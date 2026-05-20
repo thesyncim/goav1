@@ -29,6 +29,13 @@ func (w *testBitWriter) writeBool(value bool) {
 	w.writeBits(0, 1)
 }
 
+func (w *testBitWriter) writeBitsFrom(src []byte, n int) {
+	for i := 0; i < n; i++ {
+		bit := (src[i>>3] >> uint(7-(i&7))) & 1
+		w.writeBits(uint64(bit), 1)
+	}
+}
+
 func (w *testBitWriter) bytes() []byte {
 	return w.buf[:(w.bit+7)>>3]
 }

@@ -37,6 +37,7 @@ The initial implementation covers:
   fields from fragmented packet payloads with caller-owned scratch.
 - AV1 sequence header parsing for decoder configuration.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
+- AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

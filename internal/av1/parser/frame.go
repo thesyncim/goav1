@@ -236,3 +236,10 @@ func frameTypeIsKeyOrIntra(t FrameType) bool {
 func frameTypeIsInterOrSwitch(t FrameType) bool {
 	return t == FrameTypeInter || t == FrameTypeSwitch
 }
+
+func (h FrameHeaderPrefix) UsesIntraFrameSizePath() bool {
+	if h.ShowExistingFrame {
+		return false
+	}
+	return frameTypeIsKeyOrIntra(h.FrameType)
+}

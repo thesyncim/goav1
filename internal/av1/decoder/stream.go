@@ -36,6 +36,7 @@ type Event struct {
 
 	SequenceHeader parser.SequenceHeader
 	FrameHeader    parser.FrameHeaderPrefix
+	FrameSize      parser.FrameSize
 }
 
 type Stream struct {
@@ -179,6 +180,13 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		}
 		event.Kind = EventFrame
 		event.FrameHeader = frameHeader
+		if frameHeader.UsesIntraFrameSizePath() {
+			frameSize, err := parser.ParseIntraFrameSize(unit.Payload, s.sequence, frameHeader, event.TemporalID, event.SpatialID)
+			if err != nil {
+				return Event{}, err
+			}
+			event.FrameSize = frameSize
+		}
 		s.haveFrameHeader = true
 		s.tileGroups = 1
 		return event, nil
@@ -217,6 +225,13 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		return Event{}, err
 	}
 	event.FrameHeader = frameHeader
+	if frameHeader.UsesIntraFrameSizePath() {
+		frameSize, err := parser.ParseIntraFrameSize(event.Unit.Payload, s.sequence, frameHeader, event.TemporalID, event.SpatialID)
+		if err != nil {
+			return Event{}, err
+		}
+		event.FrameSize = frameSize
+	}
 	s.haveFrameHeader = true
 	s.tileGroups = 0
 	return event, nil
