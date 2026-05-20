@@ -21,6 +21,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSegmentationParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseDeltaParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseLoopFilterParams -fuzztime=10s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseCDEFParams -fuzztime=10s
 
 alloc:
 	./scripts/check_allocs.sh

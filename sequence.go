@@ -18,6 +18,7 @@ type SegmentData = internalparser.SegmentData
 type DeltaParams = internalparser.DeltaParams
 type LoopFilterParams = internalparser.LoopFilterParams
 type LoopFilterDeltas = internalparser.LoopFilterDeltas
+type CDEFParams = internalparser.CDEFParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -34,6 +35,7 @@ const (
 	MaxTileCols          = internalparser.MaxTileCols
 	MaxSegments          = internalparser.MaxSegments
 	LoopFilterModeDeltas = internalparser.LoopFilterModeDeltas
+	MaxCDEFStrengths     = internalparser.MaxCDEFStrengths
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
@@ -82,4 +84,8 @@ func ParseDeltaParams(payload []byte, size FrameSize, quant QuantizationParams, 
 
 func ParseLoopFilterParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, seg SegmentationParams, delta DeltaParams, previous *LoopFilterDeltas) (LoopFilterParams, error) {
 	return internalparser.ParseLoopFilterParams(payload, sequence, prefix, size, seg, delta, previous)
+}
+
+func ParseCDEFParams(payload []byte, sequence SequenceHeader, size FrameSize, seg SegmentationParams, lf LoopFilterParams) (CDEFParams, error) {
+	return internalparser.ParseCDEFParams(payload, sequence, size, seg, lf)
 }

@@ -48,6 +48,7 @@ The initial implementation covers:
   lossless/q-index derivation.
 - AV1 delta-q and delta-loopfilter flag parsing after segmentation.
 - AV1 loopfilter parameter parsing with explicit previous delta ownership.
+- AV1 CDEF parameter parsing for frame-level deringing setup.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

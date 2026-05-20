@@ -241,6 +241,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if !events[1].LoopFilter.ModeRefDeltaEnabled || !events[1].LoopFilter.ModeRefDeltaUpdate {
 		t.Fatalf("loopfilter=%+v", events[1].LoopFilter)
 	}
+	if events[1].CDEF.BitsRead != events[1].LoopFilter.BitsRead {
+		t.Fatalf("cdef=%+v", events[1].CDEF)
+	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
@@ -338,6 +341,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if !events[1].LoopFilter.ModeRefDeltaEnabled || !events[1].LoopFilter.ModeRefDeltaUpdate {
 		t.Fatalf("events[1] loopfilter=%+v", events[1].LoopFilter)
 	}
+	if events[1].CDEF.BitsRead != events[1].LoopFilter.BitsRead {
+		t.Fatalf("events[1] cdef=%+v", events[1].CDEF)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -379,6 +385,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if !events[3].LoopFilter.ModeRefDeltaEnabled || !events[3].LoopFilter.ModeRefDeltaUpdate {
 		t.Fatalf("inter loopfilter=%+v", events[3].LoopFilter)
+	}
+	if events[3].CDEF.BitsRead != events[3].LoopFilter.BitsRead {
+		t.Fatalf("inter cdef=%+v", events[3].CDEF)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

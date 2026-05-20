@@ -42,6 +42,7 @@ type Event struct {
 	Segmentation   parser.SegmentationParams
 	Delta          parser.DeltaParams
 	LoopFilter     parser.LoopFilterParams
+	CDEF           parser.CDEFParams
 }
 
 type Stream struct {
@@ -212,12 +213,17 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			cdef, err := parser.ParseCDEFParams(unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
 			event.Segmentation = segmentation
 			event.Delta = delta
 			event.LoopFilter = loopFilter
+			event.CDEF = cdef
 			s.references.Update(frameHeader, frameSize)
 		}
 		s.haveFrameHeader = true
@@ -283,12 +289,17 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		cdef, err := parser.ParseCDEFParams(event.Unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
 		event.Segmentation = segmentation
 		event.Delta = delta
 		event.LoopFilter = loopFilter
+		event.CDEF = cdef
 		s.references.Update(frameHeader, frameSize)
 	}
 	s.haveFrameHeader = true
