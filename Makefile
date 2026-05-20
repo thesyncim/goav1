@@ -14,3 +14,9 @@ fuzz-smoke:
 
 alloc:
 	./scripts/check_allocs.sh
+
+sync-upstreams:
+	./scripts/sync_upstreams.sh
+
+verify-upstreams:
+	./scripts/verify_upstreams.sh

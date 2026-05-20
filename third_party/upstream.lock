@@ -1,0 +1,43 @@
+# Pinned upstream references for porting and differential verification.
+# Date: 2026-05-20
+
+[[source]]
+name = "dav1d"
+role = "decoder architecture, OBU parsing, tile/decode pipeline, DSP layout"
+url = "https://code.videolan.org/videolan/dav1d.git"
+ref = "refs/tags/1.5.3"
+tag = "1.5.3"
+tag_object = "0664c109d1b85503bc32bf89920f951cacf5702e"
+commit = "b546257f770768b2c88258c533da38b91a06f737"
+verify = "git ls-remote --tags https://code.videolan.org/videolan/dav1d.git refs/tags/1.5.3 refs/tags/1.5.3^{}"
+
+[[source]]
+name = "libaom"
+role = "reference AV1 bitstream behavior and realtime encoder behavior"
+url = "https://aomedia.googlesource.com/aom"
+ref = "refs/tags/v3.14.0"
+tag = "v3.14.0"
+tag_object = "06918fc0e252bf7af787f2e738e234c26437628e"
+commit = "047d8cf6168feafe1300eb6902000dd1a03d5549"
+verify = "git ls-remote --tags https://aomedia.googlesource.com/aom refs/tags/v3.14.0 refs/tags/v3.14.0^{}"
+
+[[source]]
+name = "webrtc"
+role = "AV1 RTP payload and depayload behavior"
+url = "https://webrtc.googlesource.com/src"
+stable_channel = "Chrome Stable Mac 148.0.7778.179"
+ref = "refs/branch-heads/7778_178"
+commit = "9a7f650bcd14f241d20f88f4e1ea3b7300de72ac"
+verify = "chromiumdash Stable Mac feed hashes.webrtc plus git ls-remote https://webrtc.googlesource.com/src refs/branch-heads/7778_178"
+
+[[source]]
+name = "av1-rtp-spec"
+role = "normative AV1 RTP payload format"
+url = "https://aomediacodec.github.io/av1-rtp-spec/v1.0.0.html"
+version = "v1.0.0"
+
+[[source]]
+name = "av1-bitstream-spec"
+role = "normative AV1 bitstream and decoding process"
+url = "https://aomediacodec.github.io/av1-spec/av1-spec.pdf"
+version = "AV1 Bitstream & Decoding Process Specification"
