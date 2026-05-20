@@ -19,6 +19,8 @@ type DeltaParams = internalparser.DeltaParams
 type LoopFilterParams = internalparser.LoopFilterParams
 type LoopFilterDeltas = internalparser.LoopFilterDeltas
 type CDEFParams = internalparser.CDEFParams
+type RestorationParams = internalparser.RestorationParams
+type RestorationType = internalparser.RestorationType
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -36,12 +38,18 @@ const (
 	MaxSegments          = internalparser.MaxSegments
 	LoopFilterModeDeltas = internalparser.LoopFilterModeDeltas
 	MaxCDEFStrengths     = internalparser.MaxCDEFStrengths
+	RestorationUnitMax   = internalparser.RestorationUnitMax
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
 	InterpolationSharp      = internalparser.InterpolationSharp
 	InterpolationBilinear   = internalparser.InterpolationBilinear
 	InterpolationSwitchable = internalparser.InterpolationSwitchable
+
+	RestorationNone       = internalparser.RestorationNone
+	RestorationSwitchable = internalparser.RestorationSwitchable
+	RestorationWiener     = internalparser.RestorationWiener
+	RestorationSGRProj    = internalparser.RestorationSGRProj
 )
 
 var (
@@ -88,4 +96,8 @@ func ParseLoopFilterParams(payload []byte, sequence SequenceHeader, prefix Frame
 
 func ParseCDEFParams(payload []byte, sequence SequenceHeader, size FrameSize, seg SegmentationParams, lf LoopFilterParams) (CDEFParams, error) {
 	return internalparser.ParseCDEFParams(payload, sequence, size, seg, lf)
+}
+
+func ParseRestorationParams(payload []byte, sequence SequenceHeader, size FrameSize, seg SegmentationParams, cdef CDEFParams) (RestorationParams, error) {
+	return internalparser.ParseRestorationParams(payload, sequence, size, seg, cdef)
 }

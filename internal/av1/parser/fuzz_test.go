@@ -639,3 +639,113 @@ func FuzzParseCDEFParams(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseRestorationParams(f *testing.F) {
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, false)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var seed testBitWriter
+	seed.writeBitsFrom(payload, prefix.BitsRead)
+	seed.writeBool(false) // use_superres
+	seed.writeBool(false) // render_and_frame_size_different
+	seed.writeBool(false) // disable_frame_end_update_cdf
+	seed.writeBool(false) // uniform_tile_spacing_flag
+	seed.writeBits(50, 8) // base_q_idx
+	seed.writeBool(false) // y_dc_delta_q
+	seed.writeBool(false) // u_dc_delta_q
+	seed.writeBool(false) // u_ac_delta_q
+	seed.writeBool(false) // using_qmatrix
+	seed.writeBool(false) // segmentation_enabled
+	seed.writeBool(false) // delta_q_present
+	seed.writeBits(0, 6)  // loop_filter_level[0]
+	seed.writeBits(0, 6)  // loop_filter_level[1]
+	seed.writeBits(0, 3)  // loop_filter_sharpness
+	seed.writeBool(false) // mode_ref_delta_enabled
+	seed.writeBits(0, 2)  // cdef_damping_minus_3
+	seed.writeBits(0, 2)  // cdef_bits
+	seed.writeBits(7, 6)  // y_strength[0]
+	seed.writeBits(9, 6)  // uv_strength[0]
+	seed.writeBits(0, 2)  // restoration y type none
+	seed.writeBits(0, 2)  // restoration u type none
+	seed.writeBits(0, 2)  // restoration v type none
+	f.Add(seed.bytes())
+	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
+
+	var refs ReferenceState
+	for i := 0; i < RefFrames; i++ {
+		refs.Frames[i] = ReferenceFrame{
+			Valid:     true,
+			OrderHint: uint32(i),
+			Size: FrameSize{
+				CodedWidth:          seq.MaxFrameWidth,
+				UpscaledWidth:       seq.MaxFrameWidth,
+				Height:              seq.MaxFrameHeight,
+				RenderWidth:         seq.MaxFrameWidth,
+				RenderHeight:        seq.MaxFrameHeight,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	var previousSeg SegmentationData
+	clearSegmentationRefs(&previousSeg)
+	previousLF := defaultLoopFilterDeltas()
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		prefix, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		size, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+		if err != nil {
+			return
+		}
+		tiles, err := ParseTileInfo(payload, seq, prefix, size)
+		if err != nil {
+			return
+		}
+		quant, err := ParseQuantizationParams(payload, seq, tiles)
+		if err != nil {
+			return
+		}
+		seg, err := ParseSegmentationParams(payload, prefix, quant, &previousSeg)
+		if err != nil {
+			return
+		}
+		delta, err := ParseDeltaParams(payload, size, quant, seg)
+		if err != nil {
+			return
+		}
+		lf, err := ParseLoopFilterParams(payload, seq, prefix, size, seg, delta, &previousLF)
+		if err != nil {
+			return
+		}
+		cdef, err := ParseCDEFParams(payload, seq, size, seg, lf)
+		if err != nil {
+			return
+		}
+		restoration, err := ParseRestorationParams(payload, seq, size, seg, cdef)
+		if err != nil {
+			return
+		}
+		if restoration.BitsRead < cdef.BitsRead || restoration.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d cdef=%d len=%d", restoration.BitsRead, cdef.BitsRead, len(payload))
+		}
+		if (seg.AllLossless && !size.SuperResEnabled) || !seq.EnableRestoration || size.AllowIntrabc {
+			if restoration.BitsRead != cdef.BitsRead || restoration.UnitSizeY != 0 {
+				t.Fatalf("skipped restoration=%+v cdef bits=%d", restoration, cdef.BitsRead)
+			}
+		}
+		if seq.ColorConfig.MonoChrome && (restoration.Type[1] != RestorationNone || restoration.Type[2] != RestorationNone) {
+			t.Fatalf("monochrome restoration types=%+v", restoration)
+		}
+		if restoration.UnitSizeY != 0 && restoration.UnitSizeY != 64 && restoration.UnitSizeY != 128 && restoration.UnitSizeY != 256 {
+			t.Fatalf("bad y unit size=%+v", restoration)
+		}
+	})
+}
