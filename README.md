@@ -31,6 +31,7 @@ The initial implementation covers:
   single-OBU fragmentation, and fragment reassembly.
 - Caller-buffer AV1 RTP depacketization into complete OBU spans.
 - AV1 sequence header parsing for decoder configuration.
+- Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.
 
 Public APIs live at the module root:
