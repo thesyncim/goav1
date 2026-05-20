@@ -60,6 +60,7 @@ The initial implementation covers:
   carryover.
 - AV1 tile-group header parsing and caller-buffer tile payload span splitting.
 - Caller-buffer tile work-plan construction for deterministic decode scheduling.
+- Deterministic tile-job batch planning for bounded worker execution.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.
