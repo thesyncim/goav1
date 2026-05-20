@@ -82,3 +82,46 @@ func FuzzParseIntraFrameSize(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseFrameSize(f *testing.F) {
+	f.Add([]byte{0x10, 0x00})
+	f.Add([]byte{0x12, 0x00, 0x00, 0x00, 0x00})
+	f.Add([]byte{0x09, 0x00, 0x00, 0x00, 0x00})
+
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+	var refs ReferenceState
+	for i := 0; i < RefFrames; i++ {
+		refs.Frames[i] = ReferenceFrame{
+			Valid:     true,
+			OrderHint: uint32(i),
+			Size: FrameSize{
+				CodedWidth:          seq.MaxFrameWidth,
+				UpscaledWidth:       seq.MaxFrameWidth,
+				Height:              seq.MaxFrameHeight,
+				RenderWidth:         seq.MaxFrameWidth,
+				RenderHeight:        seq.MaxFrameHeight,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		prefix, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		size, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+		if err != nil {
+			return
+		}
+		if size.BitsRead < prefix.BitsRead || size.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d prefix=%d len=%d", size.BitsRead, prefix.BitsRead, len(payload))
+		}
+		if size.CodedWidth == 0 || size.UpscaledWidth == 0 || size.Height == 0 {
+			t.Fatalf("bad dimensions=%+v", size)
+		}
+	})
+}

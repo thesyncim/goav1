@@ -1,0 +1,48 @@
+package parser
+
+const (
+	RefFrames         = refFrames
+	InterRefsPerFrame = 7
+)
+
+// ReferenceFrame is the parser-visible metadata retained for one AV1 reference
+// slot.
+type ReferenceFrame struct {
+	Valid bool
+
+	FrameID   uint32
+	OrderHint uint32
+	FrameType FrameType
+
+	ShowableFrame bool
+	Size          FrameSize
+}
+
+// ReferenceState is caller-owned decoder reference metadata used while parsing
+// inter-frame headers.
+type ReferenceState struct {
+	Frames [RefFrames]ReferenceFrame
+}
+
+func (s *ReferenceState) Reset() {
+	*s = ReferenceState{}
+}
+
+func (s *ReferenceState) Update(prefix FrameHeaderPrefix, size FrameSize) {
+	if prefix.ShowExistingFrame {
+		return
+	}
+	ref := ReferenceFrame{
+		Valid:         true,
+		FrameID:       prefix.FrameID,
+		OrderHint:     prefix.OrderHint,
+		FrameType:     prefix.FrameType,
+		ShowableFrame: prefix.ShowableFrame,
+		Size:          size,
+	}
+	for i := 0; i < RefFrames; i++ {
+		if (size.RefreshFrameFlags & (1 << uint(i))) != 0 {
+			s.Frames[i] = ref
+		}
+	}
+}

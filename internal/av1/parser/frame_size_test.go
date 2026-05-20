@@ -182,6 +182,119 @@ func TestParseIntraFrameSizeRejectsInterFrame(t *testing.T) {
 	}
 }
 
+func TestParseFrameSizeDirectInterFrame(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefix(t, seq, false, false, 4)
+	refs := oneReferenceState(seq, 0, 1)
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x02, 8) // refresh_frame_flags
+	w.writeBool(false)   // frame_refs_short_signaling
+	for i := 0; i < InterRefsPerFrame; i++ {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBool(false) // use_superres
+	w.writeBool(false) // render_and_frame_size_different
+
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.RefreshFrameFlags != 0x02 {
+		t.Fatalf("RefreshFrameFlags=%02x", size.RefreshFrameFlags)
+	}
+	for i := 0; i < InterRefsPerFrame; i++ {
+		if size.RefFrameIdx[i] != 0 {
+			t.Fatalf("RefFrameIdx[%d]=%d", i, size.RefFrameIdx[i])
+		}
+	}
+	if size.UpscaledWidth != seq.MaxFrameWidth || size.Height != seq.MaxFrameHeight {
+		t.Fatalf("dimensions=%+v", size)
+	}
+}
+
+func TestParseFrameSizeUsesReferenceDimensions(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefix(t, seq, true, false, 4)
+	refs := oneReferenceState(seq, 0, 1)
+	refs.Frames[0].Size.UpscaledWidth = 48
+	refs.Frames[0].Size.CodedWidth = 48
+	refs.Frames[0].Size.Height = 27
+	refs.Frames[0].Size.RenderWidth = 40
+	refs.Frames[0].Size.RenderHeight = 20
+	refs.Frames[0].Size.HaveRenderSize = true
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x01, 8) // refresh_frame_flags
+	w.writeBool(false)   // frame_refs_short_signaling
+	for i := 0; i < InterRefsPerFrame; i++ {
+		w.writeBits(0, 3)
+	}
+	w.writeBool(true)  // use_ref_frame_size[0]
+	w.writeBool(false) // use_superres
+
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !size.UsedReferenceFrameSize || size.ReferenceFrameSizeIdx != 0 {
+		t.Fatalf("reference frame size flags=%+v", size)
+	}
+	if size.UpscaledWidth != 48 || size.CodedWidth != 48 || size.Height != 27 {
+		t.Fatalf("dimensions=%+v", size)
+	}
+	if size.RenderWidth != 40 || size.RenderHeight != 20 {
+		t.Fatalf("render dimensions=%+v", size)
+	}
+}
+
+func TestParseFrameSizeRejectsMissingReference(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefix(t, seq, false, false, 4)
+	var refs ReferenceState
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x01, 8)
+	w.writeBool(false)
+	for i := 0; i < InterRefsPerFrame; i++ {
+		w.writeBits(0, 3)
+	}
+
+	_, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
+	if !errors.Is(err, ErrReferenceFrameNeeded) {
+		t.Fatalf("ParseFrameSize err=%v want %v", err, ErrReferenceFrameNeeded)
+	}
+}
+
+func TestReferenceStateUpdate(t *testing.T) {
+	var refs ReferenceState
+	prefix := FrameHeaderPrefix{
+		FrameType:     FrameTypeKey,
+		ShowFrame:     true,
+		ShowableFrame: false,
+		OrderHint:     3,
+		FrameID:       5,
+	}
+	size := FrameSize{
+		RefreshFrameFlags: 0x81,
+		UpscaledWidth:     16,
+		CodedWidth:        16,
+		Height:            9,
+		RenderWidth:       16,
+		RenderHeight:      9,
+	}
+	refs.Update(prefix, size)
+	if !refs.Frames[0].Valid || !refs.Frames[7].Valid || refs.Frames[1].Valid {
+		t.Fatalf("reference state=%+v", refs.Frames)
+	}
+	if refs.Frames[7].OrderHint != 3 || refs.Frames[7].FrameID != 5 {
+		t.Fatalf("reference metadata=%+v", refs.Frames[7])
+	}
+}
+
 func TestParseIntraFrameSizeAllocs(t *testing.T) {
 	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
 	payload, prefix := buildShownKeyFramePrefix(t, seq, false)
@@ -217,6 +330,28 @@ func BenchmarkParseIntraFrameSize(b *testing.B) {
 	}
 }
 
+func BenchmarkParseFrameSizeInter(b *testing.B) {
+	seq := mustParseBenchSequenceHeader(b, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefixBench(b, seq, false, false, 4)
+	refs := oneReferenceState(seq, 0, 1)
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x02, 8)
+	w.writeBool(false)
+	for i := 0; i < InterRefsPerFrame; i++ {
+		w.writeBits(0, 3)
+	}
+	w.writeBool(false)
+	w.writeBool(false)
+	payload = w.bytes()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+	}
+}
+
 func buildShownKeyFramePrefix(t *testing.T, seq SequenceHeader, frameSizeOverride bool) ([]byte, FrameHeaderPrefix) {
 	t.Helper()
 	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, frameSizeOverride)
@@ -233,6 +368,58 @@ func buildShownKeyFramePrefixBench(b *testing.B, seq SequenceHeader, frameSizeOv
 		b.Fatal(err)
 	}
 	return payload, prefix
+}
+
+func buildInterFramePrefix(t *testing.T, seq SequenceHeader, frameSizeOverride bool, errorResilient bool, orderHint uint64) ([]byte, FrameHeaderPrefix) {
+	t.Helper()
+	payload, prefix, err := buildInterFramePrefixRaw(seq, frameSizeOverride, errorResilient, orderHint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload, prefix
+}
+
+func buildInterFramePrefixBench(b *testing.B, seq SequenceHeader, frameSizeOverride bool, errorResilient bool, orderHint uint64) ([]byte, FrameHeaderPrefix) {
+	b.Helper()
+	payload, prefix, err := buildInterFramePrefixRaw(seq, frameSizeOverride, errorResilient, orderHint)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return payload, prefix
+}
+
+func buildInterFramePrefixRaw(seq SequenceHeader, frameSizeOverride bool, errorResilient bool, orderHint uint64) ([]byte, FrameHeaderPrefix, error) {
+	var w testBitWriter
+	w.writeBool(false)                     // show_existing_frame
+	w.writeBits(uint64(FrameTypeInter), 2) // frame_type
+	w.writeBool(true)                      // show_frame
+	w.writeBool(errorResilient)            // error_resilient_mode
+	w.writeBool(false)                     // disable_cdf_update
+	w.writeBool(frameSizeOverride)         // frame_size_override_flag
+	w.writeBits(orderHint, seq.OrderHintBits)
+	if !errorResilient {
+		w.writeBits(0, 3) // primary_ref_frame
+	}
+	payload := w.bytes()
+	prefix, err := ParseFrameHeaderPrefix(payload, seq)
+	return payload, prefix, err
+}
+
+func oneReferenceState(seq SequenceHeader, slot int, orderHint uint32) ReferenceState {
+	var refs ReferenceState
+	refs.Frames[slot] = ReferenceFrame{
+		Valid:     true,
+		OrderHint: orderHint,
+		Size: FrameSize{
+			UpscaledWidth:       seq.MaxFrameWidth,
+			CodedWidth:          seq.MaxFrameWidth,
+			Height:              seq.MaxFrameHeight,
+			RenderWidth:         seq.MaxFrameWidth,
+			RenderHeight:        seq.MaxFrameHeight,
+			SuperResDenominator: 8,
+		},
+	}
+	return refs
 }
 
 func buildShownKeyFramePrefixRaw(seq SequenceHeader, frameSizeOverride bool) ([]byte, FrameHeaderPrefix, error) {

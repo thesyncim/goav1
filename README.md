@@ -38,6 +38,8 @@ The initial implementation covers:
 - AV1 sequence header parsing for decoder configuration.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
+- AV1 inter-frame reference routing and reference-size parsing with explicit
+  caller-owned reference state.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

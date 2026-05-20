@@ -32,6 +32,10 @@ func (w *testBitWriter) writeBool(value bool) {
 	w.writeBits(0, 1)
 }
 
+func (w *testBitWriter) bytes() []byte {
+	return w.buf[:(w.bit+7)>>3]
+}
+
 func (w *testBitWriter) trailingBits() []byte {
 	w.writeBits(1, 1)
 	for w.bit&7 != 0 {
@@ -64,6 +68,72 @@ func testSequenceHeaderPayload(width uint64) []byte {
 	w.writeBool(true)       // separate_uv_delta_q
 	w.writeBool(false)      // film_grain_params_present
 	return w.trailingBits()
+}
+
+func testRealtimeNoOrderSequenceHeaderPayload() []byte {
+	var w testBitWriter
+	w.writeBits(0, 3)  // seq_profile
+	w.writeBool(false) // still_picture
+	w.writeBool(false) // reduced_still_picture_header
+	w.writeBool(false) // timing_info_present_flag
+	w.writeBool(false) // initial_display_delay_present_flag
+	w.writeBits(0, 5)  // operating_points_cnt_minus_1
+	w.writeBits(0, 12) // operating_point_idc[0]
+	w.writeBits(5, 5)  // seq_level_idx[0]
+	w.writeBits(3, 4)  // frame_width_bits_minus_1
+	w.writeBits(3, 4)  // frame_height_bits_minus_1
+	w.writeBits(15, 4) // max_frame_width_minus_1
+	w.writeBits(8, 4)  // max_frame_height_minus_1
+	w.writeBool(false) // frame_id_numbers_present_flag
+	w.writeBool(false) // use_128x128_superblock
+	w.writeBool(true)  // enable_filter_intra
+	w.writeBool(true)  // enable_intra_edge_filter
+	w.writeBool(true)  // enable_interintra_compound
+	w.writeBool(true)  // enable_masked_compound
+	w.writeBool(false) // enable_warped_motion
+	w.writeBool(true)  // enable_dual_filter
+	w.writeBool(false) // enable_order_hint
+	w.writeBool(false) // seq_choose_screen_content_tools
+	w.writeBits(0, 1)  // seq_force_screen_content_tools
+	w.writeBool(false) // enable_superres
+	w.writeBool(true)  // enable_cdef
+	w.writeBool(false) // enable_restoration
+	w.writeBool(false) // high_bitdepth
+	w.writeBool(false) // mono_chrome
+	w.writeBool(false) // color_description_present_flag
+	w.writeBool(false) // color_range
+	w.writeBits(0, 2)  // chroma_sample_position
+	w.writeBool(true)  // separate_uv_delta_q
+	w.writeBool(false) // film_grain_params_present
+	return w.trailingBits()
+}
+
+func shownKeyFrameHeaderPayload() []byte {
+	var w testBitWriter
+	w.writeBool(false)                          // show_existing_frame
+	w.writeBits(uint64(parser.FrameTypeKey), 2) // frame_type
+	w.writeBool(true)                           // show_frame
+	w.writeBool(false)                          // disable_cdf_update
+	w.writeBool(false)                          // frame_size_override_flag
+	w.writeBool(false)                          // render_and_frame_size_different
+	return w.bytes()
+}
+
+func interFrameHeaderPayload() []byte {
+	var w testBitWriter
+	w.writeBool(false)                            // show_existing_frame
+	w.writeBits(uint64(parser.FrameTypeInter), 2) // frame_type
+	w.writeBool(true)                             // show_frame
+	w.writeBool(false)                            // error_resilient_mode
+	w.writeBool(false)                            // disable_cdf_update
+	w.writeBool(false)                            // frame_size_override_flag
+	w.writeBits(0, 3)                             // primary_ref_frame
+	w.writeBits(0x01, 8)                          // refresh_frame_flags
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBool(false) // render_and_frame_size_different
+	return w.bytes()
 }
 
 func appendLowOverheadOBU(dst []byte, typ obu.Type, payload []byte) []byte {
@@ -202,6 +272,38 @@ func TestStreamRTPPayload(t *testing.T) {
 	}
 	if events[1].FrameSize.CodedWidth != 16 || events[1].FrameSize.RenderHeight != 9 {
 		t.Fatalf("events[1] frame size=%+v", events[1].FrameSize)
+	}
+}
+
+func TestStreamInterFrameUsesReferenceState(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, shownKeyFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTemporalDelimiter, nil)
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, interFrameHeaderPayload())
+
+	var dec Stream
+	var events [4]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 4 {
+		t.Fatalf("count=%d", count)
+	}
+	if events[1].FrameSize.RefreshFrameFlags != 0xff {
+		t.Fatalf("key frame size=%+v", events[1].FrameSize)
+	}
+	if events[3].FrameHeader.FrameType != parser.FrameTypeInter {
+		t.Fatalf("inter header=%+v", events[3].FrameHeader)
+	}
+	if events[3].FrameSize.RefreshFrameFlags != 0x01 {
+		t.Fatalf("inter frame size=%+v", events[3].FrameSize)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if events[3].FrameSize.RefFrameIdx[i] != 0 {
+			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[3].FrameSize.RefFrameIdx[i])
+		}
 	}
 }
 

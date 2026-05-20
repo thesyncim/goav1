@@ -10,6 +10,8 @@ type ColorConfig = internalparser.ColorConfig
 type FrameType = internalparser.FrameType
 type FrameHeaderPrefix = internalparser.FrameHeaderPrefix
 type FrameSize = internalparser.FrameSize
+type ReferenceFrame = internalparser.ReferenceFrame
+type ReferenceState = internalparser.ReferenceState
 
 const (
 	FrameTypeKey       = internalparser.FrameTypeKey
@@ -17,6 +19,8 @@ const (
 	FrameTypeIntraOnly = internalparser.FrameTypeIntraOnly
 	FrameTypeSwitch    = internalparser.FrameTypeSwitch
 	PrimaryRefNone     = internalparser.PrimaryRefNone
+	RefFrames          = internalparser.RefFrames
+	InterRefsPerFrame  = internalparser.InterRefsPerFrame
 )
 
 var (
@@ -35,4 +39,8 @@ func ParseFrameHeaderPrefix(payload []byte, sequence SequenceHeader) (FrameHeade
 
 func ParseIntraFrameSize(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, temporalID uint8, spatialID uint8) (FrameSize, error) {
 	return internalparser.ParseIntraFrameSize(payload, sequence, prefix, temporalID, spatialID)
+}
+
+func ParseFrameSize(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, references *ReferenceState, temporalID uint8, spatialID uint8) (FrameSize, error) {
+	return internalparser.ParseFrameSize(payload, sequence, prefix, references, temporalID, spatialID)
 }
