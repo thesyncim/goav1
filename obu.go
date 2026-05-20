@@ -26,6 +26,7 @@ var (
 	ErrOBUForbiddenBit     = internalobu.ErrForbiddenBit
 	ErrOBUReservedBit      = internalobu.ErrReservedBit
 	ErrOBUMissingSizeField = internalobu.ErrMissingSizeField
+	ErrOBUSizeMismatch     = internalobu.ErrSizeMismatch
 	ErrOBUShortPayload     = internalobu.ErrShortPayload
 )
 
@@ -43,6 +44,10 @@ func ParseOBUElement(element []byte) (OBUUnit, error) {
 
 func ParseLowOverheadOBU(src []byte) (OBUUnit, int, error) {
 	return internalobu.ParseLowOverhead(src)
+}
+
+func NormalizeLowOverheadOBU(dst []byte, raw []byte) (int, error) {
+	return internalobu.NormalizeLowOverhead(dst, raw)
 }
 
 func NewLowOverheadIterator(src []byte) LowOverheadIterator {

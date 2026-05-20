@@ -8,5 +8,6 @@ var (
 	ErrReservedBit      = errors.New("obu: reserved bit set")
 	ErrInvalidType      = errors.New("obu: invalid type")
 	ErrMissingSizeField = errors.New("obu: missing size field")
+	ErrSizeMismatch     = errors.New("obu: size field mismatch")
 	ErrShortPayload     = errors.New("obu: short payload")
 )

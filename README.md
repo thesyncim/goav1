@@ -27,6 +27,7 @@ The initial implementation covers:
 
 - AV1 LEB128 read/write helpers.
 - Strict OBU header parsing and low-overhead OBU iteration.
+- WebRTC-compatible OBU normalization that restores low-overhead size fields.
 - AV1 RTP aggregation header parsing, payload iteration, payload building,
   single-OBU fragmentation, and fragment reassembly.
 - Caller-buffer AV1 RTP depacketization into complete OBU spans.
