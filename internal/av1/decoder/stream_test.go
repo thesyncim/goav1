@@ -6,6 +6,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/rtp"
 )
 
@@ -114,6 +115,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].Kind != EventFrameHeader {
 		t.Fatalf("frame header event=%+v", events[1])
 	}
+	if events[1].FrameHeader.FrameType != parser.FrameTypeKey || !events[1].FrameHeader.ShowFrame {
+		t.Fatalf("frame header parse=%+v", events[1].FrameHeader)
+	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
@@ -189,6 +193,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	}
 	if events[1].Kind != EventFrameHeader {
 		t.Fatalf("events[1]=%+v", events[1])
+	}
+	if events[1].FrameHeader.FrameType != parser.FrameTypeKey || !events[1].FrameHeader.DisableCDFUpdate {
+		t.Fatalf("events[1] frame header=%+v", events[1].FrameHeader)
 	}
 }
 

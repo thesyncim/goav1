@@ -35,6 +35,7 @@ type Event struct {
 	OperatingParametersChanged bool
 
 	SequenceHeader parser.SequenceHeader
+	FrameHeader    parser.FrameHeaderPrefix
 }
 
 type Stream struct {
@@ -172,7 +173,12 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		if !s.haveSequence {
 			return Event{}, ErrMissingSequenceHeader
 		}
+		frameHeader, err := parser.ParseFrameHeaderPrefix(unit.Payload, s.sequence)
+		if err != nil {
+			return Event{}, err
+		}
 		event.Kind = EventFrame
+		event.FrameHeader = frameHeader
 		s.haveFrameHeader = true
 		s.tileGroups = 1
 		return event, nil
@@ -206,6 +212,11 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	if !s.haveSequence {
 		return Event{}, ErrMissingSequenceHeader
 	}
+	frameHeader, err := parser.ParseFrameHeaderPrefix(event.Unit.Payload, s.sequence)
+	if err != nil {
+		return Event{}, err
+	}
+	event.FrameHeader = frameHeader
 	s.haveFrameHeader = true
 	s.tileGroups = 0
 	return event, nil

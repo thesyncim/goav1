@@ -36,6 +36,7 @@ The initial implementation covers:
 - WebRTC-compatible RTP frame assembly that restores low-overhead OBU size
   fields from fragmented packet payloads with caller-owned scratch.
 - AV1 sequence header parsing for decoder configuration.
+- AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

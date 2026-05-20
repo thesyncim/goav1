@@ -27,3 +27,27 @@ func FuzzParseSequenceHeader(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseFrameHeaderPrefix(f *testing.F) {
+	f.Add([]byte{0x12, 0x80})
+	f.Add([]byte{0x48, 0xc0})
+	f.Add([]byte{0x80})
+
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		hdr, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		if hdr.BitsRead < 0 || hdr.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d len=%d", hdr.BitsRead, len(payload))
+		}
+		if hdr.PrimaryRefFrame > PrimaryRefNone {
+			t.Fatalf("PrimaryRefFrame=%d", hdr.PrimaryRefFrame)
+		}
+	})
+}

@@ -7,9 +7,26 @@ type TimingInfo = internalparser.TimingInfo
 type DecoderModelInfo = internalparser.DecoderModelInfo
 type OperatingPoint = internalparser.OperatingPoint
 type ColorConfig = internalparser.ColorConfig
+type FrameType = internalparser.FrameType
+type FrameHeaderPrefix = internalparser.FrameHeaderPrefix
 
-var ErrInvalidSequenceHeader = internalparser.ErrInvalidSequenceHeader
+const (
+	FrameTypeKey       = internalparser.FrameTypeKey
+	FrameTypeInter     = internalparser.FrameTypeInter
+	FrameTypeIntraOnly = internalparser.FrameTypeIntraOnly
+	FrameTypeSwitch    = internalparser.FrameTypeSwitch
+	PrimaryRefNone     = internalparser.PrimaryRefNone
+)
+
+var (
+	ErrInvalidSequenceHeader = internalparser.ErrInvalidSequenceHeader
+	ErrInvalidFrameHeader    = internalparser.ErrInvalidFrameHeader
+)
 
 func ParseSequenceHeader(payload []byte) (SequenceHeader, error) {
 	return internalparser.ParseSequenceHeader(payload)
+}
+
+func ParseFrameHeaderPrefix(payload []byte, sequence SequenceHeader) (FrameHeaderPrefix, error) {
+	return internalparser.ParseFrameHeaderPrefix(payload, sequence)
 }

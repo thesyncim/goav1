@@ -13,6 +13,7 @@ fuzz-smoke:
 	go test ./internal/av1/rtp -run '^$$' -fuzz=FuzzPacketizer -fuzztime=10s
 	go test ./internal/av1/rtp -run '^$$' -fuzz=FuzzAssembleFrame -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSequenceHeader -fuzztime=10s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFrameHeaderPrefix -fuzztime=10s
 
 alloc:
 	./scripts/check_allocs.sh
