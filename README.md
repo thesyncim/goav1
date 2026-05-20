@@ -62,6 +62,8 @@ The initial implementation covers:
 - Caller-buffer tile work-plan construction for deterministic decode scheduling.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
+- Decoder tile-work planning from parsed frame/tile-group events into
+  caller-owned spans, jobs, and batches.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

@@ -299,6 +299,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			return Event{}, err
 		}
 		event.Kind = EventTileGroup
+		event.TileInfo = s.tileInfo
 		event.TileGroup = tileGroup
 		s.tileGroups++
 		s.nextTile = tileGroup.NextTile

@@ -1,10 +1,19 @@
 package goav1
 
-import internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+import (
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 type DecoderStream = internaldecoder.Stream
 type DecoderEvent = internaldecoder.Event
 type DecoderEventKind = internaldecoder.EventKind
+type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
+type TileJob = internaltile.Job
+type TileBatch = internalthreading.Batch
+type TileWorkerPool = internalthreading.Pool
+type TileBatchFunc = internalthreading.BatchFunc
 
 const (
 	DecoderEventIgnored              DecoderEventKind = internaldecoder.EventIgnored
@@ -24,4 +33,23 @@ var (
 	ErrDecoderMissingSequenceHeader = internaldecoder.ErrMissingSequenceHeader
 	ErrDecoderMissingFrameHeader    = internaldecoder.ErrMissingFrameHeader
 	ErrDecoderEventBufferTooSmall   = internaldecoder.ErrEventBufferTooSmall
+	ErrDecoderInvalidTileWork       = internaldecoder.ErrInvalidTileWork
+
+	ErrTileInvalidPlan       = internaltile.ErrInvalidPlan
+	ErrTileJobBufferTooSmall = internaltile.ErrJobBufferTooSmall
+
+	ErrThreadingInvalidWorkerCount  = internalthreading.ErrInvalidWorkerCount
+	ErrThreadingBatchBufferTooSmall = internalthreading.ErrBatchBufferTooSmall
+	ErrThreadingInvalidBatch        = internalthreading.ErrInvalidBatch
+	ErrThreadingInvalidJobs         = internalthreading.ErrInvalidJobs
+	ErrThreadingInvalidCallback     = internalthreading.ErrInvalidCallback
+	ErrThreadingPoolClosed          = internalthreading.ErrPoolClosed
 )
+
+func PlanDecoderTileWork(event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileWorkPlan, error) {
+	return internaldecoder.PlanTileWork(event, workers, spans, jobs, batches)
+}
+
+func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
+	return internalthreading.NewPool(workers)
+}
