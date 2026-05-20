@@ -59,6 +59,7 @@ The initial implementation covers:
 - AV1 film-grain parameter parsing with fixed storage and reference-state
   carryover.
 - AV1 tile-group header parsing and caller-buffer tile payload span splitting.
+- Caller-buffer tile work-plan construction for deterministic decode scheduling.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.
