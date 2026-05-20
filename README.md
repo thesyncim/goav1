@@ -56,6 +56,8 @@ The initial implementation covers:
 - AV1 frame-level warped-motion and reduced transform-set flag parsing.
 - AV1 global-motion type and matrix parameter parsing with reference-state
   carryover.
+- AV1 film-grain parameter parsing with fixed storage and reference-state
+  carryover.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

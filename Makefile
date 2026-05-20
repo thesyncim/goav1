@@ -27,6 +27,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSkipModeParams -fuzztime=20s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFrameModeParams -fuzztime=20s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseGlobalMotionParams -fuzztime=20s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFilmGrainParams -fuzztime=20s
 
 alloc:
 	./scripts/check_allocs.sh

@@ -48,6 +48,7 @@ type Event struct {
 	SkipMode       parser.SkipModeParams
 	FrameMode      parser.FrameModeParams
 	GlobalMotion   parser.GlobalMotionParams
+	FilmGrain      parser.FilmGrainParams
 }
 
 type Stream struct {
@@ -242,6 +243,10 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			filmGrain, err := parser.ParseFilmGrainParams(unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
@@ -254,7 +259,8 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.SkipMode = skipMode
 			event.FrameMode = frameMode
 			event.GlobalMotion = globalMotion
-			s.references.UpdateWithGlobalMotion(frameHeader, frameSize, globalMotion)
+			event.FilmGrain = filmGrain
+			s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
 		}
 		s.haveFrameHeader = true
 		s.tileGroups = 1
@@ -343,6 +349,10 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		filmGrain, err := parser.ParseFilmGrainParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
@@ -355,7 +365,8 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		event.SkipMode = skipMode
 		event.FrameMode = frameMode
 		event.GlobalMotion = globalMotion
-		s.references.UpdateWithGlobalMotion(frameHeader, frameSize, globalMotion)
+		event.FilmGrain = filmGrain
+		s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
 	}
 	s.haveFrameHeader = true
 	s.tileGroups = 0

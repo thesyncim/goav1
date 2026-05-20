@@ -29,6 +29,7 @@ type FrameModeParams = internalparser.FrameModeParams
 type GlobalMotionParams = internalparser.GlobalMotionParams
 type GlobalMotionType = internalparser.GlobalMotionType
 type WarpedMotionParams = internalparser.WarpedMotionParams
+type FilmGrainParams = internalparser.FilmGrainParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -47,6 +48,10 @@ const (
 	LoopFilterModeDeltas = internalparser.LoopFilterModeDeltas
 	MaxCDEFStrengths     = internalparser.MaxCDEFStrengths
 	RestorationUnitMax   = internalparser.RestorationUnitMax
+	MaxFilmGrainYPoints  = internalparser.MaxFilmGrainYPoints
+	MaxFilmGrainUVPoints = internalparser.MaxFilmGrainUVPoints
+	MaxFilmGrainYCoeffs  = internalparser.MaxFilmGrainYCoeffs
+	MaxFilmGrainUVCoeffs = internalparser.MaxFilmGrainUVCoeffs
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
@@ -137,4 +142,8 @@ func ParseFrameModeParams(payload []byte, sequence SequenceHeader, prefix FrameH
 
 func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size FrameSize, tiles TileInfo, references *ReferenceState, frameMode FrameModeParams) (GlobalMotionParams, error) {
 	return internalparser.ParseGlobalMotionParams(payload, prefix, size, tiles, references, frameMode)
+}
+
+func ParseFilmGrainParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, references *ReferenceState, globalMotion GlobalMotionParams) (FilmGrainParams, error) {
+	return internalparser.ParseFilmGrainParams(payload, sequence, prefix, size, references, globalMotion)
 }

@@ -1228,3 +1228,155 @@ func FuzzParseGlobalMotionParams(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseFilmGrainParams(f *testing.F) {
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, false)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var seed testBitWriter
+	seed.writeBitsFrom(payload, prefix.BitsRead)
+	seed.writeBool(false) // use_superres
+	seed.writeBool(false) // render_and_frame_size_different
+	seed.writeBool(false) // disable_frame_end_update_cdf
+	seed.writeBool(false) // uniform_tile_spacing_flag
+	seed.writeBits(50, 8) // base_q_idx
+	seed.writeBool(false) // y_dc_delta_q
+	seed.writeBool(false) // u_dc_delta_q
+	seed.writeBool(false) // u_ac_delta_q
+	seed.writeBool(false) // using_qmatrix
+	seed.writeBool(false) // segmentation_enabled
+	seed.writeBool(false) // delta_q_present
+	seed.writeBits(0, 6)  // loop_filter_level[0]
+	seed.writeBits(0, 6)  // loop_filter_level[1]
+	seed.writeBits(0, 3)  // loop_filter_sharpness
+	seed.writeBool(false) // mode_ref_delta_enabled
+	seed.writeBits(0, 2)  // cdef_damping_minus_3
+	seed.writeBits(0, 2)  // cdef_bits
+	seed.writeBits(7, 6)  // y_strength[0]
+	seed.writeBits(9, 6)  // uv_strength[0]
+	seed.writeBits(0, 2)  // restoration y type none
+	seed.writeBits(0, 2)  // restoration u type none
+	seed.writeBits(0, 2)  // restoration v type none
+	seed.writeBool(false) // tx_mode_select
+	seed.writeBool(false) // reduced_tx_set
+	seed.writeBool(false) // apply_grain
+	f.Add(seed.bytes())
+	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
+
+	defaultGlobal := DefaultGlobalMotionParams()
+	defaultFilmGrain := FilmGrainParams{
+		ParamsPresent: true,
+		Apply:         true,
+		BitDepth:      seq.ColorConfig.BitDepth,
+	}
+	var refs ReferenceState
+	for i := 0; i < RefFrames; i++ {
+		refs.Frames[i] = ReferenceFrame{
+			Valid:        true,
+			OrderHint:    uint32(i),
+			GlobalMotion: defaultGlobal,
+			FilmGrain:    defaultFilmGrain,
+			Size: FrameSize{
+				CodedWidth:          seq.MaxFrameWidth,
+				UpscaledWidth:       seq.MaxFrameWidth,
+				Height:              seq.MaxFrameHeight,
+				RenderWidth:         seq.MaxFrameWidth,
+				RenderHeight:        seq.MaxFrameHeight,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	var previousSeg SegmentationData
+	clearSegmentationRefs(&previousSeg)
+	previousLF := defaultLoopFilterDeltas()
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		prefix, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		size, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+		if err != nil {
+			return
+		}
+		tiles, err := ParseTileInfo(payload, seq, prefix, size)
+		if err != nil {
+			return
+		}
+		quant, err := ParseQuantizationParams(payload, seq, tiles)
+		if err != nil {
+			return
+		}
+		seg, err := ParseSegmentationParams(payload, prefix, quant, &previousSeg)
+		if err != nil {
+			return
+		}
+		delta, err := ParseDeltaParams(payload, size, quant, seg)
+		if err != nil {
+			return
+		}
+		lf, err := ParseLoopFilterParams(payload, seq, prefix, size, seg, delta, &previousLF)
+		if err != nil {
+			return
+		}
+		cdef, err := ParseCDEFParams(payload, seq, size, seg, lf)
+		if err != nil {
+			return
+		}
+		restoration, err := ParseRestorationParams(payload, seq, size, seg, cdef)
+		if err != nil {
+			return
+		}
+		transformRef, err := ParseTransformReferenceParams(payload, prefix, seg, restoration)
+		if err != nil {
+			return
+		}
+		skipMode, err := ParseSkipModeParams(payload, seq, prefix, size, &refs, transformRef)
+		if err != nil {
+			return
+		}
+		frameMode, err := ParseFrameModeParams(payload, seq, prefix, skipMode)
+		if err != nil {
+			return
+		}
+		globalMotion, err := ParseGlobalMotionParams(payload, prefix, size, tiles, &refs, frameMode)
+		if err != nil {
+			return
+		}
+		filmGrain, err := ParseFilmGrainParams(payload, seq, prefix, size, &refs, globalMotion)
+		if err != nil {
+			return
+		}
+		if filmGrain.BitsRead < globalMotion.BitsRead || filmGrain.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d global=%d len=%d", filmGrain.BitsRead, globalMotion.BitsRead, len(payload))
+		}
+		if filmGrain.BitDepth != seq.ColorConfig.BitDepth {
+			t.Fatalf("bit depth=%+v seq=%+v", filmGrain, seq.ColorConfig)
+		}
+		if !seq.FilmGrainParamsPresent || (!prefix.ShowFrame && !prefix.ShowableFrame) {
+			if filmGrain.Apply || filmGrain.BitsRead != globalMotion.BitsRead {
+				t.Fatalf("skipped film grain=%+v global bits=%d", filmGrain, globalMotion.BitsRead)
+			}
+		} else if !filmGrain.Apply && filmGrain.BitsRead != globalMotion.BitsRead+1 {
+			t.Fatalf("disabled film grain=%+v global bits=%d", filmGrain, globalMotion.BitsRead)
+		}
+		if filmGrain.NumYPoints > MaxFilmGrainYPoints ||
+			filmGrain.NumCbPoints > MaxFilmGrainUVPoints ||
+			filmGrain.NumCrPoints > MaxFilmGrainUVPoints {
+			t.Fatalf("too many film grain points=%+v", filmGrain)
+		}
+		if seq.ColorConfig.MonoChrome && (filmGrain.ChromaScalingFromLuma || filmGrain.NumCbPoints != 0 || filmGrain.NumCrPoints != 0) {
+			t.Fatalf("monochrome film grain=%+v", filmGrain)
+		}
+		if seq.ColorConfig.SubsamplingX && seq.ColorConfig.SubsamplingY &&
+			((filmGrain.NumCbPoints == 0) != (filmGrain.NumCrPoints == 0)) {
+			t.Fatalf("4:2:0 chroma film grain=%+v", filmGrain)
+		}
+	})
+}

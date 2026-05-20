@@ -270,6 +270,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].GlobalMotion.BitsRead != events[1].FrameMode.BitsRead {
 		t.Fatalf("global motion=%+v", events[1].GlobalMotion)
 	}
+	if events[1].FilmGrain.Apply || events[1].FilmGrain.BitsRead != events[1].GlobalMotion.BitsRead {
+		t.Fatalf("film grain=%+v", events[1].FilmGrain)
+	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
@@ -389,6 +392,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].GlobalMotion.BitsRead != events[1].FrameMode.BitsRead {
 		t.Fatalf("events[1] global motion=%+v", events[1].GlobalMotion)
 	}
+	if events[1].FilmGrain.Apply || events[1].FilmGrain.BitsRead != events[1].GlobalMotion.BitsRead {
+		t.Fatalf("events[1] film grain=%+v", events[1].FilmGrain)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -452,6 +458,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].GlobalMotion.BitsRead != events[3].FrameMode.BitsRead+parser.InterRefsPerFrame {
 		t.Fatalf("inter global motion=%+v", events[3].GlobalMotion)
+	}
+	if events[3].FilmGrain.Apply || events[3].FilmGrain.BitsRead != events[3].GlobalMotion.BitsRead {
+		t.Fatalf("inter film grain=%+v", events[3].FilmGrain)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].GlobalMotion.Ref[i].Type != parser.GlobalMotionIdentity {
