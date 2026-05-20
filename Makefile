@@ -17,6 +17,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseIntraFrameSize -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFrameSize -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseTileInfo -fuzztime=10s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseQuantizationParams -fuzztime=10s
 
 alloc:
 	./scripts/check_allocs.sh

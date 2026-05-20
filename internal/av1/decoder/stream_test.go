@@ -118,6 +118,16 @@ func shownKeyFrameHeaderPayload() []byte {
 	w.writeBool(false)                          // render_and_frame_size_different
 	w.writeBool(false)                          // disable_frame_end_update_cdf
 	w.writeBool(false)                          // uniform_tile_spacing_flag
+	writeZeroQuantParams(&w)
+	return w.bytes()
+}
+
+func reducedStillFrameHeaderPayload() []byte {
+	var w testBitWriter
+	w.writeBool(true)  // disable_cdf_update
+	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // uniform_tile_spacing_flag
+	writeZeroQuantParams(&w)
 	return w.bytes()
 }
 
@@ -141,7 +151,17 @@ func interFrameHeaderPayload() []byte {
 	w.writeBool(false) // is_motion_mode_switchable
 	w.writeBool(false) // disable_frame_end_update_cdf
 	w.writeBool(false) // uniform_tile_spacing_flag
+	writeZeroQuantParams(&w)
 	return w.bytes()
+}
+
+func writeZeroQuantParams(w *testBitWriter) {
+	w.writeBits(0, 8)  // base_q_idx
+	w.writeBool(false) // y_dc_delta_q
+	w.writeBool(false) // diff_uv_delta
+	w.writeBool(false) // u_dc_delta_q
+	w.writeBool(false) // u_ac_delta_q
+	w.writeBool(false) // using_qmatrix
 }
 
 func appendLowOverheadOBU(dst []byte, typ obu.Type, payload []byte) []byte {
@@ -175,7 +195,7 @@ func appendRTPElement(dst []byte, typ obu.Type, payload []byte) []byte {
 func TestStreamLowOverheadState(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
-	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, []byte{0x80})
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
 	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
 
 	var dec Stream
@@ -201,6 +221,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	}
 	if events[1].TileInfo.Cols != 1 || events[1].TileInfo.Rows != 1 {
 		t.Fatalf("tile info=%+v", events[1].TileInfo)
+	}
+	if events[1].Quantization.BaseQIdx != 0 {
+		t.Fatalf("quantization=%+v", events[1].Quantization)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -250,7 +273,7 @@ func TestStreamSequenceChange(t *testing.T) {
 func TestStreamRTPPayload(t *testing.T) {
 	elements := []rtp.Element{
 		{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))},
-		{Data: appendRTPElement(nil, obu.TypeFrameHeader, []byte{0x80})},
+		{Data: appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())},
 	}
 	var payload [128]byte
 	n, err := rtp.PutPayload(payload[:], rtp.AggregationHeader{
@@ -287,6 +310,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].TileInfo.Cols != 1 || events[1].TileInfo.Rows != 1 {
 		t.Fatalf("events[1] tile info=%+v", events[1].TileInfo)
 	}
+	if events[1].Quantization.BaseQIdx != 0 {
+		t.Fatalf("events[1] quantization=%+v", events[1].Quantization)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -316,6 +342,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].TileInfo.Cols != 1 || events[3].TileInfo.Rows != 1 {
 		t.Fatalf("inter tile info=%+v", events[3].TileInfo)
+	}
+	if events[3].Quantization.BaseQIdx != 0 {
+		t.Fatalf("inter quantization=%+v", events[3].Quantization)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

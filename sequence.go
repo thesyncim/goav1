@@ -11,6 +11,7 @@ type FrameType = internalparser.FrameType
 type FrameHeaderPrefix = internalparser.FrameHeaderPrefix
 type FrameSize = internalparser.FrameSize
 type TileInfo = internalparser.TileInfo
+type QuantizationParams = internalparser.QuantizationParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -57,4 +58,8 @@ func ParseFrameSize(payload []byte, sequence SequenceHeader, prefix FrameHeaderP
 
 func ParseTileInfo(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize) (TileInfo, error) {
 	return internalparser.ParseTileInfo(payload, sequence, prefix, size)
+}
+
+func ParseQuantizationParams(payload []byte, sequence SequenceHeader, tiles TileInfo) (QuantizationParams, error) {
+	return internalparser.ParseQuantizationParams(payload, sequence, tiles)
 }

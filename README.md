@@ -42,6 +42,8 @@ The initial implementation covers:
   caller-owned reference state.
 - AV1 post-size motion controls and tile layout parsing with fixed arrays for
   decoder tile scheduling.
+- AV1 quantization parameter parsing, including signed deltas and qmatrix
+  levels.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.
