@@ -52,6 +52,7 @@ The initial implementation covers:
 - AV1 loop-restoration parameter parsing with restoration type and unit-size
   derivation.
 - AV1 transform-mode and reference-mode parsing after restoration.
+- AV1 skip-mode eligibility/ref selection and frame-level enable parsing.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

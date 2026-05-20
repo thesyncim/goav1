@@ -253,6 +253,10 @@ func TestStreamLowOverheadState(t *testing.T) {
 		events[1].TransformRef.BitsRead != events[1].Restoration.BitsRead {
 		t.Fatalf("transform/reference=%+v", events[1].TransformRef)
 	}
+	if events[1].SkipMode.Allowed || events[1].SkipMode.Enabled ||
+		events[1].SkipMode.BitsRead != events[1].TransformRef.BitsRead {
+		t.Fatalf("skip mode=%+v", events[1].SkipMode)
+	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
@@ -361,6 +365,10 @@ func TestStreamRTPPayload(t *testing.T) {
 		events[1].TransformRef.BitsRead != events[1].Restoration.BitsRead {
 		t.Fatalf("events[1] transform/reference=%+v", events[1].TransformRef)
 	}
+	if events[1].SkipMode.Allowed || events[1].SkipMode.Enabled ||
+		events[1].SkipMode.BitsRead != events[1].TransformRef.BitsRead {
+		t.Fatalf("events[1] skip mode=%+v", events[1].SkipMode)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -413,6 +421,10 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 		events[3].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
 		events[3].TransformRef.BitsRead != events[3].Restoration.BitsRead+1 {
 		t.Fatalf("inter transform/reference=%+v", events[3].TransformRef)
+	}
+	if events[3].SkipMode.Allowed || events[3].SkipMode.Enabled ||
+		events[3].SkipMode.BitsRead != events[3].TransformRef.BitsRead {
+		t.Fatalf("inter skip mode=%+v", events[3].SkipMode)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {
