@@ -84,3 +84,29 @@ func FuzzPacketizer(f *testing.F) {
 		}
 	})
 }
+
+func FuzzAssembleFrame(f *testing.F) {
+	f.Add([]byte{0x10, byte(obu.TypeFrame) << 3, 0xaa})
+	f.Add([]byte{0x20, 0x02, byte(obu.TypeSequenceHeader) << 3, 0xaa, byte(obu.TypeFrameHeader) << 3, 0xbb})
+	f.Add([]byte{0x50, byte(obu.TypeFrame) << 3, 0xaa})
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		var out [512]byte
+		var obus [16]FrameOBU
+		wrote, _, err := AssembleFrame(out[:], [][]byte{payload}, obus[:])
+		if err != nil {
+			return
+		}
+
+		it := obu.NewLowOverheadIterator(out[:wrote])
+		for {
+			_, ok, err := it.Next()
+			if err != nil {
+				t.Fatalf("assembled low-overhead parse failed: %v", err)
+			}
+			if !ok {
+				return
+			}
+		}
+	})
+}

@@ -11,6 +11,7 @@ var (
 	ErrZeroLengthElement        = errors.New("rtpav1: zero-length OBU element")
 	ErrUnexpectedContinuation   = errors.New("rtpav1: unexpected OBU continuation")
 	ErrFragmentInterrupted      = errors.New("rtpav1: fragmented OBU interrupted")
+	ErrEmptyFrame               = errors.New("rtpav1: empty frame")
 	ErrMTUTooSmall              = errors.New("rtpav1: MTU too small")
 	ErrInvalidPayloadLimits     = errors.New("rtpav1: invalid payload limits")
 	ErrOBUBufferTooSmall        = errors.New("rtpav1: OBU scratch buffer too small")

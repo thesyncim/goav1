@@ -33,6 +33,8 @@ The initial implementation covers:
 - WebRTC-compatible low-overhead OBU RTP packetization with caller-owned
   scratch.
 - Caller-buffer AV1 RTP depacketization into complete OBU spans.
+- WebRTC-compatible RTP frame assembly that restores low-overhead OBU size
+  fields from fragmented packet payloads with caller-owned scratch.
 - AV1 sequence header parsing for decoder configuration.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
