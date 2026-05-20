@@ -40,6 +40,8 @@ The initial implementation covers:
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
 - AV1 inter-frame reference routing and reference-size parsing with explicit
   caller-owned reference state.
+- AV1 post-size motion controls and tile layout parsing with fixed arrays for
+  decoder tile scheduling.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

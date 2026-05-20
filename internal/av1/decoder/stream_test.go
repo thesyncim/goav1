@@ -116,6 +116,8 @@ func shownKeyFrameHeaderPayload() []byte {
 	w.writeBool(false)                          // disable_cdf_update
 	w.writeBool(false)                          // frame_size_override_flag
 	w.writeBool(false)                          // render_and_frame_size_different
+	w.writeBool(false)                          // disable_frame_end_update_cdf
+	w.writeBool(false)                          // uniform_tile_spacing_flag
 	return w.bytes()
 }
 
@@ -133,6 +135,12 @@ func interFrameHeaderPayload() []byte {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // allow_high_precision_mv
+	w.writeBool(false) // interpolation_filter is fixed
+	w.writeBits(0, 2)  // interpolation_filter = EIGHTTAP
+	w.writeBool(false) // is_motion_mode_switchable
+	w.writeBool(false) // disable_frame_end_update_cdf
+	w.writeBool(false) // uniform_tile_spacing_flag
 	return w.bytes()
 }
 
@@ -190,6 +198,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	}
 	if events[1].FrameSize.CodedWidth != 16 || events[1].FrameSize.Height != 9 {
 		t.Fatalf("frame size=%+v", events[1].FrameSize)
+	}
+	if events[1].TileInfo.Cols != 1 || events[1].TileInfo.Rows != 1 {
+		t.Fatalf("tile info=%+v", events[1].TileInfo)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -273,6 +284,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].FrameSize.CodedWidth != 16 || events[1].FrameSize.RenderHeight != 9 {
 		t.Fatalf("events[1] frame size=%+v", events[1].FrameSize)
 	}
+	if events[1].TileInfo.Cols != 1 || events[1].TileInfo.Rows != 1 {
+		t.Fatalf("events[1] tile info=%+v", events[1].TileInfo)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -299,6 +313,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].FrameSize.RefreshFrameFlags != 0x01 {
 		t.Fatalf("inter frame size=%+v", events[3].FrameSize)
+	}
+	if events[3].TileInfo.Cols != 1 || events[3].TileInfo.Rows != 1 {
+		t.Fatalf("inter tile info=%+v", events[3].TileInfo)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

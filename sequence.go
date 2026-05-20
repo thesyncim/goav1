@@ -10,6 +10,8 @@ type ColorConfig = internalparser.ColorConfig
 type FrameType = internalparser.FrameType
 type FrameHeaderPrefix = internalparser.FrameHeaderPrefix
 type FrameSize = internalparser.FrameSize
+type TileInfo = internalparser.TileInfo
+type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
 
@@ -21,6 +23,14 @@ const (
 	PrimaryRefNone     = internalparser.PrimaryRefNone
 	RefFrames          = internalparser.RefFrames
 	InterRefsPerFrame  = internalparser.InterRefsPerFrame
+	MaxTileRows        = internalparser.MaxTileRows
+	MaxTileCols        = internalparser.MaxTileCols
+
+	InterpolationEightTap   = internalparser.InterpolationEightTap
+	InterpolationSmooth     = internalparser.InterpolationSmooth
+	InterpolationSharp      = internalparser.InterpolationSharp
+	InterpolationBilinear   = internalparser.InterpolationBilinear
+	InterpolationSwitchable = internalparser.InterpolationSwitchable
 )
 
 var (
@@ -43,4 +53,8 @@ func ParseIntraFrameSize(payload []byte, sequence SequenceHeader, prefix FrameHe
 
 func ParseFrameSize(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, references *ReferenceState, temporalID uint8, spatialID uint8) (FrameSize, error) {
 	return internalparser.ParseFrameSize(payload, sequence, prefix, references, temporalID, spatialID)
+}
+
+func ParseTileInfo(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize) (TileInfo, error) {
+	return internalparser.ParseTileInfo(payload, sequence, prefix, size)
 }

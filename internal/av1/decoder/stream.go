@@ -37,6 +37,7 @@ type Event struct {
 	SequenceHeader parser.SequenceHeader
 	FrameHeader    parser.FrameHeaderPrefix
 	FrameSize      parser.FrameSize
+	TileInfo       parser.TileInfo
 }
 
 type Stream struct {
@@ -187,7 +188,12 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			tileInfo, err := parser.ParseTileInfo(unit.Payload, s.sequence, frameHeader, frameSize)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
+			event.TileInfo = tileInfo
 			s.references.Update(frameHeader, frameSize)
 		}
 		s.haveFrameHeader = true
@@ -233,7 +239,12 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
+		event.TileInfo = tileInfo
 		s.references.Update(frameHeader, frameSize)
 	}
 	s.haveFrameHeader = true
