@@ -119,6 +119,7 @@ func shownKeyFrameHeaderPayload() []byte {
 	w.writeBool(false)                          // disable_frame_end_update_cdf
 	w.writeBool(false)                          // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
+	writeZeroSegmentationParams(&w)
 	return w.bytes()
 }
 
@@ -128,6 +129,7 @@ func reducedStillFrameHeaderPayload() []byte {
 	w.writeBool(false) // render_and_frame_size_different
 	w.writeBool(false) // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
+	writeZeroSegmentationParams(&w)
 	return w.bytes()
 }
 
@@ -152,6 +154,7 @@ func interFrameHeaderPayload() []byte {
 	w.writeBool(false) // disable_frame_end_update_cdf
 	w.writeBool(false) // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
+	writeZeroSegmentationParams(&w)
 	return w.bytes()
 }
 
@@ -162,6 +165,10 @@ func writeZeroQuantParams(w *testBitWriter) {
 	w.writeBool(false) // u_dc_delta_q
 	w.writeBool(false) // u_ac_delta_q
 	w.writeBool(false) // using_qmatrix
+}
+
+func writeZeroSegmentationParams(w *testBitWriter) {
+	w.writeBool(false) // segmentation_enabled
 }
 
 func appendLowOverheadOBU(dst []byte, typ obu.Type, payload []byte) []byte {
@@ -224,6 +231,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	}
 	if events[1].Quantization.BaseQIdx != 0 {
 		t.Fatalf("quantization=%+v", events[1].Quantization)
+	}
+	if events[1].Segmentation.Enabled || !events[1].Segmentation.AllLossless {
+		t.Fatalf("segmentation=%+v", events[1].Segmentation)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -313,6 +323,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].Quantization.BaseQIdx != 0 {
 		t.Fatalf("events[1] quantization=%+v", events[1].Quantization)
 	}
+	if events[1].Segmentation.Enabled || !events[1].Segmentation.AllLossless {
+		t.Fatalf("events[1] segmentation=%+v", events[1].Segmentation)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -345,6 +358,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].Quantization.BaseQIdx != 0 {
 		t.Fatalf("inter quantization=%+v", events[3].Quantization)
+	}
+	if events[3].Segmentation.Enabled || !events[3].Segmentation.AllLossless {
+		t.Fatalf("inter segmentation=%+v", events[3].Segmentation)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

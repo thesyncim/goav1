@@ -276,3 +276,84 @@ func FuzzParseQuantizationParams(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseSegmentationParams(f *testing.F) {
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, false)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var seed testBitWriter
+	seed.writeBitsFrom(payload, prefix.BitsRead)
+	seed.writeBool(false) // use_superres
+	seed.writeBool(false) // render_and_frame_size_different
+	seed.writeBool(false) // disable_frame_end_update_cdf
+	seed.writeBool(false) // uniform_tile_spacing_flag
+	seed.writeBits(0, 8)  // base_q_idx
+	seed.writeBool(false) // y_dc_delta_q
+	seed.writeBool(false) // u_dc_delta_q
+	seed.writeBool(false) // u_ac_delta_q
+	seed.writeBool(false) // using_qmatrix
+	seed.writeBool(false) // segmentation_enabled
+	f.Add(seed.bytes())
+	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
+
+	var refs ReferenceState
+	for i := 0; i < RefFrames; i++ {
+		refs.Frames[i] = ReferenceFrame{
+			Valid:     true,
+			OrderHint: uint32(i),
+			Size: FrameSize{
+				CodedWidth:          seq.MaxFrameWidth,
+				UpscaledWidth:       seq.MaxFrameWidth,
+				Height:              seq.MaxFrameHeight,
+				RenderWidth:         seq.MaxFrameWidth,
+				RenderHeight:        seq.MaxFrameHeight,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	var previous SegmentationData
+	clearSegmentationRefs(&previous)
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		prefix, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		size, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+		if err != nil {
+			return
+		}
+		tiles, err := ParseTileInfo(payload, seq, prefix, size)
+		if err != nil {
+			return
+		}
+		quant, err := ParseQuantizationParams(payload, seq, tiles)
+		if err != nil {
+			return
+		}
+		seg, err := ParseSegmentationParams(payload, prefix, quant, &previous)
+		if err != nil {
+			return
+		}
+		if seg.BitsRead < quant.BitsRead || seg.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d quant=%d len=%d", seg.BitsRead, quant.BitsRead, len(payload))
+		}
+		if !seg.Enabled && (seg.UpdateMap || seg.UpdateData || seg.TemporalUpdate) {
+			t.Fatalf("disabled segmentation has update flags=%+v", seg)
+		}
+		for i := 0; i < MaxSegments; i++ {
+			if seg.Lossless[i] && seg.QIndex[i] != 0 {
+				t.Fatalf("lossless segment has qindex=%+v", seg)
+			}
+			if !seg.Enabled && seg.Data.Segments[i].RefFrame != -1 {
+				t.Fatalf("disabled segmentation ref=%+v", seg.Data.Segments[i])
+			}
+		}
+	})
+}

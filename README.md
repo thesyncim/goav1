@@ -44,6 +44,8 @@ The initial implementation covers:
   decoder tile scheduling.
 - AV1 quantization parameter parsing, including signed deltas and qmatrix
   levels.
+- AV1 segmentation parameter parsing with explicit previous-state ownership and
+  lossless/q-index derivation.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.

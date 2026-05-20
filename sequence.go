@@ -12,6 +12,9 @@ type FrameHeaderPrefix = internalparser.FrameHeaderPrefix
 type FrameSize = internalparser.FrameSize
 type TileInfo = internalparser.TileInfo
 type QuantizationParams = internalparser.QuantizationParams
+type SegmentationParams = internalparser.SegmentationParams
+type SegmentationData = internalparser.SegmentationData
+type SegmentData = internalparser.SegmentData
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -26,6 +29,7 @@ const (
 	InterRefsPerFrame  = internalparser.InterRefsPerFrame
 	MaxTileRows        = internalparser.MaxTileRows
 	MaxTileCols        = internalparser.MaxTileCols
+	MaxSegments        = internalparser.MaxSegments
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
@@ -62,4 +66,8 @@ func ParseTileInfo(payload []byte, sequence SequenceHeader, prefix FrameHeaderPr
 
 func ParseQuantizationParams(payload []byte, sequence SequenceHeader, tiles TileInfo) (QuantizationParams, error) {
 	return internalparser.ParseQuantizationParams(payload, sequence, tiles)
+}
+
+func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant QuantizationParams, previous *SegmentationData) (SegmentationParams, error) {
+	return internalparser.ParseSegmentationParams(payload, prefix, quant, previous)
 }
