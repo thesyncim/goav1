@@ -16,21 +16,24 @@ type SegmentationParams = internalparser.SegmentationParams
 type SegmentationData = internalparser.SegmentationData
 type SegmentData = internalparser.SegmentData
 type DeltaParams = internalparser.DeltaParams
+type LoopFilterParams = internalparser.LoopFilterParams
+type LoopFilterDeltas = internalparser.LoopFilterDeltas
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
 
 const (
-	FrameTypeKey       = internalparser.FrameTypeKey
-	FrameTypeInter     = internalparser.FrameTypeInter
-	FrameTypeIntraOnly = internalparser.FrameTypeIntraOnly
-	FrameTypeSwitch    = internalparser.FrameTypeSwitch
-	PrimaryRefNone     = internalparser.PrimaryRefNone
-	RefFrames          = internalparser.RefFrames
-	InterRefsPerFrame  = internalparser.InterRefsPerFrame
-	MaxTileRows        = internalparser.MaxTileRows
-	MaxTileCols        = internalparser.MaxTileCols
-	MaxSegments        = internalparser.MaxSegments
+	FrameTypeKey         = internalparser.FrameTypeKey
+	FrameTypeInter       = internalparser.FrameTypeInter
+	FrameTypeIntraOnly   = internalparser.FrameTypeIntraOnly
+	FrameTypeSwitch      = internalparser.FrameTypeSwitch
+	PrimaryRefNone       = internalparser.PrimaryRefNone
+	RefFrames            = internalparser.RefFrames
+	InterRefsPerFrame    = internalparser.InterRefsPerFrame
+	MaxTileRows          = internalparser.MaxTileRows
+	MaxTileCols          = internalparser.MaxTileCols
+	MaxSegments          = internalparser.MaxSegments
+	LoopFilterModeDeltas = internalparser.LoopFilterModeDeltas
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
@@ -75,4 +78,8 @@ func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant Qua
 
 func ParseDeltaParams(payload []byte, size FrameSize, quant QuantizationParams, seg SegmentationParams) (DeltaParams, error) {
 	return internalparser.ParseDeltaParams(payload, size, quant, seg)
+}
+
+func ParseLoopFilterParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, seg SegmentationParams, delta DeltaParams, previous *LoopFilterDeltas) (LoopFilterParams, error) {
+	return internalparser.ParseLoopFilterParams(payload, sequence, prefix, size, seg, delta, previous)
 }
