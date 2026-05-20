@@ -276,6 +276,37 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
+	if events[2].TileGroup.StartTile != 0 || events[2].TileGroup.EndTile != 0 ||
+		events[2].TileGroup.DataOffset != 0 || events[2].TileGroup.DataSize != 1 || !events[2].TileGroup.Final {
+		t.Fatalf("tile group=%+v", events[2].TileGroup)
+	}
+}
+
+func TestStreamFrameOBUParsesImplicitTileGroup(t *testing.T) {
+	frame := append([]byte{}, reducedStillFrameHeaderPayload()...)
+	frame = append(frame, 0xaa)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, frame)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+	if events[1].Kind != EventFrame {
+		t.Fatalf("frame event=%+v", events[1])
+	}
+	if events[1].TileGroup.StartTile != 0 || events[1].TileGroup.EndTile != 0 ||
+		events[1].TileGroup.DataOffset != len(reducedStillFrameHeaderPayload()) ||
+		events[1].TileGroup.DataSize != 1 || !events[1].TileGroup.Final {
+		t.Fatalf("frame tile group=%+v", events[1].TileGroup)
+	}
 }
 
 func TestStreamRejectsFrameBeforeSequenceHeader(t *testing.T) {
@@ -295,6 +326,21 @@ func TestStreamRejectsTileBeforeFrameHeader(t *testing.T) {
 	_, err = dec.PushOBU(appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
 	if !errors.Is(err, ErrMissingFrameHeader) {
 		t.Fatalf("PushOBU err=%v want %v", err, ErrMissingFrameHeader)
+	}
+}
+
+func TestStreamRejectsTileAfterFinalTileGroup(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [4]Event
+	_, err := dec.PushLowOverhead(stream, events[:])
+	if !errors.Is(err, ErrMissingFrameHeader) {
+		t.Fatalf("PushLowOverhead err=%v want %v", err, ErrMissingFrameHeader)
 	}
 }
 

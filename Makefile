@@ -17,6 +17,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseIntraFrameSize -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFrameSize -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseTileInfo -fuzztime=10s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseTileGroupHeader -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseQuantizationParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSegmentationParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseDeltaParams -fuzztime=10s

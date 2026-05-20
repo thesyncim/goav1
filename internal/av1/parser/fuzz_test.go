@@ -206,6 +206,54 @@ func FuzzParseTileInfo(f *testing.F) {
 	})
 }
 
+func FuzzParseTileGroupHeader(f *testing.F) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          2,
+		Log2Cols:      1,
+		Log2Rows:      1,
+		TileSizeBytes: 1,
+	}
+	f.Add([]byte{0x00})
+	f.Add([]byte{0x80})
+	f.Add([]byte{0x00, 0xaa})
+	f.Add([]byte{0x40, 0x00, 0xaa})
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		frameOBU := len(payload)&1 == 0
+		group, err := ParseTileGroupHeader(payload, tiles, 0, 0, frameOBU)
+		if err != nil {
+			return
+		}
+		if group.StartTile != 0 || group.StartTile > group.EndTile || group.EndTile >= 4 {
+			t.Fatalf("bad tile group=%+v", group)
+		}
+		if group.BitsRead&7 != 0 || group.DataOffset != group.BitsRead>>3 || group.DataOffset > len(payload) {
+			t.Fatalf("bad tile group offsets=%+v len=%d", group, len(payload))
+		}
+		if group.TileCount != group.EndTile-group.StartTile+1 {
+			t.Fatalf("bad tile count=%+v", group)
+		}
+		var spans [4]TileSpan
+		n, err := SplitTileGroup(payload, tiles, group, spans[:])
+		if err != nil {
+			return
+		}
+		if n != int(group.TileCount) {
+			t.Fatalf("span count=%d group=%+v", n, group)
+		}
+		for i := 0; i < n; i++ {
+			span := spans[i]
+			if span.Tile != uint16(i) || span.Row >= tiles.Rows || span.Col >= tiles.Cols {
+				t.Fatalf("span[%d]=%+v group=%+v", i, span, group)
+			}
+			if span.Offset < group.DataOffset || span.Size < 0 || span.Offset+span.Size > len(payload) {
+				t.Fatalf("span[%d]=%+v len=%d group=%+v", i, span, len(payload), group)
+			}
+		}
+	})
+}
+
 func FuzzParseQuantizationParams(f *testing.F) {
 	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
 	if err != nil {

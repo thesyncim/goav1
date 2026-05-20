@@ -30,6 +30,8 @@ type GlobalMotionParams = internalparser.GlobalMotionParams
 type GlobalMotionType = internalparser.GlobalMotionType
 type WarpedMotionParams = internalparser.WarpedMotionParams
 type FilmGrainParams = internalparser.FilmGrainParams
+type TileGroup = internalparser.TileGroup
+type TileSpan = internalparser.TileSpan
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -52,6 +54,7 @@ const (
 	MaxFilmGrainUVPoints = internalparser.MaxFilmGrainUVPoints
 	MaxFilmGrainYCoeffs  = internalparser.MaxFilmGrainYCoeffs
 	MaxFilmGrainUVCoeffs = internalparser.MaxFilmGrainUVCoeffs
+	MaxTiles             = internalparser.MaxTiles
 
 	InterpolationEightTap   = internalparser.InterpolationEightTap
 	InterpolationSmooth     = internalparser.InterpolationSmooth
@@ -81,6 +84,7 @@ const (
 var (
 	ErrInvalidSequenceHeader = internalparser.ErrInvalidSequenceHeader
 	ErrInvalidFrameHeader    = internalparser.ErrInvalidFrameHeader
+	ErrInvalidTileGroup      = internalparser.ErrInvalidTileGroup
 	ErrReferenceFrameNeeded  = internalparser.ErrReferenceFrameNeeded
 )
 
@@ -146,4 +150,12 @@ func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size Fram
 
 func ParseFilmGrainParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, references *ReferenceState, globalMotion GlobalMotionParams) (FilmGrainParams, error) {
 	return internalparser.ParseFilmGrainParams(payload, sequence, prefix, size, references, globalMotion)
+}
+
+func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expectedStart uint16, frameOBU bool) (TileGroup, error) {
+	return internalparser.ParseTileGroupHeader(payload, tiles, startBits, expectedStart, frameOBU)
+}
+
+func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []TileSpan) (int, error) {
+	return internalparser.SplitTileGroup(payload, tiles, group, spans)
 }

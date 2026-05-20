@@ -49,6 +49,7 @@ type Event struct {
 	FrameMode      parser.FrameModeParams
 	GlobalMotion   parser.GlobalMotionParams
 	FilmGrain      parser.FilmGrainParams
+	TileGroup      parser.TileGroup
 }
 
 type Stream struct {
@@ -57,6 +58,8 @@ type Stream struct {
 
 	haveFrameHeader bool
 	tileGroups      uint32
+	tileInfo        parser.TileInfo
+	nextTile        uint16
 
 	references parser.ReferenceState
 	rtp        rtp.Depacketizer
@@ -157,6 +160,8 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.NewCodedVideoSequence = true
 			s.haveFrameHeader = false
 			s.tileGroups = 0
+			s.tileInfo = parser.TileInfo{}
+			s.nextTile = 0
 			s.references.Reset()
 		} else if s.sequence != seq {
 			event.OperatingParametersChanged = true
@@ -170,6 +175,8 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		event.NewTemporalUnit = true
 		s.haveFrameHeader = false
 		s.tileGroups = 0
+		s.tileInfo = parser.TileInfo{}
+		s.nextTile = 0
 		return event, nil
 
 	case obu.TypeRedundantFrameHeader:
@@ -194,6 +201,9 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		}
 		event.Kind = EventFrame
 		event.FrameHeader = frameHeader
+		if frameHeader.ShowExistingFrame {
+			return Event{}, parser.ErrInvalidFrameHeader
+		}
 		if !frameHeader.ShowExistingFrame {
 			frameSize, err := parser.ParseFrameSize(unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
 			if err != nil {
@@ -247,6 +257,10 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, tileInfo, filmGrain.BitsRead, 0, true)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
@@ -260,18 +274,38 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.FrameMode = frameMode
 			event.GlobalMotion = globalMotion
 			event.FilmGrain = filmGrain
+			event.TileGroup = tileGroup
 			s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
+			s.tileInfo = tileInfo
+			s.nextTile = tileGroup.NextTile
+			s.haveFrameHeader = !tileGroup.Final
+			s.tileGroups = 1
+			if tileGroup.Final {
+				s.tileInfo = parser.TileInfo{}
+			}
+			return event, nil
 		}
 		s.haveFrameHeader = true
-		s.tileGroups = 1
+		s.tileGroups = 0
+		s.nextTile = 0
 		return event, nil
 
 	case obu.TypeTileGroup:
 		if !s.haveFrameHeader {
 			return Event{}, ErrMissingFrameHeader
 		}
+		tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, s.tileInfo, 0, s.nextTile, false)
+		if err != nil {
+			return Event{}, err
+		}
 		event.Kind = EventTileGroup
+		event.TileGroup = tileGroup
 		s.tileGroups++
+		s.nextTile = tileGroup.NextTile
+		if tileGroup.Final {
+			s.haveFrameHeader = false
+			s.tileInfo = parser.TileInfo{}
+		}
 		return event, nil
 
 	case obu.TypeMetadata:
@@ -367,6 +401,8 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		event.GlobalMotion = globalMotion
 		event.FilmGrain = filmGrain
 		s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
+		s.tileInfo = tileInfo
+		s.nextTile = 0
 	}
 	s.haveFrameHeader = true
 	s.tileGroups = 0
