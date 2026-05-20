@@ -16,6 +16,7 @@ type Format struct {
 
 	BitDepth uint8
 
+	MonoChrome   bool
 	SubsamplingX bool
 	SubsamplingY bool
 
@@ -65,20 +66,7 @@ func RequiredSize(format Format) (Layout, error) {
 		bytesPerSample = 2
 	}
 
-	chromaWidth := format.Width
-	chromaHeight := format.Height
-	if format.SubsamplingX {
-		chromaWidth = (chromaWidth + 1) >> 1
-	}
-	if format.SubsamplingY {
-		chromaHeight = (chromaHeight + 1) >> 1
-	}
-
 	yStride, ok := checkedAlign(format.Width*bytesPerSample, format.Align)
-	if !ok {
-		return Layout{}, ErrInvalidFormat
-	}
-	cStride, ok := checkedAlign(chromaWidth*bytesPerSample, format.Align)
 	if !ok {
 		return Layout{}, ErrInvalidFormat
 	}
@@ -86,6 +74,24 @@ func RequiredSize(format Format) (Layout, error) {
 	ySize, ok := checkedMul(yStride, format.Height)
 	if !ok {
 		return Layout{}, ErrInvalidFormat
+	}
+
+	chromaWidth := 0
+	chromaHeight := 0
+	cStride := 0
+	if !format.MonoChrome {
+		chromaWidth = format.Width
+		chromaHeight = format.Height
+		if format.SubsamplingX {
+			chromaWidth = (chromaWidth + 1) >> 1
+		}
+		if format.SubsamplingY {
+			chromaHeight = (chromaHeight + 1) >> 1
+		}
+		cStride, ok = checkedAlign(chromaWidth*bytesPerSample, format.Align)
+		if !ok {
+			return Layout{}, ErrInvalidFormat
+		}
 	}
 	uSize, ok := checkedMul(cStride, chromaHeight)
 	if !ok {

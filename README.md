@@ -67,6 +67,7 @@ The initial implementation covers:
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable decode surfaces.
+- AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
 Public APIs live at the module root:

@@ -56,6 +56,37 @@ func TestBindFrame(t *testing.T) {
 	}
 }
 
+func TestRequiredSizeMonochrome(t *testing.T) {
+	layout, err := RequiredSize(Format{
+		Width:      16,
+		Height:     9,
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.YStride != 64 || layout.UStride != 0 || layout.VStride != 0 {
+		t.Fatalf("strides: %+v", layout)
+	}
+	if layout.ChromaWidth != 0 || layout.ChromaHeight != 0 {
+		t.Fatalf("chroma: %dx%d", layout.ChromaWidth, layout.ChromaHeight)
+	}
+	if layout.UOffset != 64*9 || layout.VOffset != 64*9 || layout.Size != 64*9 {
+		t.Fatalf("layout=%+v", layout)
+	}
+
+	buffer := make([]byte, layout.Size)
+	frame, err := Bind(buffer, Format{Width: 16, Height: 9, BitDepth: 8, MonoChrome: true, Align: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 || frame.U.Stride != 0 || frame.V.Stride != 0 {
+		t.Fatalf("monochrome planes: U=%+v V=%+v", frame.U, frame.V)
+	}
+}
+
 func TestBindRejectsShortBuffer(t *testing.T) {
 	_, err := Bind(make([]byte, 1), Format{Width: 16, Height: 16, BitDepth: 8})
 	if !errors.Is(err, ErrShortBuffer) {

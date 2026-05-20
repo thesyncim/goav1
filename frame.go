@@ -20,6 +20,25 @@ func FrameRequiredSize(format FrameFormat) (FrameLayout, error) {
 	return internalframe.RequiredSize(format)
 }
 
+func FrameFormatFromHeaders(sequence SequenceHeader, size FrameSize, align int) (FrameFormat, error) {
+	if size.CodedWidth == 0 || size.Height == 0 || sequence.ColorConfig.BitDepth == 0 {
+		return FrameFormat{}, ErrFrameInvalidFormat
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if uint64(size.CodedWidth) > maxInt || uint64(size.Height) > maxInt {
+		return FrameFormat{}, ErrFrameInvalidFormat
+	}
+	return FrameFormat{
+		Width:        int(size.CodedWidth),
+		Height:       int(size.Height),
+		BitDepth:     sequence.ColorConfig.BitDepth,
+		MonoChrome:   sequence.ColorConfig.MonoChrome,
+		SubsamplingX: sequence.ColorConfig.SubsamplingX,
+		SubsamplingY: sequence.ColorConfig.SubsamplingY,
+		Align:        align,
+	}, nil
+}
+
 func BindFrame(buffer []byte, format FrameFormat) (Frame, error) {
 	return internalframe.Bind(buffer, format)
 }
