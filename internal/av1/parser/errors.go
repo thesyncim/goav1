@@ -1,0 +1,7 @@
+package parser
+
+import "errors"
+
+var (
+	ErrInvalidSequenceHeader = errors.New("parser: invalid sequence header")
+)

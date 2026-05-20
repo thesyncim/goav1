@@ -1,4 +1,4 @@
-package av1
+package goav1
 
 import internalobu "github.com/thesyncim/goav1/internal/av1/obu"
 
