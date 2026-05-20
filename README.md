@@ -29,6 +29,7 @@ The initial implementation covers:
 - Strict OBU header parsing and low-overhead OBU iteration.
 - AV1 RTP aggregation header parsing, payload iteration, payload building,
   single-OBU fragmentation, and fragment reassembly.
+- Caller-buffer AV1 RTP depacketization into complete OBU spans.
 - AV1 sequence header parsing for decoder configuration.
 - Allocation regression tests for the critical byte-level paths.
 

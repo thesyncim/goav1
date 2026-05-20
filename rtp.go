@@ -6,6 +6,8 @@ type RTPAggregationHeader = internalrtp.AggregationHeader
 type RTPElement = internalrtp.Element
 type RTPPayloadIterator = internalrtp.Iterator
 type RTPFragmentReassembler = internalrtp.FragmentReassembler
+type RTPDepacketizer = internalrtp.Depacketizer
+type RTPObuSpan = internalrtp.OBUSpan
 
 var (
 	ErrRTPShortPayload             = internalrtp.ErrShortPayload
