@@ -357,3 +357,86 @@ func FuzzParseSegmentationParams(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseDeltaParams(f *testing.F) {
+	seq, err := ParseSequenceHeader(realtimeSequenceHeader())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, false)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var seed testBitWriter
+	seed.writeBitsFrom(payload, prefix.BitsRead)
+	seed.writeBool(false) // use_superres
+	seed.writeBool(false) // render_and_frame_size_different
+	seed.writeBool(false) // disable_frame_end_update_cdf
+	seed.writeBool(false) // uniform_tile_spacing_flag
+	seed.writeBits(50, 8) // base_q_idx
+	seed.writeBool(false) // y_dc_delta_q
+	seed.writeBool(false) // u_dc_delta_q
+	seed.writeBool(false) // u_ac_delta_q
+	seed.writeBool(false) // using_qmatrix
+	seed.writeBool(false) // segmentation_enabled
+	seed.writeBool(true)  // delta_q_present
+	seed.writeBits(1, 2)  // delta_q_res_log2
+	seed.writeBool(false) // delta_lf_present
+	f.Add(seed.bytes())
+	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
+
+	var refs ReferenceState
+	for i := 0; i < RefFrames; i++ {
+		refs.Frames[i] = ReferenceFrame{
+			Valid:     true,
+			OrderHint: uint32(i),
+			Size: FrameSize{
+				CodedWidth:          seq.MaxFrameWidth,
+				UpscaledWidth:       seq.MaxFrameWidth,
+				Height:              seq.MaxFrameHeight,
+				RenderWidth:         seq.MaxFrameWidth,
+				RenderHeight:        seq.MaxFrameHeight,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	var previous SegmentationData
+	clearSegmentationRefs(&previous)
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		prefix, err := ParseFrameHeaderPrefix(payload, seq)
+		if err != nil {
+			return
+		}
+		size, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
+		if err != nil {
+			return
+		}
+		tiles, err := ParseTileInfo(payload, seq, prefix, size)
+		if err != nil {
+			return
+		}
+		quant, err := ParseQuantizationParams(payload, seq, tiles)
+		if err != nil {
+			return
+		}
+		seg, err := ParseSegmentationParams(payload, prefix, quant, &previous)
+		if err != nil {
+			return
+		}
+		delta, err := ParseDeltaParams(payload, size, quant, seg)
+		if err != nil {
+			return
+		}
+		if delta.BitsRead < seg.BitsRead || delta.BitsRead > len(payload)*8 {
+			t.Fatalf("BitsRead=%d seg=%d len=%d", delta.BitsRead, seg.BitsRead, len(payload))
+		}
+		if !delta.DeltaQPresent && (delta.DeltaQResLog2 != 0 || delta.DeltaLFPresent || delta.DeltaLFResLog2 != 0 || delta.DeltaLFMulti) {
+			t.Fatalf("delta fields set while absent=%+v", delta)
+		}
+		if size.AllowIntrabc && delta.DeltaLFPresent {
+			t.Fatalf("intrabc frame has delta lf=%+v", delta)
+		}
+	})
+}

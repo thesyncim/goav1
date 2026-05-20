@@ -15,6 +15,7 @@ type QuantizationParams = internalparser.QuantizationParams
 type SegmentationParams = internalparser.SegmentationParams
 type SegmentationData = internalparser.SegmentationData
 type SegmentData = internalparser.SegmentData
+type DeltaParams = internalparser.DeltaParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -70,4 +71,8 @@ func ParseQuantizationParams(payload []byte, sequence SequenceHeader, tiles Tile
 
 func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant QuantizationParams, previous *SegmentationData) (SegmentationParams, error) {
 	return internalparser.ParseSegmentationParams(payload, prefix, quant, previous)
+}
+
+func ParseDeltaParams(payload []byte, size FrameSize, quant QuantizationParams, seg SegmentationParams) (DeltaParams, error) {
+	return internalparser.ParseDeltaParams(payload, size, quant, seg)
 }

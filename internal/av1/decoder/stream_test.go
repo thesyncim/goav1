@@ -235,6 +235,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].Segmentation.Enabled || !events[1].Segmentation.AllLossless {
 		t.Fatalf("segmentation=%+v", events[1].Segmentation)
 	}
+	if events[1].Delta.DeltaQPresent || events[1].Delta.BitsRead != events[1].Segmentation.BitsRead {
+		t.Fatalf("delta=%+v", events[1].Delta)
+	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
@@ -326,6 +329,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].Segmentation.Enabled || !events[1].Segmentation.AllLossless {
 		t.Fatalf("events[1] segmentation=%+v", events[1].Segmentation)
 	}
+	if events[1].Delta.DeltaQPresent || events[1].Delta.BitsRead != events[1].Segmentation.BitsRead {
+		t.Fatalf("events[1] delta=%+v", events[1].Delta)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -361,6 +367,9 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].Segmentation.Enabled || !events[3].Segmentation.AllLossless {
 		t.Fatalf("inter segmentation=%+v", events[3].Segmentation)
+	}
+	if events[3].Delta.DeltaQPresent || events[3].Delta.BitsRead != events[3].Segmentation.BitsRead {
+		t.Fatalf("inter delta=%+v", events[3].Delta)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

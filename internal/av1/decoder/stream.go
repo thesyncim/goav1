@@ -40,6 +40,7 @@ type Event struct {
 	TileInfo       parser.TileInfo
 	Quantization   parser.QuantizationParams
 	Segmentation   parser.SegmentationParams
+	Delta          parser.DeltaParams
 }
 
 type Stream struct {
@@ -202,10 +203,15 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			delta, err := parser.ParseDeltaParams(unit.Payload, frameSize, quant, segmentation)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
 			event.Segmentation = segmentation
+			event.Delta = delta
 			s.references.Update(frameHeader, frameSize)
 		}
 		s.haveFrameHeader = true
@@ -263,10 +269,15 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		delta, err := parser.ParseDeltaParams(event.Unit.Payload, frameSize, quant, segmentation)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
 		event.Segmentation = segmentation
+		event.Delta = delta
 		s.references.Update(frameHeader, frameSize)
 	}
 	s.haveFrameHeader = true

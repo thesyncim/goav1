@@ -46,6 +46,7 @@ The initial implementation covers:
   levels.
 - AV1 segmentation parameter parsing with explicit previous-state ownership and
   lossless/q-index derivation.
+- AV1 delta-q and delta-loopfilter flag parsing after segmentation.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
 - Allocation regression tests for the critical byte-level paths.
