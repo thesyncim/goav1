@@ -155,6 +155,7 @@ func interFrameHeaderPayload() []byte {
 	w.writeBool(false) // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
 	writeZeroSegmentationParams(&w)
+	w.writeBool(false) // reference_select
 	return w.bytes()
 }
 
@@ -246,6 +247,11 @@ func TestStreamLowOverheadState(t *testing.T) {
 	}
 	if events[1].Restoration.BitsRead != events[1].CDEF.BitsRead {
 		t.Fatalf("restoration=%+v", events[1].Restoration)
+	}
+	if events[1].TransformRef.TransformMode != parser.TransformMode4x4Only ||
+		events[1].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
+		events[1].TransformRef.BitsRead != events[1].Restoration.BitsRead {
+		t.Fatalf("transform/reference=%+v", events[1].TransformRef)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -350,6 +356,11 @@ func TestStreamRTPPayload(t *testing.T) {
 	if events[1].Restoration.BitsRead != events[1].CDEF.BitsRead {
 		t.Fatalf("events[1] restoration=%+v", events[1].Restoration)
 	}
+	if events[1].TransformRef.TransformMode != parser.TransformMode4x4Only ||
+		events[1].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
+		events[1].TransformRef.BitsRead != events[1].Restoration.BitsRead {
+		t.Fatalf("events[1] transform/reference=%+v", events[1].TransformRef)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -397,6 +408,11 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 	if events[3].Restoration.BitsRead != events[3].CDEF.BitsRead {
 		t.Fatalf("inter restoration=%+v", events[3].Restoration)
+	}
+	if events[3].TransformRef.TransformMode != parser.TransformMode4x4Only ||
+		events[3].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
+		events[3].TransformRef.BitsRead != events[3].Restoration.BitsRead+1 {
+		t.Fatalf("inter transform/reference=%+v", events[3].TransformRef)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

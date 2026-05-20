@@ -44,6 +44,7 @@ type Event struct {
 	LoopFilter     parser.LoopFilterParams
 	CDEF           parser.CDEFParams
 	Restoration    parser.RestorationParams
+	TransformRef   parser.TransformReferenceParams
 }
 
 type Stream struct {
@@ -222,6 +223,10 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			transformRef, err := parser.ParseTransformReferenceParams(unit.Payload, frameHeader, segmentation, restoration)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
@@ -230,6 +235,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.LoopFilter = loopFilter
 			event.CDEF = cdef
 			event.Restoration = restoration
+			event.TransformRef = transformRef
 			s.references.Update(frameHeader, frameSize)
 		}
 		s.haveFrameHeader = true
@@ -303,6 +309,10 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		transformRef, err := parser.ParseTransformReferenceParams(event.Unit.Payload, frameHeader, segmentation, restoration)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
@@ -311,6 +321,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		event.LoopFilter = loopFilter
 		event.CDEF = cdef
 		event.Restoration = restoration
+		event.TransformRef = transformRef
 		s.references.Update(frameHeader, frameSize)
 	}
 	s.haveFrameHeader = true

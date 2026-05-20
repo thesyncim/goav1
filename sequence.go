@@ -21,6 +21,9 @@ type LoopFilterDeltas = internalparser.LoopFilterDeltas
 type CDEFParams = internalparser.CDEFParams
 type RestorationParams = internalparser.RestorationParams
 type RestorationType = internalparser.RestorationType
+type TransformReferenceParams = internalparser.TransformReferenceParams
+type TransformMode = internalparser.TransformMode
+type ReferenceMode = internalparser.ReferenceMode
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -50,6 +53,14 @@ const (
 	RestorationSwitchable = internalparser.RestorationSwitchable
 	RestorationWiener     = internalparser.RestorationWiener
 	RestorationSGRProj    = internalparser.RestorationSGRProj
+
+	TransformMode4x4Only    = internalparser.TransformMode4x4Only
+	TransformModeLargest    = internalparser.TransformModeLargest
+	TransformModeSwitchable = internalparser.TransformModeSwitchable
+
+	ReferenceModeSingle   = internalparser.ReferenceModeSingle
+	ReferenceModeCompound = internalparser.ReferenceModeCompound
+	ReferenceModeSelect   = internalparser.ReferenceModeSelect
 )
 
 var (
@@ -100,4 +111,8 @@ func ParseCDEFParams(payload []byte, sequence SequenceHeader, size FrameSize, se
 
 func ParseRestorationParams(payload []byte, sequence SequenceHeader, size FrameSize, seg SegmentationParams, cdef CDEFParams) (RestorationParams, error) {
 	return internalparser.ParseRestorationParams(payload, sequence, size, seg, cdef)
+}
+
+func ParseTransformReferenceParams(payload []byte, prefix FrameHeaderPrefix, seg SegmentationParams, restoration RestorationParams) (TransformReferenceParams, error) {
+	return internalparser.ParseTransformReferenceParams(payload, prefix, seg, restoration)
 }
