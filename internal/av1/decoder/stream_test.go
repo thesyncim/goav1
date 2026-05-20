@@ -159,6 +159,9 @@ func interFrameHeaderPayload() []byte {
 	writeZeroSegmentationParams(&w)
 	w.writeBool(false) // reference_select
 	w.writeBool(false) // reduced_tx_set
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBool(false) // global_motion_is_global
+	}
 	return w.bytes()
 }
 
@@ -263,6 +266,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].FrameMode.AllowWarpedMotion || events[1].FrameMode.ReducedTxSet ||
 		events[1].FrameMode.BitsRead != events[1].SkipMode.BitsRead+1 {
 		t.Fatalf("frame mode=%+v", events[1].FrameMode)
+	}
+	if events[1].GlobalMotion.BitsRead != events[1].FrameMode.BitsRead {
+		t.Fatalf("global motion=%+v", events[1].GlobalMotion)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -380,6 +386,9 @@ func TestStreamRTPPayload(t *testing.T) {
 		events[1].FrameMode.BitsRead != events[1].SkipMode.BitsRead+1 {
 		t.Fatalf("events[1] frame mode=%+v", events[1].FrameMode)
 	}
+	if events[1].GlobalMotion.BitsRead != events[1].FrameMode.BitsRead {
+		t.Fatalf("events[1] global motion=%+v", events[1].GlobalMotion)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -440,6 +449,14 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	if events[3].FrameMode.AllowWarpedMotion || events[3].FrameMode.ReducedTxSet ||
 		events[3].FrameMode.BitsRead != events[3].SkipMode.BitsRead+1 {
 		t.Fatalf("inter frame mode=%+v", events[3].FrameMode)
+	}
+	if events[3].GlobalMotion.BitsRead != events[3].FrameMode.BitsRead+parser.InterRefsPerFrame {
+		t.Fatalf("inter global motion=%+v", events[3].GlobalMotion)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if events[3].GlobalMotion.Ref[i].Type != parser.GlobalMotionIdentity {
+			t.Fatalf("inter global motion ref[%d]=%+v", i, events[3].GlobalMotion.Ref[i])
+		}
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

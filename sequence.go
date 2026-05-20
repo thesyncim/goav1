@@ -26,6 +26,9 @@ type TransformMode = internalparser.TransformMode
 type ReferenceMode = internalparser.ReferenceMode
 type SkipModeParams = internalparser.SkipModeParams
 type FrameModeParams = internalparser.FrameModeParams
+type GlobalMotionParams = internalparser.GlobalMotionParams
+type GlobalMotionType = internalparser.GlobalMotionType
+type WarpedMotionParams = internalparser.WarpedMotionParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -63,6 +66,11 @@ const (
 	ReferenceModeSingle   = internalparser.ReferenceModeSingle
 	ReferenceModeCompound = internalparser.ReferenceModeCompound
 	ReferenceModeSelect   = internalparser.ReferenceModeSelect
+
+	GlobalMotionIdentity    = internalparser.GlobalMotionIdentity
+	GlobalMotionTranslation = internalparser.GlobalMotionTranslation
+	GlobalMotionRotZoom     = internalparser.GlobalMotionRotZoom
+	GlobalMotionAffine      = internalparser.GlobalMotionAffine
 )
 
 var (
@@ -125,4 +133,8 @@ func ParseSkipModeParams(payload []byte, sequence SequenceHeader, prefix FrameHe
 
 func ParseFrameModeParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, skip SkipModeParams) (FrameModeParams, error) {
 	return internalparser.ParseFrameModeParams(payload, sequence, prefix, skip)
+}
+
+func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size FrameSize, tiles TileInfo, references *ReferenceState, frameMode FrameModeParams) (GlobalMotionParams, error) {
+	return internalparser.ParseGlobalMotionParams(payload, prefix, size, tiles, references, frameMode)
 }

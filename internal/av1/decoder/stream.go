@@ -47,6 +47,7 @@ type Event struct {
 	TransformRef   parser.TransformReferenceParams
 	SkipMode       parser.SkipModeParams
 	FrameMode      parser.FrameModeParams
+	GlobalMotion   parser.GlobalMotionParams
 }
 
 type Stream struct {
@@ -237,6 +238,10 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			globalMotion, err := parser.ParseGlobalMotionParams(unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
@@ -248,7 +253,8 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.TransformRef = transformRef
 			event.SkipMode = skipMode
 			event.FrameMode = frameMode
-			s.references.Update(frameHeader, frameSize)
+			event.GlobalMotion = globalMotion
+			s.references.UpdateWithGlobalMotion(frameHeader, frameSize, globalMotion)
 		}
 		s.haveFrameHeader = true
 		s.tileGroups = 1
@@ -333,6 +339,10 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		globalMotion, err := parser.ParseGlobalMotionParams(event.Unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
@@ -344,7 +354,8 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		event.TransformRef = transformRef
 		event.SkipMode = skipMode
 		event.FrameMode = frameMode
-		s.references.Update(frameHeader, frameSize)
+		event.GlobalMotion = globalMotion
+		s.references.UpdateWithGlobalMotion(frameHeader, frameSize, globalMotion)
 	}
 	s.haveFrameHeader = true
 	s.tileGroups = 0

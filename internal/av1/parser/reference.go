@@ -16,6 +16,7 @@ type ReferenceFrame struct {
 
 	ShowableFrame bool
 	Size          FrameSize
+	GlobalMotion  GlobalMotionParams
 }
 
 // ReferenceState is caller-owned decoder reference metadata used while parsing
@@ -29,6 +30,10 @@ func (s *ReferenceState) Reset() {
 }
 
 func (s *ReferenceState) Update(prefix FrameHeaderPrefix, size FrameSize) {
+	s.UpdateWithGlobalMotion(prefix, size, DefaultGlobalMotionParams())
+}
+
+func (s *ReferenceState) UpdateWithGlobalMotion(prefix FrameHeaderPrefix, size FrameSize, globalMotion GlobalMotionParams) {
 	if prefix.ShowExistingFrame {
 		return
 	}
@@ -39,6 +44,7 @@ func (s *ReferenceState) Update(prefix FrameHeaderPrefix, size FrameSize) {
 		FrameType:     prefix.FrameType,
 		ShowableFrame: prefix.ShowableFrame,
 		Size:          size,
+		GlobalMotion:  globalMotion,
 	}
 	for i := 0; i < RefFrames; i++ {
 		if (size.RefreshFrameFlags & (1 << uint(i))) != 0 {

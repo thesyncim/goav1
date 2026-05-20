@@ -21,11 +21,12 @@ fuzz-smoke:
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSegmentationParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseDeltaParams -fuzztime=10s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseLoopFilterParams -fuzztime=10s
-	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseCDEFParams -fuzztime=10s
-	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseRestorationParams -fuzztime=10s
-	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseTransformReferenceParams -fuzztime=10s
-	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSkipModeParams -fuzztime=10s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseCDEFParams -fuzztime=20s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseRestorationParams -fuzztime=20s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseTransformReferenceParams -fuzztime=20s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseSkipModeParams -fuzztime=20s
 	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseFrameModeParams -fuzztime=20s
+	go test ./internal/av1/parser -run '^$$' -fuzz=FuzzParseGlobalMotionParams -fuzztime=20s
 
 alloc:
 	./scripts/check_allocs.sh
