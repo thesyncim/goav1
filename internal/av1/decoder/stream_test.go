@@ -120,6 +120,7 @@ func shownKeyFrameHeaderPayload() []byte {
 	w.writeBool(false)                          // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
 	writeZeroSegmentationParams(&w)
+	w.writeBool(false) // reduced_tx_set
 	return w.bytes()
 }
 
@@ -130,6 +131,7 @@ func reducedStillFrameHeaderPayload() []byte {
 	w.writeBool(false) // uniform_tile_spacing_flag
 	writeZeroQuantParams(&w)
 	writeZeroSegmentationParams(&w)
+	w.writeBool(false) // reduced_tx_set
 	return w.bytes()
 }
 
@@ -156,6 +158,7 @@ func interFrameHeaderPayload() []byte {
 	writeZeroQuantParams(&w)
 	writeZeroSegmentationParams(&w)
 	w.writeBool(false) // reference_select
+	w.writeBool(false) // reduced_tx_set
 	return w.bytes()
 }
 
@@ -256,6 +259,10 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].SkipMode.Allowed || events[1].SkipMode.Enabled ||
 		events[1].SkipMode.BitsRead != events[1].TransformRef.BitsRead {
 		t.Fatalf("skip mode=%+v", events[1].SkipMode)
+	}
+	if events[1].FrameMode.AllowWarpedMotion || events[1].FrameMode.ReducedTxSet ||
+		events[1].FrameMode.BitsRead != events[1].SkipMode.BitsRead+1 {
+		t.Fatalf("frame mode=%+v", events[1].FrameMode)
 	}
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
@@ -369,6 +376,10 @@ func TestStreamRTPPayload(t *testing.T) {
 		events[1].SkipMode.BitsRead != events[1].TransformRef.BitsRead {
 		t.Fatalf("events[1] skip mode=%+v", events[1].SkipMode)
 	}
+	if events[1].FrameMode.AllowWarpedMotion || events[1].FrameMode.ReducedTxSet ||
+		events[1].FrameMode.BitsRead != events[1].SkipMode.BitsRead+1 {
+		t.Fatalf("events[1] frame mode=%+v", events[1].FrameMode)
+	}
 }
 
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
@@ -425,6 +436,10 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	if events[3].SkipMode.Allowed || events[3].SkipMode.Enabled ||
 		events[3].SkipMode.BitsRead != events[3].TransformRef.BitsRead {
 		t.Fatalf("inter skip mode=%+v", events[3].SkipMode)
+	}
+	if events[3].FrameMode.AllowWarpedMotion || events[3].FrameMode.ReducedTxSet ||
+		events[3].FrameMode.BitsRead != events[3].SkipMode.BitsRead+1 {
+		t.Fatalf("inter frame mode=%+v", events[3].FrameMode)
 	}
 	for i := 0; i < parser.InterRefsPerFrame; i++ {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {

@@ -25,6 +25,7 @@ type TransformReferenceParams = internalparser.TransformReferenceParams
 type TransformMode = internalparser.TransformMode
 type ReferenceMode = internalparser.ReferenceMode
 type SkipModeParams = internalparser.SkipModeParams
+type FrameModeParams = internalparser.FrameModeParams
 type InterpolationFilter = internalparser.InterpolationFilter
 type ReferenceFrame = internalparser.ReferenceFrame
 type ReferenceState = internalparser.ReferenceState
@@ -120,4 +121,8 @@ func ParseTransformReferenceParams(payload []byte, prefix FrameHeaderPrefix, seg
 
 func ParseSkipModeParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, references *ReferenceState, transformRef TransformReferenceParams) (SkipModeParams, error) {
 	return internalparser.ParseSkipModeParams(payload, sequence, prefix, size, references, transformRef)
+}
+
+func ParseFrameModeParams(payload []byte, sequence SequenceHeader, prefix FrameHeaderPrefix, skip SkipModeParams) (FrameModeParams, error) {
+	return internalparser.ParseFrameModeParams(payload, sequence, prefix, skip)
 }

@@ -46,6 +46,7 @@ type Event struct {
 	Restoration    parser.RestorationParams
 	TransformRef   parser.TransformReferenceParams
 	SkipMode       parser.SkipModeParams
+	FrameMode      parser.FrameModeParams
 }
 
 type Stream struct {
@@ -232,6 +233,10 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
+			frameMode, err := parser.ParseFrameModeParams(unit.Payload, s.sequence, frameHeader, skipMode)
+			if err != nil {
+				return Event{}, err
+			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
 			event.Quantization = quant
@@ -242,6 +247,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.Restoration = restoration
 			event.TransformRef = transformRef
 			event.SkipMode = skipMode
+			event.FrameMode = frameMode
 			s.references.Update(frameHeader, frameSize)
 		}
 		s.haveFrameHeader = true
@@ -323,6 +329,10 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
+		frameMode, err := parser.ParseFrameModeParams(event.Unit.Payload, s.sequence, frameHeader, skipMode)
+		if err != nil {
+			return Event{}, err
+		}
 		event.FrameSize = frameSize
 		event.TileInfo = tileInfo
 		event.Quantization = quant
@@ -333,6 +343,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		event.Restoration = restoration
 		event.TransformRef = transformRef
 		event.SkipMode = skipMode
+		event.FrameMode = frameMode
 		s.references.Update(frameHeader, frameSize)
 	}
 	s.haveFrameHeader = true
