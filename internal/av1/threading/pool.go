@@ -77,8 +77,8 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return ErrPoolClosed
 	}
 
@@ -98,6 +98,7 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 			firstErr = result.err
 		}
 	}
+	p.mu.Unlock()
 	return firstErr
 }
 
@@ -106,14 +107,15 @@ func (p *Pool) Close() {
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
+		p.mu.Unlock()
 		return
 	}
 	p.closed = true
 	for i := 0; i < len(p.workers); i++ {
 		close(p.workers[i].tasks)
 	}
+	p.mu.Unlock()
 }
 
 func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {

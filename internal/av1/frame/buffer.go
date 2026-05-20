@@ -4,6 +4,9 @@ import "errors"
 
 var (
 	ErrInvalidFormat = errors.New("frame: invalid format")
+	ErrInvalidPool   = errors.New("frame: invalid pool")
+	ErrPoolEmpty     = errors.New("frame: pool empty")
+	ErrInvalidSlot   = errors.New("frame: invalid pool slot")
 	ErrShortBuffer   = errors.New("frame: short buffer")
 )
 

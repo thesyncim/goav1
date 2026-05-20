@@ -66,6 +66,7 @@ The initial implementation covers:
   caller-owned spans, jobs, and batches.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - Caller-buffer frame plane layout and binding primitives.
+- Caller-owned deterministic frame pools for reusable decode surfaces.
 - Allocation regression tests for the critical byte-level paths.
 
 Public APIs live at the module root:
