@@ -12,4 +12,7 @@ var (
 	ErrUnexpectedContinuation   = errors.New("rtpav1: unexpected OBU continuation")
 	ErrFragmentInterrupted      = errors.New("rtpav1: fragmented OBU interrupted")
 	ErrMTUTooSmall              = errors.New("rtpav1: MTU too small")
+	ErrInvalidPayloadLimits     = errors.New("rtpav1: invalid payload limits")
+	ErrOBUBufferTooSmall        = errors.New("rtpav1: OBU scratch buffer too small")
+	ErrPacketPlanTooSmall       = errors.New("rtpav1: packet plan scratch buffer too small")
 )

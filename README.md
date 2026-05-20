@@ -30,6 +30,8 @@ The initial implementation covers:
 - WebRTC-compatible OBU normalization that restores low-overhead size fields.
 - AV1 RTP aggregation header parsing, payload iteration, payload building,
   single-OBU fragmentation, and fragment reassembly.
+- WebRTC-compatible low-overhead OBU RTP packetization with caller-owned
+  scratch.
 - Caller-buffer AV1 RTP depacketization into complete OBU spans.
 - AV1 sequence header parsing for decoder configuration.
 - Incremental decoder stream state over OBUs/RTP payloads.

@@ -8,6 +8,10 @@ type RTPPayloadIterator = internalrtp.Iterator
 type RTPFragmentReassembler = internalrtp.FragmentReassembler
 type RTPDepacketizer = internalrtp.Depacketizer
 type RTPObuSpan = internalrtp.OBUSpan
+type RTPPayloadSizeLimits = internalrtp.PayloadSizeLimits
+type RTPPacketizer = internalrtp.Packetizer
+type RTPPacketizerOBU = internalrtp.PacketizerOBU
+type RTPPacketPlan = internalrtp.PacketPlan
 
 var (
 	ErrRTPShortPayload             = internalrtp.ErrShortPayload
@@ -19,6 +23,9 @@ var (
 	ErrRTPUnexpectedContinuation   = internalrtp.ErrUnexpectedContinuation
 	ErrRTPFragmentInterrupted      = internalrtp.ErrFragmentInterrupted
 	ErrRTPMTUTooSmall              = internalrtp.ErrMTUTooSmall
+	ErrRTPInvalidPayloadLimits     = internalrtp.ErrInvalidPayloadLimits
+	ErrRTPOBUBufferTooSmall        = internalrtp.ErrOBUBufferTooSmall
+	ErrRTPPacketPlanTooSmall       = internalrtp.ErrPacketPlanTooSmall
 )
 
 func ParseRTPAggregationHeader(src []byte) (RTPAggregationHeader, int, error) {
@@ -39,4 +46,8 @@ func PutRTPPayload(dst []byte, header RTPAggregationHeader, elements []RTPElemen
 
 func PutRTPFragment(dst []byte, obu []byte, offset int, mtu int, startsNewCodedVideoSequence bool) (n int, nextOffset int, more bool, err error) {
 	return internalrtp.PutFragment(dst, obu, offset, mtu, startsNewCodedVideoSequence)
+}
+
+func NewRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, keyFrame bool, lastFrameInPicture bool, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (RTPPacketizer, error) {
+	return internalrtp.NewPacketizer(payload, limits, keyFrame, lastFrameInPicture, obuScratch, packetScratch, workScratch)
 }
