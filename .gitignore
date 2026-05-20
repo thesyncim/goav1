@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+bin/
+dist/
+coverage.out
+*.test
+*.prof
+*.pprof
+*.tmp
+**/testdata/fuzz/
