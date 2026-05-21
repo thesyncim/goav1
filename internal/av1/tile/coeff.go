@@ -181,6 +181,84 @@ func CoeffLevelsScratchLen(size TransformSize) (int, error) {
 	return (scanSize.Width + txPadHorizontal) * (scanSize.Height + txPadHorizontal), nil
 }
 
+// CoeffInitLevels ports libaom's av1_txb_init_levels_c into caller-owned
+// scratch. coeffs are in AV1 raster order: coeff_idx = col * height + row.
+func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
+	txSize, err := size.TransformSize()
+	if err != nil {
+		return ErrInvalidDecodeState
+	}
+	scanSize, err := transform.ScanSize(txSize)
+	if err != nil {
+		return ErrInvalidDecodeState
+	}
+	maxEOB := scanSize.Width * scanSize.Height
+	scratchLen, err := CoeffLevelsScratchLen(size)
+	if err != nil {
+		return err
+	}
+	if len(coeffs) < maxEOB || len(levels) < scratchLen {
+		return ErrInvalidDecodeState
+	}
+	for i := 0; i < scratchLen; i++ {
+		levels[i] = 0
+	}
+	stride := scanSize.Height + txPadHorizontal
+	for col := 0; col < scanSize.Width; col++ {
+		src := col * scanSize.Height
+		dst := col * stride
+		for row := 0; row < scanSize.Height; row++ {
+			levels[dst+row] = coeffAbsClamp127(coeffs[src+row])
+		}
+	}
+	return nil
+}
+
+// CoeffNZMapContexts ports libaom's av1_get_nz_map_contexts_c. It writes
+// contexts only for scan positions before eob and preserves all other entries.
+func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Class, scan []int16, eob int, contexts []int8) error {
+	if !class.Valid() || eob < 0 {
+		return ErrInvalidDecodeState
+	}
+	txSize, err := size.TransformSize()
+	if err != nil {
+		return ErrInvalidDecodeState
+	}
+	scanSize, err := transform.ScanSize(txSize)
+	if err != nil {
+		return ErrInvalidDecodeState
+	}
+	maxEOB := scanSize.Width * scanSize.Height
+	scratchLen, err := CoeffLevelsScratchLen(size)
+	if err != nil {
+		return err
+	}
+	if eob > maxEOB || len(scan) < eob || len(contexts) < maxEOB || len(levels) < scratchLen {
+		return ErrInvalidDecodeState
+	}
+	for i := 0; i < eob; i++ {
+		pos := int(scan[i])
+		if pos < 0 || pos >= maxEOB {
+			return ErrInvalidDecodeState
+		}
+		var ctx int
+		var err error
+		if i == eob-1 {
+			ctx, err = transform.LowerLevelsCtxEOB(scanSize, i)
+			if err != nil {
+				return ErrInvalidDecodeState
+			}
+		} else {
+			ctx, err = CoeffLowerLevelsContext(levels, size, class, pos)
+			if err != nil {
+				return err
+			}
+		}
+		contexts[pos] = int8(ctx)
+	}
+	return nil
+}
+
 func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
@@ -873,4 +951,15 @@ func clipMax3(v uint8) int {
 		return 3
 	}
 	return int(v)
+}
+
+func coeffAbsClamp127(v int16) uint8 {
+	n := int(v)
+	if n < 0 {
+		n = -n
+	}
+	if n > 127 {
+		return 127
+	}
+	return uint8(n)
 }

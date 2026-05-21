@@ -265,6 +265,165 @@ func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 	}
 }
 
+func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
+	for rawSize := TransformSize(0); rawSize < transformSizeCount; rawSize++ {
+		txSize, err := rawSize.TransformSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanSize, err := transform.ScanSize(txSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		maxEOB := scanSize.Width * scanSize.Height
+		coeffs := make([]int16, maxEOB)
+		for i := 0; i < maxEOB; i++ {
+			switch i % 7 {
+			case 0:
+				coeffs[i] = -32768
+			case 1:
+				coeffs[i] = -128
+			case 2:
+				coeffs[i] = -127
+			case 3:
+				coeffs[i] = -1
+			default:
+				coeffs[i] = int16((i * 37) - 300)
+			}
+		}
+		scratchLen, err := CoeffLevelsScratchLen(rawSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		levels := make([]uint8, scratchLen)
+		for i := range levels {
+			levels[i] = 0xff
+		}
+		if err := CoeffInitLevels(coeffs, rawSize, levels); err != nil {
+			t.Fatal(err)
+		}
+
+		stride := scanSize.Height + txPadHorizontal
+		for col := 0; col < scanSize.Width; col++ {
+			for row := 0; row < scanSize.Height; row++ {
+				idx := col*scanSize.Height + row
+				if got, want := levels[col*stride+row], coeffAbsClamp127(coeffs[idx]); got != want {
+					t.Fatalf("size=%d level[%d,%d]=%d want %d", rawSize, row, col, got, want)
+				}
+			}
+			for row := scanSize.Height; row < scanSize.Height+txPadHorizontal; row++ {
+				if got := levels[col*stride+row]; got != 0 {
+					t.Fatalf("size=%d horizontal pad[%d,%d]=%d want 0", rawSize, row, col, got)
+				}
+			}
+		}
+		for col := scanSize.Width; col < scanSize.Width+txPadHorizontal; col++ {
+			for row := 0; row < stride; row++ {
+				if got := levels[col*stride+row]; got != 0 {
+					t.Fatalf("size=%d bottom pad[%d,%d]=%d want 0", rawSize, row, col, got)
+				}
+			}
+		}
+	}
+}
+
+func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
+	rnd := newCoeffContextRandom(0x1532a5)
+	for isInter := 0; isInter < 2; isInter++ {
+		_ = isInter
+		for rawType := uint8(0); rawType < uint8(transform.TypeCount); rawType++ {
+			typ := transform.Type(rawType)
+			class, err := typ.Class()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for size := TransformSize(0); size < transformSizeCount; size++ {
+				if !libaomEncodeTXBTypeValid(size, typ) {
+					continue
+				}
+				txSize, err := size.TransformSize()
+				if err != nil {
+					t.Fatal(err)
+				}
+				scanSize, err := transform.ScanSize(txSize)
+				if err != nil {
+					t.Fatal(err)
+				}
+				maxEOB := scanSize.Width * scanSize.Height
+				scan := make([]int16, maxEOB)
+				inverse := make([]int16, maxEOB)
+				if err := transform.FillDefaultScan(scan, inverse, txSize, class); err != nil {
+					t.Fatal(err)
+				}
+				levels := make([]uint8, mustCoeffLevelsScratchLen(t, size))
+				for repeat := 0; repeat < 3; repeat++ {
+					for _, eob := range coeffNZMapEOBCases(maxEOB) {
+						for i := range levels {
+							levels[i] = 0
+						}
+						contexts := make([]int8, maxEOB)
+						want := make([]int8, maxEOB)
+						for c := 0; c < eob; c++ {
+							pos := int(scan[c])
+							mustSetCoeffLevel(t, levels, size, pos, int(rnd.u8()&0x7f))
+							contexts[pos] = int8(rnd.u16() >> 9)
+							want[pos] = contexts[pos]
+						}
+						copy(want, contexts)
+						for c := 0; c < eob; c++ {
+							pos := int(scan[c])
+							var ctx int
+							if c == eob-1 {
+								ctx, err = transform.LowerLevelsCtxEOB(scanSize, c)
+							} else {
+								ctx, err = CoeffLowerLevelsContext(levels, size, class, pos)
+							}
+							if err != nil {
+								t.Fatal(err)
+							}
+							want[pos] = int8(ctx)
+						}
+						if err := CoeffNZMapContexts(levels, size, class, scan, eob, contexts); err != nil {
+							t.Fatal(err)
+						}
+						for i := 0; i < maxEOB; i++ {
+							if contexts[i] != want[i] {
+								t.Fatalf("size=%d type=%d eob=%d context[%d]=%d want %d", size, typ, eob, i, contexts[i], want[i])
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestCoeffTXBLevelHelpersDoNotAllocate(t *testing.T) {
+	var coeffs [32 * 32]int16
+	var levels [(32 + txPadHorizontal) * (32 + txPadHorizontal)]uint8
+	var scan [32 * 32]int16
+	var inverse [32 * 32]int16
+	var contexts [32 * 32]int8
+	for i := range coeffs {
+		coeffs[i] = int16(i - 512)
+	}
+	if err := transform.FillDefaultScan(scan[:], inverse[:], transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := CoeffInitLevels(coeffs[:], TransformSize32x32, levels[:]); err != nil {
+			t.Fatal(err)
+		}
+		if err := CoeffNZMapContexts(levels[:], TransformSize32x32, transform.Class2D, scan[:], 1024, contexts[:]); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("coeff txb helpers allocated: %f", allocs)
+	}
+}
+
 func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
 	result, coeffs := readCoefficientsTXBForTest(t, []byte{0x00}, TransformSize4x4, transform.Class2D, CoeffPlaneY, 0)
 	if result.AllZero {
@@ -563,6 +722,72 @@ func mustSetCoeffLevel(t *testing.T, levels []uint8, size TransformSize, coeffIn
 	if err := setCoeffLevel(levels, size, coeffIndex, level); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustCoeffLevelsScratchLen(t *testing.T, size TransformSize) int {
+	t.Helper()
+	n, err := CoeffLevelsScratchLen(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func libaomEncodeTXBTypeValid(size TransformSize, typ transform.Type) bool {
+	up, err := TransformSizeSquareUp(size)
+	if err != nil {
+		return false
+	}
+	set := ExtTXSetAll16
+	if up > TransformSize32x32 {
+		set = ExtTXSetDCTOnly
+	} else if up == TransformSize32x32 {
+		set = ExtTXSetDCTIDTX
+	}
+	ok, err := ExtTXTypeAllowed(set, typ)
+	return err == nil && ok
+}
+
+func coeffNZMapEOBCases(maxEOB int) []int {
+	candidates := [...]int{1, 2, maxEOB / 8, maxEOB/8 + 1, maxEOB / 4, maxEOB/4 + 1, maxEOB / 2, maxEOB}
+	out := make([]int, 0, len(candidates))
+	for _, eob := range candidates {
+		if eob <= 0 || eob > maxEOB {
+			continue
+		}
+		seen := false
+		for _, existing := range out {
+			if existing == eob {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, eob)
+		}
+	}
+	return out
+}
+
+type coeffContextRandom struct {
+	state uint32
+}
+
+func newCoeffContextRandom(seed uint32) *coeffContextRandom {
+	return &coeffContextRandom{state: seed}
+}
+
+func (r *coeffContextRandom) next() uint32 {
+	r.state = r.state*1664525 + 1013904223
+	return r.state
+}
+
+func (r *coeffContextRandom) u8() uint8 {
+	return uint8(r.next() >> 24)
+}
+
+func (r *coeffContextRandom) u16() uint16 {
+	return uint16(r.next() >> 16)
 }
 
 func assertTXBDecodeInvariants(t *testing.T, result TXBDecodeResult, coeffs []int16, scan []int16) {
