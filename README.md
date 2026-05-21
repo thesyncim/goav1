@@ -108,6 +108,8 @@ The initial implementation covers:
   nearest/reference-copy reconstruction paths.
 - AV1 dequantization lookup tables and caller-buffer coefficient
   dequantization for residual reconstruction.
+- Pure-Go inverse identity transform foundation with AV1 transform-size shifts
+  and caller-buffer residual output.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
