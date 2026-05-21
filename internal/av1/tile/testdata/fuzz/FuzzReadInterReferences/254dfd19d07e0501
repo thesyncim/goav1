@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("k")
+byte('\a')
+byte('J')
+byte('d')
+byte('\x04')
+bool(true)
+bool(true)

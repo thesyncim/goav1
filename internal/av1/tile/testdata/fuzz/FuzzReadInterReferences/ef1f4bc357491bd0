@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("\xff")
+byte('\a')
+byte('N')
+byte('\x03')
+byte('\x02')
+bool(false)
+bool(true)

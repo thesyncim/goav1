@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("0")
+byte('\f')
+byte('\\')
+byte('W')
+byte('\x00')
+bool(false)
+bool(true)

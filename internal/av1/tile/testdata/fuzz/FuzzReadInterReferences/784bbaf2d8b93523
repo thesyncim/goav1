@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("\xa5")
+byte('\x02')
+byte('\x10')
+byte('Z')
+byte('\t')
+bool(true)
+bool(true)

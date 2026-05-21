@@ -272,13 +272,24 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		return ErrInvalidDecodeState
 	}
 	intraValue := boolByte(intra)
+	ref0 := ReferenceFrameNone
+	ref1 := ReferenceFrameNone
+	if !intra {
+		ref0 = ReferenceFrameLast
+	}
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = intraValue
 		c.AboveMode[x4+i] = mode
+		c.AboveRef[0][x4+i] = ref0
+		c.AboveRef[1][x4+i] = ref1
+		c.AboveCompound[x4+i] = 0
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = intraValue
 		c.LeftMode[y4+i] = mode
+		c.LeftRef[0][y4+i] = ref0
+		c.LeftRef[1][y4+i] = ref1
+		c.LeftCompound[y4+i] = 0
 	}
 	return nil
 }

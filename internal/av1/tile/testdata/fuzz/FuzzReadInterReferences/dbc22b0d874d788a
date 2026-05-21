@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("\x10000")
+byte('\f')
+byte('\x1c')
+byte('§')
+byte('l')
+bool(true)
+bool(true)
