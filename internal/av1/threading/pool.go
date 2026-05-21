@@ -145,6 +145,20 @@ type FrameWorkPlaneRegion struct {
 	RowBytes       int
 }
 
+// FrameWorkLoopRestorationPlan carries the frame-level post-filter decisions
+// used around CDEF, superres, and loop restoration.
+type FrameWorkLoopRestorationPlan struct {
+	Restoration tile.RestorationFramePlan
+
+	DoCDEF            bool
+	DoSuperRes        bool
+	DoLoopRestoration bool
+
+	OptimizedLoopRestoration bool
+	SaveBoundariesBeforeCDEF bool
+	SaveBoundariesAfterCDEF  bool
+}
+
 // FrameWorkFrameContext is the parsed frame context supplied to frame-work
 // tile batches. It is copied from the current decoder event so reconstruction
 // callbacks can map tile jobs to frame geometry and frame-level syntax without
@@ -318,6 +332,38 @@ func (b FrameWorkBatch) RestorationPlaneGrid(plane FrameWorkPlane) (tile.Restora
 	return tile.BuildRestorationPlaneGrid(b.Restoration, b.FrameSize, b.Sequence.ColorConfig, int(plane))
 }
 
+// RestorationFramePlan returns the frame-level loop-restoration allocation plan
+// for this batch's frame context.
+func (b FrameWorkBatch) RestorationFramePlan() (tile.RestorationFramePlan, error) {
+	if !b.Sequence.Valid() {
+		return tile.RestorationFramePlan{}, ErrInvalidBatch
+	}
+	return tile.BuildRestorationFramePlan(b.Restoration, b.FrameSize, b.Sequence.ColorConfig)
+}
+
+// LoopRestorationPlan ports libaom's CDEF/superres/restoration scheduling
+// decision for the frame. skipLoopFilter is the decoder-level skip flag from
+// libaom's AV1Decoder.
+func (b FrameWorkBatch) LoopRestorationPlan(skipLoopFilter bool) (FrameWorkLoopRestorationPlan, error) {
+	restoration, err := b.RestorationFramePlan()
+	if err != nil {
+		return FrameWorkLoopRestorationPlan{}, err
+	}
+	doCDEF := !skipLoopFilter && frameWorkCDEFActive(b.CDEF)
+	doSuperRes := b.FrameSize.SuperResEnabled
+	optimized := !doCDEF && !doSuperRes
+	doLoopRestoration := restoration.Active
+	return FrameWorkLoopRestorationPlan{
+		Restoration:              restoration,
+		DoCDEF:                   doCDEF,
+		DoSuperRes:               doSuperRes,
+		DoLoopRestoration:        doLoopRestoration,
+		OptimizedLoopRestoration: optimized,
+		SaveBoundariesBeforeCDEF: doLoopRestoration && !optimized,
+		SaveBoundariesAfterCDEF:  doLoopRestoration && !optimized,
+	}, nil
+}
+
 // JobRestorationUnitRange returns the restoration units whose top-left corners
 // are decoded while processing the superblock at sbX,sbY inside Jobs[index].
 func (b FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane, sbX uint16, sbY uint16) (tile.RestorationUnitRange, bool, error) {
@@ -452,6 +498,10 @@ func frameWorkMIExtent(pixels uint32) (uint32, bool) {
 		return 0, false
 	}
 	return ((pixels + 7) >> 3) << 1, true
+}
+
+func frameWorkCDEFActive(cdef parser.CDEFParams) bool {
+	return cdef.Bits != 0 || cdef.YStrength[0] != 0 || cdef.UVStrength[0] != 0
 }
 
 func frameWorkFramePlane(output *frame.Frame, plane FrameWorkPlane) (frame.Plane, bool, bool, bool) {

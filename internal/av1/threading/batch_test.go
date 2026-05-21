@@ -494,6 +494,99 @@ func TestFrameWorkBatchRestorationPlaneGridAndRange(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchRestorationFrameAndLoopPlans(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       300,
+				CodedWidth:          280,
+				Height:              260,
+				SuperResEnabled:     true,
+				SuperResDenominator: 16,
+			},
+			CDEF: parser.CDEFParams{Bits: 1, StrengthCount: 2, YStrength: [parser.MaxCDEFStrengths]uint8{4}},
+			Restoration: parser.RestorationParams{
+				Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone},
+				UnitSizeY:  128,
+				UnitSizeUV: 64,
+			},
+		},
+	}
+	framePlan, err := ctx.RestorationFramePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !framePlan.Active || framePlan.Planes != 3 || framePlan.UnitRecords != ([3]int{4, 4, 0}) {
+		t.Fatalf("frame plan=%+v", framePlan)
+	}
+
+	plan, err := ctx.LoopRestorationPlan(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.DoCDEF || !plan.DoSuperRes || !plan.DoLoopRestoration ||
+		plan.OptimizedLoopRestoration || !plan.SaveBoundariesBeforeCDEF || !plan.SaveBoundariesAfterCDEF {
+		t.Fatalf("loop restoration plan=%+v", plan)
+	}
+
+	skip, err := ctx.LoopRestorationPlan(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skip.DoCDEF || !skip.DoSuperRes || skip.OptimizedLoopRestoration ||
+		!skip.SaveBoundariesBeforeCDEF || !skip.SaveBoundariesAfterCDEF {
+		t.Fatalf("skip plan=%+v", skip)
+	}
+}
+
+func TestFrameWorkBatchLoopRestorationOptimizedAndInactive(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       128,
+				CodedWidth:          128,
+				Height:              128,
+				SuperResDenominator: 8,
+			},
+			Restoration: parser.RestorationParams{
+				Type:      [3]parser.RestorationType{parser.RestorationWiener},
+				UnitSizeY: 64,
+			},
+		},
+	}
+	plan, err := ctx.LoopRestorationPlan(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.DoLoopRestoration || !plan.OptimizedLoopRestoration ||
+		plan.SaveBoundariesBeforeCDEF || plan.SaveBoundariesAfterCDEF {
+		t.Fatalf("optimized plan=%+v", plan)
+	}
+
+	ctx.Restoration = parser.RestorationParams{UnitSizeY: 256, UnitSizeUV: 256}
+	ctx.CDEF = parser.CDEFParams{Bits: 1}
+	plan, err = ctx.LoopRestorationPlan(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.DoCDEF || plan.DoLoopRestoration || plan.OptimizedLoopRestoration ||
+		plan.SaveBoundariesBeforeCDEF || plan.SaveBoundariesAfterCDEF {
+		t.Fatalf("inactive plan=%+v", plan)
+	}
+}
+
+func TestFrameWorkBatchRestorationPlansRejectInvalidInputs(t *testing.T) {
+	ctx := FrameWorkBatch{}
+	if _, err := ctx.RestorationFramePlan(); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("frame plan err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.LoopRestorationPlan(false); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("loop plan err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{
 		Width:        130,
@@ -1105,6 +1198,39 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchLoopRestorationPlanAllocs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       300,
+				CodedWidth:          280,
+				Height:              260,
+				SuperResEnabled:     true,
+				SuperResDenominator: 16,
+			},
+			CDEF: parser.CDEFParams{Bits: 1, StrengthCount: 2, YStrength: [parser.MaxCDEFStrengths]uint8{4}},
+			Restoration: parser.RestorationParams{
+				Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj},
+				UnitSizeY:  128,
+				UnitSizeUV: 64,
+			},
+		},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		plan, err := ctx.LoopRestorationPlan(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !plan.DoCDEF || !plan.DoSuperRes || !plan.DoLoopRestoration {
+			t.Fatalf("plan=%+v", plan)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.LoopRestorationPlan allocated: %f", allocs)
+	}
+}
+
 func FuzzBuildBatches(f *testing.F) {
 	f.Add([]byte{2, 3, 2, 2, 2, 3, 3, 2, 3})
 	f.Add([]byte{8, 1, 1})
@@ -1341,6 +1467,82 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 	})
 }
 
+func FuzzFrameWorkBatchLoopRestorationPlan(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(2), uint8(3), uint8(0), uint8(1), uint8(4), false, true, true, true, false)
+	f.Add(uint16(128), uint16(128), uint8(2), uint8(0), uint8(0), uint8(0), uint8(0), false, false, false, false, false)
+	f.Add(uint16(64), uint16(64), uint8(0), uint8(0), uint8(0), uint8(1), uint8(9), true, true, true, false, true)
+
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawY uint8, rawU uint8, rawV uint8, rawCDEFBits uint8, rawCDEFStrength uint8, mono bool, ssX bool, ssY bool, superres bool, skipLoopFilter bool) {
+		types := [...]parser.RestorationType{
+			parser.RestorationNone,
+			parser.RestorationSwitchable,
+			parser.RestorationWiener,
+			parser.RestorationSGRProj,
+		}
+		unitSizes := [...]uint16{64, 128, 256}
+		width := uint32(rawW%512) + 1
+		height := uint32(rawH%512) + 1
+		size := parser.FrameSize{
+			UpscaledWidth:       width,
+			CodedWidth:          width,
+			Height:              height,
+			SuperResDenominator: 8,
+		}
+		if superres {
+			size.SuperResEnabled = true
+			size.SuperResDenominator = 16
+		}
+		ctx := FrameWorkBatch{
+			FrameWorkFrameContext: FrameWorkFrameContext{
+				Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+					Use128x128Superblock: rawW&1 == 1,
+					EnableCDEF:           true,
+					EnableRestoration:    true,
+					ColorConfig: parser.ColorConfig{
+						BitDepth:     8,
+						MonoChrome:   mono,
+						SubsamplingX: ssX,
+						SubsamplingY: ssY,
+					},
+				}),
+				FrameSize: size,
+				CDEF: parser.CDEFParams{
+					Bits:          rawCDEFBits & 3,
+					StrengthCount: 1 << (rawCDEFBits & 3),
+					YStrength:     [parser.MaxCDEFStrengths]uint8{rawCDEFStrength & 63},
+					UVStrength:    [parser.MaxCDEFStrengths]uint8{(rawCDEFStrength >> 1) & 63},
+				},
+				Restoration: parser.RestorationParams{
+					Type:       [3]parser.RestorationType{types[rawY&3], types[rawU&3], types[rawV&3]},
+					UnitSizeY:  unitSizes[rawY%uint8(len(unitSizes))],
+					UnitSizeUV: unitSizes[(rawU^rawV)%uint8(len(unitSizes))],
+				},
+			},
+		}
+		plan, err := ctx.LoopRestorationPlan(skipLoopFilter)
+		if err != nil {
+			t.Fatalf("LoopRestorationPlan err=%v", err)
+		}
+		wantCDEF := !skipLoopFilter && (ctx.CDEF.Bits != 0 || ctx.CDEF.YStrength[0] != 0 || ctx.CDEF.UVStrength[0] != 0)
+		wantOptimized := !wantCDEF && !size.SuperResEnabled
+		if plan.DoCDEF != wantCDEF ||
+			plan.DoSuperRes != size.SuperResEnabled ||
+			plan.OptimizedLoopRestoration != wantOptimized ||
+			plan.DoLoopRestoration != plan.Restoration.Active ||
+			plan.SaveBoundariesBeforeCDEF != (plan.Restoration.Active && !wantOptimized) ||
+			plan.SaveBoundariesAfterCDEF != (plan.Restoration.Active && !wantOptimized) {
+			t.Fatalf("plan=%+v wantCDEF=%v wantOptimized=%v", plan, wantCDEF, wantOptimized)
+		}
+		wantPlanes := uint8(3)
+		if mono {
+			wantPlanes = 1
+		}
+		if plan.Restoration.Planes != wantPlanes {
+			t.Fatalf("planes=%d want %d", plan.Restoration.Planes, wantPlanes)
+		}
+	})
+}
+
 func BenchmarkBuildBatches(b *testing.B) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -1473,6 +1675,32 @@ func BenchmarkFrameWorkBatchJobRestorationUnitRange(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = ctx.JobRestorationUnitRange(0, FrameWorkPlaneY, 2, 2)
+	}
+}
+
+func BenchmarkFrameWorkBatchLoopRestorationPlan(b *testing.B) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       300,
+				CodedWidth:          280,
+				Height:              260,
+				SuperResEnabled:     true,
+				SuperResDenominator: 16,
+			},
+			CDEF: parser.CDEFParams{Bits: 1, StrengthCount: 2, YStrength: [parser.MaxCDEFStrengths]uint8{4}},
+			Restoration: parser.RestorationParams{
+				Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj},
+				UnitSizeY:  128,
+				UnitSizeUV: 64,
+			},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.LoopRestorationPlan(false)
 	}
 }
 

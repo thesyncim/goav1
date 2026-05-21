@@ -26,6 +26,7 @@ type FrameWorkJobRegion = threading.FrameWorkJobRegion
 type FrameWorkPlane = threading.FrameWorkPlane
 type FrameWorkPlaneRegion = threading.FrameWorkPlaneRegion
 type FrameWorkReference = threading.FrameWorkReference
+type FrameWorkLoopRestorationPlan = threading.FrameWorkLoopRestorationPlan
 type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (
