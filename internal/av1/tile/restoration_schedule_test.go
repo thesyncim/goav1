@@ -111,6 +111,80 @@ func TestBuildRestorationFramePlanMonochromeSkipsChroma(t *testing.T) {
 	}
 }
 
+func TestBindRestorationFramePlanBuffers(t *testing.T) {
+	plan := testRestorationFramePlan(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, false)
+	recordBacking := make([]RestorationUnitRecord, plan.UnitRecordLen())
+	records, err := BindRestorationFrameRecordBuffers(plan, recordBacking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records[0]) != 4 || len(records[1]) != 4 || records[2] != nil {
+		t.Fatalf("records lens=%d,%d,%d", len(records[0]), len(records[1]), len(records[2]))
+	}
+	if err := ResetRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetRestorationPlaneRecords(plan.Grids[1], records[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	above := make([]uint16, plan.BoundaryBufferLen())
+	below := make([]uint16, plan.BoundaryBufferLen())
+	boundaries, err := BindRestorationFrameBoundaryBuffers(plan, above, below)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundaries[0].Stride != 320 || len(boundaries[0].Above) != 3200 ||
+		boundaries[1].Stride != 160 || len(boundaries[1].Below) != 1600 ||
+		!restorationStripeBoundariesEmpty(boundaries[2]) {
+		t.Fatalf("boundaries=%+v", boundaries)
+	}
+	boundaries[0].Above[0] = 11
+	boundaries[1].Above[0] = 22
+	if above[0] != 11 || above[3200] != 22 {
+		t.Fatalf("partitioned above=%d,%d", above[0], above[3200])
+	}
+}
+
+func TestBindRestorationFramePlanBuffersAllNoneIsZeroSize(t *testing.T) {
+	plan := testRestorationFramePlan(t, [3]parser.RestorationType{}, false)
+	records, err := BindRestorationFrameRecordBuffers(plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries, err := BindRestorationFrameBoundaryBuffers(plan, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restorationRecordBuffersEmpty(records) || !restorationFrameBoundariesEmpty(boundaries) {
+		t.Fatalf("records=%+v boundaries=%+v", records, boundaries)
+	}
+	if _, err := BindRestorationFrameRecordBuffers(plan, make([]RestorationUnitRecord, 1)); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("extra record backing err=%v want %v", err, ErrInvalidPlan)
+	}
+	if _, err := BindRestorationFrameBoundaryBuffers(plan, make([]uint16, 1), nil); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("extra boundary backing err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
+func TestBindRestorationFramePlanBuffersRejectInvalidInputs(t *testing.T) {
+	plan := testRestorationFramePlan(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, false)
+	if _, err := BindRestorationFrameRecordBuffers(plan, make([]RestorationUnitRecord, plan.UnitRecordLen()-1)); !errors.Is(err, ErrJobBufferTooSmall) {
+		t.Fatalf("short records err=%v want %v", err, ErrJobBufferTooSmall)
+	}
+	if _, err := BindRestorationFrameRecordBuffers(plan, make([]RestorationUnitRecord, plan.UnitRecordLen()+1)); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("long records err=%v want %v", err, ErrInvalidPlan)
+	}
+	if _, err := BindRestorationFrameBoundaryBuffers(plan, make([]uint16, plan.BoundaryBufferLen()-1), make([]uint16, plan.BoundaryBufferLen())); !errors.Is(err, ErrJobBufferTooSmall) {
+		t.Fatalf("short boundaries err=%v want %v", err, ErrJobBufferTooSmall)
+	}
+	bad := plan
+	bad.UnitRecords[0]++
+	if _, err := BindRestorationFrameRecordBuffers(bad, make([]RestorationUnitRecord, bad.UnitRecordLen())); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad plan err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
 func TestRestorationUnitsInSuperblockMatchesLibaomCorners(t *testing.T) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -439,6 +513,30 @@ func TestRestorationFramePlanAllocs(t *testing.T) {
 	}
 }
 
+func TestBindRestorationFramePlanBuffersAllocs(t *testing.T) {
+	plan := testRestorationFramePlan(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, false)
+	recordsBacking := make([]RestorationUnitRecord, plan.UnitRecordLen())
+	above := make([]uint16, plan.BoundaryBufferLen())
+	below := make([]uint16, plan.BoundaryBufferLen())
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		records, err := BindRestorationFrameRecordBuffers(plan, recordsBacking)
+		if err != nil {
+			t.Fatal(err)
+		}
+		boundaries, err := BindRestorationFrameBoundaryBuffers(plan, above, below)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(records[0]) != 4 || len(records[1]) != 4 || boundaries[0].Stride != 320 || boundaries[1].Stride != 160 {
+			t.Fatalf("records=%+v boundaries=%+v", records, boundaries)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("restoration frame plan bind allocated: %f", allocs)
+	}
+}
+
 func FuzzRestorationUnitSchedule(f *testing.F) {
 	f.Add(uint16(256), uint16(128), uint8(64), uint8(0), uint8(0), uint8(16), false, false, false)
 	f.Add(uint16(257), uint16(129), uint8(128), uint8(1), uint8(2), uint8(16), true, true, true)
@@ -546,6 +644,67 @@ func FuzzBuildRestorationFramePlan(f *testing.F) {
 	})
 }
 
+func FuzzBindRestorationFramePlanBuffers(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(2), uint8(3), uint8(0), false, true, true, false)
+	f.Add(uint16(128), uint16(64), uint8(0), uint8(0), uint8(0), false, false, false, false)
+	f.Add(uint16(257), uint16(129), uint8(1), uint8(2), uint8(1), true, true, true, true)
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawY uint8, rawU uint8, rawV uint8, mono bool, ssX bool, ssY bool, superres bool) {
+		types := [...]parser.RestorationType{
+			parser.RestorationNone,
+			parser.RestorationSwitchable,
+			parser.RestorationWiener,
+			parser.RestorationSGRProj,
+		}
+		unitSizes := [...]uint16{64, 128, 256}
+		params := parser.RestorationParams{
+			Type:       [3]parser.RestorationType{types[rawY&3], types[rawU&3], types[rawV&3]},
+			UnitSizeY:  unitSizes[rawY%uint8(len(unitSizes))],
+			UnitSizeUV: unitSizes[(rawU^rawV)%uint8(len(unitSizes))],
+		}
+		size := parser.FrameSize{UpscaledWidth: uint32(rawW%512) + 1, Height: uint32(rawH%512) + 1, SuperResDenominator: 8}
+		if superres {
+			size.SuperResEnabled = true
+			size.SuperResDenominator = 16
+		}
+		plan, err := BuildRestorationFramePlan(params, size, parser.ColorConfig{MonoChrome: mono, SubsamplingX: ssX, SubsamplingY: ssY})
+		if err != nil {
+			t.Fatalf("BuildRestorationFramePlan err=%v", err)
+		}
+		recordBacking := make([]RestorationUnitRecord, plan.UnitRecordLen())
+		records, err := BindRestorationFrameRecordBuffers(plan, recordBacking)
+		if err != nil {
+			t.Fatalf("BindRestorationFrameRecordBuffers err=%v", err)
+		}
+		above := make([]uint16, plan.BoundaryBufferLen())
+		below := make([]uint16, plan.BoundaryBufferLen())
+		boundaries, err := BindRestorationFrameBoundaryBuffers(plan, above, below)
+		if err != nil {
+			t.Fatalf("BindRestorationFrameBoundaryBuffers err=%v", err)
+		}
+		totalRecords := 0
+		totalBoundaries := 0
+		for plane := 0; plane < int(plan.Planes); plane++ {
+			if len(records[plane]) != plan.UnitRecords[plane] {
+				t.Fatalf("plane=%d records=%d want %d", plane, len(records[plane]), plan.UnitRecords[plane])
+			}
+			if plan.Boundaries[plane].Len == 0 {
+				if !restorationStripeBoundariesEmpty(boundaries[plane]) {
+					t.Fatalf("plane=%d boundaries=%+v", plane, boundaries[plane])
+				}
+			} else if len(boundaries[plane].Above) != plan.Boundaries[plane].Len ||
+				len(boundaries[plane].Below) != plan.Boundaries[plane].Len ||
+				boundaries[plane].Stride != plan.Boundaries[plane].Stride {
+				t.Fatalf("plane=%d boundaries=%+v want %+v", plane, boundaries[plane], plan.Boundaries[plane])
+			}
+			totalRecords += len(records[plane])
+			totalBoundaries += len(boundaries[plane].Above)
+		}
+		if totalRecords != len(recordBacking) || totalBoundaries != len(above) || totalBoundaries != len(below) {
+			t.Fatalf("totals records=%d/%d boundaries=%d/%d/%d", totalRecords, len(recordBacking), totalBoundaries, len(above), len(below))
+		}
+	})
+}
+
 func FuzzRestorationPlaneRecordBuffer(f *testing.F) {
 	f.Add(uint16(128), uint16(128), uint8(0), uint8(0), uint8(1), uint8(4))
 	f.Add(uint16(384), uint16(192), uint8(1), uint8(2), uint8(3), uint8(2))
@@ -623,6 +782,42 @@ func testRestorationScheduleGrid(tb testing.TB, typ parser.RestorationType, unit
 		tb.Fatal(err)
 	}
 	return grid
+}
+
+func testRestorationFramePlan(tb testing.TB, types [3]parser.RestorationType, mono bool) RestorationFramePlan {
+	tb.Helper()
+	params := parser.RestorationParams{
+		Type:       types,
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	plan, err := BuildRestorationFramePlan(params, parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}, parser.ColorConfig{MonoChrome: mono, SubsamplingX: true, SubsamplingY: true})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return plan
+}
+
+func restorationRecordBuffersEmpty(records [3][]RestorationUnitRecord) bool {
+	for i := range records {
+		if records[i] != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func restorationFrameBoundariesEmpty(boundaries [3]RestorationStripeBoundaries) bool {
+	for i := range boundaries {
+		if !restorationStripeBoundariesEmpty(boundaries[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func restorationStripeBoundariesEmpty(boundaries RestorationStripeBoundaries) bool {
+	return boundaries.Above == nil && boundaries.Below == nil && boundaries.Stride == 0
 }
 
 func fuzzRestorationUnitType(frameType parser.RestorationType, raw uint8) parser.RestorationType {

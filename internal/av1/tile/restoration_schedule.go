@@ -175,6 +175,63 @@ func (p RestorationFramePlan) BoundaryBufferLen() int {
 	return total
 }
 
+// BindRestorationFrameRecordBuffers partitions caller-owned storage into the
+// per-plane unit_info-equivalent record slices described by plan.
+func BindRestorationFrameRecordBuffers(plan RestorationFramePlan, backing []RestorationUnitRecord) ([3][]RestorationUnitRecord, error) {
+	if err := validateRestorationFramePlan(plan); err != nil {
+		return [3][]RestorationUnitRecord{}, err
+	}
+	need := plan.UnitRecordLen()
+	if len(backing) < need {
+		return [3][]RestorationUnitRecord{}, ErrJobBufferTooSmall
+	}
+	if len(backing) != need {
+		return [3][]RestorationUnitRecord{}, ErrInvalidPlan
+	}
+	var records [3][]RestorationUnitRecord
+	offset := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		n := plan.UnitRecords[plane]
+		if n == 0 {
+			continue
+		}
+		records[plane] = backing[offset : offset+n]
+		offset += n
+	}
+	return records, nil
+}
+
+// BindRestorationFrameBoundaryBuffers partitions caller-owned storage into
+// per-plane stripe-boundary buffers. above and below are separate one-side
+// backing buffers with length BoundaryBufferLen().
+func BindRestorationFrameBoundaryBuffers(plan RestorationFramePlan, above []uint16, below []uint16) ([3]RestorationStripeBoundaries, error) {
+	if err := validateRestorationFramePlan(plan); err != nil {
+		return [3]RestorationStripeBoundaries{}, err
+	}
+	need := plan.BoundaryBufferLen()
+	if len(above) < need || len(below) < need {
+		return [3]RestorationStripeBoundaries{}, ErrJobBufferTooSmall
+	}
+	if len(above) != need || len(below) != need {
+		return [3]RestorationStripeBoundaries{}, ErrInvalidPlan
+	}
+	var boundaries [3]RestorationStripeBoundaries
+	offset := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		size := plan.Boundaries[plane]
+		if size.Len == 0 {
+			continue
+		}
+		boundaries[plane] = RestorationStripeBoundaries{
+			Above:  above[offset : offset+size.Len],
+			Below:  below[offset : offset+size.Len],
+			Stride: size.Stride,
+		}
+		offset += size.Len
+	}
+	return boundaries, nil
+}
+
 // ResetRestorationPlaneRecords initializes a frame-wide unit_info-equivalent
 // record buffer for one active restoration plane. Every record starts as
 // RESTORE_NONE with geometry and stripe counts precomputed.
@@ -422,6 +479,52 @@ func restorationPlaneRecordBufferLen(grid RestorationPlaneGrid) (int, error) {
 		return 0, nil
 	}
 	return grid.UnitRecordLen()
+}
+
+func validateRestorationFramePlan(plan RestorationFramePlan) error {
+	if plan.Planes != 1 && plan.Planes != 3 {
+		return ErrInvalidPlan
+	}
+	active := false
+	for plane := 0; plane < len(plan.Grids); plane++ {
+		if plane >= int(plan.Planes) {
+			if plan.Grids[plane] != (RestorationPlaneGrid{}) ||
+				plan.UnitRecords[plane] != 0 ||
+				plan.Boundaries[plane] != (RestorationStripeBoundaryBufferSize{}) {
+				return ErrInvalidPlan
+			}
+			continue
+		}
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			if plan.UnitRecords[plane] != 0 || plan.Boundaries[plane] != (RestorationStripeBoundaryBufferSize{}) {
+				return ErrInvalidPlan
+			}
+			continue
+		}
+		active = true
+		if grid.Plane != uint8(plane) || !grid.validGeometry() {
+			return ErrInvalidPlan
+		}
+		records, err := grid.UnitRecordLen()
+		if err != nil {
+			return err
+		}
+		if plan.UnitRecords[plane] != records {
+			return ErrInvalidPlan
+		}
+		boundaries, err := RestorationStripeBoundaryBufferLen(grid)
+		if err != nil {
+			return err
+		}
+		if plan.Boundaries[plane] != boundaries {
+			return ErrInvalidPlan
+		}
+	}
+	if plan.Active != active {
+		return ErrInvalidPlan
+	}
+	return nil
 }
 
 func roundPowerOfTwoUint32(v uint32, bits uint8) uint32 {
