@@ -72,6 +72,13 @@ type FrameWorkStep struct {
 	ShowExisting ShowExistingFrameWorkPlan
 }
 
+// FrameWorkStepResult reports the side effects completed by RunStep.
+type FrameWorkStepResult struct {
+	ExecutedTileWork bool
+	CompletedFrame   bool
+	ReleaseCount     int
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -293,6 +300,29 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 	return FrameWorkStep{}, nil, nil
 }
 
+// RunStep executes any tile work in step, then publishes the active frame only
+// if event carries a final tile group. step must be the PlanEvent result for
+// event, which prevents final references from being published for unexecuted
+// or mismatched tile work.
+func (s *FrameWorkState) RunStep(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, jobs []tile.Job, batches []threading.Batch, releases []int, fn threading.BatchFunc) (FrameWorkStepResult, error) {
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
+	}
+	executed, err := ExecuteFrameWorkStep(step, workerPool, jobs, batches, fn)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     releaseCount,
+	}, nil
+}
+
 // ExecuteTileWork dispatches the planned tile jobs through a reusable worker
 // pool. Only the caller-owned job and batch ranges named by plan are used.
 func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) error {
@@ -424,4 +454,19 @@ func validateTileWorkPlan(plan TileWorkPlan, jobs []tile.Job, batches []threadin
 		return ErrInvalidTileWork
 	}
 	return nil
+}
+
+func frameWorkStepMatchesEvent(event Event, step FrameWorkStep) bool {
+	switch event.Kind {
+	case EventFrameHeader, EventFrame:
+		return step.Kind == FrameWorkStepBegin
+	case EventTileGroup:
+		return step.Kind == FrameWorkStepTile
+	case EventExistingFrame:
+		return step.Kind == FrameWorkStepShowExisting
+	}
+	if EventDropsFrameWork(event) {
+		return step.Kind == FrameWorkStepDropped || step.Kind == FrameWorkStepIgnored
+	}
+	return step.Kind == FrameWorkStepIgnored
 }

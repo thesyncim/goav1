@@ -310,6 +310,53 @@ func TestExecuteDecoderFrameWorkStep(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkStateRunStep(t *testing.T) {
+	workerPool, err := NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+	tileGroup := DecoderEvent{
+		Kind:      DecoderEventTileGroup,
+		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
+		TileGroup: TileGroup{Final: true},
+	}
+	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
+	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
+	step := DecoderFrameWorkStep{
+		Kind: DecoderFrameWorkStepTile,
+		Tile: DecoderFrameTileWorkPlan{Tile: DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
+	}
+
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	if _, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var releases [RefFrames]int
+	result, err := state.RunStep(&refs, &pool, tileGroup, step, workerPool, jobs[:], batches[:], releases[:], func(TileBatch, []TileJob) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || state.Active() {
+		t.Fatalf("result=%+v active=%v", result, state.Active())
+	}
+}
+
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

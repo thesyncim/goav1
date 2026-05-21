@@ -697,6 +697,208 @@ func TestExecuteTileWorkPropagatesCallbackError(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunStepFrameOBUExecutesThenFinishes(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
+	framePayload = append(framePayload, 0xaa)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil || step.Kind != FrameWorkStepBegin {
+		t.Fatalf("step=%+v output=%p", step, output)
+	}
+
+	var ranWhileActive bool
+	var releases [parser.RefFrames]int
+	result, err := state.RunStep(&refs, &pool, events[1], step, workerPool, jobs[:], batches[:], releases[:], func(batch threading.Batch, batchJobs []tile.Job) error {
+		ranWhileActive = state.Active() && batch.Count == 1 && len(batchJobs) == 1
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || !ranWhileActive || state.Active() {
+		t.Fatalf("result=%+v ranWhileActive=%v active=%v", result, ranWhileActive, state.Active())
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != step.Begin.Surface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, step.Begin.Surface)
+	}
+}
+
+func TestFrameWorkStateRunStepTileGroupExecutesThenFinishes(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := state.RunStep(&refs, &pool, events[1], begin, workerPool, jobs[:], batches[:], nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkStepResult{}) || !state.Active() {
+		t.Fatalf("begin result=%+v active=%v", result, state.Active())
+	}
+
+	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releases [parser.RefFrames]int
+	result, err = state.RunStep(&refs, &pool, events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || state.Active() {
+		t.Fatalf("tile result=%+v active=%v", result, state.Active())
+	}
+}
+
+func TestFrameWorkStateRunStepKeepsActiveOnCallbackError(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := errors.New("tile decode")
+	var releases [parser.RefFrames]int
+	_, err = state.RunStep(&refs, &pool, events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("RunStep err=%v want %v", err, want)
+	}
+	if !state.Active() || state.Surface != begin.Begin.Surface {
+		t.Fatalf("state=%+v active=%v begin=%+v", state, state.Active(), begin)
+	}
+	if slot, ok := refs.ReferenceSlot(0); ok || slot != -1 {
+		t.Fatalf("slot=%d ok=%v want no publication", slot, ok)
+	}
+}
+
+func TestFrameWorkStateRunStepRejectsMismatchedFinalStep(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var releases [parser.RefFrames]int
+	_, err = state.RunStep(&refs, &pool, finalFrameEvent(0xff), FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, releases[:], nil)
+	if !errors.Is(err, ErrInvalidFrameWorkStep) {
+		t.Fatalf("RunStep err=%v want %v", err, ErrInvalidFrameWorkStep)
+	}
+	if !state.Active() || state.Surface != begin.Surface {
+		t.Fatalf("state=%+v active=%v begin=%+v", state, state.Active(), begin)
+	}
+	if slot, ok := refs.ReferenceSlot(0); ok || slot != -1 {
+		t.Fatalf("slot=%d ok=%v want no publication", slot, ok)
+	}
+}
+
+func TestFrameWorkStateRunStepNoop(t *testing.T) {
+	var state FrameWorkState
+	result, err := state.RunStep(nil, nil, Event{Kind: EventMetadata}, FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkStepResult{}) {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func TestFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -1680,6 +1882,51 @@ func TestExecuteFrameWorkStepAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunStepAllocs(t *testing.T) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	jobs, batches, batchCount := testExecutionWork(t)
+	begin := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+	final := finalFrameEvent(0xff)
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		result, err := state.RunStep(&refs, &pool, final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
+			t.Fatalf("result=%+v", result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkState RunStep allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -1911,6 +2158,41 @@ func BenchmarkExecuteFrameWorkStep(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(threading.Batch, []tile.Job) error {
+			return nil
+		})
+	}
+}
+
+func BenchmarkFrameWorkStateRunStep(b *testing.B) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := benchmarkFramePool(b, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	jobs, batches, batchCount := benchmarkExecutionWork(b)
+	begin := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+	final := finalFrameEvent(0xff)
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.RunStep(&refs, &pool, final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
 			return nil
 		})
 	}
