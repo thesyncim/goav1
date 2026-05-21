@@ -122,6 +122,8 @@ The initial implementation covers:
   planes.
 - Pure-Go six-sample loop-filter edge deblocking with flat filtering and
   narrow-filter fallback for 8/10/12-bit reconstruction planes.
+- Pure-Go eight-sample loop-filter edge deblocking with AV1's luma flat filter
+  and narrow-filter fallback for 8/10/12-bit reconstruction planes.
 - Zero-allocation block-edge loop-filter resolution and application helpers
   that combine tile delta-lf state, segmentation, thresholds, and deblocking.
 - AV1 header-derived frame formats, including monochrome surface layout.
