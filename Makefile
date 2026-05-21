@@ -54,6 +54,7 @@ fuzz-smoke:
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseIdentityBlock
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseDCTBlock
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseBlock
+	go test ./internal/av1/reconstruct $(FUZZFLAGS) -fuzz=FuzzReconstructPlaneBlock
 
 alloc:
 	./scripts/check_allocs.sh
