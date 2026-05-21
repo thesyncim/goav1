@@ -15,6 +15,7 @@ fuzz-smoke:
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzParseHeader
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzTemporalUnitIterator
+	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzAnnexBIterator
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPayloadIterator
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPacketizer
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzAssembleFrame

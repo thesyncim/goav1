@@ -26,6 +26,8 @@ func TestCoreSuiteVectors(t *testing.T) {
 			checkRTPVector(t, vector)
 		case KindIVF:
 			checkIVFVector(t, vector)
+		case KindAnnexB:
+			checkAnnexBVector(t, vector)
 		default:
 			t.Fatalf("unhandled vector kind=%d", vector.Kind)
 		}
@@ -89,5 +91,31 @@ func checkIVFVector(t *testing.T, vector Vector) {
 	}
 	if got := MD5(md5.Sum(frame.Payload)); got != digest.MD5 {
 		t.Fatalf("%s md5=%x want %x", vector.Name, got, digest.MD5)
+	}
+}
+
+func checkAnnexBVector(t *testing.T, vector Vector) {
+	t.Helper()
+	it := obu.NewAnnexBIterator(vector.Input)
+	wantOff := 0
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("%s Next: %v", vector.Name, err)
+		}
+		if !ok {
+			break
+		}
+		end := wantOff + len(unit.Raw)
+		if end > len(vector.Want) {
+			t.Fatalf("%s raw overrun off=%d len=%d want=%d", vector.Name, wantOff, len(unit.Raw), len(vector.Want))
+		}
+		if !bytes.Equal(unit.Raw, vector.Want[wantOff:end]) {
+			t.Fatalf("%s raw=%x want=%x", vector.Name, unit.Raw, vector.Want[wantOff:end])
+		}
+		wantOff = end
+	}
+	if wantOff != len(vector.Want) {
+		t.Fatalf("%s consumed raw=%d want %d", vector.Name, wantOff, len(vector.Want))
 	}
 }

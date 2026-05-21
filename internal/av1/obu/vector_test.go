@@ -34,3 +34,57 @@ func TestOBUCoreVectors(t *testing.T) {
 		}
 	}
 }
+
+func TestAnnexBCoreVector(t *testing.T) {
+	suite := testvector.CoreSuite()
+	oracle := testvector.NewOracle(suite.Manifest)
+	vector, ok := suite.Manifest.Find(testvector.TagOBUAnnexBTemporalUnit)
+	if !ok {
+		t.Fatal("missing Annex B vector")
+	}
+
+	it := NewAnnexBIterator(vector.Input)
+	wantTypes := [...]Type{TypeTemporalDelimiter, TypeSequenceHeader, TypeFrameHeader}
+	wantFrames := [...]uint32{0, 0, 1}
+	var got [64]byte
+	wantOff := 0
+	for i := 0; i < len(wantTypes); i++ {
+		unit, ok, err := it.Next()
+		if err != nil || !ok {
+			t.Fatalf("unit %d ok=%v err=%v", i, ok, err)
+		}
+		end := wantOff + len(unit.Raw)
+		if end > len(vector.Want) {
+			t.Fatalf("unit %d raw overrun off=%d len=%d want=%d", i, wantOff, len(unit.Raw), len(vector.Want))
+		}
+		if end > len(got) {
+			t.Fatalf("unit %d fixed buffer overrun end=%d cap=%d", i, end, len(got))
+		}
+		if !bytes.Equal(unit.Raw, vector.Want[wantOff:end]) {
+			t.Fatalf("unit %d raw=%x want=%x", i, unit.Raw, vector.Want[wantOff:end])
+		}
+		copy(got[wantOff:end], unit.Raw)
+		if unit.OBU.Header.Type != wantTypes[i] {
+			t.Fatalf("unit %d type=%d want %d", i, unit.OBU.Header.Type, wantTypes[i])
+		}
+		if unit.FrameUnitIndex != wantFrames[i] {
+			t.Fatalf("unit %d frame=%d want %d", i, unit.FrameUnitIndex, wantFrames[i])
+		}
+		wantOff = end
+	}
+	_, ok, err := it.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unexpected extra Annex B unit")
+	}
+	if wantOff != len(vector.Want) {
+		t.Fatalf("consumed=%d want %d", wantOff, len(vector.Want))
+	}
+	if testvector.OracleEnabled {
+		if err := oracle.CheckBytes(vector.Tag, got[:wantOff]); err != nil {
+			t.Fatalf("oracle err=%v", err)
+		}
+	}
+}

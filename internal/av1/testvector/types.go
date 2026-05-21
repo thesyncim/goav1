@@ -26,10 +26,12 @@ const (
 	KindParser
 	KindDecoder
 	KindDSP
+	KindAnnexB
 )
 
 const (
 	TagOBULowOverheadTemporalDelimiter Tag = 0x0001_0001
+	TagOBUAnnexBTemporalUnit           Tag = 0x0001_0002
 	TagRTPPayloadSingleOBU             Tag = 0x0002_0001
 	TagRTPPayloadFragmentedOBU         Tag = 0x0002_0002
 	TagIVFSingleFrameAV1               Tag = 0x0003_0001

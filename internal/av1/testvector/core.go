@@ -9,6 +9,13 @@ var coreVectors = [...]Vector{
 		Want:  nil,
 	},
 	{
+		Tag:   TagOBUAnnexBTemporalUnit,
+		Kind:  KindAnnexB,
+		Name:  "annex b temporal unit with two frame units",
+		Input: []byte{0x0a, 0x05, 0x01, 0x10, 0x02, 0x08, 0xaa, 0x03, 0x02, 0x18, 0xbb},
+		Want:  []byte{0x10, 0x08, 0xaa, 0x18, 0xbb},
+	},
+	{
 		Tag:   TagRTPPayloadSingleOBU,
 		Kind:  KindRTP,
 		Name:  "rtp single inferred-length frame-header obu",
