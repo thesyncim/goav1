@@ -1,0 +1,10 @@
+go test fuzz v1
+uint16(4)
+uint16(95)
+byte('N')
+byte('$')
+byte('\u008a')
+byte('\x01')
+bool(true)
+bool(true)
+[]byte("0000077\xd2\xf570120200")

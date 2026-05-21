@@ -184,6 +184,18 @@ func RestorationPlaneApplyScratchLen(grid RestorationPlaneGrid, records []Restor
 	return size, nil
 }
 
+// RestorationFramePlaneScratchLen reports scratch for
+// ApplyRestorationFramePlane. Disabled restoration planes do not need scratch.
+func RestorationFramePlaneScratchLen(grid RestorationPlaneGrid, records []RestorationUnitRecord, optimized bool) (RestorationUnitRecordBoundaryScratchSize, error) {
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return RestorationUnitRecordBoundaryScratchSize{}, ErrInvalidPlan
+		}
+		return RestorationUnitRecordBoundaryScratchSize{}, nil
+	}
+	return RestorationPlaneApplyScratchLen(grid, records, optimized)
+}
+
 // ApplyRestorationUnit dispatches one decoded restoration unit to the matching
 // libaom-ported primitive. srcOrigin identifies the top-left pixel of the unit;
 // filtered units require the primitive-specific border around that origin.
@@ -298,6 +310,31 @@ func ApplyRestorationPlaneRecords(grid RestorationPlaneGrid, records []Restorati
 	return result, nil
 }
 
+// ApplyRestorationFramePlane ports libaom's one-plane frame restoration flow:
+// extend the input frame, filter every restoration unit into dst, then copy the
+// restored visible plane back into data. data is the mutable source frame and
+// dst is the caller-owned restoration output buffer, matching libaom's
+// cm->rst_frame.
+func ApplyRestorationFramePlane(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationPlaneApplyResult, error) {
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return RestorationPlaneApplyResult{}, ErrInvalidPlan
+		}
+		return RestorationPlaneApplyResult{}, nil
+	}
+	if err := ExtendRestorationFrame(data, dataStride, dataOrigin, int(grid.PlaneWidth), int(grid.PlaneHeight), restorationBorder, restorationBorder); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	result, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+	if err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	if err := copyRestoredPlane(dst, dstStride, dstOrigin, data, dataStride, dataOrigin, int(grid.PlaneWidth), int(grid.PlaneHeight)); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return result, nil
+}
+
 // ApplyRestorationUnitRecordWithBoundaries ports libaom's striped
 // av1_loop_restoration_filter_unit() orchestration for one decoded restoration
 // unit. data is the mutable, frame-extended source plane; its overwritten stripe
@@ -366,6 +403,19 @@ func copyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint1
 			}
 			dst[dstRow+col] = sample
 		}
+	}
+	return nil
+}
+
+func copyRestoredPlane(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, dstOrigin int, width int, height int) error {
+	if !restorationSampleBlockFitsAt(len(src), srcOrigin, srcStride, width, height) ||
+		!restorationSampleBlockFitsAt(len(dst), dstOrigin, dstStride, width, height) {
+		return ErrInvalidPlan
+	}
+	for row := 0; row < height; row++ {
+		srcRow := srcOrigin + row*srcStride
+		dstRow := dstOrigin + row*dstStride
+		copy(dst[dstRow:dstRow+width], src[srcRow:srcRow+width])
 	}
 	return nil
 }
