@@ -59,6 +59,11 @@ func TestDecodeBlockCoefficientsRunsTransformThenPlanes(t *testing.T) {
 	if visits[0].Block.Size != TransformSize16x16 || visits[1].Block.Size != TransformSize8x8 || visits[2].Block.Size != TransformSize8x8 {
 		t.Fatalf("visit sizes=%d,%d,%d want 16x16,8x8,8x8", visits[0].Block.Size, visits[1].Block.Size, visits[2].Block.Size)
 	}
+	for i, visit := range visits {
+		if visit.Transform != transform.TypeDCTDCT {
+			t.Fatalf("visit[%d] transform=%d want DCT_DCT", i, visit.Transform)
+		}
+	}
 }
 
 func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T) {

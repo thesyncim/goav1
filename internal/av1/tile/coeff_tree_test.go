@@ -67,6 +67,70 @@ func TestDecodeLumaCoefficientsFollowsDav1dTXBReplay(t *testing.T) {
 	}
 }
 
+func TestDecodeLumaCoefficientsSelectsTransformPerTXB(t *testing.T) {
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset(make([]byte, 16), Job{Offset: 0, Size: 16}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	treeReq := TransformTreeRequest{
+		Size:          BlockSize8x8,
+		VisibleW4:     2,
+		VisibleH4:     2,
+		Inter:         true,
+		TransformMode: parser.TransformModeSwitchable,
+	}
+	tree := TransformTreeResult{
+		Y:        TransformSize8x8,
+		Variable: true,
+		Split:    [2]uint16{1},
+	}
+	selected := []transform.Type{
+		transform.TypeDCTDCT,
+		transform.TypeHDCT,
+		transform.TypeVDCT,
+		transform.TypeADSTDCT,
+	}
+	calls := 0
+	var ctx CoeffEntropyContext
+	var scratch LumaCoeffTreeScratch
+	var got []transform.Type
+	stats, err := state.DecodeLumaCoefficients(&cdfs, &ctx, &scratch, LumaCoeffTreeRequest{
+		TreeRequest: treeReq,
+		Tree:        tree,
+		Class:       transform.Class2D,
+		TransformSelect: CoeffTransformSelectorFunc(func(req CoeffTransformRequest) (transform.Type, error) {
+			if req.Plane != 0 || req.Block.Size != TransformSize4x4 {
+				t.Fatalf("selector req=%+v", req)
+			}
+			if calls >= len(selected) {
+				t.Fatalf("unexpected selector call %d", calls)
+			}
+			typ := selected[calls]
+			calls++
+			return typ, nil
+		}),
+	}, func(block LumaCoeffBlock) error {
+		got = append(got, block.Transform)
+		assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TXBs != 4 || calls != 4 {
+		t.Fatalf("stats=%+v calls=%d", stats, calls)
+	}
+	for i, want := range selected {
+		if got[i] != want {
+			t.Fatalf("transform[%d]=%d want %d", i, got[i], want)
+		}
+	}
+}
+
 func TestDecodeLumaCoefficientsSkipTransformResetsContext(t *testing.T) {
 	var state DecodeState
 	var cdfs CoeffCDFs

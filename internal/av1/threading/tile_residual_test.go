@@ -89,7 +89,7 @@ func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
 		},
 		Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
 			transforms++
-			return testFrameWorkDCTTransforms(visit)
+			return ctx.ReadInterBlockTransforms(&state, visit)
 		},
 		Int32Scratch:    int32Scratch,
 		ResidualScratch: residualScratch,
@@ -120,6 +120,62 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsRejectsInvalidInputs(t *t
 	noTransforms.Transforms = nil
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, noTransforms); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("nil transforms err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			Quantization: parser.QuantizationParams{BaseQIdx: 64},
+		},
+	}
+	var cdfs tile.TransformTypeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state tile.DecodeState
+	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
+		t.Fatal(err)
+	}
+	transforms, err := ctx.ReadInterBlockTransforms(&state, tile.BlockLoopVisit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transforms.Inter || !transforms.ReadInterTX || transforms.Luma != transform.TypeDCTDCT {
+		t.Fatalf("transforms=%+v", transforms)
+	}
+	var selector tile.InterCoeffTransformSelector
+	selector.Reset(&state, &cdfs, ctx.FrameMode.ReducedTxSet, false, false)
+	got, err := selector.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Block: tile.TransformBlock{Size: tile.TransformSize32x32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("tx type=%d want %d", got, transform.TypeIDTX)
+	}
+
+	ctx.FrameMode.ReducedTxSet = true
+	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
+		t.Fatal(err)
+	}
+	transforms, err = ctx.ReadInterBlockTransforms(&state, tile.BlockLoopVisit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector.Reset(&state, nil, ctx.FrameMode.ReducedTxSet, true, false)
+	got, err = selector.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Block: tile.TransformBlock{Size: tile.TransformSize16x16},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("reduced tx type=%d want %d", got, transform.TypeDCTDCT)
 	}
 }
 
@@ -191,9 +247,11 @@ func FuzzFrameWorkBatchDecodeAndReconstructJobResiduals(f *testing.F) {
 		}
 		int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 64, Height: 64}, transform.TypeDCTDCT)
 		_, _ = ctx.DecodeAndReconstructJobResiduals(0, &state, cdfs, &scratch, FrameWorkTileResidualRequest{
-			Loop:            loopReq,
-			TransformMode:   ctx.TransformRef.TransformMode,
-			Transforms:      testFrameWorkDCTTransforms,
+			Loop:          loopReq,
+			TransformMode: ctx.TransformRef.TransformMode,
+			Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+				return ctx.ReadInterBlockTransforms(&state, visit)
+			},
 			Int32Scratch:    int32Scratch,
 			ResidualScratch: residualScratch,
 		})
@@ -229,9 +287,11 @@ func testFrameWorkResidualDriver(t *testing.T) (FrameWorkBatch, *tile.DecodeStat
 	}
 	int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 64, Height: 64}, transform.TypeDCTDCT)
 	req := FrameWorkTileResidualRequest{
-		Loop:            loopReq,
-		TransformMode:   ctx.TransformRef.TransformMode,
-		Transforms:      testFrameWorkDCTTransforms,
+		Loop:          loopReq,
+		TransformMode: ctx.TransformRef.TransformMode,
+		Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+			return ctx.ReadInterBlockTransforms(state, visit)
+		},
 		Int32Scratch:    int32Scratch,
 		ResidualScratch: residualScratch,
 	}
@@ -252,6 +312,10 @@ func mustFrameWorkTileResidualCDFs(t *testing.T, baseQIndex uint8) FrameWorkTile
 	if err := transformCDFs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
+	var transformType tile.TransformTypeCDFs
+	if err := transformType.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
 	var coeff tile.CoeffCDFs
 	if err := coeff.InitDefault(baseQIndex); err != nil {
 		t.Fatal(err)
@@ -265,6 +329,7 @@ func mustFrameWorkTileResidualCDFs(t *testing.T, baseQIndex uint8) FrameWorkTile
 			Transform: &transformCDFs,
 			Coeff:     &coeff,
 		},
+		TransformType: &transformType,
 	}
 }
 

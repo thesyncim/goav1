@@ -9,8 +9,9 @@ import (
 // FrameWorkTileResidualCDFs groups the caller-owned entropy states needed to
 // walk block syntax, decode transform trees, and decode residual coefficients.
 type FrameWorkTileResidualCDFs struct {
-	Loop  tile.BlockLoopCDFs
-	Coeff tile.BlockCoeffCDFs
+	Loop          tile.BlockLoopCDFs
+	Coeff         tile.BlockCoeffCDFs
+	TransformType *tile.TransformTypeCDFs
 }
 
 // FrameWorkTileResidualScratch is caller-owned state reused while decoding one
@@ -19,6 +20,7 @@ type FrameWorkTileResidualScratch struct {
 	Loop         tile.BlockLoopScratch
 	Coeff        tile.BlockCoeffScratch
 	CoeffContext tile.CoeffEntropyContext
+	InterTX      tile.InterCoeffTransformSelector
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -28,6 +30,8 @@ type FrameWorkBlockTransforms struct {
 	Inter           bool
 	Luma            transform.Type
 	Chroma          [2]transform.Type
+	TransformSelect tile.CoeffTransformSelector
+	ReadInterTX     bool
 	EOBMultiContext [3]int
 }
 
@@ -119,6 +123,11 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		if err != nil {
 			return err
 		}
+		transformSelect := transforms.TransformSelect
+		if transforms.ReadInterTX {
+			scratch.InterTX.Reset(state, cdfs.TransformType, b.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless)
+			transformSelect = &scratch.InterTX
+		}
 		coeffReq := tile.BlockCoeffRequest{
 			Transform: tile.TransformTreeRequest{
 				Size:          visit.Block.Size,
@@ -134,6 +143,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 			},
 			LumaType:        transforms.Luma,
 			ChromaType:      transforms.Chroma,
+			TransformSelect: transformSelect,
 			EOBMultiContext: transforms.EOBMultiContext,
 		}
 
@@ -143,14 +153,10 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 			stats.CoefficientBlocks++
 		}
 		result, err := state.DecodeBlockCoefficients(cdfs.Coeff, &scratch.Loop.Mode, &scratch.CoeffContext, &scratch.Coeff, coeffReq, func(block tile.BlockCoeffBlock) error {
-			typ, err := frameWorkBlockTransformForPlane(transforms, block.Plane)
-			if err != nil {
-				return err
-			}
 			if err := b.ReconstructBlockCoeff(index, FrameWorkBlockCoeffReconstruction{
 				Visit:           visit.Block,
 				Block:           block,
-				Transform:       typ,
+				Transform:       block.Transform,
 				CurrentQIndex:   qIndex,
 				SegmentID:       visit.SegmentID,
 				Int32Scratch:    req.Int32Scratch,
@@ -174,17 +180,19 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	return stats, nil
 }
 
-func frameWorkBlockTransformForPlane(transforms FrameWorkBlockTransforms, plane int) (transform.Type, error) {
-	switch plane {
-	case 0:
-		return transforms.Luma, nil
-	case 1:
-		return transforms.Chroma[0], nil
-	case 2:
-		return transforms.Chroma[1], nil
-	default:
-		return 0, ErrInvalidBatch
+func (b FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if state == nil {
+		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
+	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {
+		return FrameWorkBlockTransforms{}, err
+	}
+	return FrameWorkBlockTransforms{
+		Inter:       true,
+		Luma:        transform.TypeDCTDCT,
+		Chroma:      [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
+		ReadInterTX: true,
+	}, nil
 }
 
 func frameWorkAccumulateResidualStats(stats *FrameWorkTileResidualStats, coeff tile.LumaCoeffStats) {

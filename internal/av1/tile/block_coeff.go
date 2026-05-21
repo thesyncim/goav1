@@ -16,12 +16,14 @@ type BlockCoeffRequest struct {
 
 	LumaType        transform.Type
 	ChromaType      [2]transform.Type
+	TransformSelect CoeffTransformSelector
 	EOBMultiContext [3]int
 }
 
 type BlockCoeffBlock struct {
-	Plane int
-	Block TransformBlock
+	Plane     int
+	Block     TransformBlock
+	Transform transform.Type
 
 	Result TXBDecodeResult
 	Coeffs []int16
@@ -75,17 +77,21 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	result := BlockCoeffResult{Tree: tree}
 
 	result.Luma, err = s.DecodeLumaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, LumaCoeffTreeRequest{
-		TreeRequest:     req.Transform,
-		Tree:            tree,
-		Class:           lumaClass,
-		EOBMultiContext: req.EOBMultiContext[0],
+		TreeRequest:      req.Transform,
+		Tree:             tree,
+		Class:            lumaClass,
+		TransformType:    req.LumaType,
+		UseTransformType: true,
+		TransformSelect:  req.TransformSelect,
+		EOBMultiContext:  req.EOBMultiContext[0],
 	}, func(block LumaCoeffBlock) error {
 		return visit(BlockCoeffBlock{
-			Plane:  0,
-			Block:  block.Block,
-			Result: block.Result,
-			Coeffs: block.Coeffs,
-			Scan:   block.Scan,
+			Plane:     0,
+			Block:     block.Block,
+			Transform: block.Transform,
+			Result:    block.Result,
+			Coeffs:    block.Coeffs,
+			Scan:      block.Scan,
 		})
 	})
 	if err != nil {
@@ -97,19 +103,23 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	}
 	for plane := 1; plane <= 2; plane++ {
 		stats, err := s.DecodeChromaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, ChromaCoeffTreeRequest{
-			TreeRequest:     req.Transform,
-			Tree:            tree,
-			Color:           req.Transform.Color,
-			Plane:           plane,
-			Class:           chromaClass[plane-1],
-			EOBMultiContext: req.EOBMultiContext[plane],
+			TreeRequest:      req.Transform,
+			Tree:             tree,
+			Color:            req.Transform.Color,
+			Plane:            plane,
+			Class:            chromaClass[plane-1],
+			TransformType:    req.ChromaType[plane-1],
+			UseTransformType: true,
+			TransformSelect:  req.TransformSelect,
+			EOBMultiContext:  req.EOBMultiContext[plane],
 		}, func(block ChromaCoeffBlock) error {
 			return visit(BlockCoeffBlock{
-				Plane:  block.Plane,
-				Block:  block.Block,
-				Result: block.Result,
-				Coeffs: block.Coeffs,
-				Scan:   block.Scan,
+				Plane:     block.Plane,
+				Block:     block.Block,
+				Transform: block.Transform,
+				Result:    block.Result,
+				Coeffs:    block.Coeffs,
+				Scan:      block.Scan,
 			})
 		})
 		if err != nil {

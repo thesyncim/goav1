@@ -33,6 +33,40 @@ type InterTransformTypeRequest struct {
 	Lossless      bool
 }
 
+// InterCoeffTransformSelector reads inter tx_type syntax for each TXB. The
+// caller owns and reuses this struct so composed tile decode remains allocation
+// free.
+type InterCoeffTransformSelector struct {
+	State *DecodeState
+	CDFs  *TransformTypeCDFs
+
+	ReducedTXSet  bool
+	SkipTransform bool
+	Lossless      bool
+}
+
+func (s *InterCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool) {
+	*s = InterCoeffTransformSelector{
+		State:         state,
+		CDFs:          cdfs,
+		ReducedTXSet:  reducedTXSet,
+		SkipTransform: skipTransform,
+		Lossless:      lossless,
+	}
+}
+
+func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformRequest) (transform.Type, error) {
+	if s == nil || s.State == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	return s.State.ReadInterTransformType(s.CDFs, InterTransformTypeRequest{
+		Size:          req.Block.Size,
+		ReducedTXSet:  s.ReducedTXSet,
+		SkipTransform: s.SkipTransform,
+		Lossless:      s.Lossless,
+	})
+}
+
 var transformSizeSquare = [transformSizeCount]TransformSize{
 	TransformSize4x4:   TransformSize4x4,
 	TransformSize8x8:   TransformSize8x8,

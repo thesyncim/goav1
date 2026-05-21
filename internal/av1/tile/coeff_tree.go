@@ -14,8 +14,11 @@ type LumaCoeffTreeRequest struct {
 	TreeRequest TransformTreeRequest
 	Tree        TransformTreeResult
 
-	Class           transform.Class
-	EOBMultiContext int
+	Class            transform.Class
+	TransformType    transform.Type
+	UseTransformType bool
+	TransformSelect  CoeffTransformSelector
+	EOBMultiContext  int
 }
 
 type LumaCoeffTreeScratch struct {
@@ -26,8 +29,9 @@ type LumaCoeffTreeScratch struct {
 }
 
 type LumaCoeffBlock struct {
-	Block  TransformBlock
-	Result TXBDecodeResult
+	Block     TransformBlock
+	Transform transform.Type
+	Result    TXBDecodeResult
 
 	Coeffs []int16
 	Scan   []int16
@@ -49,13 +53,17 @@ type ChromaCoeffTreeRequest struct {
 	Color parser.ColorConfig
 	Plane int
 
-	Class           transform.Class
-	EOBMultiContext int
+	Class            transform.Class
+	TransformType    transform.Type
+	UseTransformType bool
+	TransformSelect  CoeffTransformSelector
+	EOBMultiContext  int
 }
 
 type ChromaCoeffBlock struct {
-	Plane int
-	Block TransformBlock
+	Plane     int
+	Block     TransformBlock
+	Transform transform.Type
 
 	Result TXBDecodeResult
 	Coeffs []int16
@@ -63,6 +71,21 @@ type ChromaCoeffBlock struct {
 }
 
 type ChromaCoeffVisitor func(ChromaCoeffBlock) error
+
+type CoeffTransformRequest struct {
+	Plane int
+	Block TransformBlock
+}
+
+type CoeffTransformSelector interface {
+	SelectCoeffTransform(CoeffTransformRequest) (transform.Type, error)
+}
+
+type CoeffTransformSelectorFunc func(CoeffTransformRequest) (transform.Type, error)
+
+func (f CoeffTransformSelectorFunc) SelectCoeffTransform(req CoeffTransformRequest) (transform.Type, error) {
+	return f(req)
+}
 
 func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, visit LumaCoeffVisitor) (LumaCoeffStats, error) {
 	if s == nil || cdfs == nil || ctx == nil || scratch == nil || visit == nil || !req.Class.Valid() {
@@ -83,7 +106,11 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 
 	var stats LumaCoeffStats
 	err := req.Tree.ForEachLumaTXB(req.TreeRequest, func(block TransformBlock) error {
-		coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, req.Class)
+		typ, class, err := resolveCoeffTransform(req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, 0, block)
+		if err != nil {
+			return err
+		}
+		coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, class)
 		if err != nil {
 			return err
 		}
@@ -96,7 +123,7 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 			VisibleW4:  block.VisibleW4,
 			VisibleH4:  block.VisibleH4,
 		}, TXBDecodeRequest{
-			Class:           req.Class,
+			Class:           class,
 			EOBMultiContext: req.EOBMultiContext,
 		}, coeffs, scan, levels)
 		if err != nil {
@@ -111,10 +138,11 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 			stats.NonZero++
 		}
 		return visit(LumaCoeffBlock{
-			Block:  block,
-			Result: result,
-			Coeffs: coeffs,
-			Scan:   scan,
+			Block:     block,
+			Transform: typ,
+			Result:    result,
+			Coeffs:    coeffs,
+			Scan:      scan,
 		})
 	})
 	if err != nil {
@@ -171,7 +199,11 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				VisibleW4: uint8(minInt(int(uvDims.W4), visibleW4-x)),
 				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
 			}
-			coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, req.Class)
+			typ, class, err := resolveCoeffTransform(req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, req.Plane, block)
+			if err != nil {
+				return stats, err
+			}
+			coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, class)
 			if err != nil {
 				return stats, err
 			}
@@ -184,7 +216,7 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				VisibleW4:  block.VisibleW4,
 				VisibleH4:  block.VisibleH4,
 			}, TXBDecodeRequest{
-				Class:           req.Class,
+				Class:           class,
 				EOBMultiContext: req.EOBMultiContext,
 			}, coeffs, scan, levels)
 			if err != nil {
@@ -198,17 +230,43 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				stats.NonZero++
 			}
 			if err := visit(ChromaCoeffBlock{
-				Plane:  req.Plane,
-				Block:  block,
-				Result: result,
-				Coeffs: coeffs,
-				Scan:   scan,
+				Plane:     req.Plane,
+				Block:     block,
+				Transform: typ,
+				Result:    result,
+				Coeffs:    coeffs,
+				Scan:      scan,
 			}); err != nil {
 				return stats, err
 			}
 		}
 	}
 	return stats, nil
+}
+
+func resolveCoeffTransform(selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, plane int, block TransformBlock) (transform.Type, transform.Class, error) {
+	if selector != nil {
+		selected, err := selector.SelectCoeffTransform(CoeffTransformRequest{Plane: plane, Block: block})
+		if err != nil {
+			return 0, 0, err
+		}
+		selectedClass, err := selected.Class()
+		if err != nil {
+			return 0, 0, ErrInvalidDecodeState
+		}
+		return selected, selectedClass, nil
+	}
+	if useType {
+		selectedClass, err := typ.Class()
+		if err != nil {
+			return 0, 0, ErrInvalidDecodeState
+		}
+		return typ, selectedClass, nil
+	}
+	if !class.Valid() {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	return transform.TypeDCTDCT, class, nil
 }
 
 func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.Class) ([]int16, []int16, []uint8, error) {
