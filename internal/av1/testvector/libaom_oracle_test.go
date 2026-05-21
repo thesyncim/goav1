@@ -16,7 +16,11 @@ import (
 	"time"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
+	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 const libaomTestDataURL = "https://storage.googleapis.com/aom-test-data"
@@ -128,8 +132,182 @@ func TestLibaomQuantizer00StreamEvents(t *testing.T) {
 	}
 }
 
+func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
+	ivfData := readLibaomRemoteFile(t, libaomQuantizer00IVF)
+	md5Data := readLibaomRemoteFile(t, libaomQuantizer00MD5)
+	digests := parseLibaomMD5Digests(t, TagDecoderLibaomQuantizer00, md5Data)
+
+	it, err := ivf.NewIterator(ivfData)
+	if err != nil {
+		t.Fatalf("NewIterator: %v", err)
+	}
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	var stream decoder.Stream
+	var refs decoder.SurfaceReferences
+	var state decoder.FrameWorkState
+	var pool frame.Pool
+	var poolFormat frame.Format
+	var havePool bool
+	var backing []byte
+	var frameSlots []frame.Frame
+	var free []int
+	var used []bool
+
+	var events [16]decoder.Event
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [parser.MaxTiles]parser.TileSpan
+	var jobs [parser.MaxTiles]tile.Job
+	var batches [parser.MaxTiles]threading.Batch
+	var releases [parser.RefFrames]int
+
+	frameCount := 0
+	completed := 0
+	tileJobs := 0
+	retainedContexts := 0
+	for {
+		ivfFrame, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("ivf frame %d: %v", frameCount, err)
+		}
+		if !ok {
+			break
+		}
+		count, err := stream.PushLowOverhead(ivfFrame.Payload, events[:])
+		if err != nil {
+			t.Fatalf("frame %d PushLowOverhead: %v", ivfFrame.Index, err)
+		}
+		for i := 0; i < count; i++ {
+			event := events[i]
+			if !eventRunsFrameWork(event) {
+				continue
+			}
+			if !havePool {
+				pool, poolFormat, backing, frameSlots, free, used = bindLibaomVectorFramePool(t, event, 8)
+				havePool = true
+			} else {
+				gotFormat := frameFormatFromEvent(event)
+				if gotFormat != poolFormat {
+					t.Fatalf("frame %d format=%+v want %+v", ivfFrame.Index, gotFormat, poolFormat)
+				}
+			}
+
+			var postMD5 MD5
+			postRan := false
+			result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
+				for j := 0; j < len(ctx.Jobs); j++ {
+					var decodeState tile.DecodeState
+					if err := ctx.JobDecodeState(j, &decodeState); err != nil {
+						return err
+					}
+					if _, err := ctx.JobRegion(j); err != nil {
+						return err
+					}
+					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
+						return err
+					}
+					if _, err := ctx.LoopRestorationPlan(false); err != nil {
+						return err
+					}
+					tileJobs++
+					if decodeState.RetainFrameContext {
+						retainedContexts++
+					}
+				}
+				return nil
+			}, func(ctx decoder.FrameWorkPostFilterContext) error {
+				digestIndex := int(ivfFrame.Index)
+				if digestIndex >= len(digests) || digests[digestIndex].FrameIndex != ivfFrame.Index {
+					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
+				}
+				got, err := FrameMD5(*ctx.Output)
+				if err != nil {
+					return err
+				}
+				postMD5 = got
+				postRan = true
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("frame %d RunEventWithContextAndPostFilter: %v", ivfFrame.Index, err)
+			}
+			if result.Run.CompletedFrame {
+				if !postRan {
+					t.Fatalf("frame %d completed without postfilter", ivfFrame.Index)
+				}
+				digestIndex := int(ivfFrame.Index)
+				if digestIndex >= len(digests) {
+					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
+				}
+				if postMD5 == digests[digestIndex].MD5 {
+					t.Fatalf("frame %d unexpectedly matched official md5 before reconstruction is wired", ivfFrame.Index)
+				}
+				completed++
+			}
+		}
+		frameCount++
+	}
+	if frameCount != len(digests) || completed != len(digests) {
+		t.Fatalf("frames=%d completed=%d want %d", frameCount, completed, len(digests))
+	}
+	if tileJobs == 0 {
+		t.Fatal("no tile jobs ran")
+	}
+	if retainedContexts == 0 {
+		t.Fatal("no context-update tile was retained")
+	}
+	runtime.KeepAlive(backing)
+	runtime.KeepAlive(frameSlots)
+	runtime.KeepAlive(free)
+	runtime.KeepAlive(used)
+}
+
 func eventCompletesDecodedFrame(event decoder.Event) bool {
 	return (event.Kind == decoder.EventFrame || event.Kind == decoder.EventTileGroup) && event.TileGroup.Final
+}
+
+func eventRunsFrameWork(event decoder.Event) bool {
+	switch event.Kind {
+	case decoder.EventFrameHeader, decoder.EventFrame, decoder.EventTileGroup, decoder.EventExistingFrame:
+		return true
+	default:
+		return false
+	}
+}
+
+func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, frame.Format, []byte, []frame.Frame, []int, []bool) {
+	t.Helper()
+	format := frameFormatFromEvent(event)
+	layout, err := frame.RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*count)
+	frames := make([]frame.Frame, count)
+	free := make([]int, count)
+	used := make([]bool, count)
+	pool, err := frame.BindPool(backing, format, frames, free, used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool, format, backing, frames, free, used
+}
+
+func frameFormatFromEvent(event decoder.Event) frame.Format {
+	return frame.Format{
+		Width:        int(event.FrameSize.CodedWidth),
+		Height:       int(event.FrameSize.Height),
+		BitDepth:     event.SequenceHeader.ColorConfig.BitDepth,
+		MonoChrome:   event.SequenceHeader.ColorConfig.MonoChrome,
+		SubsamplingX: event.SequenceHeader.ColorConfig.SubsamplingX,
+		SubsamplingY: event.SequenceHeader.ColorConfig.SubsamplingY,
+		Align:        32,
+	}
 }
 
 func parseLibaomMD5Digests(t *testing.T, tag Tag, src []byte) []FrameDigest {
