@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("\"1")
+byte('t')
+byte('6')
+byte('\x19')

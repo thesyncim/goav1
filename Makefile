@@ -40,6 +40,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateReset
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateBlockDeltas
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPartition
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzWalkBlocksScripted
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadBlockModePrefix
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadIntraEntry
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadSelectedTransformSize

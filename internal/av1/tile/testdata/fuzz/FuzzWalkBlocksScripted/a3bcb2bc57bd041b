@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("!2")
+byte('\x00')
+byte('9')
+byte('W')

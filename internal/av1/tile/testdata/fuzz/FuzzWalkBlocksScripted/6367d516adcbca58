@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("!0020")
+byte('\x01')
+byte('\x10')
+byte('/')

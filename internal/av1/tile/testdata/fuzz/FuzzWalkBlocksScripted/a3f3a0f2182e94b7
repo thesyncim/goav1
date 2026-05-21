@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("1")
+byte('\x1a')
+byte('\x10')
+byte('u')

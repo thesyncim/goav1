@@ -211,6 +211,15 @@ func (level BlockLevel) HalfSize4x4() uint8 {
 	return 16 >> level
 }
 
+// Size4x4 returns the square block width/height represented by level, in 4x4
+// units.
+func (level BlockLevel) Size4x4() uint8 {
+	if !level.Valid() {
+		return 0
+	}
+	return level.HalfSize4x4() << 1
+}
+
 // Dimensions returns the 4x4-unit dimensions for size.
 func (size BlockSize) Dimensions() (BlockDimensions, bool) {
 	if size >= blockSizeCount {

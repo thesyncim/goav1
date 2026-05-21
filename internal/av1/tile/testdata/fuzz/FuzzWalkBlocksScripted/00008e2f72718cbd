@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("! !20")
+byte('\x00')
+byte('x')
+byte('\x1f')

@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("70")
+byte('\x00')
+byte('\x1f')
+byte('\x1a')
