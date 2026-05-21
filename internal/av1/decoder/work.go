@@ -44,6 +44,34 @@ type ShowExistingFrameWorkPlan struct {
 	DroppedFrameWork bool
 }
 
+// FrameWorkStepKind identifies the action produced by PlanEvent.
+type FrameWorkStepKind uint8
+
+const (
+	// FrameWorkStepIgnored means the event did not affect frame work.
+	FrameWorkStepIgnored FrameWorkStepKind = iota
+	// FrameWorkStepDropped means active incomplete frame work was aborted.
+	FrameWorkStepDropped
+	// FrameWorkStepBegin means a new output surface was acquired.
+	FrameWorkStepBegin
+	// FrameWorkStepTile means continuation tile work was planned.
+	FrameWorkStepTile
+	// FrameWorkStepShowExisting means an existing reference surface is output.
+	FrameWorkStepShowExisting
+)
+
+// FrameWorkStep is the caller-buffer result of applying one decoder event to
+// frame-work state. The active frame should be finished separately after the
+// caller executes any tile work reported by Begin or Tile.
+type FrameWorkStep struct {
+	Kind             FrameWorkStepKind
+	DroppedFrameWork bool
+
+	Begin        FrameWorkPlan
+	Tile         FrameTileWorkPlan
+	ShowExisting ShowExistingFrameWorkPlan
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -205,6 +233,64 @@ func (s *FrameWorkState) ShowExisting(refs *SurfaceReferences, pool *frame.Pool,
 		ReleaseCount:     releaseCount,
 		DroppedFrameWork: dropped,
 	}, nil
+}
+
+// PlanEvent applies one parsed decoder event to frame-work state and returns
+// the work that should be executed by the caller. It does not finish final tile
+// groups; callers should execute the planned tile work first, then call
+// FinishIfEventCompletesFrameWork with the same event.
+func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, references []int, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int) (FrameWorkStep, *frame.Frame, error) {
+	if event.Kind == EventExistingFrame {
+		plan, err := s.ShowExisting(refs, pool, event, releases)
+		if err != nil {
+			return FrameWorkStep{}, nil, err
+		}
+		return FrameWorkStep{
+			Kind:             FrameWorkStepShowExisting,
+			DroppedFrameWork: plan.DroppedFrameWork,
+			ShowExisting:     plan,
+		}, nil, nil
+	}
+
+	dropped := false
+	if EventDropsFrameWork(event) {
+		var err error
+		dropped, err = s.AbortIfEventDropsFrameWork(pool, event)
+		if err != nil {
+			return FrameWorkStep{}, nil, err
+		}
+		if event.Kind != EventFrameHeader && event.Kind != EventFrame {
+			if dropped {
+				return FrameWorkStep{Kind: FrameWorkStepDropped, DroppedFrameWork: true}, nil, nil
+			}
+			return FrameWorkStep{}, nil, nil
+		}
+	}
+
+	switch event.Kind {
+	case EventFrameHeader, EventFrame:
+		plan, output, err := s.Begin(refs, pool, sequence, event, align, references, workers, spans, jobs, batches)
+		if err != nil {
+			return FrameWorkStep{}, nil, err
+		}
+		return FrameWorkStep{
+			Kind:             FrameWorkStepBegin,
+			DroppedFrameWork: dropped,
+			Begin:            plan,
+		}, output, nil
+
+	case EventTileGroup:
+		plan, err := s.PlanTile(event, workers, spans, jobs, batches)
+		if err != nil {
+			return FrameWorkStep{}, nil, err
+		}
+		return FrameWorkStep{
+			Kind: FrameWorkStepTile,
+			Tile: plan,
+		}, nil, nil
+	}
+
+	return FrameWorkStep{}, nil, nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

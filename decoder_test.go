@@ -246,6 +246,44 @@ func TestDecoderFrameWorkStateShowExisting(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+	tileGroup := DecoderEvent{
+		Kind:      DecoderEventTileGroup,
+		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
+		TileGroup: TileGroup{Final: true},
+	}
+
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	step, output, err := state.PlanEvent(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil || step.Kind != DecoderFrameWorkStepBegin || step.Begin.Surface != state.Surface {
+		t.Fatalf("step=%+v output=%p state=%+v", step, output, state)
+	}
+
+	var releases [RefFrames]int
+	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, tileGroup, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed || count != 0 || state.Active() {
+		t.Fatalf("completed=%v count=%d active=%v", completed, count, state.Active())
+	}
+}
+
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

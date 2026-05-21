@@ -13,6 +13,8 @@ type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
 type DecoderFrameWorkPlan = internaldecoder.FrameWorkPlan
 type DecoderFrameTileWorkPlan = internaldecoder.FrameTileWorkPlan
 type DecoderShowExistingFrameWorkPlan = internaldecoder.ShowExistingFrameWorkPlan
+type DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepKind
+type DecoderFrameWorkStep = internaldecoder.FrameWorkStep
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
@@ -33,6 +35,12 @@ const (
 	DecoderEventPadding              DecoderEventKind = internaldecoder.EventPadding
 	DecoderEventReserved             DecoderEventKind = internaldecoder.EventReserved
 	DecoderEventExistingFrame        DecoderEventKind = internaldecoder.EventExistingFrame
+
+	DecoderFrameWorkStepIgnored      DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepIgnored
+	DecoderFrameWorkStepDropped      DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepDropped
+	DecoderFrameWorkStepBegin        DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepBegin
+	DecoderFrameWorkStepTile         DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepTile
+	DecoderFrameWorkStepShowExisting DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepShowExisting
 )
 
 var (
