@@ -1,12 +1,16 @@
 package threading
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 func TestBuildBatchesBalancesContiguousJobs(t *testing.T) {
@@ -732,6 +736,296 @@ func TestFrameWorkBatchJobOutputPlaneRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := badLayout.JobOutputPlane(0, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad layout err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchBlockQuantizerUsesCurrentSegmentQ(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			Quantization: parser.QuantizationParams{
+				BaseQIdx: 20,
+				UDCDelta: 1,
+				UACDelta: 2,
+			},
+			Segmentation: parser.SegmentationParams{Enabled: true},
+		},
+	}
+	ctx.Segmentation.Data.Segments[3].DeltaQ = -9
+
+	got, lossless, err := ctx.BlockQuantizer(20, 3, FrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := quantize.PlaneQuantizer(ctx.Quantization, 11, 8, quantize.PlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want || lossless {
+		t.Fatalf("quantizer=%+v lossless=%v want %+v false", got, lossless, want)
+	}
+
+	losslessCtx := ctx
+	losslessCtx.Quantization = parser.QuantizationParams{}
+	_, lossless, err = losslessCtx.BlockQuantizer(3, 3, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lossless {
+		t.Fatalf("lossless=false want true")
+	}
+
+	ctx.Segmentation.Enabled = false
+	if _, _, err := ctx.BlockQuantizer(20, 3, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("disabled segment err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchReconstructBlockCoeffLuma(t *testing.T) {
+	got := testBatchFrame(t, frame.Format{Width: 160, Height: 128, BitDepth: 8, Align: 64})
+	want := testBatchFrame(t, got.Format)
+	testFillFrame(got, 128)
+	testFillFrame(want, 128)
+
+	ctx := FrameWorkBatch{
+		Output: got,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 160, Height: 128},
+			Quantization: parser.QuantizationParams{BaseQIdx: 40},
+			Segmentation: parser.SegmentationParams{Enabled: true},
+		},
+		Jobs: []tile.Job{{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1}},
+	}
+	ctx.Segmentation.Data.Segments[2].DeltaQ = 5
+	coeffs := make([]int16, 16)
+	coeffs[0] = 3
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 16, MIRow: 0, MIColEnd: 20, MIRowEnd: 4,
+			X4: 0, Y4: 0, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane: 0,
+			Block: tile.TransformBlock{X4: 1, Y4: 2, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{
+				EOB: 1,
+			},
+			Coeffs: coeffs,
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 40,
+		SegmentID:     2,
+	}
+	plane, x, y, err := ctx.BlockCoeffPlanePosition(0, req.Visit, req.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plane != FrameWorkPlaneY || x != 68 || y != 8 {
+		t.Fatalf("position plane=%d x=%d y=%d", plane, x, y)
+	}
+
+	req.Int32Scratch, req.ResidualScratch = testBlockCoeffScratch(t, ctx, req, plane)
+	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+		t.Fatal(err)
+	}
+	testReconstructBlockCoeffDirect(t, ctx, want, plane, x, y, req)
+	if !bytes.Equal(got.Y.Pix, want.Y.Pix) {
+		t.Fatalf("luma reconstruction did not match direct block reconstruction")
+	}
+}
+
+func TestFrameWorkBatchReconstructBlockCoeffChroma420(t *testing.T) {
+	got := testBatchFrame(t, frame.Format{
+		Width:        160,
+		Height:       160,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	want := testBatchFrame(t, got.Format)
+	testFillFrame(got, 96)
+	testFillFrame(want, 96)
+
+	ctx := FrameWorkBatch{
+		Output: got,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 160, Height: 160},
+			Quantization: parser.QuantizationParams{BaseQIdx: 64, VDCDelta: -1, VACDelta: 2},
+		},
+		Jobs: []tile.Job{{SBX: 1, SBY: 1, SBCols: 1, SBRows: 1}},
+	}
+	coeffs := make([]int16, 16)
+	coeffs[0] = -2
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 16, MIRow: 16, MIColEnd: 24, MIRowEnd: 24,
+			X4: 0, Y4: 0, Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane: 2,
+			Block: tile.TransformBlock{X4: 1, Y4: 2, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{
+				EOB: 1,
+			},
+			Coeffs: coeffs,
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 64,
+	}
+	plane, x, y, err := ctx.BlockCoeffPlanePosition(0, req.Visit, req.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plane != FrameWorkPlaneV || x != 36 || y != 40 {
+		t.Fatalf("position plane=%d x=%d y=%d", plane, x, y)
+	}
+
+	req.Int32Scratch, req.ResidualScratch = testBlockCoeffScratch(t, ctx, req, plane)
+	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+		t.Fatal(err)
+	}
+	testReconstructBlockCoeffDirect(t, ctx, want, plane, x, y, req)
+	if !bytes.Equal(got.V.Pix, want.V.Pix) {
+		t.Fatalf("chroma reconstruction did not match direct block reconstruction")
+	}
+}
+
+func TestFrameWorkBatchReconstructBlockCoeffRejectsInvalidInputs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 64, Height: 64},
+			Quantization: parser.QuantizationParams{BaseQIdx: 32},
+		},
+		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+	}
+	valid := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 0, MIRow: 0, MIColEnd: 4, MIRowEnd: 4,
+			X4: 0, Y4: 0, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane:  0,
+			Block:  tile.TransformBlock{X4: 0, Y4: 0, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{EOB: 1},
+			Coeffs: make([]int16, 16),
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 32,
+	}
+	valid.Int32Scratch, valid.ResidualScratch = testBlockCoeffScratch(t, ctx, valid, FrameWorkPlaneY)
+
+	tests := []struct {
+		name string
+		ctx  FrameWorkBatch
+		req  FrameWorkBlockCoeffReconstruction
+	}{
+		{name: "invalid plane", ctx: ctx, req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.Block.Plane = 3
+			return req
+		}()},
+		{name: "disabled nonzero segment", ctx: ctx, req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.SegmentID = 1
+			return req
+		}()},
+		{name: "out of range segment", ctx: func() FrameWorkBatch {
+			next := ctx
+			next.Segmentation.Enabled = true
+			return next
+		}(), req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.SegmentID = parser.MaxSegments
+			return req
+		}()},
+		{name: "outside job plane", ctx: ctx, req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.Block.Block.X4 = 16
+			return req
+		}()},
+		{name: "unsupported transform", ctx: ctx, req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.Transform = transform.TypeCount
+			return req
+		}()},
+		{name: "lossless non 4x4", ctx: func() FrameWorkBatch {
+			next := ctx
+			next.Quantization = parser.QuantizationParams{}
+			return next
+		}(), req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.Block.Block.Size = tile.TransformSize8x8
+			req.Block.Coeffs = make([]int16, 64)
+			req.CurrentQIndex = 0
+			req.Int32Scratch = nil
+			req.ResidualScratch = nil
+			return req
+		}()},
+		{name: "short scratch", ctx: ctx, req: func() FrameWorkBlockCoeffReconstruction {
+			req := valid
+			req.Int32Scratch = nil
+			return req
+		}()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.ctx.ReconstructBlockCoeff(0, tt.req); !errors.Is(err, ErrInvalidBatch) {
+				t.Fatalf("err=%v want %v", err, ErrInvalidBatch)
+			}
+		})
+	}
+}
+
+func TestFrameWorkBatchReconstructBlockCoeffAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	testFillFrame(output, 128)
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 64, Height: 64},
+			Quantization: parser.QuantizationParams{BaseQIdx: 32},
+		},
+		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+	}
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 0, MIRow: 0, MIColEnd: 4, MIRowEnd: 4,
+			X4: 0, Y4: 0, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane:  0,
+			Block:  tile.TransformBlock{X4: 0, Y4: 0, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{EOB: 1},
+			Coeffs: make([]int16, 16),
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 32,
+	}
+	req.Int32Scratch, req.ResidualScratch = testBlockCoeffScratch(t, ctx, req, FrameWorkPlaneY)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.ReconstructBlockCoeff allocated: %f", allocs)
 	}
 }
 
@@ -1543,6 +1837,110 @@ func FuzzFrameWorkBatchLoopRestorationPlan(f *testing.F) {
 	})
 }
 
+func FuzzFrameWorkBatchReconstructBlockCoeff(f *testing.F) {
+	f.Add(uint8(0), uint8(0), uint8(0), uint8(64), int16(1), uint8(0))
+	f.Add(uint8(2), uint8(7), uint8(9), uint8(1), int16(-3), uint8(1))
+	f.Add(uint8(1), uint8(14), uint8(13), uint8(255), int16(4), uint8(0))
+
+	f.Fuzz(func(t *testing.T, rawPlane uint8, rawX4 uint8, rawY4 uint8, qIndex uint8, coeff int16, rawSize uint8) {
+		output := testBatchFrame(t, frame.Format{
+			Width:        128,
+			Height:       128,
+			BitDepth:     8,
+			SubsamplingX: true,
+			SubsamplingY: true,
+			Align:        64,
+		})
+		testFillFrame(output, 128)
+		ctx := FrameWorkBatch{
+			Output: output,
+			FrameWorkFrameContext: FrameWorkFrameContext{
+				Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+					ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+				}),
+				FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 128},
+				Quantization: parser.QuantizationParams{BaseQIdx: qIndex},
+			},
+			Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+		}
+		sizes := [...]tile.TransformSize{tile.TransformSize4x4, tile.TransformSize8x8}
+		size := sizes[rawSize%uint8(len(sizes))]
+		dims, ok := size.Dimensions()
+		if !ok {
+			t.Fatal("invalid transform size")
+		}
+		planeID := int(rawPlane % 3)
+		slotsX := 16
+		slotsY := 16
+		if planeID > 0 {
+			slotsX = 8
+			slotsY = 8
+		}
+		xLimit := slotsX - int(dims.W4)
+		yLimit := slotsY - int(dims.H4)
+		scanSize, err := size.TransformSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan, err := transform.ScanSize(scanSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		coeffs := make([]int16, scan.Width*scan.Height)
+		coeffs[0] = coeff % 8
+		req := FrameWorkBlockCoeffReconstruction{
+			Visit: tile.BlockVisit{
+				MICol: 0, MIRow: 0, MIColEnd: 16, MIRowEnd: 16,
+				X4: 0, Y4: 0, Size: tile.BlockSize64x64, VisibleW4: 16, VisibleH4: 16,
+			},
+			Block: tile.BlockCoeffBlock{
+				Plane: planeID,
+				Block: tile.TransformBlock{
+					X4:        int(rawX4) % (xLimit + 1),
+					Y4:        int(rawY4) % (yLimit + 1),
+					Size:      size,
+					VisibleW4: dims.W4,
+					VisibleH4: dims.H4,
+				},
+				Result: tile.TXBDecodeResult{EOB: 1},
+				Coeffs: coeffs,
+			},
+			Transform:     transform.TypeDCTDCT,
+			CurrentQIndex: qIndex,
+		}
+		plane, _, _, err := ctx.BlockCoeffPlanePosition(0, req.Visit, req.Block)
+		if err != nil {
+			t.Fatalf("BlockCoeffPlanePosition err=%v", err)
+		}
+		txSize, err := req.Block.Block.Size.TransformSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, lossless, err := ctx.BlockQuantizer(req.CurrentQIndex, req.SegmentID, plane)
+		if err != nil {
+			t.Fatal(err)
+		}
+		int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
+			Size:      txSize,
+			Transform: req.Transform,
+			Quantizer: q,
+			Lossless:  lossless,
+			EOB:       req.Block.Result.EOB,
+		})
+		if err != nil {
+			return
+		}
+		req.Int32Scratch = make([]int32, int32Len)
+		req.ResidualScratch = make([]int16, int16Len)
+		if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+			if errors.Is(err, ErrInvalidBatch) {
+				return
+			}
+			t.Fatalf("ReconstructBlockCoeff err=%v", err)
+		}
+	})
+}
+
 func BenchmarkBuildBatches(b *testing.B) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -1835,6 +2233,74 @@ func testBatchFrame(t *testing.T, format frame.Format) *frame.Frame {
 		t.Fatal(err)
 	}
 	return &output
+}
+
+func testFillFrame(dst *frame.Frame, value byte) {
+	for i := range dst.Y.Pix {
+		dst.Y.Pix[i] = value
+	}
+	for i := range dst.U.Pix {
+		dst.U.Pix[i] = value
+	}
+	for i := range dst.V.Pix {
+		dst.V.Pix[i] = value
+	}
+}
+
+func testBlockCoeffScratch(t *testing.T, ctx FrameWorkBatch, req FrameWorkBlockCoeffReconstruction, plane FrameWorkPlane) ([]int32, []int16) {
+	t.Helper()
+	size, err := req.Block.Block.Size.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, lossless, err := ctx.BlockQuantizer(req.CurrentQIndex, req.SegmentID, plane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := reconstruct.Block{
+		Size:      size,
+		Transform: req.Transform,
+		Quantizer: q,
+		Lossless:  lossless,
+		EOB:       req.Block.Result.EOB,
+	}
+	int32Len, int16Len, err := reconstruct.ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return make([]int32, int32Len), make([]int16, int16Len)
+}
+
+func testReconstructBlockCoeffDirect(t *testing.T, ctx FrameWorkBatch, dst *frame.Frame, plane FrameWorkPlane, x int, y int, req FrameWorkBlockCoeffReconstruction) {
+	t.Helper()
+	size, err := req.Block.Block.Size.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanSize, err := transform.ScanSize(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, lossless, err := ctx.BlockQuantizer(req.CurrentQIndex, req.SegmentID, plane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := reconstruct.Block{
+		Size:      size,
+		Transform: req.Transform,
+		Quantizer: q,
+		Lossless:  lossless,
+		EOB:       req.Block.Result.EOB,
+	}
+	int32Scratch, residualScratch := testBlockCoeffScratch(t, ctx, req, plane)
+	dstPlane, _, _, ok := frameWorkFramePlane(dst, plane)
+	if !ok {
+		t.Fatal("invalid frame plane")
+	}
+	if err := reconstruct.ReconstructPlaneBlock(dstPlane, dst.Layout.BytesPerSample, ctx.Sequence.ColorConfig.BitDepth,
+		x, y, req.Block.Coeffs, scanSize.Height, int32Scratch, residualScratch, cfg); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func benchmarkBatchFrame(b *testing.B, format frame.Format) *frame.Frame {
