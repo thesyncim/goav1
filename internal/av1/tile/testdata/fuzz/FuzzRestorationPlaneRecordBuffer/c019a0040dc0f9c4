@@ -1,0 +1,7 @@
+go test fuzz v1
+uint16(496)
+uint16(480)
+byte('\x00')
+byte('Q')
+byte('\x00')
+byte('m')

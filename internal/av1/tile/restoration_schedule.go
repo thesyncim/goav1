@@ -175,6 +175,59 @@ func (p RestorationFramePlan) BoundaryBufferLen() int {
 	return total
 }
 
+// ResetRestorationPlaneRecords initializes a frame-wide unit_info-equivalent
+// record buffer for one active restoration plane. Every record starts as
+// RESTORE_NONE with geometry and stripe counts precomputed.
+func ResetRestorationPlaneRecords(grid RestorationPlaneGrid, dst []RestorationUnitRecord) error {
+	need, err := restorationPlaneRecordBufferLen(grid)
+	if err != nil {
+		return err
+	}
+	if len(dst) < need {
+		return ErrJobBufferTooSmall
+	}
+	if len(dst) != need {
+		return ErrInvalidPlan
+	}
+	index := 0
+	for row := uint16(0); row < grid.VertUnits; row++ {
+		for col := uint16(0); col < grid.HorzUnits; col++ {
+			record, err := grid.defaultRestorationUnitRecord(col, row)
+			if err != nil {
+				return err
+			}
+			dst[index] = record
+			index++
+		}
+	}
+	return nil
+}
+
+// StoreRestorationUnitRecords writes decoded superblock records into their
+// frame-wide unit_info-equivalent slots, matching libaom's runit_idx indexing.
+func StoreRestorationUnitRecords(grid RestorationPlaneGrid, dst []RestorationUnitRecord, records []RestorationUnitRecord) error {
+	need, err := restorationPlaneRecordBufferLen(grid)
+	if err != nil {
+		return err
+	}
+	if len(dst) < need {
+		return ErrJobBufferTooSmall
+	}
+	if len(dst) != need {
+		return ErrInvalidPlan
+	}
+	for i := range records {
+		if err := validateRestorationUnitRecord(grid, records[i]); err != nil {
+			return err
+		}
+		if int(records[i].Index) >= len(dst) {
+			return ErrInvalidPlan
+		}
+		dst[records[i].Index] = records[i]
+	}
+	return nil
+}
+
 func (g RestorationPlaneGrid) UnitsInSuperblock(miCol uint32, miRow uint32, sbSizeMIB uint8) (RestorationUnitRange, bool, error) {
 	if g.Type == parser.RestorationNone {
 		return RestorationUnitRange{}, false, nil
@@ -239,29 +292,50 @@ func (s *DecodeState) ReadRestorationUnitsForSuperblock(grid RestorationPlaneGri
 	count := 0
 	for row := unitRange.Row0; row < unitRange.Row1; row++ {
 		for col := unitRange.Col0; col < unitRange.Col1; col++ {
-			rect, err := grid.UnitRect(col, row)
+			record, err := s.readRestorationUnitRecord(grid, col, row, refs, cdfs)
 			if err != nil {
 				return 0, err
 			}
-			stripeCount, err := grid.ProcessingStripeCount(rect)
-			if err != nil || stripeCount > int(^uint8(0)) {
-				if err != nil {
-					return 0, err
-				}
+			dst[count] = record
+			count++
+		}
+	}
+	return count, nil
+}
+
+// ReadRestorationUnitsForSuperblockInto decodes the restoration units whose
+// top-left corners belong to one superblock and writes them into a frame-wide
+// unit_info-equivalent buffer by record index.
+func (s *DecodeState) ReadRestorationUnitsForSuperblockInto(grid RestorationPlaneGrid, miCol uint32, miRow uint32, sbSizeMIB uint8, dst []RestorationUnitRecord, refs *RestorationReferences, cdfs RestorationCDFs) (int, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	unitRange, ok, err := grid.UnitsInSuperblock(miCol, miRow, sbSizeMIB)
+	if err != nil || !ok {
+		return 0, err
+	}
+	need, err := restorationPlaneRecordBufferLen(grid)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < need {
+		return 0, ErrJobBufferTooSmall
+	}
+	if len(dst) != need {
+		return 0, ErrInvalidPlan
+	}
+
+	count := 0
+	for row := unitRange.Row0; row < unitRange.Row1; row++ {
+		for col := unitRange.Col0; col < unitRange.Col1; col++ {
+			record, err := s.readRestorationUnitRecord(grid, col, row, refs, cdfs)
+			if err != nil {
+				return 0, err
+			}
+			if int(record.Index) >= len(dst) {
 				return 0, ErrInvalidPlan
 			}
-			unit, err := s.ReadRestorationUnit(grid.Type, int(grid.Plane), refs, cdfs)
-			if err != nil {
-				return 0, err
-			}
-			dst[count] = RestorationUnitRecord{
-				Index:       uint32(row)*uint32(grid.HorzUnits) + uint32(col),
-				Col:         col,
-				Row:         row,
-				Rect:        rect,
-				StripeCount: uint8(stripeCount),
-				Unit:        unit,
-			}
+			dst[record.Index] = record
 			count++
 		}
 	}
@@ -301,6 +375,53 @@ func countRestorationUnits(unitSize uint32, planeSize uint32) uint16 {
 func ceilDivScaled(v uint32, multiplier int, denominator int) uint32 {
 	num := uint64(v)*uint64(multiplier) + uint64(denominator-1)
 	return uint32(num / uint64(denominator))
+}
+
+func (s *DecodeState) readRestorationUnitRecord(grid RestorationPlaneGrid, col uint16, row uint16, refs *RestorationReferences, cdfs RestorationCDFs) (RestorationUnitRecord, error) {
+	record, err := grid.defaultRestorationUnitRecord(col, row)
+	if err != nil {
+		return RestorationUnitRecord{}, err
+	}
+	record.Unit, err = s.ReadRestorationUnit(grid.Type, int(grid.Plane), refs, cdfs)
+	if err != nil {
+		return RestorationUnitRecord{}, err
+	}
+	return record, nil
+}
+
+func (g RestorationPlaneGrid) defaultRestorationUnitRecord(col uint16, row uint16) (RestorationUnitRecord, error) {
+	if !g.validGeometry() || col >= g.HorzUnits || row >= g.VertUnits {
+		return RestorationUnitRecord{}, ErrInvalidPlan
+	}
+	rect, err := g.UnitRect(col, row)
+	if err != nil {
+		return RestorationUnitRecord{}, err
+	}
+	stripeCount, err := g.ProcessingStripeCount(rect)
+	if err != nil || stripeCount > int(^uint8(0)) {
+		if err != nil {
+			return RestorationUnitRecord{}, err
+		}
+		return RestorationUnitRecord{}, ErrInvalidPlan
+	}
+	return RestorationUnitRecord{
+		Index:       uint32(row)*uint32(g.HorzUnits) + uint32(col),
+		Col:         col,
+		Row:         row,
+		Rect:        rect,
+		StripeCount: uint8(stripeCount),
+		Unit:        RestorationUnit{Type: parser.RestorationNone},
+	}, nil
+}
+
+func restorationPlaneRecordBufferLen(grid RestorationPlaneGrid) (int, error) {
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return 0, ErrInvalidPlan
+		}
+		return 0, nil
+	}
+	return grid.UnitRecordLen()
 }
 
 func roundPowerOfTwoUint32(v uint32, bits uint8) uint32 {

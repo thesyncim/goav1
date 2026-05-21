@@ -234,6 +234,114 @@ func TestReadRestorationUnitsForSuperblockRejectsShortBuffer(t *testing.T) {
 	}
 }
 
+func TestResetRestorationPlaneRecordsMatchesUnitInfoSlots(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 64,
+	}
+	size := parser.FrameSize{UpscaledWidth: 128, Height: 128, SuperResDenominator: 8}
+	grid, err := BuildRestorationPlaneGrid(params, size, parser.ColorConfig{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := make([]RestorationUnitRecord, 4)
+	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+	want := [4]RestorationUnitRecord{
+		{Index: 0, Col: 0, Row: 0, Rect: RestorationUnitRect{X0: 0, Y0: 0, X1: 64, Y1: 56}, StripeCount: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 1, Col: 1, Row: 0, Rect: RestorationUnitRect{X0: 64, Y0: 0, X1: 128, Y1: 56}, StripeCount: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 2, Col: 0, Row: 1, Rect: RestorationUnitRect{X0: 0, Y0: 56, X1: 64, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 3, Col: 1, Row: 1, Rect: RestorationUnitRect{X0: 64, Y0: 56, X1: 128, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
+	}
+	for i := range records {
+		if records[i] != want[i] {
+			t.Fatalf("record[%d]=%+v want %+v", i, records[i], want[i])
+		}
+	}
+}
+
+func TestStoreRestorationUnitRecordsWritesByIndex(t *testing.T) {
+	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 64, 128, 128)
+	records := make([]RestorationUnitRecord, 4)
+	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+	updates := []RestorationUnitRecord{records[3], records[1]}
+	updates[0].Unit.Type = parser.RestorationWiener
+	updates[1].Unit.Type = parser.RestorationWiener
+	if err := StoreRestorationUnitRecords(grid, records, updates); err != nil {
+		t.Fatal(err)
+	}
+	if records[0].Unit.Type != parser.RestorationNone ||
+		records[1].Unit.Type != parser.RestorationWiener ||
+		records[2].Unit.Type != parser.RestorationNone ||
+		records[3].Unit.Type != parser.RestorationWiener {
+		t.Fatalf("records=%+v", records)
+	}
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadRestorationUnitsForSuperblockIntoWritesFrameSlots(t *testing.T) {
+	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 128, 384, 192)
+	records := make([]RestorationUnitRecord, 6)
+	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+	records[1].Unit.Type = parser.RestorationWiener
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initRestorationCDFs(t)
+	refs := DefaultRestorationReferences()
+
+	n, err := state.ReadRestorationUnitsForSuperblockInto(grid, 0, 0, 16, records, &refs, cdfs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("n=%d", n)
+	}
+	if records[0].Unit.Type != parser.RestorationNone || records[1].Unit.Type != parser.RestorationWiener {
+		t.Fatalf("records[0]=%+v records[1]=%+v", records[0], records[1])
+	}
+}
+
+func TestRestorationPlaneRecordBuffersRejectInvalidInputs(t *testing.T) {
+	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 64, 128, 128)
+	records := make([]RestorationUnitRecord, 4)
+	if err := ResetRestorationPlaneRecords(grid, records[:3]); !errors.Is(err, ErrJobBufferTooSmall) {
+		t.Fatalf("short reset err=%v want %v", err, ErrJobBufferTooSmall)
+	}
+	if err := ResetRestorationPlaneRecords(grid, append(records, RestorationUnitRecord{})); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("long reset err=%v want %v", err, ErrInvalidPlan)
+	}
+	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
+		t.Fatal(err)
+	}
+	bad := records[0]
+	bad.Index = 99
+	if err := StoreRestorationUnitRecords(grid, records, []RestorationUnitRecord{bad}); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad store err=%v want %v", err, ErrInvalidPlan)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initRestorationCDFs(t)
+	refs := DefaultRestorationReferences()
+	_, err := state.ReadRestorationUnitsForSuperblockInto(grid, 0, 0, 32, records[:3], &refs, cdfs)
+	if !errors.Is(err, ErrJobBufferTooSmall) {
+		t.Fatalf("short read-into err=%v want %v", err, ErrJobBufferTooSmall)
+	}
+}
+
 func TestRestorationScheduleAllocs(t *testing.T) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -270,6 +378,41 @@ func TestRestorationScheduleAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("restoration schedule allocated: %f", allocs)
+	}
+}
+
+func TestRestorationPlaneRecordBufferAllocs(t *testing.T) {
+	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 64, 128, 128)
+	var records [4]RestorationUnitRecord
+	payload := []byte{0x00}
+	var state DecodeState
+	var switchable entropy.CDF
+	var wiener entropy.CDF
+	var sgr entropy.CDF
+	cdfs := RestorationCDFs{Switchable: &switchable, Wiener: &wiener, SGRProj: &sgr}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ResetRestorationPlaneRecords(grid, records[:]); err != nil {
+			t.Fatal(err)
+		}
+		updates := records[1:3]
+		updates[0].Unit.Type = parser.RestorationWiener
+		if err := StoreRestorationUnitRecords(grid, records[:], updates); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Reset(payload, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := InitDefaultRestorationCDFs(cdfs); err != nil {
+			t.Fatal(err)
+		}
+		refs := DefaultRestorationReferences()
+		if _, err := state.ReadRestorationUnitsForSuperblockInto(grid, 0, 0, 32, records[:], &refs, cdfs); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("restoration record buffer allocated: %f", allocs)
 	}
 }
 
@@ -403,6 +546,41 @@ func FuzzBuildRestorationFramePlan(f *testing.F) {
 	})
 }
 
+func FuzzRestorationPlaneRecordBuffer(f *testing.F) {
+	f.Add(uint16(128), uint16(128), uint8(0), uint8(0), uint8(1), uint8(4))
+	f.Add(uint16(384), uint16(192), uint8(1), uint8(2), uint8(3), uint8(2))
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawType uint8, rawUnit uint8, rawIndex uint8, rawCount uint8) {
+		types := [...]parser.RestorationType{
+			parser.RestorationSwitchable,
+			parser.RestorationWiener,
+			parser.RestorationSGRProj,
+		}
+		unitSizes := [...]uint16{64, 128, 256}
+		grid := testRestorationScheduleGrid(t, types[rawType%uint8(len(types))], unitSizes[rawUnit%uint8(len(unitSizes))], uint32(rawW%512)+1, uint32(rawH%512)+1)
+		need, err := grid.UnitRecordLen()
+		if err != nil {
+			t.Fatalf("UnitRecordLen err=%v", err)
+		}
+		records := make([]RestorationUnitRecord, need)
+		if err := ResetRestorationPlaneRecords(grid, records); err != nil {
+			t.Fatalf("ResetRestorationPlaneRecords err=%v", err)
+		}
+		updates := make([]RestorationUnitRecord, 0, int(rawCount%5))
+		for i := 0; i < int(rawCount%5); i++ {
+			index := (int(rawIndex) + i*7) % len(records)
+			record := records[index]
+			record.Unit.Type = fuzzRestorationUnitType(grid.Type, rawType+uint8(i))
+			updates = append(updates, record)
+		}
+		if err := StoreRestorationUnitRecords(grid, records, updates); err != nil {
+			t.Fatalf("StoreRestorationUnitRecords err=%v", err)
+		}
+		if err := validateRestorationPlaneRecords(grid, records); err != nil {
+			t.Fatalf("validateRestorationPlaneRecords err=%v", err)
+		}
+	})
+}
+
 func BenchmarkReadRestorationUnitsForSuperblock(b *testing.B) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -431,5 +609,38 @@ func BenchmarkReadRestorationUnitsForSuperblock(b *testing.B) {
 		}
 		refs := DefaultRestorationReferences()
 		_, _ = state.ReadRestorationUnitsForSuperblock(grid, 0, 0, 32, records[:], &refs, cdfs)
+	}
+}
+
+func testRestorationScheduleGrid(tb testing.TB, typ parser.RestorationType, unitSize uint16, width uint32, height uint32) RestorationPlaneGrid {
+	tb.Helper()
+	params := parser.RestorationParams{
+		Type:      [3]parser.RestorationType{typ},
+		UnitSizeY: unitSize,
+	}
+	grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{UpscaledWidth: width, Height: height, SuperResDenominator: 8}, parser.ColorConfig{}, 0)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return grid
+}
+
+func fuzzRestorationUnitType(frameType parser.RestorationType, raw uint8) parser.RestorationType {
+	switch frameType {
+	case parser.RestorationSwitchable:
+		types := [...]parser.RestorationType{parser.RestorationNone, parser.RestorationWiener, parser.RestorationSGRProj}
+		return types[raw%uint8(len(types))]
+	case parser.RestorationWiener:
+		if raw&1 == 0 {
+			return parser.RestorationNone
+		}
+		return parser.RestorationWiener
+	case parser.RestorationSGRProj:
+		if raw&1 == 0 {
+			return parser.RestorationNone
+		}
+		return parser.RestorationSGRProj
+	default:
+		return parser.RestorationNone
 	}
 }
