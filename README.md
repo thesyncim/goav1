@@ -72,7 +72,8 @@ The initial implementation covers:
 - Caller-buffer decoder surface-reference tracking for AV1 refresh and
   show-existing-frame updates.
 - Caller-buffer frame plane layout and binding primitives.
-- Caller-owned deterministic frame pools for reusable decode surfaces.
+- Caller-owned deterministic frame pools for reusable and retained decode
+  surfaces.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 

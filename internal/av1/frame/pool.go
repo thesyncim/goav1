@@ -63,6 +63,16 @@ func (p *Pool) Available() int {
 	return p.top
 }
 
+func (p *Pool) Frame(index int) (*Frame, error) {
+	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
+		return nil, ErrInvalidPool
+	}
+	if index < 0 || index >= len(p.frames) || !p.used[index] {
+		return nil, ErrInvalidSlot
+	}
+	return &p.frames[index], nil
+}
+
 func (p *Pool) Acquire() (int, *Frame, error) {
 	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
 		return -1, nil, ErrInvalidPool

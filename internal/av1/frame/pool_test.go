@@ -71,6 +71,50 @@ func TestBindPoolAcquireRelease(t *testing.T) {
 	}
 }
 
+func TestFramePoolFrame(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*2)
+	var frames [2]Frame
+	var free [2]int
+	var used [2]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Frame(0); !errors.Is(err, ErrInvalidSlot) {
+		t.Fatalf("free Frame err=%v want %v", err, ErrInvalidSlot)
+	}
+
+	index, acquired, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired.Y.Pix[0] = 0x55
+
+	retained, err := pool.Frame(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained != acquired || retained.Y.Pix[0] != 0x55 {
+		t.Fatalf("retained=%p acquired=%p value=%x", retained, acquired, retained.Y.Pix[0])
+	}
+
+	if err := pool.Release(index); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Frame(index); !errors.Is(err, ErrInvalidSlot) {
+		t.Fatalf("released Frame err=%v want %v", err, ErrInvalidSlot)
+	}
+	if _, err := pool.Frame(-1); !errors.Is(err, ErrInvalidSlot) {
+		t.Fatalf("negative Frame err=%v want %v", err, ErrInvalidSlot)
+	}
+}
+
 func TestBindPoolRejectsBadStorage(t *testing.T) {
 	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
 	layout, err := RequiredSize(format)
@@ -144,6 +188,9 @@ func TestFramePoolAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		index, _, err := pool.Acquire()
 		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Frame(index); err != nil {
 			t.Fatal(err)
 		}
 		if err := pool.Release(index); err != nil {
