@@ -3,6 +3,8 @@ package entropy
 import "errors"
 
 var (
-	ErrInvalidCDF    = errors.New("entropy: invalid cdf")
-	ErrInvalidSymbol = errors.New("entropy: invalid symbol")
+	ErrInvalidBitCount    = errors.New("entropy: invalid bit count")
+	ErrInvalidCDF         = errors.New("entropy: invalid cdf")
+	ErrInvalidProbability = errors.New("entropy: invalid probability")
+	ErrInvalidSymbol      = errors.New("entropy: invalid symbol")
 )

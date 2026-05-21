@@ -54,7 +54,7 @@ func ValidateCDF(cdf []uint16, symbols int) error {
 		return ErrInvalidCDF
 	}
 	for i := 0; i < symbols-1; i++ {
-		if cdf[i] > CDFProbTop || cdf[i] < cdf[i+1] {
+		if cdf[i] >= CDFProbTop || cdf[i] < cdf[i+1] {
 			return ErrInvalidCDF
 		}
 	}

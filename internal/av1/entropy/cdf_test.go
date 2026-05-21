@@ -97,6 +97,7 @@ func TestRejectsInvalidCDF(t *testing.T) {
 		{name: "count too large", cdf: []uint16{16384, 0, MaxCDFCount + 1}, symbols: 2},
 		{name: "missing terminal zero", cdf: []uint16{16384, 1, 0}, symbols: 2},
 		{name: "increasing inverse cdf", cdf: []uint16{100, 200, 0, 0}, symbols: 3},
+		{name: "top inverse cdf", cdf: []uint16{CDFProbTop, 0, 0}, symbols: 2},
 	}
 
 	for _, tt := range tests {
