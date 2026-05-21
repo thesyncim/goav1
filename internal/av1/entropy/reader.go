@@ -259,6 +259,45 @@ func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	return r.ReadSymbol(cdf.Values(), cdf.Symbols())
 }
 
+// ReadSignedDelta decodes the AV1 CDF-coded signed delta core used by
+// delta_qindex and delta_lflevel tile syntax.
+func (r *Reader) ReadSignedDelta(cdf *CDF, small int) (int, error) {
+	if small <= 0 || small >= MaxSymbols {
+		return 0, ErrInvalidRange
+	}
+	if cdf == nil || cdf.Symbols() != small+1 {
+		return 0, ErrInvalidCDF
+	}
+
+	abs, err := r.ReadCDF(cdf)
+	if err != nil {
+		return 0, err
+	}
+	if abs >= small {
+		remBits, err := r.ReadBits(3)
+		if err != nil {
+			return 0, err
+		}
+		remBits++
+		tail, err := r.ReadBits(uint8(remBits))
+		if err != nil {
+			return 0, err
+		}
+		abs = int(tail + (uint32(1) << remBits) + 1)
+	}
+	if abs == 0 {
+		return 0, nil
+	}
+	sign, err := r.ReadBit()
+	if err != nil {
+		return 0, err
+	}
+	if sign != 0 {
+		return -abs, nil
+	}
+	return abs, nil
+}
+
 func (r *Reader) normalize(dif uint32, rng uint32) {
 	shift := 16 - bits.Len32(rng)
 	r.cnt -= shift

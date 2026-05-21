@@ -5,6 +5,9 @@ const (
 	CDFProbTop  = 1 << CDFProbBits
 	MaxSymbols  = 16
 	MaxCDFCount = 32
+
+	// DeltaSmall is the AV1 DELTA_Q_SMALL/DELTA_LF_SMALL threshold.
+	DeltaSmall = 3
 )
 
 // CDF is caller-owned AV1 inverse-CDF state with fixed backing storage.
@@ -106,6 +109,14 @@ func (c *CDF) InitUniform(symbols int) error {
 	next.symbols = uint8(symbols)
 	*c = next
 	return nil
+}
+
+// InitDefaultDelta seeds the default AV1 delta-q/delta-lf CDF.
+func (c *CDF) InitDefaultDelta() error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	return c.Init([]uint16{28160, 32120, 32677})
 }
 
 // Reset clears c to the zero invalid state.

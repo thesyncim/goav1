@@ -19,6 +19,7 @@ fuzz-smoke:
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzUpdateCDF
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzCDFState
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzReaderBinarySymbol
+	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzReaderSignedDelta
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzReaderUniformSubexp
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseSequenceHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseFrameHeaderPrefix

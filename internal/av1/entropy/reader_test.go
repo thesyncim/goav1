@@ -169,6 +169,45 @@ func TestReaderReadCDF(t *testing.T) {
 	}
 }
 
+func TestReaderReadSignedDeltaZero(t *testing.T) {
+	var cdf CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		t.Fatal(err)
+	}
+	r := NewReader([]byte{0x00})
+	delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta != 0 {
+		t.Fatalf("delta=%d want 0", delta)
+	}
+	want := []uint16{4464, 628, 89, 0, 1}
+	for i := 0; i < len(want); i++ {
+		if cdf.Values()[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
+		}
+	}
+}
+
+func TestReaderReadSignedDeltaExtendedTail(t *testing.T) {
+	var cdf CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		t.Fatal(err)
+	}
+	r := NewReader([]byte{0xff, 0xff, 0xff})
+	delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta > -DeltaSmall && delta < DeltaSmall {
+		t.Fatalf("delta=%d did not use extended tail", delta)
+	}
+	if err := cdf.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReaderReadSymbolCanDisableCDFUpdate(t *testing.T) {
 	cdf := []uint16{16384, 0, 0}
 	r := NewReaderWithCDFUpdate([]byte{0xff}, false)
@@ -247,15 +286,38 @@ func TestReaderRejectsInvalidInputs(t *testing.T) {
 	if _, err := r.ReadCDF(&cdf); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("ReadCDF zero err=%v want %v", err, ErrInvalidCDF)
 	}
+	if _, err := r.ReadSignedDelta(nil, DeltaSmall); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("ReadSignedDelta nil err=%v want %v", err, ErrInvalidCDF)
+	}
+	if _, err := r.ReadSignedDelta(&cdf, DeltaSmall); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("ReadSignedDelta zero err=%v want %v", err, ErrInvalidCDF)
+	}
+	var binary CDF
+	if err := binary.InitUniform(2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadSignedDelta(&binary, DeltaSmall); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("ReadSignedDelta mismatched CDF err=%v want %v", err, ErrInvalidCDF)
+	}
+	if _, err := r.ReadSignedDelta(&binary, 0); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadSignedDelta small err=%v want %v", err, ErrInvalidRange)
+	}
+	if _, err := r.ReadSignedDelta(&binary, MaxSymbols); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadSignedDelta large small err=%v want %v", err, ErrInvalidRange)
+	}
 }
 
 func TestReaderAllocs(t *testing.T) {
 	src := []byte{0xff, 0x00, 0xa5}
 	cdf := []uint16{24576, 16384, 8192, 0, 0}
 	var state CDF
+	var delta CDF
 	allocs := testing.AllocsPerRun(1000, func() {
 		r := NewReader(src)
 		if err := state.InitUniform(4); err != nil {
+			t.Fatal(err)
+		}
+		if err := delta.InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}
 		_, err := r.ReadBits(3)
@@ -267,6 +329,10 @@ func TestReaderAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = r.ReadCDF(&state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = r.ReadSignedDelta(&delta, DeltaSmall)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -351,6 +417,30 @@ func FuzzReaderBinarySymbol(f *testing.F) {
 	})
 }
 
+func FuzzReaderSignedDelta(f *testing.F) {
+	f.Add([]byte{0x00})
+	f.Add([]byte{0xff, 0xff, 0xff})
+	f.Add([]byte{0xa5, 0x5a})
+
+	f.Fuzz(func(t *testing.T, src []byte) {
+		var cdf CDF
+		if err := cdf.InitDefaultDelta(); err != nil {
+			t.Fatal(err)
+		}
+		r := NewReader(src)
+		delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
+		if err != nil {
+			t.Fatalf("ReadSignedDelta err=%v src=%x", err, src)
+		}
+		if delta < -512 || delta > 512 {
+			t.Fatalf("delta=%d out of range src=%x", delta, src)
+		}
+		if err := cdf.Validate(); err != nil {
+			t.Fatalf("Validate err=%v cdf=%v", err, cdf.Values())
+		}
+	})
+}
+
 func BenchmarkReaderReadBit(b *testing.B) {
 	src := []byte{0xff, 0x00, 0xa5, 0x5a}
 
@@ -403,5 +493,19 @@ func BenchmarkReaderReadCDF(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		r := NewReader(src)
 		_, _ = r.ReadCDF(&cdf)
+	}
+}
+
+func BenchmarkReaderReadSignedDelta(b *testing.B) {
+	src := []byte{0xff, 0x00, 0xa5, 0x5a}
+	var cdf CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadSignedDelta(&cdf, DeltaSmall)
 	}
 }

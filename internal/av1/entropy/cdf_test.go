@@ -60,6 +60,20 @@ func TestCDFStateInitUniform(t *testing.T) {
 	}
 }
 
+func TestCDFStateInitDefaultDelta(t *testing.T) {
+	var cdf CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		t.Fatal(err)
+	}
+	assertCDFValues(t, cdf.Values(), []uint16{4608, 648, 91, 0, 0})
+	if cdf.Symbols() != DeltaSmall+1 {
+		t.Fatalf("symbols=%d want %d", cdf.Symbols(), DeltaSmall+1)
+	}
+	if err := cdf.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCDFStateCopyUpdateReset(t *testing.T) {
 	var src CDF
 	if err := src.InitUniform(2); err != nil {
@@ -88,6 +102,9 @@ func TestCDFStateRejectsInvalidInputs(t *testing.T) {
 	}
 	if err := nilCDF.InitUniform(2); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("nil InitUniform err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := nilCDF.InitDefaultDelta(); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil InitDefaultDelta err=%v want %v", err, ErrInvalidCDF)
 	}
 	if err := nilCDF.Validate(); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("nil Validate err=%v want %v", err, ErrInvalidCDF)
@@ -234,6 +251,9 @@ func TestCDFStateAllocs(t *testing.T) {
 	var dst CDF
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := src.InitUniform(4); err != nil {
+			t.Fatal(err)
+		}
+		if err := src.InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}
 		if err := dst.CopyFrom(&src); err != nil {

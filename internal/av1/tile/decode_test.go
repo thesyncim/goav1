@@ -86,6 +86,32 @@ func TestDecodeStateReadSymbol(t *testing.T) {
 	}
 }
 
+func TestDecodeStateReadSignedDelta(t *testing.T) {
+	payload := []byte{0x00}
+	job := Job{Offset: 0, Size: 1, UpdatesFrameContext: true}
+	var state DecodeState
+	if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var cdf entropy.CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		t.Fatal(err)
+	}
+	delta, err := state.ReadSignedDelta(&cdf, entropy.DeltaSmall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta != 0 {
+		t.Fatalf("delta=%d want 0", delta)
+	}
+	want := []uint16{4464, 628, 89, 0, 1}
+	for i := 0; i < len(want); i++ {
+		if cdf.Values()[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
+		}
+	}
+}
+
 func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	var state DecodeState
 	err := state.Reset([]byte{0xaa}, Job{Offset: 0, Size: 2}, DecodeOptions{})
@@ -106,6 +132,19 @@ func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	if _, err := state.ReadSymbol(nil); !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("nil CDF ReadSymbol err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
+	if _, err := nilState.ReadSignedDelta(nil, entropy.DeltaSmall); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("nil ReadSignedDelta err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, err := state.ReadSignedDelta(nil, entropy.DeltaSmall); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("nil CDF ReadSignedDelta err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+	var cdf entropy.CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadSignedDelta(&cdf, 0); !errors.Is(err, entropy.ErrInvalidRange) {
+		t.Fatalf("invalid small ReadSignedDelta err=%v want %v", err, entropy.ErrInvalidRange)
+	}
 }
 
 func TestDecodeStateResetAllocs(t *testing.T) {
@@ -113,12 +152,16 @@ func TestDecodeStateResetAllocs(t *testing.T) {
 	job := Job{Offset: 1, Size: 1, UpdatesFrameContext: true}
 	var state DecodeState
 	var cdf entropy.CDF
+	var deltaCDF entropy.CDF
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := cdf.InitUniform(2); err != nil {
+			t.Fatal(err)
+		}
+		if err := deltaCDF.InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}
 		if !state.RetainFrameContext {
@@ -137,6 +180,9 @@ func TestDecodeStateResetAllocs(t *testing.T) {
 		}
 		if symbol != 1 {
 			t.Fatalf("symbol=%d want 1", symbol)
+		}
+		if _, err := state.ReadSignedDelta(&deltaCDF, entropy.DeltaSmall); err != nil {
+			t.Fatal(err)
 		}
 	})
 	if allocs != 0 {
@@ -201,5 +247,23 @@ func BenchmarkDecodeStateReadSymbol(b *testing.B) {
 			b.Fatal(err)
 		}
 		_, _ = state.ReadSymbol(&cdf)
+	}
+}
+
+func BenchmarkDecodeStateReadSignedDelta(b *testing.B) {
+	payload := []byte{0xff, 0xff, 0xff}
+	job := Job{Offset: 0, Size: 3, UpdatesFrameContext: true}
+	var state DecodeState
+	var cdf entropy.CDF
+	if err := cdf.InitDefaultDelta(); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		_, _ = state.ReadSignedDelta(&cdf, entropy.DeltaSmall)
 	}
 }

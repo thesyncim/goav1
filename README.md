@@ -37,7 +37,7 @@ The initial implementation covers:
   fields from fragmented packet payloads with caller-owned scratch.
 - AV1 entropy inverse-CDF initialization, validation, adaptation,
   caller-owned CDF state wrappers, and allocation-free range reading for tile
-  symbol, uniform, and finite-subexp decoding.
+  symbol, signed-delta, uniform, and finite-subexp decoding.
 - AV1 sequence header parsing for decoder configuration.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
