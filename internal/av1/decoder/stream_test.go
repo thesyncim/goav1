@@ -165,6 +165,48 @@ func interFrameHeaderPayload() []byte {
 	return w.bytes()
 }
 
+func interFrameHeaderPayloadWithReferenceState(update bool) []byte {
+	var w testBitWriter
+	w.writeBool(false)                            // show_existing_frame
+	w.writeBits(uint64(parser.FrameTypeInter), 2) // frame_type
+	w.writeBool(true)                             // show_frame
+	w.writeBool(false)                            // error_resilient_mode
+	w.writeBool(false)                            // disable_cdf_update
+	w.writeBool(false)                            // frame_size_override_flag
+	w.writeBits(0, 3)                             // primary_ref_frame
+	w.writeBits(0x01, 8)                          // refresh_frame_flags
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // allow_high_precision_mv
+	w.writeBool(false) // interpolation_filter is fixed
+	w.writeBits(0, 2)  // interpolation_filter = EIGHTTAP
+	w.writeBool(false) // is_motion_mode_switchable
+	w.writeBool(false) // disable_frame_end_update_cdf
+	w.writeBool(false) // uniform_tile_spacing_flag
+	writeQuantParams(&w, 40)
+	if update {
+		writeSegmentationUpdateData(&w)
+	} else {
+		writeSegmentationCopyData(&w)
+	}
+	w.writeBool(false) // delta_q_present
+	if update {
+		writeLoopFilterDeltaUpdate(&w)
+	} else {
+		writeLoopFilterDeltaCopy(&w)
+	}
+	writeMinimalCDEF(&w)
+	w.writeBool(false) // transform_mode_select
+	w.writeBool(false) // reference_select
+	w.writeBool(false) // reduced_tx_set
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBool(false) // global_motion_is_global
+	}
+	return w.bytes()
+}
+
 func showExistingFrameHeaderPayload(index uint8) []byte {
 	var w testBitWriter
 	w.writeBool(true) // show_existing_frame
@@ -173,12 +215,93 @@ func showExistingFrameHeaderPayload(index uint8) []byte {
 }
 
 func writeZeroQuantParams(w *testBitWriter) {
-	w.writeBits(0, 8)  // base_q_idx
-	w.writeBool(false) // y_dc_delta_q
-	w.writeBool(false) // diff_uv_delta
-	w.writeBool(false) // u_dc_delta_q
-	w.writeBool(false) // u_ac_delta_q
-	w.writeBool(false) // using_qmatrix
+	writeQuantParams(w, 0)
+}
+
+func writeQuantParams(w *testBitWriter, baseQIdx uint8) {
+	w.writeBits(uint64(baseQIdx), 8) // base_q_idx
+	w.writeBool(false)               // y_dc_delta_q
+	w.writeBool(false)               // diff_uv_delta
+	w.writeBool(false)               // u_dc_delta_q
+	w.writeBool(false)               // u_ac_delta_q
+	w.writeBool(false)               // using_qmatrix
+}
+
+func writeSegmentationUpdateData(w *testBitWriter) {
+	w.writeBool(true)  // segmentation_enabled
+	w.writeBool(false) // update_map
+	w.writeBool(true)  // update_data
+	w.writeBool(true)  // segment 0 delta_q enabled
+	writeSignedBits(w, 5, 9)
+	w.writeBool(false) // delta_lf_y_v
+	w.writeBool(false) // delta_lf_y_h
+	w.writeBool(false) // delta_lf_u
+	w.writeBool(false) // delta_lf_v
+	w.writeBool(false) // ref_frame
+	w.writeBool(false) // skip
+	w.writeBool(false) // globalmv
+	for i := 1; i < parser.MaxSegments; i++ {
+		writeEmptySegmentData(w)
+	}
+}
+
+func writeSegmentationCopyData(w *testBitWriter) {
+	w.writeBool(true)  // segmentation_enabled
+	w.writeBool(false) // update_map
+	w.writeBool(false) // update_data
+}
+
+func writeEmptySegmentData(w *testBitWriter) {
+	w.writeBool(false) // delta_q
+	w.writeBool(false) // delta_lf_y_v
+	w.writeBool(false) // delta_lf_y_h
+	w.writeBool(false) // delta_lf_u
+	w.writeBool(false) // delta_lf_v
+	w.writeBool(false) // ref_frame
+	w.writeBool(false) // skip
+	w.writeBool(false) // globalmv
+}
+
+func writeLoopFilterDeltaUpdate(w *testBitWriter) {
+	w.writeBits(10, 6) // loop_filter_level[0]
+	w.writeBits(0, 6)  // loop_filter_level[1]
+	w.writeBits(5, 6)  // loop_filter_level_u
+	w.writeBits(6, 6)  // loop_filter_level_v
+	w.writeBits(0, 3)  // loop_filter_sharpness
+	w.writeBool(true)  // mode_ref_delta_enabled
+	w.writeBool(true)  // mode_ref_delta_update
+	for i := 0; i < parser.RefFrames; i++ {
+		update := i == 2
+		w.writeBool(update)
+		if update {
+			writeSignedBits(w, 4, 7)
+		}
+	}
+	for i := 0; i < parser.LoopFilterModeDeltas; i++ {
+		w.writeBool(false)
+	}
+}
+
+func writeLoopFilterDeltaCopy(w *testBitWriter) {
+	w.writeBits(11, 6) // loop_filter_level[0]
+	w.writeBits(0, 6)  // loop_filter_level[1]
+	w.writeBits(5, 6)  // loop_filter_level_u
+	w.writeBits(6, 6)  // loop_filter_level_v
+	w.writeBits(0, 3)  // loop_filter_sharpness
+	w.writeBool(true)  // mode_ref_delta_enabled
+	w.writeBool(false) // mode_ref_delta_update
+}
+
+func writeMinimalCDEF(w *testBitWriter) {
+	w.writeBits(0, 2) // cdef_damping_minus_3
+	w.writeBits(0, 2) // cdef_bits
+	w.writeBits(0, 6) // cdef_y_pri_strength + cdef_y_sec_strength
+	w.writeBits(0, 6) // cdef_uv_pri_strength + cdef_uv_sec_strength
+}
+
+func writeSignedBits(w *testBitWriter, value int16, n uint8) {
+	mask := (uint64(1) << n) - 1
+	w.writeBits(uint64(uint16(value))&mask, n)
 }
 
 func writeZeroSegmentationParams(w *testBitWriter) {
@@ -524,6 +647,51 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {
 			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[3].FrameSize.RefFrameIdx[i])
 		}
+	}
+}
+
+func TestStreamCarriesReferenceFrameHeaderState(t *testing.T) {
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+
+	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+		t.Fatal(err)
+	}
+
+	updateFrame := append([]byte{}, interFrameHeaderPayloadWithReferenceState(true)...)
+	updateFrame = append(updateFrame, 0xbb)
+	updateEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, updateFrame), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updateEvent.Segmentation.Enabled || !updateEvent.Segmentation.UpdateData ||
+		updateEvent.Segmentation.Data.Segments[0].DeltaQ != 5 || updateEvent.Segmentation.QIndex[0] != 45 {
+		t.Fatalf("updated segmentation=%+v", updateEvent.Segmentation)
+	}
+	if !updateEvent.LoopFilter.ModeRefDeltaUpdate || updateEvent.LoopFilter.Deltas.Ref[2] != 4 {
+		t.Fatalf("updated loopfilter=%+v", updateEvent.LoopFilter)
+	}
+	if dec.references.Frames[0].Segmentation.Segments[0].DeltaQ != 5 ||
+		dec.references.Frames[0].LoopFilterDeltas.Ref[2] != 4 {
+		t.Fatalf("stored reference=%+v", dec.references.Frames[0])
+	}
+
+	copyFrame := append([]byte{}, interFrameHeaderPayloadWithReferenceState(false)...)
+	copyFrame = append(copyFrame, 0xcc)
+	copyEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, copyFrame), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !copyEvent.Segmentation.Enabled || copyEvent.Segmentation.UpdateData ||
+		copyEvent.Segmentation.Data.Segments[0].DeltaQ != 5 || copyEvent.Segmentation.QIndex[0] != 45 {
+		t.Fatalf("copied segmentation=%+v", copyEvent.Segmentation)
+	}
+	if copyEvent.LoopFilter.ModeRefDeltaUpdate || copyEvent.LoopFilter.Deltas.Ref[2] != 4 {
+		t.Fatalf("copied loopfilter=%+v", copyEvent.LoopFilter)
 	}
 }
 

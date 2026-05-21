@@ -66,6 +66,8 @@ The initial implementation covers:
   caller-owned spans, jobs, and batches.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - AV1 show-existing-frame decoder events with reference-state validation.
+- Decoder reference-state carryover for segmentation data and loop-filter
+  deltas.
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable decode surfaces.
 - AV1 header-derived frame formats, including monochrome surface layout.

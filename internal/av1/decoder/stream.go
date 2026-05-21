@@ -219,7 +219,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
-			segmentation, err := parser.ParseSegmentationParams(unit.Payload, frameHeader, quant, nil)
+			segmentation, err := parser.ParseSegmentationParams(unit.Payload, frameHeader, quant, s.previousSegmentationData(frameHeader, frameSize))
 			if err != nil {
 				return Event{}, err
 			}
@@ -227,7 +227,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if err != nil {
 				return Event{}, err
 			}
-			loopFilter, err := parser.ParseLoopFilterParams(unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, nil)
+			loopFilter, err := parser.ParseLoopFilterParams(unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, s.previousLoopFilterDeltas(frameHeader, frameSize))
 			if err != nil {
 				return Event{}, err
 			}
@@ -277,7 +277,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.GlobalMotion = globalMotion
 			event.FilmGrain = filmGrain
 			event.TileGroup = tileGroup
-			s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
+			s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 			s.tileInfo = tileInfo
 			s.nextTile = tileGroup.NextTile
 			s.haveFrameHeader = !tileGroup.Final
@@ -353,7 +353,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	segmentation, err := parser.ParseSegmentationParams(event.Unit.Payload, frameHeader, quant, nil)
+	segmentation, err := parser.ParseSegmentationParams(event.Unit.Payload, frameHeader, quant, s.previousSegmentationData(frameHeader, frameSize))
 	if err != nil {
 		return Event{}, err
 	}
@@ -361,7 +361,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	loopFilter, err := parser.ParseLoopFilterParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, nil)
+	loopFilter, err := parser.ParseLoopFilterParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, s.previousLoopFilterDeltas(frameHeader, frameSize))
 	if err != nil {
 		return Event{}, err
 	}
@@ -406,7 +406,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	event.FrameMode = frameMode
 	event.GlobalMotion = globalMotion
 	event.FilmGrain = filmGrain
-	s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
+	s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 	s.tileInfo = tileInfo
 	s.nextTile = 0
 	s.haveFrameHeader = true
@@ -448,6 +448,36 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 		}
 	}
 	return event, nil
+}
+
+func (s *Stream) previousSegmentationData(prefix parser.FrameHeaderPrefix, size parser.FrameSize) *parser.SegmentationData {
+	if prefix.PrimaryRefFrame == parser.PrimaryRefNone || prefix.PrimaryRefFrame >= parser.InterRefsPerFrame {
+		return nil
+	}
+	slot := size.RefFrameIdx[prefix.PrimaryRefFrame]
+	if slot >= parser.RefFrames {
+		return nil
+	}
+	ref := &s.references.Frames[slot]
+	if !ref.Valid {
+		return nil
+	}
+	return &ref.Segmentation
+}
+
+func (s *Stream) previousLoopFilterDeltas(prefix parser.FrameHeaderPrefix, size parser.FrameSize) *parser.LoopFilterDeltas {
+	if prefix.PrimaryRefFrame == parser.PrimaryRefNone || prefix.PrimaryRefFrame >= parser.InterRefsPerFrame {
+		return nil
+	}
+	slot := size.RefFrameIdx[prefix.PrimaryRefFrame]
+	if slot >= parser.RefFrames {
+		return nil
+	}
+	ref := &s.references.Frames[slot]
+	if !ref.Valid {
+		return nil
+	}
+	return &ref.LoopFilterDeltas
 }
 
 func sameSequenceExceptOperatingParameters(a parser.SequenceHeader, b parser.SequenceHeader) bool {

@@ -16,8 +16,11 @@ type ReferenceFrame struct {
 
 	ShowableFrame bool
 	Size          FrameSize
-	GlobalMotion  GlobalMotionParams
-	FilmGrain     FilmGrainParams
+
+	Segmentation     SegmentationData
+	LoopFilterDeltas LoopFilterDeltas
+	GlobalMotion     GlobalMotionParams
+	FilmGrain        FilmGrainParams
 }
 
 // ReferenceState is caller-owned decoder reference metadata used while parsing
@@ -39,22 +42,34 @@ func (s *ReferenceState) UpdateWithGlobalMotion(prefix FrameHeaderPrefix, size F
 }
 
 func (s *ReferenceState) UpdateWithFrameState(prefix FrameHeaderPrefix, size FrameSize, globalMotion GlobalMotionParams, filmGrain FilmGrainParams) {
+	s.UpdateWithDecodeState(prefix, size, defaultSegmentationData(), defaultLoopFilterDeltas(), globalMotion, filmGrain)
+}
+
+func (s *ReferenceState) UpdateWithDecodeState(prefix FrameHeaderPrefix, size FrameSize, segmentation SegmentationData, loopFilter LoopFilterDeltas, globalMotion GlobalMotionParams, filmGrain FilmGrainParams) {
 	if prefix.ShowExistingFrame {
 		return
 	}
 	ref := ReferenceFrame{
-		Valid:         true,
-		FrameID:       prefix.FrameID,
-		OrderHint:     prefix.OrderHint,
-		FrameType:     prefix.FrameType,
-		ShowableFrame: prefix.ShowableFrame,
-		Size:          size,
-		GlobalMotion:  globalMotion,
-		FilmGrain:     filmGrain,
+		Valid:            true,
+		FrameID:          prefix.FrameID,
+		OrderHint:        prefix.OrderHint,
+		FrameType:        prefix.FrameType,
+		ShowableFrame:    prefix.ShowableFrame,
+		Size:             size,
+		Segmentation:     segmentation,
+		LoopFilterDeltas: loopFilter,
+		GlobalMotion:     globalMotion,
+		FilmGrain:        filmGrain,
 	}
 	for i := 0; i < RefFrames; i++ {
 		if (size.RefreshFrameFlags & (1 << uint(i))) != 0 {
 			s.Frames[i] = ref
 		}
 	}
+}
+
+func defaultSegmentationData() SegmentationData {
+	var data SegmentationData
+	clearSegmentationRefs(&data)
+	return data
 }
