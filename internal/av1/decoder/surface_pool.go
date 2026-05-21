@@ -15,6 +15,25 @@ func AcquireFrameSurface(pool *frame.Pool, sequence parser.SequenceHeader, size 
 	return pool.AcquireFormat(format)
 }
 
+// BeginFrameSurface resolves inter-frame references and acquires the output
+// frame surface for a frame-header or frame event. Reference output is written
+// before the pool slot is acquired, so invalid references leave the pool
+// untouched.
+func BeginFrameSurface(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, references []int) (int, *frame.Frame, int, error) {
+	if event.Kind != EventFrameHeader && event.Kind != EventFrame {
+		return -1, nil, 0, ErrInvalidSurfaceEvent
+	}
+	refCount, err := refs.FrameReferences(event, references)
+	if err != nil {
+		return -1, nil, 0, err
+	}
+	surface, output, err := AcquireFrameSurface(pool, sequence, event.FrameSize, align)
+	if err != nil {
+		return -1, nil, 0, err
+	}
+	return surface, output, refCount, nil
+}
+
 func frameFormatFromHeaders(sequence parser.SequenceHeader, size parser.FrameSize, align int) (frame.Format, error) {
 	if size.CodedWidth == 0 || size.Height == 0 || sequence.ColorConfig.BitDepth == 0 {
 		return frame.Format{}, frame.ErrInvalidFormat

@@ -69,6 +69,112 @@ func TestAcquireFrameSurfaceRejectsFormatMismatch(t *testing.T) {
 	}
 }
 
+func TestBeginFrameSurfaceIntra(t *testing.T) {
+	pool := testFramePool(t, 1)
+	surface, output, refCount, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if surface != 0 || output == nil || refCount != 0 {
+		t.Fatalf("surface=%d output=%p refCount=%d", surface, output, refCount)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("available=%d want 0", pool.Available())
+	}
+}
+
+func TestBeginFrameSurfaceInter(t *testing.T) {
+	pool := testFramePool(t, parser.RefFrames+1)
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	for i := 0; i < parser.RefFrames; i++ {
+		index, _, err := pool.Acquire()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index != i {
+			t.Fatalf("reference acquire index=%d want %d", index, i)
+		}
+		if _, err := refs.Refresh(1<<uint(i), index, releases[:]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var references [parser.InterRefsPerFrame]int
+	surface, output, refCount, err := BeginFrameSurface(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+		FrameSize: parser.FrameSize{
+			CodedWidth:  16,
+			Height:      16,
+			RefFrameIdx: [parser.InterRefsPerFrame]uint8{0, 1, 2, 3, 4, 5, 6},
+		},
+	}, 32, references[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if surface != parser.RefFrames || output == nil || refCount != parser.InterRefsPerFrame {
+		t.Fatalf("surface=%d output=%p refCount=%d", surface, output, refCount)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if references[i] != i {
+			t.Fatalf("references[%d]=%d want %d", i, references[i], i)
+		}
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("available=%d want 0", pool.Available())
+	}
+}
+
+func TestBeginFrameSurfaceRejectsReferencesBeforeAcquire(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	_, _, _, err := BeginFrameSurface(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil)
+	if !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("BeginFrameSurface err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("reference failure consumed a slot, available=%d", pool.Available())
+	}
+}
+
+func TestBeginFrameSurfaceRejectsFormatBeforeAcquire(t *testing.T) {
+	pool := testFramePool(t, 1)
+	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(32, 16),
+	}, 32, nil)
+	if !errors.Is(err, frame.ErrInvalidFormat) {
+		t.Fatalf("BeginFrameSurface err=%v want %v", err, frame.ErrInvalidFormat)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("format failure consumed a slot, available=%d", pool.Available())
+	}
+}
+
+func TestBeginFrameSurfaceRejectsTileGroup(t *testing.T) {
+	pool := testFramePool(t, 1)
+	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+		Kind:      EventTileGroup,
+		FrameSize: testFrameSize(16, 16),
+	}, 32, nil)
+	if !errors.Is(err, ErrInvalidSurfaceEvent) {
+		t.Fatalf("BeginFrameSurface err=%v want %v", err, ErrInvalidSurfaceEvent)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("invalid event consumed a slot, available=%d", pool.Available())
+	}
+}
+
 func TestFinishFrameSurfaceRejectsPoolReleaseAtomically(t *testing.T) {
 	pool := testFramePool(t, 2)
 	index0, _, err := pool.Acquire()
@@ -151,15 +257,20 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 	event := finalFrameEvent(0xff)
 	sequence := testSequence()
 	size := testFrameSize(16, 16)
+	beginEvent := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   size,
+	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()
 		refs.Reset()
-		index0, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
+		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		index1, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
+		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,6 +304,28 @@ func BenchmarkAcquireFrameSurface(b *testing.B) {
 	}
 }
 
+func BenchmarkBeginFrameSurface(b *testing.B) {
+	pool := benchmarkFramePool(b, 1)
+	sequence := testSequence()
+	event := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		surface, _, _, err := BeginFrameSurface(nil, &pool, sequence, event, 32, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := pool.Release(surface); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkFinishFrameSurface(b *testing.B) {
 	pool := benchmarkFramePool(b, 2)
 	var refs SurfaceReferences
@@ -200,16 +333,21 @@ func BenchmarkFinishFrameSurface(b *testing.B) {
 	event := finalFrameEvent(0xff)
 	sequence := testSequence()
 	size := testFrameSize(16, 16)
+	beginEvent := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   size,
+	}
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		pool.Reset()
 		refs.Reset()
-		index0, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
+		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
-		index1, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
+		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

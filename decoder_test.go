@@ -26,16 +26,30 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	}}
 	size := FrameSize{CodedWidth: 16, Height: 16}
 
-	index0, _, err := DecoderAcquireFrameSurface(&pool, sequence, size, 32)
+	var refs DecoderSurfaceReferences
+	index0, _, refs0, err := DecoderBeginFrameSurface(&refs, &pool, sequence, DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   size,
+	}, 32, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	index1, _, err := DecoderAcquireFrameSurface(&pool, sequence, size, 32)
+	if refs0 != 0 {
+		t.Fatalf("refs0=%d want 0", refs0)
+	}
+	index1, _, refs1, err := DecoderBeginFrameSurface(&refs, &pool, sequence, DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   size,
+	}, 32, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if refs1 != 0 {
+		t.Fatalf("refs1=%d want 0", refs1)
 	}
 
-	var refs DecoderSurfaceReferences
 	var releases [RefFrames]int
 	if _, err := refs.Refresh(0xff, index0, releases[:]); err != nil {
 		t.Fatal(err)

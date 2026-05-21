@@ -64,6 +64,10 @@ func DecoderAcquireFrameSurface(pool *FramePool, sequence SequenceHeader, size F
 	return internaldecoder.AcquireFrameSurface(pool, sequence, size, align)
 }
 
+func DecoderBeginFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, sequence SequenceHeader, event DecoderEvent, align int, references []int) (int, *Frame, int, error) {
+	return internaldecoder.BeginFrameSurface(refs, pool, sequence, event, align, references)
+}
+
 func DecoderFinishFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, event DecoderEvent, surface int, releases []int) (int, error) {
 	return internaldecoder.FinishFrameSurface(refs, pool, event, surface, releases)
 }
