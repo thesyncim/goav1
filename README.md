@@ -35,6 +35,8 @@ The initial implementation covers:
 - Caller-buffer AV1 RTP depacketization into complete OBU spans.
 - WebRTC-compatible RTP frame assembly that restores low-overhead OBU size
   fields from fragmented packet payloads with caller-owned scratch.
+- AV1 entropy inverse-CDF initialization, validation, and adaptation helpers
+  for tile symbol decoding.
 - AV1 sequence header parsing for decoder configuration.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
