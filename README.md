@@ -100,6 +100,8 @@ The initial implementation covers:
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable and retained decode
   surfaces, including format-checked acquire and atomic batch release.
+- Pure-Go DSP plane-block fill, copy, and clipped residual-add primitives for
+  reconstruction reference paths.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
