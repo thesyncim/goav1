@@ -37,6 +37,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateReset
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateBlockDeltas
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzPlaneBlockOps
+	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzMinMaxAbsDiff8x8
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzPredictIntraPlaneBlock
 	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlock
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
