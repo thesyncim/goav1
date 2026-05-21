@@ -46,6 +46,13 @@ type FrameWorkState struct {
 	active bool
 }
 
+// EventDropsFrameWork reports whether a stream event implies that any active
+// incomplete frame work should be discarded. This matches Stream's pending
+// frame reset points.
+func EventDropsFrameWork(event Event) bool {
+	return event.NewCodedVideoSequence || event.NewTemporalUnit
+}
+
 // Active reports whether a frame has begun and not yet been finished, aborted,
 // or reset.
 func (s *FrameWorkState) Active() bool {
@@ -113,6 +120,19 @@ func (s *FrameWorkState) Abort(pool *frame.Pool) error {
 	}
 	s.Reset()
 	return nil
+}
+
+// AbortIfEventDropsFrameWork aborts active frame work when event marks a
+// stream boundary that invalidates incomplete frame data. It is a no-op for
+// inactive state and non-boundary events.
+func (s *FrameWorkState) AbortIfEventDropsFrameWork(pool *frame.Pool, event Event) (bool, error) {
+	if !EventDropsFrameWork(event) || s == nil || !s.active {
+		return false, nil
+	}
+	if err := s.Abort(pool); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

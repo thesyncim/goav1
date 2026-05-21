@@ -68,6 +68,10 @@ func PlanDecoderFrameTileWork(event DecoderEvent, surface int, referenceCount in
 	return internaldecoder.PlanFrameTileWork(event, surface, referenceCount, workers, spans, jobs, batches)
 }
 
+func DecoderEventDropsFrameWork(event DecoderEvent) bool {
+	return internaldecoder.EventDropsFrameWork(event)
+}
+
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
 }

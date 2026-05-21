@@ -102,6 +102,18 @@ func TestPlanDecoderFrameTileWork(t *testing.T) {
 	}
 }
 
+func TestDecoderEventDropsFrameWork(t *testing.T) {
+	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
+		t.Fatal("new sequence did not drop frame work")
+	}
+	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventTemporalDelimiter, NewTemporalUnit: true}) {
+		t.Fatal("temporal delimiter did not drop frame work")
+	}
+	if DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, OperatingParametersChanged: true}) {
+		t.Fatal("operating parameter change dropped frame work")
+	}
+}
+
 func TestDecoderFrameWorkState(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{
