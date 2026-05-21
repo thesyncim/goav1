@@ -93,6 +93,87 @@ func UpsampleIntraEdge(edge []uint16, origin int, size int, scratch []uint16, bi
 	return nil
 }
 
+// IntraEdgeFilterStrength matches libaom's intra_edge_filter_strength helper.
+func IntraEdgeFilterStrength(blockSize0 int, blockSize1 int, delta int, smoothNeighbor bool) uint8 {
+	d := absInt(delta)
+	blockWH := blockSize0 + blockSize1
+	strength := uint8(0)
+	if !smoothNeighbor {
+		if blockWH <= 8 {
+			if d >= 56 {
+				strength = 1
+			}
+		} else if blockWH <= 12 {
+			if d >= 40 {
+				strength = 1
+			}
+		} else if blockWH <= 16 {
+			if d >= 40 {
+				strength = 1
+			}
+		} else if blockWH <= 24 {
+			if d >= 8 {
+				strength = 1
+			}
+			if d >= 16 {
+				strength = 2
+			}
+			if d >= 32 {
+				strength = 3
+			}
+		} else if blockWH <= 32 {
+			if d >= 1 {
+				strength = 1
+			}
+			if d >= 4 {
+				strength = 2
+			}
+			if d >= 32 {
+				strength = 3
+			}
+		} else if d >= 1 {
+			strength = 3
+		}
+		return strength
+	}
+
+	if blockWH <= 8 {
+		if d >= 40 {
+			strength = 1
+		}
+		if d >= 64 {
+			strength = 2
+		}
+	} else if blockWH <= 16 {
+		if d >= 20 {
+			strength = 1
+		}
+		if d >= 48 {
+			strength = 2
+		}
+	} else if blockWH <= 24 {
+		if d >= 4 {
+			strength = 3
+		}
+	} else if d >= 1 {
+		strength = 3
+	}
+	return strength
+}
+
+// UseIntraEdgeUpsample matches libaom's av1_use_intra_edge_upsample helper.
+func UseIntraEdgeUpsample(blockSize0 int, blockSize1 int, delta int, smoothNeighbor bool) bool {
+	d := absInt(delta)
+	blockWH := blockSize0 + blockSize1
+	if d == 0 || d >= 40 {
+		return false
+	}
+	if smoothNeighbor {
+		return blockWH <= 8
+	}
+	return blockWH <= 16
+}
+
 func intraEdgeSampleMax(bitDepth uint8) (uint16, error) {
 	switch bitDepth {
 	case 8:
@@ -102,4 +183,11 @@ func intraEdgeSampleMax(bitDepth uint8) (uint16, error) {
 	default:
 		return 0, ErrInvalidPrediction
 	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

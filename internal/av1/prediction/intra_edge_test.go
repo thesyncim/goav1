@@ -374,6 +374,126 @@ func BenchmarkUpsampleIntraEdge(b *testing.B) {
 	}
 }
 
+func TestIntraEdgeFilterStrengthMatchesLibaomThresholds(t *testing.T) {
+	tests := []struct {
+		name           string
+		block0         int
+		block1         int
+		delta          int
+		smoothNeighbor bool
+		want           uint8
+	}{
+		{name: "type0-small-below", block0: 4, block1: 4, delta: 55, want: 0},
+		{name: "type0-small-at", block0: 4, block1: 4, delta: 56, want: 1},
+		{name: "type0-twelve-at", block0: 4, block1: 8, delta: 40, want: 1},
+		{name: "type0-sixteen-below", block0: 8, block1: 8, delta: 39, want: 0},
+		{name: "type0-twenty-four-one", block0: 8, block1: 16, delta: 8, want: 1},
+		{name: "type0-twenty-four-two", block0: 8, block1: 16, delta: 16, want: 2},
+		{name: "type0-twenty-four-three", block0: 8, block1: 16, delta: 32, want: 3},
+		{name: "type0-thirty-two-one", block0: 16, block1: 16, delta: 1, want: 1},
+		{name: "type0-thirty-two-two", block0: 16, block1: 16, delta: 4, want: 2},
+		{name: "type0-thirty-two-three", block0: 16, block1: 16, delta: 32, want: 3},
+		{name: "type0-large", block0: 32, block1: 16, delta: 1, want: 3},
+		{name: "type1-small-below", block0: 4, block1: 4, delta: 39, smoothNeighbor: true, want: 0},
+		{name: "type1-small-one", block0: 4, block1: 4, delta: 40, smoothNeighbor: true, want: 1},
+		{name: "type1-small-two", block0: 4, block1: 4, delta: 64, smoothNeighbor: true, want: 2},
+		{name: "type1-sixteen-one", block0: 8, block1: 8, delta: 20, smoothNeighbor: true, want: 1},
+		{name: "type1-sixteen-two", block0: 8, block1: 8, delta: 48, smoothNeighbor: true, want: 2},
+		{name: "type1-twenty-four-below", block0: 8, block1: 16, delta: 3, smoothNeighbor: true, want: 0},
+		{name: "type1-twenty-four-three", block0: 8, block1: 16, delta: 4, smoothNeighbor: true, want: 3},
+		{name: "type1-large", block0: 32, block1: 16, delta: -1, smoothNeighbor: true, want: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IntraEdgeFilterStrength(tt.block0, tt.block1, tt.delta, tt.smoothNeighbor)
+			if got != tt.want {
+				t.Fatalf("strength=%d want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUseIntraEdgeUpsampleMatchesLibaomThresholds(t *testing.T) {
+	tests := []struct {
+		name           string
+		block0         int
+		block1         int
+		delta          int
+		smoothNeighbor bool
+		want           bool
+	}{
+		{name: "zero-delta", block0: 8, block1: 8, delta: 0, want: false},
+		{name: "large-delta", block0: 8, block1: 8, delta: 40, want: false},
+		{name: "type0-sixteen", block0: 8, block1: 8, delta: 39, want: true},
+		{name: "type0-too-wide", block0: 16, block1: 8, delta: 39, want: false},
+		{name: "type1-eight", block0: 4, block1: 4, delta: -39, smoothNeighbor: true, want: true},
+		{name: "type1-too-wide", block0: 8, block1: 8, delta: 39, smoothNeighbor: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := UseIntraEdgeUpsample(tt.block0, tt.block1, tt.delta, tt.smoothNeighbor)
+			if got != tt.want {
+				t.Fatalf("upsample=%t want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIntraEdgeDecisionsMatchLibaomReferenceCorpus(t *testing.T) {
+	for _, block0 := range []int{4, 8, 12, 16, 24, 32, 64} {
+		for _, block1 := range []int{4, 8, 12, 16, 24, 32, 64} {
+			for delta := -90; delta <= 90; delta++ {
+				for _, smoothNeighbor := range []bool{false, true} {
+					gotStrength := IntraEdgeFilterStrength(block0, block1, delta, smoothNeighbor)
+					wantStrength := intraEdgeFilterStrengthLibaomReference(block0, block1, delta, smoothNeighbor)
+					if gotStrength != wantStrength {
+						t.Fatalf("strength block0=%d block1=%d delta=%d smooth=%t got=%d want=%d", block0, block1, delta, smoothNeighbor, gotStrength, wantStrength)
+					}
+					gotUpsample := UseIntraEdgeUpsample(block0, block1, delta, smoothNeighbor)
+					wantUpsample := useIntraEdgeUpsampleLibaomReference(block0, block1, delta, smoothNeighbor)
+					if gotUpsample != wantUpsample {
+						t.Fatalf("upsample block0=%d block1=%d delta=%d smooth=%t got=%t want=%t", block0, block1, delta, smoothNeighbor, gotUpsample, wantUpsample)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestIntraEdgeDecisionsAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		_ = IntraEdgeFilterStrength(16, 16, -32, false)
+		_ = IntraEdgeFilterStrength(8, 8, 48, true)
+		_ = UseIntraEdgeUpsample(8, 8, 39, false)
+		_ = UseIntraEdgeUpsample(4, 4, -39, true)
+	})
+	if allocs != 0 {
+		t.Fatalf("intra edge decisions allocated: %f", allocs)
+	}
+}
+
+func FuzzIntraEdgeDecisions(f *testing.F) {
+	f.Add(uint8(4), uint8(4), int16(56), false)
+	f.Add(uint8(8), uint8(16), int16(-32), false)
+	f.Add(uint8(4), uint8(4), int16(39), true)
+
+	f.Fuzz(func(t *testing.T, rawBlock0 uint8, rawBlock1 uint8, rawDelta int16, smoothNeighbor bool) {
+		block0 := int(rawBlock0%64) + 1
+		block1 := int(rawBlock1%64) + 1
+		delta := int(rawDelta)
+		strength := IntraEdgeFilterStrength(block0, block1, delta, smoothNeighbor)
+		wantStrength := intraEdgeFilterStrengthLibaomReference(block0, block1, delta, smoothNeighbor)
+		if strength != wantStrength {
+			t.Fatalf("strength=%d want %d", strength, wantStrength)
+		}
+		upsample := UseIntraEdgeUpsample(block0, block1, delta, smoothNeighbor)
+		wantUpsample := useIntraEdgeUpsampleLibaomReference(block0, block1, delta, smoothNeighbor)
+		if upsample != wantUpsample {
+			t.Fatalf("upsample=%t want %t", upsample, wantUpsample)
+		}
+	})
+}
+
 func filterIntraEdgeLibaomReference(edge []uint16, strength uint8) {
 	if strength == 0 {
 		return
@@ -415,6 +535,85 @@ func upsampleIntraEdgeLibaomReference(edge []uint16, origin int, size int, bitDe
 		edge[origin+2*i-1] = uint16(sample)
 		edge[origin+2*i] = scratch[i+2]
 	}
+}
+
+func intraEdgeFilterStrengthLibaomReference(blockSize0 int, blockSize1 int, delta int, smoothNeighbor bool) uint8 {
+	d := absInt(delta)
+	blockWH := blockSize0 + blockSize1
+	strength := uint8(0)
+	if !smoothNeighbor {
+		if blockWH <= 8 {
+			if d >= 56 {
+				strength = 1
+			}
+		} else if blockWH <= 12 {
+			if d >= 40 {
+				strength = 1
+			}
+		} else if blockWH <= 16 {
+			if d >= 40 {
+				strength = 1
+			}
+		} else if blockWH <= 24 {
+			if d >= 8 {
+				strength = 1
+			}
+			if d >= 16 {
+				strength = 2
+			}
+			if d >= 32 {
+				strength = 3
+			}
+		} else if blockWH <= 32 {
+			if d >= 1 {
+				strength = 1
+			}
+			if d >= 4 {
+				strength = 2
+			}
+			if d >= 32 {
+				strength = 3
+			}
+		} else if d >= 1 {
+			strength = 3
+		}
+		return strength
+	}
+
+	if blockWH <= 8 {
+		if d >= 40 {
+			strength = 1
+		}
+		if d >= 64 {
+			strength = 2
+		}
+	} else if blockWH <= 16 {
+		if d >= 20 {
+			strength = 1
+		}
+		if d >= 48 {
+			strength = 2
+		}
+	} else if blockWH <= 24 {
+		if d >= 4 {
+			strength = 3
+		}
+	} else if d >= 1 {
+		strength = 3
+	}
+	return strength
+}
+
+func useIntraEdgeUpsampleLibaomReference(blockSize0 int, blockSize1 int, delta int, smoothNeighbor bool) bool {
+	d := absInt(delta)
+	blockWH := blockSize0 + blockSize1
+	if d == 0 || d >= 40 {
+		return false
+	}
+	if smoothNeighbor {
+		return blockWH <= 8
+	}
+	return blockWH <= 16
 }
 
 type libaomIntraEdgeRandom struct {
