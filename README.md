@@ -64,7 +64,8 @@ The initial implementation covers:
 - Reusable bounded worker-pool dispatch for tile batches.
 - Decoder tile-work planning from parsed frame/tile-group events into
   caller-owned spans, jobs, and batches, including checked frame-work begin
-  and tile-group continuation plans.
+  and tile-group continuation plans with caller-owned frame work lifecycle
+  state.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - AV1 show-existing-frame decoder events with reference-state validation.
 - Decoder reference-state carryover for segmentation data and loop-filter

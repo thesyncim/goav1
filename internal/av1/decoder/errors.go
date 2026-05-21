@@ -6,6 +6,7 @@ var (
 	ErrMissingSequenceHeader          = errors.New("decoder: missing sequence header")
 	ErrMissingFrameHeader             = errors.New("decoder: missing frame header")
 	ErrEventBufferTooSmall            = errors.New("decoder: event buffer too small")
+	ErrInvalidFrameWorkState          = errors.New("decoder: invalid frame work state")
 	ErrInvalidSurfaceEvent            = errors.New("decoder: invalid surface event")
 	ErrInvalidSurfaceReference        = errors.New("decoder: invalid surface reference")
 	ErrSurfaceReferenceBufferTooSmall = errors.New("decoder: surface reference buffer too small")

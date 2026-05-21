@@ -101,3 +101,59 @@ func TestPlanDecoderFrameTileWork(t *testing.T) {
 		t.Fatalf("plan=%+v", plan)
 	}
 }
+
+func TestDecoderFrameWorkState(t *testing.T) {
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+	tileGroup := DecoderEvent{
+		Kind:      DecoderEventTileGroup,
+		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
+		TileGroup: TileGroup{Final: true},
+	}
+
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	plan, output, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil || !state.Active() || plan.Surface != state.Surface {
+		t.Fatalf("plan=%+v output=%p state=%+v active=%v", plan, output, state, state.Active())
+	}
+
+	var releases [RefFrames]int
+	count, err := state.Finish(&refs, &pool, tileGroup, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || state.Active() {
+		t.Fatalf("count=%d active=%v", count, state.Active())
+	}
+}
+
+func testDecoderFramePool(t *testing.T, count int) FramePool {
+	t.Helper()
+	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := FrameRequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*count)
+	frames := make([]Frame, count)
+	free := make([]int, count)
+	used := make([]bool, count)
+	pool, err := BindFramePool(backing, format, frames, free, used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}

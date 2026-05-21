@@ -12,6 +12,7 @@ type DecoderEventKind = internaldecoder.EventKind
 type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
 type DecoderFrameWorkPlan = internaldecoder.FrameWorkPlan
 type DecoderFrameTileWorkPlan = internaldecoder.FrameTileWorkPlan
+type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
 type TileBatch = internalthreading.Batch
@@ -37,6 +38,7 @@ var (
 	ErrDecoderMissingSequenceHeader          = internaldecoder.ErrMissingSequenceHeader
 	ErrDecoderMissingFrameHeader             = internaldecoder.ErrMissingFrameHeader
 	ErrDecoderEventBufferTooSmall            = internaldecoder.ErrEventBufferTooSmall
+	ErrDecoderInvalidFrameWorkState          = internaldecoder.ErrInvalidFrameWorkState
 	ErrDecoderInvalidTileWork                = internaldecoder.ErrInvalidTileWork
 	ErrDecoderInvalidSurfaceEvent            = internaldecoder.ErrInvalidSurfaceEvent
 	ErrDecoderInvalidSurfaceReference        = internaldecoder.ErrInvalidSurfaceReference

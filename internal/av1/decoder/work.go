@@ -36,6 +36,71 @@ type FrameTileWorkPlan struct {
 	Tile           TileWorkPlan
 }
 
+// FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
+// records the acquired output surface between the frame begin event, any later
+// tile-group continuation events, and the final reference publication step.
+type FrameWorkState struct {
+	Surface        int
+	ReferenceCount int
+
+	active bool
+}
+
+// Active reports whether a frame has begun and not yet been finished or reset.
+func (s *FrameWorkState) Active() bool {
+	return s != nil && s.active
+}
+
+// Reset clears any in-flight frame work state without touching frame-pool or
+// reference ownership. Callers should normally use Finish for successfully
+// decoded final tile groups.
+func (s *FrameWorkState) Reset() {
+	if s == nil {
+		return
+	}
+	*s = FrameWorkState{}
+}
+
+// Begin acquires the output surface and records the active frame work state.
+func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, references []int, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (FrameWorkPlan, *frame.Frame, error) {
+	if s == nil || s.active {
+		return FrameWorkPlan{}, nil, ErrInvalidFrameWorkState
+	}
+	plan, output, err := BeginFrameWork(refs, pool, sequence, event, align, references, workers, spans, jobs, batches)
+	if err != nil {
+		return FrameWorkPlan{}, nil, err
+	}
+	s.Surface = plan.Surface
+	s.ReferenceCount = plan.ReferenceCount
+	s.active = true
+	return plan, output, nil
+}
+
+// PlanTile plans tile work for a continuation tile group using the active
+// frame's output surface and resolved reference count.
+func (s *FrameWorkState) PlanTile(event Event, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (FrameTileWorkPlan, error) {
+	if s == nil || !s.active {
+		return FrameTileWorkPlan{}, ErrInvalidFrameWorkState
+	}
+	return PlanFrameTileWork(event, s.Surface, s.ReferenceCount, workers, spans, jobs, batches)
+}
+
+// Finish applies the final frame event to surface references and releases any
+// overwritten frame-pool slots atomically. State is cleared only after a
+// successful finish so callers can recover or retry after transient release
+// failures.
+func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event Event, releases []int) (int, error) {
+	if s == nil || !s.active {
+		return 0, ErrInvalidFrameWorkState
+	}
+	count, err := FinishFrameSurface(refs, pool, event, s.Surface, releases)
+	if err != nil {
+		return 0, err
+	}
+	s.Reset()
+	return count, nil
+}
+
 // BeginFrameWork resolves frame references, plans any inline tile work, and
 // acquires the output frame surface. For frame OBUs, tile work is validated
 // before acquiring a pool slot so malformed tile data leaves surface ownership
