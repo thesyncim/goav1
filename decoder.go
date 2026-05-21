@@ -77,6 +77,14 @@ func PlanDecoderFrameTileWork(event DecoderEvent, surface int, referenceCount in
 	return internaldecoder.PlanFrameTileWork(event, surface, referenceCount, workers, spans, jobs, batches)
 }
 
+func ExecuteDecoderTileWork(plan DecoderTileWorkPlan, pool *TileWorkerPool, jobs []TileJob, batches []TileBatch, fn TileBatchFunc) error {
+	return internaldecoder.ExecuteTileWork(plan, pool, jobs, batches, fn)
+}
+
+func ExecuteDecoderFrameWorkStep(step DecoderFrameWorkStep, pool *TileWorkerPool, jobs []TileJob, batches []TileBatch, fn TileBatchFunc) (bool, error) {
+	return internaldecoder.ExecuteFrameWorkStep(step, pool, jobs, batches, fn)
+}
+
 func DecoderEventDropsFrameWork(event DecoderEvent) bool {
 	return internaldecoder.EventDropsFrameWork(event)
 }

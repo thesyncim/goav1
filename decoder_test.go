@@ -284,6 +284,32 @@ func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
 	}
 }
 
+func TestExecuteDecoderFrameWorkStep(t *testing.T) {
+	workerPool, err := NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
+	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
+	step := DecoderFrameWorkStep{
+		Kind: DecoderFrameWorkStepTile,
+		Tile: DecoderFrameTileWorkPlan{Tile: DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
+	}
+	seen := false
+	executed, err := ExecuteDecoderFrameWorkStep(step, workerPool, jobs[:], batches[:], func(batch TileBatch, batchJobs []TileJob) error {
+		seen = batch.Count == 1 && len(batchJobs) == 1 && batchJobs[0].Tile == 0
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed || !seen {
+		t.Fatalf("executed=%v seen=%v", executed, seen)
+	}
+}
+
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

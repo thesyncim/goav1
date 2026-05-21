@@ -293,6 +293,40 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 	return FrameWorkStep{}, nil, nil
 }
 
+// ExecuteTileWork dispatches the planned tile jobs through a reusable worker
+// pool. Only the caller-owned job and batch ranges named by plan are used.
+func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) error {
+	if err := validateTileWorkPlan(plan, jobs, batches); err != nil {
+		return err
+	}
+	if plan.JobCount == 0 {
+		return nil
+	}
+	return pool.Execute(batches[:plan.BatchCount], jobs[:plan.JobCount], fn)
+}
+
+// ExecuteFrameWorkStep dispatches any tile work carried by step. Steps that do
+// not carry tile work are successful no-ops; the boolean reports whether tile
+// work actually ran.
+func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) (bool, error) {
+	var plan TileWorkPlan
+	switch step.Kind {
+	case FrameWorkStepIgnored, FrameWorkStepDropped, FrameWorkStepShowExisting:
+		return false, nil
+	case FrameWorkStepBegin:
+		plan = step.Begin.Tile
+	case FrameWorkStepTile:
+		plan = step.Tile.Tile
+	default:
+		return false, ErrInvalidTileWork
+	}
+
+	if err := ExecuteTileWork(plan, pool, jobs, batches, fn); err != nil {
+		return false, err
+	}
+	return plan.JobCount != 0, nil
+}
+
 // BeginFrameWork resolves frame references, plans any inline tile work, and
 // acquires the output frame surface. For frame OBUs, tile work is validated
 // before acquiring a pool slot so malformed tile data leaves surface ownership
@@ -368,4 +402,26 @@ func PlanTileWork(event Event, workers int, spans []parser.TileSpan, jobs []tile
 		JobCount:   jobCount,
 		BatchCount: batchCount,
 	}, nil
+}
+
+func validateTileWorkPlan(plan TileWorkPlan, jobs []tile.Job, batches []threading.Batch) error {
+	if plan.SpanCount < 0 ||
+		plan.JobCount < 0 ||
+		plan.BatchCount < 0 ||
+		plan.SpanCount != plan.JobCount ||
+		plan.JobCount > len(jobs) ||
+		plan.BatchCount > len(batches) ||
+		plan.BatchCount > plan.JobCount {
+		return ErrInvalidTileWork
+	}
+	if plan.JobCount == 0 {
+		if plan.BatchCount != 0 {
+			return ErrInvalidTileWork
+		}
+		return nil
+	}
+	if plan.BatchCount == 0 {
+		return ErrInvalidTileWork
+	}
+	return nil
 }
