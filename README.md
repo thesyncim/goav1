@@ -112,6 +112,8 @@ The initial implementation covers:
   and caller-buffer residual output.
 - Pure-Go 4x4 and 8x8 inverse DCT residual output with caller-owned transform
   scratch.
+- Zero-allocation inverse transform dispatch for DCT_DCT and IDTX residual
+  paths with per-transform scratch sizing.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 

@@ -3,8 +3,8 @@ package transform
 const dct4Size = 4
 const dct8Size = 8
 
-// ScratchLen returns the number of int32 values needed by inverse transforms
-// that use caller-provided temporary storage.
+// ScratchLen returns the generic transform scratch length for size. For exact
+// dispatch scratch sizing, use ScratchLenForType.
 func ScratchLen(size Size) (int, error) {
 	if !size.Valid() {
 		return 0, ErrInvalidTransform

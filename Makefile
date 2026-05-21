@@ -53,6 +53,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseFilmGrainParams
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseIdentityBlock
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseDCTBlock
+	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseBlock
 
 alloc:
 	./scripts/check_allocs.sh

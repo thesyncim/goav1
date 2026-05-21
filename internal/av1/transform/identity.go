@@ -56,6 +56,10 @@ func (s Size) shift() (int, bool) {
 	}
 }
 
+func identityBlockSupported(size Size) bool {
+	return size.Valid() && size.Width <= 32 && size.Height <= 32
+}
+
 // RoundShift applies AV1's signed rounded right shift.
 func RoundShift(value int64, bits uint8) (int32, error) {
 	if bits == 0 || bits > 62 {
@@ -87,8 +91,7 @@ func InverseIdentity1DValue(v int32, length int) (int32, error) {
 func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size) error {
 	shift, ok := size.shift()
 	if !ok ||
-		size.Width > 32 ||
-		size.Height > 32 ||
+		!identityBlockSupported(size) ||
 		dstStride < size.Width ||
 		coeffStride < size.Width ||
 		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
