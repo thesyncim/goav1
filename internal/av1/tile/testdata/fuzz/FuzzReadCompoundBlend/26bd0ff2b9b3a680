@@ -1,0 +1,13 @@
+go test fuzz v1
+[]byte("0")
+byte('\f')
+bool(true)
+bool(false)
+bool(false)
+bool(true)
+byte('R')
+uint32(8)
+uint32(4)
+uint32(11)
+byte('\x00')
+byte('\x00')

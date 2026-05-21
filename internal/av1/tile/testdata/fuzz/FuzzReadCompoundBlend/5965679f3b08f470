@@ -1,0 +1,13 @@
+go test fuzz v1
+[]byte("\xd5")
+byte('\x11')
+bool(true)
+bool(true)
+bool(true)
+bool(true)
+byte('[')
+uint32(16)
+uint32(9)
+uint32(23)
+byte('\x01')
+byte('\x00')

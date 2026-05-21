@@ -703,17 +703,23 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	}
 
 	compound := boolByte(result.Compound)
+	compGroup := uint8(0)
+	compIndex := uint8(1)
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = 0
 		c.AboveRef[0][x4+i] = result.Ref[0]
 		c.AboveRef[1][x4+i] = result.Ref[1]
 		c.AboveCompound[x4+i] = compound
+		c.AboveCompGroup[x4+i] = compGroup
+		c.AboveCompIndex[x4+i] = compIndex
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
 		c.LeftRef[0][y4+i] = result.Ref[0]
 		c.LeftRef[1][y4+i] = result.Ref[1]
 		c.LeftCompound[y4+i] = compound
+		c.LeftCompGroup[y4+i] = compGroup
+		c.LeftCompIndex[y4+i] = compIndex
 	}
 	return nil
 }

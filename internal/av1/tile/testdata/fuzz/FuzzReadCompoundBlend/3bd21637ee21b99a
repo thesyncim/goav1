@@ -1,0 +1,13 @@
+go test fuzz v1
+[]byte("0")
+byte('*')
+bool(true)
+bool(false)
+bool(false)
+bool(true)
+byte('\x04')
+uint32(0)
+uint32(4)
+uint32(12)
+byte('\x00')
+byte('\x00')

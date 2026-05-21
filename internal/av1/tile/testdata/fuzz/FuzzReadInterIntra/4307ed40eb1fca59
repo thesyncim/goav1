@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xd2x")
+byte('Ö')
+byte('\x03')
+bool(true)
+bool(false)
+bool(false)

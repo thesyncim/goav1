@@ -1,0 +1,13 @@
+go test fuzz v1
+[]byte("\xd3")
+byte('\f')
+bool(true)
+bool(true)
+bool(false)
+bool(true)
+byte('R')
+uint32(86)
+uint32(4)
+uint32(11)
+byte('\x00')
+byte('\x00')

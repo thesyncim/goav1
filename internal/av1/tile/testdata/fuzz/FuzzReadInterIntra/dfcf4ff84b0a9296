@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xe1000")
+byte('\x11')
+byte('\x03')
+bool(true)
+bool(false)
+bool(false)
