@@ -61,11 +61,17 @@ func TestInverseDCT1DMatchesLibaomReference(t *testing.T) {
 		{length: 8, maxError: 10},
 		{length: 16, maxError: 19},
 		{length: 32, maxError: 31},
+		{length: 64, maxError: 40},
 	}
 	for _, tt := range tests {
 		input := make([]int32, tt.length)
 		for i := range input {
 			input[i] = int32(((i*37+11)%31)-15) * 7
+		}
+		if tt.length == 64 {
+			for i := 32; i < len(input); i++ {
+				input[i] = 0
+			}
 		}
 		got := append([]int32(nil), input...)
 		inverseDCT1D(got, 1, tt.length, minInt16, maxInt16)
@@ -182,6 +188,11 @@ func TestInverseDCTBlockSupportedSizes(t *testing.T) {
 		{Width: 16, Height: 16},
 		{Width: 32, Height: 8},
 		{Width: 32, Height: 32},
+		{Width: 16, Height: 64},
+		{Width: 64, Height: 16},
+		{Width: 32, Height: 64},
+		{Width: 64, Height: 32},
+		{Width: 64, Height: 64},
 	}
 	for _, size := range sizes {
 		coeffStride := size.Height + 1
@@ -249,7 +260,7 @@ func TestInverseDCTBlockRejectsInvalidInputs(t *testing.T) {
 		size        Size
 	}{
 		{name: "zero size", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 4, scratch: scratch, size: Size{}},
-		{name: "unsupported size", dst: make([]int16, 64*64), dstStride: 64, coeff: make([]int32, 64*64), coeffStride: 64, scratch: make([]int32, 64*64), size: Size{Width: 64, Height: 64}},
+		{name: "unsupported size", dst: make([]int16, 64*8), dstStride: 64, coeff: make([]int32, 64*8), coeffStride: 8, scratch: make([]int32, 64*8), size: Size{Width: 64, Height: 8}},
 		{name: "short dst stride", dst: dst, dstStride: 3, coeff: coeff, coeffStride: 4, scratch: scratch, size: Size{Width: 4, Height: 4}},
 		{name: "short coeff stride", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 3, scratch: scratch, size: Size{Width: 4, Height: 4}},
 		{name: "short scratch", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 4, scratch: scratch[:15], size: Size{Width: 4, Height: 4}},
@@ -303,17 +314,24 @@ func FuzzInverseDCTBlock(f *testing.F) {
 	f.Add(uint8(1), int16(-128), int16(64), int16(32), int16(-16))
 	f.Add(uint8(2), int16(64), int16(-21), int16(17), int16(-9))
 	f.Add(uint8(3), int16(128), int16(31), int16(-19), int16(11))
+	f.Add(uint8(4), int16(256), int16(-33), int16(23), int16(-13))
 	f.Add(uint8(1), int16(1024), int16(-512), int16(255), int16(-255))
 
 	f.Fuzz(func(t *testing.T, rawSize uint8, dc int16, c1 int16, c2 int16, c3 int16) {
 		size := Size{Width: 4, Height: 4}
-		switch rawSize & 3 {
+		switch rawSize & 7 {
 		case 1:
 			size = Size{Width: 8, Height: 8}
 		case 2:
 			size = Size{Width: 16, Height: 16}
 		case 3:
 			size = Size{Width: 32, Height: 32}
+		case 4:
+			size = Size{Width: 64, Height: 64}
+		case 5:
+			size = Size{Width: 64, Height: 32}
+		case 6:
+			size = Size{Width: 32, Height: 64}
 		}
 		coeffStride := size.Height + 3
 		dstStride := size.Width + 2

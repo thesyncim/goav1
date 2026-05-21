@@ -18,7 +18,7 @@ func TestTypeSupportAndScratchLen(t *testing.T) {
 		{name: "dct 8x8", typ: TypeDCTDCT, size: Size{Width: 8, Height: 8}, wantValid: true, wantSupport: true, wantScratch: 64},
 		{name: "dct 16x16", typ: TypeDCTDCT, size: Size{Width: 16, Height: 16}, wantValid: true, wantSupport: true, wantScratch: 256},
 		{name: "dct 32x16", typ: TypeDCTDCT, size: Size{Width: 32, Height: 16}, wantValid: true, wantSupport: true, wantScratch: 512},
-		{name: "dct unsupported 64x64", typ: TypeDCTDCT, size: Size{Width: 64, Height: 64}, wantValid: true},
+		{name: "dct 64x64", typ: TypeDCTDCT, size: Size{Width: 64, Height: 64}, wantValid: true, wantSupport: true, wantScratch: 4096},
 		{name: "idtx 4x16", typ: TypeIDTX, size: Size{Width: 4, Height: 16}, wantValid: true, wantSupport: true},
 		{name: "idtx 32x32", typ: TypeIDTX, size: Size{Width: 32, Height: 32}, wantValid: true, wantSupport: true},
 		{name: "idtx unsupported 64x64", typ: TypeIDTX, size: Size{Width: 64, Height: 64}, wantValid: true},

@@ -52,6 +52,15 @@ func TestScratchLen(t *testing.T) {
 			wantInt32: 128,
 			wantInt16: 64,
 		},
+		{
+			name: "dct 64x64",
+			cfg: Block{
+				Size:      transform.Size{Width: 64, Height: 64},
+				Transform: transform.TypeDCTDCT,
+			},
+			wantInt32: 8192,
+			wantInt16: 4096,
+		},
 	}
 	for _, tt := range tests {
 		got32, got16, err := ScratchLen(tt.cfg)
@@ -62,7 +71,7 @@ func TestScratchLen(t *testing.T) {
 			t.Fatalf("%s ScratchLen=%d/%d want %d/%d", tt.name, got32, got16, tt.wantInt32, tt.wantInt16)
 		}
 	}
-	if _, _, err := ScratchLen(Block{Size: transform.Size{Width: 64, Height: 64}, Transform: transform.TypeDCTDCT}); !errors.Is(err, ErrInvalidBlock) {
+	if _, _, err := ScratchLen(Block{Size: transform.Size{Width: 64, Height: 8}, Transform: transform.TypeDCTDCT}); !errors.Is(err, ErrInvalidBlock) {
 		t.Fatalf("unsupported ScratchLen err=%v want %v", err, ErrInvalidBlock)
 	}
 }
@@ -260,6 +269,28 @@ func TestReconstructPlaneBlockDCT16x16(t *testing.T) {
 	}
 }
 
+func TestReconstructPlaneBlockDCT64x64ReducedCoefficients(t *testing.T) {
+	plane, _ := testPlane(64, 64, 1, 64)
+	fillPlane(plane, 1, 100)
+	quantized := make([]int16, 32*32)
+	quantized[0] = 64
+	cfg := Block{
+		Size:      transform.Size{Width: 64, Height: 64},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 32, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := getSample(plane, 1, 0, 0); got == 100 {
+		t.Fatal("DCT64 reconstruction left the first sample unchanged")
+	}
+}
+
 func TestReconstructPlaneBlockHighBitDepthClips(t *testing.T) {
 	plane, _ := testPlane(4, 4, 2, 8)
 	fillPlane(plane, 2, 1020)
@@ -309,7 +340,7 @@ func TestReconstructPlaneBlockRejectsInvalidInputs(t *testing.T) {
 		residualScratch []int16
 		cfg             Block
 	}{
-		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 64, Height: 64}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
+		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 64, Height: 8}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
 		{name: "lossless non 4x4", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 8, Height: 8}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer, Lossless: true}},
 		{name: "lossless negative eob", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: cfg.Size, Transform: cfg.Transform, Quantizer: cfg.Quantizer, Lossless: true, EOB: -1}},
 		{name: "short int32 scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch[:31], residualScratch: residualScratch, cfg: cfg},
