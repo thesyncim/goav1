@@ -102,6 +102,19 @@ func TestPlanDecoderFrameTileWork(t *testing.T) {
 	}
 }
 
+func TestTileJobPayload(t *testing.T) {
+	payload := []byte{0, 1, 2, 3}
+	job := TileJob{Offset: 1, Size: 2}
+
+	data, err := job.Payload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 2 || data[0] != 1 || data[1] != 2 {
+		t.Fatalf("payload=%v", data)
+	}
+}
+
 func TestDecoderEventDropsFrameWork(t *testing.T) {
 	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
 		t.Fatal("new sequence did not drop frame work")

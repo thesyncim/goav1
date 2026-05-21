@@ -60,6 +60,7 @@ The initial implementation covers:
   carryover.
 - AV1 tile-group header parsing and caller-buffer tile payload span splitting.
 - Caller-buffer tile work-plan construction for deterministic decode scheduling.
+- Zero-allocation tile-job payload range validation and slicing helpers.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
 - Decoder tile-work planning from parsed frame/tile-group events into
