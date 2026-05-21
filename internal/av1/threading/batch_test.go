@@ -173,9 +173,13 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	wantDelta := parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 2}
 	ctx := FrameWorkBatch{
-		Payload:      []byte{0x00, 0xff, 0x00},
-		Quantization: parser.QuantizationParams{BaseQIdx: 73},
-		Delta:        wantDelta,
+		Payload: []byte{0x00, 0xff, 0x00},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
+			TileInfo:     testBatchTileInfo(),
+			Quantization: parser.QuantizationParams{BaseQIdx: 73},
+			Delta:        wantDelta,
+		},
 		Jobs: []tile.Job{
 			{Tile: 0, Offset: 0, Size: 1},
 			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
@@ -184,6 +188,9 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	var state tile.DecodeState
 	if ctx.Delta != wantDelta {
 		t.Fatalf("Delta=%+v want %+v", ctx.Delta, wantDelta)
+	}
+	if ctx.FrameSize.CodedWidth != 128 || ctx.TileInfo.Cols != 2 {
+		t.Fatalf("frame context size=%+v tiles=%+v", ctx.FrameSize, ctx.TileInfo)
 	}
 
 	if err := ctx.JobDecodeState(1, &state); err != nil {
@@ -353,9 +360,13 @@ func TestFrameWorkBatchJobEntropyReaderAllocs(t *testing.T) {
 
 func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 	ctx := FrameWorkBatch{
-		Payload:      []byte{0x00, 0xff, 0x00},
-		Quantization: parser.QuantizationParams{BaseQIdx: 91},
-		Delta:        parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+		Payload: []byte{0x00, 0xff, 0x00},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
+			TileInfo:     testBatchTileInfo(),
+			Quantization: parser.QuantizationParams{BaseQIdx: 91},
+			Delta:        parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
 			{Offset: 1, Size: 1, UpdatesFrameContext: true},
@@ -478,9 +489,13 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 		job := tile.Job{Offset: int(offset), Size: int(size)}
 		delta := parser.DeltaParams{DeltaQPresent: deltaQPresent, DeltaQResLog2: deltaQResLog2 & 3}
 		ctx := FrameWorkBatch{
-			Payload:          payload,
-			Quantization:     parser.QuantizationParams{BaseQIdx: baseQIdx},
-			Delta:            delta,
+			Payload: payload,
+			FrameWorkFrameContext: FrameWorkFrameContext{
+				FrameSize:    parser.FrameSize{CodedWidth: uint32(len(payload)) + 1, Height: 1},
+				TileInfo:     testBatchTileInfo(),
+				Quantization: parser.QuantizationParams{BaseQIdx: baseQIdx},
+				Delta:        delta,
+			},
 			DisableCDFUpdate: disableCDFUpdate,
 			Jobs:             []tile.Job{job},
 		}
@@ -558,9 +573,13 @@ func BenchmarkFrameWorkBatchJobEntropyReader(b *testing.B) {
 
 func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 	ctx := FrameWorkBatch{
-		Payload:      []byte{0x00, 0xff, 0x00},
-		Quantization: parser.QuantizationParams{BaseQIdx: 37},
-		Delta:        parser.DeltaParams{DeltaQPresent: true},
+		Payload: []byte{0x00, 0xff, 0x00},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
+			TileInfo:     testBatchTileInfo(),
+			Quantization: parser.QuantizationParams{BaseQIdx: 37},
+			Delta:        parser.DeltaParams{DeltaQPresent: true},
+		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
 			{Offset: 1, Size: 1, UpdatesFrameContext: true},
@@ -595,4 +614,17 @@ func testJobs() [4]tile.Job {
 		{Tile: 2, SBCols: 3, SBRows: 3},
 		{Tile: 3, SBCols: 2, SBRows: 3},
 	}
+}
+
+func testBatchTileInfo() parser.TileInfo {
+	tiles := parser.TileInfo{
+		SBCols: 2,
+		SBRows: 1,
+		Cols:   2,
+		Rows:   1,
+	}
+	tiles.ColStartSB[1] = 1
+	tiles.ColStartSB[2] = 2
+	tiles.RowStartSB[1] = 1
+	return tiles
 }

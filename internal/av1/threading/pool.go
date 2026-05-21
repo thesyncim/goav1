@@ -14,16 +14,27 @@ import (
 // contiguous range described by the Batch.
 type BatchFunc func(batch Batch, jobs []tile.Job) error
 
+// FrameWorkFrameContext is the parsed frame context supplied to frame-work
+// tile batches. It is copied from the current decoder event so reconstruction
+// callbacks can map tile jobs to frame geometry and frame-level syntax without
+// reparsing payload headers.
+type FrameWorkFrameContext struct {
+	FrameHeader  parser.FrameHeaderPrefix
+	FrameSize    parser.FrameSize
+	TileInfo     parser.TileInfo
+	Quantization parser.QuantizationParams
+	Delta        parser.DeltaParams
+}
+
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.
 // Payload, References, and Jobs alias caller-owned storage and are valid for
 // the callback invocation.
 type FrameWorkBatch struct {
-	Step             decodework.FrameStep
-	Output           *frame.Frame
-	Payload          []byte
-	References       []*frame.Frame
-	Quantization     parser.QuantizationParams
-	Delta            parser.DeltaParams
+	Step       decodework.FrameStep
+	Output     *frame.Frame
+	Payload    []byte
+	References []*frame.Frame
+	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	Batch            Batch
 	Jobs             []tile.Job

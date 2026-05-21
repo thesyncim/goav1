@@ -20,6 +20,7 @@ type FrameWorkStepKind = decodework.FrameStepKind
 type FrameWorkStep = decodework.FrameStep
 type FrameWorkStepResult = decodework.FrameStepResult
 type FrameWorkBatch = threading.FrameWorkBatch
+type FrameWorkFrameContext = threading.FrameWorkFrameContext
 type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (
@@ -299,7 +300,8 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
 	}
-	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, event.Quantization, event.Delta, event.FrameHeader.DisableCDFUpdate, jobs, batches, fn)
+	frameContext := frameWorkFrameContext(event)
+	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -412,17 +414,17 @@ func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.
 // ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
 // passing the output frame and resolved reference frames to each batch.
 func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, parser.QuantizationParams{}, parser.DeltaParams{}, false, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, jobs, batches, fn)
 }
 
 // ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
 // passing the output frame, tile-group payload, and resolved reference frames
 // to each batch.
 func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, parser.QuantizationParams{}, parser.DeltaParams{}, false, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, jobs, batches, fn)
 }
 
-func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, quantization parser.QuantizationParams, delta parser.DeltaParams, disableCDFUpdate bool, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return false, err
@@ -449,19 +451,28 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 	}
 
 	base := FrameWorkBatch{
-		Step:             step,
-		Output:           output,
-		Payload:          payload,
-		References:       references[:referenceCount],
-		Quantization:     quantization,
-		Delta:            delta,
-		DisableCDFUpdate: disableCDFUpdate,
+		Step:                  step,
+		Output:                output,
+		Payload:               payload,
+		References:            references[:referenceCount],
+		FrameWorkFrameContext: frameContext,
+		DisableCDFUpdate:      disableCDFUpdate,
 	}
 	err = pool.ExecuteFrameWork(batches[:plan.BatchCount], jobs[:plan.JobCount], base, fn)
 	if err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func frameWorkFrameContext(event Event) FrameWorkFrameContext {
+	return FrameWorkFrameContext{
+		FrameHeader:  event.FrameHeader,
+		FrameSize:    event.FrameSize,
+		TileInfo:     event.TileInfo,
+		Quantization: event.Quantization,
+		Delta:        event.Delta,
+	}
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

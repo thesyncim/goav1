@@ -761,7 +761,10 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		Kind: EventTileGroup,
 		FrameHeader: parser.FrameHeaderPrefix{
 			DisableCDFUpdate: true,
+			FrameType:        parser.FrameTypeKey,
 		},
+		FrameSize:    testFrameSize(128, 64),
+		TileInfo:     testFrameWorkTileInfo(),
 		Quantization: parser.QuantizationParams{BaseQIdx: 73},
 		Delta: parser.DeltaParams{
 			DeltaQPresent:  true,
@@ -783,6 +786,15 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.Quantization.BaseQIdx != 73 {
 			t.Fatalf("BaseQIdx=%d want 73", ctx.Quantization.BaseQIdx)
+		}
+		if ctx.FrameHeader != event.FrameHeader {
+			t.Fatalf("FrameHeader=%+v want %+v", ctx.FrameHeader, event.FrameHeader)
+		}
+		if ctx.FrameSize != event.FrameSize {
+			t.Fatalf("FrameSize=%+v want %+v", ctx.FrameSize, event.FrameSize)
+		}
+		if ctx.TileInfo != event.TileInfo {
+			t.Fatalf("TileInfo=%+v want %+v", ctx.TileInfo, event.TileInfo)
 		}
 		if ctx.Delta != event.Delta {
 			t.Fatalf("Delta=%+v want %+v", ctx.Delta, event.Delta)
@@ -1274,7 +1286,10 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 			len(ctx.References) != 0 ||
 			len(ctx.Jobs) != 1 ||
 			len(ctx.Payload) != len(events[1].Unit.Payload) ||
-			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa {
+			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa ||
+			ctx.FrameHeader != events[1].FrameHeader ||
+			ctx.FrameSize != events[1].FrameSize ||
+			ctx.TileInfo != events[1].TileInfo {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil
@@ -3184,6 +3199,19 @@ func benchmarkExecutionWork(b *testing.B) ([2]tile.Job, [2]threading.Batch, int)
 		b.Fatal(err)
 	}
 	return jobs, batches, n
+}
+
+func testFrameWorkTileInfo() parser.TileInfo {
+	tiles := parser.TileInfo{
+		SBCols: 2,
+		SBRows: 1,
+		Cols:   2,
+		Rows:   1,
+	}
+	tiles.ColStartSB[1] = 1
+	tiles.ColStartSB[2] = 2
+	tiles.RowStartSB[1] = 1
+	return tiles
 }
 
 func noopFrameWorkBatch(FrameWorkBatch) error {
