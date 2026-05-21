@@ -1,0 +1,11 @@
+go test fuzz v1
+uint16(367)
+uint16(338)
+byte('\x01')
+byte('\x01')
+byte('\x01')
+byte('8')
+byte('!')
+bool(false)
+bool(true)
+[]byte("0")

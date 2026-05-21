@@ -34,6 +34,20 @@ type RestorationUnitRecordApplyResult struct {
 	Filtered        bool
 }
 
+// RestorationUnitRecordBoundaryScratchSize reports caller-owned scratch for a
+// full striped restoration-unit apply, including temporary boundary rows.
+type RestorationUnitRecordBoundaryScratchSize struct {
+	Unit     RestorationUnitScratchSize
+	Boundary RestorationStripeBoundaryScratchSize
+}
+
+// RestorationUnitRecordBoundaryScratch is caller-owned scratch used by
+// ApplyRestorationUnitRecordWithBoundaries.
+type RestorationUnitRecordBoundaryScratch struct {
+	Unit     RestorationUnitScratch
+	Boundary RestorationStripeBoundaryScratch
+}
+
 func RestorationUnitScratchLen(width int, height int) (RestorationUnitScratchSize, error) {
 	wiener, err := av1restoration.WienerScratchLen(width, height)
 	if err != nil {
@@ -97,6 +111,41 @@ func RestorationUnitRecordScratchLen(grid RestorationPlaneGrid, record Restorati
 		}
 	}
 	return size, nil
+}
+
+// RestorationUnitRecordBoundaryScratchLen reports scratch for the full
+// libaom-style striped unit flow: boundary setup/restore plus filtering.
+// Disabled units return a zero size.
+func RestorationUnitRecordBoundaryScratchLen(grid RestorationPlaneGrid, record RestorationUnitRecord, optimized bool) (RestorationUnitRecordBoundaryScratchSize, error) {
+	unitSize, err := RestorationUnitRecordScratchLen(grid, record)
+	if err != nil {
+		return RestorationUnitRecordBoundaryScratchSize{}, err
+	}
+	if record.Unit.Type == parser.RestorationNone {
+		return RestorationUnitRecordBoundaryScratchSize{}, nil
+	}
+
+	var boundarySize RestorationStripeBoundaryScratchSize
+	for stripeIndex := 0; stripeIndex < int(record.StripeCount); stripeIndex++ {
+		stripe, ok, err := grid.ProcessingStripe(record.Rect, stripeIndex)
+		if err != nil {
+			return RestorationUnitRecordBoundaryScratchSize{}, err
+		}
+		if !ok {
+			return RestorationUnitRecordBoundaryScratchSize{}, ErrInvalidPlan
+		}
+		stripeSize, err := RestorationStripeBoundaryScratchLen(stripe, optimized)
+		if err != nil {
+			return RestorationUnitRecordBoundaryScratchSize{}, err
+		}
+		if stripeSize.Above > boundarySize.Above {
+			boundarySize.Above = stripeSize.Above
+		}
+		if stripeSize.Below > boundarySize.Below {
+			boundarySize.Below = stripeSize.Below
+		}
+	}
+	return RestorationUnitRecordBoundaryScratchSize{Unit: unitSize, Boundary: boundarySize}, nil
 }
 
 // ApplyRestorationUnit dispatches one decoded restoration unit to the matching
@@ -190,6 +239,57 @@ func ApplyRestorationUnitRecord(grid RestorationPlaneGrid, record RestorationUni
 	return result, nil
 }
 
+// ApplyRestorationUnitRecordWithBoundaries ports libaom's striped
+// av1_loop_restoration_filter_unit() orchestration for one decoded restoration
+// unit. data is the mutable, frame-extended source plane; its overwritten stripe
+// borders are restored before return. The optimized mode follows libaom's
+// optimized_lr path and does not read boundaries.
+func ApplyRestorationUnitRecordWithBoundaries(grid RestorationPlaneGrid, record RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationUnitRecordApplyResult, error) {
+	if err := validateRestorationUnitRecord(grid, record); err != nil {
+		return RestorationUnitRecordApplyResult{}, err
+	}
+	if record.Unit.Type == parser.RestorationNone {
+		return ApplyRestorationUnitRecord(grid, record, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch.Unit)
+	}
+	if !optimized {
+		if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+			return RestorationUnitRecordApplyResult{}, err
+		}
+	}
+
+	result := RestorationUnitRecordApplyResult{Type: record.Unit.Type, Filtered: true}
+	for stripeIndex := 0; stripeIndex < int(record.StripeCount); stripeIndex++ {
+		stripe, ok, err := grid.ProcessingStripe(record.Rect, stripeIndex)
+		if err != nil {
+			return RestorationUnitRecordApplyResult{}, err
+		}
+		if !ok {
+			return RestorationUnitRecordApplyResult{}, ErrInvalidPlan
+		}
+		if err := SetupRestorationStripeBoundary(record.Rect, stripe, boundaries, data, dataStride, dataOrigin, scratch.Boundary, optimized); err != nil {
+			return RestorationUnitRecordApplyResult{}, err
+		}
+
+		unitCount, applyErr := applyRestorationStripeUnits(grid, record, stripe, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch.Unit)
+		restoreErr := RestoreRestorationStripeBoundary(record.Rect, stripe, data, dataStride, dataOrigin, scratch.Boundary, optimized)
+		if applyErr != nil {
+			if restoreErr != nil {
+				return RestorationUnitRecordApplyResult{}, restoreErr
+			}
+			return RestorationUnitRecordApplyResult{}, applyErr
+		}
+		if restoreErr != nil {
+			return RestorationUnitRecordApplyResult{}, restoreErr
+		}
+		if unitCount > int(^uint16(0)) || result.ProcessingUnits > ^uint16(0)-uint16(unitCount) {
+			return RestorationUnitRecordApplyResult{}, ErrInvalidPlan
+		}
+		result.Stripes++
+		result.ProcessingUnits += uint16(unitCount)
+	}
+	return result, nil
+}
+
 func copyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, bitDepth uint8) error {
 	max, ok := restorationApplyMaxSample(bitDepth)
 	if !ok ||
@@ -209,6 +309,34 @@ func copyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint1
 		}
 	}
 	return nil
+}
+
+func applyRestorationStripeUnits(grid RestorationPlaneGrid, record RestorationUnitRecord, stripe RestorationProcessingStripe, src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitScratch) (int, error) {
+	unitCount, err := grid.ProcessingUnitCount(stripe, record.Unit.Type)
+	if err != nil {
+		return 0, err
+	}
+	for unitIndex := 0; unitIndex < unitCount; unitIndex++ {
+		unit, ok, err := grid.ProcessingUnit(stripe, record.Unit.Type, unitIndex)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, ErrInvalidPlan
+		}
+		srcBlock, ok := restorationPlaneOffset(srcOrigin, srcStride, unit.FilterRect.X0, unit.FilterRect.Y0)
+		if !ok {
+			return 0, ErrInvalidPlan
+		}
+		dstBlock, ok := restorationPlaneOffset(dstOrigin, dstStride, unit.FilterRect.X0, unit.FilterRect.Y0)
+		if !ok || dstBlock > len(dst) {
+			return 0, ErrInvalidPlan
+		}
+		if _, err := ApplyRestorationUnit(src, srcStride, srcBlock, dst[dstBlock:], dstStride, int(unit.FilterRect.Width()), int(unit.FilterRect.Height()), record.Unit, bitDepth, scratch); err != nil {
+			return 0, err
+		}
+	}
+	return unitCount, nil
 }
 
 func restorationApplyMaxSample(bitDepth uint8) (uint16, bool) {
