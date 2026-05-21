@@ -23,6 +23,8 @@ type FrameWorkBatch = threading.FrameWorkBatch
 type FrameWorkSequenceContext = threading.FrameWorkSequenceContext
 type FrameWorkFrameContext = threading.FrameWorkFrameContext
 type FrameWorkJobRegion = threading.FrameWorkJobRegion
+type FrameWorkPlane = threading.FrameWorkPlane
+type FrameWorkPlaneRegion = threading.FrameWorkPlaneRegion
 type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (
@@ -31,6 +33,10 @@ const (
 	FrameWorkStepBegin        FrameWorkStepKind = decodework.FrameStepBegin
 	FrameWorkStepTile         FrameWorkStepKind = decodework.FrameStepTile
 	FrameWorkStepShowExisting FrameWorkStepKind = decodework.FrameStepShowExisting
+
+	FrameWorkPlaneY FrameWorkPlane = threading.FrameWorkPlaneY
+	FrameWorkPlaneU FrameWorkPlane = threading.FrameWorkPlaneU
+	FrameWorkPlaneV FrameWorkPlane = threading.FrameWorkPlaneV
 )
 
 // FrameWorkEventResult reports the planning, output, and execution result for

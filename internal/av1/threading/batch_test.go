@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -437,6 +438,154 @@ func TestFrameWorkBatchJobBlockDeltaContext(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        130,
+		Height:       65,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 130, Height: 65},
+		},
+		Jobs: []tile.Job{
+			{Tile: 1, Row: 0, Col: 1, SBX: 1, SBY: 0, SBCols: 2, SBRows: 2},
+		},
+	}
+	y, err := ctx.JobOutputPlane(0, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.Plane != FrameWorkPlaneY || y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 ||
+		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 {
+		t.Fatalf("Y plane region=%+v", y)
+	}
+	if len(y.Pix) != (y.Height-1)*y.Stride+y.RowBytes {
+		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
+	}
+	y.Pix[0] = 0x7a
+	if output.Y.Pix[64] != 0x7a {
+		t.Fatalf("Y plane did not alias")
+	}
+
+	u, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Plane != FrameWorkPlaneU || u.X != 32 || u.Y != 0 || u.Width != 33 || u.Height != 33 ||
+		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 {
+		t.Fatalf("U plane region=%+v", u)
+	}
+	u.Pix[0] = 0x55
+	if output.U.Pix[32] != 0x55 {
+		t.Fatalf("U plane did not alias")
+	}
+
+	v, err := ctx.JobOutputPlane(0, FrameWorkPlaneV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Plane != FrameWorkPlaneV || v.X != 32 || v.Y != 0 || v.Width != 33 || v.Height != 33 ||
+		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 {
+		t.Fatalf("V plane region=%+v", v)
+	}
+	v.Pix[0] = 0x33
+	if output.V.Pix[32] != 0x33 {
+		t.Fatalf("V plane did not alias")
+	}
+}
+
+func TestFrameWorkBatchJobOutputPlaneHighBitDepth444(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:    300,
+		Height:   260,
+		BitDepth: 10,
+		Align:    64,
+	})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig:          parser.ColorConfig{BitDepth: 10},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+	y, err := ctx.JobOutputPlane(0, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.X != 128 || y.Y != 128 || y.Width != 172 || y.Height != 132 ||
+		y.BytesPerSample != 2 || y.RowBytes != 344 {
+		t.Fatalf("Y plane region=%+v", y)
+	}
+	wantOffset := 128*output.Y.Stride + 128*2
+	y.Pix[1] = 0x9c
+	if output.Y.Pix[wantOffset+1] != 0x9c {
+		t.Fatalf("Y high-bit plane did not alias")
+	}
+
+	u, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.X != 128 || u.Y != 128 || u.Width != 172 || u.Height != 132 ||
+		u.BytesPerSample != 2 || u.RowBytes != 344 {
+		t.Fatalf("U 4:4:4 plane region=%+v", u)
+	}
+}
+
+func TestFrameWorkBatchJobOutputPlaneRejectsInvalidInputs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:      128,
+		Height:     128,
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      32,
+	})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 128, Height: 128},
+		},
+		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+	}
+	if _, err := ctx.JobOutputPlane(0, FrameWorkPlaneU); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("monochrome U err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobOutputPlane(0, FrameWorkPlane(99)); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid plane err=%v want %v", err, ErrInvalidBatch)
+	}
+	withoutOutput := ctx
+	withoutOutput.Output = nil
+	if _, err := withoutOutput.JobOutputPlane(0, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil output err=%v want %v", err, ErrInvalidBatch)
+	}
+	badLayout := ctx
+	badLayout.Output = &frame.Frame{
+		Format: output.Format,
+		Layout: frame.Layout{},
+		Y:      output.Y,
+	}
+	if _, err := badLayout.JobOutputPlane(0, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad layout err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchJobRegionRejectsInvalidInputs(t *testing.T) {
 	validRegionBatch := func() FrameWorkBatch {
 		return FrameWorkBatch{
@@ -633,9 +782,25 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 }
 
 func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        300,
+		Height:       260,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
 	ctx := FrameWorkBatch{
+		Output: output,
 		FrameWorkFrameContext: FrameWorkFrameContext{
-			Sequence:  testBatchSequenceContext(),
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+				},
+			}),
 			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
 		},
 		Jobs: []tile.Job{
@@ -656,6 +821,13 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 		}
 		if block.SBSizeMIB != 32 || !block.SkipTransform {
 			t.Fatalf("block=%+v", block)
+		}
+		plane, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plane.X != 64 || plane.Y != 64 || plane.Width != 86 || plane.Height != 66 || plane.RowBytes != 172 {
+			t.Fatalf("plane=%+v", plane)
 		}
 	})
 	if allocs != 0 {
@@ -807,11 +979,27 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 		if width == 0 || height == 0 {
 			return
 		}
+		format := frame.Format{
+			Width:        int(width),
+			Height:       int(height),
+			BitDepth:     8,
+			MonoChrome:   width&1 == 1,
+			SubsamplingX: true,
+			SubsamplingY: true,
+			Align:        64,
+		}
+		output := testBatchFrame(t, format)
 		seq := parser.SequenceHeader{
 			Use128x128Superblock: use128,
-			ColorConfig:          parser.ColorConfig{BitDepth: 8, MonoChrome: width&1 == 1},
+			ColorConfig: parser.ColorConfig{
+				BitDepth:     8,
+				MonoChrome:   format.MonoChrome,
+				SubsamplingX: format.SubsamplingX,
+				SubsamplingY: format.SubsamplingY,
+			},
 		}
 		ctx := FrameWorkBatch{
+			Output: output,
 			FrameWorkFrameContext: FrameWorkFrameContext{
 				Sequence: FrameWorkSequenceContextFromHeader(seq),
 				FrameSize: parser.FrameSize{
@@ -844,6 +1032,22 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 		}
 		if block.SBSizeMIB != ctx.Sequence.SBSizeMIB || block.Monochrome != ctx.Sequence.ColorConfig.MonoChrome {
 			t.Fatalf("block=%+v ctx=%+v", block, ctx.Sequence)
+		}
+		yPlane, err := ctx.JobOutputPlane(0, FrameWorkPlaneY)
+		if err != nil {
+			t.Fatalf("Y plane err=%v region=%+v", err, region)
+		}
+		if yPlane.Width == 0 || yPlane.Height == 0 || len(yPlane.Pix) == 0 {
+			t.Fatalf("invalid Y plane=%+v", yPlane)
+		}
+		if !format.MonoChrome {
+			uPlane, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
+			if err != nil {
+				t.Fatalf("U plane err=%v region=%+v", err, region)
+			}
+			if uPlane.Width == 0 || uPlane.Height == 0 || len(uPlane.Pix) == 0 {
+				t.Fatalf("invalid U plane=%+v", uPlane)
+			}
 		}
 	})
 }
@@ -956,6 +1160,39 @@ func BenchmarkFrameWorkBatchJobBlockDeltaContext(b *testing.B) {
 	}
 }
 
+func BenchmarkFrameWorkBatchJobOutputPlane(b *testing.B) {
+	output := benchmarkBatchFrame(b, frame.Format{
+		Width:        300,
+		Height:       260,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+				},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobOutputPlane(0, FrameWorkPlaneU)
+	}
+}
+
 func BenchmarkFrameWorkBatchJobUpdatesFrameContext(b *testing.B) {
 	ctx := FrameWorkBatch{
 		Jobs: []tile.Job{
@@ -990,6 +1227,34 @@ func testBatchTileInfo() parser.TileInfo {
 	tiles.ColStartSB[2] = 2
 	tiles.RowStartSB[1] = 1
 	return tiles
+}
+
+func testBatchFrame(t *testing.T, format frame.Format) *frame.Frame {
+	t.Helper()
+	layout, err := frame.RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, layout.Size)
+	output, err := frame.Bind(buffer, format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &output
+}
+
+func benchmarkBatchFrame(b *testing.B, format frame.Format) *frame.Frame {
+	b.Helper()
+	layout, err := frame.RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	buffer := make([]byte, layout.Size)
+	output, err := frame.Bind(buffer, format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return &output
 }
 
 func testBatchSequenceContext() FrameWorkSequenceContext {

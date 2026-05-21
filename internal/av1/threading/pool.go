@@ -106,6 +106,31 @@ type FrameWorkJobRegion struct {
 	MIRowEnd   uint32
 }
 
+// FrameWorkPlane identifies one output frame plane.
+type FrameWorkPlane uint8
+
+const (
+	FrameWorkPlaneY FrameWorkPlane = iota
+	FrameWorkPlaneU
+	FrameWorkPlaneV
+)
+
+// FrameWorkPlaneRegion is the writable output-plane window for one scheduled
+// tile job. Pix starts at (X, Y) and spans through the final row; row starts are
+// separated by Stride bytes and each row has RowBytes valid bytes.
+type FrameWorkPlaneRegion struct {
+	Plane FrameWorkPlane
+	Pix   []byte
+
+	Stride         int
+	X              int
+	Y              int
+	Width          int
+	Height         int
+	BytesPerSample int
+	RowBytes       int
+}
+
 // FrameWorkFrameContext is the parsed frame context supplied to frame-work
 // tile batches. It is copied from the current decoder event so reconstruction
 // callbacks can map tile jobs to frame geometry and frame-level syntax without
@@ -270,6 +295,29 @@ func (b FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint
 	}, nil
 }
 
+// JobOutputPlane returns the clipped output-plane window for Jobs[index].
+func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return FrameWorkPlaneRegion{}, err
+	}
+	if b.Output == nil {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	outputPlane, subsamplingX, subsamplingY, ok := frameWorkOutputPlane(b.Output, plane)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	bytesPerSample := b.Output.Layout.BytesPerSample
+	if bytesPerSample <= 0 {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+
+	x0, x1 := frameWorkPlaneRange(region.PixelX, region.PixelX+region.PixelWidth, subsamplingX)
+	y0, y1 := frameWorkPlaneRange(region.PixelY, region.PixelY+region.PixelHeight, subsamplingY)
+	return frameWorkPlaneWindow(plane, outputPlane, bytesPerSample, x0, y0, x1, y1)
+}
+
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
 // whose adapted entropy state should refresh the frame context.
 func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
@@ -290,6 +338,107 @@ func frameWorkMIExtent(pixels uint32) (uint32, bool) {
 		return 0, false
 	}
 	return ((pixels + 7) >> 3) << 1, true
+}
+
+func frameWorkOutputPlane(output *frame.Frame, plane FrameWorkPlane) (frame.Plane, bool, bool, bool) {
+	switch plane {
+	case FrameWorkPlaneY:
+		return output.Y, false, false, true
+	case FrameWorkPlaneU:
+		if output.Format.MonoChrome {
+			return frame.Plane{}, false, false, false
+		}
+		return output.U, output.Format.SubsamplingX, output.Format.SubsamplingY, true
+	case FrameWorkPlaneV:
+		if output.Format.MonoChrome {
+			return frame.Plane{}, false, false, false
+		}
+		return output.V, output.Format.SubsamplingX, output.Format.SubsamplingY, true
+	default:
+		return frame.Plane{}, false, false, false
+	}
+}
+
+func frameWorkPlaneRange(start uint32, end uint32, subsampled bool) (uint32, uint32) {
+	if !subsampled {
+		return start, end
+	}
+	return start >> 1, (end >> 1) + (end & 1)
+}
+
+func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSample int, x0 uint32, y0 uint32, x1 uint32, y1 uint32) (FrameWorkPlaneRegion, error) {
+	if bytesPerSample <= 0 ||
+		plane.Stride <= 0 ||
+		plane.Width <= 0 ||
+		plane.Height <= 0 ||
+		x1 <= x0 ||
+		y1 <= y0 ||
+		x1 > uint32(plane.Width) ||
+		y1 > uint32(plane.Height) {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+
+	x := int(x0)
+	y := int(y0)
+	width := int(x1 - x0)
+	height := int(y1 - y0)
+	rowBytes, ok := frameWorkCheckedMul(width, bytesPerSample)
+	if !ok || rowBytes <= 0 || rowBytes > plane.Stride {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	lastRowOffset, ok := frameWorkCheckedMul(height-1, plane.Stride)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	windowLen, ok := frameWorkCheckedAdd(lastRowOffset, rowBytes)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	end, ok := frameWorkCheckedAdd(offset, windowLen)
+	if !ok || offset < 0 || end > len(plane.Pix) {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	return FrameWorkPlaneRegion{
+		Plane:          which,
+		Pix:            plane.Pix[offset:end],
+		Stride:         plane.Stride,
+		X:              x,
+		Y:              y,
+		Width:          width,
+		Height:         height,
+		BytesPerSample: bytesPerSample,
+		RowBytes:       rowBytes,
+	}, nil
+}
+
+func frameWorkCheckedAdd(a int, b int) (int, bool) {
+	c := a + b
+	if c < a {
+		return 0, false
+	}
+	return c, true
+}
+
+func frameWorkCheckedMul(a int, b int) (int, bool) {
+	if a < 0 || b < 0 {
+		return 0, false
+	}
+	if a != 0 && b > int(^uint(0)>>1)/a {
+		return 0, false
+	}
+	return a * b, true
 }
 
 // FrameWorkBatchFunc processes one deterministic frame-work tile batch.
