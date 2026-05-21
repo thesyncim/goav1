@@ -1,4 +1,4 @@
-.PHONY: test bench fuzz-smoke alloc
+.PHONY: test bench fuzz-smoke testvectors alloc
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -62,6 +62,10 @@ fuzz-smoke:
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter6Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter8Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter14Edge
+
+testvectors:
+	go test ./internal/av1/testvector
+	go test -tags goav1_oracle ./internal/av1/testvector
 
 alloc:
 	./scripts/check_allocs.sh
