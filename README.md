@@ -69,6 +69,8 @@ The initial implementation covers:
 - Decoder reference-state carryover for segmentation data and loop-filter
   deltas.
 - Self-contained tile-group decoder events with active frame-header context.
+- Caller-buffer decoder surface-reference tracking for AV1 refresh and
+  show-existing-frame updates.
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable decode surfaces.
 - AV1 header-derived frame formats, including monochrome surface layout.
