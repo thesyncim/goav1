@@ -50,6 +50,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzExtendRestorationFrame
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationStripeBoundary
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzSaveRestorationBoundaryLines
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzSaveRestorationFrameBoundaryLines
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzPlaneBlockOps
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzMinMaxAbsDiff8x8
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzBlendA64Mask

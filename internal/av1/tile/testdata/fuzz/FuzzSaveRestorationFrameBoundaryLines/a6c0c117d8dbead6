@@ -1,0 +1,9 @@
+go test fuzz v1
+uint16(27)
+uint16(196)
+byte('\v')
+byte('\x01')
+bool(true)
+bool(true)
+bool(false)
+bool(true)

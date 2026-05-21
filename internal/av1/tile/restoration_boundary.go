@@ -1,6 +1,9 @@
 package tile
 
-import av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+import (
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+)
 
 const (
 	restorationBorder    = 3
@@ -15,6 +18,16 @@ type RestorationStripeBoundaries struct {
 	Above  []uint16
 	Below  []uint16
 	Stride int
+}
+
+// RestorationFrameBoundaryPlane binds one plane's source and boundary buffers
+// for libaom's frame-level loop-restoration boundary save pass.
+type RestorationFrameBoundaryPlane struct {
+	Grid       RestorationPlaneGrid
+	Src        []uint16
+	SrcStride  int
+	SrcOrigin  int
+	Boundaries RestorationStripeBoundaries
 }
 
 // RestorationStripeBoundaryScratchSize reports caller-owned temporary storage
@@ -203,6 +216,26 @@ func SaveRestorationBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcSt
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// SaveRestorationFrameBoundaryLines ports av1_loop_restoration_save_boundary_lines
+// for a one-plane monochrome frame or a three-plane color frame.
+func SaveRestorationFrameBoundaryLines(planes []RestorationFrameBoundaryPlane, afterCDEF bool) error {
+	if len(planes) != 1 && len(planes) != 3 {
+		return ErrInvalidPlan
+	}
+	for i := range planes {
+		if planes[i].Grid.Plane != uint8(i) {
+			return ErrInvalidPlan
+		}
+		if planes[i].Grid.Type == parser.RestorationNone {
+			continue
+		}
+		if err := SaveRestorationBoundaryLines(planes[i].Grid, planes[i].Src, planes[i].SrcStride, planes[i].SrcOrigin, planes[i].Boundaries, afterCDEF); err != nil {
+			return err
 		}
 	}
 	return nil
