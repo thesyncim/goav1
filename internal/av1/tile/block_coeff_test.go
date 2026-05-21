@@ -30,8 +30,8 @@ func TestDecodeBlockCoefficientsRunsTransformThenPlanes(t *testing.T) {
 			TransformMode: parser.TransformModeLargest,
 			Inter:         true,
 		},
-		LumaClass:   transform.Class2D,
-		ChromaClass: [2]transform.Class{transform.Class2D, transform.Class2D},
+		LumaType:   transform.TypeDCTDCT,
+		ChromaType: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
 	}, func(block BlockCoeffBlock) error {
 		visits = append(visits, block)
 		assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
@@ -93,8 +93,8 @@ func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T
 			Inter:         true,
 			SkipTransform: true,
 		},
-		LumaClass:   transform.Class2D,
-		ChromaClass: [2]transform.Class{transform.Class2D, transform.Class2D},
+		LumaType:   transform.TypeDCTDCT,
+		ChromaType: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
 	}, func(BlockCoeffBlock) error {
 		t.Fatal("visitor called for skip_txfm block")
 		return nil
@@ -123,7 +123,7 @@ func TestDecodeBlockCoefficientsRejectsInvalidInputs(t *testing.T) {
 	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 	valid := BlockCoeffRequest{
 		Transform: TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1, TransformMode: parser.TransformModeLargest},
-		LumaClass: transform.Class2D,
+		LumaType:  transform.TypeDCTDCT,
 	}
 	var state DecodeState
 	var modeCtx BlockModeContext
@@ -142,13 +142,13 @@ func TestDecodeBlockCoefficientsRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("nil mode ctx err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	bad := valid
-	bad.LumaClass = transform.Class(99)
+	bad.LumaType = transform.TypeCount
 	if _, err := state.DecodeBlockCoefficients(cdfs, &modeCtx, &coeffCtx, &scratch, bad, visitor); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad luma class err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	bad = valid
 	bad.Transform.Color = parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
-	bad.ChromaClass = [2]transform.Class{transform.Class2D, transform.Class(99)}
+	bad.ChromaType = [2]transform.Type{transform.TypeDCTDCT, transform.TypeCount}
 	if _, err := state.DecodeBlockCoefficients(cdfs, &modeCtx, &coeffCtx, &scratch, bad, visitor); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad chroma classes err=%v want %v", err, ErrInvalidDecodeState)
 	}
@@ -159,7 +159,7 @@ func TestDecodeBlockCoefficientsAllocs(t *testing.T) {
 	payload := []byte{0x00}
 	req := BlockCoeffRequest{
 		Transform: TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1, Color: parser.ColorConfig{MonoChrome: true}, TransformMode: parser.TransformModeLargest},
-		LumaClass: transform.Class2D,
+		LumaType:  transform.TypeDCTDCT,
 	}
 	var state DecodeState
 	var modeCtx BlockModeContext
@@ -192,7 +192,7 @@ func FuzzDecodeBlockCoefficients(f *testing.F) {
 	f.Add([]byte{0x00}, uint8(BlockSize4x4), false, uint8(0), uint8(0), uint8(0))
 	f.Add([]byte{0x00, 0x00}, uint8(BlockSize16x16), true, uint8(1), uint8(1), uint8(0))
 
-	f.Fuzz(func(t *testing.T, payload []byte, rawBlock uint8, chroma bool, rawSSX uint8, rawSSY uint8, rawClass uint8) {
+	f.Fuzz(func(t *testing.T, payload []byte, rawBlock uint8, chroma bool, rawSSX uint8, rawSSY uint8, rawType uint8) {
 		if len(payload) == 0 || len(payload) > 64 {
 			return
 		}
@@ -202,7 +202,7 @@ func FuzzDecodeBlockCoefficients(f *testing.F) {
 			t.Fatal("invalid normalized block")
 		}
 		color := parser.ColorConfig{MonoChrome: !chroma, SubsamplingX: rawSSX&1 != 0, SubsamplingY: rawSSY&1 != 0}
-		class := transform.Class(rawClass % 3)
+		typ := transform.Type(rawType % uint8(transform.TypeCount))
 		req := BlockCoeffRequest{
 			Transform: TransformTreeRequest{
 				Size:          block,
@@ -211,8 +211,8 @@ func FuzzDecodeBlockCoefficients(f *testing.F) {
 				Color:         color,
 				TransformMode: parser.TransformModeLargest,
 			},
-			LumaClass:   class,
-			ChromaClass: [2]transform.Class{class, class},
+			LumaType:   typ,
+			ChromaType: [2]transform.Type{typ, typ},
 		}
 		transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 		var state DecodeState

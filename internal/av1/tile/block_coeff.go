@@ -14,8 +14,8 @@ type BlockCoeffScratch struct {
 type BlockCoeffRequest struct {
 	Transform TransformTreeRequest
 
-	LumaClass       transform.Class
-	ChromaClass     [2]transform.Class
+	LumaType        transform.Type
+	ChromaType      [2]transform.Type
 	EOBMultiContext [3]int
 }
 
@@ -50,13 +50,21 @@ func (r BlockCoeffResult) TotalStats() LumaCoeffStats {
 
 func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, visit BlockCoeffVisitor) (BlockCoeffResult, error) {
 	if s == nil || cdfs.Transform == nil || cdfs.Coeff == nil ||
-		modeCtx == nil || coeffCtx == nil || scratch == nil || visit == nil ||
-		!req.LumaClass.Valid() {
+		modeCtx == nil || coeffCtx == nil || scratch == nil || visit == nil {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
 	}
+	lumaClass, err := req.LumaType.Class()
+	if err != nil {
+		return BlockCoeffResult{}, ErrInvalidDecodeState
+	}
+	var chromaClass [2]transform.Class
 	if !req.Transform.Color.MonoChrome {
-		if !req.ChromaClass[0].Valid() || !req.ChromaClass[1].Valid() {
-			return BlockCoeffResult{}, ErrInvalidDecodeState
+		for i, typ := range req.ChromaType {
+			class, err := typ.Class()
+			if err != nil {
+				return BlockCoeffResult{}, ErrInvalidDecodeState
+			}
+			chromaClass[i] = class
 		}
 	}
 
@@ -69,7 +77,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	result.Luma, err = s.DecodeLumaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, LumaCoeffTreeRequest{
 		TreeRequest:     req.Transform,
 		Tree:            tree,
-		Class:           req.LumaClass,
+		Class:           lumaClass,
 		EOBMultiContext: req.EOBMultiContext[0],
 	}, func(block LumaCoeffBlock) error {
 		return visit(BlockCoeffBlock{
@@ -93,7 +101,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 			Tree:            tree,
 			Color:           req.Transform.Color,
 			Plane:           plane,
-			Class:           req.ChromaClass[plane-1],
+			Class:           chromaClass[plane-1],
 			EOBMultiContext: req.EOBMultiContext[plane],
 		}, func(block ChromaCoeffBlock) error {
 			return visit(BlockCoeffBlock{
