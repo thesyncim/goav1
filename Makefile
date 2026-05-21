@@ -1,4 +1,4 @@
-.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full alloc
+.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance alloc
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -134,6 +134,9 @@ testvectors-fast:
 	go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomQuantizer00|TestFrameMD5|TestOracleEnabled|TestLibaomRemoteManifest'
 
 testvectors-full: testvectors
+
+test-motion-conformance:
+	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
 
 alloc:
 	./scripts/check_allocs.sh

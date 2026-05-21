@@ -95,6 +95,116 @@ func TestPredictInterPlaneBlockHighBitDepth(t *testing.T) {
 	}
 }
 
+func TestInterpFilterTablesMatchLibaom(t *testing.T) {
+	tests := []struct {
+		name      string
+		filter    InterpFilter
+		blockSize int
+		subpel    int
+		want      [filterTaps]int16
+	}{
+		{name: "regular 8 tap", filter: InterpEightTapRegular, blockSize: 8, subpel: 1, want: [filterTaps]int16{0, 2, -6, 126, 8, -2, 0, 0}},
+		{name: "smooth 8 tap", filter: InterpEightTapSmooth, blockSize: 8, subpel: 8, want: [filterTaps]int16{0, -2, 14, 52, 52, 14, -2, 0}},
+		{name: "sharp 8 tap", filter: InterpMultiTapSharp, blockSize: 8, subpel: 15, want: [filterTaps]int16{0, 2, -2, 8, 126, -6, 2, -2}},
+		{name: "bilinear", filter: InterpBilinear, blockSize: 4, subpel: 8, want: [filterTaps]int16{0, 0, 0, 64, 64, 0, 0, 0}},
+		{name: "regular 4 tap", filter: InterpEightTapRegular, blockSize: 4, subpel: 4, want: [filterTaps]int16{0, 0, -12, 110, 38, -8, 0, 0}},
+		{name: "sharp uses regular 4 tap", filter: InterpMultiTapSharp, blockSize: 4, subpel: 4, want: [filterTaps]int16{0, 0, -12, 110, 38, -8, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := interpKernel(tt.filter, tt.blockSize, tt.subpel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("kernel=%v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPredictInterPlaneBlockFractionalXMatchesLibaom(t *testing.T) {
+	src, _ := testPlane(32, 32, 1, 32)
+	dst, _ := testPlane(32, 32, 1, 32)
+	want, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(src)
+
+	mv := Vector{Col: 4, Row: 0}
+	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	kernel, err := interpKernel(InterpEightTapRegular, 8, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomConvolveXRef(want, src, 8, 8, 8, 8, 8, 8, kernel)
+	assertPlaneBlockEqual(t, dst, want, 1, 8, 8, 8, 8)
+}
+
+func TestPredictInterPlaneBlockFractionalYMatchesLibaom(t *testing.T) {
+	src, _ := testPlane(32, 32, 1, 32)
+	dst, _ := testPlane(32, 32, 1, 32)
+	want, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(src)
+
+	mv := Vector{Col: 0, Row: 6}
+	filters := InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}
+	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, filters); err != nil {
+		t.Fatal(err)
+	}
+	kernel, err := interpKernel(InterpEightTapSmooth, 8, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomConvolveYRef(want, src, 8, 8, 8, 8, 8, 8, kernel)
+	assertPlaneBlockEqual(t, dst, want, 1, 8, 8, 8, 8)
+}
+
+func TestPredictInterPlaneBlockFractional2DMatchesLibaom(t *testing.T) {
+	src, _ := testPlane(32, 32, 1, 32)
+	dst, _ := testPlane(32, 32, 1, 32)
+	want, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(src)
+
+	mv := Vector{Col: 3, Row: 5}
+	filters := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
+	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, filters); err != nil {
+		t.Fatal(err)
+	}
+	xKernel, err := interpKernel(InterpMultiTapSharp, 8, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(InterpEightTapSmooth, 8, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomConvolve2DRef(want, src, 8, 8, 8, 8, 8, 8, xKernel, yKernel)
+	assertPlaneBlockEqual(t, dst, want, 1, 8, 8, 8, 8)
+}
+
+func TestPredictInterPlaneBlockNegativeFractionalMatchesLibaom(t *testing.T) {
+	src, _ := testPlane(32, 32, 1, 32)
+	dst, _ := testPlane(32, 32, 1, 32)
+	want, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(src)
+
+	mv := Vector{Col: -1, Row: -3}
+	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	xKernel, err := interpKernel(InterpEightTapRegular, 8, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(InterpEightTapRegular, 8, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomConvolve2DRef(want, src, 7, 7, 8, 8, 8, 8, xKernel, yKernel)
+	assertPlaneBlockEqual(t, dst, want, 1, 8, 8, 8, 8)
+}
+
 func TestPredictInterPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	src, _ := testPlane(4, 4, 1, 4)
 	dst, _ := testPlane(4, 4, 1, 4)
@@ -110,6 +220,12 @@ func TestPredictInterPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	}
 	if err := PredictInterPlaneBlock(dst, src, 3, 0, 0, 1, 1, Vector{}); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("invalid sample width err=%v want %v", err, ErrInvalidMotion)
+	}
+	if err := PredictInterPlaneBlock(dst, src, 2, 1, 1, 1, 1, Vector{Col: 4}); !errors.Is(err, ErrInvalidMotion) {
+		t.Fatalf("highbd fractional err=%v want %v", err, ErrInvalidMotion)
+	}
+	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 1, 1, 1, 1, Vector{Col: 4}, InterpFilters{X: interpFilterCount}); !errors.Is(err, ErrInvalidMotion) {
+		t.Fatalf("bad filter err=%v want %v", err, ErrInvalidMotion)
 	}
 	if _, err := FullpelVector(int(maxInt32)/SubpelScale+1, 0); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("overflow vector err=%v want %v", err, ErrInvalidMotion)
@@ -130,6 +246,21 @@ func TestPredictInterPlaneBlockAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("inter prediction allocated: %f", allocs)
+	}
+}
+
+func TestPredictInterPlaneBlockFractionalAllocs(t *testing.T) {
+	src, _ := testPlane(32, 32, 1, 32)
+	dst, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(src)
+	mv := Vector{Col: 3, Row: 5}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("fractional inter prediction allocated: %f", allocs)
 	}
 }
 
@@ -206,6 +337,17 @@ func BenchmarkPredictInterPlaneBlock(b *testing.B) {
 	}
 }
 
+func BenchmarkPredictInterPlaneBlockFractional(b *testing.B) {
+	src, _ := testPlane(64, 64, 1, 64)
+	dst, _ := testPlane(64, 64, 1, 64)
+	fillMotionTestPlane(src)
+	mv := Vector{Col: 3, Row: 5}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 32, 32, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth})
+	}
+}
+
 func testPlane(width int, height int, bytesPerSample int, stride int) (frame.Plane, []byte) {
 	buf := make([]byte, stride*height)
 	return frame.Plane{
@@ -232,4 +374,98 @@ func setSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16
 	}
 	plane.Pix[offset] = byte(value)
 	plane.Pix[offset+1] = byte(value >> 8)
+}
+
+func fillMotionTestPlane(plane frame.Plane) {
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			plane.Pix[y*plane.Stride+x] = byte((x*x + 3*y*y + 17*x + 11*y) & 0xff)
+		}
+	}
+}
+
+func assertPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, bytesPerSample int, x int, y int, width int, height int) {
+	t.Helper()
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			g := getSample(got, bytesPerSample, x+col, y+row)
+			w := getSample(want, bytesPerSample, x+col, y+row)
+			if g != w {
+				t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, g, w)
+			}
+		}
+	}
+}
+
+func libaomConvolveXRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(src.Pix[(refY+y)*src.Stride+refX+x-fo+k])
+			}
+			res := libaomRoundPowerOfTwo(sum, round0Bits)
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(res, filterBits-round0Bits)))
+		}
+	}
+}
+
+func libaomConvolveYRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(src.Pix[(refY+y-fo+k)*src.Stride+refX+x])
+			}
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(sum, filterBits)))
+		}
+	}
+}
+
+func libaomConvolve2DRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	for y := 0; y < height+filterTaps-1; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << (8 + filterBits - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int(xKernel[k]) * int(src.Pix[(refY-foY+y)*src.Stride+refX+x-foX+k])
+			}
+			im[y*imStride+x] = int16(libaomRoundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := 8 + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << offsetBits
+			for k := 0; k < filterTaps; k++ {
+				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+			}
+			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(res, bits)))
+		}
+	}
+}
+
+func libaomRoundPowerOfTwo(value int, bits int) int {
+	if bits <= 0 {
+		return value
+	}
+	return (value + (1 << (bits - 1))) >> bits
+}
+
+func libaomClipPixel(value int) uint8 {
+	if value < 0 {
+		return 0
+	}
+	if value > 255 {
+		return 255
+	}
+	return uint8(value)
 }
