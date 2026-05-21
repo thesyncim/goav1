@@ -12,6 +12,7 @@ bench:
 
 fuzz-smoke:
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
+	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzParseHeader
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPayloadIterator
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPacketizer
@@ -64,8 +65,8 @@ fuzz-smoke:
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter14Edge
 
 testvectors:
-	go test ./internal/av1/obu ./internal/av1/rtp ./internal/av1/testvector
-	go test -tags goav1_oracle ./internal/av1/obu ./internal/av1/rtp ./internal/av1/testvector
+	go test ./internal/av1/ivf ./internal/av1/obu ./internal/av1/rtp ./internal/av1/testvector
+	go test -tags goav1_oracle ./internal/av1/ivf ./internal/av1/obu ./internal/av1/rtp ./internal/av1/testvector
 
 alloc:
 	./scripts/check_allocs.sh

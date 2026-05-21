@@ -19,6 +19,7 @@ type Kind uint8
 const (
 	KindOBU Kind = iota + 1
 	KindRTP
+	KindIVF
 	KindParser
 	KindDecoder
 	KindDSP
@@ -28,6 +29,7 @@ const (
 	TagOBULowOverheadTemporalDelimiter Tag = 0x0001_0001
 	TagRTPPayloadSingleOBU             Tag = 0x0002_0001
 	TagRTPPayloadFragmentedOBU         Tag = 0x0002_0002
+	TagIVFSingleFrameAV1               Tag = 0x0003_0001
 )
 
 // Vector describes one byte-level input and its expected oracle output. Input

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/ivf"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/rtp"
 )
@@ -22,6 +23,8 @@ func TestCoreSuiteVectors(t *testing.T) {
 			checkOBUVector(t, vector)
 		case KindRTP:
 			checkRTPVector(t, vector)
+		case KindIVF:
+			checkIVFVector(t, vector)
 		default:
 			t.Fatalf("unhandled vector kind=%d", vector.Kind)
 		}
@@ -60,5 +63,23 @@ func checkRTPVector(t *testing.T, vector Vector) {
 	}
 	if !bytes.Equal(elem.Data, vector.Want) {
 		t.Fatalf("%s data=%x want %x", vector.Name, elem.Data, vector.Want)
+	}
+}
+
+func checkIVFVector(t *testing.T, vector Vector) {
+	t.Helper()
+	it, err := ivf.NewIterator(vector.Input)
+	if err != nil {
+		t.Fatalf("%s NewIterator: %v", vector.Name, err)
+	}
+	frame, ok, err := it.Next()
+	if err != nil {
+		t.Fatalf("%s Next: %v", vector.Name, err)
+	}
+	if !ok {
+		t.Fatalf("%s missing frame", vector.Name)
+	}
+	if !bytes.Equal(frame.Payload, vector.Want) {
+		t.Fatalf("%s payload=%x want %x", vector.Name, frame.Payload, vector.Want)
 	}
 }
