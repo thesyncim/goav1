@@ -731,6 +731,13 @@ func TestExecuteFrameWorkStepWithPayload(t *testing.T) {
 		if len(ctx.Jobs) != 2 {
 			t.Fatalf("jobs=%+v", ctx.Jobs)
 		}
+		data, err := ctx.JobPayload(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) != 2 || data[0] != 0xbb || data[1] != 0xcc {
+			t.Fatalf("job payload=%v", data)
+		}
 		return nil
 	})
 	if err != nil {
@@ -738,6 +745,24 @@ func TestExecuteFrameWorkStepWithPayload(t *testing.T) {
 	}
 	if !executed {
 		t.Fatal("not executed")
+	}
+}
+
+func TestExecuteFrameWorkStepWithPayloadRejectsInvalidPayloadRange(t *testing.T) {
+	jobs, batches, batchCount := testExecutionWork(t)
+	jobs[1].Offset = 2
+	jobs[1].Size = 2
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+
+	_, err := ExecuteFrameWorkStepWithPayload(step, nil, nil, nil, []byte{0xaa, 0xbb, 0xcc}, jobs[:], batches[:], func(FrameWorkBatch) error {
+		t.Fatal("callback should not run")
+		return nil
+	})
+	if !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("ExecuteFrameWorkStepWithPayload err=%v want %v", err, tile.ErrInvalidPlan)
 	}
 }
 
@@ -2410,7 +2435,7 @@ func TestExecuteFrameWorkStepWithPayloadAllocs(t *testing.T) {
 	defer workerPool.Close()
 
 	jobs, batches, batchCount := testExecutionWork(t)
-	payload := []byte{0xaa, 0xbb}
+	payload := []byte{0xaa, 0xbb, 0xcc}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
@@ -3003,8 +3028,8 @@ func benchmarkFramePoolForSize(b *testing.B, width uint32, height uint32, count 
 func testExecutionWork(t *testing.T) ([2]tile.Job, [2]threading.Batch, int) {
 	t.Helper()
 	jobs := [2]tile.Job{
-		{Tile: 0, SBCols: 1, SBRows: 1},
-		{Tile: 1, SBCols: 2, SBRows: 1},
+		{Tile: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 1},
+		{Tile: 1, SBCols: 2, SBRows: 1, Offset: 1, Size: 2},
 	}
 	var batches [2]threading.Batch
 	n, err := threading.BuildBatches(batches[:], jobs[:], 1)
@@ -3017,8 +3042,8 @@ func testExecutionWork(t *testing.T) ([2]tile.Job, [2]threading.Batch, int) {
 func benchmarkExecutionWork(b *testing.B) ([2]tile.Job, [2]threading.Batch, int) {
 	b.Helper()
 	jobs := [2]tile.Job{
-		{Tile: 0, SBCols: 1, SBRows: 1},
-		{Tile: 1, SBCols: 2, SBRows: 1},
+		{Tile: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 1},
+		{Tile: 1, SBCols: 2, SBRows: 1, Offset: 1, Size: 1},
 	}
 	var batches [2]threading.Batch
 	n, err := threading.BuildBatches(batches[:], jobs[:], 1)

@@ -25,6 +25,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildJobs
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzJobPayload
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
+	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobPayload
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseQuantizationParams
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseSegmentationParams
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseDeltaParams

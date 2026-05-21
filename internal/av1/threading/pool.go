@@ -24,6 +24,21 @@ type FrameWorkBatch struct {
 	Jobs       []tile.Job
 }
 
+// JobPayload returns the exact tile payload bytes for Jobs[index]. The
+// returned slice aliases Payload and is valid only for the callback invocation.
+func (b FrameWorkBatch) JobPayload(index int) ([]byte, error) {
+	if index < 0 || index >= len(b.Jobs) {
+		return nil, ErrInvalidBatch
+	}
+	return b.Jobs[index].Payload(b.Payload)
+}
+
+// ValidatePayloads checks that every job in the batch names a byte range inside
+// Payload.
+func (b FrameWorkBatch) ValidatePayloads() error {
+	return tile.ValidatePayloads(b.Payload, b.Jobs)
+}
+
 // FrameWorkBatchFunc processes one deterministic frame-work tile batch.
 type FrameWorkBatchFunc func(FrameWorkBatch) error
 

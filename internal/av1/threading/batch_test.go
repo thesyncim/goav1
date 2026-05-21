@@ -71,6 +71,53 @@ func TestBuildBatchesRejectsZeroAreaJob(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobPayload(t *testing.T) {
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	ctx := FrameWorkBatch{
+		Payload: payload,
+		Jobs: []tile.Job{
+			{Offset: 1, Size: 2},
+			{Offset: 0, Size: 1},
+		},
+	}
+
+	if err := ctx.ValidatePayloads(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ctx.JobPayload(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 2 || data[0] != 0xbb || data[1] != 0xcc {
+		t.Fatalf("payload=%v", data)
+	}
+	if len(data) != 0 {
+		data[0] = 0xdd
+	}
+	if payload[1] != 0xdd {
+		t.Fatalf("payload did not alias: %v", payload)
+	}
+}
+
+func TestFrameWorkBatchJobPayloadRejectsInvalidInputs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0xaa},
+		Jobs:    []tile.Job{{Offset: 0, Size: 2}},
+	}
+	if _, err := ctx.JobPayload(-1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("negative index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobPayload(1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("large index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobPayload(0); !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("invalid range err=%v want %v", err, tile.ErrInvalidPlan)
+	}
+	if err := ctx.ValidatePayloads(); !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("ValidatePayloads err=%v want %v", err, tile.ErrInvalidPlan)
+	}
+}
+
 func TestBuildBatchesAllocs(t *testing.T) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -83,6 +130,32 @@ func TestBuildBatchesAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("BuildBatches allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkBatchJobPayloadAllocs(t *testing.T) {
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	ctx := FrameWorkBatch{
+		Payload: payload,
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 2},
+		},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		data, err := ctx.JobPayload(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) != 2 {
+			t.Fatalf("payload=%v", data)
+		}
+		if err := ctx.ValidatePayloads(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.JobPayload allocated: %f", allocs)
 	}
 }
 
@@ -133,6 +206,40 @@ func FuzzBuildBatches(f *testing.F) {
 	})
 }
 
+func FuzzFrameWorkBatchJobPayload(f *testing.F) {
+	f.Add(uint8(3), int16(0), int16(1))
+	f.Add(uint8(3), int16(1), int16(2))
+	f.Add(uint8(1), int16(0), int16(2))
+
+	f.Fuzz(func(t *testing.T, payloadLen uint8, offset int16, size int16) {
+		payload := make([]byte, int(payloadLen%64))
+		job := tile.Job{Offset: int(offset), Size: int(size)}
+		ctx := FrameWorkBatch{Payload: payload, Jobs: []tile.Job{job}}
+
+		data, err := ctx.JobPayload(0)
+		if err != nil {
+			if _, _, rangeErr := job.PayloadRange(len(payload)); rangeErr == nil {
+				t.Fatalf("JobPayload err=%v payloadLen=%d job=%+v", err, len(payload), job)
+			}
+			return
+		}
+
+		start, end, err := job.PayloadRange(len(payload))
+		if err != nil {
+			t.Fatalf("PayloadRange err=%v after JobPayload success", err)
+		}
+		if len(data) != end-start {
+			t.Fatalf("len=%d want %d", len(data), end-start)
+		}
+		if len(data) != 0 && &data[0] != &payload[start] {
+			t.Fatalf("payload does not alias")
+		}
+		if err := ctx.ValidatePayloads(); err != nil {
+			t.Fatalf("ValidatePayloads err=%v", err)
+		}
+	})
+}
+
 func BenchmarkBuildBatches(b *testing.B) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -140,6 +247,22 @@ func BenchmarkBuildBatches(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = BuildBatches(batches[:], jobs[:], 3)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobPayload(b *testing.B) {
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	ctx := FrameWorkBatch{
+		Payload: payload,
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobPayload(1)
 	}
 }
 
