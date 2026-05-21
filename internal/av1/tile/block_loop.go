@@ -7,6 +7,7 @@ import "github.com/thesyncim/goav1/internal/av1/parser"
 type BlockLoopCDFs struct {
 	Partition *PartitionCDFs
 	Mode      *BlockModeCDFs
+	Intra     *IntraModeCDFs
 	Delta     DeltaCDFs
 }
 
@@ -33,6 +34,10 @@ type BlockLoopRequest struct {
 	CurrentSegmentMap  []uint8
 	PreviousSegmentMap []uint8
 	SegmentMapStride   int
+
+	FrameType             parser.FrameType
+	AllowIntrabc          bool
+	DecodePredictionModes bool
 }
 
 // BlockLoopVisit is reported after partition, segmentation, prefix, and delta
@@ -44,6 +49,7 @@ type BlockLoopVisit struct {
 	Segment          parser.SegmentData
 	SegmentPredicted bool
 	Prefix           BlockModeResult
+	Prediction       BlockPredictionModeResult
 	Delta            BlockDeltaContext
 }
 
@@ -53,6 +59,9 @@ type BlockLoopStats struct {
 	SegmentPredictions int
 	SegmentIDs         int
 	Prefixes           int
+	PredictionModes    int
+	IntraModes         int
+	InterEntries       int
 	DeltaReads         int
 }
 
@@ -96,6 +105,14 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 				}
 				if req.Segmentation.Enabled && req.Segmentation.UpdateMap {
 					stats.SegmentIDs++
+				}
+				if visitInfo.Prediction.Valid {
+					stats.PredictionModes++
+					if visitInfo.Prediction.Intra {
+						stats.IntraModes++
+					} else {
+						stats.InterEntries++
+					}
 				}
 				readDelta, err := shouldReadBlockDelta(visitInfo.Delta)
 				if err != nil {
@@ -166,14 +183,63 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 		return BlockLoopVisit{}, err
 	}
 
+	var prediction BlockPredictionModeResult
+	if req.DecodePredictionModes {
+		prediction, err = s.decodeBlockPredictionMode(cdfs.Intra, ctx, req, block, prefix, segment)
+		if err != nil {
+			return BlockLoopVisit{}, err
+		}
+	}
+
 	return BlockLoopVisit{
 		Block:            block,
 		SegmentID:        segmentID,
 		Segment:          segment,
 		SegmentPredicted: segmentPredicted,
 		Prefix:           prefix,
+		Prediction:       prediction,
 		Delta:            delta,
 	}, nil
+}
+
+func (s *DecodeState) decodeBlockPredictionMode(cdfs *IntraModeCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segment parser.SegmentData) (BlockPredictionModeResult, error) {
+	intra, err := s.ReadIntraFlag(cdfs, ctx, IntraFlagRequest{
+		FrameType:           req.FrameType,
+		AllowIntrabc:        req.AllowIntrabc,
+		SkipMode:            prefix.SkipMode,
+		SegmentationEnabled: req.Segmentation.Enabled,
+		Segment:             segment,
+		X4:                  block.X4,
+		Y4:                  block.Y4,
+		HaveTop:             block.HaveTop,
+		HaveLeft:            block.HaveLeft,
+	})
+	if err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+
+	result := BlockPredictionModeResult{Valid: true, Intra: intra, LumaMode: IntraModeDC}
+	if !intra {
+		if err := ctx.MarkIntraEntry(block.Size, block.X4, block.Y4, false, IntraModeDC); err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		return result, nil
+	}
+
+	mode, err := s.ReadLumaIntraMode(cdfs, ctx, LumaIntraModeRequest{
+		FrameType: req.FrameType,
+		Size:      block.Size,
+		X4:        block.X4,
+		Y4:        block.Y4,
+	})
+	if err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	if err := ctx.MarkIntra(block.Size, block.X4, block.Y4, true, mode); err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	result.LumaMode = mode
+	return result, nil
 }
 
 func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, skip bool) (uint8, bool, parser.SegmentData, error) {

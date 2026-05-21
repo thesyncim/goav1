@@ -95,6 +95,8 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		CurrentSegmentMap:  currentSegmentMap,
 		PreviousSegmentMap: previousSegmentMap,
 		SegmentMapStride:   segmentMapStride,
+		FrameType:          b.FrameHeader.FrameType,
+		AllowIntrabc:       b.FrameSize.AllowIntrabc,
 	}, nil
 }
 

@@ -130,6 +130,85 @@ func TestDecodeBlockLoopSegmentationPreskipAndMaps(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+	var intraCDFs IntraModeCDFs
+	if err := intraCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	req := BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel64x64,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   16,
+			MIRowEnd:   16,
+		},
+		SBSizeMIB:             16,
+		FrameType:             parser.FrameTypeKey,
+		DecodePredictionModes: true,
+	}
+
+	var scratch BlockLoopScratch
+	var got BlockLoopVisit
+	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+		Intra:     &intraCDFs,
+		Delta:     deltaCDFs,
+	}, &scratch, req, func(visit BlockLoopVisit) error {
+		got = visit
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1, Prefixes: 1, PredictionModes: 1, IntraModes: 1}) {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !got.Prediction.Valid || !got.Prediction.Intra || got.Prediction.LumaMode != IntraModeDC {
+		t.Fatalf("prediction=%+v", got.Prediction)
+	}
+	if scratch.Mode.AboveIntra[0] != 1 || scratch.Mode.LeftIntra[0] != 1 ||
+		scratch.Mode.AboveMode[0] != IntraModeDC || scratch.Mode.LeftMode[0] != IntraModeDC {
+		t.Fatalf("mode context aboveIntra=%d leftIntra=%d aboveMode=%d leftMode=%d",
+			scratch.Mode.AboveIntra[0], scratch.Mode.LeftIntra[0], scratch.Mode.AboveMode[0], scratch.Mode.LeftMode[0])
+	}
+	if got := intraCDFs.KeyframeYMode[0][0].Values()[int(intraModeCount)]; got != 1 {
+		t.Fatalf("keyframe ymode count=%d want 1", got)
+	}
+}
+
+func TestDecodeBlockLoopPredictionModesRequireIntraCDFs(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, _ := mustBlockLoopCDFs(t)
+	_, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+	}, &BlockLoopScratch{}, BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel64x64,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   16,
+			MIRowEnd:   16,
+		},
+		SBSizeMIB:             16,
+		FrameType:             parser.FrameTypeKey,
+		DecodePredictionModes: true,
+	}, func(BlockLoopVisit) error { return nil })
+	if !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+}
+
 func TestDecodeBlockLoopCopiesPreviousSegmentationWhenMapNotUpdated(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
@@ -235,6 +314,10 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			t.Fatal(err)
 		}
 		partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+		var intraCDFs IntraModeCDFs
+		if err := intraCDFs.InitDefault(); err != nil {
+			t.Fatal(err)
+		}
 		req := BlockLoopRequest{
 			Walk: BlockWalkRequest{
 				Root:       root,
@@ -243,7 +326,10 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 				MIColEnd:   cols,
 				MIRowEnd:   rows,
 			},
-			SBSizeMIB: root.Size4x4(),
+			SBSizeMIB:             root.Size4x4(),
+			FrameType:             parser.FrameType(rawRoot & 1),
+			AllowIntrabc:          rawRows&1 != 0,
+			DecodePredictionModes: rawRoot&0x80 != 0,
 		}
 		if delta {
 			req.Delta = parser.DeltaParams{DeltaQPresent: true}
@@ -251,6 +337,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
 			Partition: &partitionCDFs,
 			Mode:      &modeCDFs,
+			Intra:     &intraCDFs,
 			Delta:     deltaCDFs,
 		}, &BlockLoopScratch{}, req, func(visit BlockLoopVisit) error {
 			if visit.Block.MIColEnd > cols || visit.Block.MIRowEnd > rows {

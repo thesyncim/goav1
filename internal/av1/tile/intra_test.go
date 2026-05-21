@@ -72,6 +72,33 @@ func TestIntraContextsMatchDav1dAndLibaom(t *testing.T) {
 	}
 }
 
+func TestMarkIntraEntryLeavesInterRefsForReferenceReader(t *testing.T) {
+	var ctx BlockModeContext
+	if err := ctx.MarkInter(BlockSize8x8, 0, 0, InterReferencesResult{
+		Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.MarkIntraEntry(BlockSize8x8, 0, 0, false, IntraModeDC); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.AboveIntra[0] != 0 || ctx.LeftIntra[0] != 0 {
+		t.Fatalf("intra flags above=%d left=%d want 0,0", ctx.AboveIntra[0], ctx.LeftIntra[0])
+	}
+	if ctx.AboveRef[0][0] != ReferenceFrameGolden || ctx.LeftRef[0][0] != ReferenceFrameGolden {
+		t.Fatalf("refs changed above=%d left=%d", ctx.AboveRef[0][0], ctx.LeftRef[0][0])
+	}
+
+	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeVertical); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone ||
+		ctx.AboveMode[0] != IntraModeVertical || ctx.LeftMode[0] != IntraModeVertical {
+		t.Fatalf("intra mark refs/modes aboveRef=%d leftRef=%d aboveMode=%d leftMode=%d",
+			ctx.AboveRef[0][0], ctx.LeftRef[0][0], ctx.AboveMode[0], ctx.LeftMode[0])
+	}
+}
+
 func TestReadIntraFlag(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {

@@ -63,6 +63,15 @@ type LumaIntraModeRequest struct {
 	Y4        int
 }
 
+// BlockPredictionModeResult is the luma entry/mode syntax decoded after the
+// block prefix. Inter-specific reference and MV syntax is decoded by later
+// mode stages.
+type BlockPredictionModeResult struct {
+	Valid    bool
+	Intra    bool
+	LumaMode IntraMode
+}
+
 var yModeSizeContext = [blockSizeCount]int{
 	BlockSize128x128: 3,
 	BlockSize128x64:  3,
@@ -262,6 +271,41 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 	if c == nil || !mode.Valid() {
 		return ErrInvalidDecodeState
 	}
+	if err := c.MarkIntraEntry(size, x4, y4, intra, mode); err != nil {
+		return err
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return ErrInvalidDecodeState
+	}
+	ref0 := ReferenceFrameNone
+	ref1 := ReferenceFrameNone
+	if !intra {
+		ref0 = ReferenceFrameLast
+	}
+	for i := 0; i < int(dims.W4); i++ {
+		c.AboveRef[0][x4+i] = ref0
+		c.AboveRef[1][x4+i] = ref1
+		c.AboveCompound[x4+i] = 0
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		c.LeftRef[0][y4+i] = ref0
+		c.LeftRef[1][y4+i] = ref1
+		c.LeftCompound[y4+i] = 0
+	}
+	return nil
+}
+
+// MarkIntraEntry updates only the intra/inter entry context and, for intra
+// blocks, the luma prediction mode context. Inter reference contexts are left
+// for the inter-reference reader to fill with the actual decoded refs.
+func (c *BlockModeContext) MarkIntraEntry(size BlockSize, x4 int, y4 int, intra bool, mode IntraMode) error {
+	if c == nil || (intra && !mode.Valid()) {
+		return ErrInvalidDecodeState
+	}
+	if !intra {
+		mode = IntraModeDC
+	}
 	dims, ok := size.Dimensions()
 	if !ok {
 		return ErrInvalidDecodeState
@@ -272,24 +316,13 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		return ErrInvalidDecodeState
 	}
 	intraValue := boolByte(intra)
-	ref0 := ReferenceFrameNone
-	ref1 := ReferenceFrameNone
-	if !intra {
-		ref0 = ReferenceFrameLast
-	}
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = intraValue
 		c.AboveMode[x4+i] = mode
-		c.AboveRef[0][x4+i] = ref0
-		c.AboveRef[1][x4+i] = ref1
-		c.AboveCompound[x4+i] = 0
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = intraValue
 		c.LeftMode[y4+i] = mode
-		c.LeftRef[0][y4+i] = ref0
-		c.LeftRef[1][y4+i] = ref1
-		c.LeftCompound[y4+i] = 0
 	}
 	return nil
 }
