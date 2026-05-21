@@ -170,6 +170,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	completed := 0
 	tileJobs := 0
 	retainedContexts := 0
+	partitionReads := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -205,9 +206,26 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					if err := ctx.JobDecodeState(j, &decodeState); err != nil {
 						return err
 					}
-					if _, err := ctx.JobRegion(j); err != nil {
+					region, err := ctx.JobRegion(j)
+					if err != nil {
 						return err
 					}
+					var partitionCDFs tile.PartitionCDFs
+					if err := partitionCDFs.InitDefault(); err != nil {
+						return err
+					}
+					root := tile.RootBlockLevel(ctx.Sequence.Use128x128Superblock)
+					half := uint32(root.HalfSize4x4())
+					partition, err := decodeState.ReadPartition(&partitionCDFs, root, 0,
+						region.MIColEnd > region.MIColStart+half,
+						region.MIRowEnd > region.MIRowStart+half)
+					if err != nil {
+						return err
+					}
+					if !partition.ValidForLevel(root) {
+						return fmt.Errorf("root partition %d invalid for level %d", partition, root)
+					}
+					partitionReads++
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}
@@ -260,6 +278,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	}
 	if retainedContexts == 0 {
 		t.Fatal("no context-update tile was retained")
+	}
+	if partitionReads == 0 {
+		t.Fatal("no root partition syntax was read")
 	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)
