@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -172,6 +173,8 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	retainedContexts := 0
 	partitionReads := 0
 	blockPrefixReads := 0
+	blockDeltaReads := 0
+	intraEntryReads := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -228,15 +231,64 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 							return err
 						}
 						var modeCtx tile.BlockModeContext
-						if _, err := decodeState.ReadBlockModePrefix(&modeCDFs, &modeCtx, tile.BlockModeRequest{
+						prefix, err := decodeState.ReadBlockModePrefix(&modeCDFs, &modeCtx, tile.BlockModeRequest{
 							Size:     blockSize,
 							SkipMode: ctx.SkipMode,
 							CDEF:     ctx.CDEF,
 							Segment:  parser.SegmentData{RefFrame: -1},
-						}); err != nil {
+						})
+						if err != nil {
 							return err
 						}
 						blockPrefixReads++
+						if region.MIColStart == 0 && region.MIRowStart == 0 {
+							dims, ok := blockSize.Dimensions()
+							if !ok {
+								return fmt.Errorf("invalid block size %d", blockSize)
+							}
+							block, err := ctx.JobBlockDeltaContext(j, region.MIColStart, region.MIRowStart,
+								dims.W4 == ctx.Sequence.SBSizeMIB && dims.H4 == ctx.Sequence.SBSizeMIB,
+								prefix.SkipTransform)
+							if err != nil {
+								return err
+							}
+							deltaCDFs, err := initLibaomDeltaCDFs()
+							if err != nil {
+								return err
+							}
+							if err := decodeState.ReadBlockDeltas(ctx.Delta, block, deltaCDFs); err != nil {
+								return err
+							}
+							blockDeltaReads++
+
+							var intraCDFs tile.IntraModeCDFs
+							if err := intraCDFs.InitDefault(); err != nil {
+								return err
+							}
+							intra, err := decodeState.ReadIntraFlag(&intraCDFs, &modeCtx, tile.IntraFlagRequest{
+								FrameType:           ctx.FrameHeader.FrameType,
+								AllowIntrabc:        ctx.FrameSize.AllowIntrabc,
+								SkipMode:            prefix.SkipMode,
+								SegmentationEnabled: ctx.Segmentation.Enabled,
+								Segment:             parser.SegmentData{RefFrame: -1},
+							})
+							if err != nil {
+								return err
+							}
+							intraEntryReads++
+							if intra {
+								mode, err := decodeState.ReadLumaIntraMode(&intraCDFs, &modeCtx, tile.LumaIntraModeRequest{
+									FrameType: ctx.FrameHeader.FrameType,
+									Size:      blockSize,
+								})
+								if err != nil {
+									return err
+								}
+								if err := modeCtx.MarkIntra(blockSize, 0, 0, true, mode); err != nil {
+									return err
+								}
+							}
+						}
 					}
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
@@ -297,6 +349,12 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	if blockPrefixReads == 0 {
 		t.Fatal("no block prefix syntax was read")
 	}
+	if blockDeltaReads == 0 {
+		t.Fatal("no block delta syntax path ran")
+	}
+	if intraEntryReads == 0 {
+		t.Fatal("no intra entry syntax was read")
+	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)
 	runtime.KeepAlive(free)
@@ -347,6 +405,26 @@ func readFirstLibaomLeafBlock(state *tile.DecodeState, cdfs *tile.PartitionCDFs,
 		}
 		return blockSize, reads, nil
 	}
+}
+
+func initLibaomDeltaCDFs() (tile.DeltaCDFs, error) {
+	var q entropy.CDF
+	var lf entropy.CDF
+	var multi [tile.FrameLoopFilterCount]entropy.CDF
+	if err := q.InitDefaultDelta(); err != nil {
+		return tile.DeltaCDFs{}, err
+	}
+	if err := lf.InitDefaultDelta(); err != nil {
+		return tile.DeltaCDFs{}, err
+	}
+	cdfs := tile.DeltaCDFs{Q: &q, LF: &lf}
+	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+		if err := multi[i].InitDefaultDelta(); err != nil {
+			return tile.DeltaCDFs{}, err
+		}
+		cdfs.LFMulti[i] = &multi[i]
+	}
+	return cdfs, nil
 }
 
 func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, frame.Format, []byte, []frame.Frame, []int, []bool) {
