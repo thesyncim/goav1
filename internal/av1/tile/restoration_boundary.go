@@ -101,6 +101,61 @@ func RestorationStripeBoundaryScratchLen(stripe RestorationProcessingStripe, opt
 	return size, nil
 }
 
+// ExtendRestorationFrame ports av1_extend_frame for uint16 sample planes.
+// origin identifies plane coordinate (0,0); the caller-owned buffer must include
+// borderHorz columns and borderVert rows around the visible rectangle.
+func ExtendRestorationFrame(data []uint16, stride int, origin int, width int, height int, borderHorz int, borderVert int) error {
+	if stride <= 0 || origin < 0 || width <= 0 || height <= 0 || borderHorz < 0 || borderVert < 0 {
+		return ErrInvalidPlan
+	}
+	lineWidth, ok := checkedMulInt(borderHorz, 2)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	lineWidth, ok = checkedAddInt(lineWidth, width)
+	if !ok {
+		return ErrInvalidPlan
+	}
+
+	for y := 0; y < height; y++ {
+		line, ok := restorationFrameLine(data, stride, origin, -borderHorz, y, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		first := line[borderHorz]
+		last := line[borderHorz+width-1]
+		for x := 0; x < borderHorz; x++ {
+			line[x] = first
+			line[borderHorz+width+x] = last
+		}
+	}
+
+	top, ok := restorationFrameLine(data, stride, origin, -borderHorz, 0, lineWidth)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	for y := -borderVert; y < 0; y++ {
+		line, ok := restorationFrameLine(data, stride, origin, -borderHorz, y, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(line, top)
+	}
+
+	bottom, ok := restorationFrameLine(data, stride, origin, -borderHorz, height-1, lineWidth)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	for y := height; y < height+borderVert; y++ {
+		line, ok := restorationFrameLine(data, stride, origin, -borderHorz, y, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(line, bottom)
+	}
+	return nil
+}
+
 // SaveRestorationBoundaryLines ports save_tile_row_boundary_lines for an
 // already-upscaled whole-frame restoration plane.
 func SaveRestorationBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, boundaries RestorationStripeBoundaries, afterCDEF bool) error {
@@ -423,6 +478,14 @@ func boundariesForSide(boundaries RestorationStripeBoundaries, above bool) []uin
 func restorationBoundaryPlaneLine(buf []uint16, stride int, row int, planeWidth int) ([]uint16, bool) {
 	lineWidth := planeWidth + 2*restorationExtraHorz
 	return restorationBoundaryLine(buf, stride, row, 0, lineWidth)
+}
+
+func restorationFrameLine(data []uint16, stride int, origin int, x int, y int, lineWidth int) ([]uint16, bool) {
+	offset, ok := restorationSignedPlaneOffset(origin, stride, x, y)
+	if !ok || !restorationLineFits(len(data), offset, lineWidth) {
+		return nil, false
+	}
+	return data[offset : offset+lineWidth], true
 }
 
 func validateRestorationStripeBoundaryInputs(unitRect RestorationUnitRect, stripe RestorationProcessingStripe, dataStride int, dataOrigin int) error {

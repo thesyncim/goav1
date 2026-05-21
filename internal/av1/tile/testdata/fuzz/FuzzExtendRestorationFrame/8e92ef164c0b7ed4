@@ -1,0 +1,7 @@
+go test fuzz v1
+uint16(81)
+uint16(71)
+byte('Â')
+byte('?')
+byte('\x00')
+[]byte("0")

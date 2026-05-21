@@ -45,6 +45,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationUnitSchedule
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationUnitGeometry
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationProcessingUnit
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzExtendRestorationFrame
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationStripeBoundary
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzSaveRestorationBoundaryLines
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzPlaneBlockOps

@@ -160,6 +160,55 @@ func TestRestorationStripeBoundaryBufferLen(t *testing.T) {
 	}
 }
 
+func TestExtendRestorationFrame(t *testing.T) {
+	const width, height = 5, 4
+	const borderHorz, borderVert = 3, 2
+	const stride = width + 2*borderHorz + 5
+	origin := borderVert*stride + borderHorz
+	data := make([]uint16, stride*(height+2*borderVert))
+	fillUint16(data, 0xeeee)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			data[origin+y*stride+x] = uint16(20 + y*11 + x)
+		}
+	}
+
+	if err := ExtendRestorationFrame(data, stride, origin, width, height, borderHorz, borderVert); err != nil {
+		t.Fatal(err)
+	}
+	for y := -borderVert; y < height+borderVert; y++ {
+		clampedY := minInt(maxInt(y, 0), height-1)
+		for x := -borderHorz; x < width+borderHorz; x++ {
+			clampedX := minInt(maxInt(x, 0), width-1)
+			offset, ok := restorationSignedPlaneOffset(origin, stride, x, y)
+			if !ok {
+				t.Fatalf("offset x=%d y=%d", x, y)
+			}
+			want := uint16(20 + clampedY*11 + clampedX)
+			if data[offset] != want {
+				t.Fatalf("sample x=%d y=%d got=%d want %d", x, y, data[offset], want)
+			}
+		}
+	}
+}
+
+func TestExtendRestorationFrameRejectsInvalidInputs(t *testing.T) {
+	const width, height = 5, 4
+	const borderHorz, borderVert = 3, 2
+	const stride = width + 2*borderHorz
+	origin := borderVert*stride + borderHorz
+	data := make([]uint16, stride*(height+2*borderVert))
+	if err := ExtendRestorationFrame(data[:len(data)-1], stride, origin, width, height, borderHorz, borderVert); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("short data err=%v want %v", err, ErrInvalidPlan)
+	}
+	if err := ExtendRestorationFrame(data, stride, -1, width, height, borderHorz, borderVert); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad origin err=%v want %v", err, ErrInvalidPlan)
+	}
+	if err := ExtendRestorationFrame(data, stride, origin, width, height, -1, borderVert); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad border err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
 func TestSaveRestorationBoundaryLinesDeblock(t *testing.T) {
 	grid := testRestorationBoundaryGrid(t, false, false)
 	srcStride := int(grid.PlaneWidth) + 7
@@ -350,6 +399,62 @@ func TestSaveRestorationBoundaryLinesAllocs(t *testing.T) {
 	}
 }
 
+func TestExtendRestorationFrameAllocs(t *testing.T) {
+	const width, height = 64, 57
+	const borderHorz, borderVert = 6, 3
+	const stride = width + 2*borderHorz
+	origin := borderVert*stride + borderHorz
+	data := makeRestorationBoundarySamples(stride * (height + 2*borderVert))
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ExtendRestorationFrame(data, stride, origin, width, height, borderHorz, borderVert); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ExtendRestorationFrame allocated: %f", allocs)
+	}
+}
+
+func FuzzExtendRestorationFrame(f *testing.F) {
+	f.Add(uint16(5), uint16(4), uint8(3), uint8(2), uint8(0), []byte{0, 1, 2, 3, 255})
+	f.Add(uint16(64), uint16(57), uint8(6), uint8(3), uint8(2), []byte{255, 7, 11})
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawBH uint8, rawBV uint8, rawDepth uint8, dataBytes []byte) {
+		width := int(rawW%256) + 1
+		height := int(rawH%256) + 1
+		borderHorz := int(rawBH % 16)
+		borderVert := int(rawBV % 8)
+		bitDepths := [...]uint8{8, 10, 12}
+		bitDepth := bitDepths[rawDepth%uint8(len(bitDepths))]
+		max := uint16((1 << bitDepth) - 1)
+		stride := width + 2*borderHorz + int(rawBH%5)
+		origin := borderVert*stride + borderHorz
+		data := make([]uint16, stride*(height+2*borderVert))
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				data[origin+y*stride+x] = fuzzRestorationApplySample(dataBytes, y*width+x, max)
+			}
+		}
+		if err := ExtendRestorationFrame(data, stride, origin, width, height, borderHorz, borderVert); err != nil {
+			t.Fatalf("ExtendRestorationFrame err=%v", err)
+		}
+		for y := -borderVert; y < height+borderVert; y++ {
+			clampedY := minInt(maxInt(y, 0), height-1)
+			for x := -borderHorz; x < width+borderHorz; x++ {
+				clampedX := minInt(maxInt(x, 0), width-1)
+				offset, ok := restorationSignedPlaneOffset(origin, stride, x, y)
+				if !ok {
+					t.Fatalf("offset x=%d y=%d", x, y)
+				}
+				want := fuzzRestorationApplySample(dataBytes, clampedY*width+clampedX, max)
+				if data[offset] != want {
+					t.Fatalf("sample x=%d y=%d got=%d want %d", x, y, data[offset], want)
+				}
+			}
+		}
+	})
+}
+
 func FuzzRestorationStripeBoundary(f *testing.F) {
 	f.Add(uint16(300), uint16(260), uint8(1), uint8(0), uint8(1), uint8(1), uint8(0), false, false, false)
 	f.Add(uint16(300), uint16(260), uint8(0), uint8(1), uint8(1), uint8(1), uint8(2), true, true, true)
@@ -498,6 +603,22 @@ func BenchmarkSaveRestorationBoundaryLines(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, i&1 == 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkExtendRestorationFrame(b *testing.B) {
+	const width, height = 300, 260
+	const borderHorz, borderVert = 6, 3
+	const stride = width + 2*borderHorz
+	origin := borderVert*stride + borderHorz
+	data := makeRestorationBoundarySamples(stride * (height + 2*borderVert))
+	b.ReportAllocs()
+	b.SetBytes(int64((width + 2*borderHorz) * (height + 2*borderVert) * 2))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ExtendRestorationFrame(data, stride, origin, width, height, borderHorz, borderVert); err != nil {
 			b.Fatal(err)
 		}
 	}
