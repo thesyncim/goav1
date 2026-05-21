@@ -15,6 +15,7 @@ type BlockLoopCDFs struct {
 type BlockLoopScratch struct {
 	Partition PartitionContext
 	Mode      BlockModeContext
+	CDEF      CDEFIndexContext
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -73,6 +74,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 		for miCol := req.Walk.MIColStart; miCol < req.Walk.MIColEnd; miCol += rootSize {
 			scratch.Partition = PartitionContext{}
 			scratch.Mode = BlockModeContext{}
+			scratch.CDEF.Reset()
 			rootReq := BlockWalkRequest{
 				Root:       req.Walk.Root,
 				MIColStart: miCol,
@@ -83,7 +85,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitInfo, err := s.decodeBlockLoopVisit(cdfs, &scratch.Mode, req, block)
+				visitInfo, err := s.decodeBlockLoopVisit(cdfs, &scratch.Mode, &scratch.CDEF, req, block)
 				if err != nil {
 					return err
 				}
@@ -113,7 +115,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 	return stats, nil
 }
 
-func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit) (BlockLoopVisit, error) {
+func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeContext, cdef *CDEFIndexContext, req BlockLoopRequest, block BlockVisit) (BlockLoopVisit, error) {
 	segmentID := uint8(0)
 	segment := defaultSegmentData()
 	segmentPredicted := false
@@ -134,7 +136,7 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 		X4:                  block.X4,
 		Y4:                  block.Y4,
 	}
-	prefix, err := s.readBlockModePrefix(cdfs.Mode, ctx, prefixReq, segmentPredicted)
+	prefix, err := s.readBlockModePrefix(cdfs.Mode, ctx, cdef, prefixReq, segmentPredicted)
 	if err != nil {
 		return BlockLoopVisit{}, err
 	}
@@ -232,7 +234,7 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 	return id, false, req.Segmentation.Data.Segments[id], nil
 }
 
-func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
+func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, cdef *CDEFIndexContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
 	skipMode, err := s.ReadSkipMode(cdfs, ctx, req)
 	if err != nil {
 		return BlockModeResult{}, err
@@ -241,7 +243,7 @@ func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeCon
 	if err != nil {
 		return BlockModeResult{}, err
 	}
-	cdefIndex, err := s.ReadCDEFIndex(req.CDEF, skip)
+	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, cdef, req.Size, req.X4, req.Y4, skip)
 	if err != nil {
 		return BlockModeResult{}, err
 	}

@@ -8,6 +8,7 @@ import (
 const (
 	BlockModeContexts   = 3
 	MaxBlockModeSlots   = 32
+	cdefUnitsPerSB      = 4
 	segmentIDCDFSymbols = parser.MaxSegments
 	maxCDEFBits         = 3
 )
@@ -46,6 +47,14 @@ type BlockModeContext struct {
 	LeftCompGroup    [MaxBlockModeSlots]uint8
 	AboveCompIndex   [MaxBlockModeSlots]uint8
 	LeftCompIndex    [MaxBlockModeSlots]uint8
+}
+
+// CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF
+// units inside the current superblock. A 128x128 superblock has four units; a
+// 64x64 superblock only uses slot 0.
+type CDEFIndexContext struct {
+	Index [cdefUnitsPerSB]uint8
+	Read  [cdefUnitsPerSB]bool
 }
 
 // BlockModeRequest describes the block currently being decoded for the AV1
@@ -136,6 +145,14 @@ func (c *BlockModeCDFs) SegmentIDCDF(ctx int) (*entropy.CDF, error) {
 		return nil, entropy.ErrInvalidCDF
 	}
 	return blockModeCDF(&c.SegmentID, ctx, segmentIDCDFSymbols)
+}
+
+// Reset marks all CDEF-unit indices in c as unread for a new superblock.
+func (c *CDEFIndexContext) Reset() {
+	if c == nil {
+		return
+	}
+	*c = CDEFIndexContext{}
 }
 
 // SkipContext returns libaom's av1_get_skip_txfm_context() value.
@@ -324,6 +341,43 @@ func (s *DecodeState) ReadCDEFIndex(params parser.CDEFParams, skipTransform bool
 	return uint8(index), nil
 }
 
+// ReadCDEFIndexForBlock decodes cdef_idx using libaom/dav1d's 64x64 CDEF-unit
+// cache: the first non-skip block in a unit reads the syntax element, and later
+// blocks in the same unit reuse it without consuming entropy bits.
+func (s *DecodeState) ReadCDEFIndexForBlock(params parser.CDEFParams, ctx *CDEFIndexContext, size BlockSize, x4 int, y4 int, skipTransform bool) (uint8, error) {
+	if s == nil || ctx == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if params.Bits > maxCDEFBits {
+		return 0, ErrInvalidDecodeState
+	}
+	if skipTransform || params.Bits == 0 {
+		return 0, nil
+	}
+
+	units, count, err := cdefUnitsForBlock(size, x4, y4)
+	if err != nil {
+		return 0, err
+	}
+	if ctx.Read[units[0]] {
+		cached := ctx.Index[units[0]]
+		if cached >= parser.MaxCDEFStrengths {
+			return 0, ErrInvalidDecodeState
+		}
+		return cached, nil
+	}
+
+	index, err := s.ReadCDEFIndex(params, false)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < count; i++ {
+		ctx.Index[units[i]] = index
+		ctx.Read[units[i]] = true
+	}
+	return index, nil
+}
+
 // ReadBlockModePrefix decodes skip_mode, skip_transform, and cdef_idx for one
 // block and updates the caller-owned top/left contexts.
 func (s *DecodeState) ReadBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest) (BlockModeResult, error) {
@@ -494,6 +548,32 @@ func validateBlockModeSlot(x4 int, y4 int) error {
 		return ErrInvalidDecodeState
 	}
 	return nil
+}
+
+func cdefUnitsForBlock(size BlockSize, x4 int, y4 int) ([cdefUnitsPerSB]int, int, error) {
+	dims, ok := size.Dimensions()
+	if !ok || x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return [cdefUnitsPerSB]int{}, 0, ErrInvalidDecodeState
+	}
+	xUnit0 := x4 >> 4
+	yUnit0 := y4 >> 4
+	xUnit1 := (x4 + int(dims.W4) - 1) >> 4
+	yUnit1 := (y4 + int(dims.H4) - 1) >> 4
+	if xUnit0 < 0 || yUnit0 < 0 || xUnit1 >= 2 || yUnit1 >= 2 {
+		return [cdefUnitsPerSB]int{}, 0, ErrInvalidDecodeState
+	}
+
+	var units [cdefUnitsPerSB]int
+	count := 0
+	for uy := yUnit0; uy <= yUnit1; uy++ {
+		for ux := xUnit0; ux <= xUnit1; ux++ {
+			units[count] = uy*2 + ux
+			count++
+		}
+	}
+	return units, count, nil
 }
 
 func negDeinterleaveSegmentID(diff int, ref int, max int) (int, error) {

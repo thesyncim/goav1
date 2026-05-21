@@ -195,6 +195,76 @@ func TestReadCDEFIndex(t *testing.T) {
 	}
 }
 
+func TestReadCDEFIndexForBlockCachesPerLibaomUnit(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0xcf}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	params := parser.CDEFParams{Bits: 2, StrengthCount: 4}
+	var ctx CDEFIndexContext
+	ctx.Reset()
+
+	index, err := state.ReadCDEFIndexForBlock(params, &ctx, BlockSize8x8, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 3 {
+		t.Fatalf("first cdef index=%d want 3", index)
+	}
+	afterFirst := state.Reader.BitsRead()
+	if !ctx.Read[0] || ctx.Index[0] != 3 {
+		t.Fatalf("unit 0 cache read=%v index=%d want true,3", ctx.Read[0], ctx.Index[0])
+	}
+
+	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize16x16, 8, 8, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 3 || state.Reader.BitsRead() != afterFirst {
+		t.Fatalf("cached cdef index=%d bits=%d want index 3 bits %d", index, state.Reader.BitsRead(), afterFirst)
+	}
+
+	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize8x8, 16, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 0 || state.Reader.BitsRead() != afterFirst+2 {
+		t.Fatalf("right-unit cdef index=%d bits=%d want index 0 bits %d", index, state.Reader.BitsRead(), afterFirst+2)
+	}
+}
+
+func TestReadCDEFIndexForBlockSpanningBlockMarksCoveredUnits(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x80}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	params := parser.CDEFParams{Bits: 2, StrengthCount: 4}
+	var ctx CDEFIndexContext
+	ctx.Reset()
+
+	index, err := state.ReadCDEFIndexForBlock(params, &ctx, BlockSize128x128, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 2 {
+		t.Fatalf("spanning cdef index=%d want 2", index)
+	}
+	afterFirst := state.Reader.BitsRead()
+	for unit, cached := range ctx.Index {
+		if !ctx.Read[unit] || cached != 2 {
+			t.Fatalf("unit %d read=%v cached=%d want true,2", unit, ctx.Read[unit], cached)
+		}
+	}
+
+	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize16x16, 16, 16, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 2 || state.Reader.BitsRead() != afterFirst {
+		t.Fatalf("covered-unit cdef index=%d bits=%d want index 2 bits %d", index, state.Reader.BitsRead(), afterFirst)
+	}
+}
+
 func TestSegmentPredictionAndID(t *testing.T) {
 	cur := []uint8{
 		0, 0, 0, 0,
