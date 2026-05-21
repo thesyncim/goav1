@@ -2084,6 +2084,51 @@ func TestPlanTileWorkFrameEvent(t *testing.T) {
 	}
 }
 
+func TestPlanTileWorkPropagatesContextUpdateTile(t *testing.T) {
+	event := Event{
+		Kind: EventTileGroup,
+		Unit: obu.Unit{Payload: []byte{
+			0x00, // tile 0 size minus one.
+			0xaa,
+			0xbb,
+		}},
+		TileInfo: parser.TileInfo{
+			RefreshContext:      true,
+			ContextUpdateTileID: 1,
+			TileSizeBytes:       1,
+			SBCols:              2,
+			SBRows:              1,
+			Cols:                2,
+			Rows:                1,
+			ColStartSB:          [parser.MaxTileCols + 1]uint16{0, 1, 2},
+			RowStartSB:          [parser.MaxTileRows + 1]uint16{0, 1},
+		},
+		TileGroup: parser.TileGroup{
+			StartTile: 0,
+			EndTile:   1,
+			TileCount: 2,
+			Final:     true,
+		},
+	}
+	var spans [2]parser.TileSpan
+	var jobs [2]tile.Job
+	var batches [2]threading.Batch
+
+	plan, err := PlanTileWork(event, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if jobs[0].UpdatesFrameContext {
+		t.Fatalf("job[0]=%+v should not update frame context", jobs[0])
+	}
+	if !jobs[1].UpdatesFrameContext {
+		t.Fatalf("job[1]=%+v should update frame context", jobs[1])
+	}
+}
+
 func TestPlanTileWorkRejectsNonTileEvent(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job

@@ -66,6 +66,8 @@ The initial implementation covers:
 - Zero-allocation tile-job payload range validation and slicing helpers.
 - Zero-allocation tile entropy reader setup from scheduled tile jobs, including
   frame-level CDF-update control propagation into frame-work callbacks.
+- Per-job AV1 context-update-tile marking so decode workers can retain only
+  the designated tile's adapted frame entropy context.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
 - Zero-allocation frame-work batch helpers for safe per-job tile payload and

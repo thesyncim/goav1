@@ -46,6 +46,15 @@ func (b FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
 	})
 }
 
+// JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
+// whose adapted entropy state should refresh the frame context.
+func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
+	if index < 0 || index >= len(b.Jobs) {
+		return false, ErrInvalidBatch
+	}
+	return b.Jobs[index].UpdatesFrameContext, nil
+}
+
 // ValidatePayloads checks that every job in the batch names a byte range inside
 // Payload.
 func (b FrameWorkBatch) ValidatePayloads() error {

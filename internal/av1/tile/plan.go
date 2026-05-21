@@ -19,6 +19,11 @@ type Job struct {
 
 	LastInRow bool
 	LastRow   bool
+
+	// UpdatesFrameContext marks the context_update_tile_id tile when
+	// refresh_context is enabled. Decode workers can use this to retain only the
+	// designated tile's adapted entropy state after all tiles finish.
+	UpdatesFrameContext bool
 }
 
 // BuildJobs converts tile payload spans into deterministic work items. dst is
@@ -36,6 +41,9 @@ func BuildJobs(dst []Job, tiles parser.TileInfo, spans []parser.TileSpan) (int, 
 	}
 
 	numTiles := uint16(tiles.Cols) * uint16(tiles.Rows)
+	if tiles.RefreshContext && tiles.ContextUpdateTileID >= numTiles {
+		return 0, ErrInvalidPlan
+	}
 	var previous uint16
 	for i := 0; i < count; i++ {
 		span := spans[i]
@@ -72,6 +80,8 @@ func BuildJobs(dst []Job, tiles parser.TileInfo, spans []parser.TileSpan) (int, 
 			Size:      span.Size,
 			LastInRow: col == tiles.Cols-1,
 			LastRow:   row == tiles.Rows-1,
+
+			UpdatesFrameContext: tiles.RefreshContext && span.Tile == tiles.ContextUpdateTileID,
 		}
 		previous = span.Tile
 	}

@@ -63,6 +63,56 @@ func TestBuildJobsRejectsBadSpanCoordinates(t *testing.T) {
 	}
 }
 
+func TestBuildJobsMarksContextUpdateTile(t *testing.T) {
+	tiles := testTileInfo()
+	tiles.RefreshContext = true
+	tiles.ContextUpdateTileID = 2
+	spans := []parser.TileSpan{
+		{Tile: 1, Row: 0, Col: 1, Offset: 8, Size: 21},
+		{Tile: 2, Row: 1, Col: 0, Offset: 29, Size: 34},
+	}
+	var jobs [2]Job
+
+	n, err := BuildJobs(jobs[:], tiles, spans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("n=%d", n)
+	}
+	if jobs[0].UpdatesFrameContext {
+		t.Fatalf("job[0]=%+v should not update frame context", jobs[0])
+	}
+	if !jobs[1].UpdatesFrameContext {
+		t.Fatalf("job[1]=%+v should update frame context", jobs[1])
+	}
+
+	tiles.RefreshContext = false
+	n, err = BuildJobs(jobs[:], tiles, spans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("n=%d", n)
+	}
+	if jobs[1].UpdatesFrameContext {
+		t.Fatalf("job[1]=%+v should not update frame context", jobs[1])
+	}
+}
+
+func TestBuildJobsRejectsInvalidContextUpdateTile(t *testing.T) {
+	tiles := testTileInfo()
+	tiles.RefreshContext = true
+	tiles.ContextUpdateTileID = 4
+	var jobs [1]Job
+	spans := []parser.TileSpan{{Tile: 0, Row: 0, Col: 0}}
+
+	_, err := BuildJobs(jobs[:], tiles, spans)
+	if !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("BuildJobs err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
 func TestBuildJobsAllocs(t *testing.T) {
 	tiles := testTileInfo()
 	spans := []parser.TileSpan{
@@ -88,11 +138,13 @@ func FuzzBuildJobs(f *testing.F) {
 	f.Add([]byte{0, 4, 4, 4, 4})
 	f.Add([]byte{1, 0, 0, 1, 1})
 
-	tiles := testTileInfo()
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) < 5 {
 			return
 		}
+		tiles := testTileInfo()
+		tiles.RefreshContext = data[0]&0x80 != 0
+		tiles.ContextUpdateTileID = uint16((data[0] >> 2) & 3)
 		start := uint16(data[0] & 3)
 		count := int(data[1]&3) + 1
 		if int(start)+count > 4 {
@@ -124,6 +176,10 @@ func FuzzBuildJobs(f *testing.F) {
 		for i := 0; i < n; i++ {
 			if jobs[i].Tile != spans[i].Tile || jobs[i].Offset != spans[i].Offset || jobs[i].Size != spans[i].Size {
 				t.Fatalf("job[%d]=%+v span=%+v", i, jobs[i], spans[i])
+			}
+			wantUpdate := tiles.RefreshContext && jobs[i].Tile == tiles.ContextUpdateTileID
+			if jobs[i].UpdatesFrameContext != wantUpdate {
+				t.Fatalf("job[%d].UpdatesFrameContext=%v want %v job=%+v", i, jobs[i].UpdatesFrameContext, wantUpdate, jobs[i])
 			}
 		}
 	})

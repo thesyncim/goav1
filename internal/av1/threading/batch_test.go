@@ -169,6 +169,35 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobUpdatesFrameContext(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Jobs: []tile.Job{
+			{Tile: 0},
+			{Tile: 1, UpdatesFrameContext: true},
+		},
+	}
+	updates, err := ctx.JobUpdatesFrameContext(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updates {
+		t.Fatal("job 0 updates frame context")
+	}
+	updates, err = ctx.JobUpdatesFrameContext(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updates {
+		t.Fatal("job 1 does not update frame context")
+	}
+	if _, err := ctx.JobUpdatesFrameContext(-1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("negative index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobUpdatesFrameContext(2); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("large index err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestBuildBatchesAllocs(t *testing.T) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -203,6 +232,13 @@ func TestFrameWorkBatchJobPayloadAllocs(t *testing.T) {
 		}
 		if err := ctx.ValidatePayloads(); err != nil {
 			t.Fatal(err)
+		}
+		updates, err := ctx.JobUpdatesFrameContext(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updates {
+			t.Fatal("job updates frame context")
 		}
 	})
 	if allocs != 0 {
@@ -391,6 +427,20 @@ func BenchmarkFrameWorkBatchJobEntropyReader(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.JobEntropyReader(1)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobUpdatesFrameContext(b *testing.B) {
+	ctx := FrameWorkBatch{
+		Jobs: []tile.Job{
+			{Tile: 0},
+			{Tile: 1, UpdatesFrameContext: true},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobUpdatesFrameContext(1)
 	}
 }
 
