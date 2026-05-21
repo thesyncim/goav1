@@ -114,6 +114,76 @@ func TestCoeffContextsMatchLibaom(t *testing.T) {
 	}
 }
 
+func TestEOBPositionTokenMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		eob       int
+		wantToken int
+		wantExtra int
+	}{
+		{eob: 0, wantToken: 0, wantExtra: 0},
+		{eob: 1, wantToken: 1, wantExtra: 0},
+		{eob: 2, wantToken: 2, wantExtra: 0},
+		{eob: 3, wantToken: 3, wantExtra: 0},
+		{eob: 4, wantToken: 3, wantExtra: 1},
+		{eob: 5, wantToken: 4, wantExtra: 0},
+		{eob: 8, wantToken: 4, wantExtra: 3},
+		{eob: 9, wantToken: 5, wantExtra: 0},
+		{eob: 16, wantToken: 5, wantExtra: 7},
+		{eob: 17, wantToken: 6, wantExtra: 0},
+		{eob: 32, wantToken: 6, wantExtra: 15},
+		{eob: 33, wantToken: 7, wantExtra: 0},
+		{eob: 64, wantToken: 7, wantExtra: 31},
+		{eob: 65, wantToken: 8, wantExtra: 0},
+		{eob: 128, wantToken: 8, wantExtra: 63},
+		{eob: 129, wantToken: 9, wantExtra: 0},
+		{eob: 256, wantToken: 9, wantExtra: 127},
+		{eob: 257, wantToken: 10, wantExtra: 0},
+		{eob: 512, wantToken: 10, wantExtra: 255},
+		{eob: 513, wantToken: 11, wantExtra: 0},
+		{eob: 1024, wantToken: 11, wantExtra: 511},
+	}
+	for _, tt := range tests {
+		token, extra, err := EOBPositionToken(tt.eob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != tt.wantToken || extra != tt.wantExtra {
+			t.Fatalf("EOBPositionToken(%d)=(%d,%d) want (%d,%d)", tt.eob, token, extra, tt.wantToken, tt.wantExtra)
+		}
+		roundTrip, err := RecEOBPosition(token, extra)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if roundTrip != tt.eob {
+			t.Fatalf("RecEOBPosition(%d,%d)=%d want %d", token, extra, roundTrip, tt.eob)
+		}
+	}
+
+	for eob := 0; eob <= 1024; eob++ {
+		token, extra, err := EOBPositionToken(eob)
+		if err != nil {
+			t.Fatalf("EOBPositionToken(%d): %v", eob, err)
+		}
+		got, err := RecEOBPosition(token, extra)
+		if err != nil {
+			t.Fatalf("RecEOBPosition(%d,%d): %v", token, extra, err)
+		}
+		if got != eob {
+			t.Fatalf("eob round trip %d -> token %d extra %d -> %d", eob, token, extra, got)
+		}
+		if extra >= 1<<eobOffsetBits[token] {
+			t.Fatalf("eob %d extra=%d offsetBits=%d", eob, extra, eobOffsetBits[token])
+		}
+	}
+
+	if _, _, err := EOBPositionToken(-1); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("negative eob err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, _, err := EOBPositionToken(1025); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("large eob err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 func TestReadCoeffPrimitives(t *testing.T) {
 	var cdfs CoeffCDFs
 	if err := cdfs.InitDefault(0); err != nil {

@@ -91,6 +91,21 @@ type TXBDecodeResult struct {
 
 var eobGroupStart = [12]int{0, 1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513}
 var eobOffsetBits = [12]int{0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+var eobToPosSmall = [33]int{
+	0, 1, 2,
+	3, 3,
+	4, 4, 4, 4,
+	5, 5, 5, 5, 5, 5, 5, 5,
+	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+}
+var eobToPosLarge = [17]int{
+	6,
+	7,
+	8, 8,
+	9, 9, 9, 9,
+	10, 10, 10, 10, 10, 10, 10, 10,
+	11,
+}
 var eobMultiSizeTable = [transformSizeCount]int{
 	TransformSize4x4:   0,
 	TransformSize8x8:   2,
@@ -167,6 +182,26 @@ func RecEOBPosition(token int, extra int) (int, error) {
 		eob += extra
 	}
 	return eob, nil
+}
+
+func EOBPositionToken(eob int) (token int, extra int, err error) {
+	if eob < 0 || eob > 1024 {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	if eob < len(eobToPosSmall) {
+		token = eobToPosSmall[eob]
+	} else {
+		index := (eob - 1) >> 5
+		if index > 16 {
+			index = 16
+		}
+		token = eobToPosLarge[index]
+	}
+	extra = eob - eobGroupStart[token]
+	if extra < 0 || extra >= 1<<eobOffsetBits[token] {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	return token, extra, nil
 }
 
 func CoeffLevelsScratchLen(size TransformSize) (int, error) {
