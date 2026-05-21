@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\xdd")
+uint16(70)
+bool(true)
+bool(false)
+byte('\x04')
+byte('_')
+byte('\x01')
+byte('\x00')

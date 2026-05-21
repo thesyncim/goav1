@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("x")
+uint16(70)
+bool(true)
+bool(false)
+byte('B')
+byte('\x02')
+byte('C')
+byte('\x00')

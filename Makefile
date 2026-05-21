@@ -39,6 +39,13 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzNewEntropyReader
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateReset
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateBlockDeltas
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPartition
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadBlockModePrefix
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadIntraEntry
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadSelectedTransformSize
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadTransformPartitionSplit
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterReferences
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateRestorationUnit
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitNone
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitRecordNone
