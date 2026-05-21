@@ -51,6 +51,7 @@ fuzz-smoke:
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzFilterIntraEdge
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzUpsampleIntraEdge
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzIntraEdgeDecisions
+	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzCFLSubsampleAndPredict
 	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlock
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobPayload
