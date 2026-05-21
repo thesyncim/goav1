@@ -12,10 +12,15 @@ type Block struct {
 	Size      transform.Size
 	Transform transform.Type
 	Quantizer quantize.Quantizer
+	Lossless  bool
+	EOB       int
 }
 
 // ScratchLen returns the int32 and int16 scratch lengths needed by cfg.
 func ScratchLen(cfg Block) (int32Len int, int16Len int, err error) {
+	if cfg.Lossless && !losslessWHTSupported(cfg) {
+		return 0, 0, ErrInvalidBlock
+	}
 	if !cfg.Transform.Supported(cfg.Size) {
 		return 0, 0, ErrInvalidBlock
 	}
@@ -61,13 +66,23 @@ func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	if err := quantize.DequantizeBlock(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer); err != nil {
 		return ErrInvalidBlock
 	}
-	if err := transform.InverseBlock(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform); err != nil {
+	if cfg.Lossless {
+		if err := transform.InverseWHT4x4Block(residual, width, dequant, coeffSize.Height, cfg.EOB); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if err := transform.InverseBlock(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform); err != nil {
 		return ErrInvalidBlock
 	}
 	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, width, height, residual, width); err != nil {
 		return ErrInvalidBlock
 	}
 	return nil
+}
+
+func losslessWHTSupported(cfg Block) bool {
+	return cfg.Size == (transform.Size{Width: 4, Height: 4}) &&
+		cfg.Transform == transform.TypeDCTDCT &&
+		cfg.EOB >= 0
 }
 
 func checkedAdd(a int, b int) (int, bool) {

@@ -154,6 +154,41 @@ func TestReconstructPlaneBlockUsesAV1CoeffOrder(t *testing.T) {
 	}
 }
 
+func TestReconstructPlaneBlockLosslessWHT4x4(t *testing.T) {
+	plane, _ := testPlane(4, 4, 1, 4)
+	fillPlane(plane, 1, 100)
+	quantized := make([]int16, 4*4)
+	quantized[0] = 4
+	quantized[1] = 2
+	cfg := Block{
+		Size:      transform.Size{Width: 4, Height: 4},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 4},
+		Lossless:  true,
+		EOB:       2,
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			want := uint16(100)
+			if y == 0 {
+				want = 102
+			} else if y == 1 {
+				want = 101
+			}
+			if got := getSample(plane, 1, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestReconstructPlaneBlockDCT16x16(t *testing.T) {
 	plane, _ := testPlane(18, 17, 1, 20)
 	fillPlane(plane, 1, 90)
@@ -234,6 +269,8 @@ func TestReconstructPlaneBlockRejectsInvalidInputs(t *testing.T) {
 		cfg             Block
 	}{
 		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 64, Height: 64}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
+		{name: "lossless non 4x4", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 8, Height: 8}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer, Lossless: true}},
+		{name: "lossless negative eob", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: cfg.Size, Transform: cfg.Transform, Quantizer: cfg.Quantizer, Lossless: true, EOB: -1}},
 		{name: "short int32 scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch[:31], residualScratch: residualScratch, cfg: cfg},
 		{name: "short residual scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch[:15], cfg: cfg},
 		{name: "short quantized stride", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 3, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: cfg},
