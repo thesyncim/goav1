@@ -25,6 +25,8 @@ type DecoderFrameWorkPlaneRegion = internaldecoder.FrameWorkPlaneRegion
 type DecoderFrameWorkReference = internaldecoder.FrameWorkReference
 type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
 type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
+type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
+type DecoderFrameWorkPostFilterFunc = internaldecoder.FrameWorkPostFilterFunc
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
@@ -118,6 +120,10 @@ func ExecuteDecoderFrameWorkStepWithPayload(step DecoderFrameWorkStep, pool *Til
 
 func RunDecoderFrameWorkEventWithContext(state *DecoderFrameWorkState, refs *DecoderSurfaceReferences, framePool *FramePool, sequence SequenceHeader, event DecoderEvent, align int, referenceSurfaces []int, referenceFrames []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch, releases []int, workerPool *TileWorkerPool, fn DecoderFrameWorkBatchFunc) (DecoderFrameWorkEventResult, error) {
 	return state.RunEventWithContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn)
+}
+
+func RunDecoderFrameWorkEventWithContextAndPostFilter(state *DecoderFrameWorkState, refs *DecoderSurfaceReferences, framePool *FramePool, sequence SequenceHeader, event DecoderEvent, align int, referenceSurfaces []int, referenceFrames []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch, releases []int, workerPool *TileWorkerPool, fn DecoderFrameWorkBatchFunc, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
+	return state.RunEventWithContextAndPostFilter(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn, post)
 }
 
 func DecoderEventDropsFrameWork(event DecoderEvent) bool {

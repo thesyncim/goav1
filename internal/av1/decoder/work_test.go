@@ -1439,6 +1439,184 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunEventWithContextPostFilterBeforeFinish(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
+	framePayload = append(framePayload, 0xaa)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+
+	var order [2]string
+	orderIndex := 0
+	result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+		order[orderIndex] = "tile"
+		orderIndex++
+		if !state.Active() {
+			t.Fatal("state inactive during tile callback")
+		}
+		ctx.Output.Y.Pix[0] = 0x11
+		return nil
+	}, func(ctx FrameWorkPostFilterContext) error {
+		order[orderIndex] = "post"
+		orderIndex++
+		if !state.Active() {
+			t.Fatal("state inactive during postfilter")
+		}
+		if slot, ok := refs.ReferenceSlot(0); ok || slot != -1 {
+			t.Fatalf("published before postfilter slot=%d ok=%v", slot, ok)
+		}
+		if ctx.Output.Y.Pix[0] != 0x11 {
+			t.Fatalf("postfilter saw sample=%d want 0x11", ctx.Output.Y.Pix[0])
+		}
+		if ctx.Event.Kind != EventFrame || ctx.Step.Kind != FrameWorkStepBegin || !ctx.ExecutedTileWork || ctx.ReferenceCount != 0 {
+			t.Fatalf("postfilter context=%+v", ctx)
+		}
+		ctx.Output.Y.Pix[0] = 0x33
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orderIndex != 2 || order != ([2]string{"tile", "post"}) {
+		t.Fatalf("order=%v", order)
+	}
+	if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || state.Active() {
+		t.Fatalf("result=%+v active=%v", result, state.Active())
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != result.Step.Begin.Surface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, result.Step.Begin.Surface)
+	}
+	published, err := pool.Frame(slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.Y.Pix[0] != 0x33 {
+		t.Fatalf("published sample=%d want 0x33", published.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
+	framePayload = append(framePayload, 0xaa)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+
+	want := errors.New("postfilter")
+	var tileRan bool
+	_, err = state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+		tileRan = true
+		ctx.Output.Y.Pix[0] = 0x22
+		return nil
+	}, func(ctx FrameWorkPostFilterContext) error {
+		if ctx.Output.Y.Pix[0] != 0x22 {
+			t.Fatalf("postfilter sample=%d want 0x22", ctx.Output.Y.Pix[0])
+		}
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("RunEventWithContextAndPostFilter err=%v want %v", err, want)
+	}
+	if !tileRan || !state.Active() {
+		t.Fatalf("tileRan=%v active=%v", tileRan, state.Active())
+	}
+	if slot, ok := refs.ReferenceSlot(0); ok || slot != -1 {
+		t.Fatalf("slot=%d ok=%v want no publication", slot, ok)
+	}
+	output, err := pool.Frame(state.Surface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Y.Pix[0] != 0x22 {
+		t.Fatalf("active output sample=%d want 0x22", output.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkStateRunStepWithPostFilterAllocs(t *testing.T) {
+	pool := testFramePool(t, 1)
+	surface, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := finalFrameEvent(0)
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Surface: surface},
+	}
+	post := func(ctx FrameWorkPostFilterContext) error {
+		if ctx.Output != output || ctx.ExecutedTileWork {
+			t.Fatalf("ctx=%+v output=%p", ctx, output)
+		}
+		ctx.Output.Y.Pix[0] ^= 1
+		return nil
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		var refs SurfaceReferences
+		state := FrameWorkState{Surface: surface, active: true}
+		if _, err := state.RunStepWithPostFilter(&refs, &pool, event, step, nil, nil, nil, nil, nil, post); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("RunStepWithPostFilter allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkStateRunEventWithContextInterFrameReferences(t *testing.T) {
 	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
 	keyFrame = append(keyFrame, 0xaa)

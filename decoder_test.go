@@ -529,6 +529,75 @@ func TestRunDecoderFrameWorkEventWithContext(t *testing.T) {
 	}
 }
 
+func TestRunDecoderFrameWorkEventWithContextAndPostFilter(t *testing.T) {
+	workerPool, err := NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	event := DecoderEvent{
+		Kind:        DecoderEventFrame,
+		Unit:        OBUUnit{Payload: []byte{0x80}},
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16, RefreshFrameFlags: 0xff},
+		TileInfo: TileInfo{
+			SBCols:     1,
+			SBRows:     1,
+			Cols:       1,
+			Rows:       1,
+			ColStartSB: [MaxTileCols + 1]uint16{0, 1},
+			RowStartSB: [MaxTileRows + 1]uint16{0, 1},
+		},
+		TileGroup: TileGroup{TileCount: 1, DataSize: 1, Final: true},
+	}
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	var referenceSurfaces [InterRefsPerFrame]int
+	var referenceFrames [InterRefsPerFrame]*Frame
+	var spans [1]TileSpan
+	var jobs [1]TileJob
+	var batches [1]TileBatch
+	var releases [RefFrames]int
+
+	var order [2]string
+	result, err := RunDecoderFrameWorkEventWithContextAndPostFilter(&state, &refs, &pool, sequence, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
+		order[0] = "tile"
+		ctx.Output.Y.Pix[0] = 0x21
+		return nil
+	}, func(ctx DecoderFrameWorkPostFilterContext) error {
+		order[1] = "post"
+		if ctx.Output.Y.Pix[0] != 0x21 || !ctx.ExecutedTileWork {
+			t.Fatalf("post ctx=%+v sample=%d", ctx, ctx.Output.Y.Pix[0])
+		}
+		ctx.Output.Y.Pix[0] = 0x34
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order != ([2]string{"tile", "post"}) || result.Run != (DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
+		t.Fatalf("order=%v result=%+v", order, result)
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok {
+		t.Fatal("frame was not published")
+	}
+	published, err := pool.Frame(slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.Y.Pix[0] != 0x34 {
+		t.Fatalf("published sample=%d want 0x34", published.Y.Pix[0])
+	}
+}
+
 func TestDecoderFrameWorkStateRunStep(t *testing.T) {
 	workerPool, err := NewTileWorkerPool(1)
 	if err != nil {

@@ -92,7 +92,7 @@ The initial implementation covers:
   and tile-group continuation plans, bounded tile-work step execution, and
   payload-carrying frame-work batch callbacks and event-level run helpers, and
   caller-owned frame work lifecycle state with event-level orchestration,
-  ordered run-and-finish helpers for final tile groups, abort release,
+  ordered run/postfilter/finish helpers for final tile groups, abort release,
   show-existing output, and stream-boundary drop handling for temporal units,
   new sequences, and show-existing frames.
 - Incremental decoder stream state over OBUs/RTP payloads.
