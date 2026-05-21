@@ -255,6 +255,40 @@ func TestEventDropsFrameWork(t *testing.T) {
 	}
 }
 
+func TestEventCompletesFrameWork(t *testing.T) {
+	tests := []struct {
+		name  string
+		event Event
+		want  bool
+	}{
+		{
+			name:  "final frame",
+			event: Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}},
+			want:  true,
+		},
+		{
+			name:  "final tile group",
+			event: Event{Kind: EventTileGroup, TileGroup: parser.TileGroup{Final: true}},
+			want:  true,
+		},
+		{
+			name:  "non-final tile group",
+			event: Event{Kind: EventTileGroup},
+			want:  false,
+		},
+		{
+			name:  "frame header",
+			event: Event{Kind: EventFrameHeader, TileGroup: parser.TileGroup{Final: true}},
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		if got := EventCompletesFrameWork(tt.event); got != tt.want {
+			t.Fatalf("%s: EventCompletesFrameWork=%v want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestFrameWorkStateLifecycle(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -311,6 +345,164 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	slot, ok := refs.ReferenceSlot(0)
 	if !ok || slot != plan.Surface {
 		t.Fatalf("slot=%d ok=%v want %d", slot, ok, plan.Surface)
+	}
+}
+
+func TestFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var releases [parser.RefFrames]int
+	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed || releaseCount != 0 || state.Active() {
+		t.Fatalf("completed=%v releaseCount=%d active=%v", completed, releaseCount, state.Active())
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != plan.Surface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, plan.Surface)
+	}
+}
+
+func TestFrameWorkStateFinishIfEventCompletesFrameWorkFrameOBU(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
+	framePayload = append(framePayload, 0xaa)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var releases [parser.RefFrames]int
+	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[1], releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed || releaseCount != 0 || state.Active() {
+		t.Fatalf("completed=%v releaseCount=%d active=%v", completed, releaseCount, state.Active())
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != plan.Surface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, plan.Surface)
+	}
+}
+
+func TestFrameWorkStateFinishIfEventCompletesFrameWorkNoop(t *testing.T) {
+	var nilState *FrameWorkState
+	completed, count, err := nilState.FinishIfEventCompletesFrameWork(nil, nil, Event{Kind: EventTileGroup}, nil)
+	if err != nil || completed || count != 0 {
+		t.Fatalf("nil state completed=%v count=%d err=%v", completed, count, err)
+	}
+
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	completed, count, err = state.FinishIfEventCompletesFrameWork(&refs, &pool, Event{Kind: EventTileGroup}, nil)
+	if err != nil || completed || count != 0 || !state.Active() {
+		t.Fatalf("completed=%v count=%d err=%v active=%v", completed, count, err, state.Active())
+	}
+}
+
+func TestFrameWorkStateFinishIfEventCompletesFrameWorkRejectsInactive(t *testing.T) {
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	completed, count, err := state.FinishIfEventCompletesFrameWork(nil, nil, finalFrameEvent(0xff), releases[:])
+	if !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("FinishIfEventCompletesFrameWork err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
+	if completed || count != 0 {
+		t.Fatalf("completed=%v count=%d", completed, count)
+	}
+}
+
+func TestFrameWorkStateFinishIfEventCompletesFrameWorkKeepsActiveOnError(t *testing.T) {
+	pool := testFramePool(t, 2)
+	index0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0xff, index0, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state FrameWorkState
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.Release(index0); err != nil {
+		t.Fatal(err)
+	}
+
+	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, finalFrameEvent(0xff), releases[:])
+	if !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("FinishIfEventCompletesFrameWork err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	if completed || count != 0 || !state.Active() || state.Surface != plan.Surface {
+		t.Fatalf("completed=%v count=%d state=%+v active=%v", completed, count, state, state.Active())
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != index0 {
+		t.Fatalf("slot=%d ok=%v want unchanged %d", slot, ok, index0)
 	}
 }
 
@@ -760,6 +952,47 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateFinishIfEventCompletesFrameWorkAllocs(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		if _, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		completed, _, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !completed {
+			t.Fatal("not completed")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkState FinishIfEventCompletesFrameWork allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -883,6 +1116,37 @@ func BenchmarkFrameWorkStateAbortIfEventDropsFrameWork(b *testing.B) {
 		state.Reset()
 		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
 		_, _ = state.AbortIfEventDropsFrameWork(&pool, drop)
+	}
+}
+
+func BenchmarkFrameWorkStateFinishIfEventCompletesFrameWork(b *testing.B) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	if count != 3 {
+		b.Fatalf("count=%d", count)
+	}
+
+	pool := benchmarkFramePoolForSize(b, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
+		_, _, _ = state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
 	}
 }
 

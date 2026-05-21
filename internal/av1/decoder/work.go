@@ -53,6 +53,13 @@ func EventDropsFrameWork(event Event) bool {
 	return event.NewCodedVideoSequence || event.NewTemporalUnit
 }
 
+// EventCompletesFrameWork reports whether event carries the final tile group
+// for an in-flight frame and is therefore ready for reference publication
+// after tile decoding succeeds.
+func EventCompletesFrameWork(event Event) bool {
+	return (event.Kind == EventFrame || event.Kind == EventTileGroup) && event.TileGroup.Final
+}
+
 // Active reports whether a frame has begun and not yet been finished, aborted,
 // or reset.
 func (s *FrameWorkState) Active() bool {
@@ -133,6 +140,22 @@ func (s *FrameWorkState) AbortIfEventDropsFrameWork(pool *frame.Pool, event Even
 		return false, err
 	}
 	return true, nil
+}
+
+// FinishIfEventCompletesFrameWork publishes active frame work only when event
+// carries a final tile group. It is a no-op for non-final events.
+func (s *FrameWorkState) FinishIfEventCompletesFrameWork(refs *SurfaceReferences, pool *frame.Pool, event Event, releases []int) (bool, int, error) {
+	if !EventCompletesFrameWork(event) {
+		return false, 0, nil
+	}
+	if s == nil || !s.active {
+		return false, 0, ErrInvalidFrameWorkState
+	}
+	count, err := s.Finish(refs, pool, event, releases)
+	if err != nil {
+		return false, 0, err
+	}
+	return true, count, nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

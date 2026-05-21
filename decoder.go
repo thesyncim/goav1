@@ -72,6 +72,10 @@ func DecoderEventDropsFrameWork(event DecoderEvent) bool {
 	return internaldecoder.EventDropsFrameWork(event)
 }
 
+func DecoderEventCompletesFrameWork(event DecoderEvent) bool {
+	return internaldecoder.EventCompletesFrameWork(event)
+}
+
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
 }
