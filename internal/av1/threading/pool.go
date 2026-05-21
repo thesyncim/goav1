@@ -23,6 +23,7 @@ type FrameWorkBatch struct {
 	Payload          []byte
 	References       []*frame.Frame
 	Quantization     parser.QuantizationParams
+	Delta            parser.DeltaParams
 	DisableCDFUpdate bool
 	Batch            Batch
 	Jobs             []tile.Job

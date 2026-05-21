@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -762,12 +763,18 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 			DisableCDFUpdate: true,
 		},
 		Quantization: parser.QuantizationParams{BaseQIdx: 73},
+		Delta: parser.DeltaParams{
+			DeltaQPresent:  true,
+			DeltaQResLog2:  1,
+			DeltaLFPresent: true,
+			DeltaLFResLog2: 1,
+		},
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
-	payload := []byte{0x00, 0xff, 0x00}
+	payload := []byte{0x00, 0x00, 0x00}
 	state := FrameWorkState{active: true}
 
 	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
@@ -776,6 +783,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.Quantization.BaseQIdx != 73 {
 			t.Fatalf("BaseQIdx=%d want 73", ctx.Quantization.BaseQIdx)
+		}
+		if ctx.Delta != event.Delta {
+			t.Fatalf("Delta=%+v want %+v", ctx.Delta, event.Delta)
 		}
 		r, err := ctx.JobEntropyReader(1)
 		if err != nil {
@@ -788,8 +798,8 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bit != 1 {
-			t.Fatalf("bit=%d want 1", bit)
+		if bit != 0 {
+			t.Fatalf("bit=%d want 0", bit)
 		}
 		var state tile.DecodeState
 		if err := ctx.JobDecodeState(1, &state); err != nil {
@@ -800,6 +810,21 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if state.Reader.AllowCDFUpdate() {
 			t.Fatal("decode state CDF update enabled")
+		}
+		var qCDF entropy.CDF
+		if err := qCDF.InitDefaultDelta(); err != nil {
+			t.Fatal(err)
+		}
+		var lfCDF entropy.CDF
+		if err := lfCDF.InitDefaultDelta(); err != nil {
+			t.Fatal(err)
+		}
+		err = state.ReadBlockDeltas(ctx.Delta, tile.BlockDeltaContext{SBSizeMIB: 16}, tile.DeltaCDFs{Q: &qCDF, LF: &lfCDF})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.CurrentBaseQIdx != 73 || state.DeltaLFFromBase != 0 {
+			t.Fatalf("delta state q=%d lf=%d", state.CurrentBaseQIdx, state.DeltaLFFromBase)
 		}
 		return nil
 	})
