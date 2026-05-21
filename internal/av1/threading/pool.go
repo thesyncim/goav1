@@ -309,6 +309,36 @@ func (b FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint
 	}, nil
 }
 
+// RestorationPlaneGrid returns the loop-restoration unit grid for one plane of
+// this batch's frame context.
+func (b FrameWorkBatch) RestorationPlaneGrid(plane FrameWorkPlane) (tile.RestorationPlaneGrid, error) {
+	if plane > FrameWorkPlaneV || !b.Sequence.Valid() {
+		return tile.RestorationPlaneGrid{}, ErrInvalidBatch
+	}
+	return tile.BuildRestorationPlaneGrid(b.Restoration, b.FrameSize, b.Sequence.ColorConfig, int(plane))
+}
+
+// JobRestorationUnitRange returns the restoration units whose top-left corners
+// are decoded while processing the superblock at sbX,sbY inside Jobs[index].
+func (b FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane, sbX uint16, sbY uint16) (tile.RestorationUnitRange, bool, error) {
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return tile.RestorationUnitRange{}, false, err
+	}
+	if uint32(sbX) < uint32(region.SBX) || uint32(sbY) < uint32(region.SBY) ||
+		uint32(sbX) >= uint32(region.SBX)+uint32(region.SBCols) ||
+		uint32(sbY) >= uint32(region.SBY)+uint32(region.SBRows) {
+		return tile.RestorationUnitRange{}, false, ErrInvalidBatch
+	}
+	grid, err := b.RestorationPlaneGrid(plane)
+	if err != nil {
+		return tile.RestorationUnitRange{}, false, err
+	}
+	miCol := uint32(sbX) * uint32(b.Sequence.SBSizeMIB)
+	miRow := uint32(sbY) * uint32(b.Sequence.SBSizeMIB)
+	return grid.UnitsInSuperblock(miCol, miRow, b.Sequence.SBSizeMIB)
+}
+
 // JobOutputPlane returns the clipped output-plane window for Jobs[index].
 func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	region, err := b.JobRegion(index)

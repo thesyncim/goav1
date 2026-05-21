@@ -438,6 +438,62 @@ func TestFrameWorkBatchJobBlockDeltaContext(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchRestorationPlaneGridAndRange(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       300,
+				CodedWidth:          300,
+				Height:              260,
+				SuperResDenominator: 8,
+			},
+			Restoration: parser.RestorationParams{
+				Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj},
+				UnitSizeY:  128,
+				UnitSizeUV: 64,
+			},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+	grid, err := ctx.RestorationPlaneGrid(FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Type != parser.RestorationWiener || grid.HorzUnits != 2 || grid.VertUnits != 2 {
+		t.Fatalf("grid=%+v", grid)
+	}
+	r, ok, err := ctx.JobRestorationUnitRange(0, FrameWorkPlaneY, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || r != (tile.RestorationUnitRange{Col0: 1, Col1: 2, Row0: 1, Row1: 2}) {
+		t.Fatalf("job origin range=%+v ok=%v", r, ok)
+	}
+	r, ok, err = ctx.JobRestorationUnitRange(0, FrameWorkPlaneY, 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || r != (tile.RestorationUnitRange{}) {
+		t.Fatalf("frame-edge range=%+v ok=%v", r, ok)
+	}
+	uv, ok, err := ctx.JobRestorationUnitRange(0, FrameWorkPlaneU, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || uv != (tile.RestorationUnitRange{Col0: 1, Col1: 2, Row0: 1, Row1: 2}) {
+		t.Fatalf("uv range=%+v ok=%v", uv, ok)
+	}
+	if _, _, err := ctx.JobRestorationUnitRange(0, FrameWorkPlaneY, 0, 0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("outside restoration range err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.RestorationPlaneGrid(FrameWorkPlane(9)); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad plane grid err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{
 		Width:        130,
@@ -1390,6 +1446,33 @@ func BenchmarkFrameWorkBatchJobBlockDeltaContext(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.JobBlockDeltaContext(0, 32, 32, false, false)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobRestorationUnitRange(b *testing.B) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{
+				UpscaledWidth:       300,
+				CodedWidth:          300,
+				Height:              260,
+				SuperResDenominator: 8,
+			},
+			Restoration: parser.RestorationParams{
+				Type:       [3]parser.RestorationType{parser.RestorationWiener},
+				UnitSizeY:  128,
+				UnitSizeUV: 64,
+			},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = ctx.JobRestorationUnitRange(0, FrameWorkPlaneY, 2, 2)
 	}
 }
 
