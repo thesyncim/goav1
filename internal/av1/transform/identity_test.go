@@ -212,12 +212,12 @@ func referenceRoundShiftArray(values []int32, bit int) {
 }
 
 func TestInverseIdentityBlock4x4(t *testing.T) {
-	coeff := []int32{
+	coeff := av1CoeffOrder([]int32{
 		16, -16, 0, 0,
 		0, 32, 0, 0,
 		0, 0, 0, 0,
 		0, 0, 0, 0,
-	}
+	}, 4, 4)
 	dst := make([]int16, 4*4)
 	if err := InverseIdentityBlock(dst, 4, coeff, 4, Size{Width: 4, Height: 4}); err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestInverseIdentityBlockRect2Scaling(t *testing.T) {
 	coeff := make([]int32, 4*8)
 	coeff[0] = 64
 	dst := make([]int16, 4*8)
-	if err := InverseIdentityBlock(dst, 4, coeff, 4, Size{Width: 4, Height: 8}); err != nil {
+	if err := InverseIdentityBlock(dst, 4, coeff, 8, Size{Width: 4, Height: 8}); err != nil {
 		t.Fatal(err)
 	}
 	if dst[0] != 8 {
@@ -250,7 +250,7 @@ func TestInverseIdentityBlockRect2Scaling(t *testing.T) {
 func TestInverseIdentityBlockStrides(t *testing.T) {
 	coeff := make([]int32, 6*4)
 	dst := make([]int16, 7*4)
-	coeff[1*6+2] = 16
+	coeff[2*6+1] = 16
 	if err := InverseIdentityBlock(dst, 7, coeff, 6, Size{Width: 4, Height: 4}); err != nil {
 		t.Fatal(err)
 	}
@@ -344,13 +344,13 @@ func FuzzInverseIdentityBlock(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, rawSize uint8, coeffValue int16) {
 		size := sizes[int(rawSize)%len(sizes)]
-		coeffStride := size.Width + 3
+		coeffStride := size.Height + 3
 		dstStride := size.Width + 5
-		coeff := make([]int32, coeffStride*size.Height)
+		coeff := make([]int32, coeffStride*size.Width)
 		dst := make([]int16, dstStride*size.Height)
 		for row := 0; row < size.Height; row++ {
 			for col := 0; col < size.Width; col++ {
-				coeff[row*coeffStride+col] = int32(coeffValue) + int32(row-col)
+				coeff[col*coeffStride+row] = int32(coeffValue) + int32(row-col)
 			}
 		}
 

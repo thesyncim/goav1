@@ -106,7 +106,7 @@ func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 	}
 	int32Scratch := make([]int32, int32Len+3)
 	residualScratch := make([]int16, int16Len+2)
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
+	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := getSample(plane, 1, 0, 0); got != 108 {
@@ -120,6 +120,36 @@ func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 	for i := int16Len; i < len(residualScratch); i++ {
 		if residualScratch[i] != 0 {
 			t.Fatalf("residual scratch padding[%d]=%d want 0", i, residualScratch[i])
+		}
+	}
+}
+
+func TestReconstructPlaneBlockUsesAV1CoeffOrder(t *testing.T) {
+	plane, _ := testPlane(4, 4, 1, 4)
+	fillPlane(plane, 1, 100)
+	quantized := make([]int16, 4*4)
+	quantized[2*4+1] = 1
+	cfg := Block{
+		Size:      transform.Size{Width: 4, Height: 4},
+		Transform: transform.TypeIDTX,
+		Quantizer: quantize.Quantizer{DC: 16, AC: 16},
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			want := uint16(100)
+			if x == 2 && y == 1 {
+				want = 102
+			}
+			if got := getSample(plane, 1, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
 		}
 	}
 }
@@ -274,11 +304,17 @@ func FuzzReconstructPlaneBlock(f *testing.F) {
 		}
 		plane, _ := testPlane(cfg.Size.Width+2, cfg.Size.Height+1, bytesPerSample, (cfg.Size.Width+5)*bytesPerSample)
 		fillPlane(plane, bytesPerSample, fill)
-		quantizedStride := cfg.Size.Width + 2
-		quantized := make([]int16, quantizedStride*cfg.Size.Height)
+		coeffSize, err := transform.ScanSize(cfg.Size)
+		if err != nil {
+			t.Fatalf("ScanSize err=%v", err)
+		}
+		quantizedStride := coeffSize.Height + 2
+		quantized := make([]int16, quantizedStride*coeffSize.Width)
 		for row := 0; row < cfg.Size.Height; row++ {
 			for col := 0; col < cfg.Size.Width; col++ {
-				quantized[row*quantizedStride+col] = dc + acDelta*int16((row+col)&3)
+				if row < coeffSize.Height && col < coeffSize.Width {
+					quantized[col*quantizedStride+row] = dc + acDelta*int16((row+col)&3)
+				}
 			}
 		}
 		int32Len, int16Len, err := ScratchLen(cfg)

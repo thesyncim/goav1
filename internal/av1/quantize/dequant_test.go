@@ -90,20 +90,23 @@ func TestPlaneQuantizer(t *testing.T) {
 
 func TestDequantizeBlock(t *testing.T) {
 	coeff := []int16{
-		2, -3, 4, 99,
-		-5, 6, -7, 99,
+		2, -5, 99,
+		-3, 6, 99,
+		4, -7, 99,
 	}
 	dst := []int32{
-		99, 99, 99, 99,
-		99, 99, 99, 99,
+		99, 99, 99,
+		99, 99, 99,
+		99, 99, 99,
 	}
 	q := Quantizer{DC: 4, AC: 8}
-	if err := DequantizeBlock(dst, 4, coeff, 4, 3, 2, q); err != nil {
+	if err := DequantizeBlock(dst, 3, coeff, 3, 3, 2, q); err != nil {
 		t.Fatal(err)
 	}
 	want := []int32{
-		8, -24, 32, 99,
-		-40, 48, -56, 99,
+		8, -40, 99,
+		-24, 48, 99,
+		32, -56, 99,
 	}
 	for i := range want {
 		if dst[i] != want[i] {
@@ -131,7 +134,7 @@ func TestDequantizeBlockRejectsInvalidInputs(t *testing.T) {
 	if err := DequantizeBlock(dst[:3], 2, coeff, 2, 2, 2, q); !errors.Is(err, ErrInvalidQuantizer) {
 		t.Fatalf("short dst err=%v want %v", err, ErrInvalidQuantizer)
 	}
-	if err := DequantizeBlock(dst, 2, coeff[:3], 2, 2, 2, q); !errors.Is(err, ErrInvalidQuantizer) {
+	if err := DequantizeBlock(dst, 2, coeff, 1, 2, 2, q); !errors.Is(err, ErrInvalidQuantizer) {
 		t.Fatalf("short coeff err=%v want %v", err, ErrInvalidQuantizer)
 	}
 	if err := DequantizeBlock(dst, 2, coeff, 2, 2, 2, Quantizer{AC: 8}); !errors.Is(err, ErrInvalidQuantizer) {
@@ -267,13 +270,13 @@ func FuzzDequantizeBlock(f *testing.F) {
 		bitDepth := bitDepths[int(rawBitDepth)%len(bitDepths)]
 		width := int(rawW%16) + 1
 		height := int(rawH%16) + 1
-		coeffStride := width + 2
-		dstStride := width + 3
-		coeff := make([]int16, coeffStride*height)
-		dst := make([]int32, dstStride*height)
+		coeffStride := height + 2
+		dstStride := height + 3
+		coeff := make([]int16, coeffStride*width)
+		dst := make([]int32, dstStride*width)
 		for row := 0; row < height; row++ {
 			for col := 0; col < width; col++ {
-				coeff[row*coeffStride+col] = coeffValue + int16(row+col)
+				coeff[col*coeffStride+row] = coeffValue + int16(row+col)
 			}
 		}
 		dc, err := DCQuant(qIndex, delta, bitDepth)
@@ -294,8 +297,8 @@ func FuzzDequantizeBlock(f *testing.F) {
 				if row == 0 && col == 0 {
 					scale = dc
 				}
-				want := int32(coeff[row*coeffStride+col]) * scale
-				got := dst[row*dstStride+col]
+				want := int32(coeff[col*coeffStride+row]) * scale
+				got := dst[col*dstStride+row]
 				if got != want {
 					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)
 				}

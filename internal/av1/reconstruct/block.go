@@ -46,14 +46,22 @@ func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 
 	width := cfg.Size.Width
 	height := cfg.Size.Height
-	dequant := int32Scratch[:residualLen]
+	coeffSize, err := transform.ScanSize(cfg.Size)
+	if err != nil {
+		return ErrInvalidBlock
+	}
+	dequantLen, ok := checkedMul(coeffSize.Width, coeffSize.Height)
+	if !ok || residualLen < dequantLen {
+		return ErrInvalidBlock
+	}
+	dequant := int32Scratch[:dequantLen]
 	transformScratch := int32Scratch[residualLen:int32Len]
 	residual := residualScratch[:residualLen]
 
-	if err := quantize.DequantizeBlock(dequant, width, quantized, quantizedStride, width, height, cfg.Quantizer); err != nil {
+	if err := quantize.DequantizeBlock(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer); err != nil {
 		return ErrInvalidBlock
 	}
-	if err := transform.InverseBlock(residual, width, dequant, width, transformScratch, cfg.Size, cfg.Transform); err != nil {
+	if err := transform.InverseBlock(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform); err != nil {
 		return ErrInvalidBlock
 	}
 	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, width, height, residual, width); err != nil {

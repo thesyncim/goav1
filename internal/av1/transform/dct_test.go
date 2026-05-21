@@ -94,12 +94,12 @@ func TestInverseDCTBlock4x4DC(t *testing.T) {
 }
 
 func TestInverseDCTBlock4x4Mixed(t *testing.T) {
-	coeff := []int32{
+	coeff := av1CoeffOrder([]int32{
 		100, -20, 30, 7,
 		5, -9, 13, -17,
 		0, 4, -8, 12,
 		-16, 20, -24, 28,
-	}
+	}, 4, 4)
 	dst := make([]int16, 4*4)
 	scratch := make([]int32, 4*4)
 	if err := InverseDCTBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}); err != nil {
@@ -134,7 +134,7 @@ func TestInverseDCTBlock8x8DC(t *testing.T) {
 }
 
 func TestInverseDCTBlock8x8Mixed(t *testing.T) {
-	coeff := []int32{
+	coeff := av1CoeffOrder([]int32{
 		-20, 14, 7, 0, -7, -14, 20, 13,
 		-9, -15, 20, 14, 8, -3, -9, -15,
 		2, -3, -8, -18, 18, 8, 3, -2,
@@ -143,7 +143,7 @@ func TestInverseDCTBlock8x8Mixed(t *testing.T) {
 		-6, -13, -20, 14, 7, 0, -7, -14,
 		5, -1, -7, -13, -19, 11, 5, -1,
 		16, 11, 6, -4, -9, -19, 17, 12,
-	}
+	}, 8, 8)
 	dst := make([]int16, 8*8)
 	scratch := make([]int32, 8*8)
 	if err := InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}); err != nil {
@@ -184,12 +184,12 @@ func TestInverseDCTBlockSupportedSizes(t *testing.T) {
 		{Width: 32, Height: 32},
 	}
 	for _, size := range sizes {
-		coeffStride := size.Width + 1
+		coeffStride := size.Height + 1
 		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Height)
+		coeff := make([]int32, coeffStride*size.Width)
 		for row := 0; row < size.Height; row++ {
 			for col := 0; col < size.Width; col++ {
-				coeff[row*coeffStride+col] = int32(((row*13+col*7+5)%29)-14) * 3
+				coeff[col*coeffStride+row] = int32(((row*13+col*7+5)%29)-14) * 3
 			}
 		}
 		dst := make([]int16, dstStride*size.Height)
@@ -214,11 +214,11 @@ func TestInverseDCTBlockSupportedSizes(t *testing.T) {
 }
 
 func TestInverseDCTBlock4x4Strides(t *testing.T) {
-	coeff := make([]int32, 7*4)
+	coeff := make([]int32, 6*4)
 	dst := make([]int16, 6*4)
 	scratch := make([]int32, 20)
 	coeff[1] = 16
-	if err := InverseDCTBlock(dst, 6, coeff, 7, scratch, Size{Width: 4, Height: 4}); err != nil {
+	if err := InverseDCTBlock(dst, 6, coeff, 6, scratch, Size{Width: 4, Height: 4}); err != nil {
 		t.Fatal(err)
 	}
 	for row := 0; row < 4; row++ {
@@ -315,9 +315,9 @@ func FuzzInverseDCTBlock(f *testing.F) {
 		case 3:
 			size = Size{Width: 32, Height: 32}
 		}
-		coeffStride := size.Width + 3
+		coeffStride := size.Height + 3
 		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Height)
+		coeff := make([]int32, coeffStride*size.Width)
 		dst := make([]int16, dstStride*size.Height)
 		scratch := make([]int32, size.Width*size.Height+4)
 		for row := 0; row < size.Height; row++ {
@@ -331,7 +331,7 @@ func FuzzInverseDCTBlock(f *testing.F) {
 				case 3:
 					base += int32(c3)
 				}
-				coeff[row*coeffStride+col] = base
+				coeff[col*coeffStride+row] = base
 			}
 		}
 		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
@@ -393,6 +393,16 @@ func referenceIDCT1DInt(input []int32) []int32 {
 			sum += scale * float64(input[n]) * math.Cos(angle)
 		}
 		out[k] = int32(math.Round(sum))
+	}
+	return out
+}
+
+func av1CoeffOrder(rowMajor []int32, width int, height int) []int32 {
+	out := make([]int32, width*height)
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			out[col*height+row] = rowMajor[row*width+col]
+		}
 	}
 	return out
 }

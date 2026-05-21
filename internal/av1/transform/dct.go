@@ -15,27 +15,34 @@ func ScratchLen(size Size) (int, error) {
 }
 
 // InverseDCTBlock writes an AV1 DCT_DCT residual block to dst. The source
-// coefficients are dequantized transform coefficients in row-major order.
+// coefficients are dequantized transform coefficients in AV1 coefficient order:
+// coeff_idx = col * coeffStride + row.
 // The pure-Go DCT path supports AV1 transform sizes with 4, 8, 16, or 32
 // samples on each axis. AV1's reduced 64-wide transforms are handled by the
 // separate 64-point path once that is ported.
 func InverseDCTBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size) error {
 	shift, ok := size.shift()
+	coeffSize := dctCoeffSize(size)
 	scratchLen := size.Width * size.Height
 	if !ok ||
 		!dctBlockSupported(size) ||
 		dstStride < size.Width ||
-		coeffStride < size.Width ||
+		coeffStride < coeffSize.Height ||
 		len(scratch) < scratchLen ||
 		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
-		!blockFits(len(coeff), coeffStride, size.Width, size.Height) {
+		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
 		return ErrInvalidTransform
 	}
 
 	for row := 0; row < size.Height; row++ {
-		srcLine := coeff[row*coeffStride : row*coeffStride+size.Width]
 		tmpLine := scratch[row*size.Width : row*size.Width+size.Width]
-		copy(tmpLine, srcLine)
+		for col := 0; col < size.Width; col++ {
+			if col < coeffSize.Width && row < coeffSize.Height {
+				tmpLine[col] = coeff[col*coeffStride+row]
+			} else {
+				tmpLine[col] = 0
+			}
+		}
 		inverseDCT1D(tmpLine, 1, size.Width, minInt16, maxInt16)
 	}
 
@@ -61,6 +68,10 @@ func InverseDCTBlock(dst []int16, dstStride int, coeff []int32, coeffStride int,
 
 func dctBlockSupported(size Size) bool {
 	return size.Valid() && dctLengthSupported(size.Width) && dctLengthSupported(size.Height)
+}
+
+func dctCoeffSize(size Size) Size {
+	return adjustedScanSize(size)
 }
 
 func dctLengthSupported(length int) bool {

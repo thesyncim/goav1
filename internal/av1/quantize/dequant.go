@@ -79,30 +79,31 @@ func PlaneQuantizer(params parser.QuantizationParams, qIndex uint8, bitDepth uin
 	return Quantizer{DC: dc, AC: ac}, nil
 }
 
-// DequantizeBlock multiplies quantized transform coefficients into dst. The
+// DequantizeBlock multiplies quantized transform coefficients into dst. Both
+// coeff and dst use AV1 coefficient order: coeff_idx = col * stride + row. The
 // DC coefficient at (0,0) uses q.DC; every other coefficient uses q.AC.
 func DequantizeBlock(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer) error {
 	if q.DC <= 0 || q.AC <= 0 ||
 		width <= 0 ||
 		height <= 0 ||
-		dstStride < width ||
-		coeffStride < width {
+		dstStride < height ||
+		coeffStride < height {
 		return ErrInvalidQuantizer
 	}
-	if !blockFits(len(dst), dstStride, width, height) ||
-		!blockFits(len(coeff), coeffStride, width, height) {
+	if !coeffBlockFits(len(dst), dstStride, width, height) ||
+		!coeffBlockFits(len(coeff), coeffStride, width, height) {
 		return ErrInvalidQuantizer
 	}
 
-	for row := 0; row < height; row++ {
-		dstLine := dst[row*dstStride : row*dstStride+width]
-		coeffLine := coeff[row*coeffStride : row*coeffStride+width]
-		for col := 0; col < width; col++ {
+	for col := 0; col < width; col++ {
+		dstCol := dst[col*dstStride : col*dstStride+height]
+		coeffCol := coeff[col*coeffStride : col*coeffStride+height]
+		for row := 0; row < height; row++ {
 			scale := q.AC
 			if row == 0 && col == 0 {
 				scale = q.DC
 			}
-			dstLine[col] = int32(coeffLine[col]) * scale
+			dstCol[row] = int32(coeffCol[row]) * scale
 		}
 	}
 	return nil
@@ -121,15 +122,15 @@ func bitDepthTable(bitDepth uint8) (int, error) {
 	}
 }
 
-func blockFits(length int, stride int, width int, height int) bool {
+func coeffBlockFits(length int, stride int, width int, height int) bool {
 	if stride <= 0 || width <= 0 || height <= 0 {
 		return false
 	}
-	lastRowOffset, ok := checkedMul(height-1, stride)
+	lastColOffset, ok := checkedMul(width-1, stride)
 	if !ok {
 		return false
 	}
-	needed, ok := checkedAdd(lastRowOffset, width)
+	needed, ok := checkedAdd(lastColOffset, height)
 	return ok && needed <= length
 }
 

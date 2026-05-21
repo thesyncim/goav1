@@ -133,23 +133,24 @@ func InverseIdentity1DValue(v int32, length int) (int32, error) {
 }
 
 // InverseIdentityBlock writes an AV1 IDTX residual block to dst. The source
-// coefficients are dequantized transform coefficients in row-major order.
+// coefficients are dequantized transform coefficients in AV1 coefficient order:
+// coeff_idx = col * coeffStride + row.
 func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size) error {
 	shift, ok := size.shift()
+	coeffSize := adjustedScanSize(size)
 	if !ok ||
 		!identityBlockSupported(size) ||
 		dstStride < size.Width ||
-		coeffStride < size.Width ||
+		coeffStride < coeffSize.Height ||
 		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
-		!blockFits(len(coeff), coeffStride, size.Width, size.Height) {
+		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
 		return ErrInvalidTransform
 	}
 
 	for row := 0; row < size.Height; row++ {
 		dstLine := dst[row*dstStride : row*dstStride+size.Width]
-		coeffLine := coeff[row*coeffStride : row*coeffStride+size.Width]
 		for col := 0; col < size.Width; col++ {
-			v := coeffLine[col]
+			v := coeff[col*coeffStride+row]
 			if size.IsRect2() {
 				v = rect2Scale(v)
 			}
@@ -217,6 +218,18 @@ func blockFits(length int, stride int, width int, height int) bool {
 		return false
 	}
 	needed, ok := checkedAdd(lastRowOffset, width)
+	return ok && needed <= length
+}
+
+func coeffBlockFits(length int, stride int, width int, height int) bool {
+	if stride <= 0 || width <= 0 || height <= 0 {
+		return false
+	}
+	lastColOffset, ok := checkedMul(width-1, stride)
+	if !ok {
+		return false
+	}
+	needed, ok := checkedAdd(lastColOffset, height)
 	return ok && needed <= length
 }
 

@@ -91,6 +91,7 @@ func TestInverseBlockDCTMatchesDirect(t *testing.T) {
 		0, 4, -8, 12,
 		-16, 20, -24, 28,
 	}
+	coeff = av1CoeffOrder(coeff, 4, 4)
 	direct := make([]int16, 4*4)
 	dispatched := make([]int16, 4*4)
 	scratchDirect := make([]int32, 4*4)
@@ -116,10 +117,10 @@ func TestInverseBlockIDTXMatchesDirect(t *testing.T) {
 	direct := make([]int16, 4*8)
 	dispatched := make([]int16, 4*8)
 	size := Size{Width: 4, Height: 8}
-	if err := InverseIdentityBlock(direct, 4, coeff, 4, size); err != nil {
+	if err := InverseIdentityBlock(direct, 4, coeff, 8, size); err != nil {
 		t.Fatal(err)
 	}
-	if err := InverseBlock(dispatched, 4, coeff, 4, nil, size, TypeIDTX); err != nil {
+	if err := InverseBlock(dispatched, 4, coeff, 8, nil, size, TypeIDTX); err != nil {
 		t.Fatal(err)
 	}
 	for i := range direct {
@@ -184,9 +185,9 @@ func FuzzInverseBlock(f *testing.F) {
 			typ = TypeIDTX
 			size = Size{Width: 16, Height: 16}
 		}
-		coeffStride := size.Width + 3
+		coeffStride := size.Height + 3
 		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Height)
+		coeff := make([]int32, coeffStride*size.Width)
 		dst := make([]int16, dstStride*size.Height)
 		scratchLen, err := ScratchLenForType(typ, size)
 		if err != nil {
@@ -195,7 +196,7 @@ func FuzzInverseBlock(f *testing.F) {
 		scratch := make([]int32, scratchLen+4)
 		for row := 0; row < size.Height; row++ {
 			for col := 0; col < size.Width; col++ {
-				coeff[row*coeffStride+col] = int32(coeffValue) + int32(delta)*int32((row+col)&3)
+				coeff[col*coeffStride+row] = int32(coeffValue) + int32(delta)*int32((row+col)&3)
 			}
 		}
 		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, typ); err != nil {
