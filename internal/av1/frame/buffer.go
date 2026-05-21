@@ -7,6 +7,7 @@ var (
 	ErrInvalidPool   = errors.New("frame: invalid pool")
 	ErrPoolEmpty     = errors.New("frame: pool empty")
 	ErrInvalidSlot   = errors.New("frame: invalid pool slot")
+	ErrInvalidPlane  = errors.New("frame: invalid plane")
 	ErrShortBuffer   = errors.New("frame: short buffer")
 )
 

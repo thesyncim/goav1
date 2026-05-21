@@ -1,0 +1,6 @@
+go test fuzz v1
+byte('\x00')
+byte('&')
+byte('Y')
+byte('+')
+uint32(2427178516)
