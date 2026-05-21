@@ -85,6 +85,43 @@ func RoundShift(value int64, bits uint8) (int32, error) {
 	return int32(shifted), nil
 }
 
+// RoundShiftArray applies AV1's round-shift-array primitive in place.
+//
+// Positive bit values round-shift right; negative values saturating-shift left.
+func RoundShiftArray(values []int32, bit int) error {
+	if bit > 62 || bit < -62 {
+		return ErrInvalidTransform
+	}
+	if bit == 0 {
+		return nil
+	}
+	if bit > 0 {
+		for i, v := range values {
+			values[i] = clipInt32(roundShift(int64(v), bit))
+		}
+		return nil
+	}
+
+	shift := -bit
+	for i, v := range values {
+		values[i] = saturatingLeftShiftInt32(v, shift)
+	}
+	return nil
+}
+
+func saturatingLeftShiftInt32(v int32, shift int) int32 {
+	if v == 0 || shift == 0 {
+		return v
+	}
+	if shift >= 31 {
+		if v < 0 {
+			return minInt32
+		}
+		return maxInt32
+	}
+	return clipInt32(int64(v) << uint(shift))
+}
+
 // InverseIdentity1DValue applies AV1's 1D identity inverse transform scale for
 // a single coefficient.
 func InverseIdentity1DValue(v int32, length int) (int32, error) {

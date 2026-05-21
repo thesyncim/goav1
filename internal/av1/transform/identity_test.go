@@ -97,6 +97,60 @@ func TestRoundShift(t *testing.T) {
 	}
 }
 
+func TestRoundShiftArrayMatchesLibaomBitSweep(t *testing.T) {
+	widths := [...]int{4, 8, 16, 32, 64}
+	bits := [...]int{-4, -3, -2, -1, 0, 1, 2, 3, 4}
+	for _, width := range widths {
+		for _, bit := range bits {
+			var input [64]int32
+			fillRoundShiftInput(input[:])
+			got := input
+			want := input
+			if err := RoundShiftArray(got[:width], bit); err != nil {
+				t.Fatalf("RoundShiftArray width=%d bit=%d: %v", width, bit, err)
+			}
+			referenceRoundShiftArray(want[:width], bit)
+			for i := 0; i < width; i++ {
+				if got[i] != want[i] {
+					t.Fatalf("RoundShiftArray width=%d bit=%d index=%d got=%d want %d", width, bit, i, got[i], want[i])
+				}
+			}
+		}
+	}
+}
+
+func TestRoundShiftArrayClampsAndRejectsInvalidBits(t *testing.T) {
+	values := []int32{maxInt32, minInt32, 1, -1, 0}
+	if err := RoundShiftArray(values, -1); err != nil {
+		t.Fatal(err)
+	}
+	if values[0] != maxInt32 || values[1] != minInt32 || values[2] != 2 || values[3] != -2 || values[4] != 0 {
+		t.Fatalf("values=%v", values)
+	}
+	if err := RoundShiftArray(values, 63); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("positive invalid bit err=%v want %v", err, ErrInvalidTransform)
+	}
+	if err := RoundShiftArray(values, -63); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("negative invalid bit err=%v want %v", err, ErrInvalidTransform)
+	}
+}
+
+func TestRoundShiftArrayAllocs(t *testing.T) {
+	var values [64]int32
+	fillRoundShiftInput(values[:])
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := RoundShiftArray(values[:], -4); err != nil {
+			t.Fatal(err)
+		}
+		if err := RoundShiftArray(values[:], 4); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("RoundShiftArray allocated: %f", allocs)
+	}
+}
+
 func TestInverseIdentity1DValue(t *testing.T) {
 	tests := []struct {
 		length int
@@ -118,6 +172,42 @@ func TestInverseIdentity1DValue(t *testing.T) {
 	}
 	if _, err := InverseIdentity1DValue(100, 64); !errors.Is(err, ErrInvalidTransform) {
 		t.Fatalf("invalid identity length err=%v want %v", err, ErrInvalidTransform)
+	}
+}
+
+func fillRoundShiftInput(dst []int32) {
+	x := uint32(0x243f6a88)
+	for i := range dst {
+		x = x*1664525 + 1013904223
+		dst[i] = int32(x>>3) - 0x10000000
+	}
+}
+
+func referenceRoundShiftArray(values []int32, bit int) {
+	if bit == 0 {
+		return
+	}
+	if bit > 0 {
+		for i, v := range values {
+			values[i] = clipInt32((int64(v) + (int64(1) << (bit - 1))) >> bit)
+		}
+		return
+	}
+	shift := -bit
+	for i, v := range values {
+		if v == 0 {
+			values[i] = 0
+			continue
+		}
+		if shift >= 31 {
+			if v < 0 {
+				values[i] = minInt32
+			} else {
+				values[i] = maxInt32
+			}
+			continue
+		}
+		values[i] = clipInt32(int64(v) << uint(shift))
 	}
 }
 
