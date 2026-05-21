@@ -321,6 +321,9 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	if output == nil || !state.Active() || state.Surface != plan.Surface || state.ReferenceCount != plan.ReferenceCount {
 		t.Fatalf("state=%+v active=%v plan=%+v output=%p", state, state.Active(), plan, output)
 	}
+	if state.Sequence != threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader) {
+		t.Fatalf("state sequence=%+v want %+v", state.Sequence, threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader))
+	}
 	if pool.Available() != 0 {
 		t.Fatalf("available after begin=%d want 0", pool.Available())
 	}
@@ -760,7 +763,8 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	globalMotion := testFrameWorkGlobalMotion()
 	filmGrain := testFrameWorkFilmGrain()
 	event := Event{
-		Kind: EventTileGroup,
+		Kind:           EventTileGroup,
+		SequenceHeader: testFrameWorkSequenceHeader(),
 		FrameHeader: parser.FrameHeaderPrefix{
 			DisableCDFUpdate: true,
 			FrameType:        parser.FrameTypeKey,
@@ -806,6 +810,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.FrameHeader != event.FrameHeader {
 			t.Fatalf("FrameHeader=%+v want %+v", ctx.FrameHeader, event.FrameHeader)
+		}
+		if ctx.Sequence != testFrameWorkSequenceContext() {
+			t.Fatalf("Sequence=%+v want %+v", ctx.Sequence, testFrameWorkSequenceContext())
 		}
 		if ctx.FrameSize != event.FrameSize {
 			t.Fatalf("FrameSize=%+v want %+v", ctx.FrameSize, event.FrameSize)
@@ -1323,6 +1330,7 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 	var batches [1]threading.Batch
 	var releases [parser.RefFrames]int
 
+	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
 	var seenOutput *frame.Frame
 	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
@@ -1331,6 +1339,7 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 			len(ctx.Jobs) != 1 ||
 			len(ctx.Payload) != len(events[1].Unit.Payload) ||
 			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa ||
+			ctx.Sequence != wantSequence ||
 			ctx.FrameHeader != events[1].FrameHeader ||
 			ctx.FrameSize != events[1].FrameSize ||
 			ctx.TileInfo != events[1].TileInfo ||
@@ -1403,6 +1412,8 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 		t.Fatalf("begin=%+v active=%v", begin, state.Active())
 	}
 
+	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
+	events[2].SequenceHeader = parser.SequenceHeader{}
 	var seenOutput *frame.Frame
 	tileResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
@@ -1410,6 +1421,7 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 			len(ctx.References) != 0 ||
 			len(ctx.Jobs) != 1 ||
 			len(ctx.Payload) != len(events[2].Unit.Payload) ||
+			ctx.Sequence != wantSequence ||
 			ctx.Payload[ctx.Jobs[0].Offset] != 0x80 {
 			t.Fatalf("ctx=%+v", ctx)
 		}
@@ -3265,6 +3277,28 @@ func testFrameWorkTileInfo() parser.TileInfo {
 	tiles.ColStartSB[2] = 2
 	tiles.RowStartSB[1] = 1
 	return tiles
+}
+
+func testFrameWorkSequenceHeader() parser.SequenceHeader {
+	return parser.SequenceHeader{
+		SeqProfile:           1,
+		Use128x128Superblock: true,
+		EnableFilterIntra:    true,
+		EnableOrderHint:      true,
+		OrderHintBits:        5,
+		EnableCDEF:           true,
+		EnableRestoration:    true,
+		ColorConfig: parser.ColorConfig{
+			BitDepth:     10,
+			SubsamplingX: true,
+			SubsamplingY: true,
+		},
+		FilmGrainParamsPresent: true,
+	}
+}
+
+func testFrameWorkSequenceContext() threading.FrameWorkSequenceContext {
+	return threading.FrameWorkSequenceContextFromHeader(testFrameWorkSequenceHeader())
 }
 
 func testFrameWorkGlobalMotion() parser.GlobalMotionParams {

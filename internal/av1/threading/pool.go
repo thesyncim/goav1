@@ -14,11 +14,78 @@ import (
 // contiguous range described by the Batch.
 type BatchFunc func(batch Batch, jobs []tile.Job) error
 
+// FrameWorkSequenceContext is the compact sequence-level context needed by
+// frame-work callbacks. It avoids copying the full sequence header, including
+// operating-point arrays, into every worker task.
+type FrameWorkSequenceContext struct {
+	Profile                    uint8
+	Use128x128Superblock       bool
+	SBSizeLog2                 uint8
+	SBSizeMIB                  uint8
+	EnableFilterIntra          bool
+	EnableIntraEdgeFilter      bool
+	EnableInterIntraCompound   bool
+	EnableMaskedCompound       bool
+	EnableWarpedMotion         bool
+	EnableDualFilter           bool
+	EnableOrderHint            bool
+	EnableJNTComp              bool
+	EnableRefFrameMVS          bool
+	SeqForceScreenContentTools uint8
+	SeqForceIntegerMV          uint8
+	OrderHintBits              uint8
+	EnableSuperRes             bool
+	EnableCDEF                 bool
+	EnableRestoration          bool
+	ColorConfig                parser.ColorConfig
+	FilmGrainParamsPresent     bool
+}
+
+// FrameWorkSequenceContextFromHeader derives worker-facing sequence context
+// from a parsed sequence header without allocating.
+func FrameWorkSequenceContextFromHeader(seq parser.SequenceHeader) FrameWorkSequenceContext {
+	sbSizeLog2 := uint8(6)
+	sbSizeMIB := uint8(16)
+	if seq.Use128x128Superblock {
+		sbSizeLog2 = 7
+		sbSizeMIB = 32
+	}
+	return FrameWorkSequenceContext{
+		Profile:                    seq.SeqProfile,
+		Use128x128Superblock:       seq.Use128x128Superblock,
+		SBSizeLog2:                 sbSizeLog2,
+		SBSizeMIB:                  sbSizeMIB,
+		EnableFilterIntra:          seq.EnableFilterIntra,
+		EnableIntraEdgeFilter:      seq.EnableIntraEdgeFilter,
+		EnableInterIntraCompound:   seq.EnableInterIntraCompound,
+		EnableMaskedCompound:       seq.EnableMaskedCompound,
+		EnableWarpedMotion:         seq.EnableWarpedMotion,
+		EnableDualFilter:           seq.EnableDualFilter,
+		EnableOrderHint:            seq.EnableOrderHint,
+		EnableJNTComp:              seq.EnableJNTComp,
+		EnableRefFrameMVS:          seq.EnableRefFrameMVS,
+		SeqForceScreenContentTools: seq.SeqForceScreenContentTools,
+		SeqForceIntegerMV:          seq.SeqForceIntegerMV,
+		OrderHintBits:              seq.OrderHintBits,
+		EnableSuperRes:             seq.EnableSuperRes,
+		EnableCDEF:                 seq.EnableCDEF,
+		EnableRestoration:          seq.EnableRestoration,
+		ColorConfig:                seq.ColorConfig,
+		FilmGrainParamsPresent:     seq.FilmGrainParamsPresent,
+	}
+}
+
+// Valid reports whether the context was derived from a parsed sequence header.
+func (c FrameWorkSequenceContext) Valid() bool {
+	return c.ColorConfig.BitDepth != 0 && c.SBSizeLog2 != 0 && c.SBSizeMIB != 0
+}
+
 // FrameWorkFrameContext is the parsed frame context supplied to frame-work
 // tile batches. It is copied from the current decoder event so reconstruction
 // callbacks can map tile jobs to frame geometry and frame-level syntax without
 // reparsing payload headers.
 type FrameWorkFrameContext struct {
+	Sequence     FrameWorkSequenceContext
 	FrameHeader  parser.FrameHeaderPrefix
 	FrameSize    parser.FrameSize
 	TileInfo     parser.TileInfo

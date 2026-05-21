@@ -72,6 +72,62 @@ func TestBuildBatchesRejectsZeroAreaJob(t *testing.T) {
 	}
 }
 
+func TestFrameWorkSequenceContextFromHeader(t *testing.T) {
+	seq := parser.SequenceHeader{
+		SeqProfile:                 1,
+		Use128x128Superblock:       true,
+		EnableFilterIntra:          true,
+		EnableIntraEdgeFilter:      true,
+		EnableInterIntraCompound:   true,
+		EnableMaskedCompound:       true,
+		EnableWarpedMotion:         true,
+		EnableDualFilter:           true,
+		EnableOrderHint:            true,
+		EnableJNTComp:              true,
+		EnableRefFrameMVS:          true,
+		SeqForceScreenContentTools: parser.SelectScreenContentTools,
+		SeqForceIntegerMV:          parser.SelectIntegerMV,
+		OrderHintBits:              5,
+		EnableSuperRes:             true,
+		EnableCDEF:                 true,
+		EnableRestoration:          true,
+		ColorConfig:                parser.ColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true},
+		FilmGrainParamsPresent:     true,
+	}
+
+	ctx := FrameWorkSequenceContextFromHeader(seq)
+	if !ctx.Valid() ||
+		ctx.Profile != 1 ||
+		!ctx.Use128x128Superblock ||
+		ctx.SBSizeLog2 != 7 ||
+		ctx.SBSizeMIB != 32 ||
+		!ctx.EnableFilterIntra ||
+		!ctx.EnableIntraEdgeFilter ||
+		!ctx.EnableInterIntraCompound ||
+		!ctx.EnableMaskedCompound ||
+		!ctx.EnableWarpedMotion ||
+		!ctx.EnableDualFilter ||
+		!ctx.EnableOrderHint ||
+		!ctx.EnableJNTComp ||
+		!ctx.EnableRefFrameMVS ||
+		ctx.SeqForceScreenContentTools != parser.SelectScreenContentTools ||
+		ctx.SeqForceIntegerMV != parser.SelectIntegerMV ||
+		ctx.OrderHintBits != 5 ||
+		!ctx.EnableSuperRes ||
+		!ctx.EnableCDEF ||
+		!ctx.EnableRestoration ||
+		ctx.ColorConfig != seq.ColorConfig ||
+		!ctx.FilmGrainParamsPresent {
+		t.Fatalf("sequence context=%+v", ctx)
+	}
+
+	seq.Use128x128Superblock = false
+	ctx = FrameWorkSequenceContextFromHeader(seq)
+	if ctx.SBSizeLog2 != 6 || ctx.SBSizeMIB != 16 {
+		t.Fatalf("64x64 superblock context=%+v", ctx)
+	}
+}
+
 func TestFrameWorkBatchJobPayload(t *testing.T) {
 	payload := []byte{0xaa, 0xbb, 0xcc}
 	ctx := FrameWorkBatch{
@@ -171,12 +227,14 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestFrameWorkBatchJobDecodeState(t *testing.T) {
+	wantSequence := testBatchSequenceContext()
 	wantDelta := parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 2}
 	wantMotion := testBatchGlobalMotion()
 	wantGrain := testBatchFilmGrain()
 	ctx := FrameWorkBatch{
 		Payload: []byte{0x00, 0xff, 0x00},
 		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:     wantSequence,
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 73},
@@ -199,6 +257,9 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	var state tile.DecodeState
 	if ctx.Delta != wantDelta {
 		t.Fatalf("Delta=%+v want %+v", ctx.Delta, wantDelta)
+	}
+	if ctx.Sequence != wantSequence || ctx.Sequence.SBSizeMIB != 32 || ctx.Sequence.ColorConfig.BitDepth != 10 {
+		t.Fatalf("Sequence=%+v want %+v", ctx.Sequence, wantSequence)
 	}
 	if ctx.FrameSize.CodedWidth != 128 || ctx.TileInfo.Cols != 2 {
 		t.Fatalf("frame context size=%+v tiles=%+v", ctx.FrameSize, ctx.TileInfo)
@@ -381,6 +442,7 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 	ctx := FrameWorkBatch{
 		Payload: []byte{0x00, 0xff, 0x00},
 		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:     testBatchSequenceContext(),
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 91},
@@ -519,6 +581,7 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 		ctx := FrameWorkBatch{
 			Payload: payload,
 			FrameWorkFrameContext: FrameWorkFrameContext{
+				Sequence:     testBatchSequenceContext(),
 				FrameSize:    parser.FrameSize{CodedWidth: uint32(len(payload)) + 1, Height: 1},
 				TileInfo:     testBatchTileInfo(),
 				Quantization: parser.QuantizationParams{BaseQIdx: baseQIdx},
@@ -604,6 +667,7 @@ func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 	ctx := FrameWorkBatch{
 		Payload: []byte{0x00, 0xff, 0x00},
 		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:     testBatchSequenceContext(),
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 37},
@@ -665,6 +729,23 @@ func testBatchTileInfo() parser.TileInfo {
 	tiles.ColStartSB[2] = 2
 	tiles.RowStartSB[1] = 1
 	return tiles
+}
+
+func testBatchSequenceContext() FrameWorkSequenceContext {
+	return FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+		SeqProfile:           1,
+		Use128x128Superblock: true,
+		EnableOrderHint:      true,
+		OrderHintBits:        5,
+		EnableCDEF:           true,
+		EnableRestoration:    true,
+		ColorConfig: parser.ColorConfig{
+			BitDepth:     10,
+			SubsamplingX: true,
+			SubsamplingY: true,
+		},
+		FilmGrainParamsPresent: true,
+	})
 }
 
 func testBatchGlobalMotion() parser.GlobalMotionParams {

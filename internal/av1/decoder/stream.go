@@ -55,20 +55,21 @@ type Event struct {
 }
 
 type frameState struct {
-	FrameHeader  parser.FrameHeaderPrefix
-	FrameSize    parser.FrameSize
-	TileInfo     parser.TileInfo
-	Quantization parser.QuantizationParams
-	Segmentation parser.SegmentationParams
-	Delta        parser.DeltaParams
-	LoopFilter   parser.LoopFilterParams
-	CDEF         parser.CDEFParams
-	Restoration  parser.RestorationParams
-	TransformRef parser.TransformReferenceParams
-	SkipMode     parser.SkipModeParams
-	FrameMode    parser.FrameModeParams
-	GlobalMotion parser.GlobalMotionParams
-	FilmGrain    parser.FilmGrainParams
+	SequenceHeader parser.SequenceHeader
+	FrameHeader    parser.FrameHeaderPrefix
+	FrameSize      parser.FrameSize
+	TileInfo       parser.TileInfo
+	Quantization   parser.QuantizationParams
+	Segmentation   parser.SegmentationParams
+	Delta          parser.DeltaParams
+	LoopFilter     parser.LoopFilterParams
+	CDEF           parser.CDEFParams
+	Restoration    parser.RestorationParams
+	TransformRef   parser.TransformReferenceParams
+	SkipMode       parser.SkipModeParams
+	FrameMode      parser.FrameModeParams
+	GlobalMotion   parser.GlobalMotionParams
+	FilmGrain      parser.FilmGrainParams
 }
 
 type Stream struct {
@@ -209,6 +210,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		if !s.haveSequence {
 			return Event{}, ErrMissingSequenceHeader
 		}
+		event.SequenceHeader = s.sequence
 		frameHeader, err := parser.ParseFrameHeaderPrefix(unit.Payload, s.sequence)
 		if err != nil {
 			return Event{}, err
@@ -344,6 +346,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	if !s.haveSequence {
 		return Event{}, ErrMissingSequenceHeader
 	}
+	event.SequenceHeader = s.sequence
 	frameHeader, err := parser.ParseFrameHeaderPrefix(event.Unit.Payload, s.sequence)
 	if err != nil {
 		return Event{}, err
@@ -431,6 +434,7 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 	if event.NewCodedVideoSequence {
 		return Event{}, parser.ErrInvalidFrameHeader
 	}
+	event.SequenceHeader = s.sequence
 
 	ref := s.references.Frames[event.FrameHeader.ExistingFrameIdx]
 	if !ref.Valid {
@@ -470,24 +474,26 @@ func (s *Stream) clearPendingFrame() {
 
 func (s *Stream) storeFrameState(event Event) {
 	s.frame = frameState{
-		FrameHeader:  event.FrameHeader,
-		FrameSize:    event.FrameSize,
-		TileInfo:     event.TileInfo,
-		Quantization: event.Quantization,
-		Segmentation: event.Segmentation,
-		Delta:        event.Delta,
-		LoopFilter:   event.LoopFilter,
-		CDEF:         event.CDEF,
-		Restoration:  event.Restoration,
-		TransformRef: event.TransformRef,
-		SkipMode:     event.SkipMode,
-		FrameMode:    event.FrameMode,
-		GlobalMotion: event.GlobalMotion,
-		FilmGrain:    event.FilmGrain,
+		SequenceHeader: event.SequenceHeader,
+		FrameHeader:    event.FrameHeader,
+		FrameSize:      event.FrameSize,
+		TileInfo:       event.TileInfo,
+		Quantization:   event.Quantization,
+		Segmentation:   event.Segmentation,
+		Delta:          event.Delta,
+		LoopFilter:     event.LoopFilter,
+		CDEF:           event.CDEF,
+		Restoration:    event.Restoration,
+		TransformRef:   event.TransformRef,
+		SkipMode:       event.SkipMode,
+		FrameMode:      event.FrameMode,
+		GlobalMotion:   event.GlobalMotion,
+		FilmGrain:      event.FilmGrain,
 	}
 }
 
 func (s *Stream) applyFrameState(event *Event) {
+	event.SequenceHeader = s.frame.SequenceHeader
 	event.FrameHeader = s.frame.FrameHeader
 	event.FrameSize = s.frame.FrameSize
 	event.TileInfo = s.frame.TileInfo

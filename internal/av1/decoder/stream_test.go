@@ -357,6 +357,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[1].Kind != EventFrameHeader {
 		t.Fatalf("frame header event=%+v", events[1])
 	}
+	if events[1].SequenceHeader != events[0].SequenceHeader {
+		t.Fatalf("frame sequence=%+v want %+v", events[1].SequenceHeader, events[0].SequenceHeader)
+	}
 	if events[1].FrameHeader.FrameType != parser.FrameTypeKey || !events[1].FrameHeader.ShowFrame {
 		t.Fatalf("frame header parse=%+v", events[1].FrameHeader)
 	}
@@ -406,6 +409,9 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
+	if events[2].SequenceHeader != events[0].SequenceHeader {
+		t.Fatalf("tile sequence=%+v want %+v", events[2].SequenceHeader, events[0].SequenceHeader)
+	}
 	if events[2].FrameHeader != events[1].FrameHeader || events[2].FrameSize != events[1].FrameSize ||
 		events[2].Quantization != events[1].Quantization || events[2].Segmentation != events[1].Segmentation ||
 		events[2].LoopFilter != events[1].LoopFilter || events[2].FilmGrain != events[1].FilmGrain {
@@ -436,6 +442,9 @@ func TestStreamFrameOBUParsesImplicitTileGroup(t *testing.T) {
 	}
 	if events[1].Kind != EventFrame {
 		t.Fatalf("frame event=%+v", events[1])
+	}
+	if events[1].SequenceHeader != events[0].SequenceHeader {
+		t.Fatalf("frame sequence=%+v want %+v", events[1].SequenceHeader, events[0].SequenceHeader)
 	}
 	if events[1].TileGroup.StartTile != 0 || events[1].TileGroup.EndTile != 0 ||
 		events[1].TileGroup.DataOffset != len(reducedStillFrameHeaderPayload()) ||
@@ -529,6 +538,9 @@ func TestStreamRTPPayload(t *testing.T) {
 	}
 	if events[1].Kind != EventFrameHeader {
 		t.Fatalf("events[1]=%+v", events[1])
+	}
+	if events[1].SequenceHeader != events[0].SequenceHeader {
+		t.Fatalf("events[1] sequence=%+v want %+v", events[1].SequenceHeader, events[0].SequenceHeader)
 	}
 	if events[1].FrameHeader.FrameType != parser.FrameTypeKey || !events[1].FrameHeader.DisableCDFUpdate {
 		t.Fatalf("events[1] frame header=%+v", events[1].FrameHeader)

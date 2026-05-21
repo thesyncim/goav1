@@ -46,6 +46,7 @@ type FrameWorkEventResult struct {
 type FrameWorkState struct {
 	Surface        int
 	ReferenceCount int
+	Sequence       threading.FrameWorkSequenceContext
 
 	active bool
 }
@@ -91,6 +92,7 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	}
 	s.Surface = plan.Surface
 	s.ReferenceCount = plan.ReferenceCount
+	s.Sequence = threading.FrameWorkSequenceContextFromHeader(sequence)
 	s.active = true
 	return plan, output, nil
 }
@@ -300,7 +302,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
 	}
-	frameContext := frameWorkFrameContext(event)
+	frameContext := frameWorkFrameContext(event, s.sequenceContext())
 	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
@@ -465,8 +467,13 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 	return true, nil
 }
 
-func frameWorkFrameContext(event Event) FrameWorkFrameContext {
+func frameWorkFrameContext(event Event, fallback threading.FrameWorkSequenceContext) FrameWorkFrameContext {
+	sequence := threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader)
+	if !sequence.Valid() {
+		sequence = fallback
+	}
 	return FrameWorkFrameContext{
+		Sequence:     sequence,
 		FrameHeader:  event.FrameHeader,
 		FrameSize:    event.FrameSize,
 		TileInfo:     event.TileInfo,
@@ -482,6 +489,13 @@ func frameWorkFrameContext(event Event) FrameWorkFrameContext {
 		GlobalMotion: event.GlobalMotion,
 		FilmGrain:    event.FilmGrain,
 	}
+}
+
+func (s *FrameWorkState) sequenceContext() threading.FrameWorkSequenceContext {
+	if s == nil {
+		return threading.FrameWorkSequenceContext{}
+	}
+	return s.Sequence
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and
