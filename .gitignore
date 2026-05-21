@@ -8,3 +8,4 @@ coverage.out
 *.pprof
 *.tmp
 third_party/upstream/
+internal/av1/testdata/libaom/

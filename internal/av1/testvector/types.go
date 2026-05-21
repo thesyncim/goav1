@@ -40,6 +40,7 @@ const (
 	TagParserSequenceFullAnnexB         Tag = 0x0004_0003
 	TagParserSequenceReducedAnnexB      Tag = 0x0004_0004
 	TagParserSequenceBuganizer502133197 Tag = 0x0004_0005
+	TagDecoderLibaomQuantizer00         Tag = 0x0005_0001
 )
 
 // Vector describes one byte-level input and its expected oracle output. Input
