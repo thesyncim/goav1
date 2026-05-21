@@ -1,0 +1,31 @@
+package cdef
+
+// CopyRect8To16 ports libaom's cdef_copy_rect8_8bit_to_16bit_c.
+func CopyRect8To16(dst []uint16, dstStride int, src []uint8, srcStride int, width int, height int) error {
+	if width <= 0 || height <= 0 || dstStride < width || srcStride < width ||
+		!blockFits(len(dst), dstStride, width, height) ||
+		!blockFits(len(src), srcStride, width, height) {
+		return ErrInvalidCDEF
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			dst[row*dstStride+col] = uint16(src[row*srcStride+col])
+		}
+	}
+	return nil
+}
+
+// CopyRect16To16 ports libaom's cdef_copy_rect8_16bit_to_16bit_c.
+func CopyRect16To16(dst []uint16, dstStride int, src []uint16, srcStride int, width int, height int) error {
+	if width <= 0 || height <= 0 || dstStride < width || srcStride < width ||
+		!blockFits(len(dst), dstStride, width, height) ||
+		!blockFits(len(src), srcStride, width, height) {
+		return ErrInvalidCDEF
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			dst[row*dstStride+col] = src[row*srcStride+col]
+		}
+	}
+	return nil
+}

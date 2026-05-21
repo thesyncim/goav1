@@ -40,6 +40,9 @@ fuzz-smoke:
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzPlaneBlockOps
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzMinMaxAbsDiff8x8
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzBlendA64Mask
+	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFindDirection
+	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFilterBlock
+	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFilterFrameBlocks
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzPredictIntraPlaneBlock
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzDCPredictor
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzStaticIntraPredictors
