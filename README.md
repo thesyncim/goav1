@@ -116,6 +116,8 @@ The initial implementation covers:
   paths with per-transform scratch sizing.
 - Zero-allocation reconstruction bridge for dequantization, inverse transform,
   and clipped plane residual application.
+- Zero-allocation AV1 loop-filter level, delta, segmentation, and threshold
+  derivation for post-reconstruction deblocking setup.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
