@@ -90,6 +90,64 @@ var coreVectors = [...]Vector{
 
 var coreIVFSingleFrameMD5 = MD5{0x5a, 0x68, 0xde, 0x99, 0x7d, 0x60, 0xaf, 0xa9, 0x08, 0x3b, 0x17, 0xfe, 0x00, 0xf7, 0xcd, 0xf2}
 
+var coreDigests = [...]FrameDigest{
+	{Tag: TagIVFSingleFrameAV1, FrameIndex: 0, MD5: coreIVFSingleFrameMD5},
+}
+
+const (
+	coreIndexOBULowOverheadTemporalDelimiter = iota
+	coreIndexOBUAnnexBTemporalUnit
+	coreIndexRTPPayloadSingleOBU
+	coreIndexRTPPayloadFragmentedOBU
+	coreIndexIVFSingleFrameAV1
+	coreIndexParserSequenceFullLowOverhead
+	coreIndexParserSequenceReducedLowOverhead
+	coreIndexParserSequenceFullAnnexB
+	coreIndexParserSequenceReducedAnnexB
+	coreIndexParserSequenceBuganizer502133197
+)
+
+// CoreVector returns one core vector by stable numeric tag without scanning
+// names or manifests.
+func CoreVector(tag Tag) (Vector, bool) {
+	switch tag {
+	case TagOBULowOverheadTemporalDelimiter:
+		return coreVectors[coreIndexOBULowOverheadTemporalDelimiter], true
+	case TagOBUAnnexBTemporalUnit:
+		return coreVectors[coreIndexOBUAnnexBTemporalUnit], true
+	case TagRTPPayloadSingleOBU:
+		return coreVectors[coreIndexRTPPayloadSingleOBU], true
+	case TagRTPPayloadFragmentedOBU:
+		return coreVectors[coreIndexRTPPayloadFragmentedOBU], true
+	case TagIVFSingleFrameAV1:
+		return coreVectors[coreIndexIVFSingleFrameAV1], true
+	case TagParserSequenceFullLowOverhead:
+		return coreVectors[coreIndexParserSequenceFullLowOverhead], true
+	case TagParserSequenceReducedLowOverhead:
+		return coreVectors[coreIndexParserSequenceReducedLowOverhead], true
+	case TagParserSequenceFullAnnexB:
+		return coreVectors[coreIndexParserSequenceFullAnnexB], true
+	case TagParserSequenceReducedAnnexB:
+		return coreVectors[coreIndexParserSequenceReducedAnnexB], true
+	case TagParserSequenceBuganizer502133197:
+		return coreVectors[coreIndexParserSequenceBuganizer502133197], true
+	default:
+		return Vector{}, false
+	}
+}
+
+// CoreFrameDigest returns one core frame digest by stable numeric tag and frame
+// index without scanning names or manifests.
+func CoreFrameDigest(tag Tag, frameIndex uint32) (FrameDigest, bool) {
+	switch tag {
+	case TagIVFSingleFrameAV1:
+		if frameIndex == 0 {
+			return coreDigests[0], true
+		}
+	}
+	return FrameDigest{}, false
+}
+
 // CoreSuite returns the minimal byte-level vectors that cover the current
 // transport and OBU foundations.
 func CoreSuite() Suite {
@@ -97,9 +155,7 @@ func CoreSuite() Suite {
 		Name: "goav1-core",
 		Manifest: Manifest{
 			Vectors: coreVectors[:],
-			Digests: []FrameDigest{
-				{Tag: TagIVFSingleFrameAV1, FrameIndex: 0, MD5: coreIVFSingleFrameMD5},
-			},
+			Digests: coreDigests[:],
 		},
 	}
 }

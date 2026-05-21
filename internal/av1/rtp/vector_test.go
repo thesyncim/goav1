@@ -8,13 +8,15 @@ import (
 )
 
 func TestRTPCoreVectors(t *testing.T) {
-	suite := testvector.CoreSuite()
-	oracle := testvector.NewOracle(suite.Manifest)
+	var oracle testvector.Oracle
+	if testvector.OracleEnabled {
+		oracle = testvector.NewOracle(testvector.CoreSuite().Manifest)
+	}
 	for _, tag := range []testvector.Tag{
 		testvector.TagRTPPayloadSingleOBU,
 		testvector.TagRTPPayloadFragmentedOBU,
 	} {
-		vector, ok := suite.Manifest.Find(tag)
+		vector, ok := testvector.CoreVector(tag)
 		if !ok {
 			t.Fatalf("missing vector tag=%d", tag)
 		}

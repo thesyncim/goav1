@@ -37,6 +37,52 @@ func TestCoreSuiteVectors(t *testing.T) {
 	}
 }
 
+func TestCoreSuiteTagLookup(t *testing.T) {
+	suite := CoreSuite()
+	for i, vector := range suite.Manifest.Vectors {
+		got, ok := CoreVector(vector.Tag)
+		if !ok {
+			t.Fatalf("missing vector tag=%x", vector.Tag)
+		}
+		if got.Tag != vector.Tag || got.Kind != vector.Kind || got.Name != vector.Name ||
+			!bytes.Equal(got.Input, vector.Input) || !bytes.Equal(got.Want, vector.Want) {
+			t.Fatalf("vector[%d]=%+v want %+v", i, got, vector)
+		}
+	}
+	if got, ok := CoreVector(Tag(0xffff)); ok || got.Tag != 0 || got.Kind != 0 || got.Name != "" || got.Input != nil || got.Want != nil {
+		t.Fatalf("invalid vector=%+v ok=%v", got, ok)
+	}
+
+	digest, ok := CoreFrameDigest(TagIVFSingleFrameAV1, 0)
+	if !ok {
+		t.Fatal("missing core digest")
+	}
+	if digest.MD5 != coreIVFSingleFrameMD5 {
+		t.Fatalf("digest=%x want %x", digest.MD5, coreIVFSingleFrameMD5)
+	}
+	if got, ok := CoreFrameDigest(TagIVFSingleFrameAV1, 1); ok || got != (FrameDigest{}) {
+		t.Fatalf("invalid digest=%+v ok=%v", got, ok)
+	}
+}
+
+func TestCoreSuiteAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		suite := CoreSuite()
+		if len(suite.Manifest.Vectors) != len(coreVectors) || len(suite.Manifest.Digests) != len(coreDigests) {
+			t.Fatalf("suite=%+v", suite)
+		}
+		if _, ok := CoreVector(TagParserSequenceFullLowOverhead); !ok {
+			t.Fatal("missing vector")
+		}
+		if _, ok := CoreFrameDigest(TagIVFSingleFrameAV1, 0); !ok {
+			t.Fatal("missing digest")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("CoreSuite allocated: %f", allocs)
+	}
+}
+
 func checkOBUVector(t *testing.T, vector Vector) {
 	t.Helper()
 	unit, consumed, err := obu.ParseLowOverhead(vector.Input)
@@ -88,7 +134,7 @@ func checkIVFVector(t *testing.T, vector Vector) {
 	if !bytes.Equal(frame.Payload, vector.Want) {
 		t.Fatalf("%s payload=%x want %x", vector.Name, frame.Payload, vector.Want)
 	}
-	digest, ok := CoreSuite().Manifest.FindDigest(vector.Tag, frame.Index)
+	digest, ok := CoreFrameDigest(vector.Tag, frame.Index)
 	if !ok {
 		t.Fatalf("%s missing digest", vector.Name)
 	}

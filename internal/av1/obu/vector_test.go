@@ -8,9 +8,7 @@ import (
 )
 
 func TestOBUCoreVectors(t *testing.T) {
-	suite := testvector.CoreSuite()
-	oracle := testvector.NewOracle(suite.Manifest)
-	vector, ok := suite.Manifest.Find(testvector.TagOBULowOverheadTemporalDelimiter)
+	vector, ok := testvector.CoreVector(testvector.TagOBULowOverheadTemporalDelimiter)
 	if !ok {
 		t.Fatal("missing temporal delimiter vector")
 	}
@@ -29,6 +27,7 @@ func TestOBUCoreVectors(t *testing.T) {
 		t.Fatalf("payload=%x want %x", unit.Payload, vector.Want)
 	}
 	if testvector.OracleEnabled {
+		oracle := testvector.NewOracle(testvector.CoreSuite().Manifest)
 		if err := oracle.CheckBytes(vector.Tag, unit.Payload); err != nil {
 			t.Fatalf("oracle err=%v", err)
 		}
@@ -36,9 +35,7 @@ func TestOBUCoreVectors(t *testing.T) {
 }
 
 func TestAnnexBCoreVector(t *testing.T) {
-	suite := testvector.CoreSuite()
-	oracle := testvector.NewOracle(suite.Manifest)
-	vector, ok := suite.Manifest.Find(testvector.TagOBUAnnexBTemporalUnit)
+	vector, ok := testvector.CoreVector(testvector.TagOBUAnnexBTemporalUnit)
 	if !ok {
 		t.Fatal("missing Annex B vector")
 	}
@@ -83,6 +80,7 @@ func TestAnnexBCoreVector(t *testing.T) {
 		t.Fatalf("consumed=%d want %d", wantOff, len(vector.Want))
 	}
 	if testvector.OracleEnabled {
+		oracle := testvector.NewOracle(testvector.CoreSuite().Manifest)
 		if err := oracle.CheckBytes(vector.Tag, got[:wantOff]); err != nil {
 			t.Fatalf("oracle err=%v", err)
 		}

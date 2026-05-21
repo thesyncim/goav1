@@ -9,8 +9,10 @@ import (
 )
 
 func TestSequenceHeaderCoreVectors(t *testing.T) {
-	suite := testvector.CoreSuite()
-	oracle := testvector.NewOracle(suite.Manifest)
+	var oracle testvector.Oracle
+	if testvector.OracleEnabled {
+		oracle = testvector.NewOracle(testvector.CoreSuite().Manifest)
+	}
 	for _, tag := range [...]testvector.Tag{
 		testvector.TagParserSequenceFullLowOverhead,
 		testvector.TagParserSequenceReducedLowOverhead,
@@ -18,7 +20,7 @@ func TestSequenceHeaderCoreVectors(t *testing.T) {
 		testvector.TagParserSequenceReducedAnnexB,
 		testvector.TagParserSequenceBuganizer502133197,
 	} {
-		vector, ok := suite.Manifest.Find(tag)
+		vector, ok := testvector.CoreVector(tag)
 		if !ok {
 			t.Fatalf("missing vector tag=%x", tag)
 		}
