@@ -27,6 +27,7 @@ const (
 	DecoderEventTileList             DecoderEventKind = internaldecoder.EventTileList
 	DecoderEventPadding              DecoderEventKind = internaldecoder.EventPadding
 	DecoderEventReserved             DecoderEventKind = internaldecoder.EventReserved
+	DecoderEventExistingFrame        DecoderEventKind = internaldecoder.EventExistingFrame
 )
 
 var (

@@ -20,6 +20,7 @@ const (
 	EventTileList
 	EventPadding
 	EventReserved
+	EventExistingFrame
 )
 
 type Event struct {
@@ -50,6 +51,7 @@ type Event struct {
 	GlobalMotion   parser.GlobalMotionParams
 	FilmGrain      parser.FilmGrainParams
 	TileGroup      parser.TileGroup
+	ExistingFrame  parser.ReferenceFrame
 }
 
 type Stream struct {
@@ -335,78 +337,116 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 		return Event{}, err
 	}
 	event.FrameHeader = frameHeader
-	if !frameHeader.ShowExistingFrame {
-		frameSize, err := parser.ParseFrameSize(event.Unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
-		if err != nil {
-			return Event{}, err
-		}
-		tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
-		if err != nil {
-			return Event{}, err
-		}
-		quant, err := parser.ParseQuantizationParams(event.Unit.Payload, s.sequence, tileInfo)
-		if err != nil {
-			return Event{}, err
-		}
-		segmentation, err := parser.ParseSegmentationParams(event.Unit.Payload, frameHeader, quant, nil)
-		if err != nil {
-			return Event{}, err
-		}
-		delta, err := parser.ParseDeltaParams(event.Unit.Payload, frameSize, quant, segmentation)
-		if err != nil {
-			return Event{}, err
-		}
-		loopFilter, err := parser.ParseLoopFilterParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, nil)
-		if err != nil {
-			return Event{}, err
-		}
-		cdef, err := parser.ParseCDEFParams(event.Unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
-		if err != nil {
-			return Event{}, err
-		}
-		restoration, err := parser.ParseRestorationParams(event.Unit.Payload, s.sequence, frameSize, segmentation, cdef)
-		if err != nil {
-			return Event{}, err
-		}
-		transformRef, err := parser.ParseTransformReferenceParams(event.Unit.Payload, frameHeader, segmentation, restoration)
-		if err != nil {
-			return Event{}, err
-		}
-		skipMode, err := parser.ParseSkipModeParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, transformRef)
-		if err != nil {
-			return Event{}, err
-		}
-		frameMode, err := parser.ParseFrameModeParams(event.Unit.Payload, s.sequence, frameHeader, skipMode)
-		if err != nil {
-			return Event{}, err
-		}
-		globalMotion, err := parser.ParseGlobalMotionParams(event.Unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
-		if err != nil {
-			return Event{}, err
-		}
-		filmGrain, err := parser.ParseFilmGrainParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
-		if err != nil {
-			return Event{}, err
-		}
-		event.FrameSize = frameSize
-		event.TileInfo = tileInfo
-		event.Quantization = quant
-		event.Segmentation = segmentation
-		event.Delta = delta
-		event.LoopFilter = loopFilter
-		event.CDEF = cdef
-		event.Restoration = restoration
-		event.TransformRef = transformRef
-		event.SkipMode = skipMode
-		event.FrameMode = frameMode
-		event.GlobalMotion = globalMotion
-		event.FilmGrain = filmGrain
-		s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
-		s.tileInfo = tileInfo
-		s.nextTile = 0
+	if frameHeader.ShowExistingFrame {
+		return s.acceptExistingFrame(event)
 	}
+
+	frameSize, err := parser.ParseFrameSize(event.Unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
+	if err != nil {
+		return Event{}, err
+	}
+	tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
+	if err != nil {
+		return Event{}, err
+	}
+	quant, err := parser.ParseQuantizationParams(event.Unit.Payload, s.sequence, tileInfo)
+	if err != nil {
+		return Event{}, err
+	}
+	segmentation, err := parser.ParseSegmentationParams(event.Unit.Payload, frameHeader, quant, nil)
+	if err != nil {
+		return Event{}, err
+	}
+	delta, err := parser.ParseDeltaParams(event.Unit.Payload, frameSize, quant, segmentation)
+	if err != nil {
+		return Event{}, err
+	}
+	loopFilter, err := parser.ParseLoopFilterParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, nil)
+	if err != nil {
+		return Event{}, err
+	}
+	cdef, err := parser.ParseCDEFParams(event.Unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
+	if err != nil {
+		return Event{}, err
+	}
+	restoration, err := parser.ParseRestorationParams(event.Unit.Payload, s.sequence, frameSize, segmentation, cdef)
+	if err != nil {
+		return Event{}, err
+	}
+	transformRef, err := parser.ParseTransformReferenceParams(event.Unit.Payload, frameHeader, segmentation, restoration)
+	if err != nil {
+		return Event{}, err
+	}
+	skipMode, err := parser.ParseSkipModeParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, transformRef)
+	if err != nil {
+		return Event{}, err
+	}
+	frameMode, err := parser.ParseFrameModeParams(event.Unit.Payload, s.sequence, frameHeader, skipMode)
+	if err != nil {
+		return Event{}, err
+	}
+	globalMotion, err := parser.ParseGlobalMotionParams(event.Unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
+	if err != nil {
+		return Event{}, err
+	}
+	filmGrain, err := parser.ParseFilmGrainParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
+	if err != nil {
+		return Event{}, err
+	}
+	event.FrameSize = frameSize
+	event.TileInfo = tileInfo
+	event.Quantization = quant
+	event.Segmentation = segmentation
+	event.Delta = delta
+	event.LoopFilter = loopFilter
+	event.CDEF = cdef
+	event.Restoration = restoration
+	event.TransformRef = transformRef
+	event.SkipMode = skipMode
+	event.FrameMode = frameMode
+	event.GlobalMotion = globalMotion
+	event.FilmGrain = filmGrain
+	s.references.UpdateWithFrameState(frameHeader, frameSize, globalMotion, filmGrain)
+	s.tileInfo = tileInfo
+	s.nextTile = 0
 	s.haveFrameHeader = true
 	s.tileGroups = 0
+	return event, nil
+}
+
+func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
+	if event.NewCodedVideoSequence {
+		return Event{}, parser.ErrInvalidFrameHeader
+	}
+
+	ref := s.references.Frames[event.FrameHeader.ExistingFrameIdx]
+	if !ref.Valid {
+		return Event{}, parser.ErrReferenceFrameNeeded
+	}
+	if s.sequence.FrameIDNumbersPresent && ref.FrameID != event.FrameHeader.FrameID {
+		return Event{}, parser.ErrInvalidFrameHeader
+	}
+	if !ref.ShowableFrame {
+		return Event{}, parser.ErrInvalidFrameHeader
+	}
+
+	event.Kind = EventExistingFrame
+	event.ExistingFrame = ref
+	event.FrameSize = ref.Size
+	event.GlobalMotion = ref.GlobalMotion
+	event.FilmGrain = ref.FilmGrain
+
+	s.haveFrameHeader = false
+	s.tileGroups = 0
+	s.tileInfo = parser.TileInfo{}
+	s.nextTile = 0
+
+	if ref.FrameType == parser.FrameTypeKey {
+		ref.ShowableFrame = false
+		for i := 0; i < parser.RefFrames; i++ {
+			s.references.Frames[i] = ref
+		}
+	}
 	return event, nil
 }
 

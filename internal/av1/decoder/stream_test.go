@@ -165,6 +165,13 @@ func interFrameHeaderPayload() []byte {
 	return w.bytes()
 }
 
+func showExistingFrameHeaderPayload(index uint8) []byte {
+	var w testBitWriter
+	w.writeBool(true) // show_existing_frame
+	w.writeBits(uint64(index&7), 3)
+	return w.bytes()
+}
+
 func writeZeroQuantParams(w *testBitWriter) {
 	w.writeBits(0, 8)  // base_q_idx
 	w.writeBool(false) // y_dc_delta_q
@@ -517,6 +524,87 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {
 			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[3].FrameSize.RefFrameIdx[i])
 		}
+	}
+}
+
+func TestStreamShowExistingFrame(t *testing.T) {
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+
+	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+		t.Fatal(err)
+	}
+
+	interFrame := append([]byte{}, interFrameHeaderPayload()...)
+	interFrame = append(interFrame, 0xbb)
+	interEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, interFrame), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interEvent.Kind != EventFrame || interEvent.FrameHeader.FrameType != parser.FrameTypeInter {
+		t.Fatalf("inter event=%+v", interEvent)
+	}
+
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != EventExistingFrame || !event.FrameHeader.ShowExistingFrame || event.FrameHeader.ExistingFrameIdx != 0 {
+		t.Fatalf("show existing event=%+v", event)
+	}
+	if !event.ExistingFrame.Valid || event.ExistingFrame.FrameType != parser.FrameTypeInter {
+		t.Fatalf("existing frame=%+v", event.ExistingFrame)
+	}
+	if event.FrameSize != interEvent.FrameSize || event.FilmGrain != interEvent.FilmGrain {
+		t.Fatalf("show existing state=%+v inter=%+v", event, interEvent)
+	}
+
+	_, err = dec.PushOBU(appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
+	if !errors.Is(err, ErrMissingFrameHeader) {
+		t.Fatalf("PushOBU err=%v want %v", err, ErrMissingFrameHeader)
+	}
+}
+
+func TestStreamRejectsShowExistingBeforeReference(t *testing.T) {
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	if !errors.Is(err, parser.ErrReferenceFrameNeeded) {
+		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrReferenceFrameNeeded)
+	}
+}
+
+func TestStreamRejectsUnshowableExistingFrame(t *testing.T) {
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	if !errors.Is(err, parser.ErrInvalidFrameHeader) {
+		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrInvalidFrameHeader)
+	}
+}
+
+func TestStreamRejectsFrameOBUShowExistingFrame(t *testing.T) {
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, showExistingFrameHeaderPayload(0)), false)
+	if !errors.Is(err, parser.ErrInvalidFrameHeader) {
+		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrInvalidFrameHeader)
 	}
 }
 
