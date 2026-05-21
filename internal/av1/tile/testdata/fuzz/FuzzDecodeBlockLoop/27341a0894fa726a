@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xf8")
+byte('\x01')
+byte('d')
+byte('\x10')
+bool(false)

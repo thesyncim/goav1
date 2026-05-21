@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xf2")
+byte('#')
+byte('W')
+byte('\x1e')
+bool(true)

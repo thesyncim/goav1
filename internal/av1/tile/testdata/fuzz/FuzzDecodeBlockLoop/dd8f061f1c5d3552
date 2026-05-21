@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xe0z")
+byte('(')
+byte('I')
+byte('_')
+bool(true)

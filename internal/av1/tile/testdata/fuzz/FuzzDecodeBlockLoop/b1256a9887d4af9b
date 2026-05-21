@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xfd")
+byte('¾')
+byte('\x0e')
+byte('\x15')
+bool(true)

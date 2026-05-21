@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb001100000")
+byte('\x01')
+byte(']')
+byte('m')
+bool(true)

@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xff\xff\xff\xff\xff\xff\xff\xff0")
+byte('\x19')
+byte(' ')
+byte('n')
+bool(true)
