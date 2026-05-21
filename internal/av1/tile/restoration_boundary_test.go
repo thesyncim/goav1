@@ -147,7 +147,7 @@ func TestRestorationStripeBoundaryBufferLen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size != (RestorationStripeBoundaryBufferSize{Stride: 308, Rows: 10, Len: 3080}) {
+	if size != (RestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}) {
 		t.Fatalf("size=%+v", size)
 	}
 	uv := testRestorationBoundaryGrid(t, true, true)
@@ -155,7 +155,7 @@ func TestRestorationStripeBoundaryBufferLen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size != (RestorationStripeBoundaryBufferSize{Stride: 158, Rows: 10, Len: 1580}) {
+	if size != (RestorationStripeBoundaryBufferSize{Stride: 160, Rows: 10, Len: 1600}) {
 		t.Fatalf("uv size=%+v", size)
 	}
 }

@@ -46,6 +46,18 @@ type RestorationUnitRecord struct {
 	Unit        RestorationUnit
 }
 
+// RestorationFramePlan is the caller-owned allocation plan for loop
+// restoration, matching libaom's per-frame RestorationInfo setup without
+// allocating unit-info or stripe-boundary buffers.
+type RestorationFramePlan struct {
+	Planes uint8
+	Active bool
+
+	Grids       [3]RestorationPlaneGrid
+	UnitRecords [3]int
+	Boundaries  [3]RestorationStripeBoundaryBufferSize
+}
+
 func BuildRestorationPlaneGrid(params parser.RestorationParams, size parser.FrameSize, color parser.ColorConfig, plane int) (RestorationPlaneGrid, error) {
 	if plane < 0 || plane > 2 || size.UpscaledWidth == 0 || size.Height == 0 {
 		return RestorationPlaneGrid{}, ErrInvalidPlan
@@ -91,6 +103,76 @@ func BuildRestorationPlaneGrid(params parser.RestorationParams, size parser.Fram
 	grid.HorzUnits = countRestorationUnits(uint32(unitSize), planeW)
 	grid.VertUnits = countRestorationUnits(uint32(unitSize), planeH)
 	return grid, nil
+}
+
+// BuildRestorationFramePlan ports the frame-level restoration allocation pass:
+// active planes get libaom-matched unit-info counts and stripe-boundary buffer
+// sizes, while all-none frames report zero caller-owned storage.
+func BuildRestorationFramePlan(params parser.RestorationParams, size parser.FrameSize, color parser.ColorConfig) (RestorationFramePlan, error) {
+	planes := 3
+	if color.MonoChrome {
+		planes = 1
+	}
+	var plan RestorationFramePlan
+	plan.Planes = uint8(planes)
+	for plane := 0; plane < planes; plane++ {
+		grid, err := BuildRestorationPlaneGrid(params, size, color, plane)
+		if err != nil {
+			return RestorationFramePlan{}, err
+		}
+		plan.Grids[plane] = grid
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		records, err := grid.UnitRecordLen()
+		if err != nil {
+			return RestorationFramePlan{}, err
+		}
+		boundaries, err := RestorationStripeBoundaryBufferLen(grid)
+		if err != nil {
+			return RestorationFramePlan{}, err
+		}
+		plan.UnitRecords[plane] = records
+		plan.Boundaries[plane] = boundaries
+		plan.Active = true
+	}
+	return plan, nil
+}
+
+// UnitRecordLen reports the number of RestorationUnitRecord slots needed for
+// this plane's unit_info-equivalent storage.
+func (g RestorationPlaneGrid) UnitRecordLen() (int, error) {
+	if g.Type == parser.RestorationNone {
+		return 0, nil
+	}
+	if !g.valid() {
+		return 0, ErrInvalidPlan
+	}
+	n, ok := checkedMulInt(int(g.HorzUnits), int(g.VertUnits))
+	if !ok {
+		return 0, ErrInvalidPlan
+	}
+	return n, nil
+}
+
+// UnitRecordLen reports the total unit-info-equivalent record slots required
+// by all active planes in the frame plan.
+func (p RestorationFramePlan) UnitRecordLen() int {
+	total := 0
+	for i := 0; i < int(p.Planes) && i < len(p.UnitRecords); i++ {
+		total += p.UnitRecords[i]
+	}
+	return total
+}
+
+// BoundaryBufferLen reports the sum of per-plane stripe-boundary lengths for
+// one boundary side. Callers allocate that amount separately for Above and Below.
+func (p RestorationFramePlan) BoundaryBufferLen() int {
+	total := 0
+	for i := 0; i < int(p.Planes) && i < len(p.Boundaries); i++ {
+		total += p.Boundaries[i].Len
+	}
+	return total
 }
 
 func (g RestorationPlaneGrid) UnitsInSuperblock(miCol uint32, miRow uint32, sbSizeMIB uint8) (RestorationUnitRange, bool, error) {
@@ -240,4 +322,16 @@ func minUint32(a uint32, b uint32) uint32 {
 		return a
 	}
 	return b
+}
+
+func alignPowerOfTwoInt(v int, bits uint) (int, bool) {
+	if v < 0 || bits >= 30 {
+		return 0, false
+	}
+	mask := (1 << bits) - 1
+	maxInt := int(^uint(0) >> 1)
+	if v > maxInt-mask {
+		return 0, false
+	}
+	return (v + mask) &^ mask, true
 }

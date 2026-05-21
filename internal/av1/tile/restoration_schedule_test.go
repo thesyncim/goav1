@@ -46,6 +46,71 @@ func TestBuildRestorationPlaneGridMatchesLibaomCounts(t *testing.T) {
 	}
 }
 
+func TestBuildRestorationFramePlanMatchesLibaomAllocationShape(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone},
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	size := parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
+	color := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+
+	plan, err := BuildRestorationFramePlan(params, size, color)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Active || plan.Planes != 3 {
+		t.Fatalf("plan active=%v planes=%d", plan.Active, plan.Planes)
+	}
+	if plan.UnitRecords != ([3]int{4, 4, 0}) || plan.UnitRecordLen() != 8 {
+		t.Fatalf("unit records=%+v total=%d", plan.UnitRecords, plan.UnitRecordLen())
+	}
+	wantY := RestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}
+	wantU := RestorationStripeBoundaryBufferSize{Stride: 160, Rows: 10, Len: 1600}
+	if plan.Boundaries[0] != wantY || plan.Boundaries[1] != wantU || plan.Boundaries[2] != (RestorationStripeBoundaryBufferSize{}) {
+		t.Fatalf("boundaries=%+v", plan.Boundaries)
+	}
+	if plan.BoundaryBufferLen() != wantY.Len+wantU.Len {
+		t.Fatalf("boundary total=%d", plan.BoundaryBufferLen())
+	}
+}
+
+func TestBuildRestorationFramePlanAllNoneIsZeroSize(t *testing.T) {
+	params := parser.RestorationParams{
+		UnitSizeY:  256,
+		UnitSizeUV: 256,
+	}
+	plan, err := BuildRestorationFramePlan(params, parser.FrameSize{UpscaledWidth: 128, Height: 64, SuperResDenominator: 8}, parser.ColorConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Active || plan.Planes != 3 || plan.UnitRecordLen() != 0 || plan.BoundaryBufferLen() != 0 {
+		t.Fatalf("plan=%+v records=%d boundaries=%d", plan, plan.UnitRecordLen(), plan.BoundaryBufferLen())
+	}
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		if plan.Grids[plane].Type != parser.RestorationNone ||
+			plan.UnitRecords[plane] != 0 ||
+			plan.Boundaries[plane] != (RestorationStripeBoundaryBufferSize{}) {
+			t.Fatalf("plane %d grid=%+v records=%d boundaries=%+v", plane, plan.Grids[plane], plan.UnitRecords[plane], plan.Boundaries[plane])
+		}
+	}
+}
+
+func TestBuildRestorationFramePlanMonochromeSkipsChroma(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationSGRProj},
+		UnitSizeY:  64,
+		UnitSizeUV: 64,
+	}
+	plan, err := BuildRestorationFramePlan(params, parser.FrameSize{UpscaledWidth: 128, Height: 128, SuperResDenominator: 8}, parser.ColorConfig{MonoChrome: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Active || plan.Planes != 1 || plan.UnitRecords != ([3]int{4, 0, 0}) || plan.Grids[1] != (RestorationPlaneGrid{}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
 func TestRestorationUnitsInSuperblockMatchesLibaomCorners(t *testing.T) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -208,6 +273,29 @@ func TestRestorationScheduleAllocs(t *testing.T) {
 	}
 }
 
+func TestRestorationFramePlanAllocs(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone},
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	size := parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
+	color := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		plan, err := BuildRestorationFramePlan(params, size, color)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.UnitRecordLen() != 8 || plan.BoundaryBufferLen() != 4800 {
+			t.Fatalf("plan=%+v", plan)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("restoration frame plan allocated: %f", allocs)
+	}
+}
+
 func FuzzRestorationUnitSchedule(f *testing.F) {
 	f.Add(uint16(256), uint16(128), uint8(64), uint8(0), uint8(0), uint8(16), false, false, false)
 	f.Add(uint16(257), uint16(129), uint8(128), uint8(1), uint8(2), uint8(16), true, true, true)
@@ -243,6 +331,74 @@ func FuzzRestorationUnitSchedule(f *testing.F) {
 			if r.Col0 >= r.Col1 || r.Row0 >= r.Row1 || r.Col1 > grid.HorzUnits || r.Row1 > grid.VertUnits {
 				t.Fatalf("bad range=%+v grid=%+v", r, grid)
 			}
+		}
+	})
+}
+
+func FuzzBuildRestorationFramePlan(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(0), uint8(1), uint8(0), false, true, true, false)
+	f.Add(uint16(128), uint16(64), uint8(3), uint8(3), uint8(3), false, false, false, false)
+	f.Add(uint16(257), uint16(129), uint8(2), uint8(2), uint8(1), true, true, true, true)
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawY uint8, rawU uint8, rawV uint8, mono bool, ssX bool, ssY bool, superres bool) {
+		types := [...]parser.RestorationType{
+			parser.RestorationNone,
+			parser.RestorationSwitchable,
+			parser.RestorationWiener,
+			parser.RestorationSGRProj,
+		}
+		unitSizes := [...]uint16{64, 128, 256}
+		width := uint32(rawW) + 1
+		height := uint32(rawH) + 1
+		params := parser.RestorationParams{
+			Type:       [3]parser.RestorationType{types[rawY&3], types[rawU&3], types[rawV&3]},
+			UnitSizeY:  unitSizes[rawY%uint8(len(unitSizes))],
+			UnitSizeUV: unitSizes[(rawU^rawV)%uint8(len(unitSizes))],
+		}
+		size := parser.FrameSize{UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+		if superres {
+			size.SuperResEnabled = true
+			size.SuperResDenominator = 16
+		}
+		color := parser.ColorConfig{MonoChrome: mono, SubsamplingX: ssX, SubsamplingY: ssY}
+
+		plan, err := BuildRestorationFramePlan(params, size, color)
+		if err != nil {
+			t.Fatalf("BuildRestorationFramePlan err=%v", err)
+		}
+		wantPlanes := uint8(3)
+		if mono {
+			wantPlanes = 1
+		}
+		if plan.Planes != wantPlanes {
+			t.Fatalf("planes=%d want %d", plan.Planes, wantPlanes)
+		}
+		active := false
+		totalRecords := 0
+		totalBoundaries := 0
+		for plane := 0; plane < int(plan.Planes); plane++ {
+			grid := plan.Grids[plane]
+			if grid.Plane != uint8(plane) {
+				t.Fatalf("grid plane=%d want %d", grid.Plane, plane)
+			}
+			if grid.Type == parser.RestorationNone {
+				if plan.UnitRecords[plane] != 0 || plan.Boundaries[plane] != (RestorationStripeBoundaryBufferSize{}) {
+					t.Fatalf("inactive plane=%d records=%d boundaries=%+v", plane, plan.UnitRecords[plane], plan.Boundaries[plane])
+				}
+				continue
+			}
+			active = true
+			wantRecords := int(grid.HorzUnits) * int(grid.VertUnits)
+			if wantRecords == 0 || plan.UnitRecords[plane] != wantRecords {
+				t.Fatalf("plane=%d records=%d want %d grid=%+v", plane, plan.UnitRecords[plane], wantRecords, grid)
+			}
+			if plan.Boundaries[plane].Stride%32 != 0 || plan.Boundaries[plane].Rows == 0 || plan.Boundaries[plane].Len == 0 {
+				t.Fatalf("plane=%d boundary=%+v", plane, plan.Boundaries[plane])
+			}
+			totalRecords += plan.UnitRecords[plane]
+			totalBoundaries += plan.Boundaries[plane].Len
+		}
+		if plan.Active != active || plan.UnitRecordLen() != totalRecords || plan.BoundaryBufferLen() != totalBoundaries {
+			t.Fatalf("plan=%+v active=%v records=%d boundaries=%d", plan, active, totalRecords, totalBoundaries)
 		}
 	})
 }

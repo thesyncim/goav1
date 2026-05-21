@@ -71,6 +71,10 @@ func RestorationStripeBoundaryBufferLen(grid RestorationPlaneGrid) (RestorationS
 	if !ok {
 		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
 	}
+	stride, ok = alignPowerOfTwoInt(stride, 5)
+	if !ok {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
 	heightWithOffset, ok := checkedAddInt(planeHeight, stripeOff)
 	if !ok {
 		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
