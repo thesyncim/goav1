@@ -1,5 +1,7 @@
 package tile
 
+import av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+
 const (
 	restorationBorder    = 3
 	restorationCtxVert   = 2
@@ -29,6 +31,49 @@ type RestorationStripeBoundaryScratch struct {
 	Below []uint16
 }
 
+// RestorationStripeBoundaryBufferSize reports the caller-owned boundary buffer
+// layout for one whole-frame restoration plane.
+type RestorationStripeBoundaryBufferSize struct {
+	Stride int
+	Rows   int
+	Len    int
+}
+
+func RestorationStripeBoundaryBufferLen(grid RestorationPlaneGrid) (RestorationStripeBoundaryBufferSize, error) {
+	if !grid.validGeometry() {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if uint64(grid.PlaneWidth) > maxInt || uint64(grid.PlaneHeight) > maxInt {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	stripeHeight := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	stripeOff := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	if stripeHeight <= 0 {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	planeWidth := int(grid.PlaneWidth)
+	planeHeight := int(grid.PlaneHeight)
+	stride, ok := checkedAddInt(planeWidth, 2*restorationExtraHorz)
+	if !ok {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	heightWithOffset, ok := checkedAddInt(planeHeight, stripeOff)
+	if !ok {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	stripes := ceilDivInt(heightWithOffset, stripeHeight)
+	rows, ok := checkedMulInt(stripes, restorationCtxVert)
+	if !ok {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	n, ok := checkedMulInt(rows, stride)
+	if !ok {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	return RestorationStripeBoundaryBufferSize{Stride: stride, Rows: rows, Len: n}, nil
+}
+
 func RestorationStripeBoundaryScratchLen(stripe RestorationProcessingStripe, optimized bool) (RestorationStripeBoundaryScratchSize, error) {
 	lineWidth, err := restorationStripeBoundaryLineWidth(stripe)
 	if err != nil {
@@ -54,6 +99,58 @@ func RestorationStripeBoundaryScratchLen(stripe RestorationProcessingStripe, opt
 		}
 	}
 	return size, nil
+}
+
+// SaveRestorationBoundaryLines ports save_tile_row_boundary_lines for an
+// already-upscaled whole-frame restoration plane.
+func SaveRestorationBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, boundaries RestorationStripeBoundaries, afterCDEF bool) error {
+	if !grid.validGeometry() || srcStride <= 0 || srcOrigin < 0 {
+		return ErrInvalidPlan
+	}
+	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+		return err
+	}
+	planeHeight := int(grid.PlaneHeight)
+	stripeHeight := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	stripeOff := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	if stripeHeight <= 0 {
+		return ErrInvalidPlan
+	}
+	for tileStripe := 0; ; tileStripe++ {
+		relY0 := maxInt(0, tileStripe*stripeHeight-stripeOff)
+		if relY0 >= planeHeight {
+			break
+		}
+		relY1 := minInt((tileStripe+1)*stripeHeight-stripeOff, planeHeight)
+		useDeblockAbove := tileStripe > 0
+		useDeblockBelow := relY1 < planeHeight
+
+		switch {
+		case !afterCDEF:
+			if useDeblockAbove {
+				if err := saveRestorationDeblockBoundaryLines(grid, src, srcStride, srcOrigin, relY0-restorationCtxVert, tileStripe, true, boundaries); err != nil {
+					return err
+				}
+			}
+			if useDeblockBelow {
+				if err := saveRestorationDeblockBoundaryLines(grid, src, srcStride, srcOrigin, relY1, tileStripe, false, boundaries); err != nil {
+					return err
+				}
+			}
+		default:
+			if !useDeblockAbove {
+				if err := saveRestorationCDEFBoundaryLines(grid, src, srcStride, srcOrigin, relY0, tileStripe, true, boundaries); err != nil {
+					return err
+				}
+			}
+			if !useDeblockBelow {
+				if err := saveRestorationCDEFBoundaryLines(grid, src, srcStride, srcOrigin, relY1-1, tileStripe, false, boundaries); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // SetupRestorationStripeBoundary ports setup_processing_stripe_boundary for
@@ -231,6 +328,103 @@ func restoreRestorationStripeBoundaryOptimized(unitRect RestorationUnitRect, str
 	return nil
 }
 
+func saveRestorationDeblockBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	planeHeight := int(grid.PlaneHeight)
+	linesToSave := minInt(restorationCtxVert, planeHeight-row)
+	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
+		return ErrInvalidPlan
+	}
+	for i := 0; i < linesToSave; i++ {
+		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row+i, stripe, i, above, boundaries); err != nil {
+			return err
+		}
+	}
+	if linesToSave == 1 {
+		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(dst, srcLine)
+	}
+	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+}
+
+func saveRestorationCDEFBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	if row < 0 || row >= int(grid.PlaneHeight) {
+		return ErrInvalidPlan
+	}
+	for i := 0; i < restorationCtxVert; i++ {
+		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row, stripe, i, above, boundaries); err != nil {
+			return err
+		}
+	}
+	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+}
+
+func saveRestorationBoundaryLine(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, srcRow int, stripe int, ctxRow int, above bool, boundaries RestorationStripeBoundaries) error {
+	width := int(grid.PlaneWidth)
+	srcOffset, ok := restorationSignedPlaneOffset(srcOrigin, srcStride, 0, srcRow)
+	if !ok || !restorationLineFits(len(src), srcOffset, width) {
+		return ErrInvalidPlan
+	}
+	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, width)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	copy(dst[restorationExtraHorz:restorationExtraHorz+width], src[srcOffset:srcOffset+width])
+	return nil
+}
+
+func extendRestorationBoundaryLines(grid RestorationPlaneGrid, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	width := int(grid.PlaneWidth)
+	for i := 0; i < restorationCtxVert; i++ {
+		line, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+i, width)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		first := line[restorationExtraHorz]
+		last := line[restorationExtraHorz+width-1]
+		for j := 0; j < restorationExtraHorz; j++ {
+			line[j] = first
+			line[restorationExtraHorz+width+j] = last
+		}
+	}
+	return nil
+}
+
+func validateRestorationStripeBoundaries(grid RestorationPlaneGrid, boundaries RestorationStripeBoundaries) error {
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		return err
+	}
+	need, ok := checkedMulInt(boundaries.Stride, size.Rows)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	if boundaries.Stride < size.Stride ||
+		len(boundaries.Above) < need ||
+		len(boundaries.Below) < need {
+		return ErrInvalidPlan
+	}
+	return nil
+}
+
+func boundariesForSide(boundaries RestorationStripeBoundaries, above bool) []uint16 {
+	if above {
+		return boundaries.Above
+	}
+	return boundaries.Below
+}
+
+func restorationBoundaryPlaneLine(buf []uint16, stride int, row int, planeWidth int) ([]uint16, bool) {
+	lineWidth := planeWidth + 2*restorationExtraHorz
+	return restorationBoundaryLine(buf, stride, row, 0, lineWidth)
+}
+
 func validateRestorationStripeBoundaryInputs(unitRect RestorationUnitRect, stripe RestorationProcessingStripe, dataStride int, dataOrigin int) error {
 	if !unitRect.valid() || !stripe.Rect.valid() ||
 		stripe.Rect.X0 != unitRect.X0 ||
@@ -314,6 +508,13 @@ func checkedMulInt(a int, b int) (int, bool) {
 		return 0, false
 	}
 	return a * b, true
+}
+
+func ceilDivInt(n int, d int) int {
+	if n <= 0 || d <= 0 {
+		return 0
+	}
+	return 1 + (n-1)/d
 }
 
 func minInt(a int, b int) int {

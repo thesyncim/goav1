@@ -141,6 +141,92 @@ func TestRestorationStripeBoundaryScratchLenSkipsUnusedSides(t *testing.T) {
 	}
 }
 
+func TestRestorationStripeBoundaryBufferLen(t *testing.T) {
+	grid := testRestorationBoundaryGrid(t, false, false)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != (RestorationStripeBoundaryBufferSize{Stride: 308, Rows: 10, Len: 3080}) {
+		t.Fatalf("size=%+v", size)
+	}
+	uv := testRestorationBoundaryGrid(t, true, true)
+	size, err = RestorationStripeBoundaryBufferLen(uv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != (RestorationStripeBoundaryBufferSize{Stride: 158, Rows: 10, Len: 1580}) {
+		t.Fatalf("uv size=%+v", size)
+	}
+}
+
+func TestSaveRestorationBoundaryLinesDeblock(t *testing.T) {
+	grid := testRestorationBoundaryGrid(t, false, false)
+	srcStride := int(grid.PlaneWidth) + 7
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
+
+	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+		t.Fatal(err)
+	}
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 0, 56)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 1, 57)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 1, 0, 54)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 1, 1, 55)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 4, 0, 246)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 4, 1, 247)
+	assertBoundaryUntouched(t, boundaries.Above, boundaries.Stride, 0, 0, int(grid.PlaneWidth), 0xeeee)
+	assertBoundaryUntouched(t, boundaries.Below, boundaries.Stride, 4, 0, int(grid.PlaneWidth), 0xeeee)
+}
+
+func TestSaveRestorationBoundaryLinesCDEF(t *testing.T) {
+	grid := testRestorationBoundaryGrid(t, false, false)
+	srcStride := int(grid.PlaneWidth) + 7
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
+
+	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, true); err != nil {
+		t.Fatal(err)
+	}
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 0, 0, 0)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 0, 1, 0)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 4, 0, 259)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 4, 1, 259)
+	assertBoundaryUntouched(t, boundaries.Above, boundaries.Stride, 1, 0, int(grid.PlaneWidth), 0xeeee)
+	assertBoundaryUntouched(t, boundaries.Below, boundaries.Stride, 0, 0, int(grid.PlaneWidth), 0xeeee)
+}
+
+func TestSaveRestorationBoundaryLinesDuplicatesSingleDeblockRow(t *testing.T) {
+	grid, err := BuildRestorationPlaneGrid(parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 64,
+	}, parser.FrameSize{UpscaledWidth: 64, Height: 57, SuperResDenominator: 8}, parser.ColorConfig{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcStride := int(grid.PlaneWidth)
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
+
+	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+		t.Fatal(err)
+	}
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 0, 56)
+	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 1, 56)
+}
+
 func TestRestorationStripeBoundaryRejectsInvalidInputs(t *testing.T) {
 	grid := testRestorationBoundaryGrid(t, false, false)
 	rect, err := grid.UnitRect(1, 1)
@@ -182,6 +268,28 @@ func TestRestorationStripeBoundaryRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestSaveRestorationBoundaryLinesRejectsInvalidInputs(t *testing.T) {
+	grid := testRestorationBoundaryGrid(t, false, false)
+	srcStride := int(grid.PlaneWidth)
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
+	short := boundaries
+	short.Above = short.Above[:len(short.Above)-1]
+	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, short, false); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("short boundary err=%v want %v", err, ErrInvalidPlan)
+	}
+	if err := SaveRestorationBoundaryLines(grid, src[:len(src)-1], srcStride, 0, boundaries, true); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("short src err=%v want %v", err, ErrInvalidPlan)
+	}
+	if err := SaveRestorationBoundaryLines(grid, src, srcStride, -1, boundaries, false); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad origin err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
 func TestRestorationStripeBoundaryAllocs(t *testing.T) {
 	grid := testRestorationBoundaryGrid(t, false, false)
 	rect, err := grid.UnitRect(1, 1)
@@ -216,6 +324,29 @@ func TestRestorationStripeBoundaryAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("boundary setup/restore allocated: %f", allocs)
+	}
+}
+
+func TestSaveRestorationBoundaryLinesAllocs(t *testing.T) {
+	grid := testRestorationBoundaryGrid(t, false, false)
+	srcStride := int(grid.PlaneWidth)
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("SaveRestorationBoundaryLines allocated: %f", allocs)
 	}
 }
 
@@ -281,6 +412,42 @@ func FuzzRestorationStripeBoundary(f *testing.F) {
 	})
 }
 
+func FuzzSaveRestorationBoundaryLines(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(1), uint8(0), false, false, false)
+	f.Add(uint16(64), uint16(57), uint8(0), uint8(1), true, true, true)
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawUnit uint8, rawPlane uint8, ssX bool, ssY bool, afterCDEF bool) {
+		unitSizes := [...]uint16{64, 128, 256}
+		unitSize := unitSizes[rawUnit%uint8(len(unitSizes))]
+		plane := int(rawPlane % 3)
+		params := parser.RestorationParams{
+			Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationWiener, parser.RestorationWiener},
+			UnitSizeY:  unitSize,
+			UnitSizeUV: unitSize,
+		}
+		grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{
+			UpscaledWidth:       uint32(rawW%512) + 1,
+			Height:              uint32(rawH%512) + 1,
+			SuperResDenominator: 8,
+		}, parser.ColorConfig{SubsamplingX: ssX, SubsamplingY: ssY}, plane)
+		if err != nil {
+			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
+		}
+		srcStride := int(grid.PlaneWidth) + int(rawUnit%7)
+		src := makeRestorationBoundaryPlane(grid, srcStride)
+		size, err := RestorationStripeBoundaryBufferLen(grid)
+		if err != nil {
+			t.Fatalf("RestorationStripeBoundaryBufferLen err=%v", err)
+		}
+		boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
+		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, afterCDEF); err != nil {
+			t.Fatalf("SaveRestorationBoundaryLines err=%v", err)
+		}
+		if len(boundaries.Above) < size.Len || len(boundaries.Below) < size.Len {
+			t.Fatalf("bad boundary lengths above=%d below=%d size=%+v", len(boundaries.Above), len(boundaries.Below), size)
+		}
+	})
+}
+
 func BenchmarkRestorationStripeBoundarySetupRestore(b *testing.B) {
 	grid := testRestorationBoundaryGrid(b, false, false)
 	rect, err := grid.UnitRect(1, 1)
@@ -312,6 +479,25 @@ func BenchmarkRestorationStripeBoundarySetupRestore(b *testing.B) {
 			b.Fatal(err)
 		}
 		if err := RestoreRestorationStripeBoundary(rect, stripe, data, stride, origin, scratch, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSaveRestorationBoundaryLines(b *testing.B) {
+	grid := testRestorationBoundaryGrid(b, false, false)
+	srcStride := int(grid.PlaneWidth)
+	src := makeRestorationBoundaryPlane(grid, srcStride)
+	size, err := RestorationStripeBoundaryBufferLen(grid)
+	if err != nil {
+		b.Fatal(err)
+	}
+	boundaries := makeSentinelRestorationBoundaries(size, 0)
+	b.ReportAllocs()
+	b.SetBytes(int64(size.Len * 2))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, i&1 == 0); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -353,6 +539,65 @@ func makeRestorationStripeBoundaries(stride int, rows int) RestorationStripeBoun
 		below[i] = uint16(0x6000 + i*7)
 	}
 	return RestorationStripeBoundaries{Above: above, Below: below, Stride: stride}
+}
+
+func makeSentinelRestorationBoundaries(size RestorationStripeBoundaryBufferSize, sentinel uint16) RestorationStripeBoundaries {
+	above := make([]uint16, size.Len)
+	below := make([]uint16, size.Len)
+	for i := range above {
+		above[i] = sentinel
+		below[i] = sentinel
+	}
+	return RestorationStripeBoundaries{Above: above, Below: below, Stride: size.Stride}
+}
+
+func makeRestorationBoundaryPlane(grid RestorationPlaneGrid, stride int) []uint16 {
+	src := make([]uint16, stride*int(grid.PlaneHeight))
+	for y := uint32(0); y < grid.PlaneHeight; y++ {
+		for x := uint32(0); x < grid.PlaneWidth; x++ {
+			src[int(y)*stride+int(x)] = uint16(17 + y*97 + x*3)
+		}
+	}
+	return src
+}
+
+func assertSavedBoundaryRow(t *testing.T, grid RestorationPlaneGrid, src []uint16, srcStride int, boundary []uint16, boundaryStride int, stripe int, ctxRow int, srcRow int) {
+	t.Helper()
+	width := int(grid.PlaneWidth)
+	got, ok := restorationBoundaryPlaneLine(boundary, boundaryStride, stripe*restorationCtxVert+ctxRow, width)
+	if !ok {
+		t.Fatalf("boundary line stripe=%d row=%d", stripe, ctxRow)
+	}
+	srcOff := srcRow * srcStride
+	want := src[srcOff : srcOff+width]
+	for i := 0; i < restorationExtraHorz; i++ {
+		if got[i] != want[0] {
+			t.Fatalf("left extension[%d]=%d want %d", i, got[i], want[0])
+		}
+	}
+	for i := 0; i < width; i++ {
+		if got[restorationExtraHorz+i] != want[i] {
+			t.Fatalf("sample[%d]=%d want %d", i, got[restorationExtraHorz+i], want[i])
+		}
+	}
+	for i := 0; i < restorationExtraHorz; i++ {
+		if got[restorationExtraHorz+width+i] != want[width-1] {
+			t.Fatalf("right extension[%d]=%d want %d", i, got[restorationExtraHorz+width+i], want[width-1])
+		}
+	}
+}
+
+func assertBoundaryUntouched(t *testing.T, boundary []uint16, boundaryStride int, stripe int, ctxRow int, planeWidth int, sentinel uint16) {
+	t.Helper()
+	got, ok := restorationBoundaryPlaneLine(boundary, boundaryStride, stripe*restorationCtxVert+ctxRow, planeWidth)
+	if !ok {
+		t.Fatalf("boundary line stripe=%d row=%d", stripe, ctxRow)
+	}
+	for i, sample := range got {
+		if sample != sentinel {
+			t.Fatalf("sample[%d]=%d want sentinel %d", i, sample, sentinel)
+		}
+	}
 }
 
 func assertBoundaryRows(t *testing.T, data []uint16, stride int, origin int, stripe RestorationProcessingStripe, scratch []uint16, boundary []uint16, boundaryStride int, rsbRow int, lineWidth int, above bool) {
