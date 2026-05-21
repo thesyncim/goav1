@@ -1,0 +1,10 @@
+go test fuzz v1
+uint16(131)
+uint16(95)
+byte('`')
+byte('7')
+byte('\x02')
+bool(true)
+bool(true)
+bool(true)
+[]byte("0")

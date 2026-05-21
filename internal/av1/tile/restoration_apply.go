@@ -42,6 +42,34 @@ type RestorationPlaneApplyResult struct {
 	ProcessingUnits uint32
 }
 
+// RestorationFramePlane binds the caller-owned buffers and decoded records for
+// one plane in libaom's frame-level loop-restoration pass.
+type RestorationFramePlane struct {
+	Grid       RestorationPlaneGrid
+	Records    []RestorationUnitRecord
+	Boundaries RestorationStripeBoundaries
+
+	Data       []uint16
+	DataStride int
+	DataOrigin int
+
+	Dst       []uint16
+	DstStride int
+	DstOrigin int
+}
+
+// RestorationFrameApplyResult summarizes restoration work over a one- or
+// three-plane AV1 frame.
+type RestorationFrameApplyResult struct {
+	Planes       uint8
+	PlaneResults [3]RestorationPlaneApplyResult
+
+	Records         uint32
+	FilteredRecords uint32
+	Stripes         uint32
+	ProcessingUnits uint32
+}
+
 // RestorationUnitRecordBoundaryScratchSize reports caller-owned scratch for a
 // full striped restoration-unit apply, including temporary boundary rows.
 type RestorationUnitRecordBoundaryScratchSize struct {
@@ -196,6 +224,34 @@ func RestorationFramePlaneScratchLen(grid RestorationPlaneGrid, records []Restor
 	return RestorationPlaneApplyScratchLen(grid, records, optimized)
 }
 
+// RestorationFrameScratchLen reports the max scratch required to restore a
+// whole one- or three-plane frame with ApplyRestorationFrame.
+func RestorationFrameScratchLen(planes []RestorationFramePlane, optimized bool) (RestorationUnitRecordBoundaryScratchSize, error) {
+	if err := validateRestorationFramePlanes(planes); err != nil {
+		return RestorationUnitRecordBoundaryScratchSize{}, err
+	}
+	var size RestorationUnitRecordBoundaryScratchSize
+	for i := range planes {
+		planeSize, err := RestorationFramePlaneScratchLen(planes[i].Grid, planes[i].Records, optimized)
+		if err != nil {
+			return RestorationUnitRecordBoundaryScratchSize{}, err
+		}
+		if planeSize.Unit.Wiener > size.Unit.Wiener {
+			size.Unit.Wiener = planeSize.Unit.Wiener
+		}
+		if planeSize.Unit.SGRProj > size.Unit.SGRProj {
+			size.Unit.SGRProj = planeSize.Unit.SGRProj
+		}
+		if planeSize.Boundary.Above > size.Boundary.Above {
+			size.Boundary.Above = planeSize.Boundary.Above
+		}
+		if planeSize.Boundary.Below > size.Boundary.Below {
+			size.Boundary.Below = planeSize.Boundary.Below
+		}
+	}
+	return size, nil
+}
+
 // ApplyRestorationUnit dispatches one decoded restoration unit to the matching
 // libaom-ported primitive. srcOrigin identifies the top-left pixel of the unit;
 // filtered units require the primitive-specific border around that origin.
@@ -335,6 +391,31 @@ func ApplyRestorationFramePlane(grid RestorationPlaneGrid, records []Restoration
 	return result, nil
 }
 
+// ApplyRestorationFrame ports libaom's frame-level loop-restoration
+// orchestration for a one-plane monochrome frame or a three-plane color frame.
+// The scratch buffer is reused across planes.
+func ApplyRestorationFrame(planes []RestorationFramePlane, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
+	if err := validateRestorationFramePlanes(planes); err != nil {
+		return RestorationFrameApplyResult{}, err
+	}
+	var result RestorationFrameApplyResult
+	for i := range planes {
+		planeResult, err := ApplyRestorationFramePlane(planes[i].Grid, planes[i].Records, planes[i].Boundaries, planes[i].Data, planes[i].DataStride, planes[i].DataOrigin, planes[i].Dst, planes[i].DstStride, planes[i].DstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+		result.PlaneResults[i] = planeResult
+		if planes[i].Grid.Type == parser.RestorationNone {
+			continue
+		}
+		result.Planes++
+		if err := accumulateRestorationFrameResult(&result, planeResult); err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+	}
+	return result, nil
+}
+
 // ApplyRestorationUnitRecordWithBoundaries ports libaom's striped
 // av1_loop_restoration_filter_unit() orchestration for one decoded restoration
 // unit. data is the mutable, frame-extended source plane; its overwritten stripe
@@ -420,6 +501,35 @@ func copyRestoredPlane(src []uint16, srcStride int, srcOrigin int, dst []uint16,
 	return nil
 }
 
+func validateRestorationFramePlanes(planes []RestorationFramePlane) error {
+	if len(planes) != 1 && len(planes) != 3 {
+		return ErrInvalidPlan
+	}
+	for i := range planes {
+		if planes[i].Grid.Plane != uint8(i) {
+			return ErrInvalidPlan
+		}
+	}
+	return nil
+}
+
+func accumulateRestorationFrameResult(dst *RestorationFrameApplyResult, src RestorationPlaneApplyResult) error {
+	var ok bool
+	if dst.Records, ok = checkedAddUint32(dst.Records, src.Records); !ok {
+		return ErrInvalidPlan
+	}
+	if dst.FilteredRecords, ok = checkedAddUint32(dst.FilteredRecords, src.FilteredRecords); !ok {
+		return ErrInvalidPlan
+	}
+	if dst.Stripes, ok = checkedAddUint32(dst.Stripes, src.Stripes); !ok {
+		return ErrInvalidPlan
+	}
+	if dst.ProcessingUnits, ok = checkedAddUint32(dst.ProcessingUnits, src.ProcessingUnits); !ok {
+		return ErrInvalidPlan
+	}
+	return nil
+}
+
 func applyRestorationStripeUnits(grid RestorationPlaneGrid, record RestorationUnitRecord, stripe RestorationProcessingStripe, src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitScratch) (int, error) {
 	unitCount, err := grid.ProcessingUnitCount(stripe, record.Unit.Type)
 	if err != nil {
@@ -483,6 +593,11 @@ func validateRestorationUnitRecord(grid RestorationPlaneGrid, record Restoration
 		return ErrInvalidPlan
 	}
 	return nil
+}
+
+func checkedAddUint32(a uint32, b uint32) (uint32, bool) {
+	c := a + b
+	return c, c >= a
 }
 
 func validateRestorationPlaneRecords(grid RestorationPlaneGrid, records []RestorationUnitRecord) error {
