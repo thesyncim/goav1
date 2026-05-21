@@ -7,6 +7,12 @@ const (
 	MaxCDFCount = 32
 )
 
+// CDF is caller-owned AV1 inverse-CDF state with fixed backing storage.
+type CDF struct {
+	symbols uint8
+	values  [MaxSymbols + 1]uint16
+}
+
 // InitCDF converts cumulative probabilities into AV1 inverse-CDF storage.
 // cumulative must contain symbols-1 strictly increasing values in [1, 32768].
 func InitCDF(dst []uint16, cumulative []uint16) error {
@@ -71,6 +77,92 @@ func UpdateCDF(cdf []uint16, symbols int, symbol int) error {
 		return err
 	}
 	updateCDF(cdf, symbols, symbol)
+	return nil
+}
+
+// Init converts cumulative probabilities into c's fixed inverse-CDF storage.
+func (c *CDF) Init(cumulative []uint16) error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	var next CDF
+	if err := InitCDF(next.values[:], cumulative); err != nil {
+		return err
+	}
+	next.symbols = uint8(len(cumulative) + 1)
+	*c = next
+	return nil
+}
+
+// InitUniform writes an evenly-spaced inverse-CDF into c's fixed storage.
+func (c *CDF) InitUniform(symbols int) error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	var next CDF
+	if err := InitUniformCDF(next.values[:], symbols); err != nil {
+		return err
+	}
+	next.symbols = uint8(symbols)
+	*c = next
+	return nil
+}
+
+// Reset clears c to the zero invalid state.
+func (c *CDF) Reset() {
+	if c != nil {
+		*c = CDF{}
+	}
+}
+
+// Symbols returns the number of symbols represented by c.
+func (c *CDF) Symbols() int {
+	if c == nil {
+		return 0
+	}
+	return int(c.symbols)
+}
+
+// Values returns c's inverse-CDF values plus the trailing adaptation count.
+func (c *CDF) Values() []uint16 {
+	if c == nil {
+		return nil
+	}
+	symbols := int(c.symbols)
+	if symbols < 2 || symbols > MaxSymbols {
+		return nil
+	}
+	return c.values[:symbols+1]
+}
+
+// Validate checks c's inverse-CDF shape.
+func (c *CDF) Validate() error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	return ValidateCDF(c.Values(), c.Symbols())
+}
+
+// Update adapts c after decoding symbol.
+func (c *CDF) Update(symbol int) error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	if c.Symbols() < 2 || c.Symbols() > MaxSymbols {
+		return ErrInvalidCDF
+	}
+	return UpdateCDF(c.Values(), c.Symbols(), symbol)
+}
+
+// CopyFrom replaces c with src after validating src.
+func (c *CDF) CopyFrom(src *CDF) error {
+	if c == nil || src == nil {
+		return ErrInvalidCDF
+	}
+	if err := src.Validate(); err != nil {
+		return err
+	}
+	*c = *src
 	return nil
 }
 

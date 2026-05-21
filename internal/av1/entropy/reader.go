@@ -251,6 +251,14 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	return symbol, nil
 }
 
+// ReadCDF decodes one symbol from caller-owned CDF state.
+func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
+	if cdf == nil {
+		return 0, ErrInvalidCDF
+	}
+	return r.ReadSymbol(cdf.Values(), cdf.Symbols())
+}
+
 func (r *Reader) normalize(dif uint32, rng uint32) {
 	shift := 16 - bits.Len32(rng)
 	r.cnt -= shift

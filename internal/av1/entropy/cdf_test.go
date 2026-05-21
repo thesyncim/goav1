@@ -30,6 +30,90 @@ func TestInitUniformCDF(t *testing.T) {
 	}
 }
 
+func TestCDFStateInit(t *testing.T) {
+	var cdf CDF
+	if err := cdf.Init([]uint16{8192, 16384, 24576}); err != nil {
+		t.Fatal(err)
+	}
+	want := []uint16{24576, 16384, 8192, 0, 0}
+	assertCDFValues(t, cdf.Values(), want)
+	if cdf.Symbols() != 4 {
+		t.Fatalf("symbols=%d want 4", cdf.Symbols())
+	}
+	if err := cdf.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCDFStateInitUniform(t *testing.T) {
+	var cdf CDF
+	if err := cdf.InitUniform(4); err != nil {
+		t.Fatal(err)
+	}
+	want := []uint16{24576, 16384, 8192, 0, 0}
+	assertCDFValues(t, cdf.Values(), want)
+	if cdf.Symbols() != 4 {
+		t.Fatalf("symbols=%d want 4", cdf.Symbols())
+	}
+	if err := cdf.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCDFStateCopyUpdateReset(t *testing.T) {
+	var src CDF
+	if err := src.InitUniform(2); err != nil {
+		t.Fatal(err)
+	}
+	var dst CDF
+	if err := dst.CopyFrom(&src); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.Update(1); err != nil {
+		t.Fatal(err)
+	}
+	assertCDFValues(t, src.Values(), []uint16{16384, 0, 0})
+	assertCDFValues(t, dst.Values(), []uint16{17408, 0, 1})
+
+	dst.Reset()
+	if err := dst.Validate(); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("reset Validate err=%v want %v", err, ErrInvalidCDF)
+	}
+}
+
+func TestCDFStateRejectsInvalidInputs(t *testing.T) {
+	var nilCDF *CDF
+	if err := nilCDF.Init([]uint16{16384}); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil Init err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := nilCDF.InitUniform(2); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil InitUniform err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := nilCDF.Validate(); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil Validate err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := nilCDF.Update(0); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil Update err=%v want %v", err, ErrInvalidCDF)
+	}
+	var dst CDF
+	if err := dst.CopyFrom(nil); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil CopyFrom err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := nilCDF.CopyFrom(&dst); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("nil receiver CopyFrom err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := dst.InitUniform(1); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("small InitUniform err=%v want %v", err, ErrInvalidCDF)
+	}
+	if err := dst.InitUniform(MaxSymbols + 1); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("large InitUniform err=%v want %v", err, ErrInvalidCDF)
+	}
+	var invalid CDF
+	if err := dst.CopyFrom(&invalid); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("invalid CopyFrom err=%v want %v", err, ErrInvalidCDF)
+	}
+}
+
 func TestUpdateCDF(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -145,6 +229,28 @@ func TestUpdateCDFAllocs(t *testing.T) {
 	}
 }
 
+func TestCDFStateAllocs(t *testing.T) {
+	var src CDF
+	var dst CDF
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := src.InitUniform(4); err != nil {
+			t.Fatal(err)
+		}
+		if err := dst.CopyFrom(&src); err != nil {
+			t.Fatal(err)
+		}
+		if err := dst.Update(2); err != nil {
+			t.Fatal(err)
+		}
+		if err := dst.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("CDF state allocated: %f", allocs)
+	}
+}
+
 func FuzzUpdateCDF(f *testing.F) {
 	f.Add(uint8(2), []byte{0, 1, 1, 0})
 	f.Add(uint8(4), []byte{2, 3, 0, 1})
@@ -171,6 +277,37 @@ func FuzzUpdateCDF(f *testing.F) {
 	})
 }
 
+func FuzzCDFState(f *testing.F) {
+	f.Add(uint8(2), []byte{0, 1, 1, 0})
+	f.Add(uint8(4), []byte{2, 3, 0, 1})
+	f.Add(uint8(MaxSymbols), []byte{15, 0, 14, 7})
+
+	f.Fuzz(func(t *testing.T, symbolCount uint8, symbols []byte) {
+		n := int(symbolCount%MaxSymbols) + 1
+		if n < 2 {
+			n = 2
+		}
+		var cdf CDF
+		if err := cdf.InitUniform(n); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < len(symbols); i++ {
+			symbol := int(symbols[i]) % n
+			var copy CDF
+			if err := copy.CopyFrom(&cdf); err != nil {
+				t.Fatalf("CopyFrom err=%v n=%d cdf=%v", err, n, cdf.Values())
+			}
+			if err := copy.Update(symbol); err != nil {
+				t.Fatalf("Update err=%v n=%d symbol=%d cdf=%v", err, n, symbol, copy.Values())
+			}
+			if err := copy.Validate(); err != nil {
+				t.Fatalf("Validate err=%v n=%d symbol=%d cdf=%v", err, n, symbol, copy.Values())
+			}
+			cdf = copy
+		}
+	})
+}
+
 func BenchmarkUpdateCDF(b *testing.B) {
 	cdf := []uint16{24576, 16384, 8192, 0, 0}
 
@@ -186,6 +323,52 @@ func BenchmarkInitUniformCDF(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = InitUniformCDF(cdf[:], MaxSymbols)
+	}
+}
+
+func BenchmarkCDFStateInitUniform(b *testing.B) {
+	var cdf CDF
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = cdf.InitUniform(MaxSymbols)
+	}
+}
+
+func BenchmarkCDFStateUpdate(b *testing.B) {
+	var cdf CDF
+	if err := cdf.InitUniform(4); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = cdf.Update(i & 3)
+	}
+}
+
+func BenchmarkCDFStateCopyFrom(b *testing.B) {
+	var src CDF
+	if err := src.InitUniform(MaxSymbols); err != nil {
+		b.Fatal(err)
+	}
+	var dst CDF
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = dst.CopyFrom(&src)
+	}
+}
+
+func assertCDFValues(t *testing.T, got []uint16, want []uint16) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d", len(got), len(want))
+	}
+	for i := 0; i < len(want); i++ {
+		if got[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", got, want)
+		}
 	}
 }
 

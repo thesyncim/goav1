@@ -42,3 +42,11 @@ func (s *DecodeState) Reset(payload []byte, job Job, options DecodeOptions) erro
 	}
 	return nil
 }
+
+// ReadSymbol decodes one tile symbol from caller-owned CDF state.
+func (s *DecodeState) ReadSymbol(cdf *entropy.CDF) (int, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	return s.Reader.ReadCDF(cdf)
+}

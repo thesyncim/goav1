@@ -3,6 +3,8 @@ package tile
 import (
 	"errors"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 )
 
 func TestDecodeStateReset(t *testing.T) {
@@ -58,6 +60,32 @@ func TestDecodeStateResetDisablesFrameContextRetention(t *testing.T) {
 	}
 }
 
+func TestDecodeStateReadSymbol(t *testing.T) {
+	payload := []byte{0x00}
+	job := Job{Offset: 0, Size: 1, UpdatesFrameContext: true}
+	var state DecodeState
+	if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var cdf entropy.CDF
+	if err := cdf.InitUniform(2); err != nil {
+		t.Fatal(err)
+	}
+	symbol, err := state.ReadSymbol(&cdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if symbol != 0 {
+		t.Fatalf("symbol=%d want 0", symbol)
+	}
+	want := []uint16{15360, 0, 1}
+	for i := 0; i < len(want); i++ {
+		if cdf.Values()[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
+		}
+	}
+}
+
 func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	var state DecodeState
 	err := state.Reset([]byte{0xaa}, Job{Offset: 0, Size: 2}, DecodeOptions{})
@@ -70,15 +98,27 @@ func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil Reset err=%v want %v", err, ErrInvalidDecodeState)
 	}
+
+	_, err = nilState.ReadSymbol(nil)
+	if !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("nil ReadSymbol err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, err := state.ReadSymbol(nil); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("nil CDF ReadSymbol err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
 }
 
 func TestDecodeStateResetAllocs(t *testing.T) {
 	payload := []byte{0x00, 0xff, 0x00}
 	job := Job{Offset: 1, Size: 1, UpdatesFrameContext: true}
 	var state DecodeState
+	var cdf entropy.CDF
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := cdf.InitUniform(2); err != nil {
 			t.Fatal(err)
 		}
 		if !state.RetainFrameContext {
@@ -90,6 +130,13 @@ func TestDecodeStateResetAllocs(t *testing.T) {
 		}
 		if bit != 1 {
 			t.Fatalf("bit=%d want 1", bit)
+		}
+		symbol, err := state.ReadSymbol(&cdf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if symbol != 1 {
+			t.Fatalf("symbol=%d want 1", symbol)
 		}
 	})
 	if allocs != 0 {
@@ -136,5 +183,23 @@ func BenchmarkDecodeStateReset(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = state.Reset(payload, job, DecodeOptions{})
+	}
+}
+
+func BenchmarkDecodeStateReadSymbol(b *testing.B) {
+	payload := []byte{0x00}
+	job := Job{Offset: 0, Size: 1, UpdatesFrameContext: true}
+	var state DecodeState
+	var cdf entropy.CDF
+	if err := cdf.InitUniform(2); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		_, _ = state.ReadSymbol(&cdf)
 	}
 }

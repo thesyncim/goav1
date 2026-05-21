@@ -148,6 +148,27 @@ func TestReaderReadSymbol(t *testing.T) {
 	}
 }
 
+func TestReaderReadCDF(t *testing.T) {
+	var cdf CDF
+	if err := cdf.InitUniform(2); err != nil {
+		t.Fatal(err)
+	}
+	r := NewReader([]byte{0x00})
+	symbol, err := r.ReadCDF(&cdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if symbol != 0 {
+		t.Fatalf("symbol=%d want 0", symbol)
+	}
+	want := []uint16{15360, 0, 1}
+	for i := 0; i < len(want); i++ {
+		if cdf.Values()[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
+		}
+	}
+}
+
 func TestReaderReadSymbolCanDisableCDFUpdate(t *testing.T) {
 	cdf := []uint16{16384, 0, 0}
 	r := NewReaderWithCDFUpdate([]byte{0xff}, false)
@@ -219,18 +240,33 @@ func TestReaderRejectsInvalidInputs(t *testing.T) {
 	if _, err := r.ReadSymbol([]uint16{CDFProbTop, 0, 0}, 2); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("ReadSymbol err=%v want %v", err, ErrInvalidCDF)
 	}
+	if _, err := r.ReadCDF(nil); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("ReadCDF nil err=%v want %v", err, ErrInvalidCDF)
+	}
+	var cdf CDF
+	if _, err := r.ReadCDF(&cdf); !errors.Is(err, ErrInvalidCDF) {
+		t.Fatalf("ReadCDF zero err=%v want %v", err, ErrInvalidCDF)
+	}
 }
 
 func TestReaderAllocs(t *testing.T) {
 	src := []byte{0xff, 0x00, 0xa5}
 	cdf := []uint16{24576, 16384, 8192, 0, 0}
+	var state CDF
 	allocs := testing.AllocsPerRun(1000, func() {
 		r := NewReader(src)
+		if err := state.InitUniform(4); err != nil {
+			t.Fatal(err)
+		}
 		_, err := r.ReadBits(3)
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = r.ReadSymbol(cdf, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = r.ReadCDF(&state)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -353,5 +389,19 @@ func BenchmarkReaderReadSymbol(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		r := NewReader(src)
 		_, _ = r.ReadSymbol(cdf, 4)
+	}
+}
+
+func BenchmarkReaderReadCDF(b *testing.B) {
+	src := []byte{0xff, 0x00, 0xa5, 0x5a}
+	var cdf CDF
+	if err := cdf.InitUniform(4); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadCDF(&cdf)
 	}
 }
