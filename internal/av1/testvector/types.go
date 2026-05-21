@@ -30,11 +30,15 @@ const (
 )
 
 const (
-	TagOBULowOverheadTemporalDelimiter Tag = 0x0001_0001
-	TagOBUAnnexBTemporalUnit           Tag = 0x0001_0002
-	TagRTPPayloadSingleOBU             Tag = 0x0002_0001
-	TagRTPPayloadFragmentedOBU         Tag = 0x0002_0002
-	TagIVFSingleFrameAV1               Tag = 0x0003_0001
+	TagOBULowOverheadTemporalDelimiter  Tag = 0x0001_0001
+	TagOBUAnnexBTemporalUnit            Tag = 0x0001_0002
+	TagRTPPayloadSingleOBU              Tag = 0x0002_0001
+	TagRTPPayloadFragmentedOBU          Tag = 0x0002_0002
+	TagIVFSingleFrameAV1                Tag = 0x0003_0001
+	TagParserSequenceFullLowOverhead    Tag = 0x0004_0001
+	TagParserSequenceReducedLowOverhead Tag = 0x0004_0002
+	TagParserSequenceFullAnnexB         Tag = 0x0004_0003
+	TagParserSequenceReducedAnnexB      Tag = 0x0004_0004
 )
 
 // Vector describes one byte-level input and its expected oracle output. Input

@@ -92,6 +92,26 @@ func TestAnnexBIteratorMultiByteSizes(t *testing.T) {
 	}
 }
 
+func TestParseAnnexBElement(t *testing.T) {
+	src := []byte{0x03, byte(TypeSequenceHeader) << 3, 0xaa, 0xbb, 0xcc}
+	unit, consumed, err := ParseAnnexBElement(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed != len(src)-1 || unit.Header.Type != TypeSequenceHeader || !bytes.Equal(unit.Payload, []byte{0xaa, 0xbb}) {
+		t.Fatalf("unit=%+v consumed=%d", unit, consumed)
+	}
+
+	sized := []byte{0x03, byte(TypeFrame)<<3 | 0x02, 0x01, 0xdd}
+	unit, consumed, err = ParseAnnexBElement(sized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed != len(sized) || unit.Header.Type != TypeFrame || !bytes.Equal(unit.Payload, []byte{0xdd}) {
+		t.Fatalf("sized unit=%+v consumed=%d", unit, consumed)
+	}
+}
+
 func TestAnnexBIteratorRejectsInvalid(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -104,6 +124,7 @@ func TestAnnexBIteratorRejectsInvalid(t *testing.T) {
 		{name: "zero obu unit", src: []byte{0x02, 0x01, 0x00}, err: ErrInvalidAnnexB},
 		{name: "truncated temporal size", src: []byte{0x80}, err: bitstream.ErrShortLEB128},
 		{name: "truncated payload", src: []byte{0x03, 0x02, 0x01}, err: ErrShortPayload},
+		{name: "internal size mismatch", src: []byte{0x06, 0x05, 0x04, byte(TypeFrame)<<3 | 0x02, 0x01, 0xaa, 0xbb}, err: ErrSizeMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			it := NewAnnexBIterator(tc.src)
@@ -112,6 +133,39 @@ func TestAnnexBIteratorRejectsInvalid(t *testing.T) {
 				t.Fatalf("err=%v want %v", err, tc.err)
 			}
 		})
+	}
+}
+
+func TestParseAnnexBElementRejectsInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  []byte
+		err  error
+	}{
+		{name: "zero unit", src: []byte{0x00}, err: ErrInvalidAnnexB},
+		{name: "truncated size", src: []byte{0x80}, err: bitstream.ErrShortLEB128},
+		{name: "truncated payload", src: []byte{0x02, byte(TypeFrame) << 3}, err: ErrShortPayload},
+		{name: "internal size mismatch", src: []byte{0x04, byte(TypeFrame)<<3 | 0x02, 0x01, 0xaa, 0xbb}, err: ErrSizeMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := ParseAnnexBElement(tc.src)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("err=%v want %v", err, tc.err)
+			}
+		})
+	}
+}
+
+func TestParseAnnexBElementAllocs(t *testing.T) {
+	src := []byte{0x03, byte(TypeFrame)<<3 | 0x02, 0x01, 0xdd}
+	allocs := testing.AllocsPerRun(1000, func() {
+		unit, consumed, err := ParseAnnexBElement(src)
+		if err != nil || consumed != len(src) || len(unit.Payload) != 1 {
+			t.Fatalf("unit=%+v consumed=%d err=%v", unit, consumed, err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ParseAnnexBElement allocated: %f", allocs)
 	}
 }
 

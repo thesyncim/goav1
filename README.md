@@ -44,6 +44,8 @@ The initial implementation covers:
   caller-owned CDF state wrappers, and allocation-free range reading for tile
   symbol, signed-delta, uniform, and finite-subexp decoding.
 - AV1 sequence header parsing for decoder configuration.
+- libaom-derived low-overhead and Annex B sequence-header OBU vectors for
+  parser/oracle parity checks.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.
 - AV1 inter-frame reference routing and reference-size parsing with explicit

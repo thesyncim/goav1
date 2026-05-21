@@ -35,6 +35,32 @@ func NewAnnexBIterator(src []byte) AnnexBIterator {
 	return AnnexBIterator{src: src}
 }
 
+// ParseAnnexBElement parses one Annex B size-prefixed OBU unit. The returned
+// Unit aliases src after the leb128 obu_unit_size prefix.
+func ParseAnnexBElement(src []byte) (Unit, int, error) {
+	size, n, err := readAnnexBSize(src)
+	if err != nil {
+		return Unit{}, 0, err
+	}
+	if size == 0 {
+		return Unit{}, 0, ErrInvalidAnnexB
+	}
+	start := n
+	end := start + size
+	if end < start || end > len(src) {
+		return Unit{}, 0, ErrShortPayload
+	}
+	raw := src[start:end]
+	unit, err := ParseElement(raw)
+	if err != nil {
+		return Unit{}, 0, err
+	}
+	if len(unit.Raw) != len(raw) {
+		return Unit{}, 0, ErrSizeMismatch
+	}
+	return unit, end, nil
+}
+
 func (it *AnnexBIterator) Next() (AnnexBUnit, bool, error) {
 	if it.off == len(it.src) {
 		if it.temporalRemain != 0 || it.frameRemain != 0 {
@@ -98,6 +124,9 @@ func (it *AnnexBIterator) Next() (AnnexBUnit, bool, error) {
 	unit, err := ParseElement(raw)
 	if err != nil {
 		return AnnexBUnit{}, false, err
+	}
+	if len(unit.Raw) != len(raw) {
+		return AnnexBUnit{}, false, ErrSizeMismatch
 	}
 	result := AnnexBUnit{
 		Raw:               raw,

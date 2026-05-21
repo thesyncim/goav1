@@ -7,6 +7,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/rtp"
 )
 
@@ -28,6 +29,8 @@ func TestCoreSuiteVectors(t *testing.T) {
 			checkIVFVector(t, vector)
 		case KindAnnexB:
 			checkAnnexBVector(t, vector)
+		case KindParser:
+			checkParserVector(t, vector)
 		default:
 			t.Fatalf("unhandled vector kind=%d", vector.Kind)
 		}
@@ -117,5 +120,69 @@ func checkAnnexBVector(t *testing.T, vector Vector) {
 	}
 	if wantOff != len(vector.Want) {
 		t.Fatalf("%s consumed raw=%d want %d", vector.Name, wantOff, len(vector.Want))
+	}
+}
+
+func checkParserVector(t *testing.T, vector Vector) {
+	t.Helper()
+	payload := sequencePayloadFromVector(t, vector)
+	if !bytes.Equal(payload, vector.Want) {
+		t.Fatalf("%s payload=%x want %x", vector.Name, payload, vector.Want)
+	}
+	sh, err := parser.ParseSequenceHeader(payload)
+	if err != nil {
+		t.Fatalf("%s ParseSequenceHeader: %v", vector.Name, err)
+	}
+	checkLibaomSequenceConfig(t, vector, sh)
+}
+
+func sequencePayloadFromVector(t *testing.T, vector Vector) []byte {
+	t.Helper()
+	switch vector.Tag {
+	case TagParserSequenceFullLowOverhead, TagParserSequenceReducedLowOverhead:
+		unit, consumed, err := obu.ParseLowOverhead(vector.Input)
+		if err != nil {
+			t.Fatalf("%s ParseLowOverhead: %v", vector.Name, err)
+		}
+		if consumed != len(vector.Input) {
+			t.Fatalf("%s consumed=%d want %d", vector.Name, consumed, len(vector.Input))
+		}
+		if unit.Header.Type != obu.TypeSequenceHeader {
+			t.Fatalf("%s type=%d want %d", vector.Name, unit.Header.Type, obu.TypeSequenceHeader)
+		}
+		return unit.Payload
+	case TagParserSequenceFullAnnexB, TagParserSequenceReducedAnnexB:
+		unit, consumed, err := obu.ParseAnnexBElement(vector.Input)
+		if err != nil {
+			t.Fatalf("%s ParseAnnexBElement: %v", vector.Name, err)
+		}
+		if consumed != len(vector.Input) {
+			t.Fatalf("%s consumed=%d want %d", vector.Name, consumed, len(vector.Input))
+		}
+		if unit.Header.Type != obu.TypeSequenceHeader {
+			t.Fatalf("%s type=%d want %d", vector.Name, unit.Header.Type, obu.TypeSequenceHeader)
+		}
+		return unit.Payload
+	default:
+		t.Fatalf("%s unhandled parser vector tag=%x", vector.Name, vector.Tag)
+		return nil
+	}
+}
+
+func checkLibaomSequenceConfig(t *testing.T, vector Vector, sh parser.SequenceHeader) {
+	t.Helper()
+	reduced := vector.Tag == TagParserSequenceReducedLowOverhead || vector.Tag == TagParserSequenceReducedAnnexB
+	if sh.SeqProfile != 0 || sh.OperatingPointsCount != 1 || sh.OperatingPoints[0].SeqLevelIdx != 0 || sh.OperatingPoints[0].SeqTier != 0 {
+		t.Fatalf("%s profile/op=%+v", vector.Name, sh)
+	}
+	if sh.StillPicture != reduced || sh.ReducedStillPictureHeader != reduced {
+		t.Fatalf("%s still/reduced=%v/%v want %v", vector.Name, sh.StillPicture, sh.ReducedStillPictureHeader, reduced)
+	}
+	if sh.InitialDisplayDelayPresent || sh.OperatingPoints[0].InitialDisplayDelayPresent || sh.OperatingPoints[0].InitialDisplayDelayMinus1 != 0 {
+		t.Fatalf("%s initial delay=%+v", vector.Name, sh.OperatingPoints[0])
+	}
+	cc := sh.ColorConfig
+	if cc.HighBitdepth || cc.TwelveBit || cc.MonoChrome || !cc.SubsamplingX || !cc.SubsamplingY || cc.ChromaSamplePosition != 0 {
+		t.Fatalf("%s color config=%+v", vector.Name, cc)
 	}
 }
