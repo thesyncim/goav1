@@ -115,6 +115,103 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 	return v, nil
 }
 
+// ReadUniform decodes an AV1 ns(n)-style uniformly distributed value in
+// [0, n). It consumes equiprobable range-coded bits.
+func (r *Reader) ReadUniform(n uint32) (uint32, error) {
+	if n == 0 {
+		return 0, ErrInvalidRange
+	}
+	if n == 1 {
+		return 0, nil
+	}
+	width := uint8(bits.Len32(n))
+	m := (uint64(1) << width) - uint64(n)
+	v, err := r.ReadBits(width - 1)
+	if err != nil {
+		return 0, err
+	}
+	if uint64(v) < m {
+		return v, nil
+	}
+	bit, err := r.ReadBit()
+	if err != nil {
+		return 0, err
+	}
+	return uint32((uint64(v) << 1) - m + uint64(bit)), nil
+}
+
+// ReadSubexp decodes an AV1 finite subexponential code in [0, n).
+func (r *Reader) ReadSubexp(n uint32, k uint8) (uint32, error) {
+	if n == 0 || k > 31 {
+		return 0, ErrInvalidRange
+	}
+
+	i := 0
+	mk := uint32(0)
+	for {
+		b := k
+		if i > 0 {
+			next := int(k) + i - 1
+			if next > 31 {
+				return 0, ErrInvalidRange
+			}
+			b = uint8(next)
+		}
+		a := uint32(1) << b
+		if uint64(n) <= uint64(mk)+3*uint64(a) {
+			v, err := r.ReadUniform(n - mk)
+			if err != nil {
+				return 0, err
+			}
+			return v + mk, nil
+		}
+
+		more, err := r.ReadBit()
+		if err != nil {
+			return 0, err
+		}
+		if more == 0 {
+			v, err := r.ReadBits(b)
+			if err != nil {
+				return 0, err
+			}
+			return v + mk, nil
+		}
+		i++
+		mk += a
+	}
+}
+
+// ReadRefSubexp decodes a finite subexponential code and recenters it around
+// ref, returning a value in [0, n).
+func (r *Reader) ReadRefSubexp(n uint32, k uint8, ref uint32) (uint32, error) {
+	if n == 0 || ref >= n {
+		return 0, ErrInvalidRange
+	}
+	v, err := r.ReadSubexp(n, k)
+	if err != nil {
+		return 0, err
+	}
+	return invRecenterFiniteNonNeg(n, ref, v), nil
+}
+
+// ReadSignedRefSubexp decodes a value in [-(n-1), n-1] recentered around ref.
+func (r *Reader) ReadSignedRefSubexp(n uint32, k uint8, ref int32) (int32, error) {
+	if n == 0 || n > 1<<31 {
+		return 0, ErrInvalidRange
+	}
+	scaledN := (n << 1) - 1
+	scaledRef := int64(ref) + int64(n) - 1
+	if scaledRef < 0 || scaledRef >= int64(scaledN) {
+		return 0, ErrInvalidRange
+	}
+	v, err := r.ReadRefSubexp(scaledN, k, uint32(scaledRef))
+	if err != nil {
+		return 0, err
+	}
+	return int32(int64(v) - int64(n) + 1), nil
+}
+
 // ReadSymbol decodes one AV1 inverse-CDF-coded symbol. If CDF updates are
 // enabled, cdf is adapted in-place after a successful decode.
 func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
@@ -162,6 +259,23 @@ func (r *Reader) normalize(dif uint32, rng uint32) {
 	if r.cnt < 0 {
 		r.refill()
 	}
+}
+
+func invRecenterFiniteNonNeg(n uint32, ref uint32, v uint32) uint32 {
+	if uint64(ref)*2 <= uint64(n) {
+		return invRecenterNonNeg(ref, v)
+	}
+	return n - 1 - invRecenterNonNeg(n-1-ref, v)
+}
+
+func invRecenterNonNeg(ref uint32, v uint32) uint32 {
+	if uint64(v) > uint64(ref)*2 {
+		return v
+	}
+	if v&1 == 0 {
+		return (v >> 1) + ref
+	}
+	return ref - ((v + 1) >> 1)
 }
 
 func (r *Reader) refill() {

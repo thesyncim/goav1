@@ -36,7 +36,8 @@ The initial implementation covers:
 - WebRTC-compatible RTP frame assembly that restores low-overhead OBU size
   fields from fragmented packet payloads with caller-owned scratch.
 - AV1 entropy inverse-CDF initialization, validation, adaptation, and
-  allocation-free range reading for tile symbol decoding.
+  allocation-free range reading for tile symbol, uniform, and finite-subexp
+  decoding.
 - AV1 sequence header parsing for decoder configuration.
 - AV1 uncompressed frame-header prefix parsing for low-latency decoder routing.
 - AV1 key/intra frame-size parsing for frame-pool sizing and render metadata.

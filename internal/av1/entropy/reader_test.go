@@ -59,6 +59,77 @@ func TestReaderReadBits(t *testing.T) {
 	}
 }
 
+func TestReaderReadUniform(t *testing.T) {
+	r := NewReader([]byte{0x00})
+	got, err := r.ReadUniform(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("zero uniform=%d want 0", got)
+	}
+
+	r = NewReader([]byte{0xff})
+	got, err = r.ReadUniform(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 9 {
+		t.Fatalf("one uniform=%d want 9", got)
+	}
+
+	r = NewReader(nil)
+	got, err = r.ReadUniform(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("single uniform=%d want 0", got)
+	}
+}
+
+func TestReaderReadSubexp(t *testing.T) {
+	r := NewReader([]byte{0x00})
+	got, err := r.ReadSubexp(16, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("zero subexp=%d want 0", got)
+	}
+
+	r = NewReader([]byte{0xff, 0xff})
+	got, err = r.ReadSubexp(16, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 15 {
+		t.Fatalf("one subexp=%d want 15", got)
+	}
+}
+
+func TestReaderReadRefSubexp(t *testing.T) {
+	r := NewReader([]byte{0x00})
+	got, err := r.ReadRefSubexp(10, 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 4 {
+		t.Fatalf("ref subexp=%d want 4", got)
+	}
+}
+
+func TestReaderReadSignedRefSubexp(t *testing.T) {
+	r := NewReader([]byte{0x00})
+	got, err := r.ReadSignedRefSubexp(5, 1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != -1 {
+		t.Fatalf("signed ref subexp=%d want -1", got)
+	}
+}
+
 func TestReaderReadSymbol(t *testing.T) {
 	cdf := []uint16{16384, 0, 0}
 	r := NewReader([]byte{0x00})
@@ -130,6 +201,21 @@ func TestReaderRejectsInvalidInputs(t *testing.T) {
 	if _, err := r.ReadBits(33); !errors.Is(err, ErrInvalidBitCount) {
 		t.Fatalf("ReadBits err=%v want %v", err, ErrInvalidBitCount)
 	}
+	if _, err := r.ReadUniform(0); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadUniform err=%v want %v", err, ErrInvalidRange)
+	}
+	if _, err := r.ReadSubexp(0, 1); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadSubexp n err=%v want %v", err, ErrInvalidRange)
+	}
+	if _, err := r.ReadSubexp(10, 32); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadSubexp k err=%v want %v", err, ErrInvalidRange)
+	}
+	if _, err := r.ReadRefSubexp(3, 1, 3); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadRefSubexp err=%v want %v", err, ErrInvalidRange)
+	}
+	if _, err := r.ReadSignedRefSubexp(5, 1, 5); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("ReadSignedRefSubexp err=%v want %v", err, ErrInvalidRange)
+	}
 	if _, err := r.ReadSymbol([]uint16{CDFProbTop, 0, 0}, 2); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("ReadSymbol err=%v want %v", err, ErrInvalidCDF)
 	}
@@ -148,10 +234,57 @@ func TestReaderAllocs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		_, err = r.ReadUniform(257)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = r.ReadSubexp(257, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 	if allocs != 0 {
 		t.Fatalf("Reader allocated: %f", allocs)
 	}
+}
+
+func FuzzReaderUniformSubexp(f *testing.F) {
+	f.Add([]byte{0x00}, uint16(1), uint8(0), uint16(0))
+	f.Add([]byte{0xff}, uint16(16), uint8(1), uint16(4))
+	f.Add([]byte{0xa5, 0x5a}, uint16(255), uint8(3), uint16(128))
+
+	f.Fuzz(func(t *testing.T, src []byte, rawN uint16, rawK uint8, rawRef uint16) {
+		n := uint32(rawN%4096) + 1
+		k := rawK & 7
+
+		r := NewReader(src)
+		uniform, err := r.ReadUniform(n)
+		if err != nil {
+			t.Fatalf("ReadUniform err=%v n=%d", err, n)
+		}
+		if uniform >= n {
+			t.Fatalf("uniform=%d n=%d", uniform, n)
+		}
+
+		r = NewReader(src)
+		subexp, err := r.ReadSubexp(n, k)
+		if err != nil {
+			t.Fatalf("ReadSubexp err=%v n=%d k=%d", err, n, k)
+		}
+		if subexp >= n {
+			t.Fatalf("subexp=%d n=%d k=%d", subexp, n, k)
+		}
+
+		ref := uint32(rawRef) % n
+		r = NewReader(src)
+		recentered, err := r.ReadRefSubexp(n, k, ref)
+		if err != nil {
+			t.Fatalf("ReadRefSubexp err=%v n=%d k=%d ref=%d", err, n, k, ref)
+		}
+		if recentered >= n {
+			t.Fatalf("recentered=%d n=%d k=%d ref=%d", recentered, n, k, ref)
+		}
+	})
 }
 
 func FuzzReaderBinarySymbol(f *testing.F) {
@@ -189,6 +322,26 @@ func BenchmarkReaderReadBit(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		r := NewReader(src)
 		_, _ = r.ReadBit()
+	}
+}
+
+func BenchmarkReaderReadUniform(b *testing.B) {
+	src := []byte{0xff, 0x00, 0xa5, 0x5a}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadUniform(257)
+	}
+}
+
+func BenchmarkReaderReadSubexp(b *testing.B) {
+	src := []byte{0xff, 0x00, 0xa5, 0x5a}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadSubexp(257, 3)
 	}
 }
 
