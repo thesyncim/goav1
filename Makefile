@@ -41,6 +41,7 @@ fuzz-smoke:
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzMinMaxAbsDiff8x8
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzPredictIntraPlaneBlock
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzStaticIntraPredictors
+	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzFilterIntraPredictor
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzPredictDirectionalIntraPlaneBlock
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzFilterIntraEdge
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzUpsampleIntraEdge
