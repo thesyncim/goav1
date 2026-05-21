@@ -57,12 +57,14 @@ func (t Type) Class() (Class, error) {
 // Supported reports whether t can currently be applied to size.
 func (t Type) Supported(size Size) bool {
 	switch t {
-	case TypeDCTDCT:
-		return dctBlockSupported(size)
 	case TypeIDTX:
 		return identityBlockSupported(size)
 	default:
-		return false
+		vertical, horizontal, ok := t.tx1DTypes()
+		return ok &&
+			size.Valid() &&
+			tx1DSupported(horizontal, size.Width) &&
+			tx1DSupported(vertical, size.Height)
 	}
 }
 
@@ -71,21 +73,21 @@ func ScratchLenForType(t Type, size Size) (int, error) {
 	if !t.Supported(size) {
 		return 0, ErrInvalidTransform
 	}
-	if t == TypeDCTDCT {
-		return size.Width * size.Height, nil
+	if t == TypeIDTX {
+		return 0, nil
 	}
-	return 0, nil
+	return size.Width * size.Height, nil
 }
 
-// InverseBlock writes a transform residual block to dst using t. DCT_DCT uses
-// caller-provided scratch; IDTX does not need scratch.
+// InverseBlock writes a transform residual block to dst using t. IDTX keeps
+// its zero-scratch direct path; the other supported separable transforms use
+// caller-provided scratch.
 func InverseBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type) error {
-	switch t {
-	case TypeDCTDCT:
-		return InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size)
-	case TypeIDTX:
+	if t == TypeIDTX {
 		return InverseIdentityBlock(dst, dstStride, coeff, coeffStride, size)
-	default:
+	}
+	if !t.Supported(size) {
 		return ErrInvalidTransform
 	}
+	return inverseSeparableBlock(dst, dstStride, coeff, coeffStride, scratch, size, t)
 }

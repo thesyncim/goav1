@@ -139,7 +139,7 @@ test-motion-conformance:
 	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
 
 test-transform-conformance:
-	go test ./internal/av1/transform -run 'TestInverseDCT1DMatchesLibaomReference|TestInverseDCTBlockSupportedSizes|TestInverseWHT4x4Block' -count=1
+	go test ./internal/av1/transform -run 'TestInverseDCT1DMatchesLibaomReference|TestInverseADST1DRoundTripMatchesLibaomShape|TestInverseFlipADST1DReversesADST|TestInverseDCTBlockSupportedSizes|TestInverseBlockHybridTransforms|TestInverseWHT4x4Block' -count=1
 
 alloc:
 	./scripts/check_allocs.sh

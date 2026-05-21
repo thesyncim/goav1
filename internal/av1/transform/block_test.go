@@ -22,7 +22,10 @@ func TestTypeSupportAndScratchLen(t *testing.T) {
 		{name: "idtx 4x16", typ: TypeIDTX, size: Size{Width: 4, Height: 16}, wantValid: true, wantSupport: true},
 		{name: "idtx 32x32", typ: TypeIDTX, size: Size{Width: 32, Height: 32}, wantValid: true, wantSupport: true},
 		{name: "idtx unsupported 64x64", typ: TypeIDTX, size: Size{Width: 64, Height: 64}, wantValid: true},
-		{name: "adst valid unsupported", typ: TypeADSTDCT, size: Size{Width: 4, Height: 4}, wantValid: true},
+		{name: "adst 4x4", typ: TypeADSTDCT, size: Size{Width: 4, Height: 4}, wantValid: true, wantSupport: true, wantScratch: 16},
+		{name: "flipadst 16x8", typ: TypeFlipADSTADST, size: Size{Width: 16, Height: 8}, wantValid: true, wantSupport: true, wantScratch: 128},
+		{name: "adst unsupported horizontal 32", typ: TypeDCTADST, size: Size{Width: 32, Height: 16}, wantValid: true},
+		{name: "adst unsupported vertical 32", typ: TypeADSTDCT, size: Size{Width: 16, Height: 32}, wantValid: true},
 		{name: "invalid type", typ: Type(99), size: Size{Width: 4, Height: 4}},
 	}
 	for _, tt := range tests {
@@ -130,6 +133,54 @@ func TestInverseBlockIDTXMatchesDirect(t *testing.T) {
 	}
 }
 
+func TestInverseBlockHybridTransforms(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  Type
+		size Size
+	}{
+		{name: "adst dct", typ: TypeADSTDCT, size: Size{Width: 16, Height: 8}},
+		{name: "dct adst", typ: TypeDCTADST, size: Size{Width: 8, Height: 16}},
+		{name: "adst adst", typ: TypeADSTADST, size: Size{Width: 16, Height: 16}},
+		{name: "flip flip", typ: TypeFlipADSTFlipADST, size: Size{Width: 8, Height: 8}},
+		{name: "v adst", typ: TypeVADST, size: Size{Width: 4, Height: 16}},
+		{name: "h flip", typ: TypeHFlipADST, size: Size{Width: 16, Height: 4}},
+		{name: "v dct", typ: TypeVDCT, size: Size{Width: 32, Height: 16}},
+		{name: "h dct", typ: TypeHDCT, size: Size{Width: 16, Height: 32}},
+	}
+	for _, tt := range tests {
+		coeffStride := tt.size.Height + 1
+		dstStride := tt.size.Width + 2
+		coeff := make([]int32, coeffStride*tt.size.Width)
+		for row := 0; row < tt.size.Height; row++ {
+			for col := 0; col < tt.size.Width; col++ {
+				coeff[col*coeffStride+row] = int32(((row*11+col*19+7)%43)-21) * 2
+			}
+		}
+		dst := make([]int16, dstStride*tt.size.Height)
+		scratchLen, err := ScratchLenForType(tt.typ, tt.size)
+		if err != nil {
+			t.Fatalf("%s ScratchLenForType err=%v", tt.name, err)
+		}
+		scratch := make([]int32, scratchLen+3)
+		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, tt.size, tt.typ); err != nil {
+			t.Fatalf("%s InverseBlock err=%v", tt.name, err)
+		}
+		for row := 0; row < tt.size.Height; row++ {
+			for col := tt.size.Width; col < dstStride; col++ {
+				if got := dst[row*dstStride+col]; got != 0 {
+					t.Fatalf("%s dst padding row=%d col=%d overwritten with %d", tt.name, row, col, got)
+				}
+			}
+		}
+		for i := scratchLen; i < len(scratch); i++ {
+			if scratch[i] != 0 {
+				t.Fatalf("%s scratch padding[%d]=%d want 0", tt.name, i, scratch[i])
+			}
+		}
+	}
+}
+
 func TestInverseBlockRejectsInvalidInputs(t *testing.T) {
 	dst := make([]int16, 4*4)
 	coeff := make([]int32, 4*4)
@@ -151,11 +202,17 @@ func TestInverseBlockAllocs(t *testing.T) {
 	dctScratch := make([]int32, 32*32)
 	idtxCoeff := make([]int32, 16*16)
 	idtxDst := make([]int16, 16*16)
+	hybridCoeff := make([]int32, 16*16)
+	hybridDst := make([]int16, 16*16)
+	hybridScratch := make([]int32, 16*16)
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := InverseBlock(dctDst, 32, dctCoeff, 32, dctScratch, Size{Width: 32, Height: 32}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
 		if err := InverseBlock(idtxDst, 16, idtxCoeff, 16, nil, Size{Width: 16, Height: 16}, TypeIDTX); err != nil {
+			t.Fatal(err)
+		}
+		if err := InverseBlock(hybridDst, 16, hybridCoeff, 16, hybridScratch, Size{Width: 16, Height: 16}, TypeADSTFlipADST); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -169,21 +226,42 @@ func FuzzInverseBlock(f *testing.F) {
 	f.Add(uint8(1), int16(64), int16(-7))
 	f.Add(uint8(2), int16(-128), int16(13))
 	f.Add(uint8(3), int16(255), int16(-31))
+	f.Add(uint8(8), int16(32), int16(5))
+	f.Add(uint8(24), int16(-64), int16(11))
 
 	f.Fuzz(func(t *testing.T, rawMode uint8, coeffValue int16, delta int16) {
 		typ := TypeDCTDCT
 		size := Size{Width: 4, Height: 4}
-		switch rawMode & 3 {
-		case 1:
-			size = Size{Width: 8, Height: 8}
-		case 2:
-			size = Size{Width: 16, Height: 16}
-		case 3:
-			size = Size{Width: 32, Height: 32}
-		}
-		if rawMode&4 != 0 {
+		if rawMode&8 != 0 {
+			hybrids := [...]Type{
+				TypeADSTDCT,
+				TypeDCTADST,
+				TypeADSTADST,
+				TypeFlipADSTDCT,
+				TypeDCTFlipADST,
+				TypeADSTFlipADST,
+				TypeFlipADSTADST,
+				TypeHFlipADST,
+			}
+			typ = hybrids[(rawMode>>4)&7]
+			switch rawMode & 3 {
+			case 1:
+				size = Size{Width: 8, Height: 8}
+			default:
+				size = Size{Width: 16, Height: 16}
+			}
+		} else if rawMode&4 != 0 {
 			typ = TypeIDTX
 			size = Size{Width: 16, Height: 16}
+		} else {
+			switch rawMode & 3 {
+			case 1:
+				size = Size{Width: 8, Height: 8}
+			case 2:
+				size = Size{Width: 16, Height: 16}
+			case 3:
+				size = Size{Width: 32, Height: 32}
+			}
 		}
 		coeffStride := size.Height + 3
 		dstStride := size.Width + 2

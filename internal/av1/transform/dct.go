@@ -21,57 +21,7 @@ func ScratchLen(size Size) (int, error) {
 // samples on each axis. AV1's reduced 64-wide transforms are handled by the
 // separate 64-point path once that is ported.
 func InverseDCTBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size) error {
-	shift, ok := size.shift()
-	coeffSize := dctCoeffSize(size)
-	scratchLen := size.Width * size.Height
-	if !ok ||
-		!dctBlockSupported(size) ||
-		dstStride < size.Width ||
-		coeffStride < coeffSize.Height ||
-		len(scratch) < scratchLen ||
-		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
-		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
-		return ErrInvalidTransform
-	}
-
-	for row := 0; row < size.Height; row++ {
-		tmpLine := scratch[row*size.Width : row*size.Width+size.Width]
-		for col := 0; col < size.Width; col++ {
-			if col < coeffSize.Width && row < coeffSize.Height {
-				tmpLine[col] = coeff[col*coeffStride+row]
-			} else {
-				tmpLine[col] = 0
-			}
-		}
-		inverseDCT1D(tmpLine, 1, size.Width, minInt16, maxInt16)
-	}
-
-	if shift > 0 {
-		for i := 0; i < scratchLen; i++ {
-			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), minInt16, maxInt16)
-		}
-	}
-
-	for col := 0; col < size.Width; col++ {
-		inverseDCT1D(scratch[col:], size.Width, size.Height, minInt16, maxInt16)
-	}
-
-	for row := 0; row < size.Height; row++ {
-		dstLine := dst[row*dstStride : row*dstStride+size.Width]
-		tmpLine := scratch[row*size.Width : row*size.Width+size.Width]
-		for col := 0; col < size.Width; col++ {
-			dstLine[col] = clipInt16(clipInt32(roundShift(int64(tmpLine[col]), 4)))
-		}
-	}
-	return nil
-}
-
-func dctBlockSupported(size Size) bool {
-	return size.Valid() && dctLengthSupported(size.Width) && dctLengthSupported(size.Height)
-}
-
-func dctCoeffSize(size Size) Size {
-	return adjustedScanSize(size)
+	return inverseSeparableBlock(dst, dstStride, coeff, coeffStride, scratch, size, TypeDCTDCT)
 }
 
 func dctLengthSupported(length int) bool {

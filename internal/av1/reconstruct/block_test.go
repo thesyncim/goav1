@@ -43,6 +43,15 @@ func TestScratchLen(t *testing.T) {
 			wantInt32: 256,
 			wantInt16: 256,
 		},
+		{
+			name: "adst 8x8",
+			cfg: Block{
+				Size:      transform.Size{Width: 8, Height: 8},
+				Transform: transform.TypeADSTDCT,
+			},
+			wantInt32: 128,
+			wantInt16: 64,
+		},
 	}
 	for _, tt := range tests {
 		got32, got16, err := ScratchLen(tt.cfg)
@@ -121,6 +130,38 @@ func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 		if residualScratch[i] != 0 {
 			t.Fatalf("residual scratch padding[%d]=%d want 0", i, residualScratch[i])
 		}
+	}
+}
+
+func TestReconstructPlaneBlockADST8x8(t *testing.T) {
+	plane, _ := testPlane(8, 8, 1, 8)
+	fillPlane(plane, 1, 100)
+	quantized := make([]int16, 8*8)
+	quantized[0] = 4
+	quantized[1*8+0] = -2
+	quantized[0*8+1] = 3
+	cfg := Block{
+		Size:      transform.Size{Width: 8, Height: 8},
+		Transform: transform.TypeADSTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			if got := getSample(plane, 1, x, y); got != 100 {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		t.Fatal("ADST reconstruction left the predicted block unchanged")
 	}
 }
 
