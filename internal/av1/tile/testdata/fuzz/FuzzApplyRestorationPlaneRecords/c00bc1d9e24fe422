@@ -1,0 +1,9 @@
+go test fuzz v1
+uint16(127)
+uint16(95)
+byte('\n')
+byte('\x01')
+byte('\x01')
+bool(true)
+bool(true)
+[]byte("\xff\a\v")

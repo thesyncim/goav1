@@ -34,6 +34,14 @@ type RestorationUnitRecordApplyResult struct {
 	Filtered        bool
 }
 
+// RestorationPlaneApplyResult summarizes restoration work over one plane.
+type RestorationPlaneApplyResult struct {
+	Records         uint32
+	FilteredRecords uint32
+	Stripes         uint32
+	ProcessingUnits uint32
+}
+
 // RestorationUnitRecordBoundaryScratchSize reports caller-owned scratch for a
 // full striped restoration-unit apply, including temporary boundary rows.
 type RestorationUnitRecordBoundaryScratchSize struct {
@@ -148,6 +156,34 @@ func RestorationUnitRecordBoundaryScratchLen(grid RestorationPlaneGrid, record R
 	return RestorationUnitRecordBoundaryScratchSize{Unit: unitSize, Boundary: boundarySize}, nil
 }
 
+// RestorationPlaneApplyScratchLen reports scratch for applying all decoded
+// restoration records in one plane. records must be complete and row-major.
+func RestorationPlaneApplyScratchLen(grid RestorationPlaneGrid, records []RestorationUnitRecord, optimized bool) (RestorationUnitRecordBoundaryScratchSize, error) {
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		return RestorationUnitRecordBoundaryScratchSize{}, err
+	}
+	var size RestorationUnitRecordBoundaryScratchSize
+	for i := range records {
+		recordSize, err := RestorationUnitRecordBoundaryScratchLen(grid, records[i], optimized)
+		if err != nil {
+			return RestorationUnitRecordBoundaryScratchSize{}, err
+		}
+		if recordSize.Unit.Wiener > size.Unit.Wiener {
+			size.Unit.Wiener = recordSize.Unit.Wiener
+		}
+		if recordSize.Unit.SGRProj > size.Unit.SGRProj {
+			size.Unit.SGRProj = recordSize.Unit.SGRProj
+		}
+		if recordSize.Boundary.Above > size.Boundary.Above {
+			size.Boundary.Above = recordSize.Boundary.Above
+		}
+		if recordSize.Boundary.Below > size.Boundary.Below {
+			size.Boundary.Below = recordSize.Boundary.Below
+		}
+	}
+	return size, nil
+}
+
 // ApplyRestorationUnit dispatches one decoded restoration unit to the matching
 // libaom-ported primitive. srcOrigin identifies the top-left pixel of the unit;
 // filtered units require the primitive-specific border around that origin.
@@ -235,6 +271,29 @@ func ApplyRestorationUnitRecord(grid RestorationPlaneGrid, record RestorationUni
 			}
 			result.ProcessingUnits++
 		}
+	}
+	return result, nil
+}
+
+// ApplyRestorationPlaneRecords applies a complete row-major set of restoration
+// unit records over one plane, matching libaom's plane walk once unit syntax and
+// boundary lines have already been prepared.
+func ApplyRestorationPlaneRecords(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationPlaneApplyResult, error) {
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	var result RestorationPlaneApplyResult
+	for i := range records {
+		recordResult, err := ApplyRestorationUnitRecordWithBoundaries(grid, records[i], boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			return RestorationPlaneApplyResult{}, err
+		}
+		result.Records++
+		if recordResult.Filtered {
+			result.FilteredRecords++
+		}
+		result.Stripes += uint32(recordResult.Stripes)
+		result.ProcessingUnits += uint32(recordResult.ProcessingUnits)
 	}
 	return result, nil
 }
@@ -374,6 +433,40 @@ func validateRestorationUnitRecord(grid RestorationPlaneGrid, record Restoration
 		return ErrInvalidPlan
 	}
 	return nil
+}
+
+func validateRestorationPlaneRecords(grid RestorationPlaneGrid, records []RestorationUnitRecord) error {
+	if !grid.validGeometry() {
+		return ErrInvalidPlan
+	}
+	need, err := restorationPlaneRecordCount(grid)
+	if err != nil {
+		return err
+	}
+	if len(records) != need {
+		return ErrInvalidPlan
+	}
+	for i := range records {
+		if records[i].Index != uint32(i) {
+			return ErrInvalidPlan
+		}
+		if err := validateRestorationUnitRecord(grid, records[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restorationPlaneRecordCount(grid RestorationPlaneGrid) (int, error) {
+	if !grid.validGeometry() {
+		return 0, ErrInvalidPlan
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	n := uint64(grid.HorzUnits) * uint64(grid.VertUnits)
+	if n == 0 || n > maxInt {
+		return 0, ErrInvalidPlan
+	}
+	return int(n), nil
 }
 
 func restorationUnitTypeAllowed(frameType parser.RestorationType, unitType parser.RestorationType) bool {

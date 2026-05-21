@@ -1,0 +1,9 @@
+go test fuzz v1
+uint16(300)
+uint16(242)
+byte('\x16')
+byte('\x17')
+byte(';')
+bool(true)
+bool(false)
+[]byte("\xd80")

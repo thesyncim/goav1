@@ -1,0 +1,9 @@
+go test fuzz v1
+uint16(218)
+uint16(182)
+byte('T')
+byte('\x04')
+byte('[')
+bool(true)
+bool(false)
+[]byte("0")

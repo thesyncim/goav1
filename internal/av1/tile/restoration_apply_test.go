@@ -195,6 +195,30 @@ func TestRestorationUnitRecordBoundaryScratchLen(t *testing.T) {
 	}
 }
 
+func TestRestorationPlaneApplyScratchLen(t *testing.T) {
+	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationWiener}, 0)
+	records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
+		if i%2 == 0 {
+			return RestorationUnit{Type: parser.RestorationNone}
+		}
+		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
+	})
+	size, err := RestorationPlaneApplyScratchLen(grid, records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Unit.Wiener == 0 || size.Unit.SGRProj != 0 || size.Boundary.Above == 0 || size.Boundary.Below == 0 {
+		t.Fatalf("plane scratch=%+v", size)
+	}
+	opt, err := RestorationPlaneApplyScratchLen(grid, records, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opt.Unit != size.Unit || opt.Boundary.Above >= size.Boundary.Above || opt.Boundary.Below >= size.Boundary.Below {
+		t.Fatalf("optimized scratch=%+v normal=%+v", opt, size)
+	}
+}
+
 func TestApplyRestorationUnitRecordNoneCopiesRect(t *testing.T) {
 	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationWiener}, 0)
 	record := testRestorationApplyRecord(t, grid, 1, 1, RestorationUnit{Type: parser.RestorationNone})
@@ -385,6 +409,48 @@ func TestApplyRestorationUnitRecordWithBoundariesOptimizedIgnoresSavedRows(t *te
 	assertSamplesEqual(t, dstA, dstB)
 }
 
+func TestApplyRestorationPlaneRecordsMatchesManualRecords(t *testing.T) {
+	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationWiener}, 0)
+	records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
+		if i%2 == 0 {
+			return RestorationUnit{Type: parser.RestorationNone}
+		}
+		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
+	})
+	const bitDepth = 10
+	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
+	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
+	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
+	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
+	manualData := append([]uint16(nil), data...)
+	originalData := append([]uint16(nil), data...)
+	got := make([]uint16, dataStride*dataRows)
+	want := make([]uint16, dataStride*dataRows)
+	fillUint16(got, 0xeeee)
+	fillUint16(want, 0xeeee)
+	boundaries := makeRestorationApplyBoundaries(t, grid, bitDepth, 11)
+	sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := makeRestorationBoundaryApplyScratch(sizes)
+
+	result, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, got, dataStride, dataOrigin, bitDepth, scratch, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResult := applyRestorationPlaneRecordsManually(t, grid, records, boundaries, manualData, dataStride, dataOrigin, want, dataStride, dataOrigin, bitDepth, makeRestorationBoundaryApplyScratch(sizes), false)
+	if result != wantResult {
+		t.Fatalf("result=%+v want %+v", result, wantResult)
+	}
+	if result.Records != uint32(len(records)) || result.FilteredRecords != 2 {
+		t.Fatalf("unexpected result=%+v len=%d", result, len(records))
+	}
+	assertSamplesEqual(t, got, want)
+	assertSamplesEqual(t, data, originalData)
+	assertSamplesEqual(t, manualData, originalData)
+}
+
 func TestApplyRestorationUnitRejectsInvalidInputs(t *testing.T) {
 	const width, height = 8, 8
 	stride := width + 2*av1restoration.WienerHalfwin
@@ -469,6 +535,39 @@ func TestApplyRestorationUnitRecordWithBoundariesRejectsInvalidInputs(t *testing
 	}
 }
 
+func TestApplyRestorationPlaneRecordsRejectsInvalidInputs(t *testing.T) {
+	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationWiener}, 0)
+	records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
+		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
+	})
+	const bitDepth = 8
+	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
+	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
+	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
+	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
+	dst := make([]uint16, dataStride*dataRows)
+	boundaries := makeRestorationApplyBoundaries(t, grid, bitDepth, 5)
+	sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := makeRestorationBoundaryApplyScratch(sizes)
+
+	if _, err := RestorationPlaneApplyScratchLen(grid, records[:len(records)-1], false); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("short records scratch err=%v want %v", err, ErrInvalidPlan)
+	}
+	swapped := append([]RestorationUnitRecord(nil), records...)
+	swapped[0], swapped[1] = swapped[1], swapped[0]
+	if _, err := ApplyRestorationPlaneRecords(grid, swapped, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("swapped records err=%v want %v", err, ErrInvalidPlan)
+	}
+	shortScratch := scratch
+	shortScratch.Unit.Wiener = shortScratch.Unit.Wiener[:len(shortScratch.Unit.Wiener)-1]
+	if _, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, shortScratch, false); !errors.Is(err, av1restoration.ErrInvalidRestoration) {
+		t.Fatalf("short unit scratch err=%v want %v", err, av1restoration.ErrInvalidRestoration)
+	}
+}
+
 func TestApplyRestorationUnitAllocs(t *testing.T) {
 	const width, height = 8, 8
 	const stride = width + 2*av1restoration.WienerHalfwin
@@ -542,6 +641,37 @@ func TestApplyRestorationUnitRecordWithBoundariesAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("ApplyRestorationUnitRecordWithBoundaries allocated: %f", allocs)
+	}
+}
+
+func TestApplyRestorationPlaneRecordsAllocs(t *testing.T) {
+	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationWiener}, 0)
+	records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
+		if i%2 == 0 {
+			return RestorationUnit{Type: parser.RestorationNone}
+		}
+		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
+	})
+	const bitDepth = 8
+	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
+	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
+	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
+	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
+	dst := make([]uint16, dataStride*dataRows)
+	boundaries := makeRestorationApplyBoundaries(t, grid, bitDepth, 5)
+	sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := makeRestorationBoundaryApplyScratch(sizes)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ApplyRestorationPlaneRecords allocated: %f", allocs)
 	}
 }
 
@@ -671,6 +801,61 @@ func FuzzApplyRestorationUnitRecordWithBoundaries(f *testing.F) {
 	})
 }
 
+func FuzzApplyRestorationPlaneRecords(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(1), uint8(0), uint8(0), false, false, []byte{0, 1, 2, 3, 255})
+	f.Add(uint16(127), uint16(95), uint8(0), uint8(1), uint8(1), true, true, []byte{255, 7, 11})
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawUnit uint8, rawType uint8, rawDepth uint8, ssX bool, ssY bool, dataBytes []byte) {
+		unitSizes := [...]uint16{64, 128, 256}
+		unitSize := unitSizes[rawUnit%uint8(len(unitSizes))]
+		types := [...]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj}
+		unitType := types[rawType%uint8(len(types))]
+		bitDepths := [...]uint8{8, 10, 12}
+		bitDepth := bitDepths[rawDepth%uint8(len(bitDepths))]
+		grid, err := BuildRestorationPlaneGrid(parser.RestorationParams{
+			Type:       [3]parser.RestorationType{unitType, unitType, unitType},
+			UnitSizeY:  unitSize,
+			UnitSizeUV: unitSize,
+		}, parser.FrameSize{
+			UpscaledWidth:       uint32(rawW%256) + 1,
+			Height:              uint32(rawH%256) + 1,
+			SuperResDenominator: 8,
+		}, parser.ColorConfig{SubsamplingX: ssX, SubsamplingY: ssY}, int(rawType%3))
+		if err != nil {
+			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
+		}
+		filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+		records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
+			if (i+int(rawUnit))%3 == 0 {
+				return RestorationUnit{Type: parser.RestorationNone}
+			}
+			return filterUnit
+		})
+		dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + int(rawUnit%5)
+		dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
+		dataRows := int(grid.PlaneHeight) + 2*restorationBorder
+		data := make([]uint16, dataStride*dataRows)
+		max := uint16((1 << bitDepth) - 1)
+		for i := range data {
+			data[i] = fuzzRestorationApplySample(dataBytes, i, max)
+		}
+		original := append([]uint16(nil), data...)
+		dst := make([]uint16, dataStride*dataRows)
+		boundaries := makeRestorationApplyBoundaries(t, grid, bitDepth, int(rawUnit)+7)
+		sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
+		if err != nil {
+			t.Fatalf("RestorationPlaneApplyScratchLen err=%v", err)
+		}
+		result, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, makeRestorationBoundaryApplyScratch(sizes), false)
+		if err != nil {
+			t.Fatalf("ApplyRestorationPlaneRecords err=%v", err)
+		}
+		if result.Records != uint32(len(records)) {
+			t.Fatalf("records=%d want %d result=%+v", result.Records, len(records), result)
+		}
+		assertSamplesEqual(t, data, original)
+	})
+}
+
 func BenchmarkApplyRestorationUnitWiener(b *testing.B) {
 	const width, height = 64, 64
 	const bitDepth = 12
@@ -739,6 +924,33 @@ func BenchmarkApplyRestorationUnitRecordWithBoundariesWiener(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := ApplyRestorationUnitRecordWithBoundaries(grid, record, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkApplyRestorationPlaneRecordsWiener(b *testing.B) {
+	grid := testRestorationApplyGrid(b, [3]parser.RestorationType{parser.RestorationWiener}, 0)
+	records := makeRestorationPlaneRecords(b, grid, func(i int) RestorationUnit {
+		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
+	})
+	const bitDepth = 12
+	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
+	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
+	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
+	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
+	dst := make([]uint16, dataStride*dataRows)
+	boundaries := makeRestorationApplyBoundaries(b, grid, bitDepth, 5)
+	sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	scratch := makeRestorationBoundaryApplyScratch(sizes)
+	b.ReportAllocs()
+	b.SetBytes(int64(grid.PlaneWidth * grid.PlaneHeight * 2))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -832,6 +1044,21 @@ func testRestorationApplyRecord(tb testing.TB, grid RestorationPlaneGrid, col ui
 	}
 }
 
+func makeRestorationPlaneRecords(tb testing.TB, grid RestorationPlaneGrid, unitForIndex func(int) RestorationUnit) []RestorationUnitRecord {
+	tb.Helper()
+	count, err := restorationPlaneRecordCount(grid)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	records := make([]RestorationUnitRecord, 0, count)
+	for row := uint16(0); row < grid.VertUnits; row++ {
+		for col := uint16(0); col < grid.HorzUnits; col++ {
+			records = append(records, testRestorationApplyRecord(tb, grid, col, row, unitForIndex(len(records))))
+		}
+	}
+	return records
+}
+
 func applyRestorationRecordByProcessingUnits(tb testing.TB, grid RestorationPlaneGrid, record RestorationUnitRecord, src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitScratch) {
 	tb.Helper()
 	for stripeIndex := 0; stripeIndex < int(record.StripeCount); stripeIndex++ {
@@ -861,6 +1088,24 @@ func applyRestorationRecordByProcessingUnits(tb testing.TB, grid RestorationPlan
 			}
 		}
 	}
+}
+
+func applyRestorationPlaneRecordsManually(tb testing.TB, grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) RestorationPlaneApplyResult {
+	tb.Helper()
+	var result RestorationPlaneApplyResult
+	for i := range records {
+		recordResult, err := ApplyRestorationUnitRecordWithBoundaries(grid, records[i], boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		result.Records++
+		if recordResult.Filtered {
+			result.FilteredRecords++
+		}
+		result.Stripes += uint32(recordResult.Stripes)
+		result.ProcessingUnits += uint32(recordResult.ProcessingUnits)
+	}
+	return result
 }
 
 func applyRestorationRecordWithBoundariesManually(tb testing.TB, grid RestorationPlaneGrid, record RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) {
