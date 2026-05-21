@@ -175,6 +175,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	blockPrefixReads := 0
 	blockDeltaReads := 0
 	intraEntryReads := 0
+	transformPathReads := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -287,6 +288,24 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 								if err := modeCtx.MarkIntra(blockSize, 0, 0, true, mode); err != nil {
 									return err
 								}
+								if ctx.TransformRef.TransformMode != parser.TransformModeSwitchable || ctx.Segmentation.Lossless[0] {
+									var txCDFs tile.TransformCDFs
+									if err := txCDFs.InitDefault(); err != nil {
+										return err
+									}
+									tx, err := decodeState.ReadSelectedTransformSize(&txCDFs, &modeCtx, tile.SelectedTransformRequest{
+										Size:          blockSize,
+										TransformMode: ctx.TransformRef.TransformMode,
+										Lossless:      ctx.Segmentation.Lossless[0],
+									})
+									if err != nil {
+										return err
+									}
+									if err := modeCtx.MarkTransform(blockSize, 0, 0, tx, true); err != nil {
+										return err
+									}
+									transformPathReads++
+								}
 							}
 						}
 					}
@@ -354,6 +373,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	}
 	if intraEntryReads == 0 {
 		t.Fatal("no intra entry syntax was read")
+	}
+	if transformPathReads == 0 {
+		t.Fatal("no transform size syntax path ran")
 	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)

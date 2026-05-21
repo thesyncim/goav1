@@ -34,6 +34,10 @@ type BlockModeContext struct {
 	LeftIntra        [MaxBlockModeSlots]uint8
 	AboveMode        [MaxBlockModeSlots]IntraMode
 	LeftMode         [MaxBlockModeSlots]IntraMode
+	AboveTxIntra     [MaxBlockModeSlots]uint8
+	LeftTxIntra      [MaxBlockModeSlots]uint8
+	AboveTx          [MaxBlockModeSlots]uint8
+	LeftTx           [MaxBlockModeSlots]uint8
 }
 
 // BlockModeRequest describes the block currently being decoded for the AV1

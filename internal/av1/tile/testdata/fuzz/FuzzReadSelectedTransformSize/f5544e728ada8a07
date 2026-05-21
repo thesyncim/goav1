@@ -1,0 +1,8 @@
+go test fuzz v1
+[]byte("")
+byte('\n')
+byte('\b')
+byte('\a')
+byte('d')
+bool(true)
+bool(false)
