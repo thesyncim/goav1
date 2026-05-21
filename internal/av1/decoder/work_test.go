@@ -748,6 +748,55 @@ func TestExecuteFrameWorkStepWithPayload(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.T) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs, batches, batchCount := testExecutionWork(t)
+	event := Event{
+		Kind: EventTileGroup,
+		FrameHeader: parser.FrameHeaderPrefix{
+			DisableCDFUpdate: true,
+		},
+	}
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+	payload := []byte{0x00, 0xff, 0x00}
+	state := FrameWorkState{active: true}
+
+	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
+		if !ctx.DisableCDFUpdate {
+			t.Fatal("DisableCDFUpdate not propagated")
+		}
+		r, err := tile.NewEntropyReader(ctx.Payload, ctx.Jobs[1], tile.DecodeOptions{DisableCDFUpdate: ctx.DisableCDFUpdate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.AllowCDFUpdate() {
+			t.Fatal("CDF update enabled")
+		}
+		bit, err := r.ReadBit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bit != 1 {
+			t.Fatalf("bit=%d want 1", bit)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ExecutedTileWork {
+		t.Fatal("not executed")
+	}
+}
+
 func TestExecuteFrameWorkStepWithPayloadRejectsInvalidPayloadRange(t *testing.T) {
 	jobs, batches, batchCount := testExecutionWork(t)
 	jobs[1].Offset = 2

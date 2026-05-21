@@ -16,12 +16,13 @@ type BatchFunc func(batch Batch, jobs []tile.Job) error
 // Payload, References, and Jobs alias caller-owned storage and are valid for
 // the callback invocation.
 type FrameWorkBatch struct {
-	Step       decodework.FrameStep
-	Output     *frame.Frame
-	Payload    []byte
-	References []*frame.Frame
-	Batch      Batch
-	Jobs       []tile.Job
+	Step             decodework.FrameStep
+	Output           *frame.Frame
+	Payload          []byte
+	References       []*frame.Frame
+	DisableCDFUpdate bool
+	Batch            Batch
+	Jobs             []tile.Job
 }
 
 // JobPayload returns the exact tile payload bytes for Jobs[index]. The

@@ -67,6 +67,41 @@ func TestValidatePayloads(t *testing.T) {
 	}
 }
 
+func TestNewEntropyReaderUsesJobPayload(t *testing.T) {
+	payload := []byte{0x00, 0xff, 0x00}
+	job := Job{Offset: 1, Size: 1}
+
+	r, err := NewEntropyReader(payload, job, DecodeOptions{DisableCDFUpdate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.AllowCDFUpdate() {
+		t.Fatal("CDF update enabled")
+	}
+	bit, err := r.ReadBit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bit != 1 {
+		t.Fatalf("bit=%d want 1", bit)
+	}
+
+	r, err = NewEntropyReader(payload, job, DecodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.AllowCDFUpdate() {
+		t.Fatal("CDF update disabled")
+	}
+}
+
+func TestNewEntropyReaderRejectsInvalidRanges(t *testing.T) {
+	_, err := NewEntropyReader([]byte{0xaa}, Job{Offset: 0, Size: 2}, DecodeOptions{})
+	if !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("NewEntropyReader err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
 func TestJobPayloadAllocs(t *testing.T) {
 	payload := []byte{0, 1, 2, 3, 4, 5}
 	job := Job{Offset: 1, Size: 4}
@@ -86,6 +121,31 @@ func TestJobPayloadAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("Job.Payload allocated: %f", allocs)
+	}
+}
+
+func TestNewEntropyReaderAllocs(t *testing.T) {
+	payload := []byte{0x00, 0xff, 0x00}
+	job := Job{Offset: 1, Size: 1}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		r, err := NewEntropyReader(payload, job, DecodeOptions{DisableCDFUpdate: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.AllowCDFUpdate() {
+			t.Fatal("CDF update enabled")
+		}
+		bit, err := r.ReadBit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bit != 1 {
+			t.Fatalf("bit=%d want 1", bit)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("NewEntropyReader allocated: %f", allocs)
 	}
 }
 
@@ -118,6 +178,32 @@ func FuzzJobPayload(f *testing.F) {
 	})
 }
 
+func FuzzNewEntropyReader(f *testing.F) {
+	f.Add([]byte{0xff}, int16(0), int16(1), false)
+	f.Add([]byte{0x00, 0xff, 0x00}, int16(1), int16(1), true)
+	f.Add([]byte{0xaa}, int16(0), int16(2), false)
+
+	f.Fuzz(func(t *testing.T, payload []byte, offset int16, size int16, disableCDFUpdate bool) {
+		if len(payload) > 64 {
+			return
+		}
+		job := Job{Offset: int(offset), Size: int(size)}
+		r, err := NewEntropyReader(payload, job, DecodeOptions{DisableCDFUpdate: disableCDFUpdate})
+		if err != nil {
+			if _, _, rangeErr := job.PayloadRange(len(payload)); rangeErr == nil {
+				t.Fatalf("NewEntropyReader err=%v payloadLen=%d job=%+v", err, len(payload), job)
+			}
+			return
+		}
+		if r.AllowCDFUpdate() == disableCDFUpdate {
+			t.Fatalf("AllowCDFUpdate=%v disableCDFUpdate=%v", r.AllowCDFUpdate(), disableCDFUpdate)
+		}
+		if _, err := r.ReadBit(); err != nil {
+			t.Fatalf("ReadBit err=%v", err)
+		}
+	})
+}
+
 func BenchmarkJobPayload(b *testing.B) {
 	payload := []byte{0, 1, 2, 3, 4, 5}
 	job := Job{Offset: 1, Size: 4}
@@ -139,5 +225,15 @@ func BenchmarkValidatePayloads(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = ValidatePayloads(payload, jobs)
+	}
+}
+
+func BenchmarkNewEntropyReader(b *testing.B) {
+	payload := []byte{0x00, 0xff, 0x00}
+	job := Job{Offset: 1, Size: 1}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = NewEntropyReader(payload, job, DecodeOptions{DisableCDFUpdate: true})
 	}
 }

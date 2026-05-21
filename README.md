@@ -64,6 +64,8 @@ The initial implementation covers:
 - AV1 tile-group header parsing and caller-buffer tile payload span splitting.
 - Caller-buffer tile work-plan construction for deterministic decode scheduling.
 - Zero-allocation tile-job payload range validation and slicing helpers.
+- Zero-allocation tile entropy reader setup from scheduled tile jobs, including
+  frame-level CDF-update control propagation into frame-work callbacks.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
 - Zero-allocation frame-work batch helpers for safe per-job tile payload
