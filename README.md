@@ -106,6 +106,8 @@ The initial implementation covers:
   reconstruction blocks with caller-owned edge buffers.
 - Pure-Go full-pixel motion-vector helpers and inter plane prediction for
   nearest/reference-copy reconstruction paths.
+- AV1 dequantization lookup tables and caller-buffer coefficient
+  dequantization for residual reconstruction.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
