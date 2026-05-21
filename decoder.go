@@ -32,13 +32,14 @@ const (
 )
 
 var (
-	ErrDecoderMissingSequenceHeader        = internaldecoder.ErrMissingSequenceHeader
-	ErrDecoderMissingFrameHeader           = internaldecoder.ErrMissingFrameHeader
-	ErrDecoderEventBufferTooSmall          = internaldecoder.ErrEventBufferTooSmall
-	ErrDecoderInvalidTileWork              = internaldecoder.ErrInvalidTileWork
-	ErrDecoderInvalidSurfaceEvent          = internaldecoder.ErrInvalidSurfaceEvent
-	ErrDecoderInvalidSurfaceReference      = internaldecoder.ErrInvalidSurfaceReference
-	ErrDecoderSurfaceReleaseBufferTooSmall = internaldecoder.ErrSurfaceReleaseBufferTooSmall
+	ErrDecoderMissingSequenceHeader          = internaldecoder.ErrMissingSequenceHeader
+	ErrDecoderMissingFrameHeader             = internaldecoder.ErrMissingFrameHeader
+	ErrDecoderEventBufferTooSmall            = internaldecoder.ErrEventBufferTooSmall
+	ErrDecoderInvalidTileWork                = internaldecoder.ErrInvalidTileWork
+	ErrDecoderInvalidSurfaceEvent            = internaldecoder.ErrInvalidSurfaceEvent
+	ErrDecoderInvalidSurfaceReference        = internaldecoder.ErrInvalidSurfaceReference
+	ErrDecoderSurfaceReferenceBufferTooSmall = internaldecoder.ErrSurfaceReferenceBufferTooSmall
+	ErrDecoderSurfaceReleaseBufferTooSmall   = internaldecoder.ErrSurfaceReleaseBufferTooSmall
 
 	ErrTileInvalidPlan       = internaltile.ErrInvalidPlan
 	ErrTileJobBufferTooSmall = internaltile.ErrJobBufferTooSmall

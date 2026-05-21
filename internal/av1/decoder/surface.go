@@ -38,6 +38,45 @@ func (r *SurfaceReferences) Holds(surface int) bool {
 	return slotsHold(r.slots, surface)
 }
 
+// FrameReferences resolves the AV1 inter-reference indices selected by a frame
+// event into caller-owned frame-pool surface indices. It returns zero for
+// intra-only frame types.
+func (r *SurfaceReferences) FrameReferences(event Event, surfaces []int) (int, error) {
+	if event.Kind != EventFrameHeader && event.Kind != EventFrame && event.Kind != EventTileGroup {
+		return 0, ErrInvalidSurfaceEvent
+	}
+	if event.FrameHeader.ShowExistingFrame {
+		return 0, ErrInvalidSurfaceEvent
+	}
+	if event.FrameHeader.FrameType != parser.FrameTypeInter && event.FrameHeader.FrameType != parser.FrameTypeSwitch {
+		return 0, nil
+	}
+	if r == nil {
+		return 0, ErrInvalidSurfaceReference
+	}
+	if len(surfaces) < parser.InterRefsPerFrame {
+		return 0, ErrSurfaceReferenceBufferTooSmall
+	}
+	r.ensureInitialized()
+
+	var resolved [parser.InterRefsPerFrame]int
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		ref := int(event.FrameSize.RefFrameIdx[i])
+		if ref < 0 || ref >= parser.RefFrames {
+			return 0, ErrInvalidSurfaceReference
+		}
+		surface := r.slots[ref]
+		if surface < 0 {
+			return 0, ErrInvalidSurfaceReference
+		}
+		resolved[i] = surface
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		surfaces[i] = resolved[i]
+	}
+	return parser.InterRefsPerFrame, nil
+}
+
 // FinishFrame applies the reference refresh described by a complete decoded
 // frame event.
 func (r *SurfaceReferences) FinishFrame(event Event, surface int, releases []int) (int, error) {

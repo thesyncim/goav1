@@ -70,7 +70,8 @@ The initial implementation covers:
   deltas.
 - Self-contained tile-group decoder events with active frame-header context.
 - Caller-buffer decoder surface-reference tracking for AV1 refresh and
-  show-existing-frame updates, including event-aware frame completion helpers.
+  show-existing-frame updates, including event-aware frame completion and
+  inter-reference lookup helpers.
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable and retained decode
   surfaces.

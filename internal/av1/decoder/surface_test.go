@@ -61,6 +61,90 @@ func TestSurfaceReferencesReleaseUniqueOnce(t *testing.T) {
 	}
 }
 
+func TestSurfaceReferencesFrameReferences(t *testing.T) {
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	for i := 0; i < parser.RefFrames; i++ {
+		if _, err := refs.Refresh(1<<uint(i), 10+i, releases[:]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	event := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+		FrameSize: parser.FrameSize{
+			RefFrameIdx: [parser.InterRefsPerFrame]uint8{0, 1, 2, 3, 4, 5, 6},
+		},
+	}
+	var surfaces [parser.InterRefsPerFrame]int
+	count, err := refs.FrameReferences(event, surfaces[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != parser.InterRefsPerFrame {
+		t.Fatalf("count=%d", count)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if surfaces[i] != 10+i {
+			t.Fatalf("surface[%d]=%d want %d", i, surfaces[i], 10+i)
+		}
+	}
+}
+
+func TestSurfaceReferencesFrameReferencesIntra(t *testing.T) {
+	var refs SurfaceReferences
+	count, err := refs.FrameReferences(Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("count=%d", count)
+	}
+}
+
+func TestSurfaceReferencesFrameReferencesRejectsInvalidInputs(t *testing.T) {
+	var refs SurfaceReferences
+	var surfaces [parser.InterRefsPerFrame]int
+	for i := 0; i < len(surfaces); i++ {
+		surfaces[i] = -99
+	}
+
+	_, err := refs.FrameReferences(Event{Kind: EventExistingFrame}, surfaces[:])
+	if !errors.Is(err, ErrInvalidSurfaceEvent) {
+		t.Fatalf("FrameReferences event err=%v want %v", err, ErrInvalidSurfaceEvent)
+	}
+	_, err = refs.FrameReferences(Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{ShowExistingFrame: true, FrameType: parser.FrameTypeInter},
+	}, surfaces[:])
+	if !errors.Is(err, ErrInvalidSurfaceEvent) {
+		t.Fatalf("FrameReferences show-existing err=%v want %v", err, ErrInvalidSurfaceEvent)
+	}
+	_, err = refs.FrameReferences(Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+	}, surfaces[:parser.InterRefsPerFrame-1])
+	if !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("FrameReferences short buffer err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
+	}
+	_, err = refs.FrameReferences(Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+	}, surfaces[:])
+	if !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("FrameReferences missing surface err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+	for i := 0; i < len(surfaces); i++ {
+		if surfaces[i] != -99 {
+			t.Fatalf("surface[%d]=%d changed on error", i, surfaces[i])
+		}
+	}
+}
+
 func TestSurfaceReferencesFinishFrame(t *testing.T) {
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
@@ -240,6 +324,17 @@ func TestSurfaceReferencesAllocs(t *testing.T) {
 			FrameSize: parser.FrameSize{RefreshFrameFlags: 0xff},
 			TileGroup: parser.TileGroup{Final: true},
 		}, 5, releases[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var surfaces [parser.InterRefsPerFrame]int
+		_, err = refs.FrameReferences(Event{
+			Kind:        EventFrameHeader,
+			FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
+			FrameSize: parser.FrameSize{
+				RefFrameIdx: [parser.InterRefsPerFrame]uint8{0, 1, 2, 3, 4, 5, 6},
+			},
+		}, surfaces[:])
 		if err != nil {
 			t.Fatal(err)
 		}
