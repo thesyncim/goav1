@@ -25,9 +25,13 @@ func TestOracleDisabledBuildIsZeroCost(t *testing.T) {
 	if err := oracle.CheckBytes(Tag(0xffff), nil); err != nil {
 		t.Fatalf("disabled oracle missing err=%v", err)
 	}
+	if err := oracle.CheckMD5(Tag(0xffff), 0, MD5{}); err != nil {
+		t.Fatalf("disabled oracle digest err=%v", err)
+	}
 	allocs := testing.AllocsPerRun(1000, func() {
 		if OracleEnabled {
 			_ = oracle.CheckBytes(TagRTPPayloadSingleOBU, []byte{0xbb})
+			_ = oracle.CheckMD5(TagIVFSingleFrameAV1, 0, MD5{})
 		}
 	})
 	if allocs != 0 {

@@ -6,7 +6,10 @@ var (
 	ErrInvalidTag      = errors.New("testvector: invalid tag")
 	ErrDuplicateTag    = errors.New("testvector: duplicate tag")
 	ErrMissingVector   = errors.New("testvector: missing vector")
+	ErrMissingDigest   = errors.New("testvector: missing digest")
 	ErrMismatchedBytes = errors.New("testvector: mismatched bytes")
+	ErrMismatchedMD5   = errors.New("testvector: mismatched md5")
+	ErrInvalidMD5      = errors.New("testvector: invalid md5")
 )
 
 // Tag identifies a vector or oracle output without string matching in hot
@@ -42,9 +45,19 @@ type Vector struct {
 	Want  []byte
 }
 
+type MD5 [16]byte
+
+// FrameDigest describes the expected decoded-frame digest for one vector.
+type FrameDigest struct {
+	Tag        Tag
+	FrameIndex uint32
+	MD5        MD5
+}
+
 // Manifest is a caller-owned view of a vector suite.
 type Manifest struct {
 	Vectors []Vector
+	Digests []FrameDigest
 }
 
 // Suite names a manifest so test runners can compose transport, syntax, and
@@ -63,6 +76,15 @@ func (m Manifest) Find(tag Tag) (Vector, bool) {
 	return Vector{}, false
 }
 
+func (m Manifest) FindDigest(tag Tag, frameIndex uint32) (FrameDigest, bool) {
+	for _, digest := range m.Digests {
+		if digest.Tag == tag && digest.FrameIndex == frameIndex {
+			return digest, true
+		}
+	}
+	return FrameDigest{}, false
+}
+
 func (m Manifest) Validate() error {
 	for i, vector := range m.Vectors {
 		if vector.Tag == 0 {
@@ -74,5 +96,47 @@ func (m Manifest) Validate() error {
 			}
 		}
 	}
+	for i, digest := range m.Digests {
+		if digest.Tag == 0 {
+			return ErrInvalidTag
+		}
+		for j := 0; j < i; j++ {
+			if m.Digests[j].Tag == digest.Tag && m.Digests[j].FrameIndex == digest.FrameIndex {
+				return ErrDuplicateTag
+			}
+		}
+	}
 	return nil
+}
+
+func ParseMD5Hex(src []byte) (MD5, error) {
+	if len(src) < 32 {
+		return MD5{}, ErrInvalidMD5
+	}
+	var md5 MD5
+	for i := 0; i < len(md5); i++ {
+		hi, ok := hexNibble(src[i*2])
+		if !ok {
+			return MD5{}, ErrInvalidMD5
+		}
+		lo, ok := hexNibble(src[i*2+1])
+		if !ok {
+			return MD5{}, ErrInvalidMD5
+		}
+		md5[i] = hi<<4 | lo
+	}
+	return md5, nil
+}
+
+func hexNibble(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10, true
+	case b >= 'A' && b <= 'F':
+		return b - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }

@@ -16,3 +16,7 @@ func NewOracle(Manifest) Oracle {
 func (Oracle) CheckBytes(Tag, []byte) error {
 	return nil
 }
+
+func (Oracle) CheckMD5(Tag, uint32, MD5) error {
+	return nil
+}

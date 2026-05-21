@@ -46,6 +46,8 @@ var coreVectors = [...]Vector{
 	},
 }
 
+var coreIVFSingleFrameMD5 = MD5{0x5a, 0x68, 0xde, 0x99, 0x7d, 0x60, 0xaf, 0xa9, 0x08, 0x3b, 0x17, 0xfe, 0x00, 0xf7, 0xcd, 0xf2}
+
 // CoreSuite returns the minimal byte-level vectors that cover the current
 // transport and OBU foundations.
 func CoreSuite() Suite {
@@ -53,6 +55,9 @@ func CoreSuite() Suite {
 		Name: "goav1-core",
 		Manifest: Manifest{
 			Vectors: coreVectors[:],
+			Digests: []FrameDigest{
+				{Tag: TagIVFSingleFrameAV1, FrameIndex: 0, MD5: coreIVFSingleFrameMD5},
+			},
 		},
 	}
 }

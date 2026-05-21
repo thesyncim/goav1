@@ -2,6 +2,7 @@ package testvector
 
 import (
 	"bytes"
+	"crypto/md5"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/ivf"
@@ -81,5 +82,12 @@ func checkIVFVector(t *testing.T, vector Vector) {
 	}
 	if !bytes.Equal(frame.Payload, vector.Want) {
 		t.Fatalf("%s payload=%x want %x", vector.Name, frame.Payload, vector.Want)
+	}
+	digest, ok := CoreSuite().Manifest.FindDigest(vector.Tag, frame.Index)
+	if !ok {
+		t.Fatalf("%s missing digest", vector.Name)
+	}
+	if got := MD5(md5.Sum(frame.Payload)); got != digest.MD5 {
+		t.Fatalf("%s md5=%x want %x", vector.Name, got, digest.MD5)
 	}
 }

@@ -26,3 +26,14 @@ func (o Oracle) CheckBytes(tag Tag, got []byte) error {
 	}
 	return nil
 }
+
+func (o Oracle) CheckMD5(tag Tag, frameIndex uint32, got MD5) error {
+	digest, ok := o.manifest.FindDigest(tag, frameIndex)
+	if !ok {
+		return ErrMissingDigest
+	}
+	if got != digest.MD5 {
+		return ErrMismatchedMD5
+	}
+	return nil
+}
