@@ -118,6 +118,8 @@ The initial implementation covers:
   and clipped plane residual application.
 - Zero-allocation AV1 loop-filter level, delta, segmentation, and threshold
   derivation for post-reconstruction deblocking setup.
+- Pure-Go narrow loop-filter edge deblocking for 8/10/12-bit reconstruction
+  planes.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
