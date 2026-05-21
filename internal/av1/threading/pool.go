@@ -352,7 +352,54 @@ func (b FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane Frame
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
 	bytesPerSample := refFrame.Layout.BytesPerSample
+	if refPlane.Width <= 0 ||
+		refPlane.Height <= 0 ||
+		uint64(refPlane.Width) > uint64(^uint32(0)) ||
+		uint64(refPlane.Height) > uint64(^uint32(0)) {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
 	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, 0, 0, uint32(refPlane.Width), uint32(refPlane.Height))
+}
+
+// JobReferencePlane returns the reference-plane window matching Jobs[index]'s
+// clipped output region. It is valid for same-size reference sampling; scaled
+// references require motion-compensation code to map coordinates explicitly.
+func (b FrameWorkBatch) JobReferencePlane(index int, reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+	return b.JobReferencePlaneWindow(index, reference, plane, 0, 0)
+}
+
+// JobReferencePlaneWindow returns the reference-plane window matching
+// Jobs[index]'s clipped output region and expanded by marginX/marginY plane
+// samples. The window is clipped to the resolved reference frame plane.
+func (b FrameWorkBatch) JobReferencePlaneWindow(index int, reference FrameWorkReference, plane FrameWorkPlane, marginX uint32, marginY uint32) (FrameWorkPlaneRegion, error) {
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return FrameWorkPlaneRegion{}, err
+	}
+	refFrame, err := b.ReferenceFrame(reference)
+	if err != nil {
+		return FrameWorkPlaneRegion{}, err
+	}
+	refPlane, subsamplingX, subsamplingY, ok := frameWorkFramePlane(refFrame, plane)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	bytesPerSample := refFrame.Layout.BytesPerSample
+	if bytesPerSample <= 0 {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+
+	x0, x1 := frameWorkPlaneRange(region.PixelX, region.PixelX+region.PixelWidth, subsamplingX)
+	y0, y1 := frameWorkPlaneRange(region.PixelY, region.PixelY+region.PixelHeight, subsamplingY)
+	x0, x1, ok = frameWorkExpandPlaneRange(x0, x1, refPlane.Width, marginX)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	y0, y1, ok = frameWorkExpandPlaneRange(y0, y1, refPlane.Height, marginY)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, x0, y0, x1, y1)
 }
 
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
@@ -403,11 +450,37 @@ func frameWorkPlaneRange(start uint32, end uint32, subsampled bool) (uint32, uin
 	return start >> 1, (end >> 1) + (end & 1)
 }
 
+func frameWorkExpandPlaneRange(start uint32, end uint32, limit int, margin uint32) (uint32, uint32, bool) {
+	if limit <= 0 || uint64(limit) > uint64(^uint32(0)) || end <= start {
+		return 0, 0, false
+	}
+	max := uint32(limit)
+	if start >= max {
+		return 0, 0, false
+	}
+	if end > max {
+		end = max
+	}
+	if margin > start {
+		start = 0
+	} else {
+		start -= margin
+	}
+	if margin > max-end {
+		end = max
+	} else {
+		end += margin
+	}
+	return start, end, end > start
+}
+
 func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSample int, x0 uint32, y0 uint32, x1 uint32, y1 uint32) (FrameWorkPlaneRegion, error) {
 	if bytesPerSample <= 0 ||
 		plane.Stride <= 0 ||
 		plane.Width <= 0 ||
 		plane.Height <= 0 ||
+		uint64(plane.Width) > uint64(^uint32(0)) ||
+		uint64(plane.Height) > uint64(^uint32(0)) ||
 		x1 <= x0 ||
 		y1 <= y0 ||
 		x1 > uint32(plane.Width) ||

@@ -185,6 +185,13 @@ func TestDecoderFrameWorkBatchPlaneHelpers(t *testing.T) {
 	if referencePlane.Width != 8 || referencePlane.Height != 8 || referencePlane.Plane != DecoderFrameWorkPlaneU {
 		t.Fatalf("reference plane=%+v", referencePlane)
 	}
+	jobReferencePlane, err := ctx.JobReferencePlaneWindow(0, DecoderFrameWorkReferenceLast, DecoderFrameWorkPlaneU, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobReferencePlane.Width != 8 || jobReferencePlane.Height != 8 || jobReferencePlane.Plane != DecoderFrameWorkPlaneU {
+		t.Fatalf("job reference plane=%+v", jobReferencePlane)
+	}
 }
 
 func TestDecoderEventDropsFrameWork(t *testing.T) {

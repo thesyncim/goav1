@@ -76,7 +76,8 @@ The initial implementation covers:
 - Zero-allocation frame-work batch helpers for safe per-job tile payload,
   entropy-reader, sequence/superblock geometry, frame geometry,
   clipped reconstruction regions, writable output-plane windows, resolved
-  reference-frame and reference-plane lookup, block-delta context,
+  reference-frame and reference-plane lookup, job-aligned reference windows
+  with clipped interpolation margins, block-delta context,
   segmentation/filter setup, motion/film-grain context, and frame
   quantizer/delta decode-state access inside reconstruction callbacks.
 - Decoder tile-work planning from parsed frame/tile-group events into

@@ -641,6 +641,94 @@ func TestFrameWorkBatchReferencePlane(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobReferencePlaneWindow420(t *testing.T) {
+	reference := testBatchFrame(t, frame.Format{
+		Width:        130,
+		Height:       65,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := FrameWorkBatch{
+		References: []*frame.Frame{reference},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 130, Height: 65},
+		},
+		Jobs: []tile.Job{
+			{Tile: 1, Row: 0, Col: 1, SBX: 1, SBY: 0, SBCols: 2, SBRows: 2},
+		},
+	}
+	y, err := ctx.JobReferencePlane(0, FrameWorkReferenceLast, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 || y.RowBytes != 66 {
+		t.Fatalf("Y reference job plane=%+v", y)
+	}
+	if len(y.Pix) != (y.Height-1)*y.Stride+y.RowBytes {
+		t.Fatalf("Y len=%d plane=%+v", len(y.Pix), y)
+	}
+	y.Pix[0] = 0x91
+	if reference.Y.Pix[64] != 0x91 {
+		t.Fatalf("Y reference job plane did not alias")
+	}
+
+	u, err := ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneU, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.X != 30 || u.Y != 0 || u.Width != 35 || u.Height != 33 ||
+		u.Stride != reference.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 35 {
+		t.Fatalf("U reference job window=%+v", u)
+	}
+	if len(u.Pix) != (u.Height-1)*u.Stride+u.RowBytes {
+		t.Fatalf("U len=%d plane=%+v", len(u.Pix), u)
+	}
+	u.Pix[0] = 0x42
+	if reference.U.Pix[30] != 0x42 {
+		t.Fatalf("U reference job window did not alias")
+	}
+}
+
+func TestFrameWorkBatchJobReferencePlaneWindowClipsReference(t *testing.T) {
+	reference := testBatchFrame(t, frame.Format{
+		Width:    200,
+		Height:   180,
+		BitDepth: 10,
+		Align:    64,
+	})
+	ctx := FrameWorkBatch{
+		References: []*frame.Frame{reference},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig:          parser.ColorConfig{BitDepth: 10},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+	y, err := ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneY, 16, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.X != 112 || y.Y != 112 || y.Width != 88 || y.Height != 68 ||
+		y.BytesPerSample != 2 || y.RowBytes != 176 {
+		t.Fatalf("clipped Y reference job window=%+v", y)
+	}
+	wantOffset := 112*reference.Y.Stride + 112*2
+	y.Pix[1] = 0x37
+	if reference.Y.Pix[wantOffset+1] != 0x37 {
+		t.Fatalf("clipped Y reference job window did not alias")
+	}
+}
+
 func TestFrameWorkBatchReferencePlaneRejectsInvalidInputs(t *testing.T) {
 	mono := testBatchFrame(t, frame.Format{
 		Width:      64,
@@ -670,6 +758,23 @@ func TestFrameWorkBatchReferencePlaneRejectsInvalidInputs(t *testing.T) {
 	badLayout.Layout.BytesPerSample = 0
 	if _, err := (FrameWorkBatch{References: []*frame.Frame{&badLayout}}).ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad layout err=%v want %v", err, ErrInvalidBatch)
+	}
+
+	if _, err := ctx.JobReferencePlane(0, FrameWorkReferenceLast, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("missing job context err=%v want %v", err, ErrInvalidBatch)
+	}
+	outside := FrameWorkBatch{
+		References: []*frame.Frame{mono},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 128, Height: 128},
+		},
+		Jobs: []tile.Job{{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1}},
+	}
+	if _, err := outside.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneY, 0, 0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("outside reference err=%v want %v", err, ErrInvalidBatch)
 	}
 }
 
@@ -931,6 +1036,13 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 		if refPlane.Width != 300 || refPlane.Height != 260 || refPlane.RowBytes != 600 {
 			t.Fatalf("reference plane=%+v", refPlane)
 		}
+		jobRefPlane, err := ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneU, 4, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if jobRefPlane.X != 60 || jobRefPlane.Y != 59 || jobRefPlane.Width != 90 || jobRefPlane.Height != 71 || jobRefPlane.RowBytes != 180 {
+			t.Fatalf("job reference plane=%+v", jobRefPlane)
+		}
 	})
 	if allocs != 0 {
 		t.Fatalf("FrameWorkBatch.JobRegion allocated: %f", allocs)
@@ -1151,6 +1263,16 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 		if refPlane.Width != int(width) || refPlane.Height != int(height) || len(refPlane.Pix) == 0 {
 			t.Fatalf("invalid reference plane=%+v", refPlane)
 		}
+		jobRefPlane, err := ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneY, uint32(width&7), uint32(height&7))
+		if err != nil {
+			t.Fatalf("job reference plane err=%v region=%+v", err, region)
+		}
+		if jobRefPlane.Width == 0 || jobRefPlane.Height == 0 || len(jobRefPlane.Pix) == 0 ||
+			jobRefPlane.X < 0 || jobRefPlane.Y < 0 ||
+			jobRefPlane.X+jobRefPlane.Width > int(width) ||
+			jobRefPlane.Y+jobRefPlane.Height > int(height) {
+			t.Fatalf("invalid job reference plane=%+v", jobRefPlane)
+		}
 		if !format.MonoChrome {
 			uPlane, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
 			if err != nil {
@@ -1318,6 +1440,39 @@ func BenchmarkFrameWorkBatchReferencePlane(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneU)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobReferencePlaneWindow(b *testing.B) {
+	reference := benchmarkBatchFrame(b, frame.Format{
+		Width:        300,
+		Height:       260,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := FrameWorkBatch{
+		References: []*frame.Frame{reference},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+				},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneU, 4, 5)
 	}
 }
 
