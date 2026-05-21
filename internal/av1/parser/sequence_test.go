@@ -49,11 +49,15 @@ func (w *testBitWriter) trailingBits() []byte {
 }
 
 func reducedStillPictureSequenceHeader() []byte {
+	return reducedStillPictureSequenceHeaderWithLevel(5)
+}
+
+func reducedStillPictureSequenceHeaderWithLevel(level uint8) []byte {
 	var w testBitWriter
-	w.writeBits(0, 3)  // seq_profile
-	w.writeBool(true)  // still_picture
-	w.writeBool(true)  // reduced_still_picture_header
-	w.writeBits(5, 5)  // seq_level_idx[0]
+	w.writeBits(0, 3) // seq_profile
+	w.writeBool(true) // still_picture
+	w.writeBool(true) // reduced_still_picture_header
+	w.writeBits(uint64(level), 5)
 	w.writeBits(3, 4)  // frame_width_bits_minus_1
 	w.writeBits(3, 4)  // frame_height_bits_minus_1
 	w.writeBits(15, 4) // max_frame_width_minus_1
@@ -75,6 +79,10 @@ func reducedStillPictureSequenceHeader() []byte {
 }
 
 func realtimeSequenceHeader() []byte {
+	return realtimeSequenceHeaderWithLevel(5)
+}
+
+func realtimeSequenceHeaderWithLevel(level uint8) []byte {
 	var w testBitWriter
 	w.writeBits(0, 3)  // seq_profile
 	w.writeBool(false) // still_picture
@@ -83,7 +91,10 @@ func realtimeSequenceHeader() []byte {
 	w.writeBool(false) // initial_display_delay_present_flag
 	w.writeBits(0, 5)  // operating_points_cnt_minus_1
 	w.writeBits(0, 12) // operating_point_idc[0]
-	w.writeBits(5, 5)  // seq_level_idx[0]
+	w.writeBits(uint64(level), 5)
+	if level > 7 && ValidSequenceLevelIndex(level) {
+		w.writeBool(false) // seq_tier[0]
+	}
 	w.writeBits(3, 4)  // frame_width_bits_minus_1
 	w.writeBits(3, 4)  // frame_height_bits_minus_1
 	w.writeBits(15, 4) // max_frame_width_minus_1
@@ -114,6 +125,30 @@ func realtimeSequenceHeader() []byte {
 	w.writeBool(false) // separate_uv_delta_q
 	w.writeBool(true)  // film_grain_params_present
 	return w.trailingBits()
+}
+
+func TestValidSequenceLevelIndexMatchesLibaom(t *testing.T) {
+	valid := [...]uint8{0, 1, 4, 5, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 31}
+	for _, level := range valid {
+		if !ValidSequenceLevelIndex(level) {
+			t.Fatalf("ValidSequenceLevelIndex(%d)=false", level)
+		}
+	}
+	for level := uint8(0); level < 32; level++ {
+		seenValid := false
+		for _, validLevel := range valid {
+			if level == validLevel {
+				seenValid = true
+				break
+			}
+		}
+		if seenValid {
+			continue
+		}
+		if ValidSequenceLevelIndex(level) {
+			t.Fatalf("ValidSequenceLevelIndex(%d)=true", level)
+		}
+	}
 }
 
 func TestParseSequenceHeaderReducedStillPicture(t *testing.T) {
@@ -171,6 +206,19 @@ func TestParseSequenceHeaderRejectsInvalidProfile(t *testing.T) {
 	_, err := ParseSequenceHeader(w.buf[:1])
 	if !errors.Is(err, ErrInvalidSequenceHeader) {
 		t.Fatalf("ParseSequenceHeader err=%v want %v", err, ErrInvalidSequenceHeader)
+	}
+}
+
+func TestParseSequenceHeaderRejectsInvalidSequenceLevel(t *testing.T) {
+	for _, payload := range [][]byte{
+		reducedStillPictureSequenceHeaderWithLevel(2),
+		realtimeSequenceHeaderWithLevel(10),
+		realtimeSequenceHeaderWithLevel(28),
+	} {
+		_, err := ParseSequenceHeader(payload)
+		if !errors.Is(err, ErrInvalidSequenceHeader) {
+			t.Fatalf("ParseSequenceHeader invalid level err=%v want %v", err, ErrInvalidSequenceHeader)
+		}
 	}
 }
 

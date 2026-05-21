@@ -9,6 +9,7 @@ const (
 
 	SelectScreenContentTools = 2
 	SelectIntegerMV          = 2
+	SeqLevelMax              = 31
 )
 
 // SequenceHeader is a compact parsed view of sequence_header_obu().
@@ -131,11 +132,11 @@ func parseSequenceHeader(payload []byte, validateTrailing bool) (SequenceHeader,
 
 	if sh.ReducedStillPictureHeader {
 		sh.OperatingPointsCount = 1
-		level, err := r.ReadBits(5)
+		level, err := readSequenceLevel(&r)
 		if err != nil {
 			return SequenceHeader{}, err
 		}
-		sh.OperatingPoints[0].SeqLevelIdx = uint8(level)
+		sh.OperatingPoints[0].SeqLevelIdx = level
 	} else {
 		if err := parseSequenceHeaderTiming(&r, &sh); err != nil {
 			return SequenceHeader{}, err
@@ -197,11 +198,11 @@ func parseSequenceHeaderTiming(r *bitstream.Reader, sh *SequenceHeader) error {
 			return err
 		}
 		op.IDC = uint16(idc)
-		level, err := r.ReadBits(5)
+		level, err := readSequenceLevel(r)
 		if err != nil {
 			return err
 		}
-		op.SeqLevelIdx = uint8(level)
+		op.SeqLevelIdx = level
 		if op.SeqLevelIdx > 7 {
 			tier, err := r.ReadBits(1)
 			if err != nil {
@@ -233,6 +234,35 @@ func parseSequenceHeaderTiming(r *bitstream.Reader, sh *SequenceHeader) error {
 		}
 	}
 	return nil
+}
+
+// ValidSequenceLevelIndex reports whether level matches libaom's
+// is_valid_seq_level_idx() set for currently-defined AV1 levels.
+func ValidSequenceLevelIndex(level uint8) bool {
+	if level == SeqLevelMax {
+		return true
+	}
+	if level >= 28 {
+		return false
+	}
+	switch level {
+	case 2, 3, 6, 7, 10, 11,
+		20, 21, 22, 23, 24, 25, 26, 27:
+		return false
+	default:
+		return true
+	}
+}
+
+func readSequenceLevel(r *bitstream.Reader) (uint8, error) {
+	level, err := r.ReadBits(5)
+	if err != nil {
+		return 0, err
+	}
+	if !ValidSequenceLevelIndex(uint8(level)) {
+		return 0, ErrInvalidSequenceHeader
+	}
+	return uint8(level), nil
 }
 
 func parseTimingInfo(r *bitstream.Reader, timing *TimingInfo) error {
