@@ -54,6 +54,23 @@ type Event struct {
 	ExistingFrame  parser.ReferenceFrame
 }
 
+type frameState struct {
+	FrameHeader  parser.FrameHeaderPrefix
+	FrameSize    parser.FrameSize
+	TileInfo     parser.TileInfo
+	Quantization parser.QuantizationParams
+	Segmentation parser.SegmentationParams
+	Delta        parser.DeltaParams
+	LoopFilter   parser.LoopFilterParams
+	CDEF         parser.CDEFParams
+	Restoration  parser.RestorationParams
+	TransformRef parser.TransformReferenceParams
+	SkipMode     parser.SkipModeParams
+	FrameMode    parser.FrameModeParams
+	GlobalMotion parser.GlobalMotionParams
+	FilmGrain    parser.FilmGrainParams
+}
+
 type Stream struct {
 	sequence     parser.SequenceHeader
 	haveSequence bool
@@ -62,6 +79,7 @@ type Stream struct {
 	tileGroups      uint32
 	tileInfo        parser.TileInfo
 	nextTile        uint16
+	frame           frameState
 
 	references parser.ReferenceState
 	rtp        rtp.Depacketizer
@@ -160,10 +178,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		event.SequenceHeader = seq
 		if !s.haveSequence || !sameSequenceExceptOperatingParameters(s.sequence, seq) {
 			event.NewCodedVideoSequence = true
-			s.haveFrameHeader = false
-			s.tileGroups = 0
-			s.tileInfo = parser.TileInfo{}
-			s.nextTile = 0
+			s.clearPendingFrame()
 			s.references.Reset()
 		} else if s.sequence != seq {
 			event.OperatingParametersChanged = true
@@ -175,10 +190,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 	case obu.TypeTemporalDelimiter:
 		event.Kind = EventTemporalDelimiter
 		event.NewTemporalUnit = true
-		s.haveFrameHeader = false
-		s.tileGroups = 0
-		s.tileInfo = parser.TileInfo{}
-		s.nextTile = 0
+		s.clearPendingFrame()
 		return event, nil
 
 	case obu.TypeRedundantFrameHeader:
@@ -280,10 +292,11 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 			s.tileInfo = tileInfo
 			s.nextTile = tileGroup.NextTile
+			s.storeFrameState(event)
 			s.haveFrameHeader = !tileGroup.Final
 			s.tileGroups = 1
 			if tileGroup.Final {
-				s.tileInfo = parser.TileInfo{}
+				s.clearPendingFrame()
 			}
 			return event, nil
 		}
@@ -301,13 +314,12 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			return Event{}, err
 		}
 		event.Kind = EventTileGroup
-		event.TileInfo = s.tileInfo
+		s.applyFrameState(&event)
 		event.TileGroup = tileGroup
 		s.tileGroups++
 		s.nextTile = tileGroup.NextTile
 		if tileGroup.Final {
-			s.haveFrameHeader = false
-			s.tileInfo = parser.TileInfo{}
+			s.clearPendingFrame()
 		}
 		return event, nil
 
@@ -409,6 +421,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 	s.tileInfo = tileInfo
 	s.nextTile = 0
+	s.storeFrameState(event)
 	s.haveFrameHeader = true
 	s.tileGroups = 0
 	return event, nil
@@ -436,10 +449,7 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 	event.GlobalMotion = ref.GlobalMotion
 	event.FilmGrain = ref.FilmGrain
 
-	s.haveFrameHeader = false
-	s.tileGroups = 0
-	s.tileInfo = parser.TileInfo{}
-	s.nextTile = 0
+	s.clearPendingFrame()
 
 	if ref.FrameType == parser.FrameTypeKey {
 		ref.ShowableFrame = false
@@ -448,6 +458,50 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 		}
 	}
 	return event, nil
+}
+
+func (s *Stream) clearPendingFrame() {
+	s.haveFrameHeader = false
+	s.tileGroups = 0
+	s.tileInfo = parser.TileInfo{}
+	s.nextTile = 0
+	s.frame = frameState{}
+}
+
+func (s *Stream) storeFrameState(event Event) {
+	s.frame = frameState{
+		FrameHeader:  event.FrameHeader,
+		FrameSize:    event.FrameSize,
+		TileInfo:     event.TileInfo,
+		Quantization: event.Quantization,
+		Segmentation: event.Segmentation,
+		Delta:        event.Delta,
+		LoopFilter:   event.LoopFilter,
+		CDEF:         event.CDEF,
+		Restoration:  event.Restoration,
+		TransformRef: event.TransformRef,
+		SkipMode:     event.SkipMode,
+		FrameMode:    event.FrameMode,
+		GlobalMotion: event.GlobalMotion,
+		FilmGrain:    event.FilmGrain,
+	}
+}
+
+func (s *Stream) applyFrameState(event *Event) {
+	event.FrameHeader = s.frame.FrameHeader
+	event.FrameSize = s.frame.FrameSize
+	event.TileInfo = s.frame.TileInfo
+	event.Quantization = s.frame.Quantization
+	event.Segmentation = s.frame.Segmentation
+	event.Delta = s.frame.Delta
+	event.LoopFilter = s.frame.LoopFilter
+	event.CDEF = s.frame.CDEF
+	event.Restoration = s.frame.Restoration
+	event.TransformRef = s.frame.TransformRef
+	event.SkipMode = s.frame.SkipMode
+	event.FrameMode = s.frame.FrameMode
+	event.GlobalMotion = s.frame.GlobalMotion
+	event.FilmGrain = s.frame.FilmGrain
 }
 
 func (s *Stream) previousSegmentationData(prefix parser.FrameHeaderPrefix, size parser.FrameSize) *parser.SegmentationData {

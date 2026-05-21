@@ -406,6 +406,11 @@ func TestStreamLowOverheadState(t *testing.T) {
 	if events[2].Kind != EventTileGroup {
 		t.Fatalf("tile event=%+v", events[2])
 	}
+	if events[2].FrameHeader != events[1].FrameHeader || events[2].FrameSize != events[1].FrameSize ||
+		events[2].Quantization != events[1].Quantization || events[2].Segmentation != events[1].Segmentation ||
+		events[2].LoopFilter != events[1].LoopFilter || events[2].FilmGrain != events[1].FilmGrain {
+		t.Fatalf("tile frame state=%+v header event=%+v", events[2], events[1])
+	}
 	if events[2].TileGroup.StartTile != 0 || events[2].TileGroup.EndTile != 0 ||
 		events[2].TileGroup.DataOffset != 0 || events[2].TileGroup.DataSize != 1 || !events[2].TileGroup.Final {
 		t.Fatalf("tile group=%+v", events[2].TileGroup)
