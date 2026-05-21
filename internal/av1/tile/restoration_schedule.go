@@ -38,10 +38,12 @@ type RestorationUnitRange struct {
 // RestorationUnitRecord carries one decoded restoration unit plus its position
 // in the plane restoration grid.
 type RestorationUnitRecord struct {
-	Index uint32
-	Col   uint16
-	Row   uint16
-	Unit  RestorationUnit
+	Index       uint32
+	Col         uint16
+	Row         uint16
+	Rect        RestorationUnitRect
+	StripeCount uint8
+	Unit        RestorationUnit
 }
 
 func BuildRestorationPlaneGrid(params parser.RestorationParams, size parser.FrameSize, color parser.ColorConfig, plane int) (RestorationPlaneGrid, error) {
@@ -155,15 +157,28 @@ func (s *DecodeState) ReadRestorationUnitsForSuperblock(grid RestorationPlaneGri
 	count := 0
 	for row := unitRange.Row0; row < unitRange.Row1; row++ {
 		for col := unitRange.Col0; col < unitRange.Col1; col++ {
+			rect, err := grid.UnitRect(col, row)
+			if err != nil {
+				return 0, err
+			}
+			stripeCount, err := grid.ProcessingStripeCount(rect)
+			if err != nil || stripeCount > int(^uint8(0)) {
+				if err != nil {
+					return 0, err
+				}
+				return 0, ErrInvalidPlan
+			}
 			unit, err := s.ReadRestorationUnit(grid.Type, int(grid.Plane), refs, cdfs)
 			if err != nil {
 				return 0, err
 			}
 			dst[count] = RestorationUnitRecord{
-				Index: uint32(row)*uint32(grid.HorzUnits) + uint32(col),
-				Col:   col,
-				Row:   row,
-				Unit:  unit,
+				Index:       uint32(row)*uint32(grid.HorzUnits) + uint32(col),
+				Col:         col,
+				Row:         row,
+				Rect:        rect,
+				StripeCount: uint8(stripeCount),
+				Unit:        unit,
 			}
 			count++
 		}

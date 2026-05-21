@@ -139,10 +139,10 @@ func TestReadRestorationUnitsForSuperblock(t *testing.T) {
 		t.Fatalf("n=%d", n)
 	}
 	want := [4]RestorationUnitRecord{
-		{Index: 0, Col: 0, Row: 0, Unit: RestorationUnit{Type: parser.RestorationNone}},
-		{Index: 1, Col: 1, Row: 0, Unit: RestorationUnit{Type: parser.RestorationNone}},
-		{Index: 2, Col: 0, Row: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
-		{Index: 3, Col: 1, Row: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 0, Col: 0, Row: 0, Rect: RestorationUnitRect{X0: 0, Y0: 0, X1: 64, Y1: 56}, StripeCount: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 1, Col: 1, Row: 0, Rect: RestorationUnitRect{X0: 64, Y0: 0, X1: 128, Y1: 56}, StripeCount: 1, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 2, Col: 0, Row: 1, Rect: RestorationUnitRect{X0: 0, Y0: 56, X1: 64, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
+		{Index: 3, Col: 1, Row: 1, Rect: RestorationUnitRect{X0: 64, Y0: 56, X1: 128, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
 	}
 	for i := 0; i < n; i++ {
 		if records[i] != want[i] {
