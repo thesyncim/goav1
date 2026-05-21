@@ -38,6 +38,33 @@ func (v Vector) IsFullpel() bool {
 	return v.Row&(SubpelScale-1) == 0 && v.Col&(SubpelScale-1) == 0
 }
 
+// LowerPrecision applies libaom's lower_mv_precision() rule to v.
+func LowerPrecision(v Vector, allowHighPrecision bool, forceInteger bool) Vector {
+	if forceInteger {
+		return Vector{
+			Row: lowerIntegerPrecision(v.Row),
+			Col: lowerIntegerPrecision(v.Col),
+		}
+	}
+	if !allowHighPrecision {
+		if v.Row&1 != 0 {
+			if v.Row > 0 {
+				v.Row--
+			} else {
+				v.Row++
+			}
+		}
+		if v.Col&1 != 0 {
+			if v.Col > 0 {
+				v.Col--
+			} else {
+				v.Col++
+			}
+		}
+	}
+	return v
+}
+
 // FullpelOffset returns v's full-sample column/row offset. Fractional vectors
 // are rejected until interpolation filters are wired in.
 func (v Vector) FullpelOffset() (int, int, error) {
@@ -273,6 +300,29 @@ func scaleFullpel(v int) (int32, bool) {
 		return 0, false
 	}
 	return int32(scaled), true
+}
+
+func lowerIntegerPrecision(v int32) int32 {
+	mod := v % SubpelScale
+	if mod == 0 {
+		return v
+	}
+	v -= mod
+	if absInt32(mod) > SubpelScale/2 {
+		if mod > 0 {
+			v += SubpelScale
+		} else {
+			v -= SubpelScale
+		}
+	}
+	return v
+}
+
+func absInt32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func checkedAdd(a int, b int) (int, bool) {

@@ -1,0 +1,11 @@
+go test fuzz v1
+byte('\x02')
+uint16(709)
+uint16(65)
+uint16(98)
+uint16(61)
+byte('K')
+bool(false)
+byte('\x00')
+bool(false)
+bool(false)

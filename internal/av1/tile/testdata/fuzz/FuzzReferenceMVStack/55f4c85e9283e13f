@@ -1,0 +1,11 @@
+go test fuzz v1
+byte('\x04')
+uint16(643)
+uint16(3)
+uint16(700)
+uint16(1)
+byte('\x04')
+bool(true)
+byte(',')
+bool(false)
+bool(true)

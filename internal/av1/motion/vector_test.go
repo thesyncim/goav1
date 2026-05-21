@@ -37,6 +37,31 @@ func TestFullpelVectorAndReferenceOrigin(t *testing.T) {
 	}
 }
 
+func TestLowerPrecisionMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		name               string
+		in                 Vector
+		allowHighPrecision bool
+		forceInteger       bool
+		want               Vector
+	}{
+		{name: "high precision keeps eighth pel", in: Vector{Row: 3, Col: -5}, allowHighPrecision: true, want: Vector{Row: 3, Col: -5}},
+		{name: "low precision moves odd components toward zero", in: Vector{Row: 3, Col: -3}, want: Vector{Row: 2, Col: -2}},
+		{name: "low precision keeps even components", in: Vector{Row: 6, Col: -4}, want: Vector{Row: 6, Col: -4}},
+		{name: "integer rounds positive over half", in: Vector{Row: 5, Col: 12}, allowHighPrecision: true, forceInteger: true, want: Vector{Row: 8, Col: 8}},
+		{name: "integer rounds negative over half", in: Vector{Row: -5, Col: -12}, forceInteger: true, want: Vector{Row: -8, Col: -8}},
+		{name: "integer ties round toward zero", in: Vector{Row: 4, Col: -4}, forceInteger: true, want: Vector{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := LowerPrecision(tt.in, tt.allowHighPrecision, tt.forceInteger)
+			if got != tt.want {
+				t.Fatalf("LowerPrecision(%+v)=%+v want %+v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPredictInterPlaneBlock8Bit(t *testing.T) {
 	src, _ := testPlane(7, 6, 1, 9)
 	dst, _ := testPlane(7, 6, 1, 9)
