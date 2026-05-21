@@ -102,6 +102,8 @@ The initial implementation covers:
   surfaces, including format-checked acquire and atomic batch release.
 - Pure-Go DSP plane-block fill, copy, and clipped residual-add primitives for
   reconstruction reference paths.
+- Pure-Go intra plane prediction for DC, vertical, and horizontal
+  reconstruction blocks with caller-owned edge buffers.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
