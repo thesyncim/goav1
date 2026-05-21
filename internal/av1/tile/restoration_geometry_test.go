@@ -119,6 +119,64 @@ func TestRestorationProcessingStripesMatchLibaom(t *testing.T) {
 	assertRestorationStripes(t, uv, uvRect, uvWant)
 }
 
+func TestRestorationProcessingUnitsMatchLibaomWidths(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 128,
+	}
+	grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}, parser.ColorConfig{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rect, err := grid.UnitRect(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripe, ok, err := grid.ProcessingStripe(rect, 0)
+	if err != nil || !ok {
+		t.Fatalf("stripe ok=%v err=%v", ok, err)
+	}
+
+	wienerWant := []RestorationProcessingUnit{
+		{FilterRect: RestorationUnitRect{X0: 128, Y0: 120, X1: 192, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 128, Y0: 120, X1: 192, Y1: 184}},
+		{FilterRect: RestorationUnitRect{X0: 192, Y0: 120, X1: 256, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 192, Y0: 120, X1: 256, Y1: 184}},
+		{FilterRect: RestorationUnitRect{X0: 256, Y0: 120, X1: 304, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 256, Y0: 120, X1: 300, Y1: 184}},
+	}
+	assertRestorationProcessingUnits(t, grid, stripe, parser.RestorationWiener, wienerWant)
+
+	sgrWant := []RestorationProcessingUnit{
+		{FilterRect: RestorationUnitRect{X0: 128, Y0: 120, X1: 192, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 128, Y0: 120, X1: 192, Y1: 184}},
+		{FilterRect: RestorationUnitRect{X0: 192, Y0: 120, X1: 256, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 192, Y0: 120, X1: 256, Y1: 184}},
+		{FilterRect: RestorationUnitRect{X0: 256, Y0: 120, X1: 300, Y1: 184}, VisibleRect: RestorationUnitRect{X0: 256, Y0: 120, X1: 300, Y1: 184}},
+	}
+	assertRestorationProcessingUnits(t, grid, stripe, parser.RestorationSGRProj, sgrWant)
+}
+
+func TestRestorationProcessingUnitsChromaWidths(t *testing.T) {
+	params := parser.RestorationParams{
+		Type:       [3]parser.RestorationType{parser.RestorationNone, parser.RestorationWiener},
+		UnitSizeUV: 64,
+	}
+	grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rect, err := grid.UnitRect(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripe, ok, err := grid.ProcessingStripe(rect, 0)
+	if err != nil || !ok {
+		t.Fatalf("stripe ok=%v err=%v", ok, err)
+	}
+	want := []RestorationProcessingUnit{
+		{FilterRect: RestorationUnitRect{X0: 64, Y0: 60, X1: 96, Y1: 92}, VisibleRect: RestorationUnitRect{X0: 64, Y0: 60, X1: 96, Y1: 92}},
+		{FilterRect: RestorationUnitRect{X0: 96, Y0: 60, X1: 128, Y1: 92}, VisibleRect: RestorationUnitRect{X0: 96, Y0: 60, X1: 128, Y1: 92}},
+		{FilterRect: RestorationUnitRect{X0: 128, Y0: 60, X1: 160, Y1: 92}, VisibleRect: RestorationUnitRect{X0: 128, Y0: 60, X1: 150, Y1: 92}},
+	}
+	assertRestorationProcessingUnits(t, grid, stripe, parser.RestorationWiener, want)
+}
+
 func TestRestorationGeometryRejectsInvalidInputs(t *testing.T) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -146,6 +204,13 @@ func TestRestorationGeometryRejectsInvalidInputs(t *testing.T) {
 	none.Type = parser.RestorationNone
 	if _, err := none.UnitRect(0, 0); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("none rect err=%v want %v", err, ErrInvalidPlan)
+	}
+	stripe, ok, err := grid.ProcessingStripe(rect, 0)
+	if err != nil || !ok {
+		t.Fatalf("stripe ok=%v err=%v", ok, err)
+	}
+	if _, _, err := grid.ProcessingUnit(stripe, parser.RestorationNone, 0); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("none unit err=%v want %v", err, ErrInvalidPlan)
 	}
 }
 
@@ -257,6 +322,64 @@ func FuzzRestorationUnitGeometry(f *testing.F) {
 	})
 }
 
+func FuzzRestorationProcessingUnit(f *testing.F) {
+	f.Add(uint16(300), uint16(260), uint8(1), uint8(0), uint8(1), uint8(1), uint8(0), false, false)
+	f.Add(uint16(300), uint16(260), uint8(0), uint8(1), uint8(1), uint8(1), uint8(2), true, true)
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawUnit uint8, rawPlane uint8, rawCol uint8, rawRow uint8, rawIndex uint8, ssX bool, ssY bool) {
+		unitSizes := [...]uint16{64, 128, 256}
+		unitSize := unitSizes[rawUnit%uint8(len(unitSizes))]
+		plane := int(rawPlane % 3)
+		params := parser.RestorationParams{
+			Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationWiener, parser.RestorationWiener},
+			UnitSizeY:  unitSize,
+			UnitSizeUV: unitSize,
+		}
+		grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{
+			UpscaledWidth:       uint32(rawW) + 1,
+			Height:              uint32(rawH) + 1,
+			SuperResDenominator: 8,
+		}, parser.ColorConfig{SubsamplingX: ssX, SubsamplingY: ssY}, plane)
+		if err != nil {
+			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
+		}
+		rect, err := grid.UnitRect(uint16(rawCol)%grid.HorzUnits, uint16(rawRow)%grid.VertUnits)
+		if err != nil {
+			t.Fatalf("UnitRect err=%v", err)
+		}
+		stripe, ok, err := grid.ProcessingStripe(rect, int(rawIndex%4))
+		if err != nil {
+			t.Fatalf("ProcessingStripe err=%v", err)
+		}
+		if !ok {
+			return
+		}
+		for _, typ := range [...]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj} {
+			count, err := grid.ProcessingUnitCount(stripe, typ)
+			if err != nil {
+				t.Fatalf("ProcessingUnitCount err=%v", err)
+			}
+			if count == 0 {
+				t.Fatal("empty processing units")
+			}
+			prevX := stripe.Rect.X0
+			for i := 0; i < count; i++ {
+				unit, ok, err := grid.ProcessingUnit(stripe, typ, i)
+				if err != nil || !ok {
+					t.Fatalf("ProcessingUnit %d err=%v ok=%v", i, err, ok)
+				}
+				if unit.VisibleRect.X0 != prevX || unit.FilterRect.X0 != prevX ||
+					unit.VisibleRect.X1 > stripe.Rect.X1 ||
+					unit.FilterRect.X1 < unit.VisibleRect.X1 ||
+					unit.VisibleRect.Y0 != stripe.Rect.Y0 || unit.VisibleRect.Y1 != stripe.Rect.Y1 ||
+					unit.FilterRect.Width() > uint32(stripe.ProcUnitWidth) {
+					t.Fatalf("bad unit=%+v stripe=%+v", unit, stripe)
+				}
+				prevX += uint32(stripe.ProcUnitWidth)
+			}
+		}
+	})
+}
+
 func BenchmarkRestorationUnitGeometry(b *testing.B) {
 	params := parser.RestorationParams{
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
@@ -273,6 +396,29 @@ func BenchmarkRestorationUnitGeometry(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = grid.ProcessingStripe(rect, i&3)
+	}
+}
+
+func BenchmarkRestorationProcessingUnit(b *testing.B) {
+	params := parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 128,
+	}
+	grid, err := BuildRestorationPlaneGrid(params, parser.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}, parser.ColorConfig{}, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	rect, err := grid.UnitRect(1, 1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	stripe, ok, err := grid.ProcessingStripe(rect, 0)
+	if err != nil || !ok {
+		b.Fatalf("stripe ok=%v err=%v", ok, err)
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = grid.ProcessingUnit(stripe, parser.RestorationWiener, i%4)
 	}
 }
 
@@ -300,5 +446,32 @@ func assertRestorationStripes(t *testing.T, grid RestorationPlaneGrid, rect Rest
 	}
 	if ok || got != (RestorationProcessingStripe{}) {
 		t.Fatalf("past-end stripe=%+v ok=%v", got, ok)
+	}
+}
+
+func assertRestorationProcessingUnits(t *testing.T, grid RestorationPlaneGrid, stripe RestorationProcessingStripe, typ parser.RestorationType, want []RestorationProcessingUnit) {
+	t.Helper()
+	count, err := grid.ProcessingUnitCount(stripe, typ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != len(want) {
+		t.Fatalf("count=%d want %d", count, len(want))
+	}
+	for i, w := range want {
+		got, ok, err := grid.ProcessingUnit(stripe, typ, i)
+		if err != nil {
+			t.Fatalf("unit %d err=%v", i, err)
+		}
+		if !ok || got != w {
+			t.Fatalf("unit %d=%+v ok=%v want %+v", i, got, ok, w)
+		}
+	}
+	got, ok, err := grid.ProcessingUnit(stripe, typ, len(want))
+	if err != nil {
+		t.Fatalf("past-end err=%v", err)
+	}
+	if ok || got != (RestorationProcessingUnit{}) {
+		t.Fatalf("past-end unit=%+v ok=%v", got, ok)
 	}
 }

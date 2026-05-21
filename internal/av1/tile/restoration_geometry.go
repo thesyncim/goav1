@@ -1,6 +1,9 @@
 package tile
 
-import av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+import (
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+)
 
 const restorationUnitOffset = 8
 
@@ -21,6 +24,15 @@ type RestorationProcessingStripe struct {
 	TileStripe    uint16
 	CopyAbove     bool
 	CopyBelow     bool
+}
+
+// RestorationProcessingUnit is one horizontal processing unit inside a stripe.
+// FilterRect is the primitive's exact block. For Wiener, libaom rounds the
+// final block width up to a 16-sample boundary, so FilterRect may extend past
+// VisibleRect at the right edge.
+type RestorationProcessingUnit struct {
+	FilterRect  RestorationUnitRect
+	VisibleRect RestorationUnitRect
 }
 
 func (r RestorationUnitRect) Width() uint32 {
@@ -146,10 +158,94 @@ func (g RestorationPlaneGrid) ProcessingStripeCount(rect RestorationUnitRect) (i
 	}
 }
 
+// ProcessingUnit returns the index'th horizontal primitive block inside stripe,
+// using libaom's per-filter width rules.
+func (g RestorationPlaneGrid) ProcessingUnit(stripe RestorationProcessingStripe, typ parser.RestorationType, index int) (RestorationProcessingUnit, bool, error) {
+	if index < 0 || stripe.ProcUnitWidth == 0 || !stripe.Rect.valid() ||
+		stripe.Rect.X1 > g.PlaneWidth || stripe.Rect.Y1 > g.PlaneHeight {
+		return RestorationProcessingUnit{}, false, ErrInvalidPlan
+	}
+	procWidth := uint32(stripe.ProcUnitWidth)
+	if procWidth == 0 {
+		return RestorationProcessingUnit{}, false, ErrInvalidPlan
+	}
+	x := stripe.Rect.X0
+	for unitIndex := 0; x < stripe.Rect.X1; unitIndex++ {
+		remaining := stripe.Rect.X1 - x
+		filterWidth, err := restorationProcessingUnitWidth(typ, remaining, procWidth)
+		if err != nil {
+			return RestorationProcessingUnit{}, false, err
+		}
+		visibleWidth := minUint32(filterWidth, remaining)
+		if unitIndex == index {
+			return RestorationProcessingUnit{
+				FilterRect: RestorationUnitRect{
+					X0: x,
+					Y0: stripe.Rect.Y0,
+					X1: x + filterWidth,
+					Y1: stripe.Rect.Y1,
+				},
+				VisibleRect: RestorationUnitRect{
+					X0: x,
+					Y0: stripe.Rect.Y0,
+					X1: x + visibleWidth,
+					Y1: stripe.Rect.Y1,
+				},
+			}, true, nil
+		}
+		x += procWidth
+	}
+	return RestorationProcessingUnit{}, false, nil
+}
+
+func (g RestorationPlaneGrid) ProcessingUnitCount(stripe RestorationProcessingStripe, typ parser.RestorationType) (int, error) {
+	if stripe.ProcUnitWidth == 0 || !stripe.Rect.valid() ||
+		stripe.Rect.X1 > g.PlaneWidth || stripe.Rect.Y1 > g.PlaneHeight {
+		return 0, ErrInvalidPlan
+	}
+	count := 0
+	for {
+		unit, ok, err := g.ProcessingUnit(stripe, typ, count)
+		if err != nil || !ok {
+			return count, err
+		}
+		if !unit.FilterRect.valid() || !unit.VisibleRect.valid() ||
+			unit.VisibleRect.X0 != unit.FilterRect.X0 ||
+			unit.VisibleRect.Y0 != unit.FilterRect.Y0 ||
+			unit.VisibleRect.Y1 != unit.FilterRect.Y1 ||
+			unit.VisibleRect.X1 > stripe.Rect.X1 ||
+			unit.FilterRect.X1 < unit.VisibleRect.X1 {
+			return 0, ErrInvalidPlan
+		}
+		count++
+	}
+}
+
+func restorationProcessingUnitWidth(typ parser.RestorationType, remaining uint32, procWidth uint32) (uint32, error) {
+	if remaining == 0 || procWidth == 0 {
+		return 0, ErrInvalidPlan
+	}
+	switch typ {
+	case parser.RestorationWiener:
+		return minUint32(procWidth, roundUpUint32(remaining, 16)), nil
+	case parser.RestorationSGRProj:
+		return minUint32(procWidth, remaining), nil
+	default:
+		return 0, ErrInvalidPlan
+	}
+}
+
 func (g RestorationPlaneGrid) validGeometry() bool {
 	return g.valid() && g.PlaneWidth > 0 && g.PlaneHeight > 0
 }
 
 func (r RestorationUnitRect) valid() bool {
 	return r.X0 < r.X1 && r.Y0 < r.Y1
+}
+
+func roundUpUint32(v uint32, align uint32) uint32 {
+	if align == 0 {
+		return v
+	}
+	return (v + align - 1) &^ (align - 1)
 }

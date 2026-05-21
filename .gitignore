@@ -7,5 +7,4 @@ coverage.out
 *.prof
 *.pprof
 *.tmp
-**/testdata/fuzz/
 third_party/upstream/
