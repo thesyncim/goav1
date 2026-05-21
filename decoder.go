@@ -59,3 +59,11 @@ func PlanDecoderTileWork(event DecoderEvent, workers int, spans []TileSpan, jobs
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
 }
+
+func DecoderFinishFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, event DecoderEvent, surface int, releases []int) (int, error) {
+	return internaldecoder.FinishFrameSurface(refs, pool, event, surface, releases)
+}
+
+func DecoderShowExistingFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, event DecoderEvent, releases []int) (int, int, error) {
+	return internaldecoder.ShowExistingFrameSurface(refs, pool, event, releases)
+}
