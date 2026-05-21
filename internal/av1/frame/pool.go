@@ -63,6 +63,20 @@ func (p *Pool) Available() int {
 	return p.top
 }
 
+func (p *Pool) Format() (Format, error) {
+	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
+		return Format{}, ErrInvalidPool
+	}
+	return p.frames[0].Format, nil
+}
+
+func (p *Pool) Layout() (Layout, error) {
+	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
+		return Layout{}, ErrInvalidPool
+	}
+	return p.frames[0].Layout, nil
+}
+
 func (p *Pool) Frame(index int) (*Frame, error) {
 	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
 		return nil, ErrInvalidPool
@@ -88,6 +102,21 @@ func (p *Pool) Acquire() (int, *Frame, error) {
 	}
 	p.used[index] = true
 	return index, &p.frames[index], nil
+}
+
+func (p *Pool) AcquireFormat(format Format) (int, *Frame, error) {
+	format, err := normalizeFormat(format)
+	if err != nil {
+		return -1, nil, err
+	}
+	poolFormat, err := p.Format()
+	if err != nil {
+		return -1, nil, err
+	}
+	if poolFormat != format {
+		return -1, nil, ErrInvalidFormat
+	}
+	return p.Acquire()
 }
 
 func (p *Pool) Release(index int) error {

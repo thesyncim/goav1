@@ -115,6 +115,88 @@ func TestFramePoolFrame(t *testing.T) {
 	}
 }
 
+func TestFramePoolFormatAndLayout(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size)
+	var frames [1]Frame
+	var free [1]int
+	var used [1]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolFormat, err := pool.Format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poolFormat != format {
+		t.Fatalf("format=%+v want %+v", poolFormat, format)
+	}
+	poolLayout, err := pool.Layout()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poolLayout != layout {
+		t.Fatalf("layout=%+v want %+v", poolLayout, layout)
+	}
+}
+
+func TestFramePoolAcquireFormat(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size)
+	var frames [1]Frame
+	var free [1]int
+	var used [1]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, acquired, err := pool.AcquireFormat(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 0 || acquired == nil {
+		t.Fatalf("index=%d frame=%p", index, acquired)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("available=%d want 0", pool.Available())
+	}
+}
+
+func TestFramePoolAcquireFormatRejectsMismatch(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size)
+	var frames [1]Frame
+	var free [1]int
+	var used [1]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = pool.AcquireFormat(Format{Width: 32, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	if !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("AcquireFormat err=%v want %v", err, ErrInvalidFormat)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("mismatch consumed a slot, available=%d", pool.Available())
+	}
+}
+
 func TestFramePoolReleaseMany(t *testing.T) {
 	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
 	layout, err := RequiredSize(format)
@@ -295,7 +377,7 @@ func TestFramePoolAllocs(t *testing.T) {
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		index0, _, err := pool.Acquire()
+		index0, _, err := pool.AcquireFormat(format)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -336,6 +418,33 @@ func BenchmarkFramePoolAcquireRelease(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		index, _, err := pool.Acquire()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := pool.Release(index); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFramePoolAcquireFormatRelease(b *testing.B) {
+	format := Format{Width: 1920, Height: 1080, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*4)
+	var frames [4]Frame
+	var free [4]int
+	var used [4]bool
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		index, _, err := pool.AcquireFormat(format)
 		if err != nil {
 			b.Fatal(err)
 		}

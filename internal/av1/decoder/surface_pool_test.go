@@ -44,6 +44,31 @@ func TestFinishFrameSurfaceReleasesPool(t *testing.T) {
 	}
 }
 
+func TestAcquireFrameSurface(t *testing.T) {
+	pool := testFramePool(t, 1)
+	index, acquired, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(16, 16), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 0 || acquired == nil {
+		t.Fatalf("index=%d frame=%p", index, acquired)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("available=%d want 0", pool.Available())
+	}
+}
+
+func TestAcquireFrameSurfaceRejectsFormatMismatch(t *testing.T) {
+	pool := testFramePool(t, 1)
+	_, _, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(32, 16), 32)
+	if !errors.Is(err, frame.ErrInvalidFormat) {
+		t.Fatalf("AcquireFrameSurface err=%v want %v", err, frame.ErrInvalidFormat)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("mismatch consumed a slot, available=%d", pool.Available())
+	}
+}
+
 func TestFinishFrameSurfaceRejectsPoolReleaseAtomically(t *testing.T) {
 	pool := testFramePool(t, 2)
 	index0, _, err := pool.Acquire()
@@ -124,15 +149,17 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
 	event := finalFrameEvent(0xff)
+	sequence := testSequence()
+	size := testFrameSize(16, 16)
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()
 		refs.Reset()
-		index0, _, err := pool.Acquire()
+		index0, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
 		if err != nil {
 			t.Fatal(err)
 		}
-		index1, _, err := pool.Acquire()
+		index1, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,21 +175,41 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 	}
 }
 
+func BenchmarkAcquireFrameSurface(b *testing.B) {
+	pool := benchmarkFramePool(b, 1)
+	sequence := testSequence()
+	size := testFrameSize(16, 16)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		index, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := pool.Release(index); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkFinishFrameSurface(b *testing.B) {
 	pool := benchmarkFramePool(b, 2)
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
 	event := finalFrameEvent(0xff)
+	sequence := testSequence()
+	size := testFrameSize(16, 16)
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		pool.Reset()
 		refs.Reset()
-		index0, _, err := pool.Acquire()
+		index0, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
 		if err != nil {
 			b.Fatal(err)
 		}
-		index1, _, err := pool.Acquire()
+		index1, _, err := AcquireFrameSurface(&pool, sequence, size, 32)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -173,6 +220,18 @@ func BenchmarkFinishFrameSurface(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func testSequence() parser.SequenceHeader {
+	return parser.SequenceHeader{ColorConfig: parser.ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+}
+
+func testFrameSize(width uint32, height uint32) parser.FrameSize {
+	return parser.FrameSize{CodedWidth: width, Height: height}
 }
 
 func finalFrameEvent(refresh uint8) Event {

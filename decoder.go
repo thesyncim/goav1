@@ -60,6 +60,10 @@ func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
 }
 
+func DecoderAcquireFrameSurface(pool *FramePool, sequence SequenceHeader, size FrameSize, align int) (int, *Frame, error) {
+	return internaldecoder.AcquireFrameSurface(pool, sequence, size, align)
+}
+
 func DecoderFinishFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, event DecoderEvent, surface int, releases []int) (int, error) {
 	return internaldecoder.FinishFrameSurface(refs, pool, event, surface, releases)
 }

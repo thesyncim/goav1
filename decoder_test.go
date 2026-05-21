@@ -19,11 +19,18 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	index0, _, err := pool.Acquire()
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	size := FrameSize{CodedWidth: 16, Height: 16}
+
+	index0, _, err := DecoderAcquireFrameSurface(&pool, sequence, size, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	index1, _, err := pool.Acquire()
+	index1, _, err := DecoderAcquireFrameSurface(&pool, sequence, size, 32)
 	if err != nil {
 		t.Fatal(err)
 	}

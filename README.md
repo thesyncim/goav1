@@ -74,7 +74,7 @@ The initial implementation covers:
   inter-reference lookup helpers with atomic frame-pool release.
 - Caller-buffer frame plane layout and binding primitives.
 - Caller-owned deterministic frame pools for reusable and retained decode
-  surfaces, including atomic batch release.
+  surfaces, including format-checked acquire and atomic batch release.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
