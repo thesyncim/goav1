@@ -38,6 +38,15 @@ func (r *SurfaceReferences) Holds(surface int) bool {
 	return slotsHold(r.slots, surface)
 }
 
+// FinishFrame applies the reference refresh described by a complete decoded
+// frame event.
+func (r *SurfaceReferences) FinishFrame(event Event, surface int, releases []int) (int, error) {
+	if (event.Kind != EventFrame && event.Kind != EventTileGroup) || !event.TileGroup.Final {
+		return 0, ErrInvalidSurfaceEvent
+	}
+	return r.Refresh(event.FrameSize.RefreshFrameFlags, surface, releases)
+}
+
 // Refresh applies AV1 refresh_frame_flags for a decoded surface. It returns the
 // unique previously referenced surfaces that are no longer held by any
 // reference slot.
@@ -62,6 +71,24 @@ func (r *SurfaceReferences) Refresh(flags uint8, surface int, releases []int) (i
 		next[i] = surface
 	}
 	return r.apply(next, overwritten[:overwrittenCount], releases)
+}
+
+// ShowExistingFrame returns the referenced output surface for a
+// show_existing_frame event and applies the key-frame reference reset when AV1
+// requires it. The first return value is the surface to output.
+func (r *SurfaceReferences) ShowExistingFrame(event Event, releases []int) (int, int, error) {
+	if event.Kind != EventExistingFrame || !event.FrameHeader.ShowExistingFrame {
+		return -1, 0, ErrInvalidSurfaceEvent
+	}
+	surface, ok := r.ReferenceSlot(int(event.FrameHeader.ExistingFrameIdx))
+	if !ok {
+		return -1, 0, ErrInvalidSurfaceReference
+	}
+	count, err := r.ShowExisting(surface, event.ExistingFrame.FrameType, releases)
+	if err != nil {
+		return -1, 0, err
+	}
+	return surface, count, nil
 }
 
 // ShowExisting applies the AV1 key-frame show-existing reset to the surface

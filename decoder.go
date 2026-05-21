@@ -36,6 +36,7 @@ var (
 	ErrDecoderMissingFrameHeader           = internaldecoder.ErrMissingFrameHeader
 	ErrDecoderEventBufferTooSmall          = internaldecoder.ErrEventBufferTooSmall
 	ErrDecoderInvalidTileWork              = internaldecoder.ErrInvalidTileWork
+	ErrDecoderInvalidSurfaceEvent          = internaldecoder.ErrInvalidSurfaceEvent
 	ErrDecoderInvalidSurfaceReference      = internaldecoder.ErrInvalidSurfaceReference
 	ErrDecoderSurfaceReleaseBufferTooSmall = internaldecoder.ErrSurfaceReleaseBufferTooSmall
 
