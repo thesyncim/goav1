@@ -1,8 +1,9 @@
 package prediction
 
 const (
-	intraEdgeMaxSize = 129
-	intraEdgeTaps    = 5
+	intraEdgeMaxSize         = 129
+	intraEdgeMaxUpsampleSize = 16
+	intraEdgeTaps            = 5
 )
 
 var intraEdgeFilterKernels = [3][intraEdgeTaps]int{
@@ -46,6 +47,48 @@ func FilterIntraEdge(edge []uint16, scratch []uint16, strength uint8, bitDepth u
 			sum += int(scratch[k]) * kernel[j]
 		}
 		edge[i] = uint16((sum + 8) >> 4)
+	}
+	return nil
+}
+
+// UpsampleIntraEdge applies libaom's av1_upsample_intra_edge_c interpolation
+// to edge in-place. origin identifies C's p[0] inside edge; edge[origin-1] is
+// p[-1], and the function writes p[-2] through p[2*size-2].
+func UpsampleIntraEdge(edge []uint16, origin int, size int, scratch []uint16, bitDepth uint8) error {
+	if size <= 0 || size > intraEdgeMaxUpsampleSize || origin < 2 {
+		return ErrInvalidPrediction
+	}
+	if origin > len(edge)-size || origin > len(edge)-(2*size-1) {
+		return ErrInvalidPrediction
+	}
+	if len(scratch) < size+3 {
+		return ErrInvalidPrediction
+	}
+	max, err := intraEdgeSampleMax(bitDepth)
+	if err != nil {
+		return err
+	}
+	if err := validateSamples(edge[origin-1:origin+size], max); err != nil {
+		return err
+	}
+
+	scratch[0] = edge[origin-1]
+	scratch[1] = edge[origin-1]
+	copy(scratch[2:2+size], edge[origin:origin+size])
+	lastSource := origin + size - 1
+	scratch[size+2] = edge[lastSource]
+
+	edge[origin-2] = scratch[0]
+	for i := 0; i < size; i++ {
+		sum := -int(scratch[i]) + 9*int(scratch[i+1]) + 9*int(scratch[i+2]) - int(scratch[i+3])
+		sample := (sum + 8) >> 4
+		if sample < 0 {
+			sample = 0
+		} else if sample > int(max) {
+			sample = int(max)
+		}
+		edge[origin+2*i-1] = uint16(sample)
+		edge[origin+2*i] = scratch[i+2]
 	}
 	return nil
 }
