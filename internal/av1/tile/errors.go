@@ -3,6 +3,7 @@ package tile
 import "errors"
 
 var (
-	ErrInvalidPlan       = errors.New("tile: invalid work plan")
-	ErrJobBufferTooSmall = errors.New("tile: job buffer too small")
+	ErrInvalidDecodeState = errors.New("tile: invalid decode state")
+	ErrInvalidPlan        = errors.New("tile: invalid work plan")
+	ErrJobBufferTooSmall  = errors.New("tile: job buffer too small")
 )

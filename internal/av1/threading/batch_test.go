@@ -169,6 +169,68 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobDecodeState(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0x00, 0xff, 0x00},
+		Jobs: []tile.Job{
+			{Tile: 0, Offset: 0, Size: 1},
+			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
+		},
+	}
+	var state tile.DecodeState
+
+	if err := ctx.JobDecodeState(1, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Job.Tile != 1 {
+		t.Fatalf("state job=%+v", state.Job)
+	}
+	if !state.Reader.AllowCDFUpdate() {
+		t.Fatal("CDF update disabled")
+	}
+	if !state.RetainFrameContext {
+		t.Fatal("frame context not retained")
+	}
+	bit, err := state.Reader.ReadBit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bit != 1 {
+		t.Fatalf("bit=%d want 1", bit)
+	}
+
+	ctx.DisableCDFUpdate = true
+	if err := ctx.JobDecodeState(1, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Reader.AllowCDFUpdate() {
+		t.Fatal("CDF update enabled")
+	}
+	if state.RetainFrameContext {
+		t.Fatal("frame context retained")
+	}
+}
+
+func TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0xaa},
+		Jobs:    []tile.Job{{Offset: 0, Size: 2}},
+	}
+	var state tile.DecodeState
+	if err := ctx.JobDecodeState(-1, &state); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("negative index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.JobDecodeState(1, &state); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("large index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.JobDecodeState(0, nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil state err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.JobDecodeState(0, &state); !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("invalid range err=%v want %v", err, tile.ErrInvalidPlan)
+	}
+}
+
 func TestFrameWorkBatchJobUpdatesFrameContext(t *testing.T) {
 	ctx := FrameWorkBatch{
 		Jobs: []tile.Job{
@@ -276,6 +338,35 @@ func TestFrameWorkBatchJobEntropyReaderAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0x00, 0xff, 0x00},
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 1, UpdatesFrameContext: true},
+		},
+	}
+	var state tile.DecodeState
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.JobDecodeState(1, &state); err != nil {
+			t.Fatal(err)
+		}
+		if !state.RetainFrameContext {
+			t.Fatal("frame context not retained")
+		}
+		bit, err := state.Reader.ReadBit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bit != 1 {
+			t.Fatalf("bit=%d want 1", bit)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.JobDecodeState allocated: %f", allocs)
+	}
+}
+
 func FuzzBuildBatches(f *testing.F) {
 	f.Add([]byte{2, 3, 2, 2, 2, 3, 3, 2, 3})
 	f.Add([]byte{8, 1, 1})
@@ -379,8 +470,16 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 			}
 			return
 		}
+		var state tile.DecodeState
+		if err := ctx.JobDecodeState(0, &state); err != nil {
+			t.Fatalf("JobDecodeState err=%v after JobEntropyReader success", err)
+		}
 		if r.AllowCDFUpdate() == disableCDFUpdate {
 			t.Fatalf("AllowCDFUpdate=%v disableCDFUpdate=%v", r.AllowCDFUpdate(), disableCDFUpdate)
+		}
+		wantRetain := job.UpdatesFrameContext && !disableCDFUpdate
+		if state.RetainFrameContext != wantRetain {
+			t.Fatalf("RetainFrameContext=%v want %v", state.RetainFrameContext, wantRetain)
 		}
 		if _, err := r.ReadBit(); err != nil {
 			t.Fatalf("ReadBit err=%v", err)
@@ -427,6 +526,22 @@ func BenchmarkFrameWorkBatchJobEntropyReader(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.JobEntropyReader(1)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0x00, 0xff, 0x00},
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 1, UpdatesFrameContext: true},
+		},
+	}
+	var state tile.DecodeState
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = ctx.JobDecodeState(1, &state)
 	}
 }
 

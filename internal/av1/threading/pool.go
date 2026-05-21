@@ -46,6 +46,17 @@ func (b FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
 	})
 }
 
+// JobDecodeState initializes state for Jobs[index]'s exact tile payload. The
+// state records whether this job's adapted entropy context should be retained.
+func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error {
+	if index < 0 || index >= len(b.Jobs) || state == nil {
+		return ErrInvalidBatch
+	}
+	return state.Reset(b.Payload, b.Jobs[index], tile.DecodeOptions{
+		DisableCDFUpdate: b.DisableCDFUpdate,
+	})
+}
+
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
 // whose adapted entropy state should refresh the frame context.
 func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {

@@ -7,6 +7,15 @@ type DecodeOptions struct {
 	DisableCDFUpdate bool
 }
 
+// DecodeState is caller-owned per-tile decode state. It binds a scheduled job
+// to an entropy reader and records whether this tile's adapted context should
+// be retained as the next frame context after decode succeeds.
+type DecodeState struct {
+	Job                Job
+	Reader             entropy.Reader
+	RetainFrameContext bool
+}
+
 // NewEntropyReader returns an AV1 entropy reader over job's exact tile payload.
 // The returned reader aliases payload and does not allocate.
 func NewEntropyReader(payload []byte, job Job, options DecodeOptions) (entropy.Reader, error) {
@@ -15,4 +24,21 @@ func NewEntropyReader(payload []byte, job Job, options DecodeOptions) (entropy.R
 		return entropy.Reader{}, err
 	}
 	return entropy.NewReaderWithCDFUpdate(data, !options.DisableCDFUpdate), nil
+}
+
+// Reset initializes s for job's exact tile payload without allocating.
+func (s *DecodeState) Reset(payload []byte, job Job, options DecodeOptions) error {
+	if s == nil {
+		return ErrInvalidDecodeState
+	}
+	reader, err := NewEntropyReader(payload, job, options)
+	if err != nil {
+		return err
+	}
+	*s = DecodeState{
+		Job:                job,
+		Reader:             reader,
+		RetainFrameContext: job.UpdatesFrameContext && !options.DisableCDFUpdate,
+	}
+	return nil
 }
