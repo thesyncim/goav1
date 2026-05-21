@@ -1,0 +1,8 @@
+go test fuzz v1
+uint16(127)
+uint16(130)
+byte('T')
+bool(true)
+bool(true)
+bool(true)
+uint32(2427178576)

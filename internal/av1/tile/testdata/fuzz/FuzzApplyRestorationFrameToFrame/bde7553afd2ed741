@@ -1,0 +1,8 @@
+go test fuzz v1
+uint16(64)
+uint16(3)
+byte('M')
+bool(true)
+bool(false)
+bool(true)
+uint32(305419896)

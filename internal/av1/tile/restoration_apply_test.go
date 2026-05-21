@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
 )
@@ -284,6 +285,107 @@ func TestRestorationFrameScratchLen(t *testing.T) {
 	bad[1].Grid.Plane = 2
 	if _, err := RestorationFrameScratchLen(bad, false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("bad plane order err=%v want %v", err, ErrInvalidPlan)
+	}
+}
+
+func TestRestorationFrameSampleScratchLenMatchesBorderedLayouts(t *testing.T) {
+	const bitDepth = 10
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}
+	plan := testRestorationFramePlan(t, types, false)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+
+	got, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yLayout, err := av1frame.BorderedSamplePlaneLen(frm.Y, 2, RestorationFrameBorder, RestorationFrameBorder, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uLayout, err := av1frame.BorderedSamplePlaneLen(frm.U, 2, RestorationFrameBorder, RestorationFrameBorder, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Data[0] != yLayout || got.Dst[0] != yLayout {
+		t.Fatalf("Y layouts=%+v/%+v want %+v", got.Data[0], got.Dst[0], yLayout)
+	}
+	if got.Data[1] != uLayout || got.Dst[1] != uLayout {
+		t.Fatalf("U layouts=%+v/%+v want %+v", got.Data[1], got.Dst[1], uLayout)
+	}
+	if got.Data[2] != (av1frame.BorderedSamplePlaneLayout{}) || got.Dst[2] != (av1frame.BorderedSamplePlaneLayout{}) {
+		t.Fatalf("disabled V layouts=%+v/%+v", got.Data[2], got.Dst[2])
+	}
+	if got.DataLen != yLayout.Len+uLayout.Len || got.DstLen != yLayout.Len+uLayout.Len {
+		t.Fatalf("scratch=%+v want data/dst len %d", got, yLayout.Len+uLayout.Len)
+	}
+
+	allNone := testRestorationFramePlan(t, [3]parser.RestorationType{}, false)
+	zero, err := RestorationFrameSampleScratchLen(allNone, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero != (RestorationFrameSampleScratchSize{}) {
+		t.Fatalf("all-none scratch=%+v", zero)
+	}
+}
+
+func TestApplyRestorationFrameToFrameMatchesSampleFlow(t *testing.T) {
+	const bitDepth = 10
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}
+	plan := testRestorationFramePlan(t, types, false)
+	planes := makeRestorationFramePlanes(t, types, bitDepth, false)
+	manualPlanes := cloneRestorationFramePlanes(planes)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+	fillFrameFromRestorationPlanes(t, frm, planes, bitDepth)
+
+	var records [3][]RestorationUnitRecord
+	var boundaries [3]RestorationStripeBoundaries
+	for plane := range planes {
+		records[plane] = planes[plane].Records
+		boundaries[plane] = planes[plane].Boundaries
+	}
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applySize, err := RestorationFrameScratchLen(planes, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ApplyRestorationFrame(manualPlanes, bitDepth, makeRestorationBoundaryApplyScratch(applySize), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ApplyRestorationFrameToFrame(plan, frm, records, boundaries, make([]uint16, sampleSize.DataLen), make([]uint16, sampleSize.DstLen), makeRestorationBoundaryApplyScratch(applySize), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("result=%+v want %+v", got, want)
+	}
+	assertFrameMatchesRestorationPlanes(t, frm, manualPlanes, bitDepth)
+}
+
+func TestApplyRestorationFrameToFrameRejectsInvalidInputs(t *testing.T) {
+	const bitDepth = 8
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone}
+	plan := testRestorationFramePlan(t, types, false)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+	records := makeRestorationFrameNoneRecords(t, plan)
+	size, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyRestorationFrameToFrame(plan, frm, records, [3]RestorationStripeBoundaries{}, make([]uint16, size.DataLen-1), make([]uint16, size.DstLen), RestorationUnitRecordBoundaryScratch{}, false); !errors.Is(err, ErrJobBufferTooSmall) {
+		t.Fatalf("short data err=%v want %v", err, ErrJobBufferTooSmall)
+	}
+	if _, err := ApplyRestorationFrameToFrame(plan, frm, records, [3]RestorationStripeBoundaries{}, make([]uint16, size.DataLen+1), make([]uint16, size.DstLen), RestorationUnitRecordBoundaryScratch{}, false); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("oversized data err=%v want %v", err, ErrInvalidPlan)
+	}
+	badFrame := frm
+	badFrame.Y.Width--
+	if _, err := RestorationFrameSampleScratchLen(plan, badFrame); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("bad frame err=%v want %v", err, ErrInvalidPlan)
 	}
 }
 
@@ -960,6 +1062,30 @@ func TestApplyRestorationFrameAllocs(t *testing.T) {
 	}
 }
 
+func TestApplyRestorationFrameToFrameAllocs(t *testing.T) {
+	const bitDepth = 8
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone}
+	plan := testRestorationFramePlan(t, types, false)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+	fillRestorationTestFrame(frm, bitDepth, 0x12345678)
+	records := makeRestorationFrameNoneRecords(t, plan)
+	size, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataScratch := make([]uint16, size.DataLen)
+	dstScratch := make([]uint16, size.DstLen)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ApplyRestorationFrameToFrame(plan, frm, records, [3]RestorationStripeBoundaries{}, dataScratch, dstScratch, RestorationUnitRecordBoundaryScratch{}, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ApplyRestorationFrameToFrame allocated: %f", allocs)
+	}
+}
+
 func FuzzApplyRestorationUnitNone(f *testing.F) {
 	f.Add(uint8(5), uint8(4), uint8(0), []byte{0, 1, 2, 3, 255})
 	f.Add(uint8(31), uint8(17), uint8(2), []byte{255, 1, 2, 3, 4})
@@ -1223,6 +1349,63 @@ func FuzzApplyRestorationFrame(f *testing.F) {
 	})
 }
 
+func FuzzApplyRestorationFrameToFrame(f *testing.F) {
+	f.Add(uint16(64), uint16(48), uint8(0), false, false, false, uint32(0x12345678))
+	f.Add(uint16(127), uint16(95), uint8(2), true, true, false, uint32(0x90abcdef))
+	f.Fuzz(func(t *testing.T, rawW uint16, rawH uint16, rawDepth uint8, ssX bool, ssY bool, mono bool, seed uint32) {
+		bitDepths := [...]uint8{8, 10, 12}
+		bitDepth := bitDepths[rawDepth%uint8(len(bitDepths))]
+		width := int(rawW%128) + 1
+		height := int(rawH%128) + 1
+		format := av1frame.Format{
+			Width:        width,
+			Height:       height,
+			BitDepth:     bitDepth,
+			MonoChrome:   mono,
+			SubsamplingX: ssX,
+			SubsamplingY: ssY,
+			Align:        64,
+		}
+		layout, err := av1frame.RequiredSize(format)
+		if err != nil {
+			t.Fatalf("RequiredSize err=%v", err)
+		}
+		buffer := make([]byte, layout.Size)
+		frm, err := av1frame.Bind(buffer, format)
+		if err != nil {
+			t.Fatalf("Bind err=%v", err)
+		}
+		fillRestorationTestFrame(frm, bitDepth, seed)
+		original := append([]byte(nil), buffer...)
+
+		params := parser.RestorationParams{
+			Type:       [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			UnitSizeY:  64,
+			UnitSizeUV: 64,
+		}
+		size := parser.FrameSize{UpscaledWidth: uint32(width), Height: uint32(height), SuperResDenominator: 8}
+		plan, err := BuildRestorationFramePlan(params, size, parser.ColorConfig{MonoChrome: mono, SubsamplingX: ssX, SubsamplingY: ssY})
+		if err != nil {
+			t.Fatalf("BuildRestorationFramePlan err=%v", err)
+		}
+		records := makeRestorationFrameNoneRecords(t, plan)
+		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+		if err != nil {
+			t.Fatalf("RestorationFrameSampleScratchLen err=%v", err)
+		}
+		result, err := ApplyRestorationFrameToFrame(plan, frm, records, [3]RestorationStripeBoundaries{}, make([]uint16, sampleSize.DataLen), make([]uint16, sampleSize.DstLen), RestorationUnitRecordBoundaryScratch{}, false)
+		if err != nil {
+			t.Fatalf("ApplyRestorationFrameToFrame err=%v", err)
+		}
+		if result.Planes != 1 || result.Records != uint32(plan.UnitRecords[0]) || result.FilteredRecords != 0 {
+			t.Fatalf("result=%+v plan=%+v", result, plan)
+		}
+		if string(buffer) != string(original) {
+			t.Fatalf("all-none frame restore changed visible bytes")
+		}
+	})
+}
+
 func FuzzApplyRestorationFramePlane(f *testing.F) {
 	f.Add(uint16(160), uint16(112), uint8(0), uint8(0), uint8(0), uint8(0), false, false, []byte{0, 1, 2, 3, 255})
 	f.Add(uint16(127), uint16(95), uint8(1), uint8(1), uint8(1), uint8(2), true, true, []byte{255, 7, 11})
@@ -1430,6 +1613,46 @@ func BenchmarkApplyRestorationFrameWienerSGR(b *testing.B) {
 	}
 }
 
+func BenchmarkApplyRestorationFrameToFrameWienerSGR(b *testing.B) {
+	const bitDepth = 12
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}
+	plan := testRestorationFramePlan(b, types, false)
+	planes := makeRestorationFramePlanes(b, types, bitDepth, false)
+	frm := makeRestorationApplyFrame(b, bitDepth, false)
+	fillFrameFromRestorationPlanes(b, frm, planes, bitDepth)
+	var records [3][]RestorationUnitRecord
+	var boundaries [3]RestorationStripeBoundaries
+	for i := range planes {
+		records[i] = planes[i].Records
+		boundaries[i] = planes[i].Boundaries
+	}
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		b.Fatal(err)
+	}
+	applySize, err := RestorationFrameScratchLen(planes, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	dataScratch := make([]uint16, sampleSize.DataLen)
+	dstScratch := make([]uint16, sampleSize.DstLen)
+	scratch := makeRestorationBoundaryApplyScratch(applySize)
+	var bytes int64
+	for i := range planes {
+		if planes[i].Grid.Type != parser.RestorationNone {
+			bytes += int64(planes[i].Grid.PlaneWidth * planes[i].Grid.PlaneHeight * 2)
+		}
+	}
+	b.ReportAllocs()
+	b.SetBytes(bytes)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ApplyRestorationFrameToFrame(plan, frm, records, boundaries, dataScratch, dstScratch, scratch, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func makeRestorationApplySource(stride int, height int, bitDepth uint8) []uint16 {
 	max := uint16((1 << bitDepth) - 1)
 	src := make([]uint16, stride*height)
@@ -1513,6 +1736,137 @@ func makeRestorationFramePlanes(tb testing.TB, types [3]parser.RestorationType, 
 		}
 	}
 	return planes
+}
+
+func makeRestorationApplyFrame(tb testing.TB, bitDepth uint8, mono bool) av1frame.Frame {
+	tb.Helper()
+	format := av1frame.Format{
+		Width:        300,
+		Height:       260,
+		BitDepth:     bitDepth,
+		MonoChrome:   mono,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}
+	layout, err := av1frame.RequiredSize(format)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	frm, err := av1frame.Bind(make([]byte, layout.Size), format)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return frm
+}
+
+func makeRestorationFrameNoneRecords(tb testing.TB, plan RestorationFramePlan) [3][]RestorationUnitRecord {
+	tb.Helper()
+	var records [3][]RestorationUnitRecord
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		records[plane] = make([]RestorationUnitRecord, plan.UnitRecords[plane])
+		if err := ResetRestorationPlaneRecords(grid, records[plane]); err != nil {
+			tb.Fatal(err)
+		}
+	}
+	return records
+}
+
+func fillFrameFromRestorationPlanes(tb testing.TB, frm av1frame.Frame, planes []RestorationFramePlane, bitDepth uint8) {
+	tb.Helper()
+	bytesPerSample := restorationTestBytesPerSample(bitDepth)
+	for plane := range planes {
+		dst := restorationTestFramePlane(frm, plane)
+		src := planes[plane]
+		if dst.Width != int(src.Grid.PlaneWidth) || dst.Height != int(src.Grid.PlaneHeight) {
+			tb.Fatalf("plane %d frame=%+v grid=%+v", plane, dst, src.Grid)
+		}
+		for y := 0; y < dst.Height; y++ {
+			for x := 0; x < dst.Width; x++ {
+				sample := src.Data[src.DataOrigin+y*src.DataStride+x]
+				setRestorationFrameByteSample(dst, bytesPerSample, x, y, sample)
+			}
+		}
+	}
+}
+
+func assertFrameMatchesRestorationPlanes(tb testing.TB, frm av1frame.Frame, planes []RestorationFramePlane, bitDepth uint8) {
+	tb.Helper()
+	bytesPerSample := restorationTestBytesPerSample(bitDepth)
+	for plane := range planes {
+		gotPlane := restorationTestFramePlane(frm, plane)
+		wantPlane := planes[plane]
+		for y := 0; y < gotPlane.Height; y++ {
+			for x := 0; x < gotPlane.Width; x++ {
+				got := getRestorationFrameByteSample(gotPlane, bytesPerSample, x, y)
+				want := wantPlane.Data[wantPlane.DataOrigin+y*wantPlane.DataStride+x]
+				if got != want {
+					tb.Fatalf("plane=%d x=%d y=%d got=%d want %d", plane, x, y, got, want)
+				}
+			}
+		}
+	}
+}
+
+func fillRestorationTestFrame(frm av1frame.Frame, bitDepth uint8, seed uint32) {
+	bytesPerSample := restorationTestBytesPerSample(bitDepth)
+	max := uint16((1 << bitDepth) - 1)
+	planes := [3]av1frame.Plane{frm.Y, frm.U, frm.V}
+	count := 3
+	if frm.Format.MonoChrome {
+		count = 1
+	}
+	state := seed
+	for plane := 0; plane < count; plane++ {
+		for y := 0; y < planes[plane].Height; y++ {
+			for x := 0; x < planes[plane].Width; x++ {
+				state = state*1664525 + 1013904223 + uint32(plane+1)
+				setRestorationFrameByteSample(planes[plane], bytesPerSample, x, y, uint16(state)&max)
+			}
+		}
+	}
+}
+
+func restorationTestFramePlane(frm av1frame.Frame, plane int) av1frame.Plane {
+	switch plane {
+	case 0:
+		return frm.Y
+	case 1:
+		return frm.U
+	case 2:
+		return frm.V
+	default:
+		return av1frame.Plane{}
+	}
+}
+
+func restorationTestBytesPerSample(bitDepth uint8) int {
+	if bitDepth > 8 {
+		return 2
+	}
+	return 1
+}
+
+func getRestorationFrameByteSample(plane av1frame.Plane, bytesPerSample int, x int, y int) uint16 {
+	offset := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		return uint16(plane.Pix[offset])
+	}
+	return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8
+}
+
+func setRestorationFrameByteSample(plane av1frame.Plane, bytesPerSample int, x int, y int, value uint16) {
+	offset := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		plane.Pix[offset] = byte(value)
+		return
+	}
+	plane.Pix[offset] = byte(value)
+	plane.Pix[offset+1] = byte(value >> 8)
 }
 
 func makeRestorationBoundaryPlaneWithSalt(grid RestorationPlaneGrid, stride int, bitDepth uint8, salt int) []uint16 {

@@ -46,6 +46,28 @@ func BorderedSamplePlaneLen(plane Plane, bytesPerSample int, borderHorz int, bor
 	return borderedSamplePlaneLayout(plane, bytesPerSample, borderHorz, borderVert, align)
 }
 
+// BindBorderedSamplePlane binds caller-owned bordered uint16 storage without
+// loading visible samples. The returned view is suitable for restoration output
+// buffers that will be fully written before their visible region is stored.
+func BindBorderedSamplePlane(dst []uint16, plane Plane, bytesPerSample int, borderHorz int, borderVert int, align int) (BorderedSamplePlane, error) {
+	layout, err := borderedSamplePlaneLayout(plane, bytesPerSample, borderHorz, borderVert, align)
+	if err != nil {
+		return BorderedSamplePlane{}, err
+	}
+	if len(dst) < layout.Len {
+		return BorderedSamplePlane{}, ErrShortBuffer
+	}
+	return BorderedSamplePlane{
+		Pix:        dst[:layout.Len],
+		Stride:     layout.Stride,
+		Origin:     layout.Origin,
+		Width:      plane.Width,
+		Height:     plane.Height,
+		BorderHorz: borderHorz,
+		BorderVert: borderVert,
+	}, nil
+}
+
 // LoadSamplePlane expands an 8-bit or little-endian 16-bit byte plane into
 // caller-owned uint16 sample storage.
 func LoadSamplePlane(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, error) {

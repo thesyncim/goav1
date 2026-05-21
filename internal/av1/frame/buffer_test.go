@@ -244,6 +244,30 @@ func TestBorderedSamplePlaneLoadStoreHighBitDepth(t *testing.T) {
 	}
 }
 
+func TestBindBorderedSamplePlane(t *testing.T) {
+	plane := Plane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
+	layout, err := BorderedSamplePlaneLen(plane, 1, 3, 2, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := make([]uint16, layout.Len)
+	for i := range scratch {
+		scratch[i] = 0xeeee
+	}
+
+	samples, err := BindBorderedSamplePlane(scratch, plane, 1, 3, 2, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if samples.Stride != layout.Stride || samples.Origin != layout.Origin ||
+		samples.Width != plane.Width || samples.Height != plane.Height {
+		t.Fatalf("samples=%+v layout=%+v", samples, layout)
+	}
+	if samples.Pix[0] != 0xeeee || samples.Pix[samples.Origin] != 0xeeee {
+		t.Fatalf("bind unexpectedly initialized samples")
+	}
+}
+
 func TestSamplePlaneRejectsInvalidInputs(t *testing.T) {
 	plane := Plane{Pix: make([]byte, 16), Stride: 4, Width: 4, Height: 4}
 	if _, err := SamplePlaneLen(plane, 3); !errors.Is(err, ErrInvalidPlane) {
@@ -281,6 +305,9 @@ func TestBorderedSamplePlaneRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := LoadBorderedSamplePlane(make([]uint16, 3), plane, 1, 1, 1, 1); !errors.Is(err, ErrShortBuffer) {
 		t.Fatalf("short scratch err=%v want %v", err, ErrShortBuffer)
+	}
+	if _, err := BindBorderedSamplePlane(make([]uint16, 3), plane, 1, 1, 1, 1); !errors.Is(err, ErrShortBuffer) {
+		t.Fatalf("short bind err=%v want %v", err, ErrShortBuffer)
 	}
 	overflow := BorderedSamplePlane{Pix: []uint16{256}, Stride: 1, Origin: 0, Width: 1, Height: 1}
 	if err := StoreBorderedSamplePlane(Plane{Pix: make([]byte, 1), Stride: 1, Width: 1, Height: 1}, 1, overflow); !errors.Is(err, ErrInvalidPlane) {
