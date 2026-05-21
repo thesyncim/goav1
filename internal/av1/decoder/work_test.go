@@ -684,6 +684,9 @@ func TestExecuteFrameWorkStepWithContext(t *testing.T) {
 		if ctx.Output != output {
 			t.Fatalf("output=%p want %p", ctx.Output, output)
 		}
+		if ctx.Payload != nil {
+			t.Fatalf("payload=%v want nil", ctx.Payload)
+		}
 		if len(ctx.References) != 1 || ctx.References[0] != reference {
 			t.Fatalf("references=%v want %p", ctx.References, reference)
 		}
@@ -700,6 +703,41 @@ func TestExecuteFrameWorkStepWithContext(t *testing.T) {
 	}
 	if !executed || calls != 1 {
 		t.Fatalf("executed=%v calls=%d", executed, calls)
+	}
+}
+
+func TestExecuteFrameWorkStepWithPayload(t *testing.T) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs, batches, batchCount := testExecutionWork(t)
+	output := &frame.Frame{}
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+
+	executed, err := ExecuteFrameWorkStepWithPayload(step, workerPool, output, nil, payload, jobs[:], batches[:], func(ctx FrameWorkBatch) error {
+		if ctx.Output != output {
+			t.Fatalf("output=%p want %p", ctx.Output, output)
+		}
+		if len(ctx.Payload) != len(payload) || ctx.Payload[0] != payload[0] || ctx.Payload[2] != payload[2] {
+			t.Fatalf("payload=%v want %v", ctx.Payload, payload)
+		}
+		if len(ctx.Jobs) != 2 {
+			t.Fatalf("jobs=%+v", ctx.Jobs)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("not executed")
 	}
 }
 
@@ -1119,7 +1157,11 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 	var seenOutput *frame.Frame
 	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
-		if ctx.Step.Kind != FrameWorkStepBegin || len(ctx.References) != 0 || len(ctx.Jobs) != 1 {
+		if ctx.Step.Kind != FrameWorkStepBegin ||
+			len(ctx.References) != 0 ||
+			len(ctx.Jobs) != 1 ||
+			len(ctx.Payload) != len(events[1].Unit.Payload) ||
+			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil
@@ -1183,7 +1225,11 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 	var seenOutput *frame.Frame
 	tileResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
-		if ctx.Step.Kind != FrameWorkStepTile || len(ctx.References) != 0 || len(ctx.Jobs) != 1 {
+		if ctx.Step.Kind != FrameWorkStepTile ||
+			len(ctx.References) != 0 ||
+			len(ctx.Jobs) != 1 ||
+			len(ctx.Payload) != len(events[2].Unit.Payload) ||
+			ctx.Payload[ctx.Jobs[0].Offset] != 0x80 {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil
@@ -1248,6 +1294,9 @@ func TestFrameWorkStateRunEventWithContextInterFrameReferences(t *testing.T) {
 	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		if ctx.Output == nil || ctx.Output == referenceFrame {
 			t.Fatalf("output=%p reference=%p", ctx.Output, referenceFrame)
+		}
+		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xbb {
+			t.Fatalf("payload=%v", ctx.Payload)
 		}
 		if len(ctx.References) != parser.InterRefsPerFrame {
 			t.Fatalf("references=%d", len(ctx.References))
@@ -2353,6 +2402,33 @@ func TestExecuteFrameWorkStepWithContextAllocs(t *testing.T) {
 	}
 }
 
+func TestExecuteFrameWorkStepWithPayloadAllocs(t *testing.T) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs, batches, batchCount := testExecutionWork(t)
+	payload := []byte{0xaa, 0xbb}
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		executed, err := ExecuteFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !executed {
+			t.Fatal("not executed")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ExecuteFrameWorkStepWithPayload allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkStateRunStepAllocs(t *testing.T) {
 	workerPool, err := threading.NewPool(1)
 	if err != nil {
@@ -2754,6 +2830,25 @@ func BenchmarkExecuteFrameWorkStepWithContext(b *testing.B) {
 		_, _ = ExecuteFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], func(FrameWorkBatch) error {
 			return nil
 		})
+	}
+}
+
+func BenchmarkExecuteFrameWorkStepWithPayload(b *testing.B) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs, batches, batchCount := benchmarkExecutionWork(b)
+	payload := []byte{0xaa, 0xbb}
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ExecuteFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
 	}
 }
 

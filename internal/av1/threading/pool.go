@@ -13,11 +13,12 @@ import (
 type BatchFunc func(batch Batch, jobs []tile.Job) error
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.
-// References and Jobs alias caller-owned storage and are valid for the
-// callback invocation.
+// Payload, References, and Jobs alias caller-owned storage and are valid for
+// the callback invocation.
 type FrameWorkBatch struct {
 	Step       decodework.FrameStep
 	Output     *frame.Frame
+	Payload    []byte
 	References []*frame.Frame
 	Batch      Batch
 	Jobs       []tile.Job

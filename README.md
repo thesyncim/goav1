@@ -65,7 +65,7 @@ The initial implementation covers:
 - Decoder tile-work planning from parsed frame/tile-group events into
   caller-owned spans, jobs, and batches, including checked frame-work begin
   and tile-group continuation plans, bounded tile-work step execution, and
-  context-carrying frame-work batch callbacks and event-level run helpers, and
+  payload-carrying frame-work batch callbacks and event-level run helpers, and
   caller-owned frame work lifecycle state with event-level orchestration,
   ordered run-and-finish helpers for final tile groups, abort release,
   show-existing output, and stream-boundary drop handling for temporal units,

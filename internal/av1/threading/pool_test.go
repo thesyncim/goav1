@@ -59,9 +59,11 @@ func TestPoolExecuteFrameWork(t *testing.T) {
 
 	var output frame.Frame
 	var reference frame.Frame
+	payload := []byte{0xaa, 0xbb}
 	base := FrameWorkBatch{
 		Step:       decodework.FrameStep{Kind: decodework.FrameStepTile},
 		Output:     &output,
+		Payload:    payload,
 		References: []*frame.Frame{&reference},
 	}
 	var seen [4]uint16
@@ -71,6 +73,9 @@ func TestPoolExecuteFrameWork(t *testing.T) {
 		}
 		if ctx.Output != &output || len(ctx.References) != 1 || ctx.References[0] != &reference {
 			t.Fatalf("ctx=%+v", ctx)
+		}
+		if len(ctx.Payload) != len(payload) || ctx.Payload[0] != payload[0] || ctx.Payload[1] != payload[1] {
+			t.Fatalf("payload=%v want %v", ctx.Payload, payload)
 		}
 		if len(ctx.Jobs) != ctx.Batch.Count {
 			t.Fatalf("jobs len=%d count=%d", len(ctx.Jobs), ctx.Batch.Count)

@@ -94,6 +94,10 @@ func ExecuteDecoderFrameWorkStepWithContext(step DecoderFrameWorkStep, pool *Til
 	return internaldecoder.ExecuteFrameWorkStepWithContext(step, pool, output, references, jobs, batches, fn)
 }
 
+func ExecuteDecoderFrameWorkStepWithPayload(step DecoderFrameWorkStep, pool *TileWorkerPool, output *Frame, references []*Frame, payload []byte, jobs []TileJob, batches []TileBatch, fn DecoderFrameWorkBatchFunc) (bool, error) {
+	return internaldecoder.ExecuteFrameWorkStepWithPayload(step, pool, output, references, payload, jobs, batches, fn)
+}
+
 func RunDecoderFrameWorkEventWithContext(state *DecoderFrameWorkState, refs *DecoderSurfaceReferences, framePool *FramePool, sequence SequenceHeader, event DecoderEvent, align int, referenceSurfaces []int, referenceFrames []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch, releases []int, workerPool *TileWorkerPool, fn DecoderFrameWorkBatchFunc) (DecoderFrameWorkEventResult, error) {
 	return state.RunEventWithContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn)
 }

@@ -286,10 +286,16 @@ func (s *FrameWorkState) RunStep(refs *SurfaceReferences, framePool *frame.Pool,
 // RunStepWithContext is RunStep with decoder frame context attached to each
 // executed tile batch.
 func (s *FrameWorkState) RunStepWithContext(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, releases []int, fn FrameWorkBatchFunc) (FrameWorkStepResult, error) {
+	return s.RunStepWithPayloadContext(refs, framePool, event, step, workerPool, output, references, nil, jobs, batches, releases, fn)
+}
+
+// RunStepWithPayloadContext is RunStepWithContext with the tile-group payload
+// attached to every executed tile batch.
+func (s *FrameWorkState) RunStepWithPayloadContext(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, releases []int, fn FrameWorkBatchFunc) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
 	}
-	executed, err := ExecuteFrameWorkStepWithContext(step, workerPool, output, references, jobs, batches, fn)
+	executed, err := ExecuteFrameWorkStepWithPayload(step, workerPool, output, references, payload, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -357,7 +363,7 @@ func (s *FrameWorkState) RunEventWithContext(refs *SurfaceReferences, framePool 
 		}
 	}
 
-	run, err := s.RunStepWithContext(refs, framePool, event, step, workerPool, output, references, jobs, batches, releases, fn)
+	run, err := s.RunStepWithPayloadContext(refs, framePool, event, step, workerPool, output, references, event.Unit.Payload, jobs, batches, releases, fn)
 	if err != nil {
 		return FrameWorkEventResult{}, err
 	}
@@ -402,6 +408,13 @@ func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.
 // ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
 // passing the output frame and resolved reference frames to each batch.
 func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+	return ExecuteFrameWorkStepWithPayload(step, pool, output, references, nil, jobs, batches, fn)
+}
+
+// ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
+// passing the output frame, tile-group payload, and resolved reference frames
+// to each batch.
+func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return false, err
@@ -425,6 +438,7 @@ func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, o
 	base := FrameWorkBatch{
 		Step:       step,
 		Output:     output,
+		Payload:    payload,
 		References: references[:referenceCount],
 	}
 	err = pool.ExecuteFrameWork(batches[:plan.BatchCount], jobs[:plan.JobCount], base, fn)
