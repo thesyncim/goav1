@@ -171,6 +171,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	tileJobs := 0
 	retainedContexts := 0
 	partitionReads := 0
+	blockPrefixReads := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -215,17 +216,28 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 						return err
 					}
 					root := tile.RootBlockLevel(ctx.Sequence.Use128x128Superblock)
-					half := uint32(root.HalfSize4x4())
-					partition, err := decodeState.ReadPartition(&partitionCDFs, root, 0,
-						region.MIColEnd > region.MIColStart+half,
-						region.MIRowEnd > region.MIRowStart+half)
+					var partitionCtx tile.PartitionContext
+					blockSize, reads, err := readFirstLibaomLeafBlock(&decodeState, &partitionCDFs, &partitionCtx, root, region)
 					if err != nil {
 						return err
 					}
-					if !partition.ValidForLevel(root) {
-						return fmt.Errorf("root partition %d invalid for level %d", partition, root)
+					partitionReads += reads
+					if !ctx.Segmentation.Enabled {
+						var modeCDFs tile.BlockModeCDFs
+						if err := modeCDFs.InitDefault(); err != nil {
+							return err
+						}
+						var modeCtx tile.BlockModeContext
+						if _, err := decodeState.ReadBlockModePrefix(&modeCDFs, &modeCtx, tile.BlockModeRequest{
+							Size:     blockSize,
+							SkipMode: ctx.SkipMode,
+							CDEF:     ctx.CDEF,
+							Segment:  parser.SegmentData{RefFrame: -1},
+						}); err != nil {
+							return err
+						}
+						blockPrefixReads++
 					}
-					partitionReads++
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}
@@ -280,7 +292,10 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 		t.Fatal("no context-update tile was retained")
 	}
 	if partitionReads == 0 {
-		t.Fatal("no root partition syntax was read")
+		t.Fatal("no partition syntax was read")
+	}
+	if blockPrefixReads == 0 {
+		t.Fatal("no block prefix syntax was read")
 	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)
@@ -298,6 +313,39 @@ func eventRunsFrameWork(event decoder.Event) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func readFirstLibaomLeafBlock(state *tile.DecodeState, cdfs *tile.PartitionCDFs, ctx *tile.PartitionContext, root tile.BlockLevel, region threading.FrameWorkJobRegion) (tile.BlockSize, int, error) {
+	level := root
+	x4 := uint32(0)
+	y4 := uint32(0)
+	reads := 0
+	for {
+		partitionCtx, err := ctx.Context(level, int(y4), int(x4))
+		if err != nil {
+			return 0, reads, err
+		}
+		half := uint32(level.HalfSize4x4())
+		partition, err := state.ReadPartition(cdfs, level, partitionCtx,
+			region.MIRowEnd > region.MIRowStart+y4+half,
+			region.MIColEnd > region.MIColStart+x4+half)
+		if err != nil {
+			return 0, reads, err
+		}
+		reads++
+		if !partition.ValidForLevel(level) {
+			return 0, reads, fmt.Errorf("partition %d invalid for level %d", partition, level)
+		}
+		if partition == tile.PartitionSplit && level != tile.BlockLevel8x8 {
+			level++
+			continue
+		}
+		blockSize, _, ok := partition.BlockSizes(level)
+		if !ok {
+			return 0, reads, fmt.Errorf("partition %d has no block size at level %d", partition, level)
+		}
+		return blockSize, reads, nil
 	}
 }
 

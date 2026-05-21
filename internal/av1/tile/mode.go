@@ -1,0 +1,523 @@
+package tile
+
+import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+)
+
+const (
+	BlockModeContexts   = 3
+	MaxBlockModeSlots   = 32
+	segmentIDCDFSymbols = parser.MaxSegments
+	maxCDEFBits         = 3
+)
+
+// BlockModeCDFs contains the caller-owned CDFs used by the block syntax prefix:
+// segmentation prediction/id, skip_mode, and skip_transform.
+type BlockModeCDFs struct {
+	Skip        [BlockModeContexts]entropy.CDF
+	SkipMode    [BlockModeContexts]entropy.CDF
+	SegmentPred [BlockModeContexts]entropy.CDF
+	SegmentID   [BlockModeContexts]entropy.CDF
+}
+
+// BlockModeContext is the caller-owned top/left block context for one
+// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
+type BlockModeContext struct {
+	AboveSkip        [MaxBlockModeSlots]uint8
+	LeftSkip         [MaxBlockModeSlots]uint8
+	AboveSkipMode    [MaxBlockModeSlots]uint8
+	LeftSkipMode     [MaxBlockModeSlots]uint8
+	AboveSegmentPred [MaxBlockModeSlots]uint8
+	LeftSegmentPred  [MaxBlockModeSlots]uint8
+}
+
+// BlockModeRequest describes the block currently being decoded for the AV1
+// block syntax prefix.
+type BlockModeRequest struct {
+	Size BlockSize
+
+	SkipMode parser.SkipModeParams
+	CDEF     parser.CDEFParams
+
+	SegmentationEnabled bool
+	Segment             parser.SegmentData
+
+	X4 int
+	Y4 int
+}
+
+// BlockModeResult is the entropy-decoded block syntax prefix.
+type BlockModeResult struct {
+	SegmentPredicted bool
+	SkipMode         bool
+	SkipTransform    bool
+	CDEFIndex        uint8
+}
+
+// InitDefault seeds c with dav1d/libaom's default block-prefix CDFs.
+func (c *BlockModeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	var next BlockModeCDFs
+	for i, cumulative := range [...]uint16{31671, 16515, 4576} {
+		if err := next.Skip[i].Init([]uint16{cumulative}); err != nil {
+			return err
+		}
+	}
+	for i, cumulative := range [...]uint16{32621, 20708, 8127} {
+		if err := next.SkipMode[i].Init([]uint16{cumulative}); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < BlockModeContexts; i++ {
+		if err := next.SegmentPred[i].Init([]uint16{16384}); err != nil {
+			return err
+		}
+	}
+	defaultSegmentID := [...][parser.MaxSegments - 1]uint16{
+		{5622, 7893, 16093, 18233, 27809, 28373, 32533},
+		{14274, 18230, 22557, 24935, 29980, 30851, 32344},
+		{27527, 28487, 28723, 28890, 32397, 32647, 32679},
+	}
+	for i := range defaultSegmentID {
+		if err := next.SegmentID[i].Init(defaultSegmentID[i][:]); err != nil {
+			return err
+		}
+	}
+	*c = next
+	return nil
+}
+
+// SkipCDF returns the initialized skip_transform CDF for ctx.
+func (c *BlockModeCDFs) SkipCDF(ctx int) (*entropy.CDF, error) {
+	if c == nil {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return blockModeCDF(&c.Skip, ctx, 2)
+}
+
+// SkipModeCDF returns the initialized skip_mode CDF for ctx.
+func (c *BlockModeCDFs) SkipModeCDF(ctx int) (*entropy.CDF, error) {
+	if c == nil {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return blockModeCDF(&c.SkipMode, ctx, 2)
+}
+
+// SegmentPredCDF returns the initialized temporal segment prediction CDF for ctx.
+func (c *BlockModeCDFs) SegmentPredCDF(ctx int) (*entropy.CDF, error) {
+	if c == nil {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return blockModeCDF(&c.SegmentPred, ctx, 2)
+}
+
+// SegmentIDCDF returns the initialized spatial segment-id CDF for ctx.
+func (c *BlockModeCDFs) SegmentIDCDF(ctx int) (*entropy.CDF, error) {
+	if c == nil {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return blockModeCDF(&c.SegmentID, ctx, segmentIDCDFSymbols)
+}
+
+// SkipContext returns libaom's av1_get_skip_txfm_context() value.
+func (c *BlockModeContext) SkipContext(x4 int, y4 int) (int, error) {
+	if c == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return 0, err
+	}
+	return int(c.AboveSkip[x4]) + int(c.LeftSkip[y4]), nil
+}
+
+// SkipModeContext returns libaom's av1_get_skip_mode_context() value.
+func (c *BlockModeContext) SkipModeContext(x4 int, y4 int) (int, error) {
+	if c == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return 0, err
+	}
+	return int(c.AboveSkipMode[x4]) + int(c.LeftSkipMode[y4]), nil
+}
+
+// SegmentPredContext returns libaom's av1_get_pred_context_seg_id() value.
+func (c *BlockModeContext) SegmentPredContext(x4 int, y4 int) (int, error) {
+	if c == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return 0, err
+	}
+	return int(c.AboveSegmentPred[x4]) + int(c.LeftSegmentPred[y4]), nil
+}
+
+// Mark updates the top/left block prefix context after a decoded block.
+func (c *BlockModeContext) Mark(size BlockSize, x4 int, y4 int, result BlockModeResult) error {
+	if c == nil {
+		return ErrInvalidDecodeState
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return ErrInvalidDecodeState
+	}
+	if x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+
+	segPred := boolByte(result.SegmentPredicted)
+	skipMode := boolByte(result.SkipMode)
+	skip := boolByte(result.SkipTransform)
+	for i := 0; i < int(dims.W4); i++ {
+		c.AboveSegmentPred[x4+i] = segPred
+		c.AboveSkipMode[x4+i] = skipMode
+		c.AboveSkip[x4+i] = skip
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		c.LeftSegmentPred[y4+i] = segPred
+		c.LeftSkipMode[y4+i] = skipMode
+		c.LeftSkip[y4+i] = skip
+	}
+	return nil
+}
+
+// ReadSegmentPrediction decodes the temporal segmentation prediction flag.
+func (s *DecodeState) ReadSegmentPrediction(cdfs *BlockModeCDFs, ctx *BlockModeContext, x4 int, y4 int) (bool, error) {
+	if s == nil {
+		return false, ErrInvalidDecodeState
+	}
+	context, err := ctx.SegmentPredContext(x4, y4)
+	if err != nil {
+		return false, err
+	}
+	cdf, err := cdfs.SegmentPredCDF(context)
+	if err != nil {
+		return false, err
+	}
+	symbol, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return false, err
+	}
+	return symbol != 0, nil
+}
+
+// ReadSegmentID decodes one spatial segment id using AV1's negative
+// deinterleave around the current-frame spatial predictor.
+func (s *DecodeState) ReadSegmentID(cdfs *BlockModeCDFs, pred uint8, context int, lastActiveID int8, skip bool) (uint8, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	max := int(lastActiveID) + 1
+	if max <= 0 || max > parser.MaxSegments || int(pred) >= max {
+		return 0, ErrInvalidDecodeState
+	}
+	if skip {
+		return pred, nil
+	}
+	cdf, err := cdfs.SegmentIDCDF(context)
+	if err != nil {
+		return 0, err
+	}
+	diff, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return 0, err
+	}
+	segmentID, err := negDeinterleaveSegmentID(diff, int(pred), max)
+	if err != nil {
+		return 0, err
+	}
+	if segmentID < 0 || segmentID >= max {
+		return 0, ErrInvalidDecodeState
+	}
+	return uint8(segmentID), nil
+}
+
+// ReadSkipMode decodes skip_mode for one block, including the segment and
+// block-size conditions that make the syntax implicitly zero.
+func (s *DecodeState) ReadSkipMode(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest) (bool, error) {
+	if s == nil {
+		return false, ErrInvalidDecodeState
+	}
+	read, err := shouldReadSkipMode(req)
+	if err != nil || !read {
+		return false, err
+	}
+	context, err := ctx.SkipModeContext(req.X4, req.Y4)
+	if err != nil {
+		return false, err
+	}
+	cdf, err := cdfs.SkipModeCDF(context)
+	if err != nil {
+		return false, err
+	}
+	symbol, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return false, err
+	}
+	return symbol != 0, nil
+}
+
+// ReadSkipTransform decodes skip_transform for one block, including the
+// skip_mode and segment-skip conditions that force it to one.
+func (s *DecodeState) ReadSkipTransform(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, skipMode bool) (bool, error) {
+	if s == nil {
+		return false, ErrInvalidDecodeState
+	}
+	if skipMode || segmentForcesSkip(req) {
+		return true, nil
+	}
+	context, err := ctx.SkipContext(req.X4, req.Y4)
+	if err != nil {
+		return false, err
+	}
+	cdf, err := cdfs.SkipCDF(context)
+	if err != nil {
+		return false, err
+	}
+	symbol, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return false, err
+	}
+	return symbol != 0, nil
+}
+
+// ReadCDEFIndex decodes the cdef_idx syntax for one block. AV1 omits this
+// field for skipped blocks and when the frame has a single CDEF strength.
+func (s *DecodeState) ReadCDEFIndex(params parser.CDEFParams, skipTransform bool) (uint8, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if params.Bits > maxCDEFBits {
+		return 0, ErrInvalidDecodeState
+	}
+	if skipTransform || params.Bits == 0 {
+		return 0, nil
+	}
+	index, err := s.Reader.ReadBits(params.Bits)
+	if err != nil {
+		return 0, err
+	}
+	if index >= parser.MaxCDEFStrengths {
+		return 0, ErrInvalidDecodeState
+	}
+	return uint8(index), nil
+}
+
+// ReadBlockModePrefix decodes skip_mode, skip_transform, and cdef_idx for one
+// block and updates the caller-owned top/left contexts.
+func (s *DecodeState) ReadBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest) (BlockModeResult, error) {
+	if ctx == nil {
+		return BlockModeResult{}, ErrInvalidDecodeState
+	}
+	if _, ok := req.Size.Dimensions(); !ok {
+		return BlockModeResult{}, ErrInvalidDecodeState
+	}
+	skipMode, err := s.ReadSkipMode(cdfs, ctx, req)
+	if err != nil {
+		return BlockModeResult{}, err
+	}
+	skip, err := s.ReadSkipTransform(cdfs, ctx, req, skipMode)
+	if err != nil {
+		return BlockModeResult{}, err
+	}
+	cdefIndex, err := s.ReadCDEFIndex(req.CDEF, skip)
+	if err != nil {
+		return BlockModeResult{}, err
+	}
+	result := BlockModeResult{
+		SkipMode:      skipMode,
+		SkipTransform: skip,
+		CDEFIndex:     cdefIndex,
+	}
+	if err := ctx.Mark(req.Size, req.X4, req.Y4, result); err != nil {
+		return BlockModeResult{}, err
+	}
+	return result, nil
+}
+
+// PredictCurrentSegmentID ports dav1d's get_cur_frame_segid() helper.
+func PredictCurrentSegmentID(cur []uint8, stride int, x4 int, y4 int, haveTop bool, haveLeft bool) (uint8, int, error) {
+	if stride <= 0 || x4 < 0 || y4 < 0 || x4 >= stride {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	idx := y4*stride + x4
+	if idx < 0 || idx >= len(cur) {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	if haveLeft && x4 == 0 || haveTop && y4 == 0 {
+		return 0, 0, ErrInvalidDecodeState
+	}
+	if haveLeft && haveTop {
+		if idx-stride-1 < 0 || idx-1 >= len(cur) || idx-stride >= len(cur) {
+			return 0, 0, ErrInvalidDecodeState
+		}
+		left := cur[idx-1]
+		above := cur[idx-stride]
+		aboveLeft := cur[idx-stride-1]
+		if left >= parser.MaxSegments || above >= parser.MaxSegments || aboveLeft >= parser.MaxSegments {
+			return 0, 0, ErrInvalidDecodeState
+		}
+
+		context := 0
+		switch {
+		case left == above && aboveLeft == left:
+			context = 2
+		case left == above || aboveLeft == left || above == aboveLeft:
+			context = 1
+		}
+		if above == aboveLeft {
+			return above, context, nil
+		}
+		return left, context, nil
+	}
+
+	if haveLeft {
+		left := cur[idx-1]
+		if left >= parser.MaxSegments {
+			return 0, 0, ErrInvalidDecodeState
+		}
+		return left, 0, nil
+	}
+	if haveTop {
+		above := cur[idx-stride]
+		if above >= parser.MaxSegments {
+			return 0, 0, ErrInvalidDecodeState
+		}
+		return above, 0, nil
+	}
+	return 0, 0, nil
+}
+
+// MinPreviousSegmentID ports dav1d/libaom's previous-frame segment-map block
+// prediction: the minimum segment id over the block footprint.
+func MinPreviousSegmentID(prev []uint8, stride int, x4 int, y4 int, w4 int, h4 int) (uint8, error) {
+	if stride <= 0 || x4 < 0 || y4 < 0 || w4 <= 0 || h4 <= 0 || x4+w4 > stride {
+		return 0, ErrInvalidDecodeState
+	}
+	best := uint8(parser.MaxSegments)
+	for y := 0; y < h4; y++ {
+		row := (y4+y)*stride + x4
+		if row < 0 || row+w4 > len(prev) {
+			return 0, ErrInvalidDecodeState
+		}
+		for x := 0; x < w4; x++ {
+			id := prev[row+x]
+			if id >= parser.MaxSegments {
+				return 0, ErrInvalidDecodeState
+			}
+			if id < best {
+				best = id
+			}
+		}
+		if best == 0 {
+			return 0, nil
+		}
+	}
+	if best >= parser.MaxSegments {
+		return 0, ErrInvalidDecodeState
+	}
+	return best, nil
+}
+
+// FillSegmentID writes a decoded segment id into a current-frame segment map.
+func FillSegmentID(dst []uint8, stride int, x4 int, y4 int, w4 int, h4 int, segmentID uint8) error {
+	if segmentID >= parser.MaxSegments || stride <= 0 || x4 < 0 || y4 < 0 ||
+		w4 <= 0 || h4 <= 0 || x4+w4 > stride {
+		return ErrInvalidDecodeState
+	}
+	for y := 0; y < h4; y++ {
+		row := (y4+y)*stride + x4
+		if row < 0 || row+w4 > len(dst) {
+			return ErrInvalidDecodeState
+		}
+		for x := 0; x < w4; x++ {
+			dst[row+x] = segmentID
+		}
+	}
+	return nil
+}
+
+func blockModeCDF(table *[BlockModeContexts]entropy.CDF, ctx int, symbols int) (*entropy.CDF, error) {
+	if table == nil || ctx < 0 || ctx >= BlockModeContexts {
+		return nil, entropy.ErrInvalidCDF
+	}
+	cdf := &table[ctx]
+	if cdf.Symbols() != symbols {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
+func shouldReadSkipMode(req BlockModeRequest) (bool, error) {
+	dims, ok := req.Size.Dimensions()
+	if !ok {
+		return false, ErrInvalidDecodeState
+	}
+	if !req.SkipMode.Enabled || minUint8(dims.W4, dims.H4) <= 1 {
+		return false, nil
+	}
+	return !segmentPrecludesSkipMode(req), nil
+}
+
+func segmentPrecludesSkipMode(req BlockModeRequest) bool {
+	return req.SegmentationEnabled &&
+		(req.Segment.Skip || req.Segment.GlobalMV || req.Segment.RefFrame >= 0)
+}
+
+func segmentForcesSkip(req BlockModeRequest) bool {
+	return req.SegmentationEnabled && req.Segment.Skip
+}
+
+func validateBlockModeSlot(x4 int, y4 int) error {
+	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	return nil
+}
+
+func negDeinterleaveSegmentID(diff int, ref int, max int) (int, error) {
+	if diff < 0 || ref < 0 || max <= 0 || ref >= max {
+		return 0, ErrInvalidDecodeState
+	}
+	if ref == 0 {
+		return diff, nil
+	}
+	if ref >= max-1 {
+		return max - diff - 1, nil
+	}
+	if 2*ref < max {
+		if diff <= 2*ref {
+			if diff&1 != 0 {
+				return ref + ((diff + 1) >> 1), nil
+			}
+			return ref - (diff >> 1), nil
+		}
+		return diff, nil
+	}
+	if diff <= 2*(max-ref-1) {
+		if diff&1 != 0 {
+			return ref + ((diff + 1) >> 1), nil
+		}
+		return ref - (diff >> 1), nil
+	}
+	return max - (diff + 1), nil
+}
+
+func boolByte(v bool) uint8 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func minUint8(a uint8, b uint8) uint8 {
+	if a < b {
+		return a
+	}
+	return b
+}
