@@ -1,4 +1,4 @@
-.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance alloc
+.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -137,6 +137,9 @@ testvectors-full: testvectors
 
 test-motion-conformance:
 	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
+
+test-transform-conformance:
+	go test ./internal/av1/transform -run 'TestInverseDCT1DMatchesLibaomReference|TestInverseDCTBlockSupportedSizes' -count=1
 
 alloc:
 	./scripts/check_allocs.sh

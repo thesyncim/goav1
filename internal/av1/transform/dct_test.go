@@ -2,6 +2,7 @@ package transform
 
 import (
 	"errors"
+	"math"
 	"testing"
 )
 
@@ -47,6 +48,32 @@ func TestInverseDCT8(t *testing.T) {
 	for i := range want {
 		if values[i] != want[i] {
 			t.Fatalf("values[%d]=%d want %d", i, values[i], want[i])
+		}
+	}
+}
+
+func TestInverseDCT1DMatchesLibaomReference(t *testing.T) {
+	tests := []struct {
+		length   int
+		maxError int32
+	}{
+		{length: 4, maxError: 6},
+		{length: 8, maxError: 10},
+		{length: 16, maxError: 19},
+		{length: 32, maxError: 31},
+	}
+	for _, tt := range tests {
+		input := make([]int32, tt.length)
+		for i := range input {
+			input[i] = int32(((i*37+11)%31)-15) * 7
+		}
+		got := append([]int32(nil), input...)
+		inverseDCT1D(got, 1, tt.length, minInt16, maxInt16)
+		want := referenceIDCT1DInt(input)
+		for i := range got {
+			if diff := abs32(got[i] - want[i]); diff > tt.maxError {
+				t.Fatalf("length=%d coeff=%d got=%d want=%d diff=%d max=%d", tt.length, i, got[i], want[i], diff, tt.maxError)
+			}
 		}
 	}
 }
@@ -139,6 +166,53 @@ func TestInverseDCTBlock8x8Mixed(t *testing.T) {
 	}
 }
 
+func TestInverseDCTBlockSupportedSizes(t *testing.T) {
+	sizes := []Size{
+		{Width: 4, Height: 4},
+		{Width: 4, Height: 8},
+		{Width: 8, Height: 4},
+		{Width: 4, Height: 16},
+		{Width: 8, Height: 8},
+		{Width: 8, Height: 16},
+		{Width: 16, Height: 4},
+		{Width: 16, Height: 8},
+		{Width: 16, Height: 32},
+		{Width: 32, Height: 16},
+		{Width: 8, Height: 32},
+		{Width: 16, Height: 16},
+		{Width: 32, Height: 8},
+		{Width: 32, Height: 32},
+	}
+	for _, size := range sizes {
+		coeffStride := size.Width + 1
+		dstStride := size.Width + 2
+		coeff := make([]int32, coeffStride*size.Height)
+		for row := 0; row < size.Height; row++ {
+			for col := 0; col < size.Width; col++ {
+				coeff[row*coeffStride+col] = int32(((row*13+col*7+5)%29)-14) * 3
+			}
+		}
+		dst := make([]int16, dstStride*size.Height)
+		scratchLen := size.Width * size.Height
+		scratch := make([]int32, scratchLen+3)
+		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
+			t.Fatalf("%dx%d InverseDCTBlock err=%v", size.Width, size.Height, err)
+		}
+		for row := 0; row < size.Height; row++ {
+			for col := size.Width; col < dstStride; col++ {
+				if got := dst[row*dstStride+col]; got != 0 {
+					t.Fatalf("%dx%d dst padding row=%d col=%d overwritten with %d", size.Width, size.Height, row, col, got)
+				}
+			}
+		}
+		for i := scratchLen; i < len(scratch); i++ {
+			if scratch[i] != 0 {
+				t.Fatalf("%dx%d scratch padding[%d]=%d want 0", size.Width, size.Height, i, scratch[i])
+			}
+		}
+	}
+}
+
 func TestInverseDCTBlock4x4Strides(t *testing.T) {
 	coeff := make([]int32, 7*4)
 	dst := make([]int16, 6*4)
@@ -175,7 +249,7 @@ func TestInverseDCTBlockRejectsInvalidInputs(t *testing.T) {
 		size        Size
 	}{
 		{name: "zero size", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 4, scratch: scratch, size: Size{}},
-		{name: "unsupported size", dst: make([]int16, 16*16), dstStride: 16, coeff: make([]int32, 16*16), coeffStride: 16, scratch: make([]int32, 16*16), size: Size{Width: 16, Height: 16}},
+		{name: "unsupported size", dst: make([]int16, 64*64), dstStride: 64, coeff: make([]int32, 64*64), coeffStride: 64, scratch: make([]int32, 64*64), size: Size{Width: 64, Height: 64}},
 		{name: "short dst stride", dst: dst, dstStride: 3, coeff: coeff, coeffStride: 4, scratch: scratch, size: Size{Width: 4, Height: 4}},
 		{name: "short coeff stride", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 3, scratch: scratch, size: Size{Width: 4, Height: 4}},
 		{name: "short scratch", dst: dst, dstStride: 4, coeff: coeff, coeffStride: 4, scratch: scratch[:15], size: Size{Width: 4, Height: 4}},
@@ -197,11 +271,23 @@ func TestInverseDCTBlockAllocs(t *testing.T) {
 	coeff8 := make([]int32, 8*8)
 	dst8 := make([]int16, 8*8)
 	scratch8 := make([]int32, 8*8)
+	coeff16 := make([]int32, 16*16)
+	dst16 := make([]int16, 16*16)
+	scratch16 := make([]int32, 16*16)
+	coeff32 := make([]int32, 32*32)
+	dst32 := make([]int16, 32*32)
+	scratch32 := make([]int32, 32*32)
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := InverseDCTBlock(dst4, 4, coeff4, 4, scratch4, Size{Width: 4, Height: 4}); err != nil {
 			t.Fatal(err)
 		}
 		if err := InverseDCTBlock(dst8, 8, coeff8, 8, scratch8, Size{Width: 8, Height: 8}); err != nil {
+			t.Fatal(err)
+		}
+		if err := InverseDCTBlock(dst16, 16, coeff16, 16, scratch16, Size{Width: 16, Height: 16}); err != nil {
+			t.Fatal(err)
+		}
+		if err := InverseDCTBlock(dst32, 32, coeff32, 32, scratch32, Size{Width: 32, Height: 32}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -215,12 +301,19 @@ func FuzzInverseDCTBlock(f *testing.F) {
 	f.Add(uint8(0), int16(16), int16(0), int16(0), int16(0))
 	f.Add(uint8(1), int16(32), int16(0), int16(0), int16(0))
 	f.Add(uint8(1), int16(-128), int16(64), int16(32), int16(-16))
+	f.Add(uint8(2), int16(64), int16(-21), int16(17), int16(-9))
+	f.Add(uint8(3), int16(128), int16(31), int16(-19), int16(11))
 	f.Add(uint8(1), int16(1024), int16(-512), int16(255), int16(-255))
 
 	f.Fuzz(func(t *testing.T, rawSize uint8, dc int16, c1 int16, c2 int16, c3 int16) {
 		size := Size{Width: 4, Height: 4}
-		if rawSize&1 == 1 {
+		switch rawSize & 3 {
+		case 1:
 			size = Size{Width: 8, Height: 8}
+		case 2:
+			size = Size{Width: 16, Height: 16}
+		case 3:
+			size = Size{Width: 32, Height: 32}
 		}
 		coeffStride := size.Width + 3
 		dstStride := size.Width + 2
@@ -283,4 +376,30 @@ func BenchmarkInverseDCTBlock8x8(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8})
 	}
+}
+
+func referenceIDCT1DInt(input []int32) []int32 {
+	size := len(input)
+	out := make([]int32, size)
+	invSqrt2 := 1 / math.Sqrt2
+	for k := 0; k < size; k++ {
+		sum := 0.0
+		for n := 0; n < size; n++ {
+			scale := 1.0
+			if n == 0 {
+				scale = invSqrt2
+			}
+			angle := math.Pi * float64((2*k+1)*n) / float64(2*size)
+			sum += scale * float64(input[n]) * math.Cos(angle)
+		}
+		out[k] = int32(math.Round(sum))
+	}
+	return out
+}
+
+func abs32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

@@ -26,6 +26,15 @@ func TestScratchLen(t *testing.T) {
 			wantInt16: 64,
 		},
 		{
+			name: "dct 16x16",
+			cfg: Block{
+				Size:      transform.Size{Width: 16, Height: 16},
+				Transform: transform.TypeDCTDCT,
+			},
+			wantInt32: 512,
+			wantInt16: 256,
+		},
+		{
 			name: "idtx 16x16",
 			cfg: Block{
 				Size:      transform.Size{Width: 16, Height: 16},
@@ -44,7 +53,7 @@ func TestScratchLen(t *testing.T) {
 			t.Fatalf("%s ScratchLen=%d/%d want %d/%d", tt.name, got32, got16, tt.wantInt32, tt.wantInt16)
 		}
 	}
-	if _, _, err := ScratchLen(Block{Size: transform.Size{Width: 16, Height: 16}, Transform: transform.TypeDCTDCT}); !errors.Is(err, ErrInvalidBlock) {
+	if _, _, err := ScratchLen(Block{Size: transform.Size{Width: 64, Height: 64}, Transform: transform.TypeDCTDCT}); !errors.Is(err, ErrInvalidBlock) {
 		t.Fatalf("unsupported ScratchLen err=%v want %v", err, ErrInvalidBlock)
 	}
 }
@@ -115,6 +124,36 @@ func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 	}
 }
 
+func TestReconstructPlaneBlockDCT16x16(t *testing.T) {
+	plane, _ := testPlane(18, 17, 1, 20)
+	fillPlane(plane, 1, 90)
+	quantized := make([]int16, 16*16)
+	quantized[0] = 16
+	cfg := Block{
+		Size:      transform.Size{Width: 16, Height: 16},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(plane, 1, 8, 1, 1, quantized, 16, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			want := uint16(90)
+			if x >= 1 && x < 17 && y >= 1 && y < 17 {
+				want = 91
+			}
+			if got := getSample(plane, 1, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestReconstructPlaneBlockHighBitDepthClips(t *testing.T) {
 	plane, _ := testPlane(4, 4, 2, 8)
 	fillPlane(plane, 2, 1020)
@@ -164,7 +203,7 @@ func TestReconstructPlaneBlockRejectsInvalidInputs(t *testing.T) {
 		residualScratch []int16
 		cfg             Block
 	}{
-		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 16, Height: 16}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
+		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 64, Height: 64}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
 		{name: "short int32 scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch[:31], residualScratch: residualScratch, cfg: cfg},
 		{name: "short residual scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch[:15], cfg: cfg},
 		{name: "short quantized stride", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 3, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: cfg},
@@ -227,6 +266,9 @@ func FuzzReconstructPlaneBlock(f *testing.F) {
 			cfg.Size = transform.Size{Width: 8, Height: 8}
 		}
 		if rawMode&2 != 0 {
+			cfg.Size = transform.Size{Width: 16, Height: 16}
+		}
+		if rawMode&4 != 0 {
 			cfg.Size = transform.Size{Width: 16, Height: 16}
 			cfg.Transform = transform.TypeIDTX
 		}

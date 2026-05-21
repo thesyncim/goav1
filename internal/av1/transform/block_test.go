@@ -16,7 +16,9 @@ func TestTypeSupportAndScratchLen(t *testing.T) {
 	}{
 		{name: "dct 4x4", typ: TypeDCTDCT, size: Size{Width: 4, Height: 4}, wantValid: true, wantSupport: true, wantScratch: 16},
 		{name: "dct 8x8", typ: TypeDCTDCT, size: Size{Width: 8, Height: 8}, wantValid: true, wantSupport: true, wantScratch: 64},
-		{name: "dct unsupported 16x16", typ: TypeDCTDCT, size: Size{Width: 16, Height: 16}, wantValid: true},
+		{name: "dct 16x16", typ: TypeDCTDCT, size: Size{Width: 16, Height: 16}, wantValid: true, wantSupport: true, wantScratch: 256},
+		{name: "dct 32x16", typ: TypeDCTDCT, size: Size{Width: 32, Height: 16}, wantValid: true, wantSupport: true, wantScratch: 512},
+		{name: "dct unsupported 64x64", typ: TypeDCTDCT, size: Size{Width: 64, Height: 64}, wantValid: true},
 		{name: "idtx 4x16", typ: TypeIDTX, size: Size{Width: 4, Height: 16}, wantValid: true, wantSupport: true},
 		{name: "idtx 32x32", typ: TypeIDTX, size: Size{Width: 32, Height: 32}, wantValid: true, wantSupport: true},
 		{name: "idtx unsupported 64x64", typ: TypeIDTX, size: Size{Width: 64, Height: 64}, wantValid: true},
@@ -143,13 +145,13 @@ func TestInverseBlockRejectsInvalidInputs(t *testing.T) {
 }
 
 func TestInverseBlockAllocs(t *testing.T) {
-	dctCoeff := make([]int32, 8*8)
-	dctDst := make([]int16, 8*8)
-	dctScratch := make([]int32, 8*8)
+	dctCoeff := make([]int32, 32*32)
+	dctDst := make([]int16, 32*32)
+	dctScratch := make([]int32, 32*32)
 	idtxCoeff := make([]int32, 16*16)
 	idtxDst := make([]int16, 16*16)
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := InverseBlock(dctDst, 8, dctCoeff, 8, dctScratch, Size{Width: 8, Height: 8}, TypeDCTDCT); err != nil {
+		if err := InverseBlock(dctDst, 32, dctCoeff, 32, dctScratch, Size{Width: 32, Height: 32}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
 		if err := InverseBlock(idtxDst, 16, idtxCoeff, 16, nil, Size{Width: 16, Height: 16}, TypeIDTX); err != nil {
@@ -170,10 +172,15 @@ func FuzzInverseBlock(f *testing.F) {
 	f.Fuzz(func(t *testing.T, rawMode uint8, coeffValue int16, delta int16) {
 		typ := TypeDCTDCT
 		size := Size{Width: 4, Height: 4}
-		if rawMode&1 == 1 {
+		switch rawMode & 3 {
+		case 1:
 			size = Size{Width: 8, Height: 8}
+		case 2:
+			size = Size{Width: 16, Height: 16}
+		case 3:
+			size = Size{Width: 32, Height: 32}
 		}
-		if rawMode&2 != 0 {
+		if rawMode&4 != 0 {
 			typ = TypeIDTX
 			size = Size{Width: 16, Height: 16}
 		}
