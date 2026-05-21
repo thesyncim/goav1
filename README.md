@@ -120,6 +120,8 @@ The initial implementation covers:
   derivation for post-reconstruction deblocking setup.
 - Pure-Go narrow loop-filter edge deblocking for 8/10/12-bit reconstruction
   planes.
+- Zero-allocation block-edge loop-filter resolution and application helpers
+  that combine tile delta-lf state, segmentation, thresholds, and deblocking.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 

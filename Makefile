@@ -58,6 +58,7 @@ fuzz-smoke:
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzResolveLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzThresholdsForLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4Edge
+	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4BlockEdge
 
 alloc:
 	./scripts/check_allocs.sh
