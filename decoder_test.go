@@ -70,3 +70,34 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 		t.Fatalf("released frame err=%v want %v", err, ErrFrameInvalidSlot)
 	}
 }
+
+func TestPlanDecoderFrameTileWork(t *testing.T) {
+	event := DecoderEvent{
+		Kind: DecoderEventTileGroup,
+		Unit: OBUUnit{Payload: []byte{0x80}},
+		TileInfo: TileInfo{
+			SBCols:     1,
+			SBRows:     1,
+			Cols:       1,
+			Rows:       1,
+			ColStartSB: [MaxTileCols + 1]uint16{0, 1},
+			RowStartSB: [MaxTileRows + 1]uint16{0, 1},
+		},
+		TileGroup: TileGroup{
+			TileCount:  1,
+			DataOffset: 0,
+			DataSize:   1,
+			Final:      true,
+		},
+	}
+	var spans [1]TileSpan
+	var jobs [1]TileJob
+	var batches [1]TileBatch
+	plan, err := PlanDecoderFrameTileWork(event, 3, 0, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Surface != 3 || plan.ReferenceCount != 0 || plan.Tile != (DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+}

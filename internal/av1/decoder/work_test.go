@@ -172,6 +172,55 @@ func TestBeginFrameWorkRejectsNonFrameEvent(t *testing.T) {
 	}
 }
 
+func TestPlanFrameTileWorkTileGroup(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	plan, err := PlanFrameTileWork(events[2], 5, 0, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Surface != 5 || plan.ReferenceCount != 0 || plan.Tile != (TileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if jobs[0].Tile != 0 || batches[0].Count != 1 {
+		t.Fatalf("job=%+v batch=%+v", jobs[0], batches[0])
+	}
+}
+
+func TestPlanFrameTileWorkRejectsInvalidState(t *testing.T) {
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	_, err := PlanFrameTileWork(Event{Kind: EventFrameHeader}, 0, 0, 1, spans[:], jobs[:], batches[:])
+	if !errors.Is(err, ErrInvalidTileWork) {
+		t.Fatalf("wrong event err=%v want %v", err, ErrInvalidTileWork)
+	}
+	_, err = PlanFrameTileWork(Event{Kind: EventTileGroup}, -1, 0, 1, spans[:], jobs[:], batches[:])
+	if !errors.Is(err, ErrInvalidTileWork) {
+		t.Fatalf("bad surface err=%v want %v", err, ErrInvalidTileWork)
+	}
+	_, err = PlanFrameTileWork(Event{Kind: EventTileGroup}, 0, parser.InterRefsPerFrame+1, 1, spans[:], jobs[:], batches[:])
+	if !errors.Is(err, ErrInvalidTileWork) {
+		t.Fatalf("bad references err=%v want %v", err, ErrInvalidTileWork)
+	}
+}
+
 func TestPlanTileWorkFrameEvent(t *testing.T) {
 	frame := append([]byte{}, reducedStillFrameHeaderPayload()...)
 	frame = append(frame, 0xaa)
@@ -270,6 +319,36 @@ func TestBeginFrameWorkAllocs(t *testing.T) {
 	}
 }
 
+func TestPlanFrameTileWorkAllocs(t *testing.T) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, err := PlanFrameTileWork(events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PlanFrameTileWork allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -292,6 +371,31 @@ func BenchmarkPlanTileWork(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = PlanTileWork(events[2], 1, spans[:], jobs[:], batches[:])
+	}
+}
+
+func BenchmarkPlanFrameTileWork(b *testing.B) {
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0x80})
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	if count != 3 {
+		b.Fatalf("count=%d", count)
+	}
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = PlanFrameTileWork(events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
 	}
 }
 

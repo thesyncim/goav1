@@ -11,6 +11,7 @@ type DecoderEvent = internaldecoder.Event
 type DecoderEventKind = internaldecoder.EventKind
 type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
 type DecoderFrameWorkPlan = internaldecoder.FrameWorkPlan
+type DecoderFrameTileWorkPlan = internaldecoder.FrameTileWorkPlan
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
 type TileBatch = internalthreading.Batch
@@ -59,6 +60,10 @@ func PlanDecoderTileWork(event DecoderEvent, workers int, spans []TileSpan, jobs
 
 func BeginDecoderFrameWork(refs *DecoderSurfaceReferences, pool *FramePool, sequence SequenceHeader, event DecoderEvent, align int, references []int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkPlan, *Frame, error) {
 	return internaldecoder.BeginFrameWork(refs, pool, sequence, event, align, references, workers, spans, jobs, batches)
+}
+
+func PlanDecoderFrameTileWork(event DecoderEvent, surface int, referenceCount int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameTileWorkPlan, error) {
+	return internaldecoder.PlanFrameTileWork(event, surface, referenceCount, workers, spans, jobs, batches)
 }
 
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {

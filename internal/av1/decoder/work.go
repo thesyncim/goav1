@@ -28,6 +28,14 @@ type FrameWorkPlan struct {
 	Tile           TileWorkPlan
 }
 
+// FrameTileWorkPlan binds a tile-group work plan to the output surface and
+// resolved reference count chosen when the frame began.
+type FrameTileWorkPlan struct {
+	Surface        int
+	ReferenceCount int
+	Tile           TileWorkPlan
+}
+
 // BeginFrameWork resolves frame references, plans any inline tile work, and
 // acquires the output frame surface. For frame OBUs, tile work is validated
 // before acquiring a pool slot so malformed tile data leaves surface ownership
@@ -56,6 +64,26 @@ func BeginFrameWork(refs *SurfaceReferences, pool *frame.Pool, sequence parser.S
 		ReferenceCount: refCount,
 		Tile:           tilePlan,
 	}, output, nil
+}
+
+// PlanFrameTileWork plans a later tile-group event for an already-begun frame.
+// The caller carries surface and reference count from BeginFrameWork.
+func PlanFrameTileWork(event Event, surface int, referenceCount int, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (FrameTileWorkPlan, error) {
+	if event.Kind != EventTileGroup {
+		return FrameTileWorkPlan{}, ErrInvalidTileWork
+	}
+	if surface < 0 || referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+		return FrameTileWorkPlan{}, ErrInvalidTileWork
+	}
+	tilePlan, err := PlanTileWork(event, workers, spans, jobs, batches)
+	if err != nil {
+		return FrameTileWorkPlan{}, err
+	}
+	return FrameTileWorkPlan{
+		Surface:        surface,
+		ReferenceCount: referenceCount,
+		Tile:           tilePlan,
+	}, nil
 }
 
 // PlanTileWork turns an EventFrame or EventTileGroup into tile payload spans,
