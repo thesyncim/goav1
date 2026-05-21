@@ -4,7 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	decodework "github.com/thesyncim/goav1/internal/av1/work"
 )
 
 func TestPoolExecute(t *testing.T) {
@@ -28,6 +30,53 @@ func TestPoolExecute(t *testing.T) {
 		}
 		for i := 0; i < len(batchJobs); i++ {
 			seen[batch.FirstJob+i] = batchJobs[i].Tile + 1
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < len(jobs); i++ {
+		if seen[i] != jobs[i].Tile+1 {
+			t.Fatalf("seen[%d]=%d job=%+v", i, seen[i], jobs[i])
+		}
+	}
+}
+
+func TestPoolExecuteFrameWork(t *testing.T) {
+	jobs := testJobs()
+	var batches [2]Batch
+	n, err := BuildBatches(batches[:], jobs[:], 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool, err := NewPool(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var output frame.Frame
+	var reference frame.Frame
+	base := FrameWorkBatch{
+		Step:       decodework.FrameStep{Kind: decodework.FrameStepTile},
+		Output:     &output,
+		References: []*frame.Frame{&reference},
+	}
+	var seen [4]uint16
+	err = pool.ExecuteFrameWork(batches[:n], jobs[:], base, func(ctx FrameWorkBatch) error {
+		if ctx.Step.Kind != decodework.FrameStepTile {
+			t.Fatalf("step=%+v", ctx.Step)
+		}
+		if ctx.Output != &output || len(ctx.References) != 1 || ctx.References[0] != &reference {
+			t.Fatalf("ctx=%+v", ctx)
+		}
+		if len(ctx.Jobs) != ctx.Batch.Count {
+			t.Fatalf("jobs len=%d count=%d", len(ctx.Jobs), ctx.Batch.Count)
+		}
+		for i := 0; i < len(ctx.Jobs); i++ {
+			seen[ctx.Batch.FirstJob+i] = ctx.Jobs[i].Tile + 1
 		}
 		return nil
 	})
@@ -86,6 +135,11 @@ func TestPoolRejectsInvalidInputs(t *testing.T) {
 	if !errors.Is(err, ErrInvalidCallback) {
 		t.Fatalf("Execute nil callback err=%v want %v", err, ErrInvalidCallback)
 	}
+
+	err = pool.ExecuteFrameWork([]Batch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0}}, jobs[:], FrameWorkBatch{}, nil)
+	if !errors.Is(err, ErrInvalidCallback) {
+		t.Fatalf("ExecuteFrameWork nil callback err=%v want %v", err, ErrInvalidCallback)
+	}
 }
 
 func TestPoolRejectsAfterClose(t *testing.T) {
@@ -132,6 +186,31 @@ func TestPoolExecuteAllocs(t *testing.T) {
 	}
 }
 
+func TestPoolExecuteFrameWorkAllocs(t *testing.T) {
+	jobs := testJobs()
+	var batches [2]Batch
+	n, err := BuildBatches(batches[:], jobs[:], 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewPool(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	base := FrameWorkBatch{Step: decodework.FrameStep{Kind: decodework.FrameStepTile}}
+	allocs := testing.AllocsPerRun(1000, func() {
+		err := pool.ExecuteFrameWork(batches[:n], jobs[:], base, noopFrameWorkBatch)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("Pool.ExecuteFrameWork allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPoolExecute(b *testing.B) {
 	jobs := testJobs()
 	var batches [2]Batch
@@ -151,4 +230,28 @@ func BenchmarkPoolExecute(b *testing.B) {
 			return nil
 		})
 	}
+}
+
+func BenchmarkPoolExecuteFrameWork(b *testing.B) {
+	jobs := testJobs()
+	var batches [2]Batch
+	n, err := BuildBatches(batches[:], jobs[:], 2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	pool, err := NewPool(2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer pool.Close()
+
+	base := FrameWorkBatch{Step: decodework.FrameStep{Kind: decodework.FrameStepTile}}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = pool.ExecuteFrameWork(batches[:n], jobs[:], base, noopFrameWorkBatch)
+	}
+}
+
+func noopFrameWorkBatch(FrameWorkBatch) error {
+	return nil
 }

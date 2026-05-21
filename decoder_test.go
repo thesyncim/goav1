@@ -310,6 +310,44 @@ func TestExecuteDecoderFrameWorkStep(t *testing.T) {
 	}
 }
 
+func TestExecuteDecoderFrameWorkStepWithContext(t *testing.T) {
+	workerPool, err := NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
+	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
+	step := DecoderFrameWorkStep{
+		Kind: DecoderFrameWorkStepTile,
+		Tile: DecoderFrameTileWorkPlan{
+			ReferenceCount: 1,
+			Tile:           DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1},
+		},
+	}
+	var output Frame
+	var reference Frame
+	references := [InterRefsPerFrame]*Frame{&reference}
+	seen := false
+	executed, err := ExecuteDecoderFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], func(ctx DecoderFrameWorkBatch) error {
+		seen = ctx.Step == step &&
+			ctx.Output == &output &&
+			len(ctx.References) == 1 &&
+			ctx.References[0] == &reference &&
+			ctx.Batch.Count == 1 &&
+			len(ctx.Jobs) == 1 &&
+			ctx.Jobs[0].Tile == 0
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed || !seen {
+		t.Fatalf("executed=%v seen=%v", executed, seen)
+	}
+}
+
 func TestDecoderFrameWorkStateRunStep(t *testing.T) {
 	workerPool, err := NewTileWorkerPool(1)
 	if err != nil {

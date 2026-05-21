@@ -16,6 +16,8 @@ type DecoderShowExistingFrameWorkPlan = internaldecoder.ShowExistingFrameWorkPla
 type DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepKind
 type DecoderFrameWorkStep = internaldecoder.FrameWorkStep
 type DecoderFrameWorkStepResult = internaldecoder.FrameWorkStepResult
+type DecoderFrameWorkBatch = internaldecoder.FrameWorkBatch
+type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
@@ -85,6 +87,10 @@ func ExecuteDecoderTileWork(plan DecoderTileWorkPlan, pool *TileWorkerPool, jobs
 
 func ExecuteDecoderFrameWorkStep(step DecoderFrameWorkStep, pool *TileWorkerPool, jobs []TileJob, batches []TileBatch, fn TileBatchFunc) (bool, error) {
 	return internaldecoder.ExecuteFrameWorkStep(step, pool, jobs, batches, fn)
+}
+
+func ExecuteDecoderFrameWorkStepWithContext(step DecoderFrameWorkStep, pool *TileWorkerPool, output *Frame, references []*Frame, jobs []TileJob, batches []TileBatch, fn DecoderFrameWorkBatchFunc) (bool, error) {
+	return internaldecoder.ExecuteFrameWorkStepWithContext(step, pool, output, references, jobs, batches, fn)
 }
 
 func DecoderEventDropsFrameWork(event DecoderEvent) bool {

@@ -3,12 +3,28 @@ package threading
 import (
 	"sync"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	decodework "github.com/thesyncim/goav1/internal/av1/work"
 )
 
 // BatchFunc processes one deterministic batch. The jobs slice is the exact
 // contiguous range described by the Batch.
 type BatchFunc func(batch Batch, jobs []tile.Job) error
+
+// FrameWorkBatch is the decoder context supplied to one frame-work tile batch.
+// References and Jobs alias caller-owned storage and are valid for the
+// callback invocation.
+type FrameWorkBatch struct {
+	Step       decodework.FrameStep
+	Output     *frame.Frame
+	References []*frame.Frame
+	Batch      Batch
+	Jobs       []tile.Job
+}
+
+// FrameWorkBatchFunc processes one deterministic frame-work tile batch.
+type FrameWorkBatchFunc func(FrameWorkBatch) error
 
 // Pool is a reusable bounded worker pool for frame/tile work.
 type Pool struct {
@@ -23,9 +39,11 @@ type poolWorker struct {
 }
 
 type poolTask struct {
-	fn    BatchFunc
-	batch Batch
-	jobs  []tile.Job
+	fn         BatchFunc
+	frameFn    FrameWorkBatchFunc
+	frameBatch FrameWorkBatch
+	batch      Batch
+	jobs       []tile.Job
 }
 
 type workerResult struct {
@@ -102,6 +120,53 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 	return firstErr
 }
 
+// ExecuteFrameWork dispatches frame-work batches with decoder context. It
+// follows Execute's validation and synchronization rules while copying base
+// context into each worker task.
+func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWorkBatch, fn FrameWorkBatchFunc) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if fn == nil {
+		return ErrInvalidCallback
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) > len(p.workers) {
+		return ErrInvalidBatch
+	}
+	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+
+	for i := 0; i < len(batches); i++ {
+		batch := batches[i]
+		p.workers[batch.Worker].tasks <- poolTask{
+			frameFn:    fn,
+			frameBatch: base,
+			batch:      batch,
+			jobs:       jobs[batch.FirstJob : batch.FirstJob+batch.Count],
+		}
+	}
+
+	var firstErr error
+	for i := 0; i < len(batches); i++ {
+		result := <-p.done
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+	}
+	p.mu.Unlock()
+	return firstErr
+}
+
 func (p *Pool) Close() {
 	if p == nil {
 		return
@@ -137,6 +202,13 @@ func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 
 func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 	for task := range tasks {
+		if task.frameFn != nil {
+			ctx := task.frameBatch
+			ctx.Batch = task.batch
+			ctx.Jobs = task.jobs
+			done <- workerResult{err: task.frameFn(ctx)}
+			continue
+		}
 		done <- workerResult{err: task.fn(task.batch, task.jobs)}
 	}
 }

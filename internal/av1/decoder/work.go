@@ -7,77 +7,28 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	decodework "github.com/thesyncim/goav1/internal/av1/work"
 )
 
 var ErrInvalidTileWork = errors.New("decoder: invalid tile work")
 
-// TileWorkPlan is the caller-buffer work description derived from one tile
-// group event.
-type TileWorkPlan struct {
-	SpanCount  int
-	JobCount   int
-	BatchCount int
-}
-
-// FrameWorkPlan is the caller-buffer work description for one frame-begin
-// event. Frame-header events have no tile work yet; frame events may carry an
-// implicit final tile group.
-type FrameWorkPlan struct {
-	Surface        int
-	ReferenceCount int
-	Tile           TileWorkPlan
-}
-
-// FrameTileWorkPlan binds a tile-group work plan to the output surface and
-// resolved reference count chosen when the frame began.
-type FrameTileWorkPlan struct {
-	Surface        int
-	ReferenceCount int
-	Tile           TileWorkPlan
-}
-
-// ShowExistingFrameWorkPlan is the caller-buffer work result for a
-// show-existing-frame event. Surface is the frame-pool slot to output.
-type ShowExistingFrameWorkPlan struct {
-	Surface          int
-	ReleaseCount     int
-	DroppedFrameWork bool
-}
-
-// FrameWorkStepKind identifies the action produced by PlanEvent.
-type FrameWorkStepKind uint8
+type TileWorkPlan = decodework.TilePlan
+type FrameWorkPlan = decodework.FramePlan
+type FrameTileWorkPlan = decodework.FrameTilePlan
+type ShowExistingFrameWorkPlan = decodework.ShowExistingFramePlan
+type FrameWorkStepKind = decodework.FrameStepKind
+type FrameWorkStep = decodework.FrameStep
+type FrameWorkStepResult = decodework.FrameStepResult
+type FrameWorkBatch = threading.FrameWorkBatch
+type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (
-	// FrameWorkStepIgnored means the event did not affect frame work.
-	FrameWorkStepIgnored FrameWorkStepKind = iota
-	// FrameWorkStepDropped means active incomplete frame work was aborted.
-	FrameWorkStepDropped
-	// FrameWorkStepBegin means a new output surface was acquired.
-	FrameWorkStepBegin
-	// FrameWorkStepTile means continuation tile work was planned.
-	FrameWorkStepTile
-	// FrameWorkStepShowExisting means an existing reference surface is output.
-	FrameWorkStepShowExisting
+	FrameWorkStepIgnored      FrameWorkStepKind = decodework.FrameStepIgnored
+	FrameWorkStepDropped      FrameWorkStepKind = decodework.FrameStepDropped
+	FrameWorkStepBegin        FrameWorkStepKind = decodework.FrameStepBegin
+	FrameWorkStepTile         FrameWorkStepKind = decodework.FrameStepTile
+	FrameWorkStepShowExisting FrameWorkStepKind = decodework.FrameStepShowExisting
 )
-
-// FrameWorkStep is the caller-buffer result of applying one decoder event to
-// frame-work state. The active frame should be finished separately after the
-// caller executes any tile work reported by Begin or Tile.
-type FrameWorkStep struct {
-	Kind             FrameWorkStepKind
-	DroppedFrameWork bool
-
-	Begin        FrameWorkPlan
-	Tile         FrameTileWorkPlan
-	ShowExisting ShowExistingFrameWorkPlan
-}
-
-// FrameWorkStepResult reports the side effects completed by RunStep.
-type FrameWorkStepResult struct {
-	ExecutedTileWork bool
-	CompletedFrame   bool
-	ReleaseCount     int
-}
 
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
@@ -323,6 +274,27 @@ func (s *FrameWorkState) RunStep(refs *SurfaceReferences, framePool *frame.Pool,
 	}, nil
 }
 
+// RunStepWithContext is RunStep with decoder frame context attached to each
+// executed tile batch.
+func (s *FrameWorkState) RunStepWithContext(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, releases []int, fn FrameWorkBatchFunc) (FrameWorkStepResult, error) {
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
+	}
+	executed, err := ExecuteFrameWorkStepWithContext(step, workerPool, output, references, jobs, batches, fn)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     releaseCount,
+	}, nil
+}
+
 // ExecuteTileWork dispatches the planned tile jobs through a reusable worker
 // pool. Only the caller-owned job and batch ranges named by plan are used.
 func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) error {
@@ -339,22 +311,53 @@ func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, b
 // not carry tile work are successful no-ops; the boolean reports whether tile
 // work actually ran.
 func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) (bool, error) {
-	var plan TileWorkPlan
-	switch step.Kind {
-	case FrameWorkStepIgnored, FrameWorkStepDropped, FrameWorkStepShowExisting:
+	plan, _, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return false, err
+	}
+	if !hasTile {
 		return false, nil
-	case FrameWorkStepBegin:
-		plan = step.Begin.Tile
-	case FrameWorkStepTile:
-		plan = step.Tile.Tile
-	default:
-		return false, ErrInvalidTileWork
 	}
 
 	if err := ExecuteTileWork(plan, pool, jobs, batches, fn); err != nil {
 		return false, err
 	}
 	return plan.JobCount != 0, nil
+}
+
+// ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
+// passing the output frame and resolved reference frames to each batch.
+func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return false, err
+	}
+	if !hasTile {
+		return false, nil
+	}
+	if err := validateTileWorkPlan(plan, jobs, batches); err != nil {
+		return false, err
+	}
+	if plan.JobCount == 0 {
+		return false, nil
+	}
+	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+		return false, ErrInvalidTileWork
+	}
+	if len(references) < referenceCount {
+		return false, ErrSurfaceReferenceBufferTooSmall
+	}
+
+	base := FrameWorkBatch{
+		Step:       step,
+		Output:     output,
+		References: references[:referenceCount],
+	}
+	err = pool.ExecuteFrameWork(batches[:plan.BatchCount], jobs[:plan.JobCount], base, fn)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and
@@ -454,6 +457,19 @@ func validateTileWorkPlan(plan TileWorkPlan, jobs []tile.Job, batches []threadin
 		return ErrInvalidTileWork
 	}
 	return nil
+}
+
+func frameWorkStepTilePlan(step FrameWorkStep) (TileWorkPlan, int, bool, error) {
+	switch step.Kind {
+	case FrameWorkStepIgnored, FrameWorkStepDropped, FrameWorkStepShowExisting:
+		return TileWorkPlan{}, 0, false, nil
+	case FrameWorkStepBegin:
+		return step.Begin.Tile, step.Begin.ReferenceCount, true, nil
+	case FrameWorkStepTile:
+		return step.Tile.Tile, step.Tile.ReferenceCount, true, nil
+	default:
+		return TileWorkPlan{}, 0, false, ErrInvalidTileWork
+	}
 }
 
 func frameWorkStepMatchesEvent(event Event, step FrameWorkStep) bool {
