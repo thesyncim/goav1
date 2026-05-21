@@ -17,6 +17,12 @@ type DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepKind
 type DecoderFrameWorkStep = internaldecoder.FrameWorkStep
 type DecoderFrameWorkStepResult = internaldecoder.FrameWorkStepResult
 type DecoderFrameWorkBatch = internaldecoder.FrameWorkBatch
+type DecoderFrameWorkSequenceContext = internaldecoder.FrameWorkSequenceContext
+type DecoderFrameWorkFrameContext = internaldecoder.FrameWorkFrameContext
+type DecoderFrameWorkJobRegion = internaldecoder.FrameWorkJobRegion
+type DecoderFrameWorkPlane = internaldecoder.FrameWorkPlane
+type DecoderFrameWorkPlaneRegion = internaldecoder.FrameWorkPlaneRegion
+type DecoderFrameWorkReference = internaldecoder.FrameWorkReference
 type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
 type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
@@ -45,6 +51,18 @@ const (
 	DecoderFrameWorkStepBegin        DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepBegin
 	DecoderFrameWorkStepTile         DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepTile
 	DecoderFrameWorkStepShowExisting DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepShowExisting
+
+	DecoderFrameWorkPlaneY DecoderFrameWorkPlane = internaldecoder.FrameWorkPlaneY
+	DecoderFrameWorkPlaneU DecoderFrameWorkPlane = internaldecoder.FrameWorkPlaneU
+	DecoderFrameWorkPlaneV DecoderFrameWorkPlane = internaldecoder.FrameWorkPlaneV
+
+	DecoderFrameWorkReferenceLast    DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceLast
+	DecoderFrameWorkReferenceLast2   DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceLast2
+	DecoderFrameWorkReferenceLast3   DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceLast3
+	DecoderFrameWorkReferenceGolden  DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceGolden
+	DecoderFrameWorkReferenceBwd     DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceBwd
+	DecoderFrameWorkReferenceAltRef2 DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceAltRef2
+	DecoderFrameWorkReferenceAltRef  DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceAltRef
 )
 
 var (
@@ -112,6 +130,10 @@ func DecoderEventCompletesFrameWork(event DecoderEvent) bool {
 
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
+}
+
+func DecoderFrameWorkSequenceContextFromHeader(sequence SequenceHeader) DecoderFrameWorkSequenceContext {
+	return internalthreading.FrameWorkSequenceContextFromHeader(sequence)
 }
 
 func DecoderAcquireFrameSurface(pool *FramePool, sequence SequenceHeader, size FrameSize, align int) (int, *Frame, error) {

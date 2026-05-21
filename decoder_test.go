@@ -130,6 +130,63 @@ func TestDecoderFrameWorkBatchJobPayload(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkBatchPlaneHelpers(t *testing.T) {
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	sequenceContext := DecoderFrameWorkSequenceContextFromHeader(sequence)
+	if !sequenceContext.Valid() || sequenceContext.ColorConfig != sequence.ColorConfig {
+		t.Fatalf("sequence context=%+v", sequenceContext)
+	}
+
+	output := testDecoderBoundFrame(t, FrameFormat{
+		Width:        16,
+		Height:       16,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	reference := testDecoderBoundFrame(t, FrameFormat{
+		Width:        16,
+		Height:       16,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	references := [InterRefsPerFrame]*Frame{}
+	references[int(DecoderFrameWorkReferenceLast)] = &reference
+	ctx := DecoderFrameWorkBatch{
+		Output:     &output,
+		References: references[:1],
+		FrameWorkFrameContext: DecoderFrameWorkFrameContext{
+			Sequence:  sequenceContext,
+			FrameSize: FrameSize{CodedWidth: 16, Height: 16},
+		},
+		Jobs: []TileJob{{SBCols: 1, SBRows: 1}},
+	}
+
+	outputPlane, err := ctx.JobOutputPlane(0, DecoderFrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var typedOutput DecoderFrameWorkPlaneRegion = outputPlane
+	if typedOutput.Width != 16 || typedOutput.Height != 16 || typedOutput.Plane != DecoderFrameWorkPlaneY {
+		t.Fatalf("output plane=%+v", typedOutput)
+	}
+
+	referencePlane, err := ctx.ReferencePlane(DecoderFrameWorkReferenceLast, DecoderFrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if referencePlane.Width != 8 || referencePlane.Height != 8 || referencePlane.Plane != DecoderFrameWorkPlaneU {
+		t.Fatalf("reference plane=%+v", referencePlane)
+	}
+}
+
 func TestDecoderEventDropsFrameWork(t *testing.T) {
 	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
 		t.Fatal("new sequence did not drop frame work")
@@ -575,4 +632,18 @@ func testDecoderFramePool(t *testing.T, count int) FramePool {
 		t.Fatal(err)
 	}
 	return pool
+}
+
+func testDecoderBoundFrame(t *testing.T, format FrameFormat) Frame {
+	t.Helper()
+	layout, err := FrameRequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, layout.Size)
+	output, err := BindFrame(buffer, format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
 }

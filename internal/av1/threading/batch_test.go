@@ -586,6 +586,93 @@ func TestFrameWorkBatchJobOutputPlaneRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchReferencePlane(t *testing.T) {
+	last := testBatchFrame(t, frame.Format{
+		Width:        64,
+		Height:       64,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	golden := testBatchFrame(t, frame.Format{
+		Width:        150,
+		Height:       129,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	references := [parser.InterRefsPerFrame]*frame.Frame{}
+	references[int(FrameWorkReferenceLast)] = last
+	references[int(FrameWorkReferenceGolden)] = golden
+	ctx := FrameWorkBatch{References: references[:]}
+
+	ref, err := ctx.ReferenceFrame(FrameWorkReferenceGolden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != golden {
+		t.Fatalf("reference=%p want %p", ref, golden)
+	}
+
+	u, err := ctx.ReferencePlane(FrameWorkReferenceGolden, FrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Plane != FrameWorkPlaneU || u.X != 0 || u.Y != 0 || u.Width != 75 || u.Height != 65 ||
+		u.Stride != golden.U.Stride || u.BytesPerSample != 2 || u.RowBytes != 150 {
+		t.Fatalf("U reference plane=%+v", u)
+	}
+	if len(u.Pix) != (u.Height-1)*u.Stride+u.RowBytes {
+		t.Fatalf("U len=%d plane=%+v", len(u.Pix), u)
+	}
+	u.Pix[1] = 0x5a
+	if golden.U.Pix[1] != 0x5a {
+		t.Fatalf("U reference plane did not alias")
+	}
+
+	y, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.Width != 64 || y.Height != 64 || y.RowBytes != 64 || y.BytesPerSample != 1 {
+		t.Fatalf("Y reference plane=%+v", y)
+	}
+}
+
+func TestFrameWorkBatchReferencePlaneRejectsInvalidInputs(t *testing.T) {
+	mono := testBatchFrame(t, frame.Format{
+		Width:      64,
+		Height:     64,
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      32,
+	})
+	ctx := FrameWorkBatch{References: []*frame.Frame{mono}}
+	if _, err := ctx.ReferenceFrame(FrameWorkReferenceLast2); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("missing reference err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.ReferenceFrame(FrameWorkReference(parser.InterRefsPerFrame)); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid reference err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := (FrameWorkBatch{References: []*frame.Frame{nil}}).ReferenceFrame(FrameWorkReferenceLast); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil reference err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneU); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("monochrome U err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlane(99)); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid plane err=%v want %v", err, ErrInvalidBatch)
+	}
+
+	badLayout := *mono
+	badLayout.Layout.BytesPerSample = 0
+	if _, err := (FrameWorkBatch{References: []*frame.Frame{&badLayout}}).ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad layout err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchJobRegionRejectsInvalidInputs(t *testing.T) {
 	validRegionBatch := func() FrameWorkBatch {
 		return FrameWorkBatch{
@@ -791,7 +878,8 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 		Align:        64,
 	})
 	ctx := FrameWorkBatch{
-		Output: output,
+		Output:     output,
+		References: []*frame.Frame{output},
 		FrameWorkFrameContext: FrameWorkFrameContext{
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
 				Use128x128Superblock: true,
@@ -828,6 +916,20 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 		}
 		if plane.X != 64 || plane.Y != 64 || plane.Width != 86 || plane.Height != 66 || plane.RowBytes != 172 {
 			t.Fatalf("plane=%+v", plane)
+		}
+		ref, err := ctx.ReferenceFrame(FrameWorkReferenceLast)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ref != output {
+			t.Fatalf("reference=%p want %p", ref, output)
+		}
+		refPlane, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if refPlane.Width != 300 || refPlane.Height != 260 || refPlane.RowBytes != 600 {
+			t.Fatalf("reference plane=%+v", refPlane)
 		}
 	})
 	if allocs != 0 {
@@ -989,6 +1091,7 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 			Align:        64,
 		}
 		output := testBatchFrame(t, format)
+		references := [parser.InterRefsPerFrame]*frame.Frame{output}
 		seq := parser.SequenceHeader{
 			Use128x128Superblock: use128,
 			ColorConfig: parser.ColorConfig{
@@ -999,7 +1102,8 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 			},
 		}
 		ctx := FrameWorkBatch{
-			Output: output,
+			Output:     output,
+			References: references[:1],
 			FrameWorkFrameContext: FrameWorkFrameContext{
 				Sequence: FrameWorkSequenceContextFromHeader(seq),
 				FrameSize: parser.FrameSize{
@@ -1039,6 +1143,13 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 		}
 		if yPlane.Width == 0 || yPlane.Height == 0 || len(yPlane.Pix) == 0 {
 			t.Fatalf("invalid Y plane=%+v", yPlane)
+		}
+		refPlane, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY)
+		if err != nil {
+			t.Fatalf("reference plane err=%v region=%+v", err, region)
+		}
+		if refPlane.Width != int(width) || refPlane.Height != int(height) || len(refPlane.Pix) == 0 {
+			t.Fatalf("invalid reference plane=%+v", refPlane)
 		}
 		if !format.MonoChrome {
 			uPlane, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
@@ -1190,6 +1301,23 @@ func BenchmarkFrameWorkBatchJobOutputPlane(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.JobOutputPlane(0, FrameWorkPlaneU)
+	}
+}
+
+func BenchmarkFrameWorkBatchReferencePlane(b *testing.B) {
+	reference := benchmarkBatchFrame(b, frame.Format{
+		Width:        300,
+		Height:       260,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := FrameWorkBatch{References: []*frame.Frame{reference}}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneU)
 	}
 }
 

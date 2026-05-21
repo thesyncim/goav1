@@ -25,6 +25,7 @@ type FrameWorkFrameContext = threading.FrameWorkFrameContext
 type FrameWorkJobRegion = threading.FrameWorkJobRegion
 type FrameWorkPlane = threading.FrameWorkPlane
 type FrameWorkPlaneRegion = threading.FrameWorkPlaneRegion
+type FrameWorkReference = threading.FrameWorkReference
 type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (
@@ -37,6 +38,14 @@ const (
 	FrameWorkPlaneY FrameWorkPlane = threading.FrameWorkPlaneY
 	FrameWorkPlaneU FrameWorkPlane = threading.FrameWorkPlaneU
 	FrameWorkPlaneV FrameWorkPlane = threading.FrameWorkPlaneV
+
+	FrameWorkReferenceLast    FrameWorkReference = threading.FrameWorkReferenceLast
+	FrameWorkReferenceLast2   FrameWorkReference = threading.FrameWorkReferenceLast2
+	FrameWorkReferenceLast3   FrameWorkReference = threading.FrameWorkReferenceLast3
+	FrameWorkReferenceGolden  FrameWorkReference = threading.FrameWorkReferenceGolden
+	FrameWorkReferenceBwd     FrameWorkReference = threading.FrameWorkReferenceBwd
+	FrameWorkReferenceAltRef2 FrameWorkReference = threading.FrameWorkReferenceAltRef2
+	FrameWorkReferenceAltRef  FrameWorkReference = threading.FrameWorkReferenceAltRef
 )
 
 // FrameWorkEventResult reports the planning, output, and execution result for

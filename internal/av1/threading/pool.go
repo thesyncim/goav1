@@ -106,7 +106,7 @@ type FrameWorkJobRegion struct {
 	MIRowEnd   uint32
 }
 
-// FrameWorkPlane identifies one output frame plane.
+// FrameWorkPlane identifies one frame plane.
 type FrameWorkPlane uint8
 
 const (
@@ -115,9 +115,23 @@ const (
 	FrameWorkPlaneV
 )
 
-// FrameWorkPlaneRegion is the writable output-plane window for one scheduled
-// tile job. Pix starts at (X, Y) and spans through the final row; row starts are
-// separated by Stride bytes and each row has RowBytes valid bytes.
+// FrameWorkReference identifies one AV1 inter reference frame in the resolved
+// References slice. Values follow AV1's LAST_FRAME through ALTREF_FRAME order.
+type FrameWorkReference uint8
+
+const (
+	FrameWorkReferenceLast FrameWorkReference = iota
+	FrameWorkReferenceLast2
+	FrameWorkReferenceLast3
+	FrameWorkReferenceGolden
+	FrameWorkReferenceBwd
+	FrameWorkReferenceAltRef2
+	FrameWorkReferenceAltRef
+)
+
+// FrameWorkPlaneRegion is a checked output or reference plane window. Pix
+// starts at (X, Y) and spans through the final row; row starts are separated by
+// Stride bytes and each row has RowBytes valid bytes.
 type FrameWorkPlaneRegion struct {
 	Plane FrameWorkPlane
 	Pix   []byte
@@ -304,7 +318,7 @@ func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWo
 	if b.Output == nil {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
-	outputPlane, subsamplingX, subsamplingY, ok := frameWorkOutputPlane(b.Output, plane)
+	outputPlane, subsamplingX, subsamplingY, ok := frameWorkFramePlane(b.Output, plane)
 	if !ok {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
@@ -316,6 +330,29 @@ func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWo
 	x0, x1 := frameWorkPlaneRange(region.PixelX, region.PixelX+region.PixelWidth, subsamplingX)
 	y0, y1 := frameWorkPlaneRange(region.PixelY, region.PixelY+region.PixelHeight, subsamplingY)
 	return frameWorkPlaneWindow(plane, outputPlane, bytesPerSample, x0, y0, x1, y1)
+}
+
+// ReferenceFrame returns the resolved frame for one AV1 inter-reference slot.
+func (b FrameWorkBatch) ReferenceFrame(reference FrameWorkReference) (*frame.Frame, error) {
+	index := int(reference)
+	if index >= parser.InterRefsPerFrame || index >= len(b.References) || b.References[index] == nil {
+		return nil, ErrInvalidBatch
+	}
+	return b.References[index], nil
+}
+
+// ReferencePlane returns the full plane from one resolved reference frame.
+func (b FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+	refFrame, err := b.ReferenceFrame(reference)
+	if err != nil {
+		return FrameWorkPlaneRegion{}, err
+	}
+	refPlane, _, _, ok := frameWorkFramePlane(refFrame, plane)
+	if !ok {
+		return FrameWorkPlaneRegion{}, ErrInvalidBatch
+	}
+	bytesPerSample := refFrame.Layout.BytesPerSample
+	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, 0, 0, uint32(refPlane.Width), uint32(refPlane.Height))
 }
 
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
@@ -340,7 +377,7 @@ func frameWorkMIExtent(pixels uint32) (uint32, bool) {
 	return ((pixels + 7) >> 3) << 1, true
 }
 
-func frameWorkOutputPlane(output *frame.Frame, plane FrameWorkPlane) (frame.Plane, bool, bool, bool) {
+func frameWorkFramePlane(output *frame.Frame, plane FrameWorkPlane) (frame.Plane, bool, bool, bool) {
 	switch plane {
 	case FrameWorkPlaneY:
 		return output.Y, false, false, true
