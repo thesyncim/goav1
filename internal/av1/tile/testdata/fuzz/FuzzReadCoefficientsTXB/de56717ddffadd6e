@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("N")
+byte('>')
+byte('\x00')
+byte('\x00')
+byte('\x02')
+byte('¢')
+byte('\x00')
+byte('\v')

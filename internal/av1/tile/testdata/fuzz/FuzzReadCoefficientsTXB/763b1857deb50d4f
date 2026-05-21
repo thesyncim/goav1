@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\xd8")
+byte('\u009b')
+byte('3')
+byte('&')
+byte('T')
+byte('F')
+byte('\x00')
+byte('\x00')

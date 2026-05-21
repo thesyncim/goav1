@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\x8f")
+byte('\x16')
+byte('\x00')
+byte('\x00')
+byte('\x04')
+byte('\x02')
+byte('\x00')
+byte('í')

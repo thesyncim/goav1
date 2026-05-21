@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("d!\xc3~")
+byte('\x04')
+byte('\x00')
+byte('Ç')
+byte('\f')
+byte('\x02')
+byte('\x01')
+byte('ÿ')

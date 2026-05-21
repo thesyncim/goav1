@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("m\xb7Y0 000")
+byte('\x00')
+byte('\x00')
+byte('\x00')
+byte('\x00')
+byte('\x00')
+byte('\x00')
+byte('\x00')

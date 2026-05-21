@@ -1,6 +1,9 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/entropy"
+import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/transform"
+)
 
 const (
 	CoeffQContexts        = 4
@@ -15,9 +18,12 @@ const (
 	BRCDFSize             = 4
 	CoeffBaseRange        = 4 * (BRCDFSize - 1)
 	MaxBaseBRRange        = CoeffBaseRange + NumBaseLevels + 1
+	CoeffContextBits      = 3
+	CoeffContextMask      = (1 << CoeffContextBits) - 1
 	maxEOBFlagContexts    = 2
 	maxEOBFlagCumulative  = 10
 	maxCoeffCumulativeLen = 10
+	txPadHorizontal       = 4
 )
 
 type CoeffPlaneType uint8
@@ -65,6 +71,22 @@ type CoeffTokenRequest struct {
 	Size    TransformSize
 	Plane   CoeffPlaneType
 	Context int
+}
+
+type TXBDecodeRequest struct {
+	Size            TransformSize
+	Plane           CoeffPlaneType
+	Class           transform.Class
+	TXBSkipContext  int
+	DCSignContext   int
+	EOBMultiContext int
+}
+
+type TXBDecodeResult struct {
+	EOB         int
+	MaxScanLine int
+	CulLevel    int
+	AllZero     bool
 }
 
 var eobGroupStart = [12]int{0, 1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513}
@@ -145,6 +167,18 @@ func RecEOBPosition(token int, extra int) (int, error) {
 		eob += extra
 	}
 	return eob, nil
+}
+
+func CoeffLevelsScratchLen(size TransformSize) (int, error) {
+	txSize, err := size.TransformSize()
+	if err != nil {
+		return 0, ErrInvalidDecodeState
+	}
+	scanSize, err := transform.ScanSize(txSize)
+	if err != nil {
+		return 0, ErrInvalidDecodeState
+	}
+	return (scanSize.Width + txPadHorizontal) * (scanSize.Height + txPadHorizontal), nil
 }
 
 func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
@@ -416,9 +450,427 @@ func (s *DecodeState) ReadDCSign(cdfs *CoeffCDFs, plane CoeffPlaneType, context 
 	return readBoolCDF(s, cdf)
 }
 
+// ReadCoefficientsTXB decodes AV1 coefficient syntax into coeffs in AV1 raster
+// order: coeff_idx = col * adjusted_height + row. Dequantization and qmatrix
+// scaling are intentionally separate from this entropy-syntax layer.
+func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8) (TXBDecodeResult, error) {
+	if s == nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	if !req.Plane.Valid() || !req.Class.Valid() {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	txSize, err := req.Size.TransformSize()
+	if err != nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	scanSize, err := transform.ScanSize(txSize)
+	if err != nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	maxEOB := scanSize.Width * scanSize.Height
+	if len(coeffs) < maxEOB || len(scan) < maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	scratchLen, err := CoeffLevelsScratchLen(req.Size)
+	if err != nil {
+		return TXBDecodeResult{}, err
+	}
+	if len(levelsScratch) < scratchLen {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+
+	for i := 0; i < maxEOB; i++ {
+		coeffs[i] = 0
+	}
+	for i := 0; i < scratchLen; i++ {
+		levelsScratch[i] = 0
+	}
+
+	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
+	if err != nil {
+		return TXBDecodeResult{}, err
+	}
+	if allZero {
+		return TXBDecodeResult{AllZero: true}, nil
+	}
+
+	eob, err := s.ReadEOB(cdfs, EOBRequest{
+		Size:            req.Size,
+		Plane:           req.Plane,
+		EOBMultiContext: req.EOBMultiContext,
+	})
+	if err != nil {
+		return TXBDecodeResult{}, err
+	}
+	if eob.Position <= 0 || eob.Position > maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+
+	culLevel := 0
+	dcValue := 0
+	if err := s.readLastCoeffLevel(cdfs, req, eob.Position, scan, levelsScratch, scanSize); err != nil {
+		return TXBDecodeResult{}, err
+	}
+	for c := eob.Position - 2; c >= 0; c-- {
+		pos := int(scan[c])
+		ctx, err := CoeffLowerLevelsContext(levelsScratch, req.Size, req.Class, pos)
+		if err != nil {
+			return TXBDecodeResult{}, err
+		}
+		level, err := s.ReadCoeffBase(cdfs, CoeffTokenRequest{Size: req.Size, Plane: req.Plane, Context: ctx})
+		if err != nil {
+			return TXBDecodeResult{}, err
+		}
+		if level > NumBaseLevels {
+			brCtx, err := CoeffBRContext(levelsScratch, req.Size, req.Class, pos)
+			if err != nil {
+				return TXBDecodeResult{}, err
+			}
+			extra, err := s.readBaseRange(cdfs, req.Size, req.Plane, brCtx)
+			if err != nil {
+				return TXBDecodeResult{}, err
+			}
+			level += extra
+		}
+		if err := setCoeffLevel(levelsScratch, req.Size, pos, level); err != nil {
+			return TXBDecodeResult{}, err
+		}
+	}
+
+	maxScanLine := 0
+	for c := 0; c < eob.Position; c++ {
+		pos := int(scan[c])
+		level, err := coeffLevel(levelsScratch, req.Size, pos)
+		if err != nil {
+			return TXBDecodeResult{}, err
+		}
+		if level == 0 {
+			continue
+		}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		negative := false
+		if c == 0 {
+			negative, err = s.ReadDCSign(cdfs, req.Plane, req.DCSignContext)
+		} else {
+			var bit uint8
+			bit, err = s.Reader.ReadBit()
+			negative = bit != 0
+		}
+		if err != nil {
+			return TXBDecodeResult{}, err
+		}
+		if level >= MaxBaseBRRange {
+			tail, err := s.readCoeffGolomb()
+			if err != nil {
+				return TXBDecodeResult{}, err
+			}
+			level += tail
+		}
+		culLevel += level
+		if level > int(^uint16(0)>>1) {
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		signed := int16(level)
+		if negative {
+			signed = -signed
+		}
+		if c == 0 {
+			dcValue = int(signed)
+		}
+		coeffs[pos] = signed
+	}
+
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if dcValue < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if dcValue > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+
+	return TXBDecodeResult{
+		EOB:         eob.Position,
+		MaxScanLine: maxScanLine,
+		CulLevel:    culLevel,
+	}, nil
+}
+
+func (s *DecodeState) readLastCoeffLevel(cdfs *CoeffCDFs, req TXBDecodeRequest, eob int, scan []int16, levels []uint8, scanSize transform.Size) error {
+	c := eob - 1
+	pos := int(scan[c])
+	ctx, err := transform.LowerLevelsCtxEOB(scanSize, c)
+	if err != nil {
+		return ErrInvalidDecodeState
+	}
+	level, err := s.ReadCoeffBaseEOB(cdfs, CoeffTokenRequest{Size: req.Size, Plane: req.Plane, Context: ctx})
+	if err != nil {
+		return err
+	}
+	if level > NumBaseLevels {
+		brCtx, err := CoeffBRContextEOB(req.Size, req.Class, pos)
+		if err != nil {
+			return err
+		}
+		extra, err := s.readBaseRange(cdfs, req.Size, req.Plane, brCtx)
+		if err != nil {
+			return err
+		}
+		level += extra
+	}
+	return setCoeffLevel(levels, req.Size, pos, level)
+}
+
+func (s *DecodeState) readBaseRange(cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, context int) (int, error) {
+	level := 0
+	for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+		k, err := s.ReadCoeffBR(cdfs, CoeffTokenRequest{Size: size, Plane: plane, Context: context})
+		if err != nil {
+			return 0, err
+		}
+		level += k
+		if k < BRCDFSize-1 {
+			break
+		}
+	}
+	return level, nil
+}
+
+func (s *DecodeState) readCoeffGolomb() (int, error) {
+	x := 1
+	length := 0
+	for {
+		bit, err := s.Reader.ReadBit()
+		if err != nil {
+			return 0, err
+		}
+		length++
+		if length > 20 {
+			return 0, ErrInvalidDecodeState
+		}
+		if bit != 0 {
+			break
+		}
+	}
+	for i := 0; i < length-1; i++ {
+		bit, err := s.Reader.ReadBit()
+		if err != nil {
+			return 0, err
+		}
+		x <<= 1
+		x += int(bit)
+	}
+	return x - 1, nil
+}
+
 func coeffCDF(cdf *entropy.CDF, symbols int) (*entropy.CDF, error) {
 	if cdf == nil || cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
 	return cdf, cdf.Validate()
+}
+
+func CoeffBRContextEOB(size TransformSize, class transform.Class, coeffIndex int) (int, error) {
+	if !class.Valid() || coeffIndex < 0 {
+		return 0, ErrInvalidDecodeState
+	}
+	row, col, _, err := coeffPosition(size, coeffIndex)
+	if err != nil {
+		return 0, err
+	}
+	if coeffIndex == 0 {
+		return 0, nil
+	}
+	switch class {
+	case transform.Class2D:
+		if row < 2 && col < 2 {
+			return 7, nil
+		}
+	case transform.ClassHoriz:
+		if col == 0 {
+			return 7, nil
+		}
+	case transform.ClassVert:
+		if row == 0 {
+			return 7, nil
+		}
+	}
+	return 14, nil
+}
+
+func CoeffBRContext(levels []uint8, size TransformSize, class transform.Class, coeffIndex int) (int, error) {
+	if !class.Valid() || coeffIndex < 0 {
+		return 0, ErrInvalidDecodeState
+	}
+	padded, stride, row, col, err := coeffPaddedPosition(size, coeffIndex)
+	if err != nil {
+		return 0, err
+	}
+	if padded+2*stride+2 >= len(levels) || padded+4 >= len(levels) {
+		return 0, ErrInvalidDecodeState
+	}
+	mag := int(levels[padded+1]) + int(levels[padded+stride])
+	switch class {
+	case transform.Class2D:
+		mag += int(levels[padded+stride+1])
+	case transform.ClassHoriz:
+		mag += int(levels[padded+(stride<<1)])
+	case transform.ClassVert:
+		mag += int(levels[padded+2])
+	}
+	mag = minInt((mag+1)>>1, 6)
+	if coeffIndex == 0 {
+		return mag, nil
+	}
+	switch class {
+	case transform.Class2D:
+		if row < 2 && col < 2 {
+			return mag + 7, nil
+		}
+	case transform.ClassHoriz:
+		if col == 0 {
+			return mag + 7, nil
+		}
+	case transform.ClassVert:
+		if row == 0 {
+			return mag + 7, nil
+		}
+	}
+	return mag + 14, nil
+}
+
+func CoeffLowerLevelsContext(levels []uint8, size TransformSize, class transform.Class, coeffIndex int) (int, error) {
+	if !class.Valid() || coeffIndex < 0 {
+		return 0, ErrInvalidDecodeState
+	}
+	padded, stride, row, col, err := coeffPaddedPosition(size, coeffIndex)
+	if err != nil {
+		return 0, err
+	}
+	if padded+4 >= len(levels) || padded+4*stride >= len(levels) || padded+stride+1 >= len(levels) {
+		return 0, ErrInvalidDecodeState
+	}
+	if class == transform.Class2D && coeffIndex == 0 {
+		return 0, nil
+	}
+
+	mag := clipMax3(levels[padded+stride]) + clipMax3(levels[padded+1])
+	switch class {
+	case transform.Class2D:
+		mag += clipMax3(levels[padded+stride+1])
+		mag += clipMax3(levels[padded+(stride<<1)])
+		mag += clipMax3(levels[padded+2])
+	case transform.ClassVert:
+		mag += clipMax3(levels[padded+2])
+		mag += clipMax3(levels[padded+3])
+		mag += clipMax3(levels[padded+4])
+	case transform.ClassHoriz:
+		mag += clipMax3(levels[padded+(stride<<1)])
+		mag += clipMax3(levels[padded+3*stride])
+		mag += clipMax3(levels[padded+4*stride])
+	}
+	ctx := minInt((mag+1)>>1, 4)
+
+	switch class {
+	case transform.Class2D:
+		txSize, err := size.TransformSize()
+		if err != nil {
+			return 0, ErrInvalidDecodeState
+		}
+		scanSize, err := transform.ScanSize(txSize)
+		if err != nil {
+			return 0, ErrInvalidDecodeState
+		}
+		if scanSize.Width < scanSize.Height && row < 2 {
+			return ctx + 11, nil
+		}
+		if scanSize.Width > scanSize.Height && col < 2 {
+			return ctx + 16, nil
+		}
+		if row+col < 2 {
+			return ctx + 1, nil
+		}
+		if row+col < 4 {
+			return ctx + 6, nil
+		}
+		return ctx + 21, nil
+	case transform.ClassHoriz:
+		return ctx + coeff1DContextOffset(col), nil
+	case transform.ClassVert:
+		return ctx + coeff1DContextOffset(row), nil
+	default:
+		return 0, ErrInvalidDecodeState
+	}
+}
+
+func coeff1DContextOffset(position int) int {
+	if position == 0 {
+		return 26
+	}
+	if position == 1 {
+		return 31
+	}
+	return 36
+}
+
+func coeffLevel(levels []uint8, size TransformSize, coeffIndex int) (int, error) {
+	padded, _, _, _, err := coeffPaddedPosition(size, coeffIndex)
+	if err != nil {
+		return 0, err
+	}
+	if padded >= len(levels) {
+		return 0, ErrInvalidDecodeState
+	}
+	return int(levels[padded]), nil
+}
+
+func setCoeffLevel(levels []uint8, size TransformSize, coeffIndex int, level int) error {
+	if level < 0 || level > 255 {
+		return ErrInvalidDecodeState
+	}
+	padded, _, _, _, err := coeffPaddedPosition(size, coeffIndex)
+	if err != nil {
+		return err
+	}
+	if padded >= len(levels) {
+		return ErrInvalidDecodeState
+	}
+	levels[padded] = uint8(level)
+	return nil
+}
+
+func coeffPaddedPosition(size TransformSize, coeffIndex int) (padded int, stride int, row int, col int, err error) {
+	row, col, stride, err = coeffPosition(size, coeffIndex)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return col*stride + row, stride, row, col, nil
+}
+
+func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride int, err error) {
+	txSize, err := size.TransformSize()
+	if err != nil {
+		return 0, 0, 0, ErrInvalidDecodeState
+	}
+	scanSize, err := transform.ScanSize(txSize)
+	if err != nil {
+		return 0, 0, 0, ErrInvalidDecodeState
+	}
+	maxEOB := scanSize.Width * scanSize.Height
+	if coeffIndex < 0 || coeffIndex >= maxEOB {
+		return 0, 0, 0, ErrInvalidDecodeState
+	}
+	col = coeffIndex / scanSize.Height
+	row = coeffIndex - col*scanSize.Height
+	return row, col, scanSize.Height + txPadHorizontal, nil
+}
+
+func clipMax3(v uint8) int {
+	if v > 3 {
+		return 3
+	}
+	return int(v)
 }

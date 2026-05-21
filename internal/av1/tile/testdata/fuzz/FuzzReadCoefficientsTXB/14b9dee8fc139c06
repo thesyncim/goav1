@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("X00000000000000000000000000000000000")
+byte('\x04')
+byte('\x00')
+byte('Ç')
+byte('\n')
+byte('\x01')
+byte('\x01')
+byte('ÿ')

@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\x81")
+byte('\x04')
+byte('\x00')
+byte('\x01')
+byte('I')
+byte('Q')
+byte('\x01')
+byte('ÿ')
