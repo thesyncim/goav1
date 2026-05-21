@@ -295,6 +295,16 @@ func TestFrameWorkStateRejectsInvalidState(t *testing.T) {
 	if !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("inactive Finish err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
+	err = state.Abort(nil)
+	if !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("inactive Abort err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
+
+	var nilState *FrameWorkState
+	err = nilState.Abort(nil)
+	if !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("nil Abort err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
 
 	pool := testFramePool(t, 2)
 	var refs SurfaceReferences
@@ -312,6 +322,64 @@ func TestFrameWorkStateRejectsInvalidState(t *testing.T) {
 	}
 	if pool.Available() != 1 {
 		t.Fatalf("active begin consumed a surface, available=%d", pool.Available())
+	}
+}
+
+func TestFrameWorkStateAbortReleasesSurface(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	plan, output, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil || pool.Available() != 0 {
+		t.Fatalf("output=%p available=%d", output, pool.Available())
+	}
+
+	if err := state.Abort(&pool); err != nil {
+		t.Fatal(err)
+	}
+	if state.Active() {
+		t.Fatalf("state still active after abort: %+v", state)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("available=%d want 1", pool.Available())
+	}
+	if _, err := pool.Frame(plan.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("aborted frame err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	if slot, ok := refs.ReferenceSlot(0); ok || slot != -1 {
+		t.Fatalf("abort published reference slot=%d ok=%v", slot, ok)
+	}
+}
+
+func TestFrameWorkStateKeepsActiveOnAbortError(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = state.Abort(nil)
+	if !errors.Is(err, frame.ErrInvalidPool) {
+		t.Fatalf("Abort err=%v want %v", err, frame.ErrInvalidPool)
+	}
+	if !state.Active() || state.Surface != plan.Surface {
+		t.Fatalf("state after abort error=%+v active=%v plan=%+v", state, state.Active(), plan)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("failed abort released surface, available=%d", pool.Available())
 	}
 }
 
@@ -527,6 +595,32 @@ func TestFrameWorkStateAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateAbortAllocs(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	event := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Abort(&pool); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkState Abort allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -609,6 +703,26 @@ func BenchmarkFrameWorkState(b *testing.B) {
 		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
 		_, _ = state.PlanTile(events[2], 1, spans[:], jobs[:], batches[:])
 		_, _ = state.Finish(&refs, &pool, events[2], releases[:])
+	}
+}
+
+func BenchmarkFrameWorkStateAbort(b *testing.B) {
+	pool := benchmarkFramePool(b, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	event := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+		_ = state.Abort(&pool)
 	}
 }
 

@@ -140,6 +140,36 @@ func TestDecoderFrameWorkState(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkStateAbort(t *testing.T) {
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	plan, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Abort(&pool); err != nil {
+		t.Fatal(err)
+	}
+	if state.Active() || pool.Available() != 1 {
+		t.Fatalf("state=%+v active=%v available=%d", state, state.Active(), pool.Available())
+	}
+	if _, err := pool.Frame(plan.Surface); !errors.Is(err, ErrFrameInvalidSlot) {
+		t.Fatalf("aborted frame err=%v want %v", err, ErrFrameInvalidSlot)
+	}
+}
+
 func testDecoderFramePool(t *testing.T, count int) FramePool {
 	t.Helper()
 	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}

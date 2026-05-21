@@ -46,14 +46,15 @@ type FrameWorkState struct {
 	active bool
 }
 
-// Active reports whether a frame has begun and not yet been finished or reset.
+// Active reports whether a frame has begun and not yet been finished, aborted,
+// or reset.
 func (s *FrameWorkState) Active() bool {
 	return s != nil && s.active
 }
 
 // Reset clears any in-flight frame work state without touching frame-pool or
 // reference ownership. Callers should normally use Finish for successfully
-// decoded final tile groups.
+// decoded final tile groups and Abort for incomplete or discarded frames.
 func (s *FrameWorkState) Reset() {
 	if s == nil {
 		return
@@ -99,6 +100,19 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 	}
 	s.Reset()
 	return count, nil
+}
+
+// Abort releases the active output surface without publishing it to reference
+// slots. State is cleared only after the pool accepts the release.
+func (s *FrameWorkState) Abort(pool *frame.Pool) error {
+	if s == nil || !s.active {
+		return ErrInvalidFrameWorkState
+	}
+	if err := pool.Release(s.Surface); err != nil {
+		return err
+	}
+	s.Reset()
+	return nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and
