@@ -153,6 +153,110 @@ func TestDequantizeBlockAllocs(t *testing.T) {
 	}
 }
 
+func TestQuantizeFPNoQMatrixMatchesLibaomVector(t *testing.T) {
+	q := FPQuantizer{
+		Dequant: [2]int16{78, 93},
+		Round:   [2]int16{39, 46},
+		Quant:   [2]int16{840, 704},
+	}
+	coeff := []int32{-449, 624, -14, 24}
+	qcoeff := make([]int32, 4)
+	dqcoeff := make([]int32, 4)
+	scan := []int16{0, 1, 2, 3}
+	eob, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, scan, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eob != 2 {
+		t.Fatalf("eob=%d want 2", eob)
+	}
+	wantQCoeff := []int32{-6, 7, 0, 0}
+	wantDQCoeff := []int32{-468, 651, 0, 0}
+	for i := range wantQCoeff {
+		if qcoeff[i] != wantQCoeff[i] {
+			t.Fatalf("qcoeff[%d]=%d want %d", i, qcoeff[i], wantQCoeff[i])
+		}
+		if dqcoeff[i] != wantDQCoeff[i] {
+			t.Fatalf("dqcoeff[%d]=%d want %d", i, dqcoeff[i], wantDQCoeff[i])
+		}
+	}
+}
+
+func TestQuantizeFPNoQMatrixLogScaleAndEOB(t *testing.T) {
+	q := FPQuantizer{
+		Dequant:  [2]int16{64, 128},
+		Round:    [2]int16{32, 64},
+		Quant:    [2]int16{1024, 512},
+		LogScale: 1,
+	}
+	coeff := []int32{4, -512, 0, 1024}
+	qcoeff := []int32{99, 99, 99, 99}
+	dqcoeff := []int32{99, 99, 99, 99}
+	scan := []int16{0, 1, 2, 3}
+	eob, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, scan, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eob != 4 {
+		t.Fatalf("eob=%d want 4", eob)
+	}
+	wantQCoeff := []int32{0, -8, 0, 16}
+	wantDQCoeff := []int32{0, -512, 0, 1024}
+	for i := range wantQCoeff {
+		if qcoeff[i] != wantQCoeff[i] || dqcoeff[i] != wantDQCoeff[i] {
+			t.Fatalf("coeff[%d] q/dq=%d/%d want %d/%d", i, qcoeff[i], dqcoeff[i], wantQCoeff[i], wantDQCoeff[i])
+		}
+	}
+}
+
+func TestQuantizeFPNoQMatrixRejectsInvalidInputs(t *testing.T) {
+	q := FPQuantizer{
+		Dequant: [2]int16{78, 93},
+		Round:   [2]int16{39, 46},
+		Quant:   [2]int16{840, 704},
+	}
+	coeff := make([]int32, 4)
+	qcoeff := make([]int32, 4)
+	dqcoeff := make([]int32, 4)
+	scan := []int16{0, 1, 2, 3}
+	if _, err := QuantizeFPNoQMatrix(qcoeff[:3], dqcoeff, coeff, scan, q); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("short qcoeff err=%v want %v", err, ErrInvalidQuantizer)
+	}
+	if _, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff[:3], coeff, scan, q); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("short dqcoeff err=%v want %v", err, ErrInvalidQuantizer)
+	}
+	if _, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff[:3], scan, q); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("short coeff err=%v want %v", err, ErrInvalidQuantizer)
+	}
+	if _, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, []int16{0, 4}, q); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("invalid scan err=%v want %v", err, ErrInvalidQuantizer)
+	}
+	q.Dequant[0] = 0
+	if _, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, scan, q); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("invalid quantizer err=%v want %v", err, ErrInvalidQuantizer)
+	}
+}
+
+func TestQuantizeFPNoQMatrixAllocs(t *testing.T) {
+	q := FPQuantizer{
+		Dequant: [2]int16{78, 93},
+		Round:   [2]int16{39, 46},
+		Quant:   [2]int16{840, 704},
+	}
+	coeff := make([]int32, 16)
+	qcoeff := make([]int32, 16)
+	dqcoeff := make([]int32, 16)
+	scan := []int16{0, 4, 1, 2, 5, 8, 12, 9, 6, 3, 7, 10, 13, 14, 11, 15}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, scan, q); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("QuantizeFPNoQMatrix allocated: %f", allocs)
+	}
+}
+
 func FuzzDequantizeBlock(f *testing.F) {
 	f.Add(uint8(8), uint8(0), int16(0), uint8(4), uint8(4), int16(1))
 	f.Add(uint8(10), uint8(96), int16(-3), uint8(8), uint8(4), int16(-7))
@@ -196,6 +300,61 @@ func FuzzDequantizeBlock(f *testing.F) {
 					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)
 				}
 			}
+		}
+	})
+}
+
+func FuzzQuantizeFPNoQMatrix(f *testing.F) {
+	f.Add(int32(-449), int32(624), uint16(78), uint16(93), uint8(0))
+	f.Add(int32(1<<20-1), int32(-(1 << 20)), uint16(4), uint16(32767), uint8(1))
+
+	f.Fuzz(func(t *testing.T, c0 int32, c1 int32, rawDC uint16, rawAC uint16, rawLogScale uint8) {
+		dequantDC := int16(rawDC%32765 + 3)
+		dequantAC := int16(rawAC%32765 + 3)
+		logScale := rawLogScale & 1
+		q := FPQuantizer{
+			Dequant:  [2]int16{dequantDC, dequantAC},
+			Round:    [2]int16{dequantDC / 2, dequantAC / 2},
+			Quant:    [2]int16{int16((1 << 16) / int(dequantDC)), int16((1 << 16) / int(dequantAC))},
+			LogScale: logScale,
+		}
+		coeff := []int32{c0, c1, 0, c0 - c1}
+		qcoeff := make([]int32, len(coeff))
+		dqcoeff := make([]int32, len(coeff))
+		scan := []int16{0, 1, 2, 3}
+		eob, err := QuantizeFPNoQMatrix(qcoeff, dqcoeff, coeff, scan, q)
+		if err != nil {
+			t.Fatalf("QuantizeFPNoQMatrix err=%v", err)
+		}
+		wantEOB := 0
+		for i, rawRC := range scan {
+			rc := int(rawRC)
+			if qcoeff[rc] == 0 {
+				if dqcoeff[rc] != 0 {
+					t.Fatalf("dqcoeff[%d]=%d with zero qcoeff", rc, dqcoeff[rc])
+				}
+				continue
+			}
+			wantEOB = i + 1
+			absQ := qcoeff[rc]
+			negative := absQ < 0
+			if negative {
+				absQ = -absQ
+			}
+			idx := 0
+			if rc != 0 {
+				idx = 1
+			}
+			wantDQ := (absQ * int32(q.Dequant[idx])) >> q.LogScale
+			if negative {
+				wantDQ = -wantDQ
+			}
+			if dqcoeff[rc] != wantDQ {
+				t.Fatalf("dqcoeff[%d]=%d want %d", rc, dqcoeff[rc], wantDQ)
+			}
+		}
+		if eob != wantEOB {
+			t.Fatalf("eob=%d want %d", eob, wantEOB)
 		}
 	})
 }
