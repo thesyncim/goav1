@@ -127,6 +127,11 @@ func dcPrediction(width int, height int, max uint16, edges IntraEdges) (uint16, 
 	if count == 0 {
 		return uint16((int(max) + 1) >> 1), nil
 	}
+	if edges.AboveAvailable && edges.LeftAvailable {
+		if value, ok := dcRectPredictionValue(width, height, max, sum); ok {
+			return value, nil
+		}
+	}
 	return uint16((sum + (count >> 1)) / count), nil
 }
 
@@ -273,6 +278,53 @@ func validateIntraDirectionalEdges(width int, height int, max uint16, edges Intr
 		return err
 	}
 	return validateSamples(edges.Left[:height], max)
+}
+
+func dcRectPredictionValue(width int, height int, max uint16, sum int) (uint16, bool) {
+	small := width
+	large := height
+	if small > large {
+		small, large = large, small
+	}
+	if small <= 0 || (large != 2*small && large != 4*small) {
+		return 0, false
+	}
+	shift1, ok := log2PowerOfTwoInt(small)
+	if !ok {
+		return 0, false
+	}
+	multiplier := 0x5556
+	shift2 := 16
+	if large == 4*small {
+		multiplier = 0x3334
+	}
+	if max > 0xff {
+		shift2 = 17
+		if large == 2*small {
+			multiplier = 0xaaab
+		} else {
+			multiplier = 0x6667
+		}
+	}
+	value := divideUsingMultiplyShift(sum+((width+height)>>1), shift1, multiplier, shift2)
+	return uint16(value), true
+}
+
+func divideUsingMultiplyShift(num int, shift1 int, multiplier int, shift2 int) int {
+	intermediate := num >> shift1
+	return intermediate * multiplier >> shift2
+}
+
+func log2PowerOfTwoInt(v int) (int, bool) {
+	if v <= 0 || v&(v-1) != 0 {
+		return 0, false
+	}
+	log := 0
+	for v > 1 {
+		v >>= 1
+		log++
+	}
+	return log, true
 }
 
 func validateSamples(samples []uint16, max uint16) error {

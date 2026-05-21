@@ -49,6 +49,48 @@ func TestPredictIntraPlaneBlockDCMissingEdgesUsesMidpoint(t *testing.T) {
 	}
 }
 
+func TestPredictIntraPlaneBlockDCMatchesLibaomCorpus(t *testing.T) {
+	for _, bitDepth := range []uint8{8, 10, 12} {
+		bytesPerSample := 1
+		if bitDepth != 8 {
+			bytesPerSample = 2
+		}
+		max := uint16((1 << bitDepth) - 1)
+		for _, size := range libaomDRTxSizes {
+			rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
+			for iter := 0; iter < 16; iter++ {
+				baseEdges := randomStaticIntraEdges(size.width, size.height, max, rnd)
+				for _, availability := range []struct {
+					name  string
+					above bool
+					left  bool
+				}{
+					{name: "none"},
+					{name: "above", above: true},
+					{name: "left", left: true},
+					{name: "both", above: true, left: true},
+				} {
+					edges := baseEdges
+					edges.AboveAvailable = availability.above
+					edges.LeftAvailable = availability.left
+					plane, _ := testPlane(size.width, size.height, bytesPerSample, size.width*bytesPerSample)
+					if err := PredictIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, size.width, size.height, IntraModeDC, edges); err != nil {
+						t.Fatalf("bitDepth=%d size=%dx%d iter=%d availability=%s: %v", bitDepth, size.width, size.height, iter, availability.name, err)
+					}
+					want := dcPredictionLibaomReference(size.width, size.height, max, edges)
+					for row := 0; row < size.height; row++ {
+						for col := 0; col < size.width; col++ {
+							if got := getSample(plane, bytesPerSample, col, row); got != want {
+								t.Fatalf("bitDepth=%d size=%dx%d iter=%d availability=%s sample(%d,%d)=%d want %d", bitDepth, size.width, size.height, iter, availability.name, col, row, got, want)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestPredictIntraPlaneBlockVerticalHighBitDepth(t *testing.T) {
 	plane, _ := testPlane(4, 3, 2, 10)
 	edges := IntraEdges{
@@ -229,6 +271,51 @@ func FuzzPredictIntraPlaneBlock(f *testing.F) {
 	})
 }
 
+func FuzzDCPredictor(f *testing.F) {
+	f.Add(uint8(0), uint8(0), uint8(0), uint16(90), uint16(100), true, true)
+	f.Add(uint8(1), uint8(2), uint8(1), uint16(512), uint16(700), true, false)
+	f.Add(uint8(4), uint8(4), uint8(2), uint16(4095), uint16(1), false, true)
+
+	f.Fuzz(func(t *testing.T, rawW uint8, rawH uint8, rawBitDepth uint8, aboveValue uint16, leftValue uint16, aboveAvailable bool, leftAvailable bool) {
+		sizes := [...]int{4, 8, 16, 32, 64}
+		width := sizes[rawW%uint8(len(sizes))]
+		height := sizes[rawH%uint8(len(sizes))]
+		bitDepths := [...]uint8{8, 10, 12}
+		bitDepth := bitDepths[rawBitDepth%uint8(len(bitDepths))]
+		bytesPerSample := 1
+		if bitDepth != 8 {
+			bytesPerSample = 2
+		}
+		max := uint16((1 << bitDepth) - 1)
+		aboveValue &= max
+		leftValue &= max
+		edges := IntraEdges{
+			Above:          make([]uint16, width),
+			Left:           make([]uint16, height),
+			AboveAvailable: aboveAvailable,
+			LeftAvailable:  leftAvailable,
+		}
+		for i := range edges.Above {
+			edges.Above[i] = aboveValue
+		}
+		for i := range edges.Left {
+			edges.Left[i] = leftValue
+		}
+		plane, _ := testPlane(width, height, bytesPerSample, width*bytesPerSample)
+		if err := PredictIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, width, height, IntraModeDC, edges); err != nil {
+			t.Fatalf("PredictIntraPlaneBlock err=%v", err)
+		}
+		want := dcPredictionLibaomReference(width, height, max, edges)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
+				if got := getSample(plane, bytesPerSample, col, row); got != want {
+					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)
+				}
+			}
+		}
+	})
+}
+
 func BenchmarkPredictIntraPlaneBlockDC(b *testing.B) {
 	plane, _ := testPlane(64, 64, 1, 64)
 	edges := benchmarkEdges(64, 64, 91, 93)
@@ -236,6 +323,32 @@ func BenchmarkPredictIntraPlaneBlockDC(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = PredictIntraPlaneBlock(plane, 1, 8, 0, 0, 64, 64, IntraModeDC, edges)
 	}
+}
+
+func dcPredictionLibaomReference(width int, height int, max uint16, edges IntraEdges) uint16 {
+	sum := 0
+	count := 0
+	if edges.AboveAvailable {
+		for _, sample := range edges.Above[:width] {
+			sum += int(sample)
+		}
+		count += width
+	}
+	if edges.LeftAvailable {
+		for _, sample := range edges.Left[:height] {
+			sum += int(sample)
+		}
+		count += height
+	}
+	if count == 0 {
+		return uint16((int(max) + 1) >> 1)
+	}
+	if edges.AboveAvailable && edges.LeftAvailable {
+		if value, ok := dcRectPredictionValue(width, height, max, sum); ok {
+			return value
+		}
+	}
+	return uint16((sum + (count >> 1)) / count)
 }
 
 func BenchmarkPredictIntraPlaneBlockVertical(b *testing.B) {
