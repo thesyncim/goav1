@@ -34,6 +34,35 @@ func BeginFrameSurface(refs *SurfaceReferences, pool *frame.Pool, sequence parse
 	return surface, output, refCount, nil
 }
 
+// ResolveFrameReferences converts frame-pool surface indices into checked
+// frame pointers. dst is published only after every referenced surface has
+// validated, so failures leave any previous caller-owned contents untouched.
+func ResolveFrameReferences(pool *frame.Pool, surfaces []int, dst []*frame.Frame) (int, error) {
+	count := len(surfaces)
+	if count > parser.InterRefsPerFrame {
+		return 0, ErrInvalidSurfaceReference
+	}
+	if len(dst) < count {
+		return 0, ErrSurfaceReferenceBufferTooSmall
+	}
+
+	var resolved [parser.InterRefsPerFrame]*frame.Frame
+	for i := 0; i < count; i++ {
+		if surfaces[i] < 0 {
+			return 0, ErrInvalidSurfaceReference
+		}
+		ref, err := pool.Frame(surfaces[i])
+		if err != nil {
+			return 0, err
+		}
+		resolved[i] = ref
+	}
+	for i := 0; i < count; i++ {
+		dst[i] = resolved[i]
+	}
+	return count, nil
+}
+
 func frameFormatFromHeaders(sequence parser.SequenceHeader, size parser.FrameSize, align int) (frame.Format, error) {
 	if size.CodedWidth == 0 || size.Height == 0 || sequence.ColorConfig.BitDepth == 0 {
 		return frame.Format{}, frame.ErrInvalidFormat

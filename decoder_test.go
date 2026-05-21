@@ -357,6 +357,23 @@ func TestDecoderFrameWorkStateRunStep(t *testing.T) {
 	}
 }
 
+func TestResolveDecoderFrameReferences(t *testing.T) {
+	pool := testDecoderFramePool(t, 1)
+	surface, frame, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs [InterRefsPerFrame]*Frame
+	count, err := ResolveDecoderFrameReferences(&pool, []int{surface}, refs[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || refs[0] != frame {
+		t.Fatalf("count=%d ref=%p want %p", count, refs[0], frame)
+	}
+}
+
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

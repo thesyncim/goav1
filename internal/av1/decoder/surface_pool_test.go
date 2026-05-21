@@ -175,6 +175,78 @@ func TestBeginFrameSurfaceRejectsTileGroup(t *testing.T) {
 	}
 }
 
+func TestResolveFrameReferences(t *testing.T) {
+	pool := testFramePool(t, 2)
+	index0, frame0, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index1, frame1, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	surfaces := [parser.InterRefsPerFrame]int{index0, index1}
+	var refs [parser.InterRefsPerFrame]*frame.Frame
+	count, err := ResolveFrameReferences(&pool, surfaces[:2], refs[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || refs[0] != frame0 || refs[1] != frame1 {
+		t.Fatalf("count=%d refs=%p,%p want %p,%p", count, refs[0], refs[1], frame0, frame1)
+	}
+}
+
+func TestResolveFrameReferencesRejectsShortBuffer(t *testing.T) {
+	pool := testFramePool(t, 1)
+	index, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs [1]*frame.Frame
+	_, err = ResolveFrameReferences(&pool, []int{index}, refs[:0])
+	if !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("ResolveFrameReferences err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
+	}
+	if refs[0] != nil {
+		t.Fatalf("short buffer wrote ref=%p", refs[0])
+	}
+}
+
+func TestResolveFrameReferencesRejectsInvalidAtomically(t *testing.T) {
+	pool := testFramePool(t, 1)
+	index, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sentinel frame.Frame
+	refs := [2]*frame.Frame{&sentinel, &sentinel}
+	_, err = ResolveFrameReferences(&pool, []int{index, index + 1}, refs[:])
+	if !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("ResolveFrameReferences err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	if refs != ([2]*frame.Frame{&sentinel, &sentinel}) {
+		t.Fatalf("invalid surface wrote refs=%p,%p", refs[0], refs[1])
+	}
+}
+
+func TestResolveFrameReferencesRejectsInvalidSurface(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs [1]*frame.Frame
+	_, err := ResolveFrameReferences(&pool, []int{-1}, refs[:])
+	if !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("negative surface err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+
+	var tooMany [parser.InterRefsPerFrame + 1]int
+	_, err = ResolveFrameReferences(&pool, tooMany[:], nil)
+	if !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("too many surfaces err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+}
+
 func TestFinishFrameSurfaceRejectsPoolReleaseAtomically(t *testing.T) {
 	pool := testFramePool(t, 2)
 	index0, _, err := pool.Acquire()
@@ -254,6 +326,8 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 	pool := testFramePool(t, 2)
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
 	event := finalFrameEvent(0xff)
 	sequence := testSequence()
 	size := testFrameSize(16, 16)
@@ -276,6 +350,13 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 		}
 		if _, err := refs.Refresh(0xff, index0, releases[:]); err != nil {
 			t.Fatal(err)
+		}
+		referenceSurfaces[0] = index0
+		if _, err := ResolveFrameReferences(&pool, referenceSurfaces[:1], referenceFrames[:]); err != nil {
+			t.Fatal(err)
+		}
+		if referenceFrames[0] == nil {
+			t.Fatal("nil reference frame")
 		}
 		if _, err := FinishFrameSurface(&refs, &pool, event, index1, releases[:]); err != nil {
 			t.Fatal(err)
@@ -356,6 +437,30 @@ func BenchmarkFinishFrameSurface(b *testing.B) {
 		}
 		if _, err := FinishFrameSurface(&refs, &pool, event, index1, releases[:]); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkResolveFrameReferences(b *testing.B) {
+	pool := benchmarkFramePool(b, parser.InterRefsPerFrame)
+	var surfaces [parser.InterRefsPerFrame]int
+	var refs [parser.InterRefsPerFrame]*frame.Frame
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		index, _, err := pool.Acquire()
+		if err != nil {
+			b.Fatal(err)
+		}
+		surfaces[i] = index
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		count, err := ResolveFrameReferences(&pool, surfaces[:], refs[:])
+		if err != nil {
+			b.Fatal(err)
+		}
+		if count != parser.InterRefsPerFrame || refs[0] == nil {
+			b.Fatalf("count=%d refs[0]=%p", count, refs[0])
 		}
 	}
 }
