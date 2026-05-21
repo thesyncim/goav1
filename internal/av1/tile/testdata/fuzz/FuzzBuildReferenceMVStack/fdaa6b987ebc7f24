@@ -1,0 +1,12 @@
+go test fuzz v1
+byte('\x11')
+byte('\x03')
+byte('\x06')
+bool(false)
+byte('\x03')
+int16(-30)
+int16(-13)
+int16(17)
+int16(19)
+bool(true)
+bool(false)

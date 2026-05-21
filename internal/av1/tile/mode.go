@@ -47,6 +47,12 @@ type BlockModeContext struct {
 	LeftCompGroup    [MaxBlockModeSlots]uint8
 	AboveCompIndex   [MaxBlockModeSlots]uint8
 	LeftCompIndex    [MaxBlockModeSlots]uint8
+	AboveInterMotion [MaxBlockModeSlots]InterMotionResult
+	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
+	AboveMotionValid [MaxBlockModeSlots]uint8
+	LeftMotionValid  [MaxBlockModeSlots]uint8
+	AboveBlockSize   [MaxBlockModeSlots]BlockSize
+	LeftBlockSize    [MaxBlockModeSlots]BlockSize
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF

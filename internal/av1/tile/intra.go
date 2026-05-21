@@ -291,11 +291,17 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		c.AboveRef[0][x4+i] = ref0
 		c.AboveRef[1][x4+i] = ref1
 		c.AboveCompound[x4+i] = 0
+		c.AboveInterMotion[x4+i] = InterMotionResult{}
+		c.AboveMotionValid[x4+i] = 0
+		c.AboveBlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftRef[0][y4+i] = ref0
 		c.LeftRef[1][y4+i] = ref1
 		c.LeftCompound[y4+i] = 0
+		c.LeftInterMotion[y4+i] = InterMotionResult{}
+		c.LeftMotionValid[y4+i] = 0
+		c.LeftBlockSize[y4+i] = size
 	}
 	return nil
 }

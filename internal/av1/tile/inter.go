@@ -712,6 +712,9 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.AboveCompound[x4+i] = compound
 		c.AboveCompGroup[x4+i] = compGroup
 		c.AboveCompIndex[x4+i] = compIndex
+		c.AboveInterMotion[x4+i] = InterMotionResult{}
+		c.AboveMotionValid[x4+i] = 0
+		c.AboveBlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
@@ -720,6 +723,9 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftCompound[y4+i] = compound
 		c.LeftCompGroup[y4+i] = compGroup
 		c.LeftCompIndex[y4+i] = compIndex
+		c.LeftInterMotion[y4+i] = InterMotionResult{}
+		c.LeftMotionValid[y4+i] = 0
+		c.LeftBlockSize[y4+i] = size
 	}
 	return nil
 }

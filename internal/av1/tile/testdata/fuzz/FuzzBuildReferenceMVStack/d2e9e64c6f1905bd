@@ -1,0 +1,12 @@
+go test fuzz v1
+byte('Y')
+byte('\x01')
+byte('\x00')
+bool(true)
+byte('\x04')
+int16(85)
+int16(-5)
+int16(7)
+int16(-70)
+bool(false)
+bool(true)
