@@ -27,31 +27,31 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	size := FrameSize{CodedWidth: 16, Height: 16}
 
 	var refs DecoderSurfaceReferences
-	index0, _, refs0, err := DecoderBeginFrameSurface(&refs, &pool, sequence, DecoderEvent{
+	plan0, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, DecoderEvent{
 		Kind:        DecoderEventFrameHeader,
 		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
 		FrameSize:   size,
-	}, 32, nil)
+	}, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refs0 != 0 {
-		t.Fatalf("refs0=%d want 0", refs0)
+	if plan0.Surface != 0 || plan0.ReferenceCount != 0 || plan0.Tile != (DecoderTileWorkPlan{}) {
+		t.Fatalf("plan0=%+v", plan0)
 	}
-	index1, _, refs1, err := DecoderBeginFrameSurface(&refs, &pool, sequence, DecoderEvent{
+	plan1, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, DecoderEvent{
 		Kind:        DecoderEventFrameHeader,
 		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
 		FrameSize:   size,
-	}, 32, nil)
+	}, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refs1 != 0 {
-		t.Fatalf("refs1=%d want 0", refs1)
+	if plan1.Surface != 1 || plan1.ReferenceCount != 0 || plan1.Tile != (DecoderTileWorkPlan{}) {
+		t.Fatalf("plan1=%+v", plan1)
 	}
 
 	var releases [RefFrames]int
-	if _, err := refs.Refresh(0xff, index0, releases[:]); err != nil {
+	if _, err := refs.Refresh(0xff, plan0.Surface, releases[:]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,14 +59,14 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 		Kind:      DecoderEventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
 		TileGroup: TileGroup{Final: true},
-	}, index1, releases[:])
+	}, plan1.Surface, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || releases[0] != index0 {
-		t.Fatalf("count=%d release=%d want 1,%d", count, releases[0], index0)
+	if count != 1 || releases[0] != plan0.Surface {
+		t.Fatalf("count=%d release=%d want 1,%d", count, releases[0], plan0.Surface)
 	}
-	if _, err := pool.Frame(index0); !errors.Is(err, ErrFrameInvalidSlot) {
+	if _, err := pool.Frame(plan0.Surface); !errors.Is(err, ErrFrameInvalidSlot) {
 		t.Fatalf("released frame err=%v want %v", err, ErrFrameInvalidSlot)
 	}
 }
