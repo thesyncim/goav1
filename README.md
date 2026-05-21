@@ -104,6 +104,8 @@ The initial implementation covers:
   reconstruction reference paths.
 - Pure-Go intra plane prediction for DC, vertical, and horizontal
   reconstruction blocks with caller-owned edge buffers.
+- Pure-Go full-pixel motion-vector helpers and inter plane prediction for
+  nearest/reference-copy reconstruction paths.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 
