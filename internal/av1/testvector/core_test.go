@@ -129,17 +129,23 @@ func checkParserVector(t *testing.T, vector Vector) {
 	if !bytes.Equal(payload, vector.Want) {
 		t.Fatalf("%s payload=%x want %x", vector.Name, payload, vector.Want)
 	}
-	sh, err := parser.ParseSequenceHeader(payload)
-	if err != nil {
-		t.Fatalf("%s ParseSequenceHeader: %v", vector.Name, err)
+	parse := parser.ParseSequenceHeader
+	if vector.Tag == TagParserSequenceBuganizer502133197 {
+		parse = parser.PeekSequenceHeader
 	}
-	checkLibaomSequenceConfig(t, vector, sh)
+	sh, err := parse(payload)
+	if err != nil {
+		t.Fatalf("%s sequence header parse: %v", vector.Name, err)
+	}
+	if vector.Tag != TagParserSequenceBuganizer502133197 {
+		checkLibaomSequenceConfig(t, vector, sh)
+	}
 }
 
 func sequencePayloadFromVector(t *testing.T, vector Vector) []byte {
 	t.Helper()
 	switch vector.Tag {
-	case TagParserSequenceFullLowOverhead, TagParserSequenceReducedLowOverhead:
+	case TagParserSequenceFullLowOverhead, TagParserSequenceReducedLowOverhead, TagParserSequenceBuganizer502133197:
 		unit, consumed, err := obu.ParseLowOverhead(vector.Input)
 		if err != nil {
 			t.Fatalf("%s ParseLowOverhead: %v", vector.Name, err)

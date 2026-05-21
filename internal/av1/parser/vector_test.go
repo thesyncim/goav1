@@ -16,6 +16,7 @@ func TestSequenceHeaderCoreVectors(t *testing.T) {
 		testvector.TagParserSequenceReducedLowOverhead,
 		testvector.TagParserSequenceFullAnnexB,
 		testvector.TagParserSequenceReducedAnnexB,
+		testvector.TagParserSequenceBuganizer502133197,
 	} {
 		vector, ok := suite.Manifest.Find(tag)
 		if !ok {
@@ -25,11 +26,17 @@ func TestSequenceHeaderCoreVectors(t *testing.T) {
 		if !bytes.Equal(payload, vector.Want) {
 			t.Fatalf("%s payload=%x want %x", vector.Name, payload, vector.Want)
 		}
-		sh, err := ParseSequenceHeader(payload)
-		if err != nil {
-			t.Fatalf("%s ParseSequenceHeader: %v", vector.Name, err)
+		parse := ParseSequenceHeader
+		if vector.Tag == testvector.TagParserSequenceBuganizer502133197 {
+			parse = PeekSequenceHeader
 		}
-		checkSequenceVectorConfig(t, vector, sh)
+		sh, err := parse(payload)
+		if err != nil {
+			t.Fatalf("%s sequence header parse: %v", vector.Name, err)
+		}
+		if vector.Tag != testvector.TagParserSequenceBuganizer502133197 {
+			checkSequenceVectorConfig(t, vector, sh)
+		}
 		if testvector.OracleEnabled {
 			if err := oracle.CheckBytes(vector.Tag, payload); err != nil {
 				t.Fatalf("%s oracle err=%v", vector.Name, err)
@@ -41,7 +48,7 @@ func TestSequenceHeaderCoreVectors(t *testing.T) {
 func sequenceVectorPayload(t *testing.T, vector testvector.Vector) []byte {
 	t.Helper()
 	switch vector.Tag {
-	case testvector.TagParserSequenceFullLowOverhead, testvector.TagParserSequenceReducedLowOverhead:
+	case testvector.TagParserSequenceFullLowOverhead, testvector.TagParserSequenceReducedLowOverhead, testvector.TagParserSequenceBuganizer502133197:
 		unit, consumed, err := obu.ParseLowOverhead(vector.Input)
 		if err != nil {
 			t.Fatalf("%s ParseLowOverhead: %v", vector.Name, err)
