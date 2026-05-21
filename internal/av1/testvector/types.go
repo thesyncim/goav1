@@ -10,6 +10,8 @@ var (
 	ErrMismatchedBytes = errors.New("testvector: mismatched bytes")
 	ErrMismatchedMD5   = errors.New("testvector: mismatched md5")
 	ErrInvalidMD5      = errors.New("testvector: invalid md5")
+	ErrInvalidRemote   = errors.New("testvector: invalid remote vector")
+	ErrChecksum        = errors.New("testvector: checksum mismatch")
 )
 
 // Tag identifies a vector or oracle output without string matching in hot
@@ -41,6 +43,19 @@ const (
 	TagParserSequenceReducedAnnexB      Tag = 0x0004_0004
 	TagParserSequenceBuganizer502133197 Tag = 0x0004_0005
 	TagDecoderLibaomQuantizer00         Tag = 0x0005_0001
+	TagDecoderLibaomQuantizer01         Tag = 0x0005_0002
+	TagDecoderLibaomSize16x16           Tag = 0x0005_0003
+	TagDecoderLibaomQuantizer10Bit00    Tag = 0x0005_0004
+	TagDecoderLibaomAllIntra            Tag = 0x0005_0005
+	TagDecoderLibaomCDFUpdate           Tag = 0x0005_0006
+	TagDecoderLibaomMV                  Tag = 0x0005_0007
+	TagDecoderLibaomMFMV                Tag = 0x0005_0008
+	TagDecoderLibaomIntrabc             Tag = 0x0005_0009
+	TagDecoderLibaomSVC                 Tag = 0x0005_000a
+	TagDecoderLibaomFilmGrain           Tag = 0x0005_000b
+	TagDecoderLibaomMonochrome          Tag = 0x0005_000c
+	TagDecoderLibaomFilmGrain10Bit      Tag = 0x0005_000d
+	TagDecoderLibaomMonochrome10Bit     Tag = 0x0005_000e
 )
 
 // Vector describes one byte-level input and its expected oracle output. Input

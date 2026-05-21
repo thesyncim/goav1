@@ -1,4 +1,4 @@
-.PHONY: test bench fuzz-smoke testvectors alloc
+.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full alloc
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -108,6 +108,12 @@ fuzz-smoke:
 testvectors:
 	go test ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector
 	go test -tags goav1_oracle ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector
+
+testvectors-fast:
+	go test ./internal/av1/testvector
+	go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomQuantizer00|TestFrameMD5|TestOracleEnabled|TestLibaomRemoteManifest'
+
+testvectors-full: testvectors
 
 alloc:
 	./scripts/check_allocs.sh
