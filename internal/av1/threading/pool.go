@@ -28,6 +28,11 @@ type FrameWorkFrameContext struct {
 	LoopFilter   parser.LoopFilterParams
 	CDEF         parser.CDEFParams
 	Restoration  parser.RestorationParams
+	TransformRef parser.TransformReferenceParams
+	SkipMode     parser.SkipModeParams
+	FrameMode    parser.FrameModeParams
+	GlobalMotion parser.GlobalMotionParams
+	FilmGrain    parser.FilmGrainParams
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.

@@ -172,6 +172,8 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 
 func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	wantDelta := parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 2}
+	wantMotion := testBatchGlobalMotion()
+	wantGrain := testBatchFilmGrain()
 	ctx := FrameWorkBatch{
 		Payload: []byte{0x00, 0xff, 0x00},
 		FrameWorkFrameContext: FrameWorkFrameContext{
@@ -183,6 +185,11 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{4, 5}},
 			CDEF:         parser.CDEFParams{Damping: 3, StrengthCount: 1},
 			Restoration:  parser.RestorationParams{UnitSizeY: 64},
+			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeSwitchable, ReferenceMode: parser.ReferenceModeSelect},
+			SkipMode:     parser.SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{1, 2}},
+			FrameMode:    parser.FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true},
+			GlobalMotion: wantMotion,
+			FilmGrain:    wantGrain,
 		},
 		Jobs: []tile.Job{
 			{Tile: 0, Offset: 0, Size: 1},
@@ -199,6 +206,10 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	if ctx.Segmentation.QIndex[0] != 73 || ctx.LoopFilter.LevelY[0] != 4 ||
 		ctx.CDEF.Damping != 3 || ctx.Restoration.UnitSizeY != 64 {
 		t.Fatalf("filter context seg=%+v lf=%+v cdef=%+v restoration=%+v", ctx.Segmentation, ctx.LoopFilter, ctx.CDEF, ctx.Restoration)
+	}
+	if ctx.TransformRef.ReferenceMode != parser.ReferenceModeSelect || !ctx.SkipMode.Enabled ||
+		!ctx.FrameMode.AllowWarpedMotion || ctx.GlobalMotion != wantMotion || ctx.FilmGrain != wantGrain {
+		t.Fatalf("motion context transform=%+v skip=%+v frame=%+v global=%+v grain=%+v", ctx.TransformRef, ctx.SkipMode, ctx.FrameMode, ctx.GlobalMotion, ctx.FilmGrain)
 	}
 
 	if err := ctx.JobDecodeState(1, &state); err != nil {
@@ -378,6 +389,11 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{6, 7}},
 			CDEF:         parser.CDEFParams{Damping: 4, StrengthCount: 1},
 			Restoration:  parser.RestorationParams{UnitSizeY: 128},
+			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
+			SkipMode:     parser.SkipModeParams{Allowed: true},
+			FrameMode:    parser.FrameModeParams{ReducedTxSet: true},
+			GlobalMotion: testBatchGlobalMotion(),
+			FilmGrain:    testBatchFilmGrain(),
 		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
@@ -596,6 +612,11 @@ func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{1, 2}},
 			CDEF:         parser.CDEFParams{Damping: 3},
 			Restoration:  parser.RestorationParams{UnitSizeY: 64},
+			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeSwitchable},
+			SkipMode:     parser.SkipModeParams{Allowed: true},
+			FrameMode:    parser.FrameModeParams{AllowWarpedMotion: true},
+			GlobalMotion: testBatchGlobalMotion(),
+			FilmGrain:    testBatchFilmGrain(),
 		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
@@ -644,4 +665,23 @@ func testBatchTileInfo() parser.TileInfo {
 	tiles.ColStartSB[2] = 2
 	tiles.RowStartSB[1] = 1
 	return tiles
+}
+
+func testBatchGlobalMotion() parser.GlobalMotionParams {
+	motion := parser.DefaultGlobalMotionParams()
+	motion.Ref[0].Type = parser.GlobalMotionTranslation
+	motion.Ref[0].Matrix[0] = 17
+	motion.Ref[0].Matrix[1] = -9
+	return motion
+}
+
+func testBatchFilmGrain() parser.FilmGrainParams {
+	return parser.FilmGrainParams{
+		ParamsPresent: true,
+		Apply:         true,
+		Seed:          99,
+		BitDepth:      8,
+		NumYPoints:    1,
+		YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{16, 32}},
+	}
 }

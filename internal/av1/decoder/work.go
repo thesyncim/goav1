@@ -476,6 +476,11 @@ func frameWorkFrameContext(event Event) FrameWorkFrameContext {
 		LoopFilter:   event.LoopFilter,
 		CDEF:         event.CDEF,
 		Restoration:  event.Restoration,
+		TransformRef: event.TransformRef,
+		SkipMode:     event.SkipMode,
+		FrameMode:    event.FrameMode,
+		GlobalMotion: event.GlobalMotion,
+		FilmGrain:    event.FilmGrain,
 	}
 }
 

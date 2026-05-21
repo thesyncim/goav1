@@ -757,6 +757,8 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	defer workerPool.Close()
 
 	jobs, batches, batchCount := testExecutionWork(t)
+	globalMotion := testFrameWorkGlobalMotion()
+	filmGrain := testFrameWorkFilmGrain()
 	event := Event{
 		Kind: EventTileGroup,
 		FrameHeader: parser.FrameHeaderPrefix{
@@ -779,6 +781,14 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		LoopFilter:  parser.LoopFilterParams{LevelY: [2]uint8{4, 5}, LevelU: 6, LevelV: 7},
 		CDEF:        parser.CDEFParams{Damping: 3, StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{8}},
 		Restoration: parser.RestorationParams{Type: [3]parser.RestorationType{parser.RestorationWiener}, UnitSizeY: 64},
+		TransformRef: parser.TransformReferenceParams{
+			TransformMode: parser.TransformModeSwitchable,
+			ReferenceMode: parser.ReferenceModeSelect,
+		},
+		SkipMode:     parser.SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{1, 2}},
+		FrameMode:    parser.FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true},
+		GlobalMotion: globalMotion,
+		FilmGrain:    filmGrain,
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
@@ -817,6 +827,21 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.Restoration != event.Restoration {
 			t.Fatalf("Restoration=%+v want %+v", ctx.Restoration, event.Restoration)
+		}
+		if ctx.TransformRef != event.TransformRef {
+			t.Fatalf("TransformRef=%+v want %+v", ctx.TransformRef, event.TransformRef)
+		}
+		if ctx.SkipMode != event.SkipMode {
+			t.Fatalf("SkipMode=%+v want %+v", ctx.SkipMode, event.SkipMode)
+		}
+		if ctx.FrameMode != event.FrameMode {
+			t.Fatalf("FrameMode=%+v want %+v", ctx.FrameMode, event.FrameMode)
+		}
+		if ctx.GlobalMotion != event.GlobalMotion {
+			t.Fatalf("GlobalMotion=%+v want %+v", ctx.GlobalMotion, event.GlobalMotion)
+		}
+		if ctx.FilmGrain != event.FilmGrain {
+			t.Fatalf("FilmGrain=%+v want %+v", ctx.FilmGrain, event.FilmGrain)
 		}
 		r, err := ctx.JobEntropyReader(1)
 		if err != nil {
@@ -1312,7 +1337,12 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 			ctx.Segmentation != events[1].Segmentation ||
 			ctx.LoopFilter != events[1].LoopFilter ||
 			ctx.CDEF != events[1].CDEF ||
-			ctx.Restoration != events[1].Restoration {
+			ctx.Restoration != events[1].Restoration ||
+			ctx.TransformRef != events[1].TransformRef ||
+			ctx.SkipMode != events[1].SkipMode ||
+			ctx.FrameMode != events[1].FrameMode ||
+			ctx.GlobalMotion != events[1].GlobalMotion ||
+			ctx.FilmGrain != events[1].FilmGrain {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil
@@ -3235,6 +3265,25 @@ func testFrameWorkTileInfo() parser.TileInfo {
 	tiles.ColStartSB[2] = 2
 	tiles.RowStartSB[1] = 1
 	return tiles
+}
+
+func testFrameWorkGlobalMotion() parser.GlobalMotionParams {
+	motion := parser.DefaultGlobalMotionParams()
+	motion.Ref[0].Type = parser.GlobalMotionTranslation
+	motion.Ref[0].Matrix[0] = 17
+	motion.Ref[0].Matrix[1] = -9
+	return motion
+}
+
+func testFrameWorkFilmGrain() parser.FilmGrainParams {
+	return parser.FilmGrainParams{
+		ParamsPresent: true,
+		Apply:         true,
+		Seed:          99,
+		BitDepth:      8,
+		NumYPoints:    1,
+		YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{16, 32}},
+	}
 }
 
 func noopFrameWorkBatch(FrameWorkBatch) error {
