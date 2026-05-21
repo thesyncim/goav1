@@ -238,6 +238,11 @@ func TestEventDropsFrameWork(t *testing.T) {
 			want:  true,
 		},
 		{
+			name:  "show existing",
+			event: Event{Kind: EventExistingFrame},
+			want:  true,
+		},
+		{
 			name:  "operating parameters",
 			event: Event{Kind: EventSequenceHeader, OperatingParametersChanged: true},
 			want:  false,
@@ -525,6 +530,31 @@ func TestFrameWorkStateAbortIfEventDropsFrameWork(t *testing.T) {
 	}
 	if !aborted || state.Active() || pool.Available() != 1 {
 		t.Fatalf("aborted=%v state=%+v active=%v available=%d", aborted, state, state.Active(), pool.Available())
+	}
+	if _, err := pool.Frame(plan.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("aborted frame err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+}
+
+func TestFrameWorkStateAbortIfShowExistingFrameDropsFrameWork(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aborted, err := state.AbortIfEventDropsFrameWork(&pool, Event{Kind: EventExistingFrame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !aborted || state.Active() || pool.Available() != 1 {
+		t.Fatalf("aborted=%v active=%v available=%d", aborted, state.Active(), pool.Available())
 	}
 	if _, err := pool.Frame(plan.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
 		t.Fatalf("aborted frame err=%v want %v", err, frame.ErrInvalidSlot)
@@ -930,7 +960,7 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkAllocs(t *testing.T) {
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
 	}
-	drop := Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true}
+	drop := Event{Kind: EventExistingFrame}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()

@@ -109,6 +109,9 @@ func TestDecoderEventDropsFrameWork(t *testing.T) {
 	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventTemporalDelimiter, NewTemporalUnit: true}) {
 		t.Fatal("temporal delimiter did not drop frame work")
 	}
+	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventExistingFrame}) {
+		t.Fatal("show existing frame did not drop frame work")
+	}
 	if DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, OperatingParametersChanged: true}) {
 		t.Fatal("operating parameter change dropped frame work")
 	}

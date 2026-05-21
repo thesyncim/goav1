@@ -50,7 +50,7 @@ type FrameWorkState struct {
 // incomplete frame work should be discarded. This matches Stream's pending
 // frame reset points.
 func EventDropsFrameWork(event Event) bool {
-	return event.NewCodedVideoSequence || event.NewTemporalUnit
+	return event.NewCodedVideoSequence || event.NewTemporalUnit || event.Kind == EventExistingFrame
 }
 
 // EventCompletesFrameWork reports whether event carries the final tile group
