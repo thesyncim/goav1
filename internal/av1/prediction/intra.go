@@ -9,6 +9,10 @@ const (
 	IntraModeDC IntraMode = iota
 	IntraModeVertical
 	IntraModeHorizontal
+	IntraModePaeth
+	IntraModeSmooth
+	IntraModeSmoothVertical
+	IntraModeSmoothHorizontal
 )
 
 // IntraEdges carries caller-owned neighboring samples for intra prediction.
@@ -18,8 +22,11 @@ type IntraEdges struct {
 	Above []uint16
 	Left  []uint16
 
-	AboveAvailable bool
-	LeftAvailable  bool
+	AboveLeft uint16
+
+	AboveAvailable     bool
+	LeftAvailable      bool
+	AboveLeftAvailable bool
 }
 
 // PredictIntraPlaneBlock writes an intra-predicted rectangular block into dst.
@@ -58,6 +65,32 @@ func PredictIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8,
 			return err
 		}
 		predictHorizontal(block, bytesPerSample, edges.Left[:height])
+	case IntraModePaeth:
+		if err := validateIntraDirectionalEdges(width, height, max, edges, true); err != nil {
+			return err
+		}
+		predictPaeth(block, bytesPerSample, edges.Above[:width], edges.Left[:height], edges.AboveLeft)
+	case IntraModeSmooth:
+		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+			return err
+		}
+		if err := predictSmooth(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+			return err
+		}
+	case IntraModeSmoothVertical:
+		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+			return err
+		}
+		if err := predictSmoothVertical(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+			return err
+		}
+	case IntraModeSmoothHorizontal:
+		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+			return err
+		}
+		if err := predictSmoothHorizontal(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+			return err
+		}
 	default:
 		return ErrInvalidPrediction
 	}
@@ -225,6 +258,21 @@ func predictHorizontal(block planeBlock, bytesPerSample int, left []uint16) {
 			}
 		}
 	}
+}
+
+func validateIntraDirectionalEdges(width int, height int, max uint16, edges IntraEdges, requireAboveLeft bool) error {
+	if !edges.AboveAvailable || len(edges.Above) < width || !edges.LeftAvailable || len(edges.Left) < height {
+		return ErrInvalidPrediction
+	}
+	if requireAboveLeft {
+		if !edges.AboveLeftAvailable || edges.AboveLeft > max {
+			return ErrInvalidPrediction
+		}
+	}
+	if err := validateSamples(edges.Above[:width], max); err != nil {
+		return err
+	}
+	return validateSamples(edges.Left[:height], max)
 }
 
 func validateSamples(samples []uint16, max uint16) error {
