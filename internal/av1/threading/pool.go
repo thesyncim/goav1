@@ -5,6 +5,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	decodework "github.com/thesyncim/goav1/internal/av1/work"
 )
@@ -21,6 +22,7 @@ type FrameWorkBatch struct {
 	Output           *frame.Frame
 	Payload          []byte
 	References       []*frame.Frame
+	Quantization     parser.QuantizationParams
 	DisableCDFUpdate bool
 	Batch            Batch
 	Jobs             []tile.Job
@@ -54,6 +56,7 @@ func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error
 	}
 	return state.Reset(b.Payload, b.Jobs[index], tile.DecodeOptions{
 		DisableCDFUpdate: b.DisableCDFUpdate,
+		BaseQIdx:         b.Quantization.BaseQIdx,
 	})
 }
 

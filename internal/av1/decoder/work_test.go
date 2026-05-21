@@ -761,6 +761,7 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		FrameHeader: parser.FrameHeaderPrefix{
 			DisableCDFUpdate: true,
 		},
+		Quantization: parser.QuantizationParams{BaseQIdx: 73},
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
@@ -772,6 +773,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
 		if !ctx.DisableCDFUpdate {
 			t.Fatal("DisableCDFUpdate not propagated")
+		}
+		if ctx.Quantization.BaseQIdx != 73 {
+			t.Fatalf("BaseQIdx=%d want 73", ctx.Quantization.BaseQIdx)
 		}
 		r, err := ctx.JobEntropyReader(1)
 		if err != nil {
@@ -786,6 +790,16 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if bit != 1 {
 			t.Fatalf("bit=%d want 1", bit)
+		}
+		var state tile.DecodeState
+		if err := ctx.JobDecodeState(1, &state); err != nil {
+			t.Fatal(err)
+		}
+		if state.CurrentBaseQIdx != 73 {
+			t.Fatalf("CurrentBaseQIdx=%d want 73", state.CurrentBaseQIdx)
+		}
+		if state.Reader.AllowCDFUpdate() {
+			t.Fatal("decode state CDF update enabled")
 		}
 		return nil
 	})

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -171,7 +172,8 @@ func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
 
 func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	ctx := FrameWorkBatch{
-		Payload: []byte{0x00, 0xff, 0x00},
+		Payload:      []byte{0x00, 0xff, 0x00},
+		Quantization: parser.QuantizationParams{BaseQIdx: 73},
 		Jobs: []tile.Job{
 			{Tile: 0, Offset: 0, Size: 1},
 			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
@@ -191,6 +193,9 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	if !state.RetainFrameContext {
 		t.Fatal("frame context not retained")
 	}
+	if state.CurrentBaseQIdx != 73 {
+		t.Fatalf("CurrentBaseQIdx=%d want 73", state.CurrentBaseQIdx)
+	}
 	bit, err := state.Reader.ReadBit()
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +213,9 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	}
 	if state.RetainFrameContext {
 		t.Fatal("frame context retained")
+	}
+	if state.CurrentBaseQIdx != 73 {
+		t.Fatalf("CurrentBaseQIdx=%d want 73", state.CurrentBaseQIdx)
 	}
 }
 
@@ -340,7 +348,8 @@ func TestFrameWorkBatchJobEntropyReaderAllocs(t *testing.T) {
 
 func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 	ctx := FrameWorkBatch{
-		Payload: []byte{0x00, 0xff, 0x00},
+		Payload:      []byte{0x00, 0xff, 0x00},
+		Quantization: parser.QuantizationParams{BaseQIdx: 91},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
 			{Offset: 1, Size: 1, UpdatesFrameContext: true},
@@ -353,6 +362,9 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 		}
 		if !state.RetainFrameContext {
 			t.Fatal("frame context not retained")
+		}
+		if state.CurrentBaseQIdx != 91 {
+			t.Fatalf("CurrentBaseQIdx=%d want 91", state.CurrentBaseQIdx)
 		}
 		bit, err := state.Reader.ReadBit()
 		if err != nil {
@@ -449,17 +461,18 @@ func FuzzFrameWorkBatchJobPayload(f *testing.F) {
 }
 
 func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
-	f.Add([]byte{0xff}, int16(0), int16(1), false)
-	f.Add([]byte{0x00, 0xff, 0x00}, int16(1), int16(1), true)
-	f.Add([]byte{0xaa}, int16(0), int16(2), false)
+	f.Add([]byte{0xff}, int16(0), int16(1), false, uint8(0))
+	f.Add([]byte{0x00, 0xff, 0x00}, int16(1), int16(1), true, uint8(73))
+	f.Add([]byte{0xaa}, int16(0), int16(2), false, uint8(255))
 
-	f.Fuzz(func(t *testing.T, payload []byte, offset int16, size int16, disableCDFUpdate bool) {
+	f.Fuzz(func(t *testing.T, payload []byte, offset int16, size int16, disableCDFUpdate bool, baseQIdx uint8) {
 		if len(payload) > 64 {
 			return
 		}
 		job := tile.Job{Offset: int(offset), Size: int(size)}
 		ctx := FrameWorkBatch{
 			Payload:          payload,
+			Quantization:     parser.QuantizationParams{BaseQIdx: baseQIdx},
 			DisableCDFUpdate: disableCDFUpdate,
 			Jobs:             []tile.Job{job},
 		}
@@ -480,6 +493,9 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 		wantRetain := job.UpdatesFrameContext && !disableCDFUpdate
 		if state.RetainFrameContext != wantRetain {
 			t.Fatalf("RetainFrameContext=%v want %v", state.RetainFrameContext, wantRetain)
+		}
+		if state.CurrentBaseQIdx != baseQIdx {
+			t.Fatalf("CurrentBaseQIdx=%d want %d", state.CurrentBaseQIdx, baseQIdx)
 		}
 		if _, err := r.ReadBit(); err != nil {
 			t.Fatalf("ReadBit err=%v", err)
@@ -531,7 +547,8 @@ func BenchmarkFrameWorkBatchJobEntropyReader(b *testing.B) {
 
 func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 	ctx := FrameWorkBatch{
-		Payload: []byte{0x00, 0xff, 0x00},
+		Payload:      []byte{0x00, 0xff, 0x00},
+		Quantization: parser.QuantizationParams{BaseQIdx: 37},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
 			{Offset: 1, Size: 1, UpdatesFrameContext: true},
