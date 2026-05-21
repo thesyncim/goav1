@@ -25,6 +25,7 @@ fuzz-smoke:
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzReaderSignedDelta
 	go test ./internal/av1/entropy $(FUZZFLAGS) -fuzz=FuzzReaderUniformSubexp
 	go test ./internal/av1/frame $(FUZZFLAGS) -fuzz=FuzzSamplePlaneRoundTrip
+	go test ./internal/av1/frame $(FUZZFLAGS) -fuzz=FuzzBorderedSamplePlaneRoundTrip
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseSequenceHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseFrameHeaderPrefix
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseIntraFrameSize

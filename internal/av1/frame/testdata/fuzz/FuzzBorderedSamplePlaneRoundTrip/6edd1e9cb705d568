@@ -1,0 +1,9 @@
+go test fuzz v1
+byte('\x05')
+byte('=')
+byte('\x01')
+byte('\x02')
+byte('\x03')
+byte('\x02')
+byte('\a')
+uint32(305419978)
