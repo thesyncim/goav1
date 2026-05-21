@@ -766,12 +766,19 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		FrameSize:    testFrameSize(128, 64),
 		TileInfo:     testFrameWorkTileInfo(),
 		Quantization: parser.QuantizationParams{BaseQIdx: 73},
+		Segmentation: parser.SegmentationParams{
+			QIndex:      [parser.MaxSegments]uint8{73},
+			AllLossless: false,
+		},
 		Delta: parser.DeltaParams{
 			DeltaQPresent:  true,
 			DeltaQResLog2:  1,
 			DeltaLFPresent: true,
 			DeltaLFResLog2: 1,
 		},
+		LoopFilter:  parser.LoopFilterParams{LevelY: [2]uint8{4, 5}, LevelU: 6, LevelV: 7},
+		CDEF:        parser.CDEFParams{Damping: 3, StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{8}},
+		Restoration: parser.RestorationParams{Type: [3]parser.RestorationType{parser.RestorationWiener}, UnitSizeY: 64},
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
@@ -798,6 +805,18 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.Delta != event.Delta {
 			t.Fatalf("Delta=%+v want %+v", ctx.Delta, event.Delta)
+		}
+		if ctx.Segmentation != event.Segmentation {
+			t.Fatalf("Segmentation=%+v want %+v", ctx.Segmentation, event.Segmentation)
+		}
+		if ctx.LoopFilter != event.LoopFilter {
+			t.Fatalf("LoopFilter=%+v want %+v", ctx.LoopFilter, event.LoopFilter)
+		}
+		if ctx.CDEF != event.CDEF {
+			t.Fatalf("CDEF=%+v want %+v", ctx.CDEF, event.CDEF)
+		}
+		if ctx.Restoration != event.Restoration {
+			t.Fatalf("Restoration=%+v want %+v", ctx.Restoration, event.Restoration)
 		}
 		r, err := ctx.JobEntropyReader(1)
 		if err != nil {
@@ -1289,7 +1308,11 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa ||
 			ctx.FrameHeader != events[1].FrameHeader ||
 			ctx.FrameSize != events[1].FrameSize ||
-			ctx.TileInfo != events[1].TileInfo {
+			ctx.TileInfo != events[1].TileInfo ||
+			ctx.Segmentation != events[1].Segmentation ||
+			ctx.LoopFilter != events[1].LoopFilter ||
+			ctx.CDEF != events[1].CDEF ||
+			ctx.Restoration != events[1].Restoration {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil

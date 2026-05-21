@@ -23,7 +23,11 @@ type FrameWorkFrameContext struct {
 	FrameSize    parser.FrameSize
 	TileInfo     parser.TileInfo
 	Quantization parser.QuantizationParams
+	Segmentation parser.SegmentationParams
 	Delta        parser.DeltaParams
+	LoopFilter   parser.LoopFilterParams
+	CDEF         parser.CDEFParams
+	Restoration  parser.RestorationParams
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.

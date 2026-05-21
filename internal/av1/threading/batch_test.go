@@ -178,7 +178,11 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 73},
+			Segmentation: parser.SegmentationParams{AllLossless: false, QIndex: [parser.MaxSegments]uint8{73}},
 			Delta:        wantDelta,
+			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{4, 5}},
+			CDEF:         parser.CDEFParams{Damping: 3, StrengthCount: 1},
+			Restoration:  parser.RestorationParams{UnitSizeY: 64},
 		},
 		Jobs: []tile.Job{
 			{Tile: 0, Offset: 0, Size: 1},
@@ -191,6 +195,10 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	}
 	if ctx.FrameSize.CodedWidth != 128 || ctx.TileInfo.Cols != 2 {
 		t.Fatalf("frame context size=%+v tiles=%+v", ctx.FrameSize, ctx.TileInfo)
+	}
+	if ctx.Segmentation.QIndex[0] != 73 || ctx.LoopFilter.LevelY[0] != 4 ||
+		ctx.CDEF.Damping != 3 || ctx.Restoration.UnitSizeY != 64 {
+		t.Fatalf("filter context seg=%+v lf=%+v cdef=%+v restoration=%+v", ctx.Segmentation, ctx.LoopFilter, ctx.CDEF, ctx.Restoration)
 	}
 
 	if err := ctx.JobDecodeState(1, &state); err != nil {
@@ -365,7 +373,11 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 91},
+			Segmentation: parser.SegmentationParams{QIndex: [parser.MaxSegments]uint8{91}},
 			Delta:        parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{6, 7}},
+			CDEF:         parser.CDEFParams{Damping: 4, StrengthCount: 1},
+			Restoration:  parser.RestorationParams{UnitSizeY: 128},
 		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},
@@ -494,6 +506,7 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 				FrameSize:    parser.FrameSize{CodedWidth: uint32(len(payload)) + 1, Height: 1},
 				TileInfo:     testBatchTileInfo(),
 				Quantization: parser.QuantizationParams{BaseQIdx: baseQIdx},
+				Segmentation: parser.SegmentationParams{QIndex: [parser.MaxSegments]uint8{baseQIdx}},
 				Delta:        delta,
 			},
 			DisableCDFUpdate: disableCDFUpdate,
@@ -578,7 +591,11 @@ func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 			FrameSize:    parser.FrameSize{CodedWidth: 128, Height: 64},
 			TileInfo:     testBatchTileInfo(),
 			Quantization: parser.QuantizationParams{BaseQIdx: 37},
+			Segmentation: parser.SegmentationParams{QIndex: [parser.MaxSegments]uint8{37}},
 			Delta:        parser.DeltaParams{DeltaQPresent: true},
+			LoopFilter:   parser.LoopFilterParams{LevelY: [2]uint8{1, 2}},
+			CDEF:         parser.CDEFParams{Damping: 3},
+			Restoration:  parser.RestorationParams{UnitSizeY: 64},
 		},
 		Jobs: []tile.Job{
 			{Offset: 0, Size: 1},

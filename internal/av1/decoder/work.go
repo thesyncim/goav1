@@ -471,7 +471,11 @@ func frameWorkFrameContext(event Event) FrameWorkFrameContext {
 		FrameSize:    event.FrameSize,
 		TileInfo:     event.TileInfo,
 		Quantization: event.Quantization,
+		Segmentation: event.Segmentation,
 		Delta:        event.Delta,
+		LoopFilter:   event.LoopFilter,
+		CDEF:         event.CDEF,
+		Restoration:  event.Restoration,
 	}
 }
 
