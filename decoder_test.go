@@ -201,6 +201,51 @@ func TestDecoderFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkStateShowExisting(t *testing.T) {
+	pool := testDecoderFramePool(t, 2)
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs DecoderSurfaceReferences
+	var releases [RefFrames]int
+	if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+
+	var state DecoderFrameWorkState
+	if _, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := state.ShowExisting(&refs, &pool, DecoderEvent{
+		Kind: DecoderEventExistingFrame,
+		FrameHeader: FrameHeaderPrefix{
+			ShowExistingFrame: true,
+			ExistingFrameIdx:  0,
+		},
+		ExistingFrame: ReferenceFrame{FrameType: FrameTypeInter},
+	}, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (DecoderShowExistingFrameWorkPlan{Surface: reference, DroppedFrameWork: true}) || state.Active() {
+		t.Fatalf("plan=%+v active=%v", plan, state.Active())
+	}
+}
+
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

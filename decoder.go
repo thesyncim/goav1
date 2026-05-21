@@ -12,6 +12,7 @@ type DecoderEventKind = internaldecoder.EventKind
 type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
 type DecoderFrameWorkPlan = internaldecoder.FrameWorkPlan
 type DecoderFrameTileWorkPlan = internaldecoder.FrameTileWorkPlan
+type DecoderShowExistingFrameWorkPlan = internaldecoder.ShowExistingFrameWorkPlan
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job

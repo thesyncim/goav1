@@ -511,6 +511,197 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkKeepsActiveOnError(t *test
 	}
 }
 
+func TestFrameWorkStateShowExistingDropsActiveWork(t *testing.T) {
+	pool := testFramePool(t, 2)
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (ShowExistingFrameWorkPlan{Surface: reference, DroppedFrameWork: true}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if state.Active() || pool.Available() != 1 {
+		t.Fatalf("active=%v available=%d", state.Active(), pool.Available())
+	}
+	if _, err := pool.Frame(begin.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("dropped frame err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	if _, err := pool.Frame(reference); err != nil {
+		t.Fatalf("reference frame err=%v", err)
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != reference {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, reference)
+	}
+}
+
+func TestFrameWorkStateShowExistingKeyResetsReferences(t *testing.T) {
+	pool := testFramePool(t, 3)
+	index0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index1, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(1<<0, index0, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(1<<1, index1, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state FrameWorkState
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(1, parser.FrameTypeKey), releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (ShowExistingFrameWorkPlan{Surface: index1, ReleaseCount: 1, DroppedFrameWork: true}) || releases[0] != index0 {
+		t.Fatalf("plan=%+v release=%d want surface=%d release=%d", plan, releases[0], index1, index0)
+	}
+	if pool.Available() != 2 {
+		t.Fatalf("available=%d want 2", pool.Available())
+	}
+	for i := 0; i < parser.RefFrames; i++ {
+		slot, ok := refs.ReferenceSlot(i)
+		if !ok || slot != index1 {
+			t.Fatalf("slot[%d]=%d ok=%v want %d", i, slot, ok, index1)
+		}
+	}
+}
+
+func TestFrameWorkStateShowExistingInactive(t *testing.T) {
+	pool := testFramePool(t, 1)
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state FrameWorkState
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (ShowExistingFrameWorkPlan{Surface: reference}) {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func TestFrameWorkStateShowExistingRejectsInvalidEventBeforeAbort(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = state.ShowExisting(&refs, &pool, Event{Kind: EventFrameHeader}, nil)
+	if !errors.Is(err, ErrInvalidSurfaceEvent) {
+		t.Fatalf("ShowExisting err=%v want %v", err, ErrInvalidSurfaceEvent)
+	}
+	if !state.Active() || state.Surface != begin.Surface || pool.Available() != 0 {
+		t.Fatalf("state=%+v active=%v available=%d", state, state.Active(), pool.Available())
+	}
+}
+
+func TestFrameWorkStateShowExistingRejectsMissingReferenceBeforeAbort(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	if !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("ShowExisting err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+	if !state.Active() || state.Surface != begin.Surface || pool.Available() != 0 {
+		t.Fatalf("state=%+v active=%v available=%d", state, state.Active(), pool.Available())
+	}
+}
+
+func TestFrameWorkStateShowExistingKeepsActiveOnAbortError(t *testing.T) {
+	pool := testFramePool(t, 2)
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = state.ShowExisting(&refs, nil, showExistingWorkEvent(0, parser.FrameTypeInter), nil)
+	if !errors.Is(err, frame.ErrInvalidPool) {
+		t.Fatalf("ShowExisting err=%v want %v", err, frame.ErrInvalidPool)
+	}
+	if !state.Active() || state.Surface != begin.Surface || pool.Available() != 0 {
+		t.Fatalf("state=%+v active=%v available=%d", state, state.Active(), pool.Available())
+	}
+}
+
 func TestFrameWorkStateAbortIfEventDropsFrameWork(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
@@ -1023,6 +1214,45 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateShowExistingAllocs(t *testing.T) {
+	pool := testFramePool(t, 2)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	begin := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+	show := showExistingWorkEvent(0, parser.FrameTypeInter)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		reference, _, err := pool.Acquire()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := state.ShowExisting(&refs, &pool, show, releases[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Surface != reference || !plan.DroppedFrameWork {
+			t.Fatalf("plan=%+v reference=%d", plan, reference)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkState ShowExisting allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -1180,6 +1410,30 @@ func BenchmarkFrameWorkStateFinishIfEventCompletesFrameWork(b *testing.B) {
 	}
 }
 
+func BenchmarkFrameWorkStateShowExisting(b *testing.B) {
+	pool := benchmarkFramePool(b, 2)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	begin := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+	show := showExistingWorkEvent(0, parser.FrameTypeInter)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		reference, _, _ := pool.Acquire()
+		_, _ = refs.Refresh(1<<0, reference, releases[:])
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.ShowExisting(&refs, &pool, show, releases[:])
+	}
+}
+
 func BenchmarkBeginFrameWork(b *testing.B) {
 	pool := benchmarkFramePool(b, 1)
 	var refs SurfaceReferences
@@ -1213,6 +1467,17 @@ func benchmarkFramePoolForSize(b *testing.B, width uint32, height uint32, count 
 		b.Fatal(err)
 	}
 	return pool
+}
+
+func showExistingWorkEvent(index uint8, frameType parser.FrameType) Event {
+	return Event{
+		Kind: EventExistingFrame,
+		FrameHeader: parser.FrameHeaderPrefix{
+			ShowExistingFrame: true,
+			ExistingFrameIdx:  index,
+		},
+		ExistingFrame: parser.ReferenceFrame{FrameType: frameType},
+	}
 }
 
 func makeFramePoolForSize(width uint32, height uint32, count int) (frame.Pool, error) {

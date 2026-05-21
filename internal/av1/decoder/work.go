@@ -36,6 +36,14 @@ type FrameTileWorkPlan struct {
 	Tile           TileWorkPlan
 }
 
+// ShowExistingFrameWorkPlan is the caller-buffer work result for a
+// show-existing-frame event. Surface is the frame-pool slot to output.
+type ShowExistingFrameWorkPlan struct {
+	Surface          int
+	ReleaseCount     int
+	DroppedFrameWork bool
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -156,6 +164,47 @@ func (s *FrameWorkState) FinishIfEventCompletesFrameWork(refs *SurfaceReferences
 		return false, 0, err
 	}
 	return true, count, nil
+}
+
+// ShowExisting resolves a show-existing-frame event to an output surface,
+// aborts any active incomplete frame work, and applies any AV1 key-frame
+// reference reset. Active frame work is dropped only after the show-existing
+// event validates and the abort succeeds.
+func (s *FrameWorkState) ShowExisting(refs *SurfaceReferences, pool *frame.Pool, event Event, releases []int) (ShowExistingFrameWorkPlan, error) {
+	if event.Kind != EventExistingFrame || !event.FrameHeader.ShowExistingFrame {
+		return ShowExistingFrameWorkPlan{}, ErrInvalidSurfaceEvent
+	}
+	if refs == nil {
+		return ShowExistingFrameWorkPlan{}, ErrInvalidSurfaceReference
+	}
+
+	next := *refs
+	surface, releaseCount, err := next.ShowExistingFrame(event, releases)
+	if err != nil {
+		return ShowExistingFrameWorkPlan{}, err
+	}
+	if releaseCount != 0 && pool == nil {
+		return ShowExistingFrameWorkPlan{}, frame.ErrInvalidPool
+	}
+
+	dropped := false
+	if s != nil && s.active {
+		if err := s.Abort(pool); err != nil {
+			return ShowExistingFrameWorkPlan{}, err
+		}
+		dropped = true
+	}
+	if releaseCount != 0 {
+		if err := pool.ReleaseMany(releases[:releaseCount]); err != nil {
+			return ShowExistingFrameWorkPlan{}, err
+		}
+	}
+	*refs = next
+	return ShowExistingFrameWorkPlan{
+		Surface:          surface,
+		ReleaseCount:     releaseCount,
+		DroppedFrameWork: dropped,
+	}, nil
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

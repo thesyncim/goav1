@@ -65,8 +65,9 @@ The initial implementation covers:
 - Decoder tile-work planning from parsed frame/tile-group events into
   caller-owned spans, jobs, and batches, including checked frame-work begin
   and tile-group continuation plans with caller-owned frame work lifecycle
-  state, final-event completion, abort release, and stream-boundary drop
-  handling for temporal units, new sequences, and show-existing frames.
+  state, final-event completion, abort release, show-existing output, and
+  stream-boundary drop handling for temporal units, new sequences, and
+  show-existing frames.
 - Incremental decoder stream state over OBUs/RTP payloads.
 - AV1 show-existing-frame decoder events with reference-state validation.
 - Decoder reference-state carryover for segmentation data and loop-filter
