@@ -20,7 +20,9 @@ type FrameWorkStepKind = decodework.FrameStepKind
 type FrameWorkStep = decodework.FrameStep
 type FrameWorkStepResult = decodework.FrameStepResult
 type FrameWorkBatch = threading.FrameWorkBatch
+type FrameWorkSequenceContext = threading.FrameWorkSequenceContext
 type FrameWorkFrameContext = threading.FrameWorkFrameContext
+type FrameWorkJobRegion = threading.FrameWorkJobRegion
 type FrameWorkBatchFunc = threading.FrameWorkBatchFunc
 
 const (

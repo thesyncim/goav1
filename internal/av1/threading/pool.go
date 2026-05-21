@@ -77,7 +77,33 @@ func FrameWorkSequenceContextFromHeader(seq parser.SequenceHeader) FrameWorkSequ
 
 // Valid reports whether the context was derived from a parsed sequence header.
 func (c FrameWorkSequenceContext) Valid() bool {
-	return c.ColorConfig.BitDepth != 0 && c.SBSizeLog2 != 0 && c.SBSizeMIB != 0
+	return c.ColorConfig.BitDepth != 0 &&
+		((c.SBSizeLog2 == 6 && c.SBSizeMIB == 16) ||
+			(c.SBSizeLog2 == 7 && c.SBSizeMIB == 32))
+}
+
+// FrameWorkJobRegion is the clipped reconstruction region for one scheduled
+// tile job. Pixel bounds are clipped to the coded frame, while MI bounds follow
+// AV1's 8-aligned MI grid.
+type FrameWorkJobRegion struct {
+	Tile uint16
+	Row  uint8
+	Col  uint8
+
+	SBX    uint16
+	SBY    uint16
+	SBCols uint16
+	SBRows uint16
+
+	PixelX      uint32
+	PixelY      uint32
+	PixelWidth  uint32
+	PixelHeight uint32
+
+	MIColStart uint32
+	MIRowStart uint32
+	MIColEnd   uint32
+	MIRowEnd   uint32
 }
 
 // FrameWorkFrameContext is the parsed frame context supplied to frame-work
@@ -148,6 +174,102 @@ func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error
 	})
 }
 
+// JobRegion returns the clipped reconstruction region for Jobs[index].
+func (b FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
+	if index < 0 || index >= len(b.Jobs) || !b.Sequence.Valid() ||
+		b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+
+	job := b.Jobs[index]
+	if job.SBCols == 0 || job.SBRows == 0 {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+
+	sbXEnd := uint32(job.SBX) + uint32(job.SBCols)
+	sbYEnd := uint32(job.SBY) + uint32(job.SBRows)
+	pixelX := uint32(job.SBX) << b.Sequence.SBSizeLog2
+	pixelY := uint32(job.SBY) << b.Sequence.SBSizeLog2
+	pixelXEnd := sbXEnd << b.Sequence.SBSizeLog2
+	pixelYEnd := sbYEnd << b.Sequence.SBSizeLog2
+	if pixelX >= b.FrameSize.CodedWidth || pixelY >= b.FrameSize.Height {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+	if pixelXEnd > b.FrameSize.CodedWidth {
+		pixelXEnd = b.FrameSize.CodedWidth
+	}
+	if pixelYEnd > b.FrameSize.Height {
+		pixelYEnd = b.FrameSize.Height
+	}
+	if pixelXEnd <= pixelX || pixelYEnd <= pixelY {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+
+	miCols, ok := frameWorkMIExtent(b.FrameSize.CodedWidth)
+	if !ok {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+	miRows, ok := frameWorkMIExtent(b.FrameSize.Height)
+	if !ok {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+	miColStart := uint32(job.SBX) * uint32(b.Sequence.SBSizeMIB)
+	miRowStart := uint32(job.SBY) * uint32(b.Sequence.SBSizeMIB)
+	miColEnd := sbXEnd * uint32(b.Sequence.SBSizeMIB)
+	miRowEnd := sbYEnd * uint32(b.Sequence.SBSizeMIB)
+	if miColStart >= miCols || miRowStart >= miRows {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+	if miColEnd > miCols {
+		miColEnd = miCols
+	}
+	if miRowEnd > miRows {
+		miRowEnd = miRows
+	}
+	if miColEnd <= miColStart || miRowEnd <= miRowStart {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
+
+	return FrameWorkJobRegion{
+		Tile:        job.Tile,
+		Row:         job.Row,
+		Col:         job.Col,
+		SBX:         job.SBX,
+		SBY:         job.SBY,
+		SBCols:      job.SBCols,
+		SBRows:      job.SBRows,
+		PixelX:      pixelX,
+		PixelY:      pixelY,
+		PixelWidth:  pixelXEnd - pixelX,
+		PixelHeight: pixelYEnd - pixelY,
+		MIColStart:  miColStart,
+		MIRowStart:  miRowStart,
+		MIColEnd:    miColEnd,
+		MIRowEnd:    miRowEnd,
+	}, nil
+}
+
+// JobBlockDeltaContext returns the AV1 block-delta context for an absolute MI
+// coordinate inside Jobs[index]'s region.
+func (b FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint32, fullSuperblock bool, skipTransform bool) (tile.BlockDeltaContext, error) {
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return tile.BlockDeltaContext{}, err
+	}
+	if miCol < region.MIColStart || miCol >= region.MIColEnd ||
+		miRow < region.MIRowStart || miRow >= region.MIRowEnd {
+		return tile.BlockDeltaContext{}, ErrInvalidBatch
+	}
+	return tile.BlockDeltaContext{
+		MICol:          miCol,
+		MIRow:          miRow,
+		SBSizeMIB:      b.Sequence.SBSizeMIB,
+		FullSuperblock: fullSuperblock,
+		SkipTransform:  skipTransform,
+		Monochrome:     b.Sequence.ColorConfig.MonoChrome,
+	}, nil
+}
+
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
 // whose adapted entropy state should refresh the frame context.
 func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
@@ -161,6 +283,13 @@ func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
 // Payload.
 func (b FrameWorkBatch) ValidatePayloads() error {
 	return tile.ValidatePayloads(b.Payload, b.Jobs)
+}
+
+func frameWorkMIExtent(pixels uint32) (uint32, bool) {
+	if pixels > ^uint32(0)-7 {
+		return 0, false
+	}
+	return ((pixels + 7) >> 3) << 1, true
 }
 
 // FrameWorkBatchFunc processes one deterministic frame-work tile batch.

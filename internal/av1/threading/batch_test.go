@@ -331,6 +331,152 @@ func TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobRegion64SuperblockClipsFrameEdge(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 130, Height: 65},
+		},
+		Jobs: []tile.Job{
+			{Tile: 1, Row: 0, Col: 1, SBX: 1, SBY: 0, SBCols: 2, SBRows: 2},
+		},
+	}
+	region, err := ctx.JobRegion(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := FrameWorkJobRegion{
+		Tile:        1,
+		Row:         0,
+		Col:         1,
+		SBX:         1,
+		SBY:         0,
+		SBCols:      2,
+		SBRows:      2,
+		PixelX:      64,
+		PixelY:      0,
+		PixelWidth:  66,
+		PixelHeight: 65,
+		MIColStart:  16,
+		MIRowStart:  0,
+		MIColEnd:    34,
+		MIRowEnd:    18,
+	}
+	if region != want {
+		t.Fatalf("region=%+v want %+v", region, want)
+	}
+}
+
+func TestFrameWorkBatchJobRegion128SuperblockClipsFrameEdge(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:  testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+	region, err := ctx.JobRegion(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := FrameWorkJobRegion{
+		Tile:        3,
+		Row:         1,
+		Col:         1,
+		SBX:         1,
+		SBY:         1,
+		SBCols:      2,
+		SBRows:      2,
+		PixelX:      128,
+		PixelY:      128,
+		PixelWidth:  172,
+		PixelHeight: 132,
+		MIColStart:  32,
+		MIRowStart:  32,
+		MIColEnd:    76,
+		MIRowEnd:    66,
+	}
+	if region != want {
+		t.Fatalf("region=%+v want %+v", region, want)
+	}
+}
+
+func TestFrameWorkBatchJobBlockDeltaContext(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: true,
+				ColorConfig:          parser.ColorConfig{BitDepth: 10, MonoChrome: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 256, Height: 256},
+		},
+		Jobs: []tile.Job{
+			{Tile: 0, SBX: 1, SBY: 1, SBCols: 1, SBRows: 1},
+		},
+	}
+	block, err := ctx.JobBlockDeltaContext(0, 32, 32, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := tile.BlockDeltaContext{
+		MICol:          32,
+		MIRow:          32,
+		SBSizeMIB:      32,
+		FullSuperblock: true,
+		Monochrome:     true,
+	}
+	if block != want {
+		t.Fatalf("block=%+v want %+v", block, want)
+	}
+	if _, err := ctx.JobBlockDeltaContext(0, 31, 32, false, false); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("outside block err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchJobRegionRejectsInvalidInputs(t *testing.T) {
+	validRegionBatch := func() FrameWorkBatch {
+		return FrameWorkBatch{
+			FrameWorkFrameContext: FrameWorkFrameContext{
+				Sequence:  testBatchSequenceContext(),
+				FrameSize: parser.FrameSize{CodedWidth: 128, Height: 128},
+			},
+			Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+		}
+	}
+	valid := validRegionBatch()
+	if _, err := valid.JobRegion(-1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("negative index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := valid.JobRegion(1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("large index err=%v want %v", err, ErrInvalidBatch)
+	}
+
+	invalid := validRegionBatch()
+	invalid.Sequence = FrameWorkSequenceContext{}
+	if _, err := invalid.JobRegion(0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid sequence err=%v want %v", err, ErrInvalidBatch)
+	}
+	invalid = validRegionBatch()
+	invalid.FrameSize = parser.FrameSize{}
+	if _, err := invalid.JobRegion(0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid frame size err=%v want %v", err, ErrInvalidBatch)
+	}
+	invalid = validRegionBatch()
+	invalid.Jobs[0].SBCols = 0
+	if _, err := invalid.JobRegion(0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("zero job err=%v want %v", err, ErrInvalidBatch)
+	}
+	invalid = validRegionBatch()
+	invalid.Jobs = []tile.Job{{SBX: 8, SBCols: 1, SBRows: 1}}
+	if _, err := invalid.JobRegion(0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("outside frame err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchJobUpdatesFrameContext(t *testing.T) {
 	ctx := FrameWorkBatch{
 		Jobs: []tile.Job{
@@ -486,6 +632,37 @@ func TestFrameWorkBatchJobDecodeStateAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:  testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		region, err := ctx.JobRegion(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if region.PixelWidth != 172 || region.MIColEnd != 76 {
+			t.Fatalf("region=%+v", region)
+		}
+		block, err := ctx.JobBlockDeltaContext(0, region.MIColStart, region.MIRowStart, false, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if block.SBSizeMIB != 32 || !block.SkipTransform {
+			t.Fatalf("block=%+v", block)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.JobRegion allocated: %f", allocs)
+	}
+}
+
 func FuzzBuildBatches(f *testing.F) {
 	f.Add([]byte{2, 3, 2, 2, 2, 3, 3, 2, 3})
 	f.Add([]byte{8, 1, 1})
@@ -621,6 +798,56 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 	})
 }
 
+func FuzzFrameWorkBatchJobRegion(f *testing.F) {
+	f.Add(uint16(130), uint16(65), false, uint16(1), uint16(0), uint16(2), uint16(2))
+	f.Add(uint16(300), uint16(260), true, uint16(1), uint16(1), uint16(2), uint16(2))
+	f.Add(uint16(16), uint16(16), false, uint16(8), uint16(0), uint16(1), uint16(1))
+
+	f.Fuzz(func(t *testing.T, width uint16, height uint16, use128 bool, sbx uint16, sby uint16, sbCols uint16, sbRows uint16) {
+		if width == 0 || height == 0 {
+			return
+		}
+		seq := parser.SequenceHeader{
+			Use128x128Superblock: use128,
+			ColorConfig:          parser.ColorConfig{BitDepth: 8, MonoChrome: width&1 == 1},
+		}
+		ctx := FrameWorkBatch{
+			FrameWorkFrameContext: FrameWorkFrameContext{
+				Sequence: FrameWorkSequenceContextFromHeader(seq),
+				FrameSize: parser.FrameSize{
+					CodedWidth: uint32(width),
+					Height:     uint32(height),
+				},
+			},
+			Jobs: []tile.Job{{
+				Tile:   0,
+				SBX:    sbx & 63,
+				SBY:    sby & 63,
+				SBCols: sbCols & 7,
+				SBRows: sbRows & 7,
+			}},
+		}
+		region, err := ctx.JobRegion(0)
+		if err != nil {
+			return
+		}
+		if region.PixelWidth == 0 || region.PixelHeight == 0 ||
+			region.PixelX+region.PixelWidth > uint32(width) ||
+			region.PixelY+region.PixelHeight > uint32(height) ||
+			region.MIColStart >= region.MIColEnd ||
+			region.MIRowStart >= region.MIRowEnd {
+			t.Fatalf("invalid region=%+v width=%d height=%d", region, width, height)
+		}
+		block, err := ctx.JobBlockDeltaContext(0, region.MIColStart, region.MIRowStart, false, false)
+		if err != nil {
+			t.Fatalf("block context err=%v region=%+v", err, region)
+		}
+		if block.SBSizeMIB != ctx.Sequence.SBSizeMIB || block.Monochrome != ctx.Sequence.ColorConfig.MonoChrome {
+			t.Fatalf("block=%+v ctx=%+v", block, ctx.Sequence)
+		}
+	})
+}
+
 func BenchmarkBuildBatches(b *testing.B) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -692,6 +919,40 @@ func BenchmarkFrameWorkBatchJobDecodeState(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = ctx.JobDecodeState(1, &state)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobRegion(b *testing.B) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:  testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobRegion(0)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobBlockDeltaContext(b *testing.B) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence:  testBatchSequenceContext(),
+			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
+		},
+		Jobs: []tile.Job{
+			{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobBlockDeltaContext(0, 32, 32, false, false)
 	}
 }
 
