@@ -106,6 +106,38 @@ func (p *Pool) Release(index int) error {
 	return nil
 }
 
+// ReleaseMany returns a caller-owned batch of frame slots to the pool. The
+// batch is validated before the pool is modified, so invalid or duplicate
+// indices leave ownership unchanged.
+func (p *Pool) ReleaseMany(indices []int) error {
+	if p == nil || len(p.frames) == 0 || len(p.free) < len(p.frames) || len(p.used) < len(p.frames) || p.top < 0 || p.top > len(p.frames) {
+		return ErrInvalidPool
+	}
+	if len(indices) == 0 {
+		return nil
+	}
+
+	for i := 0; i < len(indices); i++ {
+		index := indices[i]
+		if index < 0 || index >= len(p.frames) || !p.used[index] {
+			return ErrInvalidSlot
+		}
+		for j := 0; j < i; j++ {
+			if indices[j] == index {
+				return ErrInvalidSlot
+			}
+		}
+	}
+
+	for i := 0; i < len(indices); i++ {
+		index := indices[i]
+		p.used[index] = false
+		p.free[p.top] = index
+		p.top++
+	}
+	return nil
+}
+
 func (p *Pool) Reset() {
 	if p == nil {
 		return

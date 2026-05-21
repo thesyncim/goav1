@@ -115,6 +115,115 @@ func TestFramePoolFrame(t *testing.T) {
 	}
 }
 
+func TestFramePoolReleaseMany(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*3)
+	var frames [3]Frame
+	var free [3]int
+	var used [3]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	index0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index1, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index2, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pool.ReleaseMany([]int{index0, index2}); err != nil {
+		t.Fatal(err)
+	}
+	if pool.Available() != 2 {
+		t.Fatalf("available=%d want 2", pool.Available())
+	}
+	reacquired2, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reacquired2 != index2 {
+		t.Fatalf("first reacquire=%d want %d", reacquired2, index2)
+	}
+	reacquired0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reacquired0 != index0 {
+		t.Fatalf("second reacquire=%d want %d", reacquired0, index0)
+	}
+
+	if err := pool.ReleaseMany([]int{reacquired2, reacquired0, index1}); err != nil {
+		t.Fatal(err)
+	}
+	if pool.Available() != 3 {
+		t.Fatalf("available=%d want 3", pool.Available())
+	}
+	if err := pool.ReleaseMany(nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFramePoolReleaseManyRejectsAtomically(t *testing.T) {
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*2)
+	var frames [2]Frame
+	var free [2]int
+	var used [2]bool
+
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	index0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index1, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pool.ReleaseMany([]int{index0, index0}); !errors.Is(err, ErrInvalidSlot) {
+		t.Fatalf("duplicate release err=%v want %v", err, ErrInvalidSlot)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("duplicate changed available=%d", pool.Available())
+	}
+	if _, err := pool.Frame(index0); err != nil {
+		t.Fatalf("duplicate released index0: %v", err)
+	}
+
+	if err := pool.ReleaseMany([]int{index0, 99}); !errors.Is(err, ErrInvalidSlot) {
+		t.Fatalf("invalid release err=%v want %v", err, ErrInvalidSlot)
+	}
+	if pool.Available() != 0 {
+		t.Fatalf("invalid changed available=%d", pool.Available())
+	}
+	if _, err := pool.Frame(index1); err != nil {
+		t.Fatalf("invalid released index1: %v", err)
+	}
+
+	if err := pool.ReleaseMany([]int{index0, index1}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBindPoolRejectsBadStorage(t *testing.T) {
 	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
 	layout, err := RequiredSize(format)
@@ -186,14 +295,21 @@ func TestFramePoolAllocs(t *testing.T) {
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		index, _, err := pool.Acquire()
+		index0, _, err := pool.Acquire()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Frame(index); err != nil {
+		index1, _, err := pool.Acquire()
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := pool.Release(index); err != nil {
+		if _, err := pool.Frame(index0); err != nil {
+			t.Fatal(err)
+		}
+		var batch [2]int
+		batch[0] = index0
+		batch[1] = index1
+		if err := pool.ReleaseMany(batch[:]); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -224,6 +340,40 @@ func BenchmarkFramePoolAcquireRelease(b *testing.B) {
 			b.Fatal(err)
 		}
 		if err := pool.Release(index); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFramePoolReleaseMany(b *testing.B) {
+	format := Format{Width: 1920, Height: 1080, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*4)
+	var frames [4]Frame
+	var free [4]int
+	var used [4]bool
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var batch [2]int
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		index0, _, err := pool.Acquire()
+		if err != nil {
+			b.Fatal(err)
+		}
+		index1, _, err := pool.Acquire()
+		if err != nil {
+			b.Fatal(err)
+		}
+		batch[0] = index0
+		batch[1] = index1
+		if err := pool.ReleaseMany(batch[:]); err != nil {
 			b.Fatal(err)
 		}
 	}
