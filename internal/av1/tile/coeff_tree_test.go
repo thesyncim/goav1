@@ -104,6 +104,112 @@ func TestDecodeLumaCoefficientsSkipTransformResetsContext(t *testing.T) {
 	}
 }
 
+func TestDecodeChromaCoefficientsUsesSubsampledPlaneBlock(t *testing.T) {
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	treeReq := TransformTreeRequest{
+		Size:      BlockSize16x16,
+		X4:        5,
+		Y4:        7,
+		VisibleW4: 2,
+		VisibleH4: 2,
+	}
+	tree := TransformTreeResult{UV: TransformSize8x8, HasUV: true}
+	var ctx CoeffEntropyContext
+	var scratch LumaCoeffTreeScratch
+	var got ChromaCoeffBlock
+	stats, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, ChromaCoeffTreeRequest{
+		TreeRequest: treeReq,
+		Tree:        tree,
+		Color:       parser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
+		Plane:       1,
+		Class:       transform.Class2D,
+	}, func(block ChromaCoeffBlock) error {
+		got = block
+		if len(block.Coeffs) != 64 || len(block.Scan) != 64 {
+			t.Fatalf("buffer lens coeffs=%d scan=%d want 64", len(block.Coeffs), len(block.Scan))
+		}
+		assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TXBs != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
+		t.Fatalf("stats=%+v want one chroma txb and consistent counts", stats)
+	}
+	want := ChromaCoeffBlock{
+		Plane: 1,
+		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+	}
+	if got.Plane != want.Plane || got.Block != want.Block {
+		t.Fatalf("chroma block plane=%d block=%+v want plane=%d block=%+v", got.Plane, got.Block, want.Plane, want.Block)
+	}
+}
+
+func TestDecodeChromaCoefficientsNoChromaRefAndSkipReset(t *testing.T) {
+	color420 := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	var state DecodeState
+	var cdfs CoeffCDFs
+	var ctx CoeffEntropyContext
+	var scratch LumaCoeffTreeScratch
+	stats, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, ChromaCoeffTreeRequest{
+		TreeRequest: TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1},
+		Tree:        TransformTreeResult{UV: TransformSize4x4, HasUV: true},
+		Color:       color420,
+		Plane:       1,
+		Class:       transform.Class2D,
+	}, func(ChromaCoeffBlock) error {
+		t.Fatal("visitor called for no-chroma-ref block")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (LumaCoeffStats{}) {
+		t.Fatalf("stats=%+v want zero for no-chroma-ref block", stats)
+	}
+
+	for i := 2; i < 4; i++ {
+		ctx.Above[2][i] = 17
+		ctx.Left[2][i] = 17
+	}
+	stats, err = state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, ChromaCoeffTreeRequest{
+		TreeRequest: TransformTreeRequest{
+			Size:          BlockSize16x16,
+			X4:            4,
+			Y4:            4,
+			VisibleW4:     4,
+			VisibleH4:     4,
+			SkipTransform: true,
+		},
+		Tree:  TransformTreeResult{UV: TransformSize8x8, HasUV: true},
+		Color: color420,
+		Plane: 2,
+		Class: transform.Class2D,
+	}, func(ChromaCoeffBlock) error {
+		t.Fatal("visitor called for skip_txfm chroma block")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (LumaCoeffStats{}) {
+		t.Fatalf("stats=%+v want zero for skip_txfm chroma", stats)
+	}
+	for i := 2; i < 4; i++ {
+		if ctx.Above[2][i] != 0 || ctx.Left[2][i] != 0 {
+			t.Fatalf("ctx slot %d above=%d left=%d want reset", i, ctx.Above[2][i], ctx.Left[2][i])
+		}
+	}
+}
+
 func TestLumaCoeffScratchMatchesAdjustedLibaomScanBounds(t *testing.T) {
 	var scratch LumaCoeffTreeScratch
 	coeffs, scan, levels, err := scratch.coeffBuffers(TransformSize64x64, transform.Class2D)
@@ -157,6 +263,27 @@ func TestDecodeLumaCoefficientsRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, _, _, err := (*LumaCoeffTreeScratch)(nil).coeffBuffers(TransformSize4x4, transform.Class2D); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil scratch buffers err=%v want %v", err, ErrInvalidDecodeState)
+	}
+
+	chromaValid := ChromaCoeffTreeRequest{
+		TreeRequest: TransformTreeRequest{Size: BlockSize8x8, VisibleW4: 2, VisibleH4: 2},
+		Tree:        TransformTreeResult{UV: TransformSize4x4, HasUV: true},
+		Color:       parser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
+		Plane:       1,
+		Class:       transform.Class2D,
+	}
+	if _, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, chromaValid, nil); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("nil chroma visitor err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	badChroma := chromaValid
+	badChroma.Plane = 0
+	if _, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, badChroma, func(ChromaCoeffBlock) error { return nil }); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("bad chroma plane err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	badChroma = chromaValid
+	badChroma.Tree.HasUV = false
+	if _, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, badChroma, func(ChromaCoeffBlock) error { return nil }); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("missing uv tree err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 
@@ -248,6 +375,63 @@ func FuzzDecodeLumaCoefficients(f *testing.F) {
 				return
 			}
 			t.Fatalf("DecodeLumaCoefficients err=%v", err)
+		}
+		if stats.TXBs != stats.NonZero+stats.AllZero {
+			t.Fatalf("stats=%+v inconsistent counts", stats)
+		}
+	})
+}
+
+func FuzzDecodeChromaCoefficients(f *testing.F) {
+	f.Add([]byte{0x00}, uint8(BlockSize16x16), uint8(1), uint8(1), uint8(1), uint8(transform.Class2D))
+	f.Add([]byte{0xff}, uint8(BlockSize8x8), uint8(1), uint8(0), uint8(2), uint8(transform.ClassHoriz))
+
+	f.Fuzz(func(t *testing.T, payload []byte, rawBlock uint8, rawSSX uint8, rawSSY uint8, rawPlane uint8, rawClass uint8) {
+		if len(payload) == 0 || len(payload) > 64 {
+			return
+		}
+		block := BlockSize(rawBlock % uint8(blockSizeCount))
+		blockDims, ok := block.Dimensions()
+		if !ok {
+			t.Fatal("invalid normalized block")
+		}
+		color := parser.ColorConfig{SubsamplingX: rawSSX&1 != 0, SubsamplingY: rawSSY&1 != 0}
+		plane := 1 + int(rawPlane%2)
+		uv, err := MaxTransformSize(block, color, plane)
+		if err != nil {
+			return
+		}
+		req := ChromaCoeffTreeRequest{
+			TreeRequest: TransformTreeRequest{
+				Size:      block,
+				VisibleW4: blockDims.W4,
+				VisibleH4: blockDims.H4,
+			},
+			Tree:  TransformTreeResult{UV: uv, HasUV: true},
+			Color: color,
+			Plane: plane,
+			Class: transform.Class(rawClass % 3),
+		}
+
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			t.Fatal(err)
+		}
+		var state DecodeState
+		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		var ctx CoeffEntropyContext
+		var scratch LumaCoeffTreeScratch
+		stats, err := state.DecodeChromaCoefficients(&cdfs, &ctx, &scratch, req, func(block ChromaCoeffBlock) error {
+			assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, ErrInvalidDecodeState) {
+				return
+			}
+			t.Fatalf("DecodeChromaCoefficients err=%v", err)
 		}
 		if stats.TXBs != stats.NonZero+stats.AllZero {
 			t.Fatalf("stats=%+v inconsistent counts", stats)

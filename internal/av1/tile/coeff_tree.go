@@ -1,6 +1,9 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/transform"
+import (
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/transform"
+)
 
 const (
 	maxCoeffScanLen    = 32 * 32
@@ -38,6 +41,28 @@ type LumaCoeffStats struct {
 }
 
 type LumaCoeffVisitor func(LumaCoeffBlock) error
+
+type ChromaCoeffTreeRequest struct {
+	TreeRequest TransformTreeRequest
+	Tree        TransformTreeResult
+
+	Color parser.ColorConfig
+	Plane int
+
+	Class           transform.Class
+	EOBMultiContext int
+}
+
+type ChromaCoeffBlock struct {
+	Plane int
+	Block TransformBlock
+
+	Result TXBDecodeResult
+	Coeffs []int16
+	Scan   []int16
+}
+
+type ChromaCoeffVisitor func(ChromaCoeffBlock) error
 
 func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, visit LumaCoeffVisitor) (LumaCoeffStats, error) {
 	if s == nil || cdfs == nil || ctx == nil || scratch == nil || visit == nil || !req.Class.Valid() {
@@ -94,6 +119,94 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	})
 	if err != nil {
 		return stats, err
+	}
+	return stats, nil
+}
+
+func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
+	if s == nil || cdfs == nil || ctx == nil || scratch == nil || visit == nil ||
+		req.Plane < 1 || req.Plane > 2 || !req.Class.Valid() {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+		return LumaCoeffStats{}, err
+	}
+	if !req.Tree.HasUV || !req.Tree.UV.Valid() {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+	if !HasChromaBlock(req.TreeRequest, req.Color) {
+		return LumaCoeffStats{}, nil
+	}
+	planeBlock, err := PlaneBlockSize(req.TreeRequest.Size, req.Color, req.Plane)
+	if err != nil {
+		return LumaCoeffStats{}, err
+	}
+
+	ssX := int(boolToShift(req.Color.SubsamplingX))
+	ssY := int(boolToShift(req.Color.SubsamplingY))
+	x4 := req.TreeRequest.X4 >> ssX
+	y4 := req.TreeRequest.Y4 >> ssY
+	visibleW4 := ((req.TreeRequest.X4 + int(req.TreeRequest.VisibleW4) + ssX) >> ssX) - x4
+	visibleH4 := ((req.TreeRequest.Y4 + int(req.TreeRequest.VisibleH4) + ssY) >> ssY) - y4
+	uvDims, ok := req.Tree.UV.Dimensions()
+	if !ok || visibleW4 <= 0 || visibleH4 <= 0 ||
+		x4+visibleW4 > MaxBlockModeSlots || y4+visibleH4 > MaxBlockModeSlots {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+
+	if req.TreeRequest.SkipTransform {
+		if err := ctx.ResetBlock(req.Plane, planeBlock, x4, y4); err != nil {
+			return LumaCoeffStats{}, err
+		}
+		return LumaCoeffStats{}, nil
+	}
+
+	var stats LumaCoeffStats
+	for y := 0; y < visibleH4; y += int(uvDims.H4) {
+		for x := 0; x < visibleW4; x += int(uvDims.W4) {
+			block := TransformBlock{
+				X4:        x4 + x,
+				Y4:        y4 + y,
+				Size:      req.Tree.UV,
+				VisibleW4: uint8(minInt(int(uvDims.W4), visibleW4-x)),
+				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
+			}
+			coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, req.Class)
+			if err != nil {
+				return stats, err
+			}
+			result, err := s.ReadCoefficientsTXBWithContext(cdfs, ctx, CoeffContextRequest{
+				Plane:      req.Plane,
+				PlaneBlock: planeBlock,
+				Size:       block.Size,
+				X4:         block.X4,
+				Y4:         block.Y4,
+				VisibleW4:  block.VisibleW4,
+				VisibleH4:  block.VisibleH4,
+			}, TXBDecodeRequest{
+				Class:           req.Class,
+				EOBMultiContext: req.EOBMultiContext,
+			}, coeffs, scan, levels)
+			if err != nil {
+				return stats, err
+			}
+			stats.TXBs++
+			stats.EOBTotal += result.EOB
+			if result.AllZero {
+				stats.AllZero++
+			} else {
+				stats.NonZero++
+			}
+			if err := visit(ChromaCoeffBlock{
+				Plane:  req.Plane,
+				Block:  block,
+				Result: result,
+				Coeffs: coeffs,
+				Scan:   scan,
+			}); err != nil {
+				return stats, err
+			}
+		}
 	}
 	return stats, nil
 }
