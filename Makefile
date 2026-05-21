@@ -81,6 +81,7 @@ fuzz-smoke:
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter6Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter8Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter14Edge
+	go test ./internal/av1/restoration $(FUZZFLAGS) -fuzz=FuzzApplySelfguidedRestoration
 
 testvectors:
 	go test ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector
