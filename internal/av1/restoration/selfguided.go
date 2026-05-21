@@ -14,6 +14,12 @@ const (
 
 	SGRProjMTableBits = 20
 	SGRProjRecipBits  = 12
+
+	SGRProjPrjMin0    = -(1 << SGRProjPrjBits) * 3 / 4
+	SGRProjPrjMax0    = SGRProjPrjMin0 + (1 << SGRProjPrjBits) - 1
+	SGRProjPrjMin1    = -(1 << SGRProjPrjBits) / 4
+	SGRProjPrjMax1    = SGRProjPrjMin1 + (1 << SGRProjPrjBits) - 1
+	SGRProjPrjSubexpK = 4
 )
 
 type SGRParams struct {
