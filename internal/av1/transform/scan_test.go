@@ -11,9 +11,13 @@ func TestScanOrderDependencyMatchesLibaom(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ScanSize(%+v): %v", size, err)
 		}
-		for txType, class := range libaomTxTypeClasses {
+		for txType := 0; txType < int(TypeCount); txType++ {
 			if !libaomTxSizeTypeValid(txSize, txType) {
 				continue
+			}
+			class, err := Type(txType).Class()
+			if err != nil {
+				t.Fatalf("Class(%d): %v", txType, err)
 			}
 			mode, err := DefaultScanMode(size, class)
 			if err != nil {
@@ -257,11 +261,6 @@ var libaomScanSizes = [...]Size{
 
 var libaomTxSizeSqrUp = [...]int{
 	0, 1, 2, 3, 4, 1, 1, 2, 2, 3, 3, 4, 4, 2, 2, 3, 3, 4, 4,
-}
-
-var libaomTxTypeClasses = [...]Class{
-	Class2D, Class2D, Class2D, Class2D, Class2D, Class2D, Class2D, Class2D,
-	Class2D, Class2D, ClassVert, ClassHoriz, ClassVert, ClassHoriz, ClassVert, ClassHoriz,
 }
 
 var libaomExtTxUsed = [...][16]int{

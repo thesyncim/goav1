@@ -113,6 +113,7 @@ fuzz-smoke:
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzInverseBlock
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzFillDefaultScan
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTXBHelpers
+	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTypeClass
 	go test ./internal/av1/reconstruct $(FUZZFLAGS) -fuzz=FuzzReconstructPlaneBlock
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzResolveLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzThresholdsForLevel

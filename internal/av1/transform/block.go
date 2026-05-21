@@ -5,17 +5,53 @@ type Type uint8
 
 const (
 	TypeDCTDCT Type = iota
+	TypeADSTDCT
+	TypeDCTADST
+	TypeADSTADST
+	TypeFlipADSTDCT
+	TypeDCTFlipADST
+	TypeFlipADSTFlipADST
+	TypeADSTFlipADST
+	TypeFlipADSTADST
 	TypeIDTX
+	TypeVDCT
+	TypeHDCT
+	TypeVADST
+	TypeHADST
+	TypeVFlipADST
+	TypeHFlipADST
+	TypeCount
 )
 
-// Valid reports whether t names a transform implemented by this package.
+var typeClasses = [TypeCount]Class{
+	TypeDCTDCT:           Class2D,
+	TypeADSTDCT:          Class2D,
+	TypeDCTADST:          Class2D,
+	TypeADSTADST:         Class2D,
+	TypeFlipADSTDCT:      Class2D,
+	TypeDCTFlipADST:      Class2D,
+	TypeFlipADSTFlipADST: Class2D,
+	TypeADSTFlipADST:     Class2D,
+	TypeFlipADSTADST:     Class2D,
+	TypeIDTX:             Class2D,
+	TypeVDCT:             ClassVert,
+	TypeHDCT:             ClassHoriz,
+	TypeVADST:            ClassVert,
+	TypeHADST:            ClassHoriz,
+	TypeVFlipADST:        ClassVert,
+	TypeHFlipADST:        ClassHoriz,
+}
+
+// Valid reports whether t names an AV1 transform type.
 func (t Type) Valid() bool {
-	switch t {
-	case TypeDCTDCT, TypeIDTX:
-		return true
-	default:
-		return false
+	return t < TypeCount
+}
+
+func (t Type) Class() (Class, error) {
+	if !t.Valid() {
+		return 0, ErrInvalidTransform
 	}
+	return typeClasses[t], nil
 }
 
 // Supported reports whether t can currently be applied to size.

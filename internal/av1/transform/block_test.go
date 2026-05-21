@@ -10,20 +10,22 @@ func TestTypeSupportAndScratchLen(t *testing.T) {
 		name        string
 		typ         Type
 		size        Size
+		wantValid   bool
 		wantSupport bool
 		wantScratch int
 	}{
-		{name: "dct 4x4", typ: TypeDCTDCT, size: Size{Width: 4, Height: 4}, wantSupport: true, wantScratch: 16},
-		{name: "dct 8x8", typ: TypeDCTDCT, size: Size{Width: 8, Height: 8}, wantSupport: true, wantScratch: 64},
-		{name: "dct unsupported 16x16", typ: TypeDCTDCT, size: Size{Width: 16, Height: 16}},
-		{name: "idtx 4x16", typ: TypeIDTX, size: Size{Width: 4, Height: 16}, wantSupport: true},
-		{name: "idtx 32x32", typ: TypeIDTX, size: Size{Width: 32, Height: 32}, wantSupport: true},
-		{name: "idtx unsupported 64x64", typ: TypeIDTX, size: Size{Width: 64, Height: 64}},
+		{name: "dct 4x4", typ: TypeDCTDCT, size: Size{Width: 4, Height: 4}, wantValid: true, wantSupport: true, wantScratch: 16},
+		{name: "dct 8x8", typ: TypeDCTDCT, size: Size{Width: 8, Height: 8}, wantValid: true, wantSupport: true, wantScratch: 64},
+		{name: "dct unsupported 16x16", typ: TypeDCTDCT, size: Size{Width: 16, Height: 16}, wantValid: true},
+		{name: "idtx 4x16", typ: TypeIDTX, size: Size{Width: 4, Height: 16}, wantValid: true, wantSupport: true},
+		{name: "idtx 32x32", typ: TypeIDTX, size: Size{Width: 32, Height: 32}, wantValid: true, wantSupport: true},
+		{name: "idtx unsupported 64x64", typ: TypeIDTX, size: Size{Width: 64, Height: 64}, wantValid: true},
+		{name: "adst valid unsupported", typ: TypeADSTDCT, size: Size{Width: 4, Height: 4}, wantValid: true},
 		{name: "invalid type", typ: Type(99), size: Size{Width: 4, Height: 4}},
 	}
 	for _, tt := range tests {
-		if got := tt.typ.Valid(); got != (tt.typ == TypeDCTDCT || tt.typ == TypeIDTX) {
-			t.Fatalf("%s Valid=%t", tt.name, got)
+		if got := tt.typ.Valid(); got != tt.wantValid {
+			t.Fatalf("%s Valid=%t want %t", tt.name, got, tt.wantValid)
 		}
 		if got := tt.typ.Supported(tt.size); got != tt.wantSupport {
 			t.Fatalf("%s Supported=%t want %t", tt.name, got, tt.wantSupport)
