@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xff\xff\xff00000")
+byte('\x02')
+byte('\x14')
+byte('\x02')
+byte('\a')
+byte('G')

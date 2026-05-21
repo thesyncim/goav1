@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xe5")
+byte('E')
+byte('<')
+byte('\x02')
+byte('L')
+byte('\x06')

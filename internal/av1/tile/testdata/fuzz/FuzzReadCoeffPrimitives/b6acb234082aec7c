@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xff\xff\xd0")
+byte('E')
+byte('Q')
+byte('>')
+byte('\x05')
+byte('G')

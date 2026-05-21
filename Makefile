@@ -47,6 +47,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterReferences
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadMotionMode
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoeffPrimitives
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateRestorationUnit
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitNone
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitRecordNone

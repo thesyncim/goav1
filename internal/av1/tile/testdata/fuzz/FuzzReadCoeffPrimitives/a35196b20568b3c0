@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("\xff\xff\xff000")
+byte('¥')
+byte('%')
+byte('c')
+byte('\x05')
+byte('\u009e')
