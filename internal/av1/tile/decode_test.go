@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestDecodeStateReset(t *testing.T) {
@@ -112,6 +113,88 @@ func TestDecodeStateReadSignedDelta(t *testing.T) {
 	}
 }
 
+func TestDecodeStateReadBlockDeltasSingleLF(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{BaseQIdx: 50}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initDeltaCDFs(t)
+	params := parser.DeltaParams{
+		DeltaQPresent:  true,
+		DeltaQResLog2:  1,
+		DeltaLFPresent: true,
+		DeltaLFResLog2: 2,
+	}
+	block := BlockDeltaContext{SBSizeMIB: 16}
+	if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentBaseQIdx != 50 || state.DeltaLFFromBase != 0 {
+		t.Fatalf("delta state q=%d lf=%d", state.CurrentBaseQIdx, state.DeltaLFFromBase)
+	}
+	assertEntropyCDFValues(t, cdfs.Q.Values(), []uint16{4464, 628, 89, 0, 1})
+	assertEntropyCDFValues(t, cdfs.LF.Values(), []uint16{4464, 628, 89, 0, 1})
+}
+
+func TestDecodeStateReadBlockDeltasSkipsNonDeltaBlocks(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0xff}, Job{Offset: 0, Size: 1}, DecodeOptions{BaseQIdx: 50}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initDeltaCDFs(t)
+	params := parser.DeltaParams{DeltaQPresent: true, DeltaLFPresent: true}
+
+	block := BlockDeltaContext{MICol: 1, SBSizeMIB: 16}
+	if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+		t.Fatal(err)
+	}
+	block = BlockDeltaContext{SBSizeMIB: 16, FullSuperblock: true, SkipTransform: true}
+	if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentBaseQIdx != 50 || state.DeltaLFFromBase != 0 {
+		t.Fatalf("delta state q=%d lf=%d", state.CurrentBaseQIdx, state.DeltaLFFromBase)
+	}
+	assertEntropyCDFValues(t, cdfs.Q.Values(), []uint16{4608, 648, 91, 0, 0})
+	assertEntropyCDFValues(t, cdfs.LF.Values(), []uint16{4608, 648, 91, 0, 0})
+}
+
+func TestDecodeStateReadBlockDeltasMultiLFMonochrome(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{BaseQIdx: 50}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initDeltaCDFs(t)
+	params := parser.DeltaParams{DeltaQPresent: true, DeltaLFPresent: true, DeltaLFMulti: true}
+	block := BlockDeltaContext{SBSizeMIB: 16, Monochrome: true}
+	if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+		t.Fatal(err)
+	}
+	assertEntropyCDFValues(t, cdfs.LFMulti[0].Values(), []uint16{4464, 628, 89, 0, 1})
+	assertEntropyCDFValues(t, cdfs.LFMulti[1].Values(), []uint16{4464, 628, 89, 0, 1})
+	assertEntropyCDFValues(t, cdfs.LFMulti[2].Values(), []uint16{4608, 648, 91, 0, 0})
+	assertEntropyCDFValues(t, cdfs.LFMulti[3].Values(), []uint16{4608, 648, 91, 0, 0})
+}
+
+func TestDecodeStateReadBlockDeltasClamps(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0xff, 0xff, 0xff}, Job{Offset: 0, Size: 3}, DecodeOptions{BaseQIdx: 2}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := initDeltaCDFs(t)
+	params := parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 6}
+	block := BlockDeltaContext{SBSizeMIB: 16}
+	if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentBaseQIdx != 1 {
+		t.Fatalf("CurrentBaseQIdx=%d want 1", state.CurrentBaseQIdx)
+	}
+	if clampQIndex(999) != MaxQIndex || clampLoopFilterDelta(999) != MaxLoopFilter || clampLoopFilterDelta(-999) != -MaxLoopFilter {
+		t.Fatal("clamp helpers did not clamp")
+	}
+}
+
 func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	var state DecodeState
 	err := state.Reset([]byte{0xaa}, Job{Offset: 0, Size: 2}, DecodeOptions{})
@@ -145,6 +228,17 @@ func TestDecodeStateResetRejectsInvalidInputs(t *testing.T) {
 	if _, err := state.ReadSignedDelta(&cdf, 0); !errors.Is(err, entropy.ErrInvalidRange) {
 		t.Fatalf("invalid small ReadSignedDelta err=%v want %v", err, entropy.ErrInvalidRange)
 	}
+
+	params := parser.DeltaParams{DeltaQPresent: true}
+	if err := state.ReadBlockDeltas(params, BlockDeltaContext{}, DeltaCDFs{Q: &cdf}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("invalid block ReadBlockDeltas err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if err := state.ReadBlockDeltas(params, BlockDeltaContext{SBSizeMIB: 16}, DeltaCDFs{}); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("nil CDF ReadBlockDeltas err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+	if err := nilState.ReadBlockDeltas(params, BlockDeltaContext{SBSizeMIB: 16}, DeltaCDFs{Q: &cdf}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("nil ReadBlockDeltas err=%v want %v", err, ErrInvalidDecodeState)
+	}
 }
 
 func TestDecodeStateResetAllocs(t *testing.T) {
@@ -153,15 +247,23 @@ func TestDecodeStateResetAllocs(t *testing.T) {
 	var state DecodeState
 	var cdf entropy.CDF
 	var deltaCDF entropy.CDF
+	var qCDF entropy.CDF
+	var lfCDF entropy.CDF
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := state.Reset(payload, job, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, job, DecodeOptions{BaseQIdx: 50}); err != nil {
 			t.Fatal(err)
 		}
 		if err := cdf.InitUniform(2); err != nil {
 			t.Fatal(err)
 		}
 		if err := deltaCDF.InitDefaultDelta(); err != nil {
+			t.Fatal(err)
+		}
+		if err := qCDF.InitDefaultDelta(); err != nil {
+			t.Fatal(err)
+		}
+		if err := lfCDF.InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}
 		if !state.RetainFrameContext {
@@ -182,6 +284,13 @@ func TestDecodeStateResetAllocs(t *testing.T) {
 			t.Fatalf("symbol=%d want 1", symbol)
 		}
 		if _, err := state.ReadSignedDelta(&deltaCDF, entropy.DeltaSmall); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.ReadBlockDeltas(
+			parser.DeltaParams{DeltaQPresent: true, DeltaLFPresent: true},
+			BlockDeltaContext{SBSizeMIB: 16},
+			DeltaCDFs{Q: &qCDF, LF: &lfCDF},
+		); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -217,6 +326,56 @@ func FuzzDecodeStateReset(f *testing.F) {
 		}
 		if _, err := state.Reader.ReadBit(); err != nil {
 			t.Fatalf("ReadBit err=%v", err)
+		}
+	})
+}
+
+func FuzzDecodeStateBlockDeltas(f *testing.F) {
+	f.Add([]byte{0x00}, uint8(50), uint8(0), uint8(0), uint8(16), false, false, true, true, false, false)
+	f.Add([]byte{0xff, 0xff, 0xff}, uint8(2), uint8(0), uint8(0), uint8(16), false, false, true, false, false, false)
+	f.Add([]byte{0xa5, 0x5a}, uint8(128), uint8(1), uint8(0), uint8(16), true, true, true, true, true, true)
+
+	f.Fuzz(func(t *testing.T, payload []byte, baseQ uint8, miCol uint8, miRow uint8, sbSize uint8, fullSB bool, skipTransform bool, deltaQ bool, deltaLF bool, multi bool, monochrome bool) {
+		if len(payload) > 64 {
+			return
+		}
+		if sbSize == 0 {
+			sbSize = 1
+		}
+		var state DecodeState
+		job := Job{Offset: 0, Size: len(payload)}
+		if err := state.Reset(payload, job, DecodeOptions{BaseQIdx: baseQ}); err != nil {
+			t.Fatal(err)
+		}
+		cdfs := initDeltaCDFs(t)
+		params := parser.DeltaParams{
+			DeltaQPresent:  deltaQ,
+			DeltaQResLog2:  miCol & 3,
+			DeltaLFPresent: deltaQ && deltaLF,
+			DeltaLFResLog2: miRow & 3,
+			DeltaLFMulti:   multi,
+		}
+		block := BlockDeltaContext{
+			MICol:          uint32(miCol),
+			MIRow:          uint32(miRow),
+			SBSizeMIB:      sbSize,
+			FullSuperblock: fullSB,
+			SkipTransform:  skipTransform,
+			Monochrome:     monochrome,
+		}
+		if err := state.ReadBlockDeltas(params, block, cdfs); err != nil {
+			t.Fatalf("ReadBlockDeltas err=%v params=%+v block=%+v", err, params, block)
+		}
+		if state.CurrentBaseQIdx > MaxQIndex {
+			t.Fatalf("CurrentBaseQIdx=%d", state.CurrentBaseQIdx)
+		}
+		if state.DeltaLFFromBase < -MaxLoopFilter || state.DeltaLFFromBase > MaxLoopFilter {
+			t.Fatalf("DeltaLFFromBase=%d", state.DeltaLFFromBase)
+		}
+		for i := 0; i < FrameLoopFilterCount; i++ {
+			if state.DeltaLF[i] < -MaxLoopFilter || state.DeltaLF[i] > MaxLoopFilter {
+				t.Fatalf("DeltaLF[%d]=%d", i, state.DeltaLF[i])
+			}
 		}
 	})
 }
@@ -265,5 +424,63 @@ func BenchmarkDecodeStateReadSignedDelta(b *testing.B) {
 			b.Fatal(err)
 		}
 		_, _ = state.ReadSignedDelta(&cdf, entropy.DeltaSmall)
+	}
+}
+
+func BenchmarkDecodeStateReadBlockDeltas(b *testing.B) {
+	payload := []byte{0x00, 0x00, 0x00}
+	job := Job{Offset: 0, Size: 3, UpdatesFrameContext: true}
+	params := parser.DeltaParams{DeltaQPresent: true, DeltaLFPresent: true}
+	block := BlockDeltaContext{SBSizeMIB: 16}
+	var state DecodeState
+	var qCDF entropy.CDF
+	var lfCDF entropy.CDF
+	if err := qCDF.InitDefaultDelta(); err != nil {
+		b.Fatal(err)
+	}
+	if err := lfCDF.InitDefaultDelta(); err != nil {
+		b.Fatal(err)
+	}
+	cdfs := DeltaCDFs{Q: &qCDF, LF: &lfCDF}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := state.Reset(payload, job, DecodeOptions{BaseQIdx: 50}); err != nil {
+			b.Fatal(err)
+		}
+		_ = state.ReadBlockDeltas(params, block, cdfs)
+	}
+}
+
+func initDeltaCDFs(tb testing.TB) DeltaCDFs {
+	tb.Helper()
+	var q entropy.CDF
+	var lf entropy.CDF
+	var multi [FrameLoopFilterCount]entropy.CDF
+	if err := q.InitDefaultDelta(); err != nil {
+		tb.Fatal(err)
+	}
+	if err := lf.InitDefaultDelta(); err != nil {
+		tb.Fatal(err)
+	}
+	cdfs := DeltaCDFs{Q: &q, LF: &lf}
+	for i := 0; i < FrameLoopFilterCount; i++ {
+		if err := multi[i].InitDefaultDelta(); err != nil {
+			tb.Fatal(err)
+		}
+		cdfs.LFMulti[i] = &multi[i]
+	}
+	return cdfs
+}
+
+func assertEntropyCDFValues(t *testing.T, got []uint16, want []uint16) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d", len(got), len(want))
+	}
+	for i := 0; i < len(want); i++ {
+		if got[i] != want[i] {
+			t.Fatalf("cdf=%v want %v", got, want)
+		}
 	}
 }

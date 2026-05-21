@@ -69,7 +69,8 @@ The initial implementation covers:
 - Per-job AV1 context-update-tile marking so decode workers can retain only
   the designated tile's adapted frame entropy context.
 - Caller-owned tile decode state that binds a scheduled job to its entropy
-  reader and frame-context retention decision without hot-path allocation.
+  reader, block delta-q/loopfilter state, and frame-context retention decision
+  without hot-path allocation.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
 - Zero-allocation frame-work batch helpers for safe per-job tile payload and
