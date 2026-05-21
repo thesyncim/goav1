@@ -6,6 +6,15 @@ type Size struct {
 	Height int
 }
 
+// SizeFromDimensions returns the AV1 transform size with the given dimensions.
+func SizeFromDimensions(width int, height int) (Size, error) {
+	size := Size{Width: width, Height: height}
+	if !size.Valid() {
+		return Size{}, ErrInvalidTransform
+	}
+	return size, nil
+}
+
 // Valid reports whether s is one of the transform sizes supported by AV1.
 func (s Size) Valid() bool {
 	_, ok := s.shift()

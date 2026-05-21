@@ -44,6 +44,42 @@ func TestTypeSupportAndScratchLen(t *testing.T) {
 	}
 }
 
+func TestSizeFromDimensionsMatchesLibaomTable(t *testing.T) {
+	sizes := [...]Size{
+		{Width: 4, Height: 4},
+		{Width: 8, Height: 8},
+		{Width: 16, Height: 16},
+		{Width: 32, Height: 32},
+		{Width: 64, Height: 64},
+		{Width: 4, Height: 8},
+		{Width: 8, Height: 4},
+		{Width: 8, Height: 16},
+		{Width: 16, Height: 8},
+		{Width: 16, Height: 32},
+		{Width: 32, Height: 16},
+		{Width: 32, Height: 64},
+		{Width: 64, Height: 32},
+		{Width: 4, Height: 16},
+		{Width: 16, Height: 4},
+		{Width: 8, Height: 32},
+		{Width: 32, Height: 8},
+		{Width: 16, Height: 64},
+		{Width: 64, Height: 16},
+	}
+	for _, size := range sizes {
+		got, err := SizeFromDimensions(size.Width, size.Height)
+		if err != nil {
+			t.Fatalf("SizeFromDimensions(%d,%d): %v", size.Width, size.Height, err)
+		}
+		if got != size {
+			t.Fatalf("SizeFromDimensions(%d,%d)=%+v", size.Width, size.Height, got)
+		}
+	}
+	if _, err := SizeFromDimensions(4, 12); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("invalid dimensions err=%v want %v", err, ErrInvalidTransform)
+	}
+}
+
 func TestInverseBlockDCTMatchesDirect(t *testing.T) {
 	coeff := []int32{
 		100, -20, 30, 7,
