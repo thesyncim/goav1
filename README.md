@@ -68,8 +68,8 @@ The initial implementation covers:
   frame-level CDF-update control propagation into frame-work callbacks.
 - Deterministic tile-job batch planning for bounded worker execution.
 - Reusable bounded worker-pool dispatch for tile batches.
-- Zero-allocation frame-work batch helpers for safe per-job tile payload
-  access inside reconstruction callbacks.
+- Zero-allocation frame-work batch helpers for safe per-job tile payload and
+  entropy-reader access inside reconstruction callbacks.
 - Decoder tile-work planning from parsed frame/tile-group events into
   caller-owned spans, jobs, and batches, including checked frame-work begin
   and tile-group continuation plans, bounded tile-work step execution, and

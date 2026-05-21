@@ -118,6 +118,57 @@ func TestFrameWorkBatchJobPayloadRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchJobEntropyReader(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload:          []byte{0x00, 0xff, 0x00},
+		DisableCDFUpdate: true,
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 1},
+		},
+	}
+
+	r, err := ctx.JobEntropyReader(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.AllowCDFUpdate() {
+		t.Fatal("CDF update enabled")
+	}
+	bit, err := r.ReadBit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bit != 1 {
+		t.Fatalf("bit=%d want 1", bit)
+	}
+
+	ctx.DisableCDFUpdate = false
+	r, err = ctx.JobEntropyReader(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.AllowCDFUpdate() {
+		t.Fatal("CDF update disabled")
+	}
+}
+
+func TestFrameWorkBatchJobEntropyReaderRejectsInvalidInputs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload: []byte{0xaa},
+		Jobs:    []tile.Job{{Offset: 0, Size: 2}},
+	}
+	if _, err := ctx.JobEntropyReader(-1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("negative index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobEntropyReader(1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("large index err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.JobEntropyReader(0); !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("invalid range err=%v want %v", err, tile.ErrInvalidPlan)
+	}
+}
+
 func TestBuildBatchesAllocs(t *testing.T) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -156,6 +207,36 @@ func TestFrameWorkBatchJobPayloadAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("FrameWorkBatch.JobPayload allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkBatchJobEntropyReaderAllocs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		Payload:          []byte{0x00, 0xff, 0x00},
+		DisableCDFUpdate: true,
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 1},
+		},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		r, err := ctx.JobEntropyReader(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.AllowCDFUpdate() {
+			t.Fatal("CDF update enabled")
+		}
+		bit, err := r.ReadBit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bit != 1 {
+			t.Fatalf("bit=%d want 1", bit)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkBatch.JobEntropyReader allocated: %f", allocs)
 	}
 }
 
@@ -240,6 +321,37 @@ func FuzzFrameWorkBatchJobPayload(f *testing.F) {
 	})
 }
 
+func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
+	f.Add([]byte{0xff}, int16(0), int16(1), false)
+	f.Add([]byte{0x00, 0xff, 0x00}, int16(1), int16(1), true)
+	f.Add([]byte{0xaa}, int16(0), int16(2), false)
+
+	f.Fuzz(func(t *testing.T, payload []byte, offset int16, size int16, disableCDFUpdate bool) {
+		if len(payload) > 64 {
+			return
+		}
+		job := tile.Job{Offset: int(offset), Size: int(size)}
+		ctx := FrameWorkBatch{
+			Payload:          payload,
+			DisableCDFUpdate: disableCDFUpdate,
+			Jobs:             []tile.Job{job},
+		}
+		r, err := ctx.JobEntropyReader(0)
+		if err != nil {
+			if _, _, rangeErr := job.PayloadRange(len(payload)); rangeErr == nil {
+				t.Fatalf("JobEntropyReader err=%v payloadLen=%d job=%+v", err, len(payload), job)
+			}
+			return
+		}
+		if r.AllowCDFUpdate() == disableCDFUpdate {
+			t.Fatalf("AllowCDFUpdate=%v disableCDFUpdate=%v", r.AllowCDFUpdate(), disableCDFUpdate)
+		}
+		if _, err := r.ReadBit(); err != nil {
+			t.Fatalf("ReadBit err=%v", err)
+		}
+	})
+}
+
 func BenchmarkBuildBatches(b *testing.B) {
 	jobs := testJobs()
 	var batches [4]Batch
@@ -263,6 +375,22 @@ func BenchmarkFrameWorkBatchJobPayload(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_, _ = ctx.JobPayload(1)
+	}
+}
+
+func BenchmarkFrameWorkBatchJobEntropyReader(b *testing.B) {
+	ctx := FrameWorkBatch{
+		Payload:          []byte{0x00, 0xff, 0x00},
+		DisableCDFUpdate: true,
+		Jobs: []tile.Job{
+			{Offset: 0, Size: 1},
+			{Offset: 1, Size: 1},
+		},
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ctx.JobEntropyReader(1)
 	}
 }
 

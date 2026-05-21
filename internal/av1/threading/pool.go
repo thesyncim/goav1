@@ -3,6 +3,7 @@ package threading
 import (
 	"sync"
 
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	decodework "github.com/thesyncim/goav1/internal/av1/work"
@@ -32,6 +33,17 @@ func (b FrameWorkBatch) JobPayload(index int) ([]byte, error) {
 		return nil, ErrInvalidBatch
 	}
 	return b.Jobs[index].Payload(b.Payload)
+}
+
+// JobEntropyReader returns an entropy reader over Jobs[index]'s exact tile
+// payload. The reader inherits the frame-level CDF update mode carried by b.
+func (b FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
+	if index < 0 || index >= len(b.Jobs) {
+		return entropy.Reader{}, ErrInvalidBatch
+	}
+	return tile.NewEntropyReader(b.Payload, b.Jobs[index], tile.DecodeOptions{
+		DisableCDFUpdate: b.DisableCDFUpdate,
+	})
 }
 
 // ValidatePayloads checks that every job in the batch names a byte range inside

@@ -773,7 +773,7 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		if !ctx.DisableCDFUpdate {
 			t.Fatal("DisableCDFUpdate not propagated")
 		}
-		r, err := tile.NewEntropyReader(ctx.Payload, ctx.Jobs[1], tile.DecodeOptions{DisableCDFUpdate: ctx.DisableCDFUpdate})
+		r, err := ctx.JobEntropyReader(1)
 		if err != nil {
 			t.Fatal(err)
 		}
