@@ -16,6 +16,9 @@ type RestorationPlaneGrid struct {
 	HorzUnits uint16
 	VertUnits uint16
 
+	PlaneWidth  uint32
+	PlaneHeight uint32
+
 	SubsamplingX bool
 	SubsamplingY bool
 
@@ -54,10 +57,17 @@ func BuildRestorationPlaneGrid(params parser.RestorationParams, size parser.Fram
 		unitSize = params.UnitSizeUV
 	}
 	typ := params.Type[plane]
+	planeW := roundPowerOfTwoUint32(size.UpscaledWidth, boolToShift(plane > 0 && color.SubsamplingX))
+	planeH := roundPowerOfTwoUint32(size.Height, boolToShift(plane > 0 && color.SubsamplingY))
+	if planeW == 0 || planeH == 0 {
+		return RestorationPlaneGrid{}, ErrInvalidPlan
+	}
 	grid := RestorationPlaneGrid{
 		Plane:               uint8(plane),
 		Type:                typ,
 		UnitSize:            unitSize,
+		PlaneWidth:          planeW,
+		PlaneHeight:         planeH,
 		SubsamplingX:        plane > 0 && color.SubsamplingX,
 		SubsamplingY:        plane > 0 && color.SubsamplingY,
 		SuperResEnabled:     size.SuperResEnabled,
@@ -76,11 +86,6 @@ func BuildRestorationPlaneGrid(params parser.RestorationParams, size parser.Fram
 		return RestorationPlaneGrid{}, ErrInvalidPlan
 	}
 
-	planeW := roundPowerOfTwoUint32(size.UpscaledWidth, boolToShift(grid.SubsamplingX))
-	planeH := roundPowerOfTwoUint32(size.Height, boolToShift(grid.SubsamplingY))
-	if planeW == 0 || planeH == 0 {
-		return RestorationPlaneGrid{}, ErrInvalidPlan
-	}
 	grid.HorzUnits = countRestorationUnits(uint32(unitSize), planeW)
 	grid.VertUnits = countRestorationUnits(uint32(unitSize), planeH)
 	return grid, nil
