@@ -30,6 +30,15 @@ const (
 	FrameWorkStepShowExisting FrameWorkStepKind = decodework.FrameStepShowExisting
 )
 
+// FrameWorkEventResult reports the planning, output, and execution result for
+// one event-level frame-work run.
+type FrameWorkEventResult struct {
+	Step           FrameWorkStep
+	Output         *frame.Frame
+	ReferenceCount int
+	Run            FrameWorkStepResult
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -295,6 +304,71 @@ func (s *FrameWorkState) RunStepWithContext(refs *SurfaceReferences, framePool *
 	}, nil
 }
 
+// RunEventWithContext plans event, resolves any output/reference frame
+// pointers needed by tile work, executes it, and finishes final tile groups.
+// All working storage is caller-owned.
+func (s *FrameWorkState) RunEventWithContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, fn FrameWorkBatchFunc) (FrameWorkEventResult, error) {
+	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	if step.Kind == FrameWorkStepShowExisting {
+		output, err = framePool.Frame(step.ShowExisting.Surface)
+		if err != nil {
+			return FrameWorkEventResult{}, err
+		}
+	}
+
+	var references []*frame.Frame
+	if hasTile && plan.JobCount != 0 {
+		if output == nil {
+			surface, err := frameWorkStepSurface(step)
+			if err != nil {
+				return FrameWorkEventResult{}, err
+			}
+			output, err = framePool.Frame(surface)
+			if err != nil {
+				return FrameWorkEventResult{}, err
+			}
+		}
+		if referenceCount != 0 {
+			if step.Kind == FrameWorkStepTile {
+				count, err := refs.FrameReferences(event, referenceSurfaces)
+				if err != nil {
+					return FrameWorkEventResult{}, err
+				}
+				if count != referenceCount {
+					return FrameWorkEventResult{}, ErrInvalidFrameWorkStep
+				}
+			}
+			count, err := ResolveFrameReferences(framePool, referenceSurfaces[:referenceCount], referenceFrames)
+			if err != nil {
+				return FrameWorkEventResult{}, err
+			}
+			if count != referenceCount {
+				return FrameWorkEventResult{}, ErrInvalidFrameWorkStep
+			}
+			references = referenceFrames[:referenceCount]
+		}
+	}
+
+	run, err := s.RunStepWithContext(refs, framePool, event, step, workerPool, output, references, jobs, batches, releases, fn)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	return FrameWorkEventResult{
+		Step:           step,
+		Output:         output,
+		ReferenceCount: referenceCount,
+		Run:            run,
+	}, nil
+}
+
 // ExecuteTileWork dispatches the planned tile jobs through a reusable worker
 // pool. Only the caller-owned job and batch ranges named by plan are used.
 func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) error {
@@ -469,6 +543,19 @@ func frameWorkStepTilePlan(step FrameWorkStep) (TileWorkPlan, int, bool, error) 
 		return step.Tile.Tile, step.Tile.ReferenceCount, true, nil
 	default:
 		return TileWorkPlan{}, 0, false, ErrInvalidTileWork
+	}
+}
+
+func frameWorkStepSurface(step FrameWorkStep) (int, error) {
+	switch step.Kind {
+	case FrameWorkStepBegin:
+		return step.Begin.Surface, nil
+	case FrameWorkStepTile:
+		return step.Tile.Surface, nil
+	case FrameWorkStepShowExisting:
+		return step.ShowExisting.Surface, nil
+	default:
+		return -1, ErrInvalidFrameWorkStep
 	}
 }
 
