@@ -1,6 +1,9 @@
 package parser
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
+import (
+	"github.com/thesyncim/goav1/internal/av1/bitstream"
+	"github.com/thesyncim/goav1/internal/av1/common"
+)
 
 const (
 	warpedModelPrecBits = 16
@@ -242,7 +245,7 @@ func readPrimitiveQUniform(r *bitstream.Reader, n uint32) (uint32, error) {
 	if n <= 1 {
 		return 0, nil
 	}
-	l := uint8(msb32(n) + 1)
+	l := uint8(common.MSB32(n) + 1)
 	m := (uint32(1) << l) - n
 	v, err := r.ReadBits(l - 1)
 	if err != nil {
@@ -280,13 +283,4 @@ func boolBit(v bool) uint32 {
 		return 1
 	}
 	return 0
-}
-
-func msb32(v uint32) int {
-	msb := -1
-	for v != 0 {
-		v >>= 1
-		msb++
-	}
-	return msb
 }
