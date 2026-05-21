@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb0\x1b\x1b\x1b\x1b\x1b\x10\x00Z")
+byte('\u0097')
+byte('¿')
+byte('m')
+bool(true)

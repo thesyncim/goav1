@@ -97,6 +97,11 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		SegmentMapStride:   segmentMapStride,
 		FrameType:          b.FrameHeader.FrameType,
 		AllowIntrabc:       b.FrameSize.AllowIntrabc,
+		ReferenceMode:      b.TransformRef.ReferenceMode,
+		SkipModeRefs: [2]tile.ReferenceFrame{
+			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
+			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),
+		},
 	}, nil
 }
 

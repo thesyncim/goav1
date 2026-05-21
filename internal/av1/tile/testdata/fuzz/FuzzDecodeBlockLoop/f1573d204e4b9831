@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xd5*")
+byte('±')
+byte('L')
+byte('_')
+bool(false)

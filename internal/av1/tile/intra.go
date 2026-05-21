@@ -67,9 +67,13 @@ type LumaIntraModeRequest struct {
 // block prefix. Inter-specific reference and MV syntax is decoded by later
 // mode stages.
 type BlockPredictionModeResult struct {
-	Valid    bool
-	Intra    bool
+	Valid bool
+	Intra bool
+
 	LumaMode IntraMode
+
+	InterReferences      InterReferencesResult
+	InterReferencesValid bool
 }
 
 var yModeSizeContext = [blockSizeCount]int{

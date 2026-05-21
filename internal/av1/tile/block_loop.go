@@ -8,6 +8,7 @@ type BlockLoopCDFs struct {
 	Partition *PartitionCDFs
 	Mode      *BlockModeCDFs
 	Intra     *IntraModeCDFs
+	InterRef  *InterRefCDFs
 	Delta     DeltaCDFs
 }
 
@@ -37,6 +38,8 @@ type BlockLoopRequest struct {
 
 	FrameType             parser.FrameType
 	AllowIntrabc          bool
+	ReferenceMode         parser.ReferenceMode
+	SkipModeRefs          [2]ReferenceFrame
 	DecodePredictionModes bool
 }
 
@@ -62,6 +65,7 @@ type BlockLoopStats struct {
 	PredictionModes    int
 	IntraModes         int
 	InterEntries       int
+	InterReferences    int
 	DeltaReads         int
 }
 
@@ -112,6 +116,9 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 						stats.IntraModes++
 					} else {
 						stats.InterEntries++
+						if visitInfo.Prediction.InterReferencesValid {
+							stats.InterReferences++
+						}
 					}
 				}
 				readDelta, err := shouldReadBlockDelta(visitInfo.Delta)
@@ -185,7 +192,7 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 
 	var prediction BlockPredictionModeResult
 	if req.DecodePredictionModes {
-		prediction, err = s.decodeBlockPredictionMode(cdfs.Intra, ctx, req, block, prefix, segment)
+		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segment)
 		if err != nil {
 			return BlockLoopVisit{}, err
 		}
@@ -202,8 +209,8 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 	}, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionMode(cdfs *IntraModeCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segment parser.SegmentData) (BlockPredictionModeResult, error) {
-	intra, err := s.ReadIntraFlag(cdfs, ctx, IntraFlagRequest{
+func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segment parser.SegmentData) (BlockPredictionModeResult, error) {
+	intra, err := s.ReadIntraFlag(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
 		SkipMode:            prefix.SkipMode,
@@ -220,13 +227,30 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs *IntraModeCDFs, ctx *BlockM
 
 	result := BlockPredictionModeResult{Valid: true, Intra: intra, LumaMode: IntraModeDC}
 	if !intra {
-		if err := ctx.MarkIntraEntry(block.Size, block.X4, block.Y4, false, IntraModeDC); err != nil {
+		refs, err := s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
+			Size:                block.Size,
+			ReferenceMode:       req.ReferenceMode,
+			SkipMode:            prefix.SkipMode,
+			SkipModeRefs:        req.SkipModeRefs,
+			SegmentationEnabled: req.Segmentation.Enabled,
+			Segment:             segment,
+			X4:                  block.X4,
+			Y4:                  block.Y4,
+			HaveTop:             block.HaveTop,
+			HaveLeft:            block.HaveLeft,
+		})
+		if err != nil {
 			return BlockPredictionModeResult{}, err
 		}
+		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		result.InterReferences = refs
+		result.InterReferencesValid = true
 		return result, nil
 	}
 
-	mode, err := s.ReadLumaIntraMode(cdfs, ctx, LumaIntraModeRequest{
+	mode, err := s.ReadLumaIntraMode(cdfs.Intra, ctx, LumaIntraModeRequest{
 		FrameType: req.FrameType,
 		Size:      block.Size,
 		X4:        block.X4,

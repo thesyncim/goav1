@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xfd")
+byte('\u009f')
+byte('T')
+byte('1')
+bool(false)

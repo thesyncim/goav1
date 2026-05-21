@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xec")
+byte('\u0085')
+byte('J')
+byte('\x10')
+bool(true)
