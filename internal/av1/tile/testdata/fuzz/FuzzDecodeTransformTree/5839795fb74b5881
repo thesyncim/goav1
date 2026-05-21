@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\x7f")
+byte('B')
+byte('ø')
+bool(true)
+bool(false)
+bool(false)
+byte('_')
+byte('\u009b')

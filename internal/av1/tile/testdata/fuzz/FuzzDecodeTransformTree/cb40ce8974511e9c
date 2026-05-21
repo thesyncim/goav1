@@ -1,0 +1,9 @@
+go test fuzz v1
+[]byte("\xb3")
+byte('\x02')
+byte('\x02')
+bool(true)
+bool(false)
+bool(false)
+byte('|')
+byte('\x0e')

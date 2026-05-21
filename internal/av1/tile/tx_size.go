@@ -322,21 +322,33 @@ func (c *BlockModeContext) MarkTransform(block BlockSize, x4 int, y4 int, size T
 	if !ok {
 		return ErrInvalidDecodeState
 	}
-	if x4 < 0 || y4 < 0 ||
-		x4+int(blockDims.W4) > MaxBlockModeSlots ||
-		y4+int(blockDims.H4) > MaxBlockModeSlots {
+	return c.MarkTransformArea(x4, y4, int(blockDims.W4), int(blockDims.H4),
+		txDims.Log2W, txDims.Log2H, intra)
+}
+
+// MarkTransformArea updates transform contexts for a decoded transform block
+// area. spanW4/spanH4 describe the coded txb area in 4x4 units, while
+// ctxLog2W/ctxLog2H describe the transform context value written to that area.
+// AV1 var-tx split-to-4x4 uses this distinction: the coded 8x8 txb area is
+// marked with 4x4 context values.
+func (c *BlockModeContext) MarkTransformArea(x4 int, y4 int, spanW4 int, spanH4 int, ctxLog2W uint8, ctxLog2H uint8, intra bool) error {
+	if c == nil || spanW4 <= 0 || spanH4 <= 0 ||
+		x4 < 0 || y4 < 0 ||
+		x4+spanW4 > MaxBlockModeSlots ||
+		y4+spanH4 > MaxBlockModeSlots ||
+		ctxLog2W > 5 || ctxLog2H > 5 {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < int(blockDims.W4); i++ {
-		c.AboveTx[x4+i] = txDims.Log2W
+	for i := 0; i < spanW4; i++ {
+		c.AboveTx[x4+i] = ctxLog2W
 		if intra {
-			c.AboveTxIntra[x4+i] = txDims.Log2W
+			c.AboveTxIntra[x4+i] = ctxLog2W
 		}
 	}
-	for i := 0; i < int(blockDims.H4); i++ {
-		c.LeftTx[y4+i] = txDims.Log2H
+	for i := 0; i < spanH4; i++ {
+		c.LeftTx[y4+i] = ctxLog2H
 		if intra {
-			c.LeftTxIntra[y4+i] = txDims.Log2H
+			c.LeftTxIntra[y4+i] = ctxLog2H
 		}
 	}
 	return nil
