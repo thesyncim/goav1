@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xfe")
+byte('ç')
+byte('\x00')
+byte('/')
+bool(true)

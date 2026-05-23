@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb7")
+byte('û')
+byte('\u0094')
+byte('m')
+bool(false)

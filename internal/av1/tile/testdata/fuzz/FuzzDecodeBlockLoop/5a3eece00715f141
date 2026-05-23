@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xfd")
+byte('ú')
+byte('T')
+byte('\x12')
+bool(true)

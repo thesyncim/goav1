@@ -3,6 +3,7 @@ package tile
 import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 // BlockLoopCDFs groups the caller-owned entropy state used by the block syntax
@@ -16,6 +17,8 @@ type BlockLoopCDFs struct {
 	MV        *MVCDFs
 	Motion    *MotionModeCDFs
 	Blend     *CompoundBlendCDFs
+	Transform *TransformCDFs
+	Coeff     *CoeffCDFs
 	Delta     DeltaCDFs
 }
 
@@ -25,6 +28,8 @@ type BlockLoopScratch struct {
 	Partition PartitionContext
 	Mode      BlockModeContext
 	CDEF      CDEFIndexContext
+	Coeff     BlockCoeffScratch
+	CoeffCtx  CoeffEntropyContext
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -53,6 +58,7 @@ type BlockLoopRequest struct {
 	DecodeInterIntra      bool
 	DecodeMotionModes     bool
 	DecodeCompoundBlend   bool
+	DecodeCoefficients    bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
 	GlobalMotionTypes    [referenceFrameCount]parser.GlobalMotionType
@@ -73,6 +79,15 @@ type BlockLoopRequest struct {
 	EnableOrderHint       bool
 	OrderHintBits         uint8
 	CurrentOrderHint      uint32
+
+	Color               parser.ColorConfig
+	TransformMode       parser.TransformMode
+	Lossless            bool
+	LumaTransformType   transform.Type
+	ChromaTransformType [2]transform.Type
+	TransformSelect     CoeffTransformSelector
+	EOBMultiContext     [3]int
+	CoeffVisitor        BlockLoopCoeffVisitor
 }
 
 // BlockLoopVisit is reported after partition, segmentation, prefix, and delta
@@ -80,37 +95,46 @@ type BlockLoopRequest struct {
 type BlockLoopVisit struct {
 	Block BlockVisit
 
-	SegmentID        uint8
-	Segment          parser.SegmentData
-	SegmentPredicted bool
-	Prefix           BlockModeResult
-	Prediction       BlockPredictionModeResult
-	Delta            BlockDeltaContext
+	SegmentID         uint8
+	Segment           parser.SegmentData
+	SegmentPredicted  bool
+	Prefix            BlockModeResult
+	Prediction        BlockPredictionModeResult
+	Coefficients      BlockCoeffResult
+	CoefficientsValid bool
+	Delta             BlockDeltaContext
 }
 
 type BlockLoopStats struct {
-	PartitionReads     int
-	Blocks             int
-	SegmentPredictions int
-	SegmentIDs         int
-	Prefixes           int
-	PredictionModes    int
-	IntraModes         int
-	InterEntries       int
-	InterReferences    int
-	InterModes         int
-	RefMVStacks        int
-	DRLIndices         int
-	InterMVReferences  int
-	MotionVectors      int
-	MVResiduals        int
-	InterIntras        int
-	MotionModes        int
-	CompoundBlends     int
-	DeltaReads         int
+	PartitionReads      int
+	Blocks              int
+	SegmentPredictions  int
+	SegmentIDs          int
+	Prefixes            int
+	PredictionModes     int
+	IntraModes          int
+	InterEntries        int
+	InterReferences     int
+	InterModes          int
+	RefMVStacks         int
+	DRLIndices          int
+	InterMVReferences   int
+	MotionVectors       int
+	MVResiduals         int
+	InterIntras         int
+	MotionModes         int
+	CompoundBlends      int
+	CoefficientBlocks   int
+	CoefficientTXBs     int
+	CoefficientNonZero  int
+	CoefficientAllZero  int
+	CoefficientEOBTotal int
+	DeltaReads          int
 }
 
 type BlockLoopVisitor func(BlockLoopVisit) error
+
+type BlockLoopCoeffVisitor func(BlockLoopVisit, BlockCoeffBlock) error
 
 // DecodeBlockLoop walks every root block in req and decodes the shared
 // per-block syntax prefix needed before intra/inter and transform decode.
@@ -129,6 +153,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 			scratch.Partition = PartitionContext{}
 			scratch.Mode = BlockModeContext{}
 			scratch.CDEF.Reset()
+			scratch.CoeffCtx = CoeffEntropyContext{}
 			rootReq := BlockWalkRequest{
 				Root:       req.Walk.Root,
 				MIColStart: miCol,
@@ -139,7 +164,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitInfo, err := s.decodeBlockLoopVisit(cdfs, &scratch.Mode, &scratch.CDEF, req, block)
+				visitInfo, err := s.decodeBlockLoopVisit(cdfs, scratch, req, block)
 				if err != nil {
 					return err
 				}
@@ -191,6 +216,14 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 						}
 					}
 				}
+				if visitInfo.CoefficientsValid {
+					stats.CoefficientBlocks++
+					total := visitInfo.Coefficients.TotalStats()
+					stats.CoefficientTXBs += total.TXBs
+					stats.CoefficientNonZero += total.NonZero
+					stats.CoefficientAllZero += total.AllZero
+					stats.CoefficientEOBTotal += total.EOBTotal
+				}
 				readDelta, err := shouldReadBlockDelta(visitInfo.Delta)
 				if err != nil {
 					return err
@@ -209,7 +242,9 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 	return stats, nil
 }
 
-func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeContext, cdef *CDEFIndexContext, req BlockLoopRequest, block BlockVisit) (BlockLoopVisit, error) {
+func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, block BlockVisit) (BlockLoopVisit, error) {
+	ctx := &scratch.Mode
+	cdef := &scratch.CDEF
 	segmentID := uint8(0)
 	segment := defaultSegmentData()
 	segmentPredicted := false
@@ -268,7 +303,7 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 		}
 	}
 
-	return BlockLoopVisit{
+	visit := BlockLoopVisit{
 		Block:            block,
 		SegmentID:        segmentID,
 		Segment:          segment,
@@ -276,7 +311,45 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, ctx *BlockModeCon
 		Prefix:           prefix,
 		Prediction:       prediction,
 		Delta:            delta,
-	}, nil
+	}
+	if req.DecodeCoefficients {
+		if !prediction.Valid {
+			return BlockLoopVisit{}, ErrInvalidDecodeState
+		}
+		coeffVisit := req.CoeffVisitor
+		if coeffVisit == nil {
+			coeffVisit = discardBlockLoopCoeff
+		}
+		coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
+			Transform: cdfs.Transform,
+			Coeff:     cdfs.Coeff,
+		}, ctx, &scratch.CoeffCtx, &scratch.Coeff, BlockCoeffRequest{
+			Transform: TransformTreeRequest{
+				Size:          block.Size,
+				X4:            block.X4,
+				Y4:            block.Y4,
+				VisibleW4:     block.VisibleW4,
+				VisibleH4:     block.VisibleH4,
+				Color:         req.Color,
+				TransformMode: req.TransformMode,
+				Inter:         !prediction.Intra,
+				SkipTransform: prefix.SkipTransform,
+				Lossless:      req.Lossless,
+			},
+			LumaType:        req.LumaTransformType,
+			ChromaType:      req.ChromaTransformType,
+			TransformSelect: req.TransformSelect,
+			EOBMultiContext: req.EOBMultiContext,
+		}, func(block BlockCoeffBlock) error {
+			return coeffVisit(visit, block)
+		})
+		if err != nil {
+			return BlockLoopVisit{}, err
+		}
+		visit.Coefficients = coefficients
+		visit.CoefficientsValid = true
+	}
+	return visit, nil
 }
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segment parser.SegmentData) (BlockPredictionModeResult, error) {
@@ -567,6 +640,9 @@ func validateBlockLoopRequest(req BlockLoopRequest) error {
 	if (req.DecodeInterIntra || req.DecodeMotionModes || req.DecodeCompoundBlend) && !req.DecodeMotionVectors {
 		return ErrInvalidDecodeState
 	}
+	if req.DecodeCoefficients && !req.DecodePredictionModes {
+		return ErrInvalidDecodeState
+	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
 	if rootSize == 0 || req.Walk.MIColStart%rootSize != 0 || req.Walk.MIRowStart%rootSize != 0 {
 		return ErrInvalidDecodeState
@@ -597,6 +673,10 @@ func fillBlockSegmentID(req BlockLoopRequest, block BlockVisit, segmentID uint8)
 
 func defaultSegmentData() parser.SegmentData {
 	return parser.SegmentData{RefFrame: -1}
+}
+
+func discardBlockLoopCoeff(BlockLoopVisit, BlockCoeffBlock) error {
+	return nil
 }
 
 func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameCount]motion.Vector) [2]motion.Vector {

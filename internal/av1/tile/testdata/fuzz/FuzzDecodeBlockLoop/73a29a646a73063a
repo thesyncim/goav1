@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xf2")
+byte('ñ')
+byte('m')
+byte('\x17')
+bool(true)

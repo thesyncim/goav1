@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xde")
+byte('þ')
+byte('\r')
+byte('\u0097')
+bool(false)
