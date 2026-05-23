@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdf8X")
+byte('ñ')
+byte('\a')
+byte('C')
+bool(true)

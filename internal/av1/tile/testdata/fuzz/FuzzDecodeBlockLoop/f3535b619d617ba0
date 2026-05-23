@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("c")
+byte('ß')
+byte('d')
+byte('\x17')
+bool(true)

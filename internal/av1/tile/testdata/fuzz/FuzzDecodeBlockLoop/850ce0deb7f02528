@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xffC70")
+byte('\u009b')
+byte('\\')
+byte('\x10')
+bool(true)

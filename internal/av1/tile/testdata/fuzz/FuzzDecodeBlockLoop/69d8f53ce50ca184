@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xffx 0")
+byte('Ï')
+byte('\x05')
+byte('m')
+bool(false)

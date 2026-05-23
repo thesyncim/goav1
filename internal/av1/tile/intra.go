@@ -64,7 +64,7 @@ type LumaIntraModeRequest struct {
 }
 
 // BlockPredictionModeResult is the luma entry/mode syntax decoded after the
-// block prefix. Inter-specific reference and MV syntax is decoded by later
+// block prefix. Inter MV residuals and reconstruction are decoded by later
 // mode stages.
 type BlockPredictionModeResult struct {
 	Valid bool
@@ -74,6 +74,18 @@ type BlockPredictionModeResult struct {
 
 	InterReferences      InterReferencesResult
 	InterReferencesValid bool
+
+	InterMode      InterModeResult
+	InterModeValid bool
+
+	ReferenceMVStack      ReferenceMVStackResult
+	ReferenceMVStackValid bool
+
+	DRLIndex      int
+	DRLIndexValid bool
+
+	InterMVReferences      InterMVReferenceSet
+	InterMVReferencesValid bool
 }
 
 var yModeSizeContext = [blockSizeCount]int{

@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xe4000Y")
+byte('\u0083')
+byte('^')
+byte('\x0e')
+bool(true)

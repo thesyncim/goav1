@@ -1,6 +1,9 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/parser"
+import (
+	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+)
 
 // BlockLoopCDFs groups the caller-owned entropy state used by the block syntax
 // loop.
@@ -9,6 +12,7 @@ type BlockLoopCDFs struct {
 	Mode      *BlockModeCDFs
 	Intra     *IntraModeCDFs
 	InterRef  *InterRefCDFs
+	InterMode *InterModeCDFs
 	Delta     DeltaCDFs
 }
 
@@ -41,6 +45,12 @@ type BlockLoopRequest struct {
 	ReferenceMode         parser.ReferenceMode
 	SkipModeRefs          [2]ReferenceFrame
 	DecodePredictionModes bool
+	DecodeInterModes      bool
+
+	GlobalMVs            [referenceFrameCount]motion.Vector
+	RefSignBias          [referenceFrameCount]bool
+	AllowHighPrecisionMV bool
+	ForceIntegerMV       bool
 }
 
 // BlockLoopVisit is reported after partition, segmentation, prefix, and delta
@@ -66,6 +76,10 @@ type BlockLoopStats struct {
 	IntraModes         int
 	InterEntries       int
 	InterReferences    int
+	InterModes         int
+	RefMVStacks        int
+	DRLIndices         int
+	InterMVReferences  int
 	DeltaReads         int
 }
 
@@ -118,6 +132,18 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 						stats.InterEntries++
 						if visitInfo.Prediction.InterReferencesValid {
 							stats.InterReferences++
+						}
+						if visitInfo.Prediction.InterModeValid {
+							stats.InterModes++
+						}
+						if visitInfo.Prediction.ReferenceMVStackValid {
+							stats.RefMVStacks++
+						}
+						if visitInfo.Prediction.DRLIndexValid {
+							stats.DRLIndices++
+						}
+						if visitInfo.Prediction.InterMVReferencesValid {
+							stats.InterMVReferences++
 						}
 					}
 				}
@@ -242,11 +268,58 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		if err != nil {
 			return BlockPredictionModeResult{}, err
 		}
+		result.InterReferences = refs
+		result.InterReferencesValid = true
+		if req.DecodeInterModes {
+			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
+				Size:        block.Size,
+				References:  refs,
+				X4:          block.X4,
+				Y4:          block.Y4,
+				HaveTop:     block.HaveTop,
+				HaveLeft:    block.HaveLeft,
+				GlobalMVs:   blockReferenceGlobalMVs(refs, req.GlobalMVs),
+				RefSignBias: req.RefSignBias,
+			})
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			mode, err := s.ReadBlockInterMode(cdfs.InterMode, InterModeRequest{
+				Compound:            refs.Compound,
+				SkipMode:            prefix.SkipMode,
+				SegmentationEnabled: req.Segmentation.Enabled,
+				Segment:             segment,
+				ModeContext:         stack.ModeContext,
+			})
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			drlReq, err := stack.Stack.DRLRequestForMode(mode)
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			drlIndex, err := s.ReadDRLIndex(cdfs.InterMode, drlReq)
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			result.InterMode = mode
+			result.InterModeValid = true
+			result.ReferenceMVStack = stack
+			result.ReferenceMVStackValid = true
+			result.DRLIndex = drlIndex
+			result.DRLIndexValid = drlReq.usesNewMV() || drlReq.usesNearMV()
+			if !interModeUsesGlobalOnly(mode) {
+				mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
+				if err != nil {
+					return BlockPredictionModeResult{}, err
+				}
+				result.InterMVReferences = mvRefs
+				result.InterMVReferencesValid = true
+			}
+		}
 		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
 			return BlockPredictionModeResult{}, err
 		}
-		result.InterReferences = refs
-		result.InterReferencesValid = true
 		return result, nil
 	}
 
@@ -355,6 +428,9 @@ func validateBlockLoopRequest(req BlockLoopRequest) error {
 		req.Walk.MIRowEnd <= req.Walk.MIRowStart {
 		return ErrInvalidDecodeState
 	}
+	if req.DecodeInterModes && !req.DecodePredictionModes {
+		return ErrInvalidDecodeState
+	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
 	if rootSize == 0 || req.Walk.MIColStart%rootSize != 0 || req.Walk.MIRowStart%rootSize != 0 {
 		return ErrInvalidDecodeState
@@ -385,4 +461,22 @@ func fillBlockSegmentID(req BlockLoopRequest, block BlockVisit, segmentID uint8)
 
 func defaultSegmentData() parser.SegmentData {
 	return parser.SegmentData{RefFrame: -1}
+}
+
+func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameCount]motion.Vector) [2]motion.Vector {
+	var out [2]motion.Vector
+	if refs.Ref[0].Valid() {
+		out[0] = global[refs.Ref[0]]
+	}
+	if refs.Compound && refs.Ref[1].Valid() {
+		out[1] = global[refs.Ref[1]]
+	}
+	return out
+}
+
+func interModeUsesGlobalOnly(mode InterModeResult) bool {
+	if mode.Compound {
+		return mode.CompoundMode == CompoundInterModeGlobalGlobal
+	}
+	return mode.Mode == InterModeGlobalMV
 }
