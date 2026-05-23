@@ -488,6 +488,145 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 5}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var interModeCDFs InterModeCDFs
+	if err := interModeCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var mvCDFs MVCDFs
+	if err := mvCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var blendCDFs CompoundBlendCDFs
+	if err := blendCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var motionCDFs MotionModeCDFs
+	if err := motionCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	var ctx BlockModeContext
+	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNewMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
+	})
+	seedLeftMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: -7, Col: 9}},
+	})
+
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+		InterMode: &interModeCDFs,
+		MV:        &mvCDFs,
+		Blend:     &blendCDFs,
+		Motion:    &motionCDFs,
+	}, &ctx, BlockLoopRequest{
+		FrameType:                parser.FrameTypeInter,
+		Segmentation:             parser.SegmentationParams{Enabled: true},
+		DecodePredictionModes:    true,
+		DecodeInterModes:         true,
+		DecodeMotionVectors:      true,
+		DecodeInterIntra:         true,
+		DecodeMotionModes:        true,
+		EnableInterIntraCompound: true,
+		SwitchableMotionMode:     true,
+		OverlappableNeighbors:    1,
+		EnableMaskedCompound:     true,
+		EnableDistWtdCompound:    true,
+		AllowHighPrecisionMV:     true,
+		AllowWarpedMotion:        false,
+		EnableOrderHint:          true,
+		OrderHintBits:            4,
+		CurrentOrderHint:         8,
+		ReferenceOrderHints:      [referenceFrameCount]uint32{ReferenceFrameLast: 4},
+		GlobalMotionTypes:        [referenceFrameCount]parser.GlobalMotionType{ReferenceFrameLast: parser.GlobalMotionTranslation},
+		ScaledReferences:         [referenceFrameCount]bool{},
+		DecodeCompoundBlend:      true,
+		GlobalMVs:                [referenceFrameCount]motion.Vector{},
+		RefSignBias:              [referenceFrameCount]bool{},
+		ForceIntegerMV:           false,
+		AllowIntrabc:             false,
+		ReferenceMode:            parser.ReferenceModeSingle,
+		SkipModeRefs:             [2]ReferenceFrame{},
+		NumProjRef:               0,
+	}, BlockVisit{
+		Size:     BlockSize16x16,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
+	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.InterIntraValid || result.InterIntra.Enabled {
+		t.Fatalf("inter-intra=%+v valid=%v", result.InterIntra, result.InterIntraValid)
+	}
+	if !result.MotionModeValid || result.MotionMode != MotionModeTranslation {
+		t.Fatalf("motion mode=%d valid=%v", result.MotionMode, result.MotionModeValid)
+	}
+	if result.CompoundBlendValid {
+		t.Fatalf("single-ref compound blend valid: %+v", result.CompoundBlend)
+	}
+	if got := blendCDFs.InterIntra[yModeSizeContext[BlockSize16x16]].Values()[2]; got != 1 {
+		t.Fatalf("inter-intra cdf count=%d want 1", got)
+	}
+	if got := motionCDFs.OBMC[BlockSize16x16].Values()[2]; got != 1 {
+		t.Fatalf("obmc cdf count=%d want 1", got)
+	}
+}
+
+func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00}, Job{Offset: 0, Size: 2}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var blendCDFs CompoundBlendCDFs
+	if err := blendCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Blend: &blendCDFs}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		DecodePredictionModes: true,
+		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
+		DecodeCompoundBlend:   true,
+		SkipModeRefs:          [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref},
+		EnableDistWtdCompound: true,
+		EnableOrderHint:       true,
+		OrderHintBits:         4,
+		CurrentOrderHint:      8,
+		ReferenceOrderHints: [referenceFrameCount]uint32{
+			ReferenceFrameLast:   4,
+			ReferenceFrameAltref: 12,
+		},
+	}, BlockVisit{
+		Size: BlockSize16x16,
+		X4:   0,
+		Y4:   0,
+	}, BlockModeResult{SkipMode: true}, parser.SegmentData{RefFrame: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CompoundBlendValid || result.CompoundBlend.Type != CompoundTypeAverage || result.CompoundBlend.CompoundIndex != 1 {
+		t.Fatalf("compound blend=%+v valid=%v", result.CompoundBlend, result.CompoundBlendValid)
+	}
+	if !result.InterMotionValid || !result.InterReferences.Compound {
+		t.Fatalf("motion=%+v refs=%+v", result.InterMotion, result.InterReferences)
+	}
+	if ctx.AboveCompIndex[0] != 1 || ctx.LeftCompIndex[0] != 1 {
+		t.Fatalf("compound index context above=%d left=%d want 1", ctx.AboveCompIndex[0], ctx.LeftCompIndex[0])
+	}
+}
+
 func TestDecodeBlockLoopPredictionModesRequireIntraCDFs(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
@@ -635,6 +774,16 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		if err := mvCDFs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
+		var motionCDFs MotionModeCDFs
+		if err := motionCDFs.InitDefault(); err != nil {
+			t.Fatal(err)
+		}
+		var blendCDFs CompoundBlendCDFs
+		if err := blendCDFs.InitDefault(); err != nil {
+			t.Fatal(err)
+		}
+		orderBits := uint8(rawRows%8 + 1)
+		orderLimit := uint32(1) << orderBits
 		req := BlockLoopRequest{
 			Walk: BlockWalkRequest{
 				Root:       root,
@@ -650,15 +799,41 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			DecodePredictionModes: rawRoot&0x80 != 0,
 			DecodeInterModes:      rawRoot&0xc0 == 0xc0,
 			DecodeMotionVectors:   rawRoot&0xe0 == 0xe0,
+			DecodeInterIntra:      rawRoot&0xf0 == 0xf0,
+			DecodeMotionModes:     rawRoot&0xf0 == 0xf0,
+			DecodeCompoundBlend:   rawRoot&0xf0 == 0xf0,
 			GlobalMVs: [referenceFrameCount]motion.Vector{
 				ReferenceFrameLast:    {Row: int32(int8(rawRows)), Col: int32(int8(rawCols))},
 				ReferenceFrameGolden:  {Row: -int32(int8(rawRows)), Col: int32(int8(rawCols))},
 				ReferenceFrameAltref2: {Row: int32(int8(rawRoot)), Col: -int32(int8(rawCols))},
 			},
+			GlobalMotionTypes: [referenceFrameCount]parser.GlobalMotionType{
+				ReferenceFrameLast:   parser.GlobalMotionType(rawRoot % 4),
+				ReferenceFrameAltref: parser.GlobalMotionType(rawRows % 4),
+			},
 			RefSignBias: [referenceFrameCount]bool{
 				ReferenceFrameGolden: rawRoot&1 != 0,
 				ReferenceFrameAltref: rawRows&1 != 0,
 			},
+			ReferenceOrderHints: [referenceFrameCount]uint32{
+				ReferenceFrameLast:   uint32(rawCols) % orderLimit,
+				ReferenceFrameGolden: uint32(rawRows) % orderLimit,
+				ReferenceFrameAltref: uint32(rawRoot) % orderLimit,
+			},
+			ScaledReferences: [referenceFrameCount]bool{
+				ReferenceFrameLast2: rawCols&1 != 0,
+				ReferenceFrameBWD:   rawRows&1 != 0,
+			},
+			EnableInterIntraCompound: rawCols&0x80 != 0,
+			SwitchableMotionMode:     rawRows&0x80 != 0,
+			AllowWarpedMotion:        rawRoot&0x20 != 0,
+			OverlappableNeighbors:    int(rawCols & 1),
+			NumProjRef:               int(rawRows & 1),
+			EnableMaskedCompound:     rawRoot&0x10 != 0,
+			EnableDistWtdCompound:    rawCols&0x40 != 0,
+			EnableOrderHint:          true,
+			OrderHintBits:            orderBits,
+			CurrentOrderHint:         uint32(rawRoot) % orderLimit,
 		}
 		if delta {
 			req.Delta = parser.DeltaParams{DeltaQPresent: true}
@@ -670,6 +845,8 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			InterRef:  &interCDFs,
 			InterMode: &interModeCDFs,
 			MV:        &mvCDFs,
+			Motion:    &motionCDFs,
+			Blend:     &blendCDFs,
 			Delta:     deltaCDFs,
 		}, &BlockLoopScratch{}, req, func(visit BlockLoopVisit) error {
 			if visit.Block.MIColEnd > cols || visit.Block.MIRowEnd > rows {

@@ -14,6 +14,8 @@ type BlockLoopCDFs struct {
 	InterRef  *InterRefCDFs
 	InterMode *InterModeCDFs
 	MV        *MVCDFs
+	Motion    *MotionModeCDFs
+	Blend     *CompoundBlendCDFs
 	Delta     DeltaCDFs
 }
 
@@ -48,11 +50,29 @@ type BlockLoopRequest struct {
 	DecodePredictionModes bool
 	DecodeInterModes      bool
 	DecodeMotionVectors   bool
+	DecodeInterIntra      bool
+	DecodeMotionModes     bool
+	DecodeCompoundBlend   bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
+	GlobalMotionTypes    [referenceFrameCount]parser.GlobalMotionType
 	RefSignBias          [referenceFrameCount]bool
+	ReferenceOrderHints  [referenceFrameCount]uint32
+	ScaledReferences     [referenceFrameCount]bool
 	AllowHighPrecisionMV bool
 	ForceIntegerMV       bool
+
+	EnableInterIntraCompound bool
+	SwitchableMotionMode     bool
+	AllowWarpedMotion        bool
+	OverlappableNeighbors    int
+	NumProjRef               int
+
+	EnableMaskedCompound  bool
+	EnableDistWtdCompound bool
+	EnableOrderHint       bool
+	OrderHintBits         uint8
+	CurrentOrderHint      uint32
 }
 
 // BlockLoopVisit is reported after partition, segmentation, prefix, and delta
@@ -84,6 +104,9 @@ type BlockLoopStats struct {
 	InterMVReferences  int
 	MotionVectors      int
 	MVResiduals        int
+	InterIntras        int
+	MotionModes        int
+	CompoundBlends     int
 	DeltaReads         int
 }
 
@@ -155,6 +178,15 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 								if valid {
 									stats.MVResiduals++
 								}
+							}
+							if visitInfo.Prediction.InterIntraValid {
+								stats.InterIntras++
+							}
+							if visitInfo.Prediction.MotionModeValid {
+								stats.MotionModes++
+							}
+							if visitInfo.Prediction.CompoundBlendValid {
+								stats.CompoundBlends++
 							}
 						}
 					}
@@ -344,8 +376,73 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				result.InterMotionValid = true
 				result.MVResiduals = motionResult.Residuals
 				result.MVResidualValid = motionResult.ResidualValid
+
+				motionMode := MotionModeTranslation
+				if req.DecodeInterIntra && !refs.Compound {
+					interIntra, err := s.ReadInterIntra(cdfs.Blend, InterIntraRequest{
+						Size:                     block.Size,
+						Mode:                     mode.Mode,
+						EnableInterIntraCompound: req.EnableInterIntraCompound,
+						SkipMode:                 prefix.SkipMode,
+						Compound:                 refs.Compound,
+					})
+					if err != nil {
+						return BlockPredictionModeResult{}, err
+					}
+					result.InterIntra = interIntra
+					result.InterIntraValid = true
+				}
+				if req.DecodeMotionModes {
+					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
+						Size:                  block.Size,
+						Mode:                  mode.Mode,
+						Compound:              refs.Compound,
+						SkipMode:              prefix.SkipMode,
+						InterIntra:            result.InterIntra.Enabled,
+						SwitchableMotionMode:  req.SwitchableMotionMode,
+						AllowWarpedMotion:     req.AllowWarpedMotion,
+						ForceIntegerMV:        req.ForceIntegerMV,
+						GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
+						ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
+						OverlappableNeighbors: req.OverlappableNeighbors,
+						NumProjRef:            req.NumProjRef,
+					})
+					if err != nil {
+						return BlockPredictionModeResult{}, err
+					}
+					result.MotionMode = motionMode
+					result.MotionModeValid = true
+				}
+				if req.DecodeCompoundBlend && refs.Compound {
+					blend, err := s.ReadCompoundBlend(cdfs.Blend, ctx, CompoundBlendRequest{
+						Size:                  block.Size,
+						Compound:              refs.Compound,
+						SkipMode:              prefix.SkipMode,
+						MotionMode:            motionMode,
+						EnableMaskedCompound:  req.EnableMaskedCompound,
+						EnableDistWtdCompound: req.EnableDistWtdCompound,
+						EnableOrderHint:       req.EnableOrderHint,
+						OrderHintBits:         req.OrderHintBits,
+						CurrentOrderHint:      req.CurrentOrderHint,
+						RefOrderHint:          blockReferenceOrderHints(refs, req.ReferenceOrderHints),
+						X4:                    block.X4,
+						Y4:                    block.Y4,
+						HaveTop:               block.HaveTop,
+						HaveLeft:              block.HaveLeft,
+					})
+					if err != nil {
+						return BlockPredictionModeResult{}, err
+					}
+					result.CompoundBlend = blend
+					result.CompoundBlendValid = true
+				}
 				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, motionResult.Motion); err != nil {
 					return BlockPredictionModeResult{}, err
+				}
+				if result.CompoundBlendValid {
+					if err := ctx.MarkCompoundBlend(block.Size, block.X4, block.Y4, result.CompoundBlend); err != nil {
+						return BlockPredictionModeResult{}, err
+					}
 				}
 				return result, nil
 			}
@@ -467,6 +564,9 @@ func validateBlockLoopRequest(req BlockLoopRequest) error {
 	if req.DecodeMotionVectors && !req.DecodeInterModes {
 		return ErrInvalidDecodeState
 	}
+	if (req.DecodeInterIntra || req.DecodeMotionModes || req.DecodeCompoundBlend) && !req.DecodeMotionVectors {
+		return ErrInvalidDecodeState
+	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
 	if rootSize == 0 || req.Walk.MIColStart%rootSize != 0 || req.Walk.MIRowStart%rootSize != 0 {
 		return ErrInvalidDecodeState
@@ -506,6 +606,31 @@ func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameC
 	}
 	if refs.Compound && refs.Ref[1].Valid() {
 		out[1] = global[refs.Ref[1]]
+	}
+	return out
+}
+
+func blockReferenceGlobalMotionType(refs InterReferencesResult, global [referenceFrameCount]parser.GlobalMotionType) parser.GlobalMotionType {
+	if refs.Ref[0].Valid() {
+		return global[refs.Ref[0]]
+	}
+	return parser.GlobalMotionIdentity
+}
+
+func blockReferenceScaled(refs InterReferencesResult, scaled [referenceFrameCount]bool) bool {
+	if refs.Ref[0].Valid() {
+		return scaled[refs.Ref[0]]
+	}
+	return false
+}
+
+func blockReferenceOrderHints(refs InterReferencesResult, orderHints [referenceFrameCount]uint32) [2]uint32 {
+	var out [2]uint32
+	if refs.Ref[0].Valid() {
+		out[0] = orderHints[refs.Ref[0]]
+	}
+	if refs.Compound && refs.Ref[1].Valid() {
+		out[1] = orderHints[refs.Ref[1]]
 	}
 	return out
 }

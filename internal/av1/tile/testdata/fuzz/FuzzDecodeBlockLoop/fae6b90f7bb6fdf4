@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb\xe6")
+byte('ñ')
+byte('ü')
+byte('m')
+bool(true)

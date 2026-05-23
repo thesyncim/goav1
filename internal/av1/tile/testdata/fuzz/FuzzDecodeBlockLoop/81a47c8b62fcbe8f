@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb\xd8Z0")
+byte('\u0083')
+byte('=')
+byte('=')
+bool(false)

@@ -92,6 +92,15 @@ type BlockPredictionModeResult struct {
 
 	MVResiduals     [2]MVResidualResult
 	MVResidualValid [2]bool
+
+	InterIntra      InterIntraResult
+	InterIntraValid bool
+
+	MotionMode      MotionMode
+	MotionModeValid bool
+
+	CompoundBlend      CompoundBlendResult
+	CompoundBlendValid bool
 }
 
 var yModeSizeContext = [blockSizeCount]int{

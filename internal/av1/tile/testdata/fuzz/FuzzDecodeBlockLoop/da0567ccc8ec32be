@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdc")
+byte('ñ')
+byte('\x00')
+byte('=')
+bool(true)
