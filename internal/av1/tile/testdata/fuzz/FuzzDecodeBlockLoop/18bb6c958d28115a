@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdf\xe8A000")
+byte('ñ')
+byte('\n')
+byte('\x06')
+bool(true)

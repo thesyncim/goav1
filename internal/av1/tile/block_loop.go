@@ -13,6 +13,7 @@ type BlockLoopCDFs struct {
 	Intra     *IntraModeCDFs
 	InterRef  *InterRefCDFs
 	InterMode *InterModeCDFs
+	MV        *MVCDFs
 	Delta     DeltaCDFs
 }
 
@@ -46,6 +47,7 @@ type BlockLoopRequest struct {
 	SkipModeRefs          [2]ReferenceFrame
 	DecodePredictionModes bool
 	DecodeInterModes      bool
+	DecodeMotionVectors   bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
 	RefSignBias          [referenceFrameCount]bool
@@ -80,6 +82,8 @@ type BlockLoopStats struct {
 	RefMVStacks        int
 	DRLIndices         int
 	InterMVReferences  int
+	MotionVectors      int
+	MVResiduals        int
 	DeltaReads         int
 }
 
@@ -144,6 +148,14 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 						}
 						if visitInfo.Prediction.InterMVReferencesValid {
 							stats.InterMVReferences++
+						}
+						if visitInfo.Prediction.InterMotionValid {
+							stats.MotionVectors++
+							for _, valid := range visitInfo.Prediction.MVResidualValid {
+								if valid {
+									stats.MVResiduals++
+								}
+							}
 						}
 					}
 				}
@@ -270,6 +282,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		}
 		result.InterReferences = refs
 		result.InterReferencesValid = true
+		globalMVs := blockReferenceGlobalMVs(refs, req.GlobalMVs)
 		if req.DecodeInterModes {
 			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
 				Size:        block.Size,
@@ -278,7 +291,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				Y4:          block.Y4,
 				HaveTop:     block.HaveTop,
 				HaveLeft:    block.HaveLeft,
-				GlobalMVs:   blockReferenceGlobalMVs(refs, req.GlobalMVs),
+				GlobalMVs:   globalMVs,
 				RefSignBias: req.RefSignBias,
 			})
 			if err != nil {
@@ -315,6 +328,26 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				}
 				result.InterMVReferences = mvRefs
 				result.InterMVReferencesValid = true
+			}
+			if req.DecodeMotionVectors {
+				motionResult, err := s.ReadInterMotion(cdfs.MV, InterMotionRequest{
+					References:   refs,
+					Mode:         mode,
+					ReferenceMVs: result.InterMVReferences,
+					GlobalMVs:    globalMVs,
+					Precision:    MVPrecision(req.AllowHighPrecisionMV, req.ForceIntegerMV),
+				})
+				if err != nil {
+					return BlockPredictionModeResult{}, err
+				}
+				result.InterMotion = motionResult.Motion
+				result.InterMotionValid = true
+				result.MVResiduals = motionResult.Residuals
+				result.MVResidualValid = motionResult.ResidualValid
+				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, motionResult.Motion); err != nil {
+					return BlockPredictionModeResult{}, err
+				}
+				return result, nil
 			}
 		}
 		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
@@ -429,6 +462,9 @@ func validateBlockLoopRequest(req BlockLoopRequest) error {
 		return ErrInvalidDecodeState
 	}
 	if req.DecodeInterModes && !req.DecodePredictionModes {
+		return ErrInvalidDecodeState
+	}
+	if req.DecodeMotionVectors && !req.DecodeInterModes {
 		return ErrInvalidDecodeState
 	}
 	rootSize := uint32(req.Walk.Root.Size4x4())

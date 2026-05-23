@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("")
+int16(0)
+int16(-49)
+int8(-37)

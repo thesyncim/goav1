@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("\xce")
+int16(52)
+int16(0)
+int8(0)

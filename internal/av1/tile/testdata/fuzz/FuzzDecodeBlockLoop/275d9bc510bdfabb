@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xec")
+byte('õ')
+byte('j')
+byte('\b')
+bool(true)

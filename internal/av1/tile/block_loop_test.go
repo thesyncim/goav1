@@ -282,6 +282,7 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 		FrameType:             parser.FrameTypeInter,
 		DecodePredictionModes: true,
 		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
 		GlobalMVs: [referenceFrameCount]motion.Vector{
 			ReferenceFrameLast: {Row: 4, Col: -6},
 		},
@@ -309,6 +310,7 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 		InterReferences: 1,
 		InterModes:      1,
 		RefMVStacks:     1,
+		MotionVectors:   1,
 	}) {
 		t.Fatalf("stats=%+v", stats)
 	}
@@ -328,8 +330,14 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 	if got.Prediction.DRLIndexValid || got.Prediction.InterMVReferencesValid {
 		t.Fatalf("unexpected drl/mv refs prediction=%+v", got.Prediction)
 	}
-	if scratch.Mode.AboveRef[0][0] != ReferenceFrameLast || scratch.Mode.LeftRef[0][0] != ReferenceFrameLast {
-		t.Fatalf("marked refs above=%d left=%d", scratch.Mode.AboveRef[0][0], scratch.Mode.LeftRef[0][0])
+	if !got.Prediction.InterMotionValid || got.Prediction.InterMotion.MV[0] != (motion.Vector{Row: 4, Col: -6}) {
+		t.Fatalf("inter motion=%+v valid=%v", got.Prediction.InterMotion, got.Prediction.InterMotionValid)
+	}
+	if scratch.Mode.AboveRef[0][0] != ReferenceFrameLast || scratch.Mode.LeftRef[0][0] != ReferenceFrameLast ||
+		scratch.Mode.AboveMotionValid[0] != 1 || scratch.Mode.LeftMotionValid[0] != 1 {
+		t.Fatalf("marked refs above=%d left=%d motion=(%d,%d)",
+			scratch.Mode.AboveRef[0][0], scratch.Mode.LeftRef[0][0],
+			scratch.Mode.AboveMotionValid[0], scratch.Mode.LeftMotionValid[0])
 	}
 }
 
@@ -424,6 +432,59 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
 	if !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+}
+
+func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 4}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var interModeCDFs InterModeCDFs
+	if err := interModeCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var mvCDFs MVCDFs
+	if err := mvCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	var ctx BlockModeContext
+	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNewMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
+	})
+	seedLeftMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: -7, Col: 9}},
+	})
+
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{InterMode: &interModeCDFs, MV: &mvCDFs}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		Segmentation:          parser.SegmentationParams{Enabled: true},
+		DecodePredictionModes: true,
+		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
+	}, BlockVisit{
+		Size:     BlockSize16x16,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
+	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.InterMotionValid || result.InterMotion.MV[0] != (motion.Vector{Row: 3, Col: 5}) {
+		t.Fatalf("inter motion=%+v valid=%v", result.InterMotion, result.InterMotionValid)
+	}
+	if !result.MVResidualValid[0] || result.MVResiduals[0].Joint != MVJointZero {
+		t.Fatalf("mv residuals=%+v valid=%v", result.MVResiduals, result.MVResidualValid)
+	}
+	if ctx.AboveMotionValid[0] != 1 || ctx.LeftMotionValid[0] != 1 {
+		t.Fatalf("motion context above=%d left=%d", ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
 	}
 }
 
@@ -570,6 +631,10 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		if err := interModeCDFs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
+		var mvCDFs MVCDFs
+		if err := mvCDFs.InitDefault(); err != nil {
+			t.Fatal(err)
+		}
 		req := BlockLoopRequest{
 			Walk: BlockWalkRequest{
 				Root:       root,
@@ -584,6 +649,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			ReferenceMode:         parser.ReferenceMode(rawCols % 3),
 			DecodePredictionModes: rawRoot&0x80 != 0,
 			DecodeInterModes:      rawRoot&0xc0 == 0xc0,
+			DecodeMotionVectors:   rawRoot&0xe0 == 0xe0,
 			GlobalMVs: [referenceFrameCount]motion.Vector{
 				ReferenceFrameLast:    {Row: int32(int8(rawRows)), Col: int32(int8(rawCols))},
 				ReferenceFrameGolden:  {Row: -int32(int8(rawRows)), Col: int32(int8(rawCols))},
@@ -603,6 +669,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			Intra:     &intraCDFs,
 			InterRef:  &interCDFs,
 			InterMode: &interModeCDFs,
+			MV:        &mvCDFs,
 			Delta:     deltaCDFs,
 		}, &BlockLoopScratch{}, req, func(visit BlockLoopVisit) error {
 			if visit.Block.MIColEnd > cols || visit.Block.MIRowEnd > rows {

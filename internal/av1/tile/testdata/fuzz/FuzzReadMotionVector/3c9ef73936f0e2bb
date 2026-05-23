@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("\xed")
+int16(-29)
+int16(-64)
+int8(33)

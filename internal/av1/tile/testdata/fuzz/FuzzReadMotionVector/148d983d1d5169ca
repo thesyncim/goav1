@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("\xffc\xac00000")
+int16(-11)
+int16(-49)
+int8(13)

@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xde")
+byte('\u0083')
+byte('L')
+byte('\x7f')
+bool(true)

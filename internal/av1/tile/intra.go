@@ -86,6 +86,12 @@ type BlockPredictionModeResult struct {
 
 	InterMVReferences      InterMVReferenceSet
 	InterMVReferencesValid bool
+
+	InterMotion      InterMotionResult
+	InterMotionValid bool
+
+	MVResiduals     [2]MVResidualResult
+	MVResidualValid [2]bool
 }
 
 var yModeSizeContext = [blockSizeCount]int{
