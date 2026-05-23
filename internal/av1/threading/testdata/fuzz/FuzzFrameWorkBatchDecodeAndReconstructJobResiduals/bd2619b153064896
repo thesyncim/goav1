@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xaa\x11U\xee")
+byte('\x7f')

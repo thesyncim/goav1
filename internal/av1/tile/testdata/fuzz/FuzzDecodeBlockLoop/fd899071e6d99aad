@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xe4Z%%%%%%!\xc5\x13\xd12)z\xf9\x1e!X\x1cCZ'\f\xe37\xf4272100000")
+byte('á')
+byte('/')
+byte('\x0e')
+bool(true)

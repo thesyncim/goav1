@@ -87,6 +87,9 @@ type BlockLoopRequest struct {
 	ChromaTransformType [2]transform.Type
 	TransformSelect     CoeffTransformSelector
 	EOBMultiContext     [3]int
+	CoeffController     BlockLoopCoeffController
+	CoeffRequest        BlockLoopCoeffRequestSelector
+	BeforeCoefficients  BlockLoopVisitor
 	CoeffVisitor        BlockLoopCoeffVisitor
 }
 
@@ -134,15 +137,51 @@ type BlockLoopStats struct {
 
 type BlockLoopVisitor func(BlockLoopVisit) error
 
+type BlockLoopCoeffController interface {
+	BeforeBlockCoefficients(BlockLoopVisit) error
+	SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error)
+	VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error
+}
+
+type BlockLoopCoeffRequestSelector func(BlockLoopVisit) (BlockCoeffRequest, error)
+
 type BlockLoopCoeffVisitor func(BlockLoopVisit, BlockCoeffBlock) error
+
+type noBlockLoopCoeffController struct{}
+
+func (noBlockLoopCoeffController) BeforeBlockCoefficients(BlockLoopVisit) error {
+	return ErrInvalidDecodeState
+}
+
+func (noBlockLoopCoeffController) SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error) {
+	return BlockCoeffRequest{}, ErrInvalidDecodeState
+}
+
+func (noBlockLoopCoeffController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
+	return ErrInvalidDecodeState
+}
 
 // DecodeBlockLoop walks every root block in req and decodes the shared
 // per-block syntax prefix needed before intra/inter and transform decode.
 func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, visit BlockLoopVisitor) (BlockLoopStats, error) {
+	if req.CoeffController != nil {
+		return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, req.CoeffController, true, visit)
+	}
+	return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, noBlockLoopCoeffController{}, false, visit)
+}
+
+// DecodeBlockLoopWithCoeffController is DecodeBlockLoop with a call-scoped
+// coefficient controller. Passing the controller as an argument lets hot callers
+// keep controller state on the stack instead of storing it in BlockLoopRequest.
+func DecodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopVisitor) (BlockLoopStats, error) {
+	return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, coeffController, true, visit)
+}
+
+func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopVisitor) (BlockLoopStats, error) {
 	if s == nil || scratch == nil || cdfs.Partition == nil || cdfs.Mode == nil || visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
-	if err := validateBlockLoopRequest(req); err != nil {
+	if err := validateBlockLoopRequest(req, hasCoeffController); err != nil {
 		return BlockLoopStats{}, err
 	}
 
@@ -164,7 +203,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitInfo, err := s.decodeBlockLoopVisit(cdfs, scratch, req, block)
+				visitInfo, err := decodeBlockLoopVisitWithCoeffController(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
 				if err != nil {
 					return err
 				}
@@ -242,7 +281,7 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 	return stats, nil
 }
 
-func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, block BlockVisit) (BlockLoopVisit, error) {
+func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
 	ctx := &scratch.Mode
 	cdef := &scratch.CDEF
 	segmentID := uint8(0)
@@ -313,8 +352,18 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, scratch *BlockLoo
 		Delta:            delta,
 	}
 	if req.DecodeCoefficients {
-		if !prediction.Valid {
-			return BlockLoopVisit{}, ErrInvalidDecodeState
+		if hasCoeffController {
+			if err := coeffController.BeforeBlockCoefficients(visit); err != nil {
+				return BlockLoopVisit{}, err
+			}
+		} else if req.BeforeCoefficients != nil {
+			if err := req.BeforeCoefficients(visit); err != nil {
+				return BlockLoopVisit{}, err
+			}
+		}
+		coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, visit)
+		if err != nil {
+			return BlockLoopVisit{}, err
 		}
 		coeffVisit := req.CoeffVisitor
 		if coeffVisit == nil {
@@ -323,24 +372,10 @@ func (s *DecodeState) decodeBlockLoopVisit(cdfs BlockLoopCDFs, scratch *BlockLoo
 		coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
 			Transform: cdfs.Transform,
 			Coeff:     cdfs.Coeff,
-		}, ctx, &scratch.CoeffCtx, &scratch.Coeff, BlockCoeffRequest{
-			Transform: TransformTreeRequest{
-				Size:          block.Size,
-				X4:            block.X4,
-				Y4:            block.Y4,
-				VisibleW4:     block.VisibleW4,
-				VisibleH4:     block.VisibleH4,
-				Color:         req.Color,
-				TransformMode: req.TransformMode,
-				Inter:         !prediction.Intra,
-				SkipTransform: prefix.SkipTransform,
-				Lossless:      req.Lossless,
-			},
-			LumaType:        req.LumaTransformType,
-			ChromaType:      req.ChromaTransformType,
-			TransformSelect: req.TransformSelect,
-			EOBMultiContext: req.EOBMultiContext,
-		}, func(block BlockCoeffBlock) error {
+		}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
+			if hasCoeffController {
+				return coeffController.VisitBlockCoeff(visit, block)
+			}
 			return coeffVisit(visit, block)
 		})
 		if err != nil {
@@ -625,7 +660,7 @@ func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeCon
 	return result, nil
 }
 
-func validateBlockLoopRequest(req BlockLoopRequest) error {
+func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) error {
 	if !req.Walk.Root.Valid() || req.SBSizeMIB == 0 ||
 		req.Walk.MIColEnd <= req.Walk.MIColStart ||
 		req.Walk.MIRowEnd <= req.Walk.MIRowStart {
@@ -640,7 +675,7 @@ func validateBlockLoopRequest(req BlockLoopRequest) error {
 	if (req.DecodeInterIntra || req.DecodeMotionModes || req.DecodeCompoundBlend) && !req.DecodeMotionVectors {
 		return ErrInvalidDecodeState
 	}
-	if req.DecodeCoefficients && !req.DecodePredictionModes {
+	if req.DecodeCoefficients && !req.DecodePredictionModes && !hasCoeffController && req.CoeffRequest == nil {
 		return ErrInvalidDecodeState
 	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
@@ -673,6 +708,37 @@ func fillBlockSegmentID(req BlockLoopRequest, block BlockVisit, segmentID uint8)
 
 func defaultSegmentData() parser.SegmentData {
 	return parser.SegmentData{RefFrame: -1}
+}
+
+func blockLoopCoeffRequest[T BlockLoopCoeffController](req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopVisit) (BlockCoeffRequest, error) {
+	if hasCoeffController {
+		return coeffController.SelectBlockCoeffRequest(visit)
+	}
+	if req.CoeffRequest != nil {
+		return req.CoeffRequest(visit)
+	}
+	if !visit.Prediction.Valid {
+		return BlockCoeffRequest{}, ErrInvalidDecodeState
+	}
+	block := visit.Block
+	return BlockCoeffRequest{
+		Transform: TransformTreeRequest{
+			Size:          block.Size,
+			X4:            block.X4,
+			Y4:            block.Y4,
+			VisibleW4:     block.VisibleW4,
+			VisibleH4:     block.VisibleH4,
+			Color:         req.Color,
+			TransformMode: req.TransformMode,
+			Inter:         !visit.Prediction.Intra,
+			SkipTransform: visit.Prefix.SkipTransform,
+			Lossless:      req.Lossless,
+		},
+		LumaType:        req.LumaTransformType,
+		ChromaType:      req.ChromaTransformType,
+		TransformSelect: req.TransformSelect,
+		EOBMultiContext: req.EOBMultiContext,
+	}, nil
 }
 
 func discardBlockLoopCoeff(BlockLoopVisit, BlockCoeffBlock) error {

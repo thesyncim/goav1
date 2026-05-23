@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xe6}Y\t\xf6\xf6\xf6\x00\xe6x\xc3\f0")
+byte('ù')

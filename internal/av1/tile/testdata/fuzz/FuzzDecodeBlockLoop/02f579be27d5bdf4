@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdbB00")
+byte('ú')
+byte('ó')
+byte('\x01')
+bool(true)

@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdb0")
+byte('ñ')
+byte('¿')
+byte('%')
+bool(true)

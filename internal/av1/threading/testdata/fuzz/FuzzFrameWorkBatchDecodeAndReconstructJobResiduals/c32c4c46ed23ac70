@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xc82\xb4\xb4\xa5C\xf3\xd2\xf7\x90\xee{{81")
+byte('1')

@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\x8e\x92\x92\xae\x92\xb4\x92q")
+byte('þ')

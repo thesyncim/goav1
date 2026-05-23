@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xffy@\xb6\xceߏc\xbe\x9dșaB1")
+byte('ÿ')

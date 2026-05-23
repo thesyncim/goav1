@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xda\x00\xff\xfd\x01")
+byte('\u009b')

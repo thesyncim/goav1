@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xc6\x1c\xc6/\x00@31<\xb1\x8fd\x01")
+byte('þ')

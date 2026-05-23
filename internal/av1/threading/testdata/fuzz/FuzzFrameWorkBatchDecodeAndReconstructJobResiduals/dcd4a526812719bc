@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd8\xd8؟\x9f\x9f")
+byte('\x12')

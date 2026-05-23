@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xde")
+byte('Å')
+byte('\a')
+byte('t')
+bool(false)

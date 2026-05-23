@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xffy*\xb6\xceߏE\xbe\x9da\x99\xc8B1")
+byte('ÿ')

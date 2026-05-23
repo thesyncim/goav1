@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xe1\fZA\xe1%\xe0@6\x80")
+byte('\x04')

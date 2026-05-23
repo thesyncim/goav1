@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd8|#7%x\x8c\x81\xaa\x11\x7fd")
+byte('9')

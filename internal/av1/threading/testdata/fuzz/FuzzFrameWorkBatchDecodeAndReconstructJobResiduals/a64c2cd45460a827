@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd2GS!!I\xb6\xd5")
+byte('g')

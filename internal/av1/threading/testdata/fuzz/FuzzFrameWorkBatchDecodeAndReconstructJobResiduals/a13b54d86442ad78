@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\x8eY___B_X2")
+byte('ü')

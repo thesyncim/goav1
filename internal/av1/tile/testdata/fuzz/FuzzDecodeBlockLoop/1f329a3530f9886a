@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdd1")
+byte('º')
+byte('/')
+byte('\x0e')
+bool(false)

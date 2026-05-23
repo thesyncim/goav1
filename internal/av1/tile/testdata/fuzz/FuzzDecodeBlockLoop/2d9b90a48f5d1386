@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdbb8")
+byte('Ã')
+byte('ü')
+byte('m')
+bool(true)

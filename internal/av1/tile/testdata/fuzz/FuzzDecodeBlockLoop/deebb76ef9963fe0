@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xdd\x14")
+byte('õ')
+byte('\u0081')
+byte('7')
+bool(false)

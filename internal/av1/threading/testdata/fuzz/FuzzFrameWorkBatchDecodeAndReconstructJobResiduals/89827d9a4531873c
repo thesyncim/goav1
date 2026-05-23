@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xdd,,\xff\xff\x7f\xffK")
+byte('Ñ')

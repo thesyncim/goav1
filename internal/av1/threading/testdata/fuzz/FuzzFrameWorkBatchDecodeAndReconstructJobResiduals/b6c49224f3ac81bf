@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd4\xd4\xd4\xd4\xd4\x7f\xff")
+byte('\x11')

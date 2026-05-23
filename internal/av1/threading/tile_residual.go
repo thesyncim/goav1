@@ -21,6 +21,9 @@ type FrameWorkTileResidualScratch struct {
 	Coeff        tile.BlockCoeffScratch
 	CoeffContext tile.CoeffEntropyContext
 	InterTX      tile.InterCoeffTransformSelector
+
+	controller frameWorkTileResidualLoopController
+	stats      FrameWorkTileResidualStats
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -112,79 +115,128 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	if state == nil || scratch == nil || req.Transforms == nil {
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
 	}
-	var stats FrameWorkTileResidualStats
-	loopStats, err := state.DecodeBlockLoop(cdfs.Loop, &scratch.Loop, req.Loop, func(visit tile.BlockLoopVisit) error {
-		if req.Predict != nil {
-			if err := req.Predict(visit); err != nil {
-				return err
-			}
-			stats.Predictions++
-		}
+	scratch.stats = FrameWorkTileResidualStats{}
 
-		transforms, err := req.Transforms(visit)
-		if err != nil {
-			return err
-		}
-		qIndex := state.CurrentBaseQIdx
-		_, lossless, err := b.BlockQIndex(qIndex, visit.SegmentID)
-		if err != nil {
-			return err
-		}
-		transformSelect := transforms.TransformSelect
-		if transforms.ReadInterTX {
-			scratch.InterTX.Reset(state, cdfs.TransformType, b.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless)
-			transformSelect = &scratch.InterTX
-		}
-		coeffReq := tile.BlockCoeffRequest{
-			Transform: tile.TransformTreeRequest{
-				Size:          visit.Block.Size,
-				X4:            visit.Block.X4,
-				Y4:            visit.Block.Y4,
-				VisibleW4:     visit.Block.VisibleW4,
-				VisibleH4:     visit.Block.VisibleH4,
-				Color:         b.Sequence.ColorConfig,
-				TransformMode: req.TransformMode,
-				Inter:         transforms.Inter,
-				SkipTransform: visit.Prefix.SkipTransform,
-				Lossless:      lossless,
-			},
-			LumaType:        transforms.Luma,
-			ChromaType:      transforms.Chroma,
-			TransformSelect: transformSelect,
-			EOBMultiContext: transforms.EOBMultiContext,
-		}
+	loopCDFs := cdfs.Loop
+	if loopCDFs.Transform == nil {
+		loopCDFs.Transform = cdfs.Coeff.Transform
+	}
+	if loopCDFs.Coeff == nil {
+		loopCDFs.Coeff = cdfs.Coeff.Coeff
+	}
+	loopReq := req.Loop
+	loopReq.DecodeCoefficients = true
+	scratch.controller = frameWorkTileResidualLoopController{
+		batch:                  b,
+		index:                  index,
+		state:                  state,
+		cdfs:                   cdfs,
+		scratch:                scratch,
+		req:                    req,
+		stats:                  &scratch.stats,
+		userBeforeCoefficients: loopReq.BeforeCoefficients,
+		userCoeffVisitor:       loopReq.CoeffVisitor,
+	}
 
-		if visit.Prefix.SkipTransform {
-			stats.SkippedBlocks++
-		} else {
-			stats.CoefficientBlocks++
+	loopStats, err := tile.DecodeBlockLoopWithCoeffController(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit tile.BlockLoopVisit) error {
+		if !visit.CoefficientsValid {
+			return ErrInvalidBatch
 		}
-		result, err := state.DecodeBlockCoefficients(cdfs.Coeff, &scratch.Loop.Mode, &scratch.CoeffContext, &scratch.Coeff, coeffReq, func(block tile.BlockCoeffBlock) error {
-			if err := b.ReconstructBlockCoeff(index, FrameWorkBlockCoeffReconstruction{
-				Visit:           visit.Block,
-				Block:           block,
-				Transform:       block.Transform,
-				CurrentQIndex:   qIndex,
-				SegmentID:       visit.SegmentID,
-				Int32Scratch:    req.Int32Scratch,
-				ResidualScratch: req.ResidualScratch,
-			}); err != nil {
-				return err
-			}
-			stats.Residuals++
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		frameWorkAccumulateResidualStats(&stats, result.TotalStats())
+		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
 		return nil
 	})
-	stats.Loop = loopStats
+	scratch.stats.Loop = loopStats
 	if err != nil {
-		return stats, err
+		return scratch.stats, err
 	}
-	return stats, nil
+	return scratch.stats, nil
+}
+
+type frameWorkTileResidualLoopController struct {
+	batch   FrameWorkBatch
+	index   int
+	state   *tile.DecodeState
+	cdfs    FrameWorkTileResidualCDFs
+	scratch *FrameWorkTileResidualScratch
+	req     FrameWorkTileResidualRequest
+	stats   *FrameWorkTileResidualStats
+
+	userBeforeCoefficients tile.BlockLoopVisitor
+	userCoeffVisitor       tile.BlockLoopCoeffVisitor
+}
+
+func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {
+	if c.userBeforeCoefficients != nil {
+		if err := c.userBeforeCoefficients(visit); err != nil {
+			return err
+		}
+	}
+	if c.req.Predict != nil {
+		if err := c.req.Predict(visit); err != nil {
+			return err
+		}
+		c.stats.Predictions++
+	}
+	if visit.Prefix.SkipTransform {
+		c.stats.SkippedBlocks++
+	} else {
+		c.stats.CoefficientBlocks++
+	}
+	return nil
+}
+
+func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+	transforms, err := c.req.Transforms(visit)
+	if err != nil {
+		return tile.BlockCoeffRequest{}, err
+	}
+	qIndex := c.state.CurrentBaseQIdx
+	_, lossless, err := c.batch.BlockQIndex(qIndex, visit.SegmentID)
+	if err != nil {
+		return tile.BlockCoeffRequest{}, err
+	}
+	transformSelect := transforms.TransformSelect
+	if transforms.ReadInterTX {
+		c.scratch.InterTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless)
+		transformSelect = &c.scratch.InterTX
+	}
+	return tile.BlockCoeffRequest{
+		Transform: tile.TransformTreeRequest{
+			Size:          visit.Block.Size,
+			X4:            visit.Block.X4,
+			Y4:            visit.Block.Y4,
+			VisibleW4:     visit.Block.VisibleW4,
+			VisibleH4:     visit.Block.VisibleH4,
+			Color:         c.batch.Sequence.ColorConfig,
+			TransformMode: c.req.TransformMode,
+			Inter:         transforms.Inter,
+			SkipTransform: visit.Prefix.SkipTransform,
+			Lossless:      lossless,
+		},
+		LumaType:        transforms.Luma,
+		ChromaType:      transforms.Chroma,
+		TransformSelect: transformSelect,
+		EOBMultiContext: transforms.EOBMultiContext,
+	}, nil
+}
+
+func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
+	if err := c.batch.ReconstructBlockCoeff(c.index, FrameWorkBlockCoeffReconstruction{
+		Visit:           visit.Block,
+		Block:           block,
+		Transform:       block.Transform,
+		CurrentQIndex:   c.state.CurrentBaseQIdx,
+		SegmentID:       visit.SegmentID,
+		Int32Scratch:    c.req.Int32Scratch,
+		ResidualScratch: c.req.ResidualScratch,
+	}); err != nil {
+		return err
+	}
+	c.stats.Residuals++
+	if c.userCoeffVisitor != nil {
+		return c.userCoeffVisitor(visit, block)
+	}
+	return nil
 }
 
 func (b FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {

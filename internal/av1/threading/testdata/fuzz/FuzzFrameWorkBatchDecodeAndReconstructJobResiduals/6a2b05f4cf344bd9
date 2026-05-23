@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xe2/\x01")
+byte('µ')

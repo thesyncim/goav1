@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd9U\x11\xa7\v5\xe81")
+byte('%')

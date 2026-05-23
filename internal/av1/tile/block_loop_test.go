@@ -308,6 +308,83 @@ func TestDecodeBlockLoopCoefficientVisitorError(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockLoopCoefficientSelectorDoesNotRequirePredictionModes(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 64), Job{Offset: 0, Size: 64}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
+
+	beforeCoefficients := false
+	coeffVisits := 0
+	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+		Transform: &transformCDFs,
+		Coeff:     &coeffCDFs,
+		Delta:     deltaCDFs,
+	}, &BlockLoopScratch{}, BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel16x16,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   4,
+			MIRowEnd:   4,
+		},
+		SBSizeMIB:          4,
+		DecodeCoefficients: true,
+		BeforeCoefficients: func(visit BlockLoopVisit) error {
+			if visit.Prediction.Valid {
+				t.Fatalf("prediction unexpectedly decoded: %+v", visit.Prediction)
+			}
+			beforeCoefficients = true
+			return nil
+		},
+		CoeffRequest: func(visit BlockLoopVisit) (BlockCoeffRequest, error) {
+			if !beforeCoefficients {
+				t.Fatal("coefficient selector ran before before-coefficients hook")
+			}
+			return BlockCoeffRequest{
+				Transform: TransformTreeRequest{
+					Size:          visit.Block.Size,
+					X4:            visit.Block.X4,
+					Y4:            visit.Block.Y4,
+					VisibleW4:     visit.Block.VisibleW4,
+					VisibleH4:     visit.Block.VisibleH4,
+					Color:         parser.ColorConfig{MonoChrome: true},
+					TransformMode: parser.TransformModeLargest,
+					Inter:         true,
+					SkipTransform: visit.Prefix.SkipTransform,
+				},
+				LumaType: transform.TypeDCTDCT,
+			}, nil
+		},
+		CoeffVisitor: func(parent BlockLoopVisit, block BlockCoeffBlock) error {
+			coeffVisits++
+			if !beforeCoefficients || parent.Prediction.Valid {
+				t.Fatalf("parent before=%v prediction=%+v", beforeCoefficients, parent.Prediction)
+			}
+			assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
+			return nil
+		},
+	}, func(visit BlockLoopVisit) error {
+		if !visit.CoefficientsValid || visit.Prediction.Valid {
+			t.Fatalf("visit=%+v", visit)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !beforeCoefficients || coeffVisits != 1 {
+		t.Fatalf("before=%v coeffVisits=%d", beforeCoefficients, coeffVisits)
+	}
+	if stats.PredictionModes != 0 || stats.CoefficientBlocks != 1 || stats.CoefficientTXBs != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
 func TestDecodeBlockLoopReadsInterReferences(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {

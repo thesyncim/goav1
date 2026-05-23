@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xe58/V/\x1f\x04\xdb2\xea2")
+byte('J')

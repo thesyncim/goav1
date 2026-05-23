@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xcac\xbb22\xff\xff\xee")
+byte('7')

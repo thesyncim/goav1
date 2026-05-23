@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xb9yY9F2\x01cX\x8b0$y\xd4Y7Mm\xc6B221801a190310027")
+byte('È')

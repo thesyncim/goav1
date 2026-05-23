@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xda\x1aic")
+byte('Y')

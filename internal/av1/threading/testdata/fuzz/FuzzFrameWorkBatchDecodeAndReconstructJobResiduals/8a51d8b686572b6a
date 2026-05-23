@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\x92?w\xac\xe4\xb4")
+byte('ÿ')

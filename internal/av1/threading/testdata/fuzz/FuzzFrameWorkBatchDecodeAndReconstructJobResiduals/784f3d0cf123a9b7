@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd9\x170웥8\x99\xce")
+byte('ä')

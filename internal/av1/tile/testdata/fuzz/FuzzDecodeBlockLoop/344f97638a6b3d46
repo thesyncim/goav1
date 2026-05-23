@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xda2h\"")
+byte('ø')
+byte('o')
+byte('\x1f')
+bool(true)

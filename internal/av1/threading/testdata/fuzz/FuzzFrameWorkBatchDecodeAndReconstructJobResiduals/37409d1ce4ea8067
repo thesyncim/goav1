@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xa2io\xa2")
+byte('ý')

@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\xd1Y\xd3")
+byte('b')

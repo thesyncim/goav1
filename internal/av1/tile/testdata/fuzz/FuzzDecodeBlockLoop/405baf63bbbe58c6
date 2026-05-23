@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\"")
+byte('û')
+byte('\n')
+byte('=')
+bool(true)
