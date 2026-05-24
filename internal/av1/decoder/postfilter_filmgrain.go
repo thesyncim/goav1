@@ -45,6 +45,7 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ARCoeffs      [3]int
 
 	LumaGrain   int
+	ChromaGrain [2]int
 	LumaSamples int
 	LumaLine    int
 	LumaColumn  int
@@ -78,6 +79,19 @@ type FrameWorkFilmGrainPostFilterScalingLUTs struct {
 type FrameWorkFilmGrainPostFilterLumaGrain struct {
 	Active bool
 
+	Grain []int16
+
+	Width  int
+	Height int
+	Stride int
+}
+
+// FrameWorkFilmGrainPostFilterChromaGrain is one generated chroma grain
+// template stored in caller-owned scratch.
+type FrameWorkFilmGrainPostFilterChromaGrain struct {
+	Active bool
+
+	Plane int
 	Grain []int16
 
 	Width  int
@@ -184,6 +198,11 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 		size.LumaLine = filmgrain.LumaOverlapSamples * plan.Planes[0].Stride
 		size.LumaColumn = filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples
 	}
+	for plane := 1; plane <= 2; plane++ {
+		if plan.Planes[plane].Active {
+			size.ChromaGrain[plane-1] = filmgrain.ChromaGrainSamples
+		}
+	}
 	return size, nil
 }
 
@@ -244,6 +263,42 @@ func (ctx FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (F
 		Width:  filmgrain.LumaGrainWidth,
 		Height: filmgrain.LumaGrainHeight,
 		Stride: filmgrain.LumaGrainWidth,
+	}, nil
+}
+
+// GenerateFilmGrainChromaGrain fills caller-owned scratch with one chroma grain
+// template for the current frame. plane must be filmgrain.ChromaPlaneCb or
+// filmgrain.ChromaPlaneCr.
+func (ctx FrameWorkPostFilterContext) GenerateFilmGrainChromaGrain(dst []int16, luma []int16, plane int) (FrameWorkFilmGrainPostFilterChromaGrain, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, err
+	}
+	if !plan.Active {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, nil
+	}
+	if plane != filmgrain.ChromaPlaneCb && plane != filmgrain.ChromaPlaneCr {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrInvalidFormat
+	}
+	if !plan.Planes[plane].Active {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, nil
+	}
+	if len(dst) < filmgrain.ChromaGrainSamples ||
+		(plan.Params.NumYPoints != 0 && len(luma) < filmgrain.LumaGrainSamples) {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrShortBuffer
+	}
+	params := frameWorkFilmGrainChromaGrainParams(plan, plane)
+	if err := filmgrain.GenerateChromaGrain(dst, luma, params); err != nil {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrInvalidFormat
+	}
+	width, height := frameWorkFilmGrainChromaGrainDimensions(plan.Format)
+	return FrameWorkFilmGrainPostFilterChromaGrain{
+		Active: true,
+		Plane:  plane,
+		Grain:  dst[:filmgrain.ChromaGrainSamples],
+		Width:  width,
+		Height: height,
+		Stride: filmgrain.ChromaGrainWidth,
 	}, nil
 }
 
@@ -420,6 +475,39 @@ func frameWorkFilmGrainLumaRowParams(plan FrameWorkFilmGrainPostFilterPlan, row 
 		Overlap:               plan.Overlap,
 		ClipToRestrictedRange: plan.ClipToRestrictedRange,
 	}
+}
+
+func frameWorkFilmGrainChromaGrainParams(plan FrameWorkFilmGrainPostFilterPlan, plane int) filmgrain.ChromaGrainParams {
+	params := plan.Params
+	out := filmgrain.ChromaGrainParams{
+		Seed:            params.Seed,
+		Plane:           plane,
+		BitDepth:        plan.BitDepth,
+		NumYPoints:      params.NumYPoints,
+		GrainScaleShift: params.GrainScaleShift,
+		SubsamplingX:    plan.Format.SubsamplingX,
+		SubsamplingY:    plan.Format.SubsamplingY,
+		ARCoeffLag:      params.ARCoeffLag,
+		ARCoeffShift:    params.ARCoeffShift,
+	}
+	if plane == filmgrain.ChromaPlaneCb {
+		copy(out.ARCoeffs[:], params.ARCoeffsCb[:])
+	} else {
+		copy(out.ARCoeffs[:], params.ARCoeffsCr[:])
+	}
+	return out
+}
+
+func frameWorkFilmGrainChromaGrainDimensions(format frame.Format) (int, int) {
+	width := filmgrain.ChromaGrainWidth
+	if format.SubsamplingX {
+		width = filmgrain.ChromaSubsampledGrainWidth
+	}
+	height := filmgrain.ChromaGrainHeight
+	if format.SubsamplingY {
+		height = filmgrain.ChromaSubsampledGrainHeight
+	}
+	return width, height
 }
 
 func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {

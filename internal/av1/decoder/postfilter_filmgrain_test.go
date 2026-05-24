@@ -109,6 +109,9 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsChromaScalingFr
 	if size.ScalingPoints != [3]int{1, 0, 0} || size.ARCoeffs != [3]int{4, 5, 5} {
 		t.Fatalf("scratch=%+v", size)
 	}
+	if size.ChromaGrain != [2]int{filmgrain.ChromaGrainSamples, filmgrain.ChromaGrainSamples} {
+		t.Fatalf("chroma grain scratch=%+v", size.ChromaGrain)
+	}
 }
 
 func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsSampleStride(t *testing.T) {
