@@ -586,6 +586,42 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *te
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errTransform) {
 		t.Fatalf("transform err=%v want %v", err, errTransform)
 	}
+
+	ctx, state, cdfs, scratch, req = testFrameWorkResidualDriver(t)
+	errAfterBlock := errors.New("after block")
+	req.AfterBlock = func(tile.BlockLoopVisit) error { return errAfterBlock }
+	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errAfterBlock) {
+		t.Fatalf("after block err=%v want %v", err, errAfterBlock)
+	}
+}
+
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsAfterBlock(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	var order []string
+	req.Loop.CoeffVisitor = func(parent tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
+		order = append(order, "coeff")
+		if parent.Block.MICol != 0 || parent.Block.MIRow != 0 || block.Plane != 0 {
+			t.Fatalf("parent=%+v block=%+v", parent.Block, block)
+		}
+		return nil
+	}
+	req.AfterBlock = func(visit tile.BlockLoopVisit) error {
+		order = append(order, "after")
+		if !visit.CoefficientsValid || visit.Coefficients.TotalStats().TXBs == 0 {
+			t.Fatalf("after block visit missing coefficients: %+v", visit)
+		}
+		return nil
+	}
+	stats, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.TXBs == 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if len(order) != 2 || order[0] != "coeff" || order[1] != "after" {
+		t.Fatalf("order=%v want [coeff after]", order)
+	}
 }
 
 func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {

@@ -214,6 +214,7 @@ type FrameWorkTileResidualRequest struct {
 	PredictionScratch *FrameWorkPredictionScratch
 	CDEFIndexMap      *FrameWorkCDEFIndexMap
 	Transforms        FrameWorkBlockTransformSelector
+	AfterBlock        tile.BlockLoopVisitor
 
 	Int32Scratch    []int32
 	ResidualScratch []int16
@@ -413,6 +414,9 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 			return ErrInvalidBatch
 		}
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
+		if req.AfterBlock != nil {
+			return req.AfterBlock(visit)
+		}
 		return nil
 	})
 	scratch.stats.Loop = loopStats
