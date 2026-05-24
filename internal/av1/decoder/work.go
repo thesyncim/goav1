@@ -69,21 +69,6 @@ type FrameWorkPostFilterContext struct {
 	ExecutedTileWork bool
 }
 
-// RequireNoActivePostFilters is a capability gate for callers that consume the
-// current reconstructed frame directly. It accepts frames whose postfilter plan
-// is a no-op and rejects frames that need loop filter, CDEF, superres, loop
-// restoration, or film grain before MD5/reference use.
-func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
-	if frameWorkLoopFilterActive(ctx.Event.LoopFilter) ||
-		frameWorkCDEFActive(ctx.Event.CDEF) ||
-		ctx.Event.FrameSize.SuperResEnabled ||
-		frameWorkRestorationActive(ctx.Event.Restoration) ||
-		ctx.Event.FilmGrain.Apply {
-		return ErrUnsupportedPostFilter
-	}
-	return nil
-}
-
 // FrameWorkPostFilterFunc applies final frame postfilters before reference
 // publication. Returning an error keeps frame work active and unpublished.
 type FrameWorkPostFilterFunc func(FrameWorkPostFilterContext) error
