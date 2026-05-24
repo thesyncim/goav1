@@ -96,7 +96,11 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
 	}
-	if err := frameWorkValidateCDEFIndexMap(req.IndexMap, cols, rows); err != nil {
+	indexMap := req.IndexMap
+	if frameWorkCDEFIndexMapEmpty(indexMap) && ctx.CDEFIndexMap != nil {
+		indexMap = *ctx.CDEFIndexMap
+	}
+	if err := frameWorkValidateCDEFIndexMap(indexMap, cols, rows); err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
 	}
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
@@ -134,7 +138,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
 		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, req.IndexMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -146,6 +150,11 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		result.Planes++
 	}
 	return result, nil
+}
+
+func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
+	return indexMap.Stride == 0 && indexMap.Rows == 0 &&
+		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
 func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, cols int, rows int, src frame.SamplePlane, dst frame.SamplePlane, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {

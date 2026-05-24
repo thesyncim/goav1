@@ -100,6 +100,47 @@ func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersLuma(t *testing.T) 
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyCDEFPostFilterDefaultsIndexMapFromContext(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkCDEFPlane(output.Y)
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	cdefMap := req.IndexMap
+	ctx.CDEFIndexMap = &cdefMap
+	req.IndexMap = FrameWorkCDEFIndexMap{}
+	result, err := ctx.ApplyCDEFPostFilter(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Planes != 1 || result.Units != 1 || result.Blocks == 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("CDEF did not change luma samples")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersChromaWithLumaDirectionPass(t *testing.T) {
 	const width = 128
 	const height = 64
