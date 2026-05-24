@@ -130,6 +130,7 @@ type FrameWorkTileResidualScratch struct {
 	LoopContext  tile.BlockLoopContextCarrier
 	Coeff        tile.BlockCoeffScratch
 	CoeffContext tile.CoeffEntropyContext
+	IntraTX      tile.IntraCoeffTransformSelector
 	InterTX      tile.InterCoeffTransformSelector
 
 	controller frameWorkTileResidualLoopController
@@ -144,6 +145,7 @@ type FrameWorkBlockTransforms struct {
 	Luma            transform.Type
 	Chroma          [2]transform.Type
 	TransformSelect tile.CoeffTransformSelector
+	ReadIntraTX     bool
 	ReadInterTX     bool
 	EOBMultiContext [3]int
 }
@@ -342,7 +344,17 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 		return tile.BlockCoeffRequest{}, err
 	}
 	transformSelect := transforms.TransformSelect
-	if transforms.ReadInterTX {
+	if transforms.ReadIntraTX {
+		if !visit.Prediction.Valid || !visit.Prediction.Intra {
+			return tile.BlockCoeffRequest{}, ErrInvalidBatch
+		}
+		chromaMode := visit.Prediction.ChromaMode
+		if !chromaMode.Valid() {
+			chromaMode = tile.ChromaIntraModeDC
+		}
+		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, visit.Prediction.LumaMode, chromaMode)
+		transformSelect = &c.scratch.IntraTX
+	} else if transforms.ReadInterTX {
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
@@ -383,6 +395,21 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 		return c.userCoeffVisitor(visit, block)
 	}
 	return nil
+}
+
+func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if state == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
+		return FrameWorkBlockTransforms{}, ErrInvalidBatch
+	}
+	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {
+		return FrameWorkBlockTransforms{}, err
+	}
+	return FrameWorkBlockTransforms{
+		Inter:       false,
+		Luma:        transform.TypeDCTDCT,
+		Chroma:      [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
+		ReadIntraTX: true,
+	}, nil
 }
 
 func (b FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {

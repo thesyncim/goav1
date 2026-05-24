@@ -343,6 +343,113 @@ func TestTransformTypeCDFsInitDefaultMatchesLibaom(t *testing.T) {
 		t.Fatalf("inter set 3 symbols=%d want 2", got)
 	}
 	assertEntropyCDFValues(t, cdfs.Inter[3][3].Values(), []uint16{32020, 0, 0})
+
+	if got := cdfs.Intra[1][0][IntraModeDC].Symbols(); got != 7 {
+		t.Fatalf("intra set 1 symbols=%d want 7", got)
+	}
+	assertEntropyCDFValues(t, cdfs.Intra[1][0][IntraModeDC].Values(), []uint16{
+		31233, 24733, 23307, 20017, 9301, 4943, 0, 0,
+	})
+
+	if got := cdfs.Intra[1][1][IntraModeVertical].Symbols(); got != 7 {
+		t.Fatalf("intra set 1 size1 symbols=%d want 7", got)
+	}
+	assertEntropyCDFValues(t, cdfs.Intra[1][1][IntraModeVertical].Values(), []uint16{
+		32442, 23972, 18136, 17689, 13496, 5282, 0, 0,
+	})
+
+	if got := cdfs.Intra[2][2][IntraModeDC].Symbols(); got != 5 {
+		t.Fatalf("intra set 2 symbols=%d want 5", got)
+	}
+	assertEntropyCDFValues(t, cdfs.Intra[2][2][IntraModeDC].Values(), []uint16{31641, 19954, 9996, 5285, 0, 0})
+
+	if got := cdfs.Intra[2][0][IntraModePaeth].Symbols(); got != 5 {
+		t.Fatalf("intra set 2 uniform symbols=%d want 5", got)
+	}
+	assertEntropyCDFValues(t, cdfs.Intra[2][0][IntraModePaeth].Values(), []uint16{26214, 19661, 13107, 6554, 0, 0})
+}
+
+func TestReadIntraTransformTypeMatchesLibaomBranches(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := state.ReadIntraTransformType(nil, IntraTransformTypeRequest{Size: TransformSize16x16, Mode: IntraModeDC, SkipTransform: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("skip tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = state.ReadIntraTransformType(nil, IntraTransformTypeRequest{Size: TransformSize16x16, Mode: IntraModeDC, Lossless: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("lossless tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = state.ReadIntraTransformType(nil, IntraTransformTypeRequest{Size: TransformSize16x16, Mode: IntraModeDC, QIndexKnown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("qindex-zero tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = state.ReadIntraTransformType(nil, IntraTransformTypeRequest{Size: TransformSize32x32, Mode: IntraModeDC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("dct-only tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+}
+
+func TestReadIntraTransformTypeUsesLibaomCDF(t *testing.T) {
+	var cdfs TransformTypeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := state.ReadIntraTransformType(&cdfs, IntraTransformTypeRequest{Size: TransformSize8x8, Mode: IntraModeDC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("zero payload intra tx type=%d want %d", got, transform.TypeIDTX)
+	}
+	if got := cdfs.Intra[1][1][IntraModeDC].Values()[7]; got != 1 {
+		t.Fatalf("intra ext tx cdf count=%d want 1", got)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = state.ReadIntraTransformType(&cdfs, IntraTransformTypeRequest{Size: TransformSize16x16, Mode: IntraModeD135})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("zero payload intra set2 tx type=%d want %d", got, transform.TypeIDTX)
+	}
+	if got := cdfs.Intra[2][2][IntraModeD135].Values()[5]; got != 1 {
+		t.Fatalf("intra set2 cdf count=%d want 1", got)
+	}
 }
 
 func TestReadInterTransformTypeMatchesLibaomBranches(t *testing.T) {
@@ -462,6 +569,100 @@ func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.
 	}
 }
 
+func TestIntraCoeffTransformSelectorReadsLumaAndDerivesChroma(t *testing.T) {
+	var cdfs TransformTypeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector IntraCoeffTransformSelector
+	selector.Reset(&state, &cdfs, false, false, false, 64, IntraModeDC, ChromaIntraModeVertical)
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{Size: TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("intra luma tx type=%d want %d", got, transform.TypeIDTX)
+	}
+
+	got, err = selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{Size: TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeADSTDCT {
+		t.Fatalf("intra chroma tx type=%d want %d", got, transform.TypeADSTDCT)
+	}
+}
+
+func TestIntraCoeffTransformSelectorQIndexZeroDoesNotRead(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector IntraCoeffTransformSelector
+	selector.Reset(&state, nil, false, false, false, 0, IntraModeD45, ChromaIntraModeD135)
+	before := state.Reader.BitsRead()
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{Size: TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("qindex-zero luma tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+	got, err = selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{Size: TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("qindex-zero chroma tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+	if after := state.Reader.BitsRead(); after != before {
+		t.Fatalf("qindex-zero tx type read bits=%d want %d", after, before)
+	}
+}
+
+func TestIntraChromaTransformTypeMatchesDav1dUVMap(t *testing.T) {
+	tests := []struct {
+		mode ChromaIntraMode
+		size TransformSize
+		want transform.Type
+	}{
+		{ChromaIntraModeDC, TransformSize8x8, transform.TypeDCTDCT},
+		{ChromaIntraModeVertical, TransformSize8x8, transform.TypeADSTDCT},
+		{ChromaIntraModeHorizontal, TransformSize8x8, transform.TypeDCTADST},
+		{ChromaIntraModeD135, TransformSize8x8, transform.TypeADSTADST},
+		{ChromaIntraModeCFL, TransformSize8x8, transform.TypeDCTDCT},
+		{ChromaIntraModeVertical, TransformSize32x32, transform.TypeDCTDCT},
+	}
+	for _, tt := range tests {
+		got, err := IntraChromaTransformType(tt.mode, tt.size, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tt.want {
+			t.Fatalf("mode=%d size=%d tx type=%d want %d", tt.mode, tt.size, got, tt.want)
+		}
+	}
+	if _, err := IntraChromaTransformType(chromaIntraModeCount, TransformSize8x8, false); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("bad chroma tx type err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	if _, err := TransformSizeSquare(transformSizeCount); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad square err=%v want %v", err, ErrInvalidDecodeState)
@@ -486,6 +687,9 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	}
 
 	var cdfs TransformTypeCDFs
+	if _, err := cdfs.IntraCDF(0, TransformSize4x4, IntraModeDC, 1); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("bad intra cdf err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
 	if _, err := cdfs.InterCDF(0, TransformSize4x4, 1); !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("bad inter cdf err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
@@ -496,9 +700,15 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	if _, err := state.ReadInterTransformType(nil, InterTransformTypeRequest{Size: TransformSize32x32}); !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("nil cdfs err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
+	if _, err := state.ReadIntraTransformType(nil, IntraTransformTypeRequest{Size: TransformSize8x8, Mode: IntraModeDC}); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("nil intra cdfs err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
 	var nilState *DecodeState
 	if _, err := nilState.ReadInterTransformType(&cdfs, InterTransformTypeRequest{Size: TransformSize32x32}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil state err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, err := nilState.ReadIntraTransformType(&cdfs, IntraTransformTypeRequest{Size: TransformSize8x8, Mode: IntraModeDC}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("nil intra state err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 const (
 	ExtTXSetTypes  = 6
+	ExtTXSetsIntra = 3
 	ExtTXSetsInter = 4
 	ExtTXSizes     = 4
 )
@@ -24,7 +25,18 @@ const (
 )
 
 type TransformTypeCDFs struct {
+	Intra [ExtTXSetsIntra][ExtTXSizes][intraModeCount]entropy.CDF
 	Inter [ExtTXSetsInter][ExtTXSizes]entropy.CDF
+}
+
+type IntraTransformTypeRequest struct {
+	Size          TransformSize
+	Mode          IntraMode
+	ReducedTXSet  bool
+	SkipTransform bool
+	Lossless      bool
+	QIndexKnown   bool
+	QIndex        uint8
 }
 
 type InterTransformTypeRequest struct {
@@ -32,6 +44,22 @@ type InterTransformTypeRequest struct {
 	ReducedTXSet  bool
 	SkipTransform bool
 	Lossless      bool
+}
+
+// IntraCoeffTransformSelector reads luma intra tx_type syntax for each luma
+// TXB and derives chroma intra tx_type from the decoded UV mode.
+type IntraCoeffTransformSelector struct {
+	State *DecodeState
+	CDFs  *TransformTypeCDFs
+
+	ReducedTXSet  bool
+	SkipTransform bool
+	Lossless      bool
+	QIndexKnown   bool
+	QIndex        uint8
+
+	LumaMode   IntraMode
+	ChromaMode ChromaIntraMode
 }
 
 // InterCoeffTransformSelector reads inter tx_type syntax for each TXB. The
@@ -51,6 +79,41 @@ type InterCoeffTransformSelector struct {
 type InterTransformTypeMap struct {
 	Type  [MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
 	Valid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+}
+
+func (s *IntraCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, qIndex uint8, lumaMode IntraMode, chromaMode ChromaIntraMode) {
+	*s = IntraCoeffTransformSelector{
+		State:         state,
+		CDFs:          cdfs,
+		ReducedTXSet:  reducedTXSet,
+		SkipTransform: skipTransform,
+		Lossless:      lossless,
+		QIndexKnown:   true,
+		QIndex:        qIndex,
+		LumaMode:      lumaMode,
+		ChromaMode:    chromaMode,
+	}
+}
+
+func (s *IntraCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformRequest) (transform.Type, error) {
+	if s == nil || s.State == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if s.SkipTransform || s.Lossless || (s.QIndexKnown && s.QIndex == 0) {
+		return transform.TypeDCTDCT, nil
+	}
+	if req.Plane != 0 {
+		return IntraChromaTransformType(s.ChromaMode, req.Block.Size, s.ReducedTXSet)
+	}
+	return s.State.ReadIntraTransformType(s.CDFs, IntraTransformTypeRequest{
+		Size:          req.Block.Size,
+		Mode:          s.LumaMode,
+		ReducedTXSet:  s.ReducedTXSet,
+		SkipTransform: s.SkipTransform,
+		Lossless:      s.Lossless,
+		QIndexKnown:   s.QIndexKnown,
+		QIndex:        s.QIndex,
+	})
 }
 
 func (s *InterCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool) {
@@ -324,11 +387,54 @@ func ExtTXSymbolForType(set ExtTXSetType, typ transform.Type) (int, error) {
 	return int(extTXTypeInd[set][typ]), nil
 }
 
+// IntraChromaTransformType derives the chroma intra tx_type from AV1's UV mode
+// mapping and clamps it to DCT_DCT when the current tx set disallows the type.
+func IntraChromaTransformType(mode ChromaIntraMode, size TransformSize, reduced bool) (transform.Type, error) {
+	lumaMode, err := mode.LumaMode()
+	if err != nil {
+		return 0, err
+	}
+	typ, err := intraModeTransformType(lumaMode)
+	if err != nil {
+		return 0, err
+	}
+	set, err := ExtTXSetTypeFor(size, false, reduced)
+	if err != nil {
+		return 0, err
+	}
+	allowed, err := ExtTXTypeAllowed(set, typ)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed {
+		return transform.TypeDCTDCT, nil
+	}
+	return typ, nil
+}
+
 func (c *TransformTypeCDFs) InitDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}
 	var next TransformTypeCDFs
+	for tx := 0; tx < ExtTXSizes; tx++ {
+		for mode := 0; mode < int(intraModeCount); mode++ {
+			cdf7 := defaultIntraExtTX7Uniform
+			if tx < len(defaultIntraExtTX7Mode) {
+				cdf7 = defaultIntraExtTX7Mode[tx][mode]
+			}
+			if err := next.Intra[1][tx][mode].Init(cdf7[:]); err != nil {
+				return err
+			}
+			cdf5 := defaultIntraExtTX5Uniform
+			if tx == 2 {
+				cdf5 = defaultIntraExtTX5Size2[mode]
+			}
+			if err := next.Intra[2][tx][mode].Init(cdf5[:]); err != nil {
+				return err
+			}
+		}
+	}
 	for tx := 0; tx < ExtTXSizes; tx++ {
 		if err := next.Inter[1][tx].Init(defaultInterExtTX16[tx][:]); err != nil {
 			return err
@@ -344,6 +450,17 @@ func (c *TransformTypeCDFs) InitDefault() error {
 	return nil
 }
 
+func (c *TransformTypeCDFs) IntraCDF(index int, square TransformSize, mode IntraMode, symbols int) (*entropy.CDF, error) {
+	if c == nil || index <= 0 || index >= ExtTXSetsIntra || square < 0 || square >= ExtTXSizes || !mode.Valid() {
+		return nil, entropy.ErrInvalidCDF
+	}
+	cdf := &c.Intra[index][square][mode]
+	if cdf.Symbols() != symbols {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
 func (c *TransformTypeCDFs) InterCDF(index int, square TransformSize, symbols int) (*entropy.CDF, error) {
 	if c == nil || index <= 0 || index >= ExtTXSetsInter || square < 0 || square >= ExtTXSizes {
 		return nil, entropy.ErrInvalidCDF
@@ -353,6 +470,46 @@ func (c *TransformTypeCDFs) InterCDF(index int, square TransformSize, symbols in
 		return nil, entropy.ErrInvalidCDF
 	}
 	return cdf, cdf.Validate()
+}
+
+func (s *DecodeState) ReadIntraTransformType(cdfs *TransformTypeCDFs, req IntraTransformTypeRequest) (transform.Type, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	if !req.Size.Valid() || !req.Mode.Valid() {
+		return 0, ErrInvalidDecodeState
+	}
+	if req.SkipTransform || req.Lossless || (req.QIndexKnown && req.QIndex == 0) {
+		return transform.TypeDCTDCT, nil
+	}
+	set, err := ExtTXSetTypeFor(req.Size, false, req.ReducedTXSet)
+	if err != nil {
+		return 0, err
+	}
+	symbols, err := ExtTXTypeCount(set)
+	if err != nil {
+		return 0, err
+	}
+	if symbols <= 1 {
+		return transform.TypeDCTDCT, nil
+	}
+	index, err := ExtTXSetIndex(req.Size, false, req.ReducedTXSet)
+	if err != nil {
+		return 0, err
+	}
+	square, err := TransformSizeSquare(req.Size)
+	if err != nil {
+		return 0, err
+	}
+	cdf, err := cdfs.IntraCDF(index, square, req.Mode, symbols)
+	if err != nil {
+		return 0, err
+	}
+	symbol, err := s.ReadSymbol(cdf)
+	if err != nil {
+		return 0, err
+	}
+	return ExtTXTypeFromSymbol(set, symbol)
 }
 
 func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterTransformTypeRequest) (transform.Type, error) {
@@ -393,4 +550,19 @@ func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterT
 		return 0, err
 	}
 	return ExtTXTypeFromSymbol(set, symbol)
+}
+
+func intraModeTransformType(mode IntraMode) (transform.Type, error) {
+	switch mode {
+	case IntraModeDC, IntraModeD45:
+		return transform.TypeDCTDCT, nil
+	case IntraModeVertical, IntraModeD113, IntraModeD67, IntraModeSmoothVertical:
+		return transform.TypeADSTDCT, nil
+	case IntraModeHorizontal, IntraModeD157, IntraModeD203, IntraModeSmoothHorizontal:
+		return transform.TypeDCTADST, nil
+	case IntraModeD135, IntraModeSmooth, IntraModePaeth:
+		return transform.TypeADSTADST, nil
+	default:
+		return 0, ErrInvalidDecodeState
+	}
 }

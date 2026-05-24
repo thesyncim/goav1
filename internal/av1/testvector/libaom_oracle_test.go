@@ -227,11 +227,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 							if visit.Prediction.Valid && !visit.Prediction.Intra {
 								return ctx.ReadInterBlockTransforms(&decodeState, visit)
 							}
-							return threading.FrameWorkBlockTransforms{
-								Inter:  false,
-								Luma:   transform.TypeDCTDCT,
-								Chroma: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
-							}, nil
+							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
 						},
 						Int32Scratch:    int32Scratch,
 						ResidualScratch: residualScratch,

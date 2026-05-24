@@ -200,6 +200,137 @@ func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchReadIntraBlockTransforms(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			Quantization: parser.QuantizationParams{BaseQIdx: 64},
+		},
+	}
+	var cdfs tile.TransformTypeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state tile.DecodeState
+	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
+		t.Fatal(err)
+	}
+	visit := tile.BlockLoopVisit{
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:           true,
+			Intra:           true,
+			LumaMode:        tile.IntraModeDC,
+			ChromaMode:      tile.ChromaIntraModeVertical,
+			ChromaModeValid: true,
+		},
+	}
+	transforms, err := ctx.ReadIntraBlockTransforms(&state, visit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transforms.Inter || !transforms.ReadIntraTX || transforms.Luma != transform.TypeDCTDCT {
+		t.Fatalf("transforms=%+v", transforms)
+	}
+	var selector tile.IntraCoeffTransformSelector
+	selector.Reset(&state, &cdfs, ctx.FrameMode.ReducedTxSet, false, false, 64, tile.IntraModeDC, tile.ChromaIntraModeVertical)
+	got, err := selector.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Plane: 0,
+		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("intra luma tx type=%d want %d", got, transform.TypeIDTX)
+	}
+	got, err = selector.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Plane: 1,
+		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeADSTDCT {
+		t.Fatalf("intra chroma tx type=%d want %d", got, transform.TypeADSTDCT)
+	}
+
+	if _, err := ctx.ReadIntraBlockTransforms(nil, visit); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil state err=%v want %v", err, ErrInvalidBatch)
+	}
+	visit.Prediction.Intra = false
+	if _, err := ctx.ReadIntraBlockTransforms(&state, visit); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("inter visit err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkTileResidualControllerWiresIntraTransformSelector(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			Quantization: parser.QuantizationParams{BaseQIdx: 64},
+			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
+		},
+	}
+	var state tile.DecodeState
+	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := mustFrameWorkTileResidualCDFs(t, 64)
+	var scratch FrameWorkTileResidualScratch
+	controller := frameWorkTileResidualLoopController{
+		batch:   ctx,
+		state:   &state,
+		cdfs:    cdfs,
+		scratch: &scratch,
+		req: FrameWorkTileResidualRequest{
+			TransformMode: parser.TransformModeLargest,
+			Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+				return ctx.ReadIntraBlockTransforms(&state, visit)
+			},
+		},
+	}
+	visit := tile.BlockLoopVisit{
+		Block:     tile.BlockVisit{Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4},
+		Segment:   parser.SegmentData{RefFrame: -1},
+		SegmentID: 0,
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:           true,
+			Intra:           true,
+			LumaMode:        tile.IntraModeDC,
+			ChromaMode:      tile.ChromaIntraModeVertical,
+			ChromaModeValid: true,
+		},
+	}
+	req, err := controller.SelectBlockCoeffRequest(visit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := req.TransformSelect.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Plane: 0,
+		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeIDTX {
+		t.Fatalf("controller intra luma tx=%d want %d", got, transform.TypeIDTX)
+	}
+	got, err = req.TransformSelect.SelectCoeffTransform(tile.CoeffTransformRequest{
+		Plane: 1,
+		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeADSTDCT {
+		t.Fatalf("controller intra chroma tx=%d want %d", got, transform.TypeADSTDCT)
+	}
+}
+
 func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 	var storage FrameWorkTileResidualCDFStorage
 	if err := storage.InitDefault(64); err != nil {
