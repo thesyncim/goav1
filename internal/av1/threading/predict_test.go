@@ -207,6 +207,113 @@ func TestFrameWorkBatchPredictBlockLumaDirectionalModes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
+	tests := []struct {
+		name  string
+		mode  tile.IntraMode
+		seed  func(*frame.Frame)
+		visit func() tile.BlockLoopVisit
+		want  uint16
+	}{
+		{
+			name: "vertical-missing-top-uses-left",
+			mode: tile.IntraModeVertical,
+			seed: func(output *frame.Frame) {
+				for y := 0; y < 16; y++ {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 70)
+				}
+			},
+			visit: func() tile.BlockLoopVisit {
+				visit := testIntraPredictionVisit(tile.IntraModeVertical)
+				visit.Block.MIRow = 0
+				visit.Block.MIRowEnd = 4
+				visit.Block.Y4 = 0
+				visit.Block.HaveTop = false
+				return visit
+			},
+			want: 70,
+		},
+		{
+			name: "directional-missing-top-uses-left",
+			mode: tile.IntraModeD45,
+			seed: func(output *frame.Frame) {
+				for y := 0; y < 16; y++ {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 81)
+				}
+			},
+			visit: func() tile.BlockLoopVisit {
+				visit := testIntraPredictionVisit(tile.IntraModeD45)
+				visit.Block.MIRow = 0
+				visit.Block.MIRowEnd = 4
+				visit.Block.Y4 = 0
+				visit.Block.HaveTop = false
+				return visit
+			},
+			want: 81,
+		},
+		{
+			name: "horizontal-missing-left-uses-top",
+			mode: tile.IntraModeHorizontal,
+			seed: func(output *frame.Frame) {
+				for x := 0; x < 16; x++ {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 93)
+				}
+			},
+			visit: func() tile.BlockLoopVisit {
+				visit := testIntraPredictionVisit(tile.IntraModeHorizontal)
+				visit.Block.MICol = 0
+				visit.Block.MIColEnd = 4
+				visit.Block.X4 = 0
+				visit.Block.HaveLeft = false
+				return visit
+			},
+			want: 93,
+		},
+		{
+			name: "vertical-missing-both-uses-mid-minus-one",
+			mode: tile.IntraModeVertical,
+			seed: func(*frame.Frame) {},
+			visit: func() tile.BlockLoopVisit {
+				visit := testIntraPredictionVisit(tile.IntraModeVertical)
+				visit.Block.MICol = 0
+				visit.Block.MIColEnd = 4
+				visit.Block.MIRow = 0
+				visit.Block.MIRowEnd = 4
+				visit.Block.X4 = 0
+				visit.Block.Y4 = 0
+				visit.Block.HaveTop = false
+				visit.Block.HaveLeft = false
+				return visit
+			},
+			want: 127,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+			ctx := testIntraPredictionBatch(output)
+			tt.seed(output)
+			visit := tt.visit()
+
+			var scratch FrameWorkIntraPredictionScratch
+			if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
+				t.Fatal(err)
+			}
+			x, y, err := frameWorkBlockLumaPosition(visit.Block)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for row := 0; row < 16; row++ {
+				for col := 0; col < 16; col++ {
+					if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x+col, y+row); got != tt.want {
+						t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, got, tt.want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterFullpel(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	reference := testBatchFrame(t, output.Format)
@@ -1053,21 +1160,6 @@ func TestFrameWorkBatchPredictBlockLumaIntraRejectsInvalidInputs(t *testing.T) {
 		{name: "inter", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := valid
 			visit.Prediction.Intra = false
-			return visit
-		}(), scratch: &scratch},
-		{name: "directional missing top", ctx: ctx, visit: func() tile.BlockLoopVisit {
-			visit := testIntraPredictionVisit(tile.IntraModeD45)
-			visit.Block.HaveTop = false
-			return visit
-		}(), scratch: &scratch},
-		{name: "directional missing left", ctx: ctx, visit: func() tile.BlockLoopVisit {
-			visit := testIntraPredictionVisit(tile.IntraModeD203)
-			visit.Block.HaveLeft = false
-			return visit
-		}(), scratch: &scratch},
-		{name: "vertical missing top", ctx: ctx, visit: func() tile.BlockLoopVisit {
-			visit := testIntraPredictionVisit(tile.IntraModeVertical)
-			visit.Block.HaveTop = false
 			return visit
 		}(), scratch: &scratch},
 		{name: "outside job", ctx: ctx, visit: func() tile.BlockLoopVisit {

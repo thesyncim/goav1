@@ -464,6 +464,98 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	want := testBatchFrame(t, output.Format)
+	seedFrameWorkCFLPredictionFrame(output)
+	seedFrameWorkCFLPredictionFrame(want)
+	ctx := testIntraPredictionBatch(output)
+	wantCtx := testIntraPredictionBatch(want)
+
+	var predictionScratch FrameWorkPredictionScratch
+	var scratch FrameWorkTileResidualScratch
+	var stats FrameWorkTileResidualStats
+	controller := frameWorkTileResidualLoopController{
+		batch:   ctx,
+		index:   0,
+		scratch: &scratch,
+		req: FrameWorkTileResidualRequest{
+			PredictionScratch: &predictionScratch,
+		},
+		stats: &stats,
+	}
+	visit := testCFLPredictionVisit()
+	visit.Prefix.SkipTransform = true
+	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+		t.Fatal(err)
+	}
+
+	var wantIntraScratch FrameWorkIntraPredictionScratch
+	if err := wantCtx.PredictBlockLumaIntra(0, visit, &wantIntraScratch); err != nil {
+		t.Fatal(err)
+	}
+	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
+	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneV)
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
+	assertFrameWorkPlaneBlockEqual(t, output.U, want.U, output.Layout.BytesPerSample, 8, 8, 8, 8)
+	assertFrameWorkPlaneBlockEqual(t, output.V, want.V, output.Layout.BytesPerSample, 8, 8, 8, 8)
+	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
+func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	want := testBatchFrame(t, output.Format)
+	seedFrameWorkCFLPredictionFrame(output)
+	seedFrameWorkCFLPredictionFrame(want)
+	ctx := testIntraPredictionBatch(output)
+	ctx.Quantization = parser.QuantizationParams{BaseQIdx: 64}
+
+	int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 8, Height: 8}, transform.TypeDCTDCT)
+	var predictionScratch FrameWorkPredictionScratch
+	var scratch FrameWorkTileResidualScratch
+	var stats FrameWorkTileResidualStats
+	state := &tile.DecodeState{CurrentBaseQIdx: ctx.Quantization.BaseQIdx}
+	controller := frameWorkTileResidualLoopController{
+		batch:   ctx,
+		index:   0,
+		state:   state,
+		scratch: &scratch,
+		req: FrameWorkTileResidualRequest{
+			PredictionScratch: &predictionScratch,
+			Int32Scratch:      int32Scratch,
+			ResidualScratch:   residualScratch,
+		},
+		stats: &stats,
+	}
+	visit := testCFLPredictionVisit()
+	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+		t.Fatal(err)
+	}
+	if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, 8, 8); got != 0 {
+		t.Fatalf("chroma predicted before first chroma txb: sample=%d", got)
+	}
+	overwriteFrameWorkCFLLuma(output)
+	overwriteFrameWorkCFLLuma(want)
+
+	chroma := tile.BlockCoeffBlock{
+		Plane:     1,
+		Block:     tile.TransformBlock{X4: 2, Y4: 2, Size: tile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+		Transform: transform.TypeDCTDCT,
+		Result:    tile.TXBDecodeResult{AllZero: true},
+		Coeffs:    make([]int16, 64),
+	}
+	if err := controller.VisitBlockCoeff(visit, chroma); err != nil {
+		t.Fatal(err)
+	}
+	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
+	assertFrameWorkPlaneBlockEqual(t, output.U, want.U, output.Layout.BytesPerSample, 8, 8, 8, 8)
+	if !controller.cflPredictionDone || stats.Residuals != 1 {
+		t.Fatalf("controller cflDone=%v stats=%+v", controller.cflPredictionDone, stats)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsAllocs(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -598,4 +690,13 @@ func testFrameWorkResidualScratch(t *testing.T, ctx FrameWorkBatch, size transfo
 		t.Fatal(err)
 	}
 	return make([]int32, int32Len), make([]int16, int16Len)
+}
+
+func overwriteFrameWorkCFLLuma(output *frame.Frame) {
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			value := uint16(9 + ((x-16)*23+(y-16)*29)%220)
+			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y, value)
+		}
+	}
 }

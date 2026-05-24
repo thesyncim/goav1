@@ -1,6 +1,8 @@
 package threading
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -132,6 +134,7 @@ type FrameWorkTileResidualScratch struct {
 	CoeffContext tile.CoeffEntropyContext
 	IntraTX      tile.IntraCoeffTransformSelector
 	InterTX      tile.InterCoeffTransformSelector
+	CFL          FrameWorkCFLPredictionScratch
 
 	controller frameWorkTileResidualLoopController
 	stats      FrameWorkTileResidualStats
@@ -301,6 +304,10 @@ type frameWorkTileResidualLoopController struct {
 
 	userBeforeCoefficients tile.BlockLoopVisitor
 	userCoeffVisitor       tile.BlockLoopCoeffVisitor
+
+	pendingCFLPrediction bool
+	cflPredictionDone    bool
+	cflVisit             tile.BlockLoopVisit
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {
@@ -314,22 +321,60 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile
 			return err
 		}
 	}
-	if c.req.Predict != nil {
-		if err := c.req.Predict(visit); err != nil {
+	c.pendingCFLPrediction = false
+	c.cflPredictionDone = false
+	c.cflVisit = tile.BlockLoopVisit{}
+	if err := c.predictBeforeCoefficients(visit); err != nil {
+		return err
+	}
+	if visit.Prefix.SkipTransform {
+		if err := c.predictDeferredCFLChroma(); err != nil {
 			return err
 		}
-		c.stats.Predictions++
-	} else if c.req.PredictionScratch != nil {
-		if err := c.batch.PredictBlock(c.index, visit, c.req.PredictionScratch); err != nil {
-			return err
-		}
-		c.stats.Predictions++
 	}
 	if visit.Prefix.SkipTransform {
 		c.stats.SkippedBlocks++
 	} else {
 		c.stats.CoefficientBlocks++
 	}
+	return nil
+}
+
+func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
+	if c.req.Predict != nil {
+		if err := c.req.Predict(visit); err != nil {
+			return fmt.Errorf("predict callback block=%+v: %w", visit.Block, err)
+		}
+		c.stats.Predictions++
+		return nil
+	}
+	if c.req.PredictionScratch == nil {
+		return nil
+	}
+	if frameWorkVisitUsesCFL(visit) {
+		if err := c.batch.PredictBlockLumaIntra(c.index, visit, &c.req.PredictionScratch.Intra); err != nil {
+			return fmt.Errorf("predict cfl luma block=%+v: %w", visit.Block, err)
+		}
+		c.pendingCFLPrediction = true
+		c.cflVisit = visit
+		c.stats.Predictions++
+		return nil
+	}
+	if err := c.batch.PredictBlock(c.index, visit, c.req.PredictionScratch); err != nil {
+		return fmt.Errorf("predict block=%+v: %w", visit.Block, err)
+	}
+	c.stats.Predictions++
+	return nil
+}
+
+func (c *frameWorkTileResidualLoopController) predictDeferredCFLChroma() error {
+	if !c.pendingCFLPrediction || c.cflPredictionDone {
+		return nil
+	}
+	if err := c.batch.PredictBlockChromaCFL(c.index, c.cflVisit, &c.scratch.CFL); err != nil {
+		return fmt.Errorf("predict cfl chroma block=%+v: %w", c.cflVisit.Block, err)
+	}
+	c.cflPredictionDone = true
 	return nil
 }
 
@@ -379,6 +424,11 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
+	if block.Plane != 0 {
+		if err := c.predictDeferredCFLChroma(); err != nil {
+			return err
+		}
+	}
 	if err := c.batch.ReconstructBlockCoeff(c.index, FrameWorkBlockCoeffReconstruction{
 		Visit:           visit.Block,
 		Block:           block,
@@ -388,13 +438,20 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 		Int32Scratch:    c.req.Int32Scratch,
 		ResidualScratch: c.req.ResidualScratch,
 	}); err != nil {
-		return err
+		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	c.stats.Residuals++
 	if c.userCoeffVisitor != nil {
 		return c.userCoeffVisitor(visit, block)
 	}
 	return nil
+}
+
+func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
+	return visit.Prediction.Valid &&
+		visit.Prediction.Intra &&
+		visit.Prediction.ChromaModeValid &&
+		visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL
 }
 
 func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {

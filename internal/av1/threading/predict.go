@@ -243,7 +243,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	y -= window.Y
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, x, y, width, height, angle, visit.Block, scratch)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, visit.Block, scratch)
 		if err != nil {
 			return err
 		}
@@ -257,7 +257,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(dst, window.BytesPerSample, x, y, width, height, visit.Block, scratch)
+	edges, err := frameWorkIntraPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, visit.Block, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 		return err
 	}
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, angle, visit.Block, scratch)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, visit.Block, scratch)
 		if err != nil {
 			return err
 		}
@@ -286,7 +286,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, scratch)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], geom.Width, geom.Height); err != nil {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, &scratch.Intra)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, &scratch.Intra, false)
 	if err != nil {
 		return err
 	}
@@ -1259,7 +1259,10 @@ func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {
 	return x, y, nil
 }
 
-func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) (prediction.IntraEdges, error) {
+func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
+	if scratch == nil {
+		return prediction.IntraEdges{}, ErrInvalidBatch
+	}
 	var edges prediction.IntraEdges
 	if block.HaveTop {
 		if y <= 0 {
@@ -1270,6 +1273,16 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y
 			if !ok {
 				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
+			scratch.Above[col] = sample
+		}
+		edges.Above = scratch.Above[:width]
+		edges.AboveAvailable = true
+	} else if fillMissing {
+		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return prediction.IntraEdges{}, err
+		}
+		for col := 0; col < width; col++ {
 			scratch.Above[col] = sample
 		}
 		edges.Above = scratch.Above[:width]
@@ -1288,6 +1301,16 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y
 		}
 		edges.Left = scratch.Left[:height]
 		edges.LeftAvailable = true
+	} else if fillMissing {
+		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return prediction.IntraEdges{}, err
+		}
+		for row := 0; row < height; row++ {
+			scratch.Left[row] = sample
+		}
+		edges.Left = scratch.Left[:height]
+		edges.LeftAvailable = true
 	}
 	if block.HaveTop && block.HaveLeft {
 		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
@@ -1296,12 +1319,19 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y
 		}
 		edges.AboveLeft = sample
 		edges.AboveLeftAvailable = true
+	} else if fillMissing {
+		sample, err := frameWorkMissingTopLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return prediction.IntraEdges{}, err
+		}
+		edges.AboveLeft = sample
+		edges.AboveLeftAvailable = true
 	}
 	return edges, nil
 }
 
-func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) (prediction.DirectionalEdges, error) {
-	if angle <= 0 || angle >= 270 {
+func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) (prediction.DirectionalEdges, error) {
+	if scratch == nil || angle <= 0 || angle >= 270 {
 		return prediction.DirectionalEdges{}, ErrInvalidBatch
 	}
 	edges := prediction.DirectionalEdges{
@@ -1313,35 +1343,39 @@ func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, x 
 
 	switch {
 	case angle < 90:
-		if !block.HaveTop {
-			return prediction.DirectionalEdges{}, ErrInvalidBatch
-		}
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, x, y, 0, width+height-1, scratch); err != nil {
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, block, scratch); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	case angle < 180:
-		if !block.HaveTop || !block.HaveLeft {
-			return prediction.DirectionalEdges{}, ErrInvalidBatch
-		}
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, x, y, -height, width+height, scratch); err != nil {
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, -height, width+height, block, scratch); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, x, y, -width, width+height, scratch); err != nil {
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, -width, width+height, block, scratch); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	default:
-		if !block.HaveLeft {
-			return prediction.DirectionalEdges{}, ErrInvalidBatch
-		}
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, x, y, 0, width+height-1, scratch); err != nil {
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, block, scratch); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	}
 	return edges, nil
 }
 
-func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, x int, y int, minIndex int, maxIndex int, scratch *FrameWorkIntraPredictionScratch) error {
-	if y <= 0 || !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) error {
+	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+		return ErrInvalidBatch
+	}
+	if !block.HaveTop {
+		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return err
+		}
+		for i := minIndex; i <= maxIndex; i++ {
+			scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+		}
+		return nil
+	}
+	if y <= 0 {
 		return ErrInvalidBatch
 	}
 	for i := minIndex; i <= maxIndex; i++ {
@@ -1360,8 +1394,21 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, x int, y
 	return nil
 }
 
-func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, x int, y int, minIndex int, maxIndex int, scratch *FrameWorkIntraPredictionScratch) error {
-	if x <= 0 || !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) error {
+	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+		return ErrInvalidBatch
+	}
+	if !block.HaveLeft {
+		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return err
+		}
+		for i := minIndex; i <= maxIndex; i++ {
+			scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+		}
+		return nil
+	}
+	if x <= 0 {
 		return ErrInvalidBatch
 	}
 	for i := minIndex; i <= maxIndex; i++ {
@@ -1378,6 +1425,71 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, x int, y 
 		scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
 	}
 	return nil
+}
+
+func frameWorkMissingAboveSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
+	if block.HaveLeft {
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		if !ok {
+			return 0, ErrInvalidBatch
+		}
+		return sample, nil
+	}
+	sample, ok := frameWorkIntraBoundaryDefault(bitDepth, -1)
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	return sample, nil
+}
+
+func frameWorkMissingLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
+	if block.HaveTop {
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		if !ok {
+			return 0, ErrInvalidBatch
+		}
+		return sample, nil
+	}
+	sample, ok := frameWorkIntraBoundaryDefault(bitDepth, 1)
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	return sample, nil
+}
+
+func frameWorkMissingTopLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
+	if block.HaveLeft {
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		if !ok {
+			return 0, ErrInvalidBatch
+		}
+		return sample, nil
+	}
+	if block.HaveTop {
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		if !ok {
+			return 0, ErrInvalidBatch
+		}
+		return sample, nil
+	}
+	sample, ok := frameWorkIntraBoundaryDefault(bitDepth, 0)
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	return sample, nil
+}
+
+func frameWorkIntraBoundaryDefault(bitDepth uint8, offset int) (uint16, bool) {
+	max, ok := frameWorkSampleMax(bitDepth)
+	if !ok {
+		return 0, false
+	}
+	mid := int(max+1) >> 1
+	value := mid + offset
+	if value < 0 || value > int(max) {
+		return 0, false
+	}
+	return uint16(value), true
 }
 
 func frameWorkDirectionalRangeFits(minIndex int, maxIndex int) bool {
