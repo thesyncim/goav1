@@ -113,9 +113,9 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 }
 
 // PredictBlockInter writes inter prediction pixels for every present plane of
-// one decoded inter block. Single-reference and average/dist-wtd compound
-// translation are supported; wedge compound, inter-intra, warped/global
-// refinement, scaled references, and intrabc are handled by later stages.
+// one decoded inter block. Single-reference and average/dist-wtd/wedge
+// compound translation are supported; inter-intra, warped/global refinement,
+// scaled references, and intrabc are handled by later stages.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -499,9 +499,8 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 }
 
 // PredictBlockLumaInterCompoundAverage writes average compound luma inter
-// prediction for one decoded block-loop visit. Wedge compound, inter-intra,
-// scaled references, and warped/global refinement are handled by later
-// inter-prediction stages.
+// prediction for one decoded block-loop visit. Inter-intra, scaled references,
+// and warped/global refinement are handled by later inter-prediction stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -522,8 +521,8 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 
 // PredictBlockLumaInterCompound writes compound luma inter prediction for one
 // decoded block-loop visit. It currently covers average, distance-weighted,
-// and difference-weighted compound. Wedge compound, inter-intra, scaled
-// references, and warped/global refinement are handled by later stages.
+// wedge, and difference-weighted compound. Inter-intra, scaled references, and
+// warped/global refinement are handled by later stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompound(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -549,7 +548,10 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 		return ErrInvalidBatch
 	}
 	blend := visit.Prediction.CompoundBlend
-	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd && blend.Type != tile.CompoundTypeDiffWtd {
+	if blend.Type != tile.CompoundTypeAverage &&
+		blend.Type != tile.CompoundTypeDistWtd &&
+		blend.Type != tile.CompoundTypeWedge &&
+		blend.Type != tile.CompoundTypeDiffWtd {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -562,6 +564,9 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 }
 
 func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode != tile.MotionModeTranslation {
+		return ErrInvalidBatch
+	}
 	motionResult := visit.Prediction.InterMotion
 	if motionResult.References.Compound ||
 		!motionResult.References.Ref[0].Valid() ||
@@ -582,7 +587,10 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 		return ErrInvalidBatch
 	}
 	blend := visit.Prediction.CompoundBlend
-	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd && blend.Type != tile.CompoundTypeDiffWtd {
+	if blend.Type != tile.CompoundTypeAverage &&
+		blend.Type != tile.CompoundTypeDistWtd &&
+		blend.Type != tile.CompoundTypeWedge &&
+		blend.Type != tile.CompoundTypeDiffWtd {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -616,6 +624,18 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 			return err
 		}
 		if err := frameWorkBlendCompoundBlock(geom.Output, first, second, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
+			return err
+		}
+	case tile.CompoundTypeWedge:
+		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		maskStride := lumaWidth
+		if err := frameWorkBuildWedgeMask(scratch.Mask[:], maskStride, visit.Block.Size, blend.WedgeIndex, blend.WedgeSign); err != nil {
+			return err
+		}
+		if err := frameWorkBlendMaskedCompoundBlock(geom.Output, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 			return err
 		}
 	case tile.CompoundTypeDiffWtd:

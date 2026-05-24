@@ -63,7 +63,11 @@ func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	transformScratch := int32Scratch[residualLen:int32Len]
 	residual := residualScratch[:residualLen]
 
-	if err := quantize.DequantizeBlock(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer); err != nil {
+	txScale, err := quantize.TransformScale(width, height)
+	if err != nil {
+		return ErrInvalidBlock
+	}
+	if err := quantize.DequantizeBlockScaled(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale); err != nil {
 		return ErrInvalidBlock
 	}
 	if cfg.Lossless {

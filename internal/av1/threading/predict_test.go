@@ -567,6 +567,188 @@ func TestFrameWorkBatchPredictBlockInterCompoundDiffWtdChromaSubsampledMatchesLi
 	assertFrameWorkMaskedCompoundEqual(t, output.V, firstV, secondV, mask, 16, true, true, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8)
 }
 
+func TestFrameWorkBuildWedgeMaskMatchesLibaomSamples(t *testing.T) {
+	tests := []struct {
+		name       string
+		size       tile.BlockSize
+		index      uint8
+		sign       bool
+		width      int
+		height     int
+		samples    [][2]int
+		wantSample []byte
+	}{
+		{
+			name:       "8x8 oblique27 neg",
+			size:       tile.BlockSize8x8,
+			index:      0,
+			width:      8,
+			height:     8,
+			samples:    [][2]int{{0, 0}, {7, 7}},
+			wantSample: []byte{64, 0},
+		},
+		{
+			name:       "8x8 oblique27 positive",
+			size:       tile.BlockSize8x8,
+			index:      0,
+			sign:       true,
+			width:      8,
+			height:     8,
+			samples:    [][2]int{{0, 0}, {7, 7}},
+			wantSample: []byte{0, 64},
+		},
+		{
+			name:       "8x8 vertical neg",
+			size:       tile.BlockSize8x8,
+			index:      6,
+			width:      8,
+			height:     8,
+			samples:    [][2]int{{0, 0}, {1, 0}, {2, 0}, {7, 0}},
+			wantSample: []byte{57, 43, 21, 0},
+		},
+		{
+			name:       "32x8 oblique63 positive",
+			size:       tile.BlockSize32x8,
+			index:      12,
+			width:      32,
+			height:     8,
+			samples:    [][2]int{{0, 0}, {31, 7}},
+			wantSample: []byte{0, 64},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mask := make([]byte, tt.width*tt.height)
+			if err := frameWorkBuildWedgeMask(mask, tt.width, tt.size, tt.index, tt.sign); err != nil {
+				t.Fatal(err)
+			}
+			for i, sample := range tt.samples {
+				got := mask[sample[1]*tt.width+sample[0]]
+				if got != tt.wantSample[i] {
+					t.Fatalf("mask(%d,%d)=%d want %d", sample[0], sample[1], got, tt.wantSample[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFrameWorkBuildWedgeMaskSignComplementsLibaom(t *testing.T) {
+	sizes := []tile.BlockSize{
+		tile.BlockSize8x8,
+		tile.BlockSize8x16,
+		tile.BlockSize16x8,
+		tile.BlockSize16x16,
+		tile.BlockSize8x32,
+		tile.BlockSize32x8,
+		tile.BlockSize16x32,
+		tile.BlockSize32x16,
+		tile.BlockSize32x32,
+	}
+	var mask [32 * 32]byte
+	var complement [32 * 32]byte
+	for _, size := range sizes {
+		dims, ok := size.Dimensions()
+		if !ok {
+			t.Fatalf("missing dimensions for %v", size)
+		}
+		width := int(dims.W4) * 4
+		height := int(dims.H4) * 4
+		for index := uint8(0); index < tile.MaxWedgeTypes; index++ {
+			if err := frameWorkBuildWedgeMask(mask[:], width, size, index, false); err != nil {
+				t.Fatalf("size=%v index=%d neg err=%v", size, index, err)
+			}
+			if err := frameWorkBuildWedgeMask(complement[:], width, size, index, true); err != nil {
+				t.Fatalf("size=%v index=%d pos err=%v", size, index, err)
+			}
+			for row := 0; row < height; row++ {
+				for col := 0; col < width; col++ {
+					got := int(mask[row*width+col]) + int(complement[row*width+col])
+					if got != frameWorkWedgeMaxAlpha {
+						t.Fatalf("size=%v index=%d mask(%d,%d) sum=%d want %d", size, index, col, row, got, frameWorkWedgeMaxAlpha)
+					}
+				}
+			}
+		}
+	}
+	if err := frameWorkBuildWedgeMask(mask[:], 4, tile.BlockSize4x4, 0, false); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("unsupported wedge err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBuildWedgeMaskAllocs(t *testing.T) {
+	var mask [16 * 16]byte
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := frameWorkBuildWedgeMask(mask[:], 16, tile.BlockSize16x16, 0, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("frameWorkBuildWedgeMask allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterCompoundWedgeMatchesLibaom(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0x3ff, 31)
+	fillFrameWorkInterReferenceVariant(bwd, 0x3ff, 149)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 3, Row: 5}
+	mv1 := motion.Vector{Col: -5, Row: 1}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeWedge)
+	visit.Prediction.CompoundBlend.WedgeIndex = 0
+	visit.Prediction.CompoundBlend.WedgeSign = false
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	first := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv0, filters)
+	second := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv1, filters)
+	mask := make([]byte, 16*16)
+	if err := frameWorkBuildWedgeMask(mask, 16, visit.Block.Size, visit.Prediction.CompoundBlend.WedgeIndex, visit.Prediction.CompoundBlend.WedgeSign); err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkMaskedCompoundEqual(t, output.Y, first, second, mask, 16, false, false, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16)
+}
+
+func TestFrameWorkBatchPredictBlockInterCompoundWedgeChromaSubsampledMatchesLibaom(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 43)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 211)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 5, Row: -3}
+	mv1 := motion.Vector{Col: -1, Row: 7}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeWedge)
+	visit.Prediction.CompoundBlend.WedgeIndex = 6
+	visit.Prediction.CompoundBlend.WedgeSign = false
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	firstY := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv0, filters)
+	secondY := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv1, filters)
+	mask := make([]byte, 16*16)
+	if err := frameWorkBuildWedgeMask(mask, 16, visit.Block.Size, visit.Prediction.CompoundBlend.WedgeIndex, visit.Prediction.CompoundBlend.WedgeSign); err != nil {
+		t.Fatal(err)
+	}
+	firstU := testFrameWorkMotionPredictionPlaneSubsampled(t, last.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondU := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	firstV := testFrameWorkMotionPredictionPlaneSubsampled(t, last.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondV := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	assertFrameWorkMaskedCompoundEqual(t, output.Y, firstY, secondY, mask, 16, false, false, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16)
+	assertFrameWorkMaskedCompoundEqual(t, output.U, firstU, secondU, mask, 16, true, true, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8)
+	assertFrameWorkMaskedCompoundEqual(t, output.V, firstV, secondV, mask, 16, true, true, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8)
+}
+
 func TestFrameWorkCompoundDistanceWeightedOffsetsMatchLibaom(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1068,6 +1250,28 @@ func TestFrameWorkBatchPredictBlockInterCompoundDiffWtdAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterCompoundWedgeAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 31)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 157)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	visit := testCompoundInterPredictionVisit(motion.Vector{Col: 3, Row: 5}, motion.Vector{Col: -1, Row: 7}, tile.CompoundTypeWedge)
+	visit.Prediction.CompoundBlend.WedgeIndex = 0
+	var scratch FrameWorkInterPredictionScratch
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockInter wedge allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	reference := testBatchFrame(t, output.Format)
@@ -1098,6 +1302,12 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 			visit := valid
 			visit.Prediction.InterMotion.References.Compound = true
 			visit.Prediction.InterMotion.References.Ref[1] = tile.ReferenceFrameBWD
+			return visit
+		}()},
+		{name: "non translation motion mode", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.MotionModeValid = true
+			visit.Prediction.MotionMode = tile.MotionModeWarp
 			return visit
 		}()},
 		{name: "missing reference frame", ctx: func() FrameWorkBatch {

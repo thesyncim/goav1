@@ -83,7 +83,36 @@ func PlaneQuantizer(params parser.QuantizationParams, qIndex uint8, bitDepth uin
 // coeff and dst use AV1 coefficient order: coeff_idx = col * stride + row. The
 // DC coefficient at (0,0) uses q.DC; every other coefficient uses q.AC.
 func DequantizeBlock(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer) error {
+	return DequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, 0)
+}
+
+// TransformScale ports libaom's av1_get_tx_scale() for a validated AV1
+// transform shape. Callers should pass the coded transform dimensions, not the
+// adjusted coefficient scan size used by 64-wide/high transforms.
+func TransformScale(width int, height int) (uint8, error) {
+	if width <= 0 || height <= 0 {
+		return 0, ErrInvalidQuantizer
+	}
+	pixels, ok := checkedMul(width, height)
+	if !ok {
+		return 0, ErrInvalidQuantizer
+	}
+	var scale uint8
+	if pixels > 256 {
+		scale++
+	}
+	if pixels > 1024 {
+		scale++
+	}
+	return scale, nil
+}
+
+// DequantizeBlockScaled is DequantizeBlock with libaom's transform scale
+// applied after the DC/AC dequant multiply. The scale is the value returned by
+// TransformScale for the coded transform size.
+func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
 	if q.DC <= 0 || q.AC <= 0 ||
+		txScale > 2 ||
 		width <= 0 ||
 		height <= 0 ||
 		dstStride < height ||
@@ -103,7 +132,16 @@ func DequantizeBlock(dst []int32, dstStride int, coeff []int16, coeffStride int,
 			if row == 0 && col == 0 {
 				scale = q.DC
 			}
-			dstCol[row] = int32(coeffCol[row]) * scale
+			level := int32(coeffCol[row])
+			negative := level < 0
+			if negative {
+				level = -level
+			}
+			level = (level * scale) >> txScale
+			if negative {
+				level = -level
+			}
+			dstCol[row] = level
 		}
 	}
 	return nil
