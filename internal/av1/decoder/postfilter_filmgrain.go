@@ -36,6 +36,7 @@ type FrameWorkFilmGrainPostFilterPlan struct {
 	ChromaScalingFromLuma bool
 	Overlap               bool
 	ClipToRestrictedRange bool
+	MatrixIdentity        bool
 }
 
 // FrameWorkFilmGrainPostFilterScratchSize reports caller-owned scratch needed
@@ -44,26 +45,30 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ScalingPoints [3]int
 	ARCoeffs      [3]int
 
-	LumaGrain   int
-	ChromaGrain [2]int
-	LumaSamples int
-	LumaLine    int
-	LumaColumn  int
+	LumaGrain     int
+	ChromaGrain   [2]int
+	LumaSamples   int
+	ChromaSamples [2]int
+	LumaLine      int
+	LumaColumn    int
 }
 
 // FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
 // ApplyFilmGrainPostFilter.
 type FrameWorkFilmGrainPostFilterRequest struct {
-	LumaGrain   []int16
-	LumaSamples []uint16
+	LumaGrain     []int16
+	ChromaGrain   [2][]int16
+	LumaSamples   []uint16
+	ChromaSamples [2][]uint16
 }
 
 // FrameWorkFilmGrainPostFilterResult summarizes film-grain postfilter work.
 type FrameWorkFilmGrainPostFilterResult struct {
 	Plan FrameWorkFilmGrainPostFilterPlan
 
-	NoOp     bool
-	LumaRows int
+	NoOp       bool
+	LumaRows   int
+	ChromaRows [2]int
 }
 
 // FrameWorkFilmGrainPostFilterScalingLUTs contains the 8-bit-domain scaling
@@ -111,6 +116,20 @@ type FrameWorkFilmGrainPostFilterLumaRow struct {
 	Stride int
 }
 
+// FrameWorkFilmGrainPostFilterChromaRow summarizes one applied chroma grain row
+// band.
+type FrameWorkFilmGrainPostFilterChromaRow struct {
+	Active bool
+
+	Plane int
+	Row   int
+
+	Width      int
+	Height     int
+	Stride     int
+	LumaStride int
+}
+
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
 // plane-local synthesis inputs. It does not mutate ctx.Output.
 func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGrainPostFilterPlan, error) {
@@ -141,6 +160,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGr
 		ChromaScalingFromLuma: params.ChromaScalingFromLuma,
 		Overlap:               params.Overlap,
 		ClipToRestrictedRange: params.ClipToRestrictedRange,
+		MatrixIdentity:        ctx.Event.SequenceHeader.ColorConfig.MatrixCoefficients == parser.MatrixCoefficientsIdentity,
 	}
 	if params.NumYPoints != 0 {
 		plan.Planes[0] = FrameWorkFilmGrainPostFilterPlanePlan{
@@ -192,15 +212,19 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 		size.ScalingPoints[plane] = plan.Planes[plane].ScalingPoints
 		size.ARCoeffs[plane] = plan.Planes[plane].ARCoeffs
 	}
+	if frameWorkFilmGrainAnyPlaneActive(plan) {
+		lumaStride := frameWorkFilmGrainSampleStride(ctx.Output.Layout.YStride, ctx.Output.Layout.BytesPerSample)
+		size.LumaSamples = lumaStride * ctx.Output.Format.Height
+	}
 	if plan.Planes[0].Active {
 		size.LumaGrain = filmgrain.LumaGrainSamples
-		size.LumaSamples = plan.Planes[0].Stride * plan.Planes[0].Height
 		size.LumaLine = filmgrain.LumaOverlapSamples * plan.Planes[0].Stride
 		size.LumaColumn = filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples
 	}
 	for plane := 1; plane <= 2; plane++ {
 		if plan.Planes[plane].Active {
 			size.ChromaGrain[plane-1] = filmgrain.ChromaGrainSamples
+			size.ChromaSamples[plane-1] = plan.Planes[plane].Stride * plan.Planes[plane].Height
 		}
 	}
 	return size, nil
@@ -337,9 +361,58 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []
 	}, nil
 }
 
+// ApplyFilmGrainChromaRow applies chroma film grain to one chroma row band
+// using caller-owned uint16 sample views. src and dst may alias. luma must be a
+// pre-grain luma sample view for the matching luma row band.
+func (ctx FrameWorkPostFilterContext) ApplyFilmGrainChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, plane int, row int) (FrameWorkFilmGrainPostFilterChromaRow, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, err
+	}
+	if !plan.Active {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, nil
+	}
+	if plane != filmgrain.ChromaPlaneCb && plane != filmgrain.ChromaPlaneCr {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
+	if !plan.Planes[plane].Active {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, nil
+	}
+	planePlan := plan.Planes[plane]
+	blockHeight := frameWorkFilmGrainChromaBlockHeight(plan.Format)
+	if row < 0 || row*blockHeight >= planePlan.Height {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
+	height := blockHeight
+	if remaining := planePlan.Height - row*blockHeight; remaining < height {
+		height = remaining
+	}
+	shiftX := frameWorkFilmGrainSubsamplingShift(plan.Format.SubsamplingX)
+	shiftY := frameWorkFilmGrainSubsamplingShift(plan.Format.SubsamplingY)
+	lumaStride := frameWorkFilmGrainSampleStride(ctx.Output.Layout.YStride, ctx.Output.Layout.BytesPerSample)
+	need := (height-1)*planePlan.Stride + planePlan.Width
+	lumaRows := ((height - 1) << shiftY) + 1
+	lumaNeed := (lumaRows-1)*lumaStride + ((planePlan.Width - 1) << shiftX) + 1 + shiftX
+	if len(dst) < need || len(src) < need || len(luma) < lumaNeed ||
+		len(grain) < filmgrain.ChromaGrainSamples || len(scaling) < filmgrain.ScalingLUTSize {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrShortBuffer
+	}
+	params := frameWorkFilmGrainChromaRowParams(plan, plane, row, height, lumaStride)
+	if err := filmgrain.ApplyChromaRow(dst, src, luma, grain, scaling, params); err != nil {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
+	return FrameWorkFilmGrainPostFilterChromaRow{
+		Active:     true,
+		Plane:      plane,
+		Row:        row,
+		Width:      params.Width,
+		Height:     params.Height,
+		Stride:     params.Stride,
+		LumaStride: params.LumaStride,
+	}, nil
+}
+
 // ApplyFilmGrainPostFilter applies the currently supported film-grain subset.
-// It only completes the stage when the signaled grain is a true no-op; active
-// synthesis still rejects before mutating ctx.Output.
 func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilmGrainPostFilterRequest) (FrameWorkFilmGrainPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	preFilmGrain := FrameWorkPostFilterLoopFilter |
@@ -357,7 +430,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 		return FrameWorkFilmGrainPostFilterResult{}, err
 	}
 	if !frameWorkFilmGrainNoOp(plan.Params) {
-		if !frameWorkFilmGrainLumaOnlySupported(plan) {
+		if !frameWorkFilmGrainAnyPlaneActive(plan) {
 			return FrameWorkFilmGrainPostFilterResult{}, ErrUnsupportedPostFilter
 		}
 		if plan.Params.ScalingShift < 8 || plan.Params.ScalingShift > 11 {
@@ -367,25 +440,71 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 		if err != nil {
 			return FrameWorkFilmGrainPostFilterResult{}, err
 		}
-		grain, err := ctx.GenerateFilmGrainLumaGrain(req.LumaGrain)
-		if err != nil {
-			return FrameWorkFilmGrainPostFilterResult{}, err
-		}
 		luma, err := frame.LoadSamplePlane(req.LumaSamples, ctx.Output.Y, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkFilmGrainPostFilterResult{}, err
 		}
-		rows := (plan.Planes[0].Height + filmgrain.LumaBlockSize - 1) / filmgrain.LumaBlockSize
-		for row := 0; row < rows; row++ {
-			rowStart := row * filmgrain.LumaBlockSize * luma.Stride
-			if _, err := ctx.ApplyFilmGrainLumaRow(luma.Pix[rowStart:], luma.Pix[rowStart:], grain.Grain, luts.LUTs[0][:], row); err != nil {
+
+		var lumaGrain FrameWorkFilmGrainPostFilterLumaGrain
+		if plan.Planes[0].Active {
+			lumaGrain, err = ctx.GenerateFilmGrainLumaGrain(req.LumaGrain)
+			if err != nil {
 				return FrameWorkFilmGrainPostFilterResult{}, err
 			}
 		}
-		if err := frame.StoreSamplePlane(ctx.Output.Y, ctx.Output.Layout.BytesPerSample, luma); err != nil {
-			return FrameWorkFilmGrainPostFilterResult{}, err
+		var chromaGrain [2]FrameWorkFilmGrainPostFilterChromaGrain
+		for plane := filmgrain.ChromaPlaneCb; plane <= filmgrain.ChromaPlaneCr; plane++ {
+			if !plan.Planes[plane].Active {
+				continue
+			}
+			chromaGrain[plane-1], err = ctx.GenerateFilmGrainChromaGrain(req.ChromaGrain[plane-1], lumaGrain.Grain, plane)
+			if err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, err
+			}
 		}
-		return FrameWorkFilmGrainPostFilterResult{Plan: plan, LumaRows: rows}, nil
+
+		result := FrameWorkFilmGrainPostFilterResult{Plan: plan}
+		for plane := filmgrain.ChromaPlaneCb; plane <= filmgrain.ChromaPlaneCr; plane++ {
+			if !plan.Planes[plane].Active {
+				continue
+			}
+			chromaPlane := ctx.Output.U
+			if plane == filmgrain.ChromaPlaneCr {
+				chromaPlane = ctx.Output.V
+			}
+			chroma, err := frame.LoadSamplePlane(req.ChromaSamples[plane-1], chromaPlane, ctx.Output.Layout.BytesPerSample)
+			if err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, err
+			}
+			blockHeight := frameWorkFilmGrainChromaBlockHeight(plan.Format)
+			rows := (plan.Planes[plane].Height + blockHeight - 1) / blockHeight
+			for row := 0; row < rows; row++ {
+				rowStart := row * blockHeight * chroma.Stride
+				lumaRowStart := row * filmgrain.LumaBlockSize * luma.Stride
+				if _, err := ctx.ApplyFilmGrainChromaRow(chroma.Pix[rowStart:], chroma.Pix[rowStart:], luma.Pix[lumaRowStart:], chromaGrain[plane-1].Grain, luts.LUTs[plane][:], plane, row); err != nil {
+					return FrameWorkFilmGrainPostFilterResult{}, err
+				}
+			}
+			if err := frame.StoreSamplePlane(chromaPlane, ctx.Output.Layout.BytesPerSample, chroma); err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, err
+			}
+			result.ChromaRows[plane-1] = rows
+		}
+
+		if plan.Planes[0].Active {
+			rows := (plan.Planes[0].Height + filmgrain.LumaBlockSize - 1) / filmgrain.LumaBlockSize
+			for row := 0; row < rows; row++ {
+				rowStart := row * filmgrain.LumaBlockSize * luma.Stride
+				if _, err := ctx.ApplyFilmGrainLumaRow(luma.Pix[rowStart:], luma.Pix[rowStart:], lumaGrain.Grain, luts.LUTs[0][:], row); err != nil {
+					return FrameWorkFilmGrainPostFilterResult{}, err
+				}
+			}
+			if err := frame.StoreSamplePlane(ctx.Output.Y, ctx.Output.Layout.BytesPerSample, luma); err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, err
+			}
+			result.LumaRows = rows
+		}
+		return result, nil
 	}
 	return FrameWorkFilmGrainPostFilterResult{Plan: plan, NoOp: true}, nil
 }
@@ -395,7 +514,7 @@ func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, erro
 	if err != nil {
 		return false, err
 	}
-	return plan.Active && (frameWorkFilmGrainNoOp(plan.Params) || frameWorkFilmGrainLumaOnlySupported(plan)), nil
+	return plan.Active && (frameWorkFilmGrainNoOp(plan.Params) || frameWorkFilmGrainAnyPlaneActive(plan)), nil
 }
 
 func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req FrameWorkFilmGrainPostFilterRequest) error {
@@ -406,7 +525,7 @@ func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req Fra
 	if !plan.Active || frameWorkFilmGrainNoOp(plan.Params) {
 		return nil
 	}
-	if !frameWorkFilmGrainLumaOnlySupported(plan) {
+	if !frameWorkFilmGrainAnyPlaneActive(plan) {
 		return ErrUnsupportedPostFilter
 	}
 	if plan.Params.ScalingShift < 8 || plan.Params.ScalingShift > 11 {
@@ -418,6 +537,12 @@ func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req Fra
 	}
 	if len(req.LumaGrain) < size.LumaGrain || len(req.LumaSamples) < size.LumaSamples {
 		return frame.ErrShortBuffer
+	}
+	for plane := 0; plane < len(req.ChromaGrain); plane++ {
+		if len(req.ChromaGrain[plane]) < size.ChromaGrain[plane] ||
+			len(req.ChromaSamples[plane]) < size.ChromaSamples[plane] {
+			return frame.ErrShortBuffer
+		}
 	}
 	if _, err := ctx.FilmGrainPostFilterScalingLUTs(); err != nil {
 		return err
@@ -477,6 +602,36 @@ func frameWorkFilmGrainLumaRowParams(plan FrameWorkFilmGrainPostFilterPlan, row 
 	}
 }
 
+func frameWorkFilmGrainChromaRowParams(plan FrameWorkFilmGrainPostFilterPlan, plane int, row int, height int, lumaStride int) filmgrain.ChromaRowParams {
+	params := plan.Params
+	out := filmgrain.ChromaRowParams{
+		Seed:                  plan.Seed,
+		Width:                 plan.Planes[plane].Width,
+		Height:                height,
+		Stride:                plan.Planes[plane].Stride,
+		LumaStride:            lumaStride,
+		Row:                   row,
+		BitDepth:              plan.BitDepth,
+		ScalingShift:          params.ScalingShift,
+		SubsamplingX:          plan.Format.SubsamplingX,
+		SubsamplingY:          plan.Format.SubsamplingY,
+		Overlap:               plan.Overlap,
+		ClipToRestrictedRange: plan.ClipToRestrictedRange,
+		MatrixIdentity:        plan.MatrixIdentity,
+		ChromaScalingFromLuma: params.ChromaScalingFromLuma,
+	}
+	if plane == filmgrain.ChromaPlaneCb {
+		out.ChromaMult = params.CbMult
+		out.ChromaLumaMult = params.CbLumaMult
+		out.ChromaOffset = params.CbOffset
+	} else {
+		out.ChromaMult = params.CrMult
+		out.ChromaLumaMult = params.CrLumaMult
+		out.ChromaOffset = params.CrOffset
+	}
+	return out
+}
+
 func frameWorkFilmGrainChromaGrainParams(plan FrameWorkFilmGrainPostFilterPlan, plane int) filmgrain.ChromaGrainParams {
 	params := plan.Params
 	out := filmgrain.ChromaGrainParams{
@@ -517,8 +672,23 @@ func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {
 		params.NumCrPoints == 0
 }
 
-func frameWorkFilmGrainLumaOnlySupported(plan FrameWorkFilmGrainPostFilterPlan) bool {
-	return plan.Planes[0].Active && !plan.Planes[1].Active && !plan.Planes[2].Active
+func frameWorkFilmGrainAnyPlaneActive(plan FrameWorkFilmGrainPostFilterPlan) bool {
+	return plan.Planes[0].Active || plan.Planes[1].Active || plan.Planes[2].Active
+}
+
+func frameWorkFilmGrainChromaBlockHeight(format frame.Format) int {
+	height := filmgrain.LumaBlockSize
+	if format.SubsamplingY {
+		height >>= 1
+	}
+	return height
+}
+
+func frameWorkFilmGrainSubsamplingShift(subsampled bool) int {
+	if subsampled {
+		return 1
+	}
+	return 0
 }
 
 func frameWorkFilmGrainSampleStride(strideBytes int, bytesPerSample int) int {

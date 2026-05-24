@@ -141,10 +141,229 @@ func TestFrameWorkPostFilterContextGenerateFilmGrainChromaGrainAllocs(t *testing
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRow(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0,
+				BitDepth:      8,
+				NumCbPoints:   1,
+				CbPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 64}},
+				NumCrPoints:   1,
+				CrPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 64}},
+				ScalingShift:  8,
+				CbMult:        64,
+				CrMult:        64,
+				Overlap:       true,
+			},
+		},
+		Output: output,
+	}
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, filmgrain.LumaBlockSize>>1, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
+	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
+	grain := make([]int16, filmgrain.ChromaGrainSamples)
+	setTestFrameWorkFilmGrainChromaRowGrain(t, grain, 0xd9, true, true, 0, 0, 0, 0, 20)
+	lut := testFrameWorkFilmGrainScaling(64)
+
+	result, err := ctx.ApplyFilmGrainChromaRow(dst, src, luma, grain, lut[:], filmgrain.ChromaPlaneCb, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Active ||
+		result.Plane != filmgrain.ChromaPlaneCb ||
+		result.Row != 0 ||
+		result.Width != plan.Planes[filmgrain.ChromaPlaneCb].Width ||
+		result.Height != filmgrain.LumaBlockSize>>1 ||
+		result.Stride != plan.Planes[filmgrain.ChromaPlaneCb].Stride ||
+		result.LumaStride != lumaStride {
+		t.Fatalf("result=%+v", result)
+	}
+	if got := dst[0]; got != 105 {
+		t.Fatalf("chroma row sample=%d want 105", got)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowSkipsInactive(t *testing.T) {
+	result, err := (FrameWorkPostFilterContext{}).ApplyFilmGrainChromaRow(nil, nil, nil, nil, nil, filmgrain.ChromaPlaneCb, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkFilmGrainPostFilterChromaRow{}) {
+		t.Fatalf("result=%+v want zero", result)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowRejectsInvalidPlane(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{FilmGrain: parser.FilmGrainParams{
+			Apply:        true,
+			BitDepth:     8,
+			NumCbPoints:  1,
+			NumCrPoints:  1,
+			ScalingShift: 8,
+		}},
+		Output: output,
+	}
+	if _, err := ctx.ApplyFilmGrainChromaRow(nil, nil, nil, nil, nil, 0, 0); !errors.Is(err, frame.ErrInvalidFormat) {
+		t.Fatalf("ApplyFilmGrainChromaRow err=%v want %v", err, frame.ErrInvalidFormat)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowRejectsInvalidRow(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{FilmGrain: parser.FilmGrainParams{
+			Apply:        true,
+			BitDepth:     8,
+			NumCbPoints:  1,
+			NumCrPoints:  1,
+			ScalingShift: 8,
+		}},
+		Output: output,
+	}
+	if _, err := ctx.ApplyFilmGrainChromaRow(nil, nil, nil, nil, nil, filmgrain.ChromaPlaneCb, 1); !errors.Is(err, frame.ErrInvalidFormat) {
+		t.Fatalf("ApplyFilmGrainChromaRow err=%v want %v", err, frame.ErrInvalidFormat)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowRejectsShortScratch(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{FilmGrain: parser.FilmGrainParams{
+			Apply:        true,
+			BitDepth:     8,
+			NumCbPoints:  1,
+			NumCrPoints:  1,
+			ScalingShift: 8,
+			CbMult:       64,
+			CrMult:       64,
+		}},
+		Output: output,
+	}
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	height := filmgrain.LumaBlockSize >> 1
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, height, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
+	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
+	grain := make([]int16, filmgrain.ChromaGrainSamples)
+	lut := testFrameWorkFilmGrainScaling(64)
+	need := (height-1)*plan.Planes[filmgrain.ChromaPlaneCb].Stride + plan.Planes[filmgrain.ChromaPlaneCb].Width
+	if _, err := ctx.ApplyFilmGrainChromaRow(dst[:need-1], src, luma, grain, lut[:], filmgrain.ChromaPlaneCb, 0); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("ApplyFilmGrainChromaRow err=%v want %v", err, frame.ErrShortBuffer)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowAllocs(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0,
+				BitDepth:      8,
+				NumCbPoints:   1,
+				CbPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 64}},
+				NumCrPoints:   1,
+				CrPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 64}},
+				ScalingShift:  8,
+				CbMult:        64,
+				CrMult:        64,
+				Overlap:       true,
+			},
+		},
+		Output: output,
+	}
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, filmgrain.LumaBlockSize>>1, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
+	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
+	grain := make([]int16, filmgrain.ChromaGrainSamples)
+	setTestFrameWorkFilmGrainChromaRowGrain(t, grain, 0xd9, true, true, 0, 0, 0, 0, 20)
+	lut := testFrameWorkFilmGrainScaling(64)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		result, err := ctx.ApplyFilmGrainChromaRow(dst, src, luma, grain, lut[:], filmgrain.ChromaPlaneCb, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Active {
+			t.Fatalf("result=%+v", result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ApplyFilmGrainChromaRow allocated: %f", allocs)
+	}
+}
+
 func testFrameWorkFilmGrainLumaTemplate(value int16) []int16 {
 	grain := make([]int16, filmgrain.LumaGrainSamples)
 	for i := range grain {
 		grain[i] = value
 	}
 	return grain
+}
+
+func testFrameWorkFilmGrainChromaRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
+	dst := make([]uint16, stride*height)
+	src := make([]uint16, stride*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			src[y*stride+x] = value
+		}
+	}
+	return dst, src
+}
+
+func testFrameWorkFilmGrainSampleBuffer(width int, height int, stride int, value uint16) []uint16 {
+	samples := make([]uint16, stride*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			samples[y*stride+x] = value
+		}
+	}
+	return samples
+}
+
+func testFrameWorkFilmGrainScaling(value uint8) [filmgrain.ScalingLUTSize]uint8 {
+	var lut [filmgrain.ScalingLUTSize]uint8
+	for i := range lut {
+		lut[i] = value
+	}
+	return lut
+}
+
+func setTestFrameWorkFilmGrainChromaRowGrain(t *testing.T, grain []int16, offset uint8, subsamplingX bool, subsamplingY bool, blockCol int, blockRow int, x int, y int, value int16) {
+	t.Helper()
+	shiftX := frameWorkFilmGrainSubsamplingShift(subsamplingX)
+	shiftY := frameWorkFilmGrainSubsamplingShift(subsamplingY)
+	col := 3 + (filmgrain.LumaOverlapSamples>>shiftX)*(3+int(offset>>4)) + x + (filmgrain.LumaBlockSize>>shiftX)*blockCol
+	row := 3 + (filmgrain.LumaOverlapSamples>>shiftY)*(3+int(offset&0x0f)) + y + (filmgrain.LumaBlockSize>>shiftY)*blockRow
+	width := filmgrain.ChromaGrainWidth
+	if subsamplingX {
+		width = filmgrain.ChromaSubsampledGrainWidth
+	}
+	height := filmgrain.ChromaGrainHeight
+	if subsamplingY {
+		height = filmgrain.ChromaSubsampledGrainHeight
+	}
+	if col < 0 || col >= width || row < 0 || row >= height {
+		t.Fatalf("grain coordinate out of range: col=%d row=%d", col, row)
+	}
+	grain[row*filmgrain.ChromaGrainWidth+col] = value
 }
