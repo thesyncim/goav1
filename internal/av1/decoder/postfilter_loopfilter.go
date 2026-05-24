@@ -397,7 +397,7 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if verticalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y)
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y, plan.MICols, plan.MIRows)
 				if err != nil {
 					return err
 				}
@@ -424,7 +424,7 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if horizontalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y)
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y, plan.MICols, plan.MIRows)
 				if err != nil {
 					return err
 				}
@@ -462,7 +462,7 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if verticalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size)
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, plan.MICols, plan.MIRows)
 				if err != nil {
 					return err
 				}
@@ -489,7 +489,7 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if horizontalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size)
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, plan.MICols, plan.MIRows)
 				if err != nil {
 					return err
 				}
@@ -602,7 +602,7 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, fil
 			return err
 		}
 		if verticalLevel != 0 {
-			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size)
+			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, filterMap, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
@@ -629,7 +629,7 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, fil
 			return err
 		}
 		if horizontalLevel != 0 {
-			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size)
+			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, filterMap, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
@@ -687,19 +687,37 @@ func frameWorkLoopFilterChromaPreviousLookup4(ctx FrameWorkPostFilterContext, ed
 	}
 }
 
-func frameWorkLoopFilterScheduledLumaWidth(ctx FrameWorkPostFilterContext, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize) (int, bool, error) {
-	return frameWorkLoopFilterScheduledWidth(ctx, loopfilter.PlaneY, edge, x4, y4, length4, tx)
+func frameWorkLoopFilterScheduledLumaWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, cols int, rows int) (int, bool, error) {
+	width, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
+	if err != nil {
+		return 0, false, err
+	}
+	previousWidth, err := frameWorkLoopFilterPreviousLumaMinWidth(ctx, filterMap, edge, x4, y4, length4, cols, rows)
+	if err != nil {
+		return 0, false, err
+	}
+	if previousWidth < width {
+		width = previousWidth
+	}
+	return frameWorkLoopFilterScheduledWidth(ctx, loopfilter.PlaneY, edge, x4, y4, length4, width)
 }
 
-func frameWorkLoopFilterScheduledChromaWidth(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize) (int, bool, error) {
-	return frameWorkLoopFilterScheduledWidth(ctx, plane, edge, x4, y4, length4, tx)
-}
-
-func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize) (int, bool, error) {
+func frameWorkLoopFilterScheduledChromaWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, cols int, rows int) (int, bool, error) {
 	width, err := frameWorkLoopFilterWidth(plane, edge, tx)
 	if err != nil {
 		return 0, false, err
 	}
+	previousWidth, err := frameWorkLoopFilterPreviousChromaMinWidth(ctx, filterMap, plane, edge, x4, y4, length4, cols, rows)
+	if err != nil {
+		return 0, false, err
+	}
+	if previousWidth < width {
+		width = previousWidth
+	}
+	return frameWorkLoopFilterScheduledWidth(ctx, plane, edge, x4, y4, length4, width)
+}
+
+func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, width int) (int, bool, error) {
 	x := x4 * 4
 	y := y4 * 4
 	length := length4 * 4
@@ -714,6 +732,169 @@ func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loo
 		width = frameWorkLoopFilterDowngradeWidth(width)
 	}
 	return 0, false, nil
+}
+
+func frameWorkLoopFilterPreviousLumaMinWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, length4 int, cols int, rows int) (int, error) {
+	minWidth := 0
+	for offset := 0; offset < length4; offset++ {
+		boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
+		targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
+		if err != nil {
+			return 0, err
+		}
+		previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, loopfilter.ErrInvalidFilter
+		}
+		tx, ok, err := frameWorkLoopFilterLumaTransformAt(ctx, previous, targetX4, targetY4)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, threading.ErrInvalidBatch
+		}
+		width, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
+		if err != nil {
+			return 0, err
+		}
+		if minWidth == 0 || width < minWidth {
+			minWidth = width
+		}
+	}
+	if minWidth == 0 {
+		return 0, loopfilter.ErrInvalidFilter
+	}
+	return minWidth, nil
+}
+
+func frameWorkLoopFilterPreviousChromaMinWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, cols int, rows int) (int, error) {
+	minWidth := 0
+	for offset := 0; offset < length4; offset++ {
+		boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
+		targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
+		if err != nil {
+			return 0, err
+		}
+		lookupX4, lookupY4 := frameWorkLoopFilterChromaPreviousLookup4(ctx, edge, boundaryX4, boundaryY4)
+		previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, lookupX4, lookupY4, cols, rows)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, loopfilter.ErrInvalidFilter
+		}
+		tx, ok, err := frameWorkLoopFilterChromaTransformAt(ctx, previous, targetX4, targetY4)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, threading.ErrInvalidBatch
+		}
+		width, err := frameWorkLoopFilterWidth(plane, edge, tx)
+		if err != nil {
+			return 0, err
+		}
+		if minWidth == 0 || width < minWidth {
+			minWidth = width
+		}
+	}
+	if minWidth == 0 {
+		return 0, loopfilter.ErrInvalidFilter
+	}
+	return minWidth, nil
+}
+
+func frameWorkLoopFilterBoundaryOffset(edge loopfilter.Edge, x4 int, y4 int, offset int) (int, int) {
+	switch edge {
+	case loopfilter.EdgeVertical:
+		return x4, y4 + offset
+	case loopfilter.EdgeHorizontal:
+		return x4 + offset, y4
+	default:
+		return x4, y4
+	}
+}
+
+func frameWorkLoopFilterPreviousTarget4(edge loopfilter.Edge, x4 int, y4 int) (int, int, error) {
+	switch edge {
+	case loopfilter.EdgeVertical:
+		return x4 - 1, y4, nil
+	case loopfilter.EdgeHorizontal:
+		return x4, y4 - 1, nil
+	default:
+		return 0, 0, loopfilter.ErrInvalidFilter
+	}
+}
+
+func frameWorkLoopFilterLumaTransformAt(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, frameX4 int, frameY4 int) (tile.TransformSize, bool, error) {
+	req, err := frameWorkLoopFilterTransformTreeRequest(ctx, record)
+	if err != nil {
+		return 0, false, err
+	}
+	localX4 := record.Block.X4 + frameX4 - int(record.Block.MICol)
+	localY4 := record.Block.Y4 + frameY4 - int(record.Block.MIRow)
+	if localX4 < req.X4 || localY4 < req.Y4 ||
+		localX4 >= req.X4+int(req.VisibleW4) ||
+		localY4 >= req.Y4+int(req.VisibleH4) {
+		return 0, false, nil
+	}
+	if record.SkipTransform {
+		if !record.TransformTree.Y.Valid() {
+			return 0, false, threading.ErrInvalidBatch
+		}
+		return record.TransformTree.Y, true, nil
+	}
+	found := tile.TransformSize(0)
+	ok := false
+	if err := record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
+		if frameWorkLoopFilterTransformBlockContains(tx, localX4, localY4) {
+			found = tx.Size
+			ok = true
+		}
+		return nil
+	}); err != nil {
+		return 0, false, err
+	}
+	return found, ok, nil
+}
+
+func frameWorkLoopFilterChromaTransformAt(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, frameX4 int, frameY4 int) (tile.TransformSize, bool, error) {
+	block, ok, err := frameWorkLoopFilterChromaBlock(ctx, record)
+	if err != nil || !ok {
+		return 0, ok, err
+	}
+	color := ctx.Event.SequenceHeader.ColorConfig
+	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
+	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
+	localX4 := (record.Block.X4 >> ssX) + frameX4 - (int(record.Block.MICol) >> ssX)
+	localY4 := (record.Block.Y4 >> ssY) + frameY4 - (int(record.Block.MIRow) >> ssY)
+	if !frameWorkLoopFilterTransformBlockContains(block, localX4, localY4) {
+		return 0, false, nil
+	}
+	if record.SkipTransform {
+		return block.Size, true, nil
+	}
+	found := tile.TransformSize(0)
+	foundBlock := false
+	if err := frameWorkLoopFilterForEachChromaTXB(ctx, record, func(tx tile.TransformBlock) error {
+		if frameWorkLoopFilterTransformBlockContains(tx, localX4, localY4) {
+			found = tx.Size
+			foundBlock = true
+		}
+		return nil
+	}); err != nil {
+		return 0, false, err
+	}
+	return found, foundBlock, nil
+}
+
+func frameWorkLoopFilterTransformBlockContains(tx tile.TransformBlock, x4 int, y4 int) bool {
+	return x4 >= tx.X4 && y4 >= tx.Y4 &&
+		x4 < tx.X4+int(tx.VisibleW4) &&
+		y4 < tx.Y4+int(tx.VisibleH4)
 }
 
 func frameWorkLoopFilterLumaWidth(edge loopfilter.Edge, tx tile.TransformSize) (int, error) {

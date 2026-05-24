@@ -348,10 +348,122 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSchedulesLumaEdgeWidt
 	if plan.StoredEdges != 3 {
 		t.Fatalf("plan=%+v edges=%+v", plan, edges)
 	}
-	for i, want := range []int{4, 8, 14} {
+	for i, want := range []int{4, 4, 8} {
 		if edges[i].Width != want {
 			t.Fatalf("edge[%d]=%+v want width %d", i, edges[i], want)
 		}
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsHorizontalLumaWidthByPreviousTransform(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              32,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filler := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
+	filler.Block.Size = tile.BlockSize16x32
+	filler.SkipTransform = true
+	tx4 := testFrameWorkLoopFilterPostFilterRecordAt(0, 1, 1, 2)
+	tx4.SkipTransform = true
+	tx4.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4}
+	tx8 := testFrameWorkLoopFilterPostFilterRecordAt(0, 2, 2, 4)
+	tx8.SkipTransform = true
+	tx8.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8}
+	tx16 := testFrameWorkLoopFilterPostFilterRecordAt(0, 4, 4, 8)
+	tx16.SkipTransform = true
+	tx16.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x16}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, filler, tx4, tx8, tx16)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{0, 8}},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 3)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.StoredEdges != 3 {
+		t.Fatalf("plan=%+v edges=%+v", plan, edges)
+	}
+	for i, want := range []int{4, 4, 8} {
+		if edges[i].Width != want {
+			t.Fatalf("edge[%d]=%+v want width %d", i, edges[i], want)
+		}
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsChromaWidthByPreviousTransform(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	seq := testSequence()
+	seq.ColorConfig.SubsamplingX = false
+	seq.ColorConfig.SubsamplingY = false
+	left := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 2, 4)
+	left.SkipTransform = true
+	left.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize4x4, HasUV: true}
+	right := testFrameWorkLoopFilterPostFilterRecordAt(2, 0, 4, 4)
+	right.SkipTransform = true
+	right.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize8x8, HasUV: true}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, left, right)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: seq,
+			FrameSize:      size,
+			Segmentation: parser.SegmentationParams{
+				Enabled: true,
+				Data: parser.SegmentationData{
+					Segments: [parser.MaxSegments]parser.SegmentData{
+						0: {DeltaLFYV: -1},
+					},
+				},
+			},
+			LoopFilter: parser.LoopFilterParams{
+				LevelY: [2]uint8{1},
+				LevelU: 7,
+			},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 1)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PlaneEdgeCandidates != [3]int{0, 1, 0} {
+		t.Fatalf("plan=%+v", plan)
+	}
+	want := FrameWorkLoopFilterPostFilterEdge{
+		Plane:      loopfilter.PlaneU,
+		Edge:       loopfilter.EdgeVertical,
+		X4:         2,
+		Y4:         0,
+		Length4:    4,
+		Level:      7,
+		Transform:  tile.TransformSize8x8,
+		Width:      4,
+		BlockMICol: 2,
+		BlockMIRow: 0,
+	}
+	if edges[0] != want {
+		t.Fatalf("edge=%+v want %+v", edges[0], want)
 	}
 }
 
