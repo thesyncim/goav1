@@ -16,7 +16,13 @@ func LumaGrainSample(grain []int16, offset uint8, blockCol int, blockRow int, x 
 	if col < 0 || col >= LumaGrainWidth || row < 0 || row >= LumaGrainHeight {
 		return 0, ErrInvalidParams
 	}
-	return grain[row*LumaGrainWidth+col], nil
+	return lumaGrainSample(grain, offset, blockCol, blockRow, x, y), nil
+}
+
+func lumaGrainSample(grain []int16, offset uint8, blockCol int, blockRow int, x int, y int) int16 {
+	col := lumaGrainOffset(int(offset>>4)) + x + LumaBlockSize*blockCol
+	row := lumaGrainOffset(int(offset&0x0f)) + y + LumaBlockSize*blockRow
+	return grain[row*LumaGrainWidth+col]
 }
 
 func lumaGrainOffset(n int) int {

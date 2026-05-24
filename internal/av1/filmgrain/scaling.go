@@ -52,15 +52,19 @@ func ScaleLUT(lut []uint8, index int, bitDepth uint8) (uint8, error) {
 		index < 0 || index >= 1<<bitDepth {
 		return 0, ErrInvalidParams
 	}
+	return scaleLUT(lut, index, bitDepth), nil
+}
+
+func scaleLUT(lut []uint8, index int, bitDepth uint8) uint8 {
 	shift := int(bitDepth - 8)
 	x := index >> shift
 	if bitDepth == 8 || x == ScalingLUTSize-1 {
-		return lut[x], nil
+		return lut[x]
 	}
 	rem := index - (x << shift)
 	start := int(lut[x])
 	end := int(lut[x+1])
-	return uint8(start + roundPowerOfTwo((end-start)*rem, shift)), nil
+	return uint8(start + roundPowerOfTwo((end-start)*rem, shift))
 }
 
 func validateScalingPoints(points []ScalingPoint) error {
