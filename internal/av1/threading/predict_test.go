@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -204,6 +205,140 @@ func TestFrameWorkBatchPredictBlockLumaDirectionalModes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaInterFullpel(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{Col: 8, Row: -8})
+	if err := ctx.PredictBlockLumaInter(0, visit); err != nil {
+		t.Fatal(err)
+	}
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y)
+			want := frameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x+1, y-1)
+			if got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterFractionalMatchesMotion(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	want := testBatchFrame(t, output.Format)
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	mv := motion.Vector{Col: 3, Row: 5}
+	filters := motion.InterpFilters{X: motion.InterpMultiTapSharp, Y: motion.InterpEightTapSmooth}
+	visit := testInterPredictionVisit(mv)
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+		t.Fatal(err)
+	}
+	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
+	want := testBatchFrame(t, output.Format)
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0x3ff)
+	ctx := testInterPredictionBatch(output, reference)
+	mv := motion.Vector{Col: 4, Row: 6}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	visit := testInterPredictionVisit(mv)
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+		t.Fatal(err)
+	}
+	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	ctx := testInterPredictionBatch(output, reference)
+	valid := testInterPredictionVisit(motion.Vector{})
+
+	tests := []struct {
+		name  string
+		ctx   FrameWorkBatch
+		visit tile.BlockLoopVisit
+	}{
+		{name: "missing prediction", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.Valid = false
+			return visit
+		}()},
+		{name: "intra", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.Intra = true
+			return visit
+		}()},
+		{name: "missing motion", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.InterMotionValid = false
+			return visit
+		}()},
+		{name: "compound", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.InterMotion.References.Compound = true
+			visit.Prediction.InterMotion.References.Ref[1] = tile.ReferenceFrameBWD
+			return visit
+		}()},
+		{name: "missing reference frame", ctx: func() FrameWorkBatch {
+			next := ctx
+			next.References = nil
+			return next
+		}(), visit: valid},
+		{name: "switchable filter not decoded", ctx: func() FrameWorkBatch {
+			next := ctx
+			next.TileInfo.InterpolationFilter = parser.InterpolationSwitchable
+			return next
+		}(), visit: valid},
+		{name: "outside job", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Block.MICol = 16
+			visit.Block.MIColEnd = 20
+			return visit
+		}()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.ctx.PredictBlockLumaInter(0, tt.visit); !errors.Is(err, ErrInvalidBatch) {
+				t.Fatalf("err=%v want %v", err, ErrInvalidBatch)
+			}
+		})
+	}
+	if err := ctx.PredictBlockLumaInterWithFilters(0, valid, motion.InterpFilters{X: motion.InterpFilter(99)}); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad filters err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0x3ff)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{Col: 4, Row: 6})
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockLumaInter allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := testIntraPredictionBatch(output)
@@ -341,6 +476,21 @@ func testIntraPredictionBatch(output *frame.Frame) FrameWorkBatch {
 	}
 }
 
+func testInterPredictionBatch(output *frame.Frame, reference *frame.Frame) FrameWorkBatch {
+	return FrameWorkBatch{
+		Output:     output,
+		References: []*frame.Frame{reference},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: output.Format.BitDepth},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
+			TileInfo:  parser.TileInfo{InterpolationFilter: parser.InterpolationEightTap},
+		},
+		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+	}
+}
+
 func testIntraPredictionVisit(mode tile.IntraMode) tile.BlockLoopVisit {
 	return tile.BlockLoopVisit{
 		Block: tile.BlockVisit{
@@ -352,6 +502,28 @@ func testIntraPredictionVisit(mode tile.IntraMode) tile.BlockLoopVisit {
 			Valid:    true,
 			Intra:    true,
 			LumaMode: mode,
+		},
+	}
+}
+
+func testInterPredictionVisit(mv motion.Vector) tile.BlockLoopVisit {
+	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	return tile.BlockLoopVisit{
+		Block: tile.BlockVisit{
+			MICol: 4, MIRow: 4, MIColEnd: 8, MIRowEnd: 8,
+			X4: 4, Y4: 4, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+			HaveTop: true, HaveLeft: true,
+		},
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:                true,
+			Intra:                false,
+			InterReferences:      refs,
+			InterReferencesValid: true,
+			InterMotion: tile.InterMotionResult{
+				References: refs,
+				MV:         [2]motion.Vector{mv},
+			},
+			InterMotionValid: true,
 		},
 	}
 }
@@ -374,6 +546,19 @@ func frameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int) ui
 	return sample
 }
 
+func assertFrameWorkPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, bytesPerSample int, x int, y int, width int, height int) {
+	t.Helper()
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
+			w := frameWorkTestSample(want, bytesPerSample, x+col, y+row)
+			if g != w {
+				t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, g, w)
+			}
+		}
+	}
+}
+
 func setFrameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) {
 	offset := y*plane.Stride + x*bytesPerSample
 	if bytesPerSample == 1 {
@@ -382,6 +567,14 @@ func setFrameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int,
 	}
 	plane.Pix[offset] = byte(value)
 	plane.Pix[offset+1] = byte(value >> 8)
+}
+
+func fillFrameWorkInterReference(reference *frame.Frame, max uint16) {
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((x*x+3*y*y+17*x+11*y)&int(max)))
+		}
+	}
 }
 
 func seedFrameWorkDirectionalEdges(output *frame.Frame, max uint16, above uint16, left uint16, aboveLeft uint16) {

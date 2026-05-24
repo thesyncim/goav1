@@ -2,6 +2,8 @@ package threading
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -79,6 +81,111 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+// PredictBlockLumaInter writes single-reference translational luma inter
+// prediction for one decoded block-loop visit. Switchable filters, compound
+// blending, scaled references, warped/global refinement, and chroma prediction
+// are handled by later inter-prediction stages.
+func (b FrameWorkBatch) PredictBlockLumaInter(index int, visit tile.BlockLoopVisit) error {
+	filters, err := frameWorkMotionFilters(b.TileInfo)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockLumaInterWithFilters(index, visit, filters)
+}
+
+// PredictBlockLumaInterWithFilters is PredictBlockLumaInter with explicit
+// interpolation filters. It is useful for blocks whose switchable filter syntax
+// has already been decoded by a caller.
+func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.BlockLoopVisit, filters motion.InterpFilters) error {
+	if !visit.Prediction.Valid || visit.Prediction.Intra || !visit.Prediction.InterMotionValid {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		return ErrInvalidBatch
+	}
+	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	if !ok {
+		return ErrInvalidBatch
+	}
+	width, height, ok := frameWorkBlockVisiblePixels(visit.Block)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	x, y, err := frameWorkBlockLumaPosition(visit.Block)
+	if err != nil {
+		return err
+	}
+	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
+		return ErrInvalidBatch
+	}
+	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	output, _, _, ok := frameWorkFramePlane(b.Output, FrameWorkPlaneY)
+	if !ok || b.Output.Layout.BytesPerSample <= 0 {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(output, ref, b.Output.Layout.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, motionResult.MV[0], filters); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkMotionFilters(info parser.TileInfo) (motion.InterpFilters, error) {
+	var filter motion.InterpFilter
+	switch info.InterpolationFilter {
+	case parser.InterpolationEightTap:
+		filter = motion.InterpEightTapRegular
+	case parser.InterpolationSmooth:
+		filter = motion.InterpEightTapSmooth
+	case parser.InterpolationSharp:
+		filter = motion.InterpMultiTapSharp
+	case parser.InterpolationBilinear:
+		filter = motion.InterpBilinear
+	default:
+		return motion.InterpFilters{}, ErrInvalidBatch
+	}
+	return motion.InterpFilters{X: filter, Y: filter}, nil
+}
+
+func frameWorkReferenceFromTile(ref tile.ReferenceFrame) (FrameWorkReference, bool) {
+	switch ref {
+	case tile.ReferenceFrameLast:
+		return FrameWorkReferenceLast, true
+	case tile.ReferenceFrameLast2:
+		return FrameWorkReferenceLast2, true
+	case tile.ReferenceFrameLast3:
+		return FrameWorkReferenceLast3, true
+	case tile.ReferenceFrameGolden:
+		return FrameWorkReferenceGolden, true
+	case tile.ReferenceFrameBWD:
+		return FrameWorkReferenceBwd, true
+	case tile.ReferenceFrameAltref2:
+		return FrameWorkReferenceAltRef2, true
+	case tile.ReferenceFrameAltref:
+		return FrameWorkReferenceAltRef, true
+	default:
+		return 0, false
+	}
 }
 
 func frameWorkLumaIntraPredictionMode(mode tile.IntraMode) (prediction.IntraMode, bool) {
