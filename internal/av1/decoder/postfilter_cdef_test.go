@@ -228,6 +228,12 @@ func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
 	if runner.Result.Completed != FrameWorkPostFilterCDEF || runner.Context.RemainingPostFilters() != 0 {
 		t.Fatalf("runner result=%+v remaining=%b", runner.Result, runner.Context.RemainingPostFilters())
 	}
+	if runner.Context.DetachedPostFilterOutput() {
+		t.Fatal("supported runner returned detached output")
+	}
+	if err := runner.Context.RequirePublishablePostFilterOutput(); err != nil {
+		t.Fatalf("RequirePublishablePostFilterOutput err=%v", err)
+	}
 	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
 		t.Fatal("runner did not change luma samples")
 	}

@@ -72,7 +72,8 @@ type FrameWorkPostFilterContext struct {
 	LoopFilterMap           *threading.FrameWorkLoopFilterMap
 	RestorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
 
-	completedPostFilters FrameWorkPostFilterStage
+	completedPostFilters     FrameWorkPostFilterStage
+	detachedPostFilterOutput bool
 }
 
 // FrameWorkPostFilterFunc applies final frame postfilters before reference

@@ -91,7 +91,7 @@ func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContex
 	if err != nil {
 		return err
 	}
-	if err := next.RequireNoRemainingPostFilters(); err != nil {
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
 		return err
 	}
 	r.Context = next
@@ -150,6 +150,27 @@ func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
 // marked complete in this callback-local context.
 func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
 	if !ctx.RemainingPostFilters().Empty() {
+		return ErrUnsupportedPostFilter
+	}
+	return nil
+}
+
+// DetachedPostFilterOutput reports whether ctx.Output points at caller-owned
+// postfilter scratch instead of the frame-pool surface that the framework will
+// publish to reference slots.
+func (ctx FrameWorkPostFilterContext) DetachedPostFilterOutput() bool {
+	return ctx.detachedPostFilterOutput
+}
+
+// RequirePublishablePostFilterOutput rejects contexts whose filters are done
+// but whose current output is detached caller-owned scratch. Use this guard from
+// frame-pool publication hooks; display/caller-owned consumers can instead use
+// RequireNoRemainingPostFilters and then read ctx.Output directly.
+func (ctx FrameWorkPostFilterContext) RequirePublishablePostFilterOutput() error {
+	if err := ctx.RequireNoRemainingPostFilters(); err != nil {
+		return err
+	}
+	if ctx.detachedPostFilterOutput {
 		return ErrUnsupportedPostFilter
 	}
 	return nil

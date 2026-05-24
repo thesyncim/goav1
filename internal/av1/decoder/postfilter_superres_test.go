@@ -202,6 +202,9 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterToContextCompletesStag
 	if result.Planes != 3 || next.RemainingPostFilters() != 0 {
 		t.Fatalf("result=%+v remaining=%b", result, next.RemainingPostFilters())
 	}
+	if !next.DetachedPostFilterOutput() {
+		t.Fatal("superres context did not report detached output")
+	}
 	if next.Output == nil {
 		t.Fatal("next output is nil")
 	}
@@ -213,6 +216,12 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterToContextCompletesStag
 	}
 	if output.Y.Pix[1] != 32 {
 		t.Fatalf("coded output mutated: %d", output.Y.Pix[1])
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+	if err := next.RequirePublishablePostFilterOutput(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequirePublishablePostFilterOutput err=%v want %v", err, ErrUnsupportedPostFilter)
 	}
 }
 

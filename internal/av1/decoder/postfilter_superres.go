@@ -232,6 +232,7 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilterToContext(req Frame
 		return ctx, result, nil
 	}
 	ctx.Output = &result.Output
+	ctx.detachedPostFilterOutput = true
 	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterSuperRes)
 	return ctx, result, nil
 }
