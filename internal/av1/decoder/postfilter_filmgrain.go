@@ -68,6 +68,18 @@ type FrameWorkFilmGrainPostFilterScalingLUTs struct {
 	LUTs [3][filmgrain.ScalingLUTSize]uint8
 }
 
+// FrameWorkFilmGrainPostFilterLumaGrain is the generated luma grain template
+// stored in caller-owned scratch.
+type FrameWorkFilmGrainPostFilterLumaGrain struct {
+	Active bool
+
+	Grain []int16
+
+	Width  int
+	Height int
+	Stride int
+}
+
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
 // plane-local synthesis inputs. It does not mutate ctx.Output.
 func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGrainPostFilterPlan, error) {
@@ -191,6 +203,32 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWor
 	return luts, nil
 }
 
+// GenerateFilmGrainLumaGrain fills caller-owned scratch with the luma grain
+// template for the current frame. It does not place grain onto ctx.Output.
+func (ctx FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (FrameWorkFilmGrainPostFilterLumaGrain, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterLumaGrain{}, err
+	}
+	if !plan.Active || !plan.Planes[0].Active {
+		return FrameWorkFilmGrainPostFilterLumaGrain{}, nil
+	}
+	if len(dst) < filmgrain.LumaGrainSamples {
+		return FrameWorkFilmGrainPostFilterLumaGrain{}, frame.ErrShortBuffer
+	}
+	params := frameWorkFilmGrainLumaGrainParams(plan.Params, plan.BitDepth)
+	if err := filmgrain.GenerateLumaGrain(dst, params); err != nil {
+		return FrameWorkFilmGrainPostFilterLumaGrain{}, frame.ErrInvalidFormat
+	}
+	return FrameWorkFilmGrainPostFilterLumaGrain{
+		Active: true,
+		Grain:  dst[:filmgrain.LumaGrainSamples],
+		Width:  filmgrain.LumaGrainWidth,
+		Height: filmgrain.LumaGrainHeight,
+		Stride: filmgrain.LumaGrainWidth,
+	}, nil
+}
+
 // ApplyFilmGrainPostFilter applies the currently supported film-grain subset.
 // It only completes the stage when the signaled grain is a true no-op; active
 // synthesis still rejects before mutating ctx.Output.
@@ -248,6 +286,19 @@ func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format fram
 		return frame.ErrInvalidFormat
 	}
 	return nil
+}
+
+func frameWorkFilmGrainLumaGrainParams(params parser.FilmGrainParams, bitDepth uint8) filmgrain.LumaGrainParams {
+	out := filmgrain.LumaGrainParams{
+		Seed:            params.Seed,
+		BitDepth:        bitDepth,
+		NumYPoints:      params.NumYPoints,
+		GrainScaleShift: params.GrainScaleShift,
+		ARCoeffLag:      params.ARCoeffLag,
+		ARCoeffShift:    params.ARCoeffShift,
+	}
+	copy(out.ARCoeffs[:], params.ARCoeffsY[:])
+	return out
 }
 
 func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {
