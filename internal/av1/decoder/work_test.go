@@ -1689,6 +1689,85 @@ func TestFrameWorkStateRunEventWithContextPostFilterBeforeFinish(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
+	pool := testFramePoolForSize(t, 64, 64, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+
+	seq := testSequence()
+	begin := Event{
+		Kind:           EventFrameHeader,
+		SequenceHeader: seq,
+		FrameHeader:    parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:      testFrameSize(64, 64),
+	}
+	plan, _, err := state.Begin(&refs, &pool, seq, begin, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	final := begin
+	final.Kind = EventTileGroup
+	final.TileGroup.Final = true
+	final.FrameSize.RefreshFrameFlags = 1
+	final.CDEF = parser.CDEFParams{Damping: 5, StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{8}}
+	final.LoopFilter = parser.LoopFilterParams{LevelY: [2]uint8{1}}
+	ctx := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(final, threading.FrameWorkSequenceContextFromHeader(final.SequenceHeader))}
+	_, _, cdefLen, err := ctx.CDEFIndexMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, err := ctx.BindCDEFIndexMap(make([]uint8, cdefLen), make([]bool, cdefLen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetCDEFIndexMap(cdefMap); err != nil {
+		t.Fatal(err)
+	}
+	_, _, lfLen, err := ctx.LoopFilterMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfMap, err := ctx.BindLoopFilterMap(make([]threading.FrameWorkLoopFilterBlockRecord, lfLen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetLoopFilterMap(lfMap); err != nil {
+		t.Fatal(err)
+	}
+
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Surface: plan.Surface},
+	}
+	var postRan bool
+	result, err := state.RunStepWithPostFilter(&refs, &pool, final, step, nil, nil, nil, releases[:], nil, func(post FrameWorkPostFilterContext) error {
+		postRan = true
+		if post.CDEFIndexMap == nil || post.CDEFIndexMap.Stride != cdefMap.Stride || post.CDEFIndexMap.Rows != cdefMap.Rows {
+			t.Fatalf("CDEFIndexMap=%+v want stride=%d rows=%d", post.CDEFIndexMap, cdefMap.Stride, cdefMap.Rows)
+		}
+		if post.LoopFilterMap == nil || post.LoopFilterMap.Stride != lfMap.Stride || post.LoopFilterMap.Rows != lfMap.Rows {
+			t.Fatalf("LoopFilterMap=%+v want stride=%d rows=%d", post.LoopFilterMap, lfMap.Stride, lfMap.Rows)
+		}
+		post.CDEFIndexMap.Read[0] = true
+		post.LoopFilterMap.Records[0].Valid = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !postRan || !result.CompletedFrame || state.Active() {
+		t.Fatalf("postRan=%v result=%+v active=%v", postRan, result, state.Active())
+	}
+	if !cdefMap.Read[0] {
+		t.Fatal("postfilter CDEFIndexMap did not alias caller storage")
+	}
+	if !lfMap.Records[0].Valid {
+		t.Fatal("postfilter LoopFilterMap did not alias caller storage")
+	}
+}
+
 func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.T) {
 	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
 	framePayload = append(framePayload, 0xaa)

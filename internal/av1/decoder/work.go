@@ -68,6 +68,9 @@ type FrameWorkPostFilterContext struct {
 	ReferenceCount   int
 	ExecutedTileWork bool
 
+	CDEFIndexMap  *threading.FrameWorkCDEFIndexMap
+	LoopFilterMap *threading.FrameWorkLoopFilterMap
+
 	completedPostFilters FrameWorkPostFilterStage
 }
 
@@ -426,7 +429,15 @@ func (s *FrameWorkState) RunStepWithPostFilter(refs *SurfaceReferences, framePoo
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
-	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, post); err != nil {
+	var cdefIndexMap *threading.FrameWorkCDEFIndexMap
+	var loopFilterMap *threading.FrameWorkLoopFilterMap
+	if s != nil && s.cdefIndexMapValid {
+		cdefIndexMap = &s.cdefIndexMap
+	}
+	if s != nil && s.loopFilterMapValid {
+		loopFilterMap = &s.loopFilterMap
+	}
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -499,7 +510,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, post); err != nil {
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -598,7 +609,7 @@ func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep
 	return pool.Frame(surface)
 }
 
-func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, post FrameWorkPostFilterFunc) error {
+func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, post FrameWorkPostFilterFunc) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -611,6 +622,8 @@ func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame
 		Output:           output,
 		ReferenceCount:   referenceCount,
 		ExecutedTileWork: executed,
+		CDEFIndexMap:     cdefIndexMap,
+		LoopFilterMap:    loopFilterMap,
 	})
 }
 
