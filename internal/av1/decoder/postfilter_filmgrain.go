@@ -80,6 +80,18 @@ type FrameWorkFilmGrainPostFilterLumaGrain struct {
 	Stride int
 }
 
+// FrameWorkFilmGrainPostFilterLumaRow summarizes one applied luma grain row
+// band.
+type FrameWorkFilmGrainPostFilterLumaRow struct {
+	Active bool
+
+	Row int
+
+	Width  int
+	Height int
+	Stride int
+}
+
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
 // plane-local synthesis inputs. It does not mutate ctx.Output.
 func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGrainPostFilterPlan, error) {
@@ -229,6 +241,41 @@ func (ctx FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (F
 	}, nil
 }
 
+// ApplyFilmGrainLumaRow applies luma film grain to one 32-line row band using
+// caller-owned uint16 sample views. src and dst may alias.
+func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, row int) (FrameWorkFilmGrainPostFilterLumaRow, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, err
+	}
+	if !plan.Active || !plan.Planes[0].Active {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, nil
+	}
+	plane := plan.Planes[0]
+	if row < 0 || row*filmgrain.LumaBlockSize >= plane.Height {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrInvalidFormat
+	}
+	height := filmgrain.LumaBlockSize
+	if remaining := plane.Height - row*filmgrain.LumaBlockSize; remaining < height {
+		height = remaining
+	}
+	need := (height-1)*plane.Stride + plane.Width
+	if len(dst) < need || len(src) < need || len(grain) < filmgrain.LumaGrainSamples || len(scaling) < filmgrain.ScalingLUTSize {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrShortBuffer
+	}
+	params := frameWorkFilmGrainLumaRowParams(plan, row, height)
+	if err := filmgrain.ApplyLumaRow(dst, src, grain, scaling, params); err != nil {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrInvalidFormat
+	}
+	return FrameWorkFilmGrainPostFilterLumaRow{
+		Active: true,
+		Row:    row,
+		Width:  params.Width,
+		Height: params.Height,
+		Stride: params.Stride,
+	}, nil
+}
+
 // ApplyFilmGrainPostFilter applies the currently supported film-grain subset.
 // It only completes the stage when the signaled grain is a true no-op; active
 // synthesis still rejects before mutating ctx.Output.
@@ -299,6 +346,20 @@ func frameWorkFilmGrainLumaGrainParams(params parser.FilmGrainParams, bitDepth u
 	}
 	copy(out.ARCoeffs[:], params.ARCoeffsY[:])
 	return out
+}
+
+func frameWorkFilmGrainLumaRowParams(plan FrameWorkFilmGrainPostFilterPlan, row int, height int) filmgrain.LumaRowParams {
+	return filmgrain.LumaRowParams{
+		Seed:                  plan.Seed,
+		Width:                 plan.Planes[0].Width,
+		Height:                height,
+		Stride:                plan.Planes[0].Stride,
+		Row:                   row,
+		BitDepth:              plan.BitDepth,
+		ScalingShift:          plan.Params.ScalingShift,
+		Overlap:               plan.Overlap,
+		ClipToRestrictedRange: plan.ClipToRestrictedRange,
+	}
 }
 
 func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {
