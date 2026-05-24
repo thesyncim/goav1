@@ -112,6 +112,87 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsTransformReplay
 	}
 }
 
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	first.SkipTransform = true
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	second.TransformTree = tile.TransformTreeResult{
+		Y:        tile.TransformSize16x16,
+		Variable: true,
+		Split:    [2]uint16{1, 0},
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 4)
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EdgeCandidates != 4 || plan.StoredEdges != len(edges) || plan.DroppedEdges != 0 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	want := []FrameWorkLoopFilterPostFilterEdge{
+		{Plane: loopfilter.PlaneY, Edge: loopfilter.EdgeVertical, X4: 4, Y4: 0, Length4: 2, Level: 8, Transform: tile.TransformSize8x8, BlockMICol: 4, BlockMIRow: 0},
+		{Plane: loopfilter.PlaneY, Edge: loopfilter.EdgeVertical, X4: 6, Y4: 0, Length4: 2, Level: 8, Transform: tile.TransformSize8x8, BlockMICol: 4, BlockMIRow: 0},
+		{Plane: loopfilter.PlaneY, Edge: loopfilter.EdgeVertical, X4: 4, Y4: 2, Length4: 2, Level: 8, Transform: tile.TransformSize8x8, BlockMICol: 4, BlockMIRow: 0},
+		{Plane: loopfilter.PlaneY, Edge: loopfilter.EdgeVertical, X4: 6, Y4: 2, Length4: 2, Level: 8, Transform: tile.TransformSize8x8, BlockMICol: 4, BlockMIRow: 0},
+	}
+	for i := range want {
+		if edges[i] != want[i] {
+			t.Fatalf("edge[%d]=%+v want %+v", i, edges[i], want[i])
+		}
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsDroppedEdges(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              32,
+		SuperResDenominator: 8,
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size,
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 4, 4, 8),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 4, 8, 8),
+	)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8, 9}},
+		},
+	}
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: make([]FrameWorkLoopFilterPostFilterEdge, 1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EdgeCandidates != 4 || plan.StoredEdges != 1 || plan.DroppedEdges != 3 {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsMissingActiveMap(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{
