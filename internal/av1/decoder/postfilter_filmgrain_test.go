@@ -208,6 +208,82 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterScalingLUTsRejectsInvalidP
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersCompletesNoOpFilmGrain(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	output.Y.Pix[0] = 0x5a
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				BitDepth:      8,
+			},
+		},
+		Output: output,
+	}
+	size, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("scratch=%+v", size.FilmGrain)
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != FrameWorkPostFilterFilmGrain || !result.FilmGrain.NoOp || !result.FilmGrain.Plan.Active {
+		t.Fatalf("result=%+v", result)
+	}
+	if got := next.RemainingPostFilters(); got != 0 {
+		t.Fatalf("remaining=%b want 0", got)
+	}
+	if output.Y.Pix[0] != 0x5a {
+		t.Fatalf("output sample=%d want 0x5a", output.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsActiveFilmGrainBeforeMutation(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	output.Y.Pix[0] = 0x44
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FrameSize: parser.FrameSize{
+				CodedWidth:          64,
+				UpscaledWidth:       64,
+				Height:              32,
+				SuperResDenominator: 8,
+			},
+			CDEF: parser.CDEFParams{
+				Damping:       5,
+				StrengthCount: 1,
+				YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+			},
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				BitDepth:      8,
+				NumYPoints:    1,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 16}},
+			},
+		},
+		Output: output,
+	}
+	if _, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{}); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("SupportedPostFilterScratchLen err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{})
+	if !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("ApplySupportedPostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+	if next.RemainingPostFilters() != ctx.RemainingPostFilters() || result != (FrameWorkPostFilterResult{}) {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if output.Y.Pix[0] != 0x44 {
+		t.Fatalf("output sample=%d want 0x44", output.Y.Pix[0])
+	}
+}
+
 func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanRejectsNilOutput(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{

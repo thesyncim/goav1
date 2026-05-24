@@ -45,6 +45,17 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ARCoeffs      [3]int
 }
 
+// FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
+// ApplyFilmGrainPostFilter. The currently supported no-op subset needs none.
+type FrameWorkFilmGrainPostFilterRequest struct{}
+
+// FrameWorkFilmGrainPostFilterResult summarizes film-grain postfilter work.
+type FrameWorkFilmGrainPostFilterResult struct {
+	Plan FrameWorkFilmGrainPostFilterPlan
+
+	NoOp bool
+}
+
 // FrameWorkFilmGrainPostFilterScalingLUTs contains the 8-bit-domain scaling
 // lookup tables used by film-grain synthesis.
 type FrameWorkFilmGrainPostFilterScalingLUTs struct {
@@ -171,6 +182,40 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWor
 	return luts, nil
 }
 
+// ApplyFilmGrainPostFilter applies the currently supported film-grain subset.
+// It only completes the stage when the signaled grain is a true no-op; active
+// synthesis still rejects before mutating ctx.Output.
+func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilmGrainPostFilterRequest) (FrameWorkFilmGrainPostFilterResult, error) {
+	_ = req
+	remaining := ctx.RemainingPostFilters()
+	preFilmGrain := FrameWorkPostFilterLoopFilter |
+		FrameWorkPostFilterCDEF |
+		FrameWorkPostFilterSuperRes |
+		FrameWorkPostFilterLoopRestoration
+	if remaining&preFilmGrain != 0 {
+		return FrameWorkFilmGrainPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterFilmGrain) {
+		return FrameWorkFilmGrainPostFilterResult{}, nil
+	}
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterResult{}, err
+	}
+	if !frameWorkFilmGrainNoOp(plan.Params) {
+		return FrameWorkFilmGrainPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	return FrameWorkFilmGrainPostFilterResult{Plan: plan, NoOp: true}, nil
+}
+
+func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return false, err
+	}
+	return plan.Active && frameWorkFilmGrainNoOp(plan.Params), nil
+}
+
 func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format frame.Format) error {
 	if params.BitDepth != 0 && params.BitDepth != format.BitDepth {
 		return frame.ErrInvalidFormat
@@ -194,6 +239,13 @@ func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format fram
 		return frame.ErrInvalidFormat
 	}
 	return nil
+}
+
+func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {
+	return !params.ChromaScalingFromLuma &&
+		params.NumYPoints == 0 &&
+		params.NumCbPoints == 0 &&
+		params.NumCrPoints == 0
 }
 
 func frameWorkFilmGrainSampleStride(strideBytes int, bytesPerSample int) int {
