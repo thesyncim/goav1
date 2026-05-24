@@ -40,6 +40,27 @@ func (b FrameWorkBatch) BindReferenceMVFrame(entries []tile.ReferenceMVEntry) (t
 	return frame, nil
 }
 
+// BindTemporalMotionField validates and clears caller-owned projected MFMV
+// storage for the current frame.
+func (b FrameWorkBatch) BindTemporalMotionField(entries []tile.TemporalMotionEntry) (tile.TemporalMotionField, error) {
+	miRows, miCols, err := b.referenceMVFrameMIExtents()
+	if err != nil {
+		return tile.TemporalMotionField{}, err
+	}
+	need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		return tile.TemporalMotionField{}, ErrInvalidBatch
+	}
+	if len(entries) < need {
+		return tile.TemporalMotionField{}, ErrInvalidBatch
+	}
+	var field tile.TemporalMotionField
+	if err := field.Init(miRows, miCols, entries); err != nil {
+		return tile.TemporalMotionField{}, ErrInvalidBatch
+	}
+	return field, nil
+}
+
 func (b FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint32, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return 0, 0, ErrInvalidBatch

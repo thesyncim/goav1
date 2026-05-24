@@ -243,6 +243,125 @@ func TestBuildReferenceMVStackRefFrameMVSUnavailableSetsGlobalContext(t *testing
 	}
 }
 
+func TestBuildReferenceMVStackUsesTemporalRefFrameMVS(t *testing.T) {
+	var ctx BlockModeContext
+	field := newTemporalMotionFieldForTest(t, 16, 16)
+	field.Entries[0] = TemporalMotionEntry{
+		MV:             motion.Vector{Row: 64, Col: 32},
+		RefFrameOffset: 4,
+		Valid:          true,
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize16x16,
+		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+
+		MICol:            0,
+		MIRow:            0,
+		TileMIColEnd:     16,
+		TileMIRowEnd:     16,
+		TemporalMVs:      field,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		ReferenceOrderHints: [referenceFrameCount]uint32{
+			ReferenceFrameLast: 4,
+		},
+		GlobalMVs:      [2]motion.Vector{{Row: 0, Col: 0}},
+		UseRefFrameMVS: true,
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ModeContext&(1<<globalMVOffset) == 0 {
+		t.Fatalf("mode ctx=%d missing temporal globalmv signal", result.ModeContext)
+	}
+	if result.Stack.Count != 1 || !result.Stack.SingleRefValid {
+		t.Fatalf("stack=%+v", result.Stack)
+	}
+	if got := result.Stack.Candidates[0]; got != (ReferenceMVCandidate{This: motion.Vector{Row: 64, Col: 32}, Weight: 2}) {
+		t.Fatalf("temporal candidate=%+v", got)
+	}
+	nearest, near, err := result.Stack.BestSingleReferenceMVs(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nearest != (motion.Vector{Row: 64, Col: 32}) || near != (motion.Vector{}) {
+		t.Fatalf("nearest=%+v near=%+v", nearest, near)
+	}
+}
+
+func TestBuildReferenceMVStackTemporalCompoundProjectsBothRefs(t *testing.T) {
+	var ctx BlockModeContext
+	field := newTemporalMotionFieldForTest(t, 16, 16)
+	field.Entries[0] = TemporalMotionEntry{
+		MV:             motion.Vector{Row: 64, Col: 32},
+		RefFrameOffset: 4,
+		Valid:          true,
+	}
+	req := ReferenceMVStackRequest{
+		Size: BlockSize16x16,
+		References: InterReferencesResult{
+			Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+			Compound: true,
+		},
+
+		MICol:            0,
+		MIRow:            0,
+		TileMIColEnd:     16,
+		TileMIRowEnd:     16,
+		TemporalMVs:      field,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		ReferenceOrderHints: [referenceFrameCount]uint32{
+			ReferenceFrameLast: 4,
+			ReferenceFrameBWD:  12,
+		},
+		GlobalMVs:      [2]motion.Vector{{Row: 0, Col: 0}, {Row: 0, Col: 0}},
+		UseRefFrameMVS: true,
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 2 {
+		t.Fatalf("stack=%+v", result.Stack)
+	}
+	if got := result.Stack.Candidates[0]; got != (ReferenceMVCandidate{
+		This:     motion.Vector{Row: 64, Col: 32},
+		Compound: motion.Vector{Row: -64, Col: -32},
+		Weight:   2,
+	}) {
+		t.Fatalf("temporal compound candidate=%+v", got)
+	}
+}
+
+func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T) {
+	var ctx BlockModeContext
+	req := ReferenceMVStackRequest{
+		Size:             BlockSize16x16,
+		References:       InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		TileMIColEnd:     16,
+		TileMIRowEnd:     16,
+		TemporalMVs:      newTemporalMotionFieldForTest(t, 16, 16),
+		UseRefFrameMVS:   true,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		ReferenceOrderHints: [referenceFrameCount]uint32{
+			ReferenceFrameLast: 4,
+		},
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.ModeContext, uint16(1<<globalMVOffset); got != want {
+		t.Fatalf("mode ctx=%d want %d", got, want)
+	}
+	if result.Stack.Count != 0 {
+		t.Fatalf("stack=%+v want no temporal candidates", result.Stack)
+	}
+}
+
 func TestBlockModeContextBuildReferenceMVStackCompound(t *testing.T) {
 	var ctx BlockModeContext
 	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD}, Compound: true}

@@ -154,6 +154,7 @@ type BlockLoopRequest struct {
 	TemporalMVSampleUnavailable bool
 	OrderHintBits               uint8
 	CurrentOrderHint            uint32
+	TemporalMVs                 *TemporalMotionField
 	CurrentMVFrame              *ReferenceMVFrame
 
 	Color               parser.ColorConfig
@@ -651,6 +652,20 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				GlobalMVs:   globalMVs,
 				RefSignBias: req.RefSignBias,
 
+				MICol:          block.MICol,
+				MIRow:          block.MIRow,
+				TileMIColStart: req.Walk.MIColStart,
+				TileMIRowStart: req.Walk.MIRowStart,
+				TileMIColEnd:   req.Walk.MIColEnd,
+				TileMIRowEnd:   req.Walk.MIRowEnd,
+
+				TemporalMVs:          req.TemporalMVs,
+				OrderHintBits:        req.OrderHintBits,
+				CurrentOrderHint:     req.CurrentOrderHint,
+				ReferenceOrderHints:  req.ReferenceOrderHints,
+				AllowHighPrecisionMV: req.AllowHighPrecisionMV,
+				ForceIntegerMV:       req.ForceIntegerMV,
+
 				UseRefFrameMVS:              req.UseRefFrameMVS,
 				TemporalMVSampleUnavailable: req.TemporalMVSampleUnavailable,
 			})
@@ -1023,6 +1038,9 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		return ErrInvalidDecodeState
 	}
 	if req.TemporalMVSampleUnavailable && !req.UseRefFrameMVS {
+		return ErrInvalidDecodeState
+	}
+	if req.TemporalMVs != nil && !req.UseRefFrameMVS {
 		return ErrInvalidDecodeState
 	}
 	if req.DecodeCoefficients && !req.DecodePredictionModes && !hasCoeffController && req.CoeffRequest == nil {

@@ -43,6 +43,11 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx.CurrentMVFrame = &currentMVFrame
+	temporalMVs, err := ctx.BindTemporalMotionField(make([]tile.TemporalMotionEntry, mvLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.TemporalMVs = &temporalMVs
 	req, err := ctx.JobBlockLoopRequest(0, segMap, nil, 96)
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +68,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		req.RefFrameSide[tile.ReferenceFrameLast2] != -1 ||
 		req.RefFrameSide[tile.ReferenceFrameLast3] != 1 ||
 		req.CurrentMVFrame != &currentMVFrame ||
+		req.TemporalMVs != &temporalMVs ||
 		!req.UseRefFrameMVS || !req.TemporalMVSampleUnavailable {
 		t.Fatalf("request=%+v", req)
 	}
@@ -115,8 +121,33 @@ func TestFrameWorkBatchReferenceMVFrameShapeAndBind(t *testing.T) {
 		t.Fatalf("caller storage past MV_REF grid was modified: %+v", entries[length])
 	}
 
+	temporalEntries := make([]tile.TemporalMotionEntry, length+1)
+	for i := range temporalEntries {
+		temporalEntries[i] = tile.TemporalMotionEntry{
+			Valid: true,
+		}
+	}
+	temporal, err := ctx.BindTemporalMotionField(temporalEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if temporal.Cols != cols || temporal.Rows != rows || temporal.Stride != cols || len(temporal.Entries) != length {
+		t.Fatalf("temporal field=%+v len=%d", temporal, len(temporal.Entries))
+	}
+	for i, entry := range temporal.Entries {
+		if entry.Valid {
+			t.Fatalf("temporal entry %d=%+v want invalid", i, entry)
+		}
+	}
+	if !temporalEntries[length].Valid {
+		t.Fatalf("caller temporal storage past grid was modified: %+v", temporalEntries[length])
+	}
+
 	if _, err := ctx.BindReferenceMVFrame(entries[:length-1]); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("short bind err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.BindTemporalMotionField(temporalEntries[:length-1]); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("short temporal bind err=%v want %v", err, ErrInvalidBatch)
 	}
 	if _, _, _, err := (FrameWorkBatch{}).ReferenceMVFrameShape(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid shape err=%v want %v", err, ErrInvalidBatch)
@@ -137,13 +168,17 @@ func TestFrameWorkBatchReferenceMVFrameBindAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := make([]tile.ReferenceMVEntry, length)
+	temporalEntries := make([]tile.TemporalMotionEntry, length)
 	allocs := testing.AllocsPerRun(1000, func() {
 		if _, err := ctx.BindReferenceMVFrame(entries); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := ctx.BindTemporalMotionField(temporalEntries); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if allocs != 0 {
-		t.Fatalf("BindReferenceMVFrame allocated: %f", allocs)
+		t.Fatalf("MV frame binds allocated: %f", allocs)
 	}
 }
 

@@ -41,8 +41,23 @@ type ReferenceMVStackRequest struct {
 	HaveTop  bool
 	HaveLeft bool
 
+	MICol uint32
+	MIRow uint32
+
+	TileMIColStart uint32
+	TileMIRowStart uint32
+	TileMIColEnd   uint32
+	TileMIRowEnd   uint32
+
 	GlobalMVs   [2]motion.Vector
 	RefSignBias [referenceFrameCount]bool
+
+	TemporalMVs          *TemporalMotionField
+	OrderHintBits        uint8
+	CurrentOrderHint     uint32
+	ReferenceOrderHints  [referenceFrameCount]uint32
+	AllowHighPrecisionMV bool
+	ForceIntegerMV       bool
 
 	UseRefFrameMVS              bool
 	TemporalMVSampleUnavailable bool
@@ -300,7 +315,18 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		result.Stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
 	result.ModeContext = referenceMVModeContext(nearestMatch, refMatchCount, result.NewMVMatches)
-	if req.UseRefFrameMVS && req.TemporalMVSampleUnavailable {
+	temporalUnavailable := req.TemporalMVSampleUnavailable
+	if req.UseRefFrameMVS && req.TemporalMVs != nil {
+		temporal, err := req.temporalReferenceMVs(dims, &result.Stack)
+		if err != nil {
+			return ReferenceMVStackResult{}, err
+		}
+		temporalUnavailable = !temporal.FirstAvailable
+		if temporal.GlobalMVDifferent {
+			result.ModeContext |= 1 << globalMVOffset
+		}
+	}
+	if req.UseRefFrameMVS && temporalUnavailable {
 		result.ModeContext |= 1 << globalMVOffset
 	}
 	sortReferenceMVStack(&result.Stack, 0, result.NearestCount)
@@ -312,6 +338,138 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	}
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
 	return result, nil
+}
+
+type temporalReferenceMVResult struct {
+	FirstAvailable    bool
+	GlobalMVDifferent bool
+}
+
+func (req ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, stack *ReferenceMVStack) (temporalReferenceMVResult, error) {
+	if req.TemporalMVs == nil {
+		return temporalReferenceMVResult{}, nil
+	}
+	if err := req.TemporalMVs.validate(); err != nil {
+		return temporalReferenceMVResult{}, err
+	}
+	voffset := maxInt(2, int(dims.H4))
+	hoffset := maxInt(2, int(dims.W4))
+	blkRowEnd := minInt(int(dims.H4), 16)
+	blkColEnd := minInt(int(dims.W4), 16)
+	stepH := 2
+	if dims.H4 >= 16 {
+		stepH = 4
+	}
+	stepW := 2
+	if dims.W4 >= 16 {
+		stepW = 4
+	}
+
+	var result temporalReferenceMVResult
+	for blkRow := 0; blkRow < blkRowEnd; blkRow += stepH {
+		for blkCol := 0; blkCol < blkColEnd; blkCol += stepW {
+			added, different, err := req.addTemporalReferenceMV(blkRow, blkCol, stack)
+			if err != nil {
+				return temporalReferenceMVResult{}, err
+			}
+			if blkRow == 0 && blkCol == 0 {
+				result.FirstAvailable = added
+			}
+			if different {
+				result.GlobalMVDifferent = true
+			}
+		}
+	}
+
+	allowExtension := dims.H4 >= 2 && dims.H4 < 16 && dims.W4 >= 2 && dims.W4 < 16
+	if allowExtension {
+		positions := [3][2]int{
+			{voffset, -2},
+			{voffset, hoffset},
+			{voffset - 2, hoffset},
+		}
+		for _, pos := range positions {
+			added, different, err := req.addTemporalReferenceMV(pos[0], pos[1], stack)
+			if err != nil {
+				return temporalReferenceMVResult{}, err
+			}
+			if added && different {
+				result.GlobalMVDifferent = true
+			}
+		}
+	}
+	return result, nil
+}
+
+func (req ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int, stack *ReferenceMVStack) (bool, bool, error) {
+	rowOffset := blkRow
+	if req.MIRow&1 == 0 {
+		rowOffset++
+	}
+	colOffset := blkCol
+	if req.MICol&1 == 0 {
+		colOffset++
+	}
+	absRow := int64(req.MIRow) + int64(rowOffset)
+	absCol := int64(req.MICol) + int64(colOffset)
+	if absRow < int64(req.TileMIRowStart) || absRow >= int64(req.TileMIRowEnd) ||
+		absCol < int64(req.TileMIColStart) || absCol >= int64(req.TileMIColEnd) {
+		return false, false, nil
+	}
+	sampleRow := int(absRow >> 1)
+	sampleCol := int(absCol >> 1)
+	if sampleRow < 0 || sampleRow >= req.TemporalMVs.Rows ||
+		sampleCol < 0 || sampleCol >= req.TemporalMVs.Cols {
+		return false, false, nil
+	}
+	sample := req.TemporalMVs.Entries[sampleRow*req.TemporalMVs.Stride+sampleCol]
+	if !sample.Valid {
+		return false, false, nil
+	}
+
+	first, err := req.temporalProjectedMV(sample, 0)
+	if err != nil {
+		return false, false, err
+	}
+	different := temporalMVDifferent(first, req.GlobalMVs[0])
+	candidate := ReferenceMVCandidate{This: first}
+	if req.References.Compound {
+		second, err := req.temporalProjectedMV(sample, 1)
+		if err != nil {
+			return false, false, err
+		}
+		candidate.Compound = second
+		different = different || temporalMVDifferent(second, req.GlobalMVs[1])
+	}
+	stack.addOrWeight(candidate, 2)
+	return true, different, nil
+}
+
+func (req ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int) (motion.Vector, error) {
+	ref := req.References.Ref[refIndex]
+	if !ref.Valid() {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	currentOffset, err := motionFieldRelativeOrderHint(req.OrderHintBits, req.CurrentOrderHint, req.ReferenceOrderHints[ref])
+	if err != nil {
+		return motion.Vector{}, err
+	}
+	projected, err := motionFieldProjectMV(sample.MV, currentOffset, sample.RefFrameOffset)
+	if err != nil {
+		return motion.Vector{}, err
+	}
+	return motion.LowerPrecision(projected, req.AllowHighPrecisionMV, req.ForceIntegerMV), nil
+}
+
+func temporalMVDifferent(a motion.Vector, b motion.Vector) bool {
+	return absInt32(a.Row-b.Row) >= 16 || absInt32(a.Col-b.Col) >= 16
+}
+
+func absInt32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
@@ -451,6 +609,15 @@ func validateReferenceMVStackRequest(req ReferenceMVStackRequest) (BlockDimensio
 		return BlockDimensions{}, err
 	}
 	if req.TemporalMVSampleUnavailable && !req.UseRefFrameMVS {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	if req.TemporalMVs != nil && !req.UseRefFrameMVS {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	if req.TemporalMVs != nil &&
+		(req.TileMIColEnd <= req.TileMIColStart || req.TileMIRowEnd <= req.TileMIRowStart ||
+			req.MICol < req.TileMIColStart || req.MICol >= req.TileMIColEnd ||
+			req.MIRow < req.TileMIRowStart || req.MIRow >= req.TileMIRowEnd) {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	return dims, nil

@@ -183,8 +183,8 @@ type FrameWorkFrameContext struct {
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.
-// Payload, References, CurrentMVFrame, and Jobs alias caller-owned storage and
-// are valid for the callback invocation.
+// Payload, References, CurrentMVFrame, TemporalMVs, and Jobs alias caller-owned
+// storage and are valid for the callback invocation.
 type FrameWorkBatch struct {
 	Step       decodework.FrameStep
 	Output     *frame.Frame
@@ -194,6 +194,9 @@ type FrameWorkBatch struct {
 	// loop decodes prediction modes. It is optional until temporal projection
 	// consumers are fully wired.
 	CurrentMVFrame *tile.ReferenceMVFrame
+	// TemporalMVs carries projected ref-frame-MVS samples consumed by
+	// BuildReferenceMVStack when use_ref_frame_mvs is enabled.
+	TemporalMVs *tile.TemporalMotionField
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	Batch            Batch
