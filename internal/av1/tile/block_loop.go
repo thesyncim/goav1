@@ -166,8 +166,17 @@ type BlockLoopRequest struct {
 	EOBMultiContext     [3]int
 	CoeffController     BlockLoopCoeffController
 	CoeffRequest        BlockLoopCoeffRequestSelector
+	BeforeSuperblock    BlockLoopSuperblockVisitor
 	BeforeCoefficients  BlockLoopVisitor
 	CoeffVisitor        BlockLoopCoeffVisitor
+}
+
+// BlockLoopSuperblockVisit is reported before partition syntax is decoded for
+// one root superblock in the block loop.
+type BlockLoopSuperblockVisit struct {
+	MICol     uint32
+	MIRow     uint32
+	SBSizeMIB uint8
 }
 
 // BlockLoopVisit is reported after partition, segmentation, prefix, and delta
@@ -212,6 +221,8 @@ type BlockLoopStats struct {
 	CoefficientEOBTotal int
 	DeltaReads          int
 }
+
+type BlockLoopSuperblockVisitor func(BlockLoopSuperblockVisit) error
 
 type BlockLoopVisitor func(BlockLoopVisit) error
 
@@ -280,6 +291,15 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 				UseNeighborBounds:  true,
 				NeighborMIColStart: req.Walk.neighborMIColStart(),
 				NeighborMIRowStart: req.Walk.neighborMIRowStart(),
+			}
+			if req.BeforeSuperblock != nil {
+				if err := req.BeforeSuperblock(BlockLoopSuperblockVisit{
+					MICol:     miCol,
+					MIRow:     miRow,
+					SBSizeMIB: req.SBSizeMIB,
+				}); err != nil {
+					return stats, err
+				}
 			}
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)

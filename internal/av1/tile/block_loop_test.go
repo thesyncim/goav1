@@ -73,6 +73,57 @@ func TestDecodeBlockLoopReadsPrefixDeltaAndSegments(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockLoopBeforeSuperblockRunsBeforePartition(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+	var scratch BlockLoopScratch
+	var roots []BlockLoopSuperblockVisit
+	var bitsBeforePartition []int
+	initialBits := state.Reader.BitsRead()
+	req := BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel64x64,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   32,
+			MIRowEnd:   16,
+		},
+		SBSizeMIB: 16,
+		BeforeSuperblock: func(visit BlockLoopSuperblockVisit) error {
+			roots = append(roots, visit)
+			bitsBeforePartition = append(bitsBeforePartition, state.Reader.BitsRead())
+			return nil
+		},
+	}
+
+	var visits []BlockLoopVisit
+	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+		Delta:     deltaCDFs,
+	}, &scratch, req, func(visit BlockLoopVisit) error {
+		visits = append(visits, visit)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Blocks != 2 || stats.PartitionReads != 2 || len(visits) != 2 {
+		t.Fatalf("stats=%+v visits=%d", stats, len(visits))
+	}
+	if len(roots) != 2 ||
+		roots[0] != (BlockLoopSuperblockVisit{MICol: 0, MIRow: 0, SBSizeMIB: 16}) ||
+		roots[1] != (BlockLoopSuperblockVisit{MICol: 16, MIRow: 0, SBSizeMIB: 16}) {
+		t.Fatalf("roots=%+v", roots)
+	}
+	if len(bitsBeforePartition) != 2 || bitsBeforePartition[0] != initialBits || bitsBeforePartition[1] <= bitsBeforePartition[0] {
+		t.Fatalf("bits before partition=%v", bitsBeforePartition)
+	}
+}
+
 func TestDecodeBlockLoopPreservesNeighborAvailabilityAcrossRoots(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 16), Job{Offset: 0, Size: 16}, DecodeOptions{}); err != nil {
@@ -1140,6 +1191,11 @@ func TestDecodeBlockLoopRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("coefficients without prediction err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	errBoom := errors.New("boom")
+	beforeReq := validReq
+	beforeReq.BeforeSuperblock = func(BlockLoopSuperblockVisit) error { return errBoom }
+	if stats, err := state.DecodeBlockLoop(BlockLoopCDFs{Partition: &partitionCDFs, Mode: &modeCDFs}, &BlockLoopScratch{}, beforeReq, func(BlockLoopVisit) error { return nil }); !errors.Is(err, errBoom) || stats != (BlockLoopStats{}) {
+		t.Fatalf("before superblock stats=%+v err=%v want zero stats, %v", stats, err, errBoom)
+	}
 	if _, err := state.DecodeBlockLoop(BlockLoopCDFs{Partition: &partitionCDFs, Mode: &modeCDFs}, &BlockLoopScratch{}, validReq, func(BlockLoopVisit) error { return errBoom }); !errors.Is(err, errBoom) {
 		t.Fatalf("visitor err=%v want %v", err, errBoom)
 	}
