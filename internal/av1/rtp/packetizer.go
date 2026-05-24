@@ -131,6 +131,17 @@ func (p *Packetizer) NextPacket(dst []byte) (n int, marker bool, ok bool, err er
 }
 
 func ParsePacketizerOBUs(payload []byte, out []PacketizerOBU) (int, error) {
+	return scanPacketizerOBUs(payload, out, false)
+}
+
+// CountPacketizerOBUs reports how many outbound OBU elements ParsePacketizerOBUs
+// will write after dropping RTP-ineligible temporal delimiter, tile list, and
+// padding OBUs. It validates the same OBU framing without requiring scratch.
+func CountPacketizerOBUs(payload []byte) (int, error) {
+	return scanPacketizerOBUs(payload, nil, true)
+}
+
+func scanPacketizerOBUs(payload []byte, out []PacketizerOBU, countOnly bool) (int, error) {
 	count := 0
 	for off := 0; off < len(payload); {
 		unit, err := obu.ParseElement(payload[off:])
@@ -146,20 +157,22 @@ func ParsePacketizerOBUs(payload []byte, out []PacketizerOBU) (int, error) {
 		if typ == obu.TypeTemporalDelimiter || typ == obu.TypeTileList || typ == obu.TypePadding {
 			continue
 		}
-		if count >= len(out) {
+		if !countOnly && count >= len(out) {
 			return count, ErrOBUBufferTooSmall
 		}
 
 		header := unit.Header
 		header.HasSizeField = false
 		headerByte, extensionByte := packetizerHeaderBytes(header)
-		out[count] = PacketizerOBU{
-			Type:          typ,
-			headerByte:    headerByte,
-			extensionByte: extensionByte,
-			hasExtension:  header.Extension,
-			payload:       unit.Payload,
-			Size:          header.HeaderLen() + len(unit.Payload),
+		if !countOnly {
+			out[count] = PacketizerOBU{
+				Type:          typ,
+				headerByte:    headerByte,
+				extensionByte: extensionByte,
+				hasExtension:  header.Extension,
+				payload:       unit.Payload,
+				Size:          header.HeaderLen() + len(unit.Payload),
+			}
 		}
 		count++
 	}
@@ -167,6 +180,9 @@ func ParsePacketizerOBUs(payload []byte, out []PacketizerOBU) (int, error) {
 }
 
 func PacketizeOBUs(obus []PacketizerOBU, limits PayloadSizeLimits, packets []PacketPlan, work []PacketPlan) (int, error) {
+	if len(obus) != 0 && len(packets) == 0 {
+		return 0, ErrPacketPlanTooSmall
+	}
 	count, err := packetizeInternal(obus, limits, packets)
 	if err != nil || count <= 1 {
 		return count, err
@@ -214,6 +230,13 @@ func PacketizeOBUs(obus []PacketizerOBU, limits PayloadSizeLimits, packets []Pac
 	return count, nil
 }
 
+// PacketizeOBUCount reports the exact packet-plan count PacketizeOBUs needs for
+// obus and limits. Callers can use it after ParsePacketizerOBUs to size both the
+// packet plan scratch and PacketizeOBUs' optional work scratch.
+func PacketizeOBUCount(obus []PacketizerOBU, limits PayloadSizeLimits) (int, error) {
+	return packetizeInternal(obus, limits, nil)
+}
+
 func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets []PacketPlan) (int, error) {
 	if len(obus) == 0 {
 		return 0, nil
@@ -222,35 +245,38 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		limits.MaxPayloadLen-limits.FirstPacketReductionLen < 3 {
 		return 0, ErrInvalidPayloadLimits
 	}
-	if len(packets) == 0 {
+	writePlans := packets != nil
+	if writePlans && len(packets) == 0 {
 		return 0, ErrPacketPlanTooSmall
 	}
 
 	maxPayload := limits.MaxPayloadLen - 1
 	packetCount := 1
-	packets[0] = PacketPlan{FirstOBU: 0}
+	packet := PacketPlan{FirstOBU: 0}
 	remaining := maxPayload - limits.FirstPacketReductionLen
 
 	for obuIndex := 0; obuIndex < len(obus); obuIndex++ {
 		isLastOBU := obuIndex == len(obus)-1
 		current := &obus[obuIndex]
 
-		previousExtra := additionalBytesForPreviousOBUElement(packets[packetCount-1])
+		previousExtra := additionalBytesForPreviousOBUElement(packet)
 		minRequired := 1
-		if packets[packetCount-1].NumOBUElements >= maxObusWithOmittedLastSize {
+		if packet.NumOBUElements >= maxObusWithOmittedLastSize {
 			minRequired = 2
 		}
 		if remaining < previousExtra+minRequired {
-			if packetCount >= len(packets) {
+			if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+				return packetCount, err
+			}
+			if writePlans && packetCount >= len(packets) {
 				return packetCount, ErrPacketPlanTooSmall
 			}
-			packets[packetCount] = PacketPlan{FirstOBU: obuIndex}
+			packet = PacketPlan{FirstOBU: obuIndex}
 			packetCount++
 			remaining = maxPayload
 			previousExtra = 0
 		}
 
-		packet := &packets[packetCount-1]
 		packet.PacketSize += previousExtra
 		remaining -= previousExtra
 		packet.NumOBUElements++
@@ -300,10 +326,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 
 		obuOffset := firstFragmentSize
 		for obuOffset+maxPayload < current.Size {
-			if packetCount >= len(packets) {
+			if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+				return packetCount, err
+			}
+			if writePlans && packetCount >= len(packets) {
 				return packetCount, ErrPacketPlanTooSmall
 			}
-			packets[packetCount] = PacketPlan{
+			packet = PacketPlan{
 				FirstOBU:       obuIndex,
 				NumOBUElements: 1,
 				FirstOBUOffset: obuOffset,
@@ -322,10 +351,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 			}
 			lastFragmentSize -= secondLastFragmentSize
 
-			if packetCount >= len(packets) {
+			if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+				return packetCount, err
+			}
+			if writePlans && packetCount >= len(packets) {
 				return packetCount, ErrPacketPlanTooSmall
 			}
-			packets[packetCount] = PacketPlan{
+			packet = PacketPlan{
 				FirstOBU:       obuIndex,
 				NumOBUElements: 1,
 				FirstOBUOffset: obuOffset,
@@ -336,10 +368,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 			obuOffset += secondLastFragmentSize
 		}
 
-		if packetCount >= len(packets) {
+		if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+			return packetCount, err
+		}
+		if writePlans && packetCount >= len(packets) {
 			return packetCount, ErrPacketPlanTooSmall
 		}
-		packets[packetCount] = PacketPlan{
+		packet = PacketPlan{
 			FirstOBU:       obuIndex,
 			NumOBUElements: 1,
 			FirstOBUOffset: obuOffset,
@@ -350,7 +385,21 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		remaining = maxPayload - lastFragmentSize
 	}
 
+	if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+		return packetCount, err
+	}
 	return packetCount, nil
+}
+
+func storePacketPlan(packets []PacketPlan, index int, packet PacketPlan) error {
+	if packets == nil {
+		return nil
+	}
+	if index < 0 || index >= len(packets) {
+		return ErrPacketPlanTooSmall
+	}
+	packets[index] = packet
+	return nil
 }
 
 func additionalBytesForPreviousOBUElement(packet PacketPlan) int {

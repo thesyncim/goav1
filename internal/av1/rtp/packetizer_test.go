@@ -85,6 +85,42 @@ func TestPacketizerFiltersAndStripsSizeFields(t *testing.T) {
 	}
 }
 
+func TestCountPacketizerOBUsMatchesParse(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeTemporalDelimiter, nil)
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBUExt(frame, obu.TypeFrameHeader, 1, 2, []byte{0xbb})
+	frame = appendPacketizerOBU(frame, obu.TypePadding, []byte{0x00})
+
+	count, err := CountPacketizerOBUs(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d want 2", count)
+	}
+
+	var obus [2]PacketizerOBU
+	parsed, err := ParsePacketizerOBUs(frame, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != count {
+		t.Fatalf("parsed=%d count=%d", parsed, count)
+	}
+	if obus[0].Type != obu.TypeSequenceHeader || obus[1].Type != obu.TypeFrameHeader || !obus[1].hasExtension {
+		t.Fatalf("obus=%+v", obus)
+	}
+}
+
+func TestCountPacketizerOBUsRejectsMalformedOBU(t *testing.T) {
+	payload := appendPacketizerOBU(nil, obu.TypeFrame, []byte{0xaa, 0xbb})
+	payload[1] = 3
+	if _, err := CountPacketizerOBUs(payload); !errors.Is(err, obu.ErrShortPayload) {
+		t.Fatalf("CountPacketizerOBUs err=%v want %v", err, obu.ErrShortPayload)
+	}
+}
+
 func TestPacketizerWritesLengthForMoreThanThreeOBUs(t *testing.T) {
 	var frame []byte
 	for i := 0; i < 4; i++ {
@@ -173,6 +209,51 @@ func TestPacketizerFragmentsOBU(t *testing.T) {
 	}
 }
 
+func TestPacketizeOBUCountMatchesPacketizeOBUs(t *testing.T) {
+	payloadBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	frame := appendPacketizerOBU(nil, obu.TypeFrame, payloadBytes)
+
+	obuCount, err := CountPacketizerOBUs(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obus [2]PacketizerOBU
+	parsed, err := ParsePacketizerOBUs(frame, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != obuCount {
+		t.Fatalf("parsed=%d count=%d", parsed, obuCount)
+	}
+
+	limits := PayloadSizeLimits{MaxPayloadLen: 6}
+	planCount, err := PacketizeOBUCount(obus[:parsed], limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packets [8]PacketPlan
+	var work [8]PacketPlan
+	packetized, err := PacketizeOBUs(obus[:parsed], limits, packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planCount != packetized || planCount != 3 {
+		t.Fatalf("planCount=%d packetized=%d want 3", planCount, packetized)
+	}
+	for i := 0; i < planCount; i++ {
+		if packets[i].PacketSize == 0 || packets[i].NumOBUElements == 0 {
+			t.Fatalf("packet[%d]=%+v", i, packets[i])
+		}
+	}
+}
+
+func TestPacketizeOBUCountRejectsInvalidLimits(t *testing.T) {
+	obus := []PacketizerOBU{{Type: obu.TypeFrame, Size: 3}}
+	if _, err := PacketizeOBUCount(obus, PayloadSizeLimits{MaxPayloadLen: 2}); !errors.Is(err, ErrInvalidPayloadLimits) {
+		t.Fatalf("PacketizeOBUCount err=%v want %v", err, ErrInvalidPayloadLimits)
+	}
+}
+
 func TestPacketizerPreservesExtensionAndClearsSize(t *testing.T) {
 	frame := appendPacketizerOBUExt(nil, obu.TypeTileGroup, 1, 2, []byte{0x99})
 	var obus [1]PacketizerOBU
@@ -208,6 +289,15 @@ func TestPacketizerScratchTooSmall(t *testing.T) {
 	if !errors.Is(err, ErrOBUBufferTooSmall) {
 		t.Fatalf("NewPacketizer err=%v want %v", err, ErrOBUBufferTooSmall)
 	}
+
+	var obus [1]PacketizerOBU
+	count, err := ParsePacketizerOBUs(frame, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PacketizeOBUs(obus[:count], PayloadSizeLimits{MaxPayloadLen: 1200}, nil, nil); !errors.Is(err, ErrPacketPlanTooSmall) {
+		t.Fatalf("PacketizeOBUs err=%v want %v", err, ErrPacketPlanTooSmall)
+	}
 }
 
 func TestPacketizerAllocs(t *testing.T) {
@@ -231,6 +321,37 @@ func TestPacketizerAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("Packetizer allocated: %f", allocs)
+	}
+}
+
+func TestPacketizerSizingAllocs(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBU(frame, obu.TypeFrameHeader, []byte{0xbb})
+	var obus [4]PacketizerOBU
+	count, err := ParsePacketizerOBUs(frame, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		obuCount, err := CountPacketizerOBUs(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if obuCount != count {
+			t.Fatalf("obuCount=%d want %d", obuCount, count)
+		}
+		packetCount, err := PacketizeOBUCount(obus[:count], PayloadSizeLimits{MaxPayloadLen: 1200})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if packetCount != 1 {
+			t.Fatalf("packetCount=%d want 1", packetCount)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("packetizer sizing allocated: %f", allocs)
 	}
 }
 
