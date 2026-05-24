@@ -94,6 +94,15 @@ func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
 	return nil
 }
 
+// RequireNoRemainingPostFilters rejects active postfilters that have not been
+// marked complete in this callback-local context.
+func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
+	if !ctx.RemainingPostFilters().Empty() {
+		return ErrUnsupportedPostFilter
+	}
+	return nil
+}
+
 // LoopRestorationPostFilterPlan returns the frame-level loop-restoration plan
 // for the current event.
 func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterPlan() (tile.RestorationFramePlan, error) {

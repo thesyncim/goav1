@@ -192,10 +192,19 @@ func TestFrameWorkPostFilterContextRemainingPostFilters(t *testing.T) {
 	if err := ctx.RequireNoActivePostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
 		t.Fatalf("RequireNoActivePostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
 	}
+	if err := ctx.RequireNoRemainingPostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
 
 	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopRestoration | FrameWorkPostFilterFilmGrain)
 	if got := ctx.RemainingPostFilters(); got != 0 {
 		t.Fatalf("remaining after all stages=%b want 0", got)
+	}
+	if err := ctx.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+	if err := ctx.RequireNoActivePostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequireNoActivePostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
 	}
 }
 
