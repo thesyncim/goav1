@@ -43,6 +43,9 @@ type ReferenceMVStackRequest struct {
 
 	GlobalMVs   [2]motion.Vector
 	RefSignBias [referenceFrameCount]bool
+
+	UseRefFrameMVS              bool
+	TemporalMVSampleUnavailable bool
 }
 
 type ReferenceMVStackResult struct {
@@ -297,6 +300,9 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		result.Stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
 	result.ModeContext = referenceMVModeContext(nearestMatch, refMatchCount, result.NewMVMatches)
+	if req.UseRefFrameMVS && req.TemporalMVSampleUnavailable {
+		result.ModeContext |= 1 << globalMVOffset
+	}
 	sortReferenceMVStack(&result.Stack, 0, result.NearestCount)
 
 	if req.References.Compound {
@@ -443,6 +449,9 @@ func validateReferenceMVStackRequest(req ReferenceMVStackRequest) (BlockDimensio
 	}
 	if err := validateInterReferences(req.References); err != nil {
 		return BlockDimensions{}, err
+	}
+	if req.TemporalMVSampleUnavailable && !req.UseRefFrameMVS {
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	return dims, nil
 }

@@ -150,6 +150,13 @@ func TestReferenceMVStackRejectsInvalidInputs(t *testing.T) {
 	if _, err := stack.DRLRequestForMode(InterModeResult{Mode: interModeCount}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad drl mode err=%v want %v", err, ErrInvalidDecodeState)
 	}
+	if _, err := (&BlockModeContext{}).BuildReferenceMVStack(ReferenceMVStackRequest{
+		Size:                        BlockSize16x16,
+		References:                  InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		TemporalMVSampleUnavailable: true,
+	}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("temporal without ref-frame-mvs err=%v want %v", err, ErrInvalidDecodeState)
+	}
 }
 
 func TestReferenceMVStackAllocs(t *testing.T) {
@@ -211,6 +218,28 @@ func TestBlockModeContextBuildReferenceMVStackSingle(t *testing.T) {
 	}
 	if result.Stack.Candidates[1] != (ReferenceMVCandidate{This: motion.Vector{Row: 7, Col: -9}, Weight: 2}) {
 		t.Fatalf("fallback candidate=%+v", result.Stack.Candidates[1])
+	}
+}
+
+func TestBuildReferenceMVStackRefFrameMVSUnavailableSetsGlobalContext(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	req := ReferenceMVStackRequest{
+		Size:                        BlockSize16x16,
+		References:                  target,
+		GlobalMVs:                   [2]motion.Vector{{Row: 1, Col: 1}},
+		UseRefFrameMVS:              true,
+		TemporalMVSampleUnavailable: true,
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.ModeContext, uint16((1 << globalMVOffset)); got != want {
+		t.Fatalf("mode ctx=%d want %d", got, want)
+	}
+	if result.Stack.Count != 0 || !result.Stack.SingleRefValid || result.Stack.SingleRefMVs[0] != req.GlobalMVs[0] {
+		t.Fatalf("stack=%+v", result.Stack)
 	}
 }
 

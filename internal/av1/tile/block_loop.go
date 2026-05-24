@@ -146,8 +146,13 @@ type BlockLoopRequest struct {
 	EnableMaskedCompound  bool
 	EnableDistWtdCompound bool
 	EnableOrderHint       bool
-	OrderHintBits         uint8
-	CurrentOrderHint      uint32
+	UseRefFrameMVS        bool
+	// TemporalMVSampleUnavailable carries libaom's add_tpl_ref_mv() miss for
+	// the current motion-field port stage. Full MFMV projection will replace
+	// this frame-level unavailable marker with per-block temporal samples.
+	TemporalMVSampleUnavailable bool
+	OrderHintBits               uint8
+	CurrentOrderHint            uint32
 
 	Color               parser.ColorConfig
 	TransformMode       parser.TransformMode
@@ -631,6 +636,9 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				HaveLeft:    block.HaveLeft,
 				GlobalMVs:   globalMVs,
 				RefSignBias: req.RefSignBias,
+
+				UseRefFrameMVS:              req.UseRefFrameMVS,
+				TemporalMVSampleUnavailable: req.TemporalMVSampleUnavailable,
 			})
 			if err != nil {
 				return BlockPredictionModeResult{}, err
@@ -998,6 +1006,9 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		return ErrInvalidDecodeState
 	}
 	if (req.DecodeInterIntra || req.DecodeMotionModes || req.DecodeCompoundBlend) && !req.DecodeMotionVectors {
+		return ErrInvalidDecodeState
+	}
+	if req.TemporalMVSampleUnavailable && !req.UseRefFrameMVS {
 		return ErrInvalidDecodeState
 	}
 	if req.DecodeCoefficients && !req.DecodePredictionModes && !hasCoeffController && req.CoeffRequest == nil {

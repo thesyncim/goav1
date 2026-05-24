@@ -24,7 +24,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 			}),
 			FrameHeader:         parser.FrameHeaderPrefix{OrderHint: 9},
 			FrameSize:           parser.FrameSize{CodedWidth: 300, Height: 260},
-			TileInfo:            parser.TileInfo{InterpolationFilter: parser.InterpolationSwitchable},
+			TileInfo:            parser.TileInfo{InterpolationFilter: parser.InterpolationSwitchable, UseRefFrameMVS: true},
 			GlobalMotion:        parser.DefaultGlobalMotionParams(),
 			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 2, 3, 4, 5, 6, 7},
 			SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true},
@@ -50,7 +50,8 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		!req.EnableFilterIntra ||
 		req.GlobalMotion[0] != parser.DefaultWarpedMotionParams() ||
 		!req.EnableOrderHint || req.OrderHintBits != 5 ||
-		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 {
+		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 ||
+		!req.UseRefFrameMVS || !req.TemporalMVSampleUnavailable {
 		t.Fatalf("request=%+v", req)
 	}
 	rootCols, err := ctx.JobBlockLoopContextRootColumns(0)
