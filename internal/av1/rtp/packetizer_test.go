@@ -254,6 +254,77 @@ func TestPacketizeOBUCountRejectsInvalidLimits(t *testing.T) {
 	}
 }
 
+func TestPacketizerScratchLenTwoPass(t *testing.T) {
+	payloadBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeTemporalDelimiter, nil)
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBU(frame, obu.TypeFrame, payloadBytes)
+	limits := PayloadSizeLimits{MaxPayloadLen: 6}
+
+	size, err := PacketizerScratchLen(frame, limits, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.OBUs != 2 || size.Packets != 0 || size.Work != 0 {
+		t.Fatalf("first pass size=%+v want OBUs=2 only", size)
+	}
+
+	var obus [4]PacketizerOBU
+	size, err = PacketizerScratchLen(frame, limits, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.OBUs != 2 || size.Packets <= 1 || size.Work != size.Packets {
+		t.Fatalf("second pass size=%+v", size)
+	}
+
+	var packets [8]PacketPlan
+	var work [8]PacketPlan
+	packetizer, err := NewPacketizer(frame, limits, true, true, obus[:size.OBUs], packets[:size.Packets], work[:size.Work])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packetizer.NumPackets() != size.Packets {
+		t.Fatalf("NumPackets=%d scratch packets=%d", packetizer.NumPackets(), size.Packets)
+	}
+}
+
+func TestPacketizerScratchLenWaitsForOBUScratchBeforePacketSizing(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBU(frame, obu.TypeFrameHeader, []byte{0xbb})
+	limits := PayloadSizeLimits{MaxPayloadLen: 2}
+
+	var short [1]PacketizerOBU
+	size, err := PacketizerScratchLen(frame, limits, short[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.OBUs != 2 || size.Packets != 0 || size.Work != 0 {
+		t.Fatalf("short scratch size=%+v want OBUs=2 only", size)
+	}
+
+	var obus [2]PacketizerOBU
+	size, err = PacketizerScratchLen(frame, limits, obus[:])
+	if !errors.Is(err, ErrInvalidPayloadLimits) {
+		t.Fatalf("PacketizerScratchLen err=%v want %v", err, ErrInvalidPayloadLimits)
+	}
+	if size.OBUs != 2 || size.Packets != 0 || size.Work != 0 {
+		t.Fatalf("invalid-limit size=%+v want OBUs=2 only", size)
+	}
+}
+
+func TestPacketizerScratchLenEmptyPayloadIgnoresLimits(t *testing.T) {
+	size, err := PacketizerScratchLen(nil, PayloadSizeLimits{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != (PacketizerScratchSize{}) {
+		t.Fatalf("size=%+v want zero", size)
+	}
+}
+
 func TestPacketizerPreservesExtensionAndClearsSize(t *testing.T) {
 	frame := appendPacketizerOBUExt(nil, obu.TypeTileGroup, 1, 2, []byte{0x99})
 	var obus [1]PacketizerOBU
@@ -348,6 +419,20 @@ func TestPacketizerSizingAllocs(t *testing.T) {
 		}
 		if packetCount != 1 {
 			t.Fatalf("packetCount=%d want 1", packetCount)
+		}
+		size, err := PacketizerScratchLen(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size.OBUs != count || size.Packets != 0 || size.Work != 0 {
+			t.Fatalf("first pass size=%+v", size)
+		}
+		size, err = PacketizerScratchLen(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, obus[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size.OBUs != count || size.Packets != packetCount || size.Work != 0 {
+			t.Fatalf("second pass size=%+v packetCount=%d", size, packetCount)
 		}
 	})
 	if allocs != 0 {

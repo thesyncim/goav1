@@ -56,6 +56,13 @@ func FuzzPacketizer(f *testing.F) {
 		if err != nil {
 			return
 		}
+		scratch, err := PacketizerScratchLen(payload, PayloadSizeLimits{MaxPayloadLen: limit}, nil)
+		if err != nil {
+			t.Fatalf("PacketizerScratchLen first pass after count: %v", err)
+		}
+		if scratch.OBUs != obuCount || scratch.Packets != 0 || scratch.Work != 0 {
+			t.Fatalf("first pass scratch=%+v count=%d", scratch, obuCount)
+		}
 		if obuCount > len(obus) {
 			return
 		}
@@ -69,6 +76,20 @@ func FuzzPacketizer(f *testing.F) {
 		packetCount, err := PacketizeOBUCount(obus[:parsed], PayloadSizeLimits{MaxPayloadLen: limit})
 		if err != nil {
 			t.Fatalf("PacketizeOBUCount: %v", err)
+		}
+		scratch, err = PacketizerScratchLen(payload, PayloadSizeLimits{MaxPayloadLen: limit}, obus[:])
+		if err != nil {
+			t.Fatalf("PacketizerScratchLen second pass: %v", err)
+		}
+		if scratch.OBUs != obuCount || scratch.Packets != packetCount {
+			t.Fatalf("second pass scratch=%+v count=%d packets=%d", scratch, obuCount, packetCount)
+		}
+		if packetCount <= 1 {
+			if scratch.Work != 0 {
+				t.Fatalf("scratch work=%d want 0 for packetCount=%d", scratch.Work, packetCount)
+			}
+		} else if scratch.Work != packetCount {
+			t.Fatalf("scratch work=%d packetCount=%d", scratch.Work, packetCount)
 		}
 		if packetCount > len(packets) {
 			return

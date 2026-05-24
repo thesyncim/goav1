@@ -33,6 +33,14 @@ type PacketPlan struct {
 	PacketSize     int
 }
 
+// PacketizerScratchSize reports caller-owned scratch slots needed to packetize
+// one low-overhead AV1 frame into RTP payloads.
+type PacketizerScratchSize struct {
+	OBUs    int
+	Packets int
+	Work    int
+}
+
 type Packetizer struct {
 	obus    []PacketizerOBU
 	packets []PacketPlan
@@ -65,6 +73,34 @@ func NewPacketizer(payload []byte, limits PayloadSizeLimits, keyFrame bool, last
 		keyFrame:           keyFrame,
 		lastFrameInPicture: lastFrameInPicture,
 	}, nil
+}
+
+// PacketizerScratchLen reports scratch needed by NewPacketizer. Callers may
+// first pass nil or short obuScratch to learn the OBU count, allocate that many
+// PacketizerOBU slots, and call again to learn packet-plan and work-plan counts.
+func PacketizerScratchLen(payload []byte, limits PayloadSizeLimits, obuScratch []PacketizerOBU) (PacketizerScratchSize, error) {
+	obuCount, err := CountPacketizerOBUs(payload)
+	size := PacketizerScratchSize{OBUs: obuCount}
+	if err != nil {
+		return size, err
+	}
+	if obuCount == 0 || len(obuScratch) < obuCount {
+		return size, nil
+	}
+
+	parsed, err := ParsePacketizerOBUs(payload, obuScratch[:obuCount])
+	if err != nil {
+		return size, err
+	}
+	packetCount, err := PacketizeOBUCount(obuScratch[:parsed], limits)
+	if err != nil {
+		return size, err
+	}
+	size.Packets = packetCount
+	if packetCount > 1 {
+		size.Work = packetCount
+	}
+	return size, nil
 }
 
 func (p *Packetizer) NumPackets() int {
