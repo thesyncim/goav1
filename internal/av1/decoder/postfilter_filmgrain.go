@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/filmgrain"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -15,6 +16,7 @@ type FrameWorkFilmGrainPostFilterPlanePlan struct {
 
 	Width  int
 	Height int
+	// Stride is measured in samples, not bytes.
 	Stride int
 }
 
@@ -41,6 +43,14 @@ type FrameWorkFilmGrainPostFilterPlan struct {
 type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ScalingPoints [3]int
 	ARCoeffs      [3]int
+}
+
+// FrameWorkFilmGrainPostFilterScalingLUTs contains the 8-bit-domain scaling
+// lookup tables used by film-grain synthesis.
+type FrameWorkFilmGrainPostFilterScalingLUTs struct {
+	Active bool
+
+	LUTs [3][filmgrain.ScalingLUTSize]uint8
 }
 
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
@@ -81,7 +91,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGr
 			ARCoeffs:      numYPos,
 			Width:         ctx.Output.Format.Width,
 			Height:        ctx.Output.Format.Height,
-			Stride:        ctx.Output.Layout.YStride,
+			Stride:        frameWorkFilmGrainSampleStride(ctx.Output.Layout.YStride, ctx.Output.Layout.BytesPerSample),
 		}
 	}
 	if !ctx.Output.Format.MonoChrome {
@@ -92,7 +102,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGr
 				ARCoeffs:      numUVPos,
 				Width:         ctx.Output.Layout.ChromaWidth,
 				Height:        ctx.Output.Layout.ChromaHeight,
-				Stride:        ctx.Output.Layout.UStride,
+				Stride:        frameWorkFilmGrainSampleStride(ctx.Output.Layout.UStride, ctx.Output.Layout.BytesPerSample),
 			}
 		}
 		if params.NumCrPoints != 0 || params.ChromaScalingFromLuma {
@@ -102,7 +112,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGr
 				ARCoeffs:      numUVPos,
 				Width:         ctx.Output.Layout.ChromaWidth,
 				Height:        ctx.Output.Layout.ChromaHeight,
-				Stride:        ctx.Output.Layout.VStride,
+				Stride:        frameWorkFilmGrainSampleStride(ctx.Output.Layout.VStride, ctx.Output.Layout.BytesPerSample),
 			}
 		}
 	}
@@ -127,6 +137,40 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 	return size, nil
 }
 
+// FilmGrainPostFilterScalingLUTs builds the per-plane film-grain scaling lookup
+// tables from parsed frame parameters. It does not synthesize grain or mutate
+// ctx.Output.
+func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWorkFilmGrainPostFilterScalingLUTs, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return FrameWorkFilmGrainPostFilterScalingLUTs{}, err
+	}
+	if !plan.Active {
+		return FrameWorkFilmGrainPostFilterScalingLUTs{}, nil
+	}
+
+	var luts FrameWorkFilmGrainPostFilterScalingLUTs
+	luts.Active = true
+	params := plan.Params
+	if err := frameWorkBuildFilmGrainYScalingLUT(luts.LUTs[0][:], params); err != nil {
+		return FrameWorkFilmGrainPostFilterScalingLUTs{}, err
+	}
+	if !plan.Format.MonoChrome {
+		if params.ChromaScalingFromLuma {
+			copy(luts.LUTs[1][:], luts.LUTs[0][:])
+			copy(luts.LUTs[2][:], luts.LUTs[0][:])
+			return luts, nil
+		}
+		if err := frameWorkBuildFilmGrainUVScalingLUT(luts.LUTs[1][:], params.NumCbPoints, params.CbPoints); err != nil {
+			return FrameWorkFilmGrainPostFilterScalingLUTs{}, err
+		}
+		if err := frameWorkBuildFilmGrainUVScalingLUT(luts.LUTs[2][:], params.NumCrPoints, params.CrPoints); err != nil {
+			return FrameWorkFilmGrainPostFilterScalingLUTs{}, err
+		}
+	}
+	return luts, nil
+}
+
 func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format frame.Format) error {
 	if params.BitDepth != 0 && params.BitDepth != format.BitDepth {
 		return frame.ErrInvalidFormat
@@ -140,9 +184,42 @@ func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format fram
 	if format.MonoChrome && (params.ChromaScalingFromLuma || params.NumCbPoints != 0 || params.NumCrPoints != 0) {
 		return frame.ErrInvalidFormat
 	}
+	if format.SubsamplingX && format.SubsamplingY &&
+		((params.NumCbPoints == 0) != (params.NumCrPoints == 0)) {
+		return frame.ErrInvalidFormat
+	}
 	numYPos := frameWorkFilmGrainLumaARCoeffCount(params.ARCoeffLag)
 	numUVPos := frameWorkFilmGrainChromaARCoeffCount(params)
 	if numYPos > parser.MaxFilmGrainYCoeffs || numUVPos > parser.MaxFilmGrainUVCoeffs {
+		return frame.ErrInvalidFormat
+	}
+	return nil
+}
+
+func frameWorkFilmGrainSampleStride(strideBytes int, bytesPerSample int) int {
+	if bytesPerSample <= 0 {
+		return 0
+	}
+	return strideBytes / bytesPerSample
+}
+
+func frameWorkBuildFilmGrainYScalingLUT(dst []uint8, params parser.FilmGrainParams) error {
+	var points [parser.MaxFilmGrainYPoints]filmgrain.ScalingPoint
+	for i := 0; i < int(params.NumYPoints); i++ {
+		points[i] = filmgrain.ScalingPoint{Value: params.YPoints[i][0], Scaling: params.YPoints[i][1]}
+	}
+	if err := filmgrain.BuildScalingLUT(dst, points[:params.NumYPoints]); err != nil {
+		return frame.ErrInvalidFormat
+	}
+	return nil
+}
+
+func frameWorkBuildFilmGrainUVScalingLUT(dst []uint8, count uint8, input [parser.MaxFilmGrainUVPoints][2]uint8) error {
+	var points [parser.MaxFilmGrainUVPoints]filmgrain.ScalingPoint
+	for i := 0; i < int(count); i++ {
+		points[i] = filmgrain.ScalingPoint{Value: input[i][0], Scaling: input[i][1]}
+	}
+	if err := filmgrain.BuildScalingLUT(dst, points[:count]); err != nil {
 		return frame.ErrInvalidFormat
 	}
 	return nil

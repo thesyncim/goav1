@@ -104,6 +104,110 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsChromaScalingFr
 	}
 }
 
+func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsSampleStride(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 48, Height: 16, BitDepth: 10, Align: 64})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				BitDepth:      10,
+				NumYPoints:    1,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 16}},
+			},
+		},
+		Output: output,
+	}
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Planes[0].Width != 48 || plan.Planes[0].Stride != 64 {
+		t.Fatalf("luma plane=%+v", plan.Planes[0])
+	}
+}
+
+func TestFrameWorkPostFilterContextFilmGrainPostFilterScalingLUTs(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				BitDepth:      8,
+				NumYPoints:    2,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{10, 20}, {20, 40}},
+				NumCbPoints:   1,
+				CbPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 7}},
+				NumCrPoints:   2,
+				CrPoints:      [parser.MaxFilmGrainUVPoints][2]uint8{{0, 100}, {10, 0}},
+			},
+		},
+		Output: output,
+	}
+	luts, err := ctx.FilmGrainPostFilterScalingLUTs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !luts.Active {
+		t.Fatalf("luts=%+v", luts)
+	}
+	if luts.LUTs[0][0] != 20 || luts.LUTs[0][15] != 30 || luts.LUTs[0][255] != 40 {
+		t.Fatalf("y lut samples=%d %d %d", luts.LUTs[0][0], luts.LUTs[0][15], luts.LUTs[0][255])
+	}
+	if luts.LUTs[1][0] != 7 || luts.LUTs[1][255] != 7 {
+		t.Fatalf("cb lut samples=%d %d", luts.LUTs[1][0], luts.LUTs[1][255])
+	}
+	if luts.LUTs[2][5] != 50 || luts.LUTs[2][255] != 0 {
+		t.Fatalf("cr lut samples=%d %d", luts.LUTs[2][5], luts.LUTs[2][255])
+	}
+}
+
+func TestFrameWorkPostFilterContextFilmGrainPostFilterScalingLUTsCopiesLumaForChroma(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent:         true,
+				Apply:                 true,
+				BitDepth:              8,
+				ChromaScalingFromLuma: true,
+				NumYPoints:            2,
+				YPoints:               [parser.MaxFilmGrainYPoints][2]uint8{{10, 20}, {20, 40}},
+			},
+		},
+		Output: output,
+	}
+	luts, err := ctx.FilmGrainPostFilterScalingLUTs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []int{0, 15, 255} {
+		if luts.LUTs[1][x] != luts.LUTs[0][x] || luts.LUTs[2][x] != luts.LUTs[0][x] {
+			t.Fatalf("lut[%d] y=%d cb=%d cr=%d", x, luts.LUTs[0][x], luts.LUTs[1][x], luts.LUTs[2][x])
+		}
+	}
+}
+
+func TestFrameWorkPostFilterContextFilmGrainPostFilterScalingLUTsRejectsInvalidPoints(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				BitDepth:      8,
+				NumYPoints:    2,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{10, 20}, {10, 40}},
+			},
+		},
+		Output: output,
+	}
+	if _, err := ctx.FilmGrainPostFilterScalingLUTs(); !errors.Is(err, frame.ErrInvalidFormat) {
+		t.Fatalf("FilmGrainPostFilterScalingLUTs err=%v want %v", err, frame.ErrInvalidFormat)
+	}
+}
+
 func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanRejectsNilOutput(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{
@@ -135,6 +239,11 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanRejectsInvalidActiveSt
 			name:   "lag",
 			format: frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32},
 			grain:  parser.FilmGrainParams{Apply: true, BitDepth: 8, ARCoeffLag: 4},
+		},
+		{
+			name:   "420-one-sided-chroma",
+			format: frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32},
+			grain:  parser.FilmGrainParams{Apply: true, BitDepth: 8, NumCbPoints: 1},
 		},
 	}
 	for _, tt := range tests {
