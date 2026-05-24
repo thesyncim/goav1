@@ -423,6 +423,91 @@ func TestFrameWorkDirectionalAvailabilityTablesCoverBlockSizes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkChromaDirectionalExtendedEdgesMatchesLibaomCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		block          tile.BlockVisit
+		originX        int
+		originY        int
+		absX           int
+		absY           int
+		width          int
+		height         int
+		wantTopRight   bool
+		wantBottomLeft bool
+	}{
+		{
+			name: "quantizer00 horizontal right-half denies bottom-left",
+			block: func() tile.BlockVisit {
+				parent := tile.BlockVisit{
+					MICol: 4, MIRow: 0, MIColEnd: 8, MIRowEnd: 2,
+					X4: 4, Y4: 0, Partition: tile.PartitionH, Size: tile.BlockSize16x8,
+					VisibleW4: 4, VisibleH4: 2, HaveLeft: true,
+				}
+				return frameWorkPredictionTransformEdgeBlock(parent, parent.X4>>1, parent.Y4>>1, 3, 0)
+			}(),
+			originX: 8, originY: 0,
+			absX: 12, absY: 0, width: 4, height: 4,
+		},
+		{
+			name: "quantizer00 dc next block has left-edge bottom-left",
+			block: tile.BlockVisit{
+				MICol: 8, MIRow: 1, MIColEnd: 10, MIRowEnd: 2,
+				X4: 8, Y4: 1, Partition: tile.PartitionH, Size: tile.BlockSize8x4,
+				VisibleW4: 2, VisibleH4: 1, HaveTop: true, HaveLeft: true,
+			},
+			originX: 16, originY: 0,
+			absX: 16, absY: 0, width: 4, height: 4,
+			wantTopRight: true, wantBottomLeft: true,
+		},
+		{
+			name: "small 4x4 420 scales to 8x8 for table lookup",
+			block: tile.BlockVisit{
+				MICol: 8, MIRow: 2, MIColEnd: 9, MIRowEnd: 3,
+				Partition: tile.PartitionSplit, Size: tile.BlockSize4x4,
+				VisibleW4: 1, VisibleH4: 1, HaveTop: true, HaveLeft: true,
+			},
+			originX: 16, originY: 4,
+			absX: 16, absY: 4, width: 4, height: 4,
+			wantTopRight: true, wantBottomLeft: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTopRight, gotBottomLeft := frameWorkChromaDirectionalExtendedEdges(tt.block, 32, 88, 72, tt.originX, tt.originY, tt.absX, tt.absY, tt.width, tt.height, true, true)
+			if gotTopRight != tt.wantTopRight || gotBottomLeft != tt.wantBottomLeft {
+				t.Fatalf("topRight=%v bottomLeft=%v want %v/%v", gotTopRight, gotBottomLeft, tt.wantTopRight, tt.wantBottomLeft)
+			}
+		})
+	}
+}
+
+func TestFrameWorkChromaAvailabilityBlockSizeMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		name         string
+		size         tile.BlockSize
+		subsamplingX bool
+		subsamplingY bool
+		want         tile.BlockSize
+	}{
+		{name: "4x4 420", size: tile.BlockSize4x4, subsamplingX: true, subsamplingY: true, want: tile.BlockSize8x8},
+		{name: "4x4 422", size: tile.BlockSize4x4, subsamplingX: true, want: tile.BlockSize8x4},
+		{name: "4x4 440", size: tile.BlockSize4x4, subsamplingY: true, want: tile.BlockSize4x8},
+		{name: "4x8 422", size: tile.BlockSize4x8, subsamplingX: true, want: tile.BlockSize8x8},
+		{name: "8x4 440", size: tile.BlockSize8x4, subsamplingY: true, want: tile.BlockSize8x8},
+		{name: "4x16 420", size: tile.BlockSize4x16, subsamplingX: true, subsamplingY: true, want: tile.BlockSize8x16},
+		{name: "16x4 420", size: tile.BlockSize16x4, subsamplingX: true, subsamplingY: true, want: tile.BlockSize16x8},
+		{name: "16x8 420 unchanged", size: tile.BlockSize16x8, subsamplingX: true, subsamplingY: true, want: tile.BlockSize16x8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := frameWorkChromaAvailabilityBlockSize(tt.size, tt.subsamplingX, tt.subsamplingY); got != tt.want {
+				t.Fatalf("size=%d want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -388,13 +388,18 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if err != nil || !present {
 		return err
 	}
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return err
+	}
 	predWidth, predHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
 	if err != nil {
 		return err
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, false, true, true)
+		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, geom.SubsamplingX, geom.SubsamplingY)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, false, allowTopRight, allowBottomLeft)
 		if err != nil {
 			return err
 		}
@@ -422,6 +427,10 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	if err != nil || !present {
 		return err
 	}
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return err
+	}
 	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
 	if err != nil {
 		return err
@@ -445,7 +454,8 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, geom.Window)
 
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, false, true, true)
+		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, absX, absY, predWidth, predHeight, geom.SubsamplingX, geom.SubsamplingY)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, false, allowTopRight, allowBottomLeft)
 		if err != nil {
 			return err
 		}
@@ -909,36 +919,87 @@ func frameWorkPredictionTransformEdgeBlock(block tile.BlockVisit, baseX4 int, ba
 func frameWorkLumaDirectionalExtendedEdges(block tile.BlockVisit, sbSizeMIB uint8, miColEnd uint32, miRowEnd uint32, absX int, absY int, width int, height int) (allowTopRight bool, allowBottomLeft bool) {
 	blockX := int(block.MICol) * 4
 	blockY := int(block.MIRow) * 4
-	colOff := absX - blockX
-	rowOff := absY - blockY
-	allowTopRight = frameWorkLumaHasTopRight(block, sbSizeMIB, miColEnd, colOff, rowOff, width)
-	allowBottomLeft = frameWorkLumaHasBottomLeft(block, sbSizeMIB, miRowEnd, colOff, rowOff, height)
+	return frameWorkDirectionalExtendedEdges(block, block.Size, sbSizeMIB, miColEnd, miRowEnd, blockX, blockY, absX, absY, width, height, 0, 0)
+}
+
+func frameWorkChromaDirectionalExtendedEdges(block tile.BlockVisit, sbSizeMIB uint8, miColEnd uint32, miRowEnd uint32, originX int, originY int, absX int, absY int, width int, height int, subsamplingX bool, subsamplingY bool) (allowTopRight bool, allowBottomLeft bool) {
+	ssX := int(frameWorkSubsampleShift(subsamplingX))
+	ssY := int(frameWorkSubsampleShift(subsamplingY))
+	size := frameWorkChromaAvailabilityBlockSize(block.Size, subsamplingX, subsamplingY)
+	return frameWorkDirectionalExtendedEdges(block, size, sbSizeMIB, miColEnd, miRowEnd, originX, originY, absX, absY, width, height, ssX, ssY)
+}
+
+func frameWorkChromaAvailabilityBlockSize(size tile.BlockSize, subsamplingX bool, subsamplingY bool) tile.BlockSize {
+	switch size {
+	case tile.BlockSize4x4:
+		if subsamplingX && subsamplingY {
+			return tile.BlockSize8x8
+		}
+		if subsamplingX {
+			return tile.BlockSize8x4
+		}
+		if subsamplingY {
+			return tile.BlockSize4x8
+		}
+	case tile.BlockSize4x8:
+		if subsamplingX {
+			return tile.BlockSize8x8
+		}
+	case tile.BlockSize8x4:
+		if subsamplingY {
+			return tile.BlockSize8x8
+		}
+	case tile.BlockSize4x16:
+		if subsamplingX {
+			return tile.BlockSize8x16
+		}
+	case tile.BlockSize16x4:
+		if subsamplingY {
+			return tile.BlockSize16x8
+		}
+	}
+	return size
+}
+
+func frameWorkDirectionalExtendedEdges(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB uint8, miColEnd uint32, miRowEnd uint32, originX int, originY int, absX int, absY int, width int, height int, ssX int, ssY int) (allowTopRight bool, allowBottomLeft bool) {
+	colOff := absX - originX
+	rowOff := absY - originY
+	allowTopRight = frameWorkHasTopRight(block, size, sbSizeMIB, miColEnd, colOff, rowOff, width, ssX, ssY)
+	allowBottomLeft = frameWorkHasBottomLeft(block, size, sbSizeMIB, miRowEnd, colOff, rowOff, height, ssX, ssY)
 	return allowTopRight, allowBottomLeft
 }
 
-func frameWorkLumaHasTopRight(block tile.BlockVisit, sbSizeMIB uint8, miColEnd uint32, colOffPx int, rowOffPx int, width int) bool {
+func frameWorkHasTopRight(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB uint8, miColEnd uint32, colOffPx int, rowOffPx int, width int, ssX int, ssY int) bool {
 	if !block.HaveTop || sbSizeMIB == 0 || colOffPx < 0 || rowOffPx < 0 || width <= 0 ||
 		colOffPx%4 != 0 || rowOffPx%4 != 0 || width%4 != 0 {
 		return false
 	}
-	dims, ok := block.Size.Dimensions()
+	dims, ok := size.Dimensions()
 	if !ok {
 		return false
 	}
 	colOff := colOffPx >> 2
 	rowOff := rowOffPx >> 2
 	txW := width >> 2
-	if block.MICol+uint32(colOff+txW) >= miColEnd {
+	if ssX < 0 || ssY < 0 || ssX > 1 || ssY > 1 ||
+		block.MICol+uint32((colOff+txW)<<ssX) >= miColEnd {
 		return false
 	}
-	blockW := int(dims.W4)
+	blockW := int(dims.W4) >> ssX
+	if blockW < 1 {
+		blockW = 1
+	}
 	if rowOff > 0 {
-		if blockW > 16 {
-			if rowOff == 16 && colOff+txW == 16 {
+		if int(dims.W4) > 16 {
+			block64 := 16 >> ssX
+			if block64 < 1 {
+				block64 = 1
+			}
+			if rowOff == 16>>ssY && colOff+txW == block64 {
 				return true
 			}
-			colOff64 := colOff % 16
-			return colOff64+txW < 16
+			colOff64 := colOff % block64
+			return colOff64+txW < block64
 		}
 		return colOff+txW < blockW
 	}
@@ -959,7 +1020,7 @@ func frameWorkLumaHasTopRight(block tile.BlockVisit, sbSizeMIB uint8, miColEnd u
 	if ((blkColInSB + 1) << bwLog2) >= sb {
 		return false
 	}
-	table := frameWorkTopRightAvailabilityTable(block.Partition, block.Size)
+	table := frameWorkTopRightAvailabilityTable(block.Partition, size)
 	if len(table) == 0 {
 		return false
 	}
@@ -969,37 +1030,51 @@ func frameWorkLumaHasTopRight(block tile.BlockVisit, sbSizeMIB uint8, miColEnd u
 	return idx1 >= 0 && idx1 < len(table) && ((table[idx1]>>idx2)&1) != 0
 }
 
-func frameWorkLumaHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8, miRowEnd uint32, colOffPx int, rowOffPx int, height int) bool {
+func frameWorkHasBottomLeft(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB uint8, miRowEnd uint32, colOffPx int, rowOffPx int, height int, ssX int, ssY int) bool {
 	if !block.HaveLeft || sbSizeMIB == 0 || colOffPx < 0 || rowOffPx < 0 || height <= 0 ||
 		colOffPx%4 != 0 || rowOffPx%4 != 0 || height%4 != 0 {
 		return false
 	}
-	dims, ok := block.Size.Dimensions()
+	dims, ok := size.Dimensions()
 	if !ok {
 		return false
 	}
 	colOff := colOffPx >> 2
 	rowOff := rowOffPx >> 2
 	txH := height >> 2
-	if block.MIRow+uint32(rowOff+txH) >= miRowEnd {
+	if ssX < 0 || ssY < 0 || ssX > 1 || ssY > 1 ||
+		block.MIRow+uint32((rowOff+txH)<<ssY) >= miRowEnd {
 		return false
 	}
-	blockW := int(dims.W4)
-	if blockW > 16 && colOff > 0 {
-		colOff64 := colOff % 16
+	if int(dims.W4) > 16 && colOff > 0 {
+		blockW64 := 16 >> ssX
+		if blockW64 < 1 {
+			blockW64 = 1
+		}
+		colOff64 := colOff % blockW64
 		if colOff64 == 0 {
-			rowOff64 := rowOff % 16
-			blockH64 := int(dims.H4)
-			if blockH64 > 16 {
-				blockH64 = 16
+			planeBlockH64 := 16 >> ssY
+			if planeBlockH64 < 1 {
+				planeBlockH64 = 1
 			}
-			return rowOff64+txH < blockH64
+			rowOff64 := rowOff % planeBlockH64
+			blockH := int(dims.H4) >> ssY
+			if blockH < 1 {
+				blockH = 1
+			}
+			if blockH > planeBlockH64 {
+				blockH = planeBlockH64
+			}
+			return rowOff64+txH < blockH
 		}
 	}
 	if colOff > 0 {
 		return false
 	}
-	blockH := int(dims.H4)
+	blockH := int(dims.H4) >> ssY
+	if blockH < 1 {
+		blockH = 1
+	}
 	if rowOff+txH < blockH {
 		return true
 	}
@@ -1012,13 +1087,13 @@ func frameWorkLumaHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8, miRowEnd
 	blkRowInSB := int(block.MIRow&uint32(sb-1)) >> bhLog2
 	blkColInSB := int(block.MICol&uint32(sb-1)) >> bwLog2
 	if blkColInSB == 0 {
-		rowOffInSB := (blkRowInSB << bhLog2) + rowOff
-		return rowOffInSB+txH < sb
+		rowOffInSB := (blkRowInSB << bhLog2 >> ssY) + rowOff
+		return rowOffInSB+txH < sb>>ssY
 	}
 	if ((blkRowInSB + 1) << bhLog2) >= sb {
 		return false
 	}
-	table := frameWorkBottomLeftAvailabilityTable(block.Partition, block.Size)
+	table := frameWorkBottomLeftAvailabilityTable(block.Partition, size)
 	if len(table) == 0 {
 		return false
 	}
