@@ -51,6 +51,18 @@ func TestBuildScalingLUT(t *testing.T) {
 	}
 }
 
+func TestNormativeDimensions(t *testing.T) {
+	if GaussianSequenceLen != 2048 || GaussianBits != 11 {
+		t.Fatalf("gaussian bits=%d len=%d", GaussianBits, GaussianSequenceLen)
+	}
+	if LumaGrainWidth != 82 || LumaGrainHeight != 73 || LumaGrainSamples != 5986 {
+		t.Fatalf("luma grain dimensions=%dx%d samples=%d", LumaGrainWidth, LumaGrainHeight, LumaGrainSamples)
+	}
+	if LumaBlockSize != 32 || NoiseStripeHeight != 34 || LumaOverlapSamples != 2 {
+		t.Fatalf("luma block=%d stripe=%d overlap=%d", LumaBlockSize, NoiseStripeHeight, LumaOverlapSamples)
+	}
+}
+
 func TestScaleLUT(t *testing.T) {
 	var lut [ScalingLUTSize]uint8
 	if err := BuildScalingLUT(lut[:], []ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}); err != nil {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/filmgrain"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -64,6 +65,11 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsLumaInputs(t *t
 	}
 	if size.ScalingPoints != [3]int{1, 0, 0} || size.ARCoeffs != [3]int{4, 0, 0} {
 		t.Fatalf("scratch=%+v", size)
+	}
+	if size.LumaGrain != filmgrain.LumaGrainSamples ||
+		size.LumaLine != filmgrain.LumaOverlapSamples*plan.Planes[0].Stride ||
+		size.LumaColumn != filmgrain.LumaColumnScratchRows*filmgrain.LumaOverlapSamples {
+		t.Fatalf("luma scratch=%+v", size)
 	}
 }
 

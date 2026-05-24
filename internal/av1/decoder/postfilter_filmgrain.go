@@ -43,6 +43,10 @@ type FrameWorkFilmGrainPostFilterPlan struct {
 type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ScalingPoints [3]int
 	ARCoeffs      [3]int
+
+	LumaGrain  int
+	LumaLine   int
+	LumaColumn int
 }
 
 // FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
@@ -144,6 +148,11 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 	for plane := 0; plane < len(plan.Planes); plane++ {
 		size.ScalingPoints[plane] = plan.Planes[plane].ScalingPoints
 		size.ARCoeffs[plane] = plan.Planes[plane].ARCoeffs
+	}
+	if plan.Planes[0].Active {
+		size.LumaGrain = filmgrain.LumaGrainSamples
+		size.LumaLine = filmgrain.LumaOverlapSamples * plan.Planes[0].Stride
+		size.LumaColumn = filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples
 	}
 	return size, nil
 }
