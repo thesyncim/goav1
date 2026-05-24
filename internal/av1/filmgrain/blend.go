@@ -1,8 +1,10 @@
 package filmgrain
 
 const (
-	LumaLegalMin = 16
-	LumaLegalMax = 235
+	LumaLegalMin      = 16
+	LumaLegalMax      = 235
+	ChromaLegalMax    = 240
+	ChromaIdentityMax = 235
 )
 
 // BlendLumaOverlap blends a previous block's grain with the current block's

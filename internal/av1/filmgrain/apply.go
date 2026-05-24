@@ -16,6 +16,31 @@ type LumaRowParams struct {
 	ClipToRestrictedRange bool
 }
 
+// ChromaRowParams contains the per-stripe inputs for placing chroma grain onto
+// a decoded chroma row band.
+type ChromaRowParams struct {
+	Seed uint16
+
+	Width      int
+	Height     int
+	Stride     int
+	LumaStride int
+	Row        int
+
+	BitDepth              uint8
+	ScalingShift          uint8
+	SubsamplingX          bool
+	SubsamplingY          bool
+	Overlap               bool
+	ClipToRestrictedRange bool
+	MatrixIdentity        bool
+	ChromaScalingFromLuma bool
+
+	ChromaMult     uint8
+	ChromaLumaMult uint8
+	ChromaOffset   uint16
+}
+
 // ApplyLumaRow places generated AV1 luma grain on one 32-line luma row band.
 // src and dst are uint16 sample views of the row band and may alias.
 func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams) error {
@@ -72,6 +97,65 @@ func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, pa
 	return nil
 }
 
+// ApplyChromaRow places generated AV1 chroma grain on one chroma row band.
+// src and dst are uint16 sample views of the chroma band and may alias.
+func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams) error {
+	if err := validateChromaRow(dst, src, luma, grain, scaling, params); err != nil {
+		return err
+	}
+
+	rows := 1
+	if params.Overlap && params.Row > 0 {
+		rows = 2
+	}
+	var randoms [2]Random
+	for i := 0; i < rows; i++ {
+		rng, err := NewStripeRandom(params.Seed, (params.Row-i)*LumaBlockSize)
+		if err != nil {
+			return err
+		}
+		randoms[i] = rng
+	}
+
+	shiftX := chromaSubsamplingShift(params.SubsamplingX)
+	shiftY := chromaSubsamplingShift(params.SubsamplingY)
+	chromaBlockWidth := LumaBlockSize >> shiftX
+	var offsets [2][2]uint8
+	for blockX := 0; blockX < params.Width; blockX += chromaBlockWidth {
+		blockWidth := chromaBlockWidth
+		if remaining := params.Width - blockX; remaining < blockWidth {
+			blockWidth = remaining
+		}
+		if params.Overlap && blockX > 0 {
+			for i := 0; i < rows; i++ {
+				offsets[1][i] = offsets[0][i]
+			}
+		}
+		for i := 0; i < rows; i++ {
+			offset, _ := randoms[i].Number(8)
+			offsets[0][i] = uint8(offset)
+		}
+
+		yStart := 0
+		if params.Overlap && params.Row > 0 {
+			yStart = LumaOverlapSamples >> shiftY
+			if params.Height < yStart {
+				yStart = params.Height
+			}
+		}
+		xStart := 0
+		if params.Overlap && blockX > 0 {
+			xStart = LumaOverlapSamples >> shiftX
+			if blockWidth < xStart {
+				xStart = blockWidth
+			}
+		}
+
+		applyChromaBlock(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
+	}
+	return nil
+}
+
 func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
 	for y := yStart; y < params.Height; y++ {
 		for x := xStart; x < blockWidth; x++ {
@@ -108,9 +192,93 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 	}
 }
 
+func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
+	for y := yStart; y < params.Height; y++ {
+		for x := xStart; x < blockWidth; x++ {
+			g := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
+			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		}
+		for x := 0; x < xStart; x++ {
+			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
+			left := chromaGrainSample(grain, offsets[1][0], shiftX, shiftY, 1, 0, x, y)
+			g := blendChromaOverlap(left, current, x, shiftX, params.BitDepth)
+			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		}
+	}
+
+	for y := 0; y < yStart; y++ {
+		for x := xStart; x < blockWidth; x++ {
+			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
+			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
+			g := blendChromaOverlap(top, current, y, shiftY, params.BitDepth)
+			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		}
+		for x := 0; x < xStart; x++ {
+			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
+			topLeft := chromaGrainSample(grain, offsets[1][1], shiftX, shiftY, 1, 1, x, y)
+			top = blendChromaOverlap(topLeft, top, x, shiftX, params.BitDepth)
+
+			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
+			left := chromaGrainSample(grain, offsets[1][0], shiftX, shiftY, 1, 0, x, y)
+			current = blendChromaOverlap(left, current, x, shiftX, params.BitDepth)
+
+			g := blendChromaOverlap(top, current, y, shiftY, params.BitDepth)
+			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		}
+	}
+}
+
 func applyLumaRowSample(dst []uint16, src []uint16, scaling []uint8, params LumaRowParams, x int, y int, grain int16) {
 	i := y*params.Stride + x
 	dst[i] = applyLumaSample(src[i], grain, scaling, params.BitDepth, params.ScalingShift, params.ClipToRestrictedRange)
+}
+
+func applyChromaRowSample(dst []uint16, src []uint16, luma []uint16, scaling []uint8, params ChromaRowParams, shiftX int, x int, y int, grain int16) {
+	i := y*params.Stride + x
+	val := chromaScalingIndex(src[i], luma, params, shiftX, x, y)
+	dst[i] = applyChromaSample(src[i], val, grain, scaling, params)
+}
+
+func chromaScalingIndex(src uint16, luma []uint16, params ChromaRowParams, shiftX int, x int, y int) int {
+	lumaX := x << shiftX
+	lumaY := y << chromaSubsamplingShift(params.SubsamplingY)
+	lumaIndex := lumaY*params.LumaStride + lumaX
+	avg := int(luma[lumaIndex])
+	if shiftX != 0 {
+		avg = (avg + int(luma[lumaIndex+1]) + 1) >> 1
+	}
+	if params.ChromaScalingFromLuma {
+		return avg
+	}
+	combined := avg*int(params.ChromaLumaMult) + int(src)*int(params.ChromaMult)
+	v := (combined >> 6) + int(params.ChromaOffset)*(1<<int(params.BitDepth-8))
+	return clipInt(v, 0, (1<<params.BitDepth)-1)
+}
+
+func applyChromaSample(src uint16, scalingIndex int, grain int16, scaling []uint8, params ChromaRowParams) uint16 {
+	scale := scaleLUT(scaling, scalingIndex, params.BitDepth)
+	noise := roundPowerOfTwo(int(scale)*int(grain), int(params.ScalingShift))
+	minValue := 0
+	maxValue := (256 << (params.BitDepth - 8)) - 1
+	if params.ClipToRestrictedRange {
+		minValue = LumaLegalMin << (params.BitDepth - 8)
+		maxLegal := ChromaLegalMax
+		if params.MatrixIdentity {
+			maxLegal = ChromaIdentityMax
+		}
+		maxValue = maxLegal << (params.BitDepth - 8)
+	}
+	return uint16(clipInt(int(src)+noise, minValue, maxValue))
+}
+
+func blendChromaOverlap(previous int16, current int16, offset int, shift int, bitDepth uint8) int16 {
+	if shift != 0 {
+		v := roundPowerOfTwo(int(previous)*23+int(current)*22, 5)
+		grainMin := -(1 << (bitDepth - 1))
+		grainMax := (1 << (bitDepth - 1)) - 1
+		return int16(clipInt(v, grainMin, grainMax))
+	}
+	return blendLumaOverlap(previous, current, offset, bitDepth)
 }
 
 func validateLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams) error {
@@ -128,6 +296,32 @@ func validateLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8,
 	}
 	need := (params.Height-1)*params.Stride + params.Width
 	if len(dst) < need || len(src) < need {
+		return ErrInvalidParams
+	}
+	return nil
+}
+
+func validateChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams) error {
+	shiftX := chromaSubsamplingShift(params.SubsamplingX)
+	shiftY := chromaSubsamplingShift(params.SubsamplingY)
+	blockHeight := LumaBlockSize >> shiftY
+	if len(grain) < ChromaGrainSamples ||
+		len(scaling) < ScalingLUTSize ||
+		params.Width <= 0 ||
+		params.Height <= 0 ||
+		params.Height > blockHeight ||
+		params.Stride < params.Width ||
+		params.LumaStride < ((params.Width-1)<<shiftX)+1+shiftX ||
+		params.Row < 0 ||
+		(params.BitDepth != 8 && params.BitDepth != 10 && params.BitDepth != 12) ||
+		params.ScalingShift < 8 ||
+		params.ScalingShift > 11 {
+		return ErrInvalidParams
+	}
+	need := (params.Height-1)*params.Stride + params.Width
+	lumaRows := ((params.Height - 1) << shiftY) + 1
+	lumaNeed := (lumaRows-1)*params.LumaStride + ((params.Width - 1) << shiftX) + 1 + shiftX
+	if len(dst) < need || len(src) < need || len(luma) < lumaNeed {
 		return ErrInvalidParams
 	}
 	return nil
