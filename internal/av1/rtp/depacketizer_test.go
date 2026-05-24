@@ -81,6 +81,62 @@ func TestDepacketizerFragmentedElement(t *testing.T) {
 	}
 }
 
+func TestDepacketizerHeaderOnlyFragmentStart(t *testing.T) {
+	var dep Depacketizer
+	var out [8]byte
+	var spans [2]OBUSpan
+
+	used, count, _, err := dep.Push(out[:], 0, spans[:], []byte{0x50}) // Y=1, W=1.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != 0 || count != 0 || !dep.InFragment() {
+		t.Fatalf("start used=%d count=%d inFragment=%v", used, count, dep.InFragment())
+	}
+
+	used, count, _, err = dep.Push(out[:], used, spans[:], []byte{0x90, 0x18, 0xaa}) // Z=1, W=1.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != 2 || count != 1 || dep.InFragment() {
+		t.Fatalf("end used=%d count=%d inFragment=%v", used, count, dep.InFragment())
+	}
+	if spans[0] != (OBUSpan{Offset: 0, Length: 2, Fragmented: true}) {
+		t.Fatalf("span=%+v", spans[0])
+	}
+	if string(out[:used]) != string([]byte{0x18, 0xaa}) {
+		t.Fatalf("out=%x", out[:used])
+	}
+}
+
+func TestDepacketizerHeaderOnlyFragmentEnd(t *testing.T) {
+	var dep Depacketizer
+	var out [8]byte
+	var spans [2]OBUSpan
+
+	used, count, _, err := dep.Push(out[:], 0, spans[:], []byte{0x50, 0x18, 0xaa}) // Y=1, W=1.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != 2 || count != 0 || !dep.InFragment() {
+		t.Fatalf("start used=%d count=%d inFragment=%v", used, count, dep.InFragment())
+	}
+
+	used, count, _, err = dep.Push(out[:], used, spans[:], []byte{0x90}) // Z=1, W=1.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != 2 || count != 1 || dep.InFragment() {
+		t.Fatalf("end used=%d count=%d inFragment=%v", used, count, dep.InFragment())
+	}
+	if spans[0] != (OBUSpan{Offset: 0, Length: 2, Fragmented: true}) {
+		t.Fatalf("span=%+v", spans[0])
+	}
+	if string(out[:used]) != string([]byte{0x18, 0xaa}) {
+		t.Fatalf("out=%x", out[:used])
+	}
+}
+
 func TestDepacketizerAllocs(t *testing.T) {
 	elements := []Element{{Data: []byte{0x18, 0xaa}}, {Data: []byte{0x20, 0xbb}}}
 	var payload [32]byte

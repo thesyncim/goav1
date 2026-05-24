@@ -31,7 +31,7 @@ func FuzzPayloadIterator(f *testing.F) {
 			if !ok {
 				return
 			}
-			if len(elem.Data) == 0 {
+			if len(elem.Data) == 0 && !elem.fragmented() {
 				t.Fatal("empty element returned without error")
 			}
 			if elem.Index < lastIndex {

@@ -30,7 +30,9 @@ func NewIterator(payload []byte) (Iterator, error) {
 		return Iterator{}, err
 	}
 	if n == len(payload) {
-		return Iterator{}, ErrShortPayload
+		if header.ElementCount != 1 {
+			return Iterator{}, ErrInvalidElementCount
+		}
 	}
 	return Iterator{
 		payload: payload,
@@ -48,6 +50,20 @@ func (it *Iterator) Next() (Element, bool, error) {
 		return Element{}, false, nil
 	}
 	if it.off >= len(it.payload) {
+		if it.index == 0 && it.header.ElementCount == 1 {
+			it.done = true
+			it.index++
+			elem := Element{
+				Index:              0,
+				ContinuesPrevious:  it.header.ContinuesPrevious,
+				ContinuesNext:      it.header.ContinuesNext,
+				InferredLastLength: true,
+			}
+			if !elem.fragmented() {
+				return Element{}, false, ErrZeroLengthElement
+			}
+			return elem, true, nil
+		}
 		it.done = true
 		return Element{}, false, nil
 	}
@@ -82,10 +98,6 @@ func (it *Iterator) Next() (Element, bool, error) {
 		}
 	}
 
-	if len(data) == 0 {
-		return Element{}, false, ErrZeroLengthElement
-	}
-
 	elem := Element{
 		Data:               data,
 		Index:              index,
@@ -93,8 +105,15 @@ func (it *Iterator) Next() (Element, bool, error) {
 		ContinuesNext:      it.header.ContinuesNext && it.off == len(it.payload),
 		InferredLastLength: inferred,
 	}
+	if len(data) == 0 && !elem.fragmented() {
+		return Element{}, false, ErrZeroLengthElement
+	}
 	it.index++
 	return elem, true, nil
+}
+
+func (e Element) fragmented() bool {
+	return e.ContinuesPrevious || e.ContinuesNext
 }
 
 // PutPayload writes one AV1 RTP payload into dst.
@@ -116,7 +135,8 @@ func PutPayload(dst []byte, header AggregationHeader, elements []Element) (int, 
 
 	for i := range elements {
 		data := elements[i].Data
-		if len(data) == 0 {
+		fragmented := (header.ContinuesPrevious && i == 0) || (header.ContinuesNext && i == len(elements)-1)
+		if len(data) == 0 && !fragmented {
 			return 0, ErrZeroLengthElement
 		}
 

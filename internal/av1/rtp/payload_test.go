@@ -110,6 +110,38 @@ func TestPayloadIteratorInferredLastLength(t *testing.T) {
 	}
 }
 
+func TestPayloadIteratorHeaderOnlyFragment(t *testing.T) {
+	it, err := NewIterator([]byte{0x50}) // Y=1, W=1.
+	if err != nil {
+		t.Fatal(err)
+	}
+	elem, ok, err := it.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || len(elem.Data) != 0 || elem.Index != 0 || !elem.ContinuesNext || !elem.InferredLastLength {
+		t.Fatalf("elem=%+v ok=%v", elem, ok)
+	}
+	_, ok, err = it.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unexpected second element")
+	}
+}
+
+func TestPayloadIteratorRejectsHeaderOnlyCompleteOBU(t *testing.T) {
+	it, err := NewIterator([]byte{0x10}) // W=1, but neither Z nor Y.
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = it.Next()
+	if !errors.Is(err, ErrZeroLengthElement) {
+		t.Fatalf("Next err=%v want %v", err, ErrZeroLengthElement)
+	}
+}
+
 func TestPayloadIteratorManyElementsNoIndexWrap(t *testing.T) {
 	var payload [1 + 300*2]byte
 	payload[0] = 0x00
@@ -171,6 +203,20 @@ func TestPutPayload(t *testing.T) {
 		if !ok || string(elem.Data) != string(elements[i].Data) {
 			t.Fatalf("element %d got=%+v ok=%v", i, elem, ok)
 		}
+	}
+}
+
+func TestPutPayloadAllowsEmptyFragment(t *testing.T) {
+	var dst [1]byte
+	n, err := PutPayload(dst[:], AggregationHeader{
+		ContinuesNext: true,
+		ElementCount:  1,
+	}, []Element{{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || dst[0] != 0x50 {
+		t.Fatalf("payload=%x n=%d want 50", dst[:n], n)
 	}
 }
 
