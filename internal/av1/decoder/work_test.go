@@ -1591,6 +1591,62 @@ func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.
 	}
 }
 
+func TestFrameWorkPostFilterContextRequireNoActivePostFilters(t *testing.T) {
+	if err := (FrameWorkPostFilterContext{}).RequireNoActivePostFilters(); err != nil {
+		t.Fatalf("inactive postfilter err=%v", err)
+	}
+
+	tests := []struct {
+		name  string
+		event Event
+	}{
+		{
+			name: "loopfilter",
+			event: Event{
+				LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{1, 0}},
+			},
+		},
+		{
+			name: "cdef-indexes",
+			event: Event{
+				CDEF: parser.CDEFParams{Bits: 1, StrengthCount: 2},
+			},
+		},
+		{
+			name: "cdef-strength",
+			event: Event{
+				CDEF: parser.CDEFParams{StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{4}},
+			},
+		},
+		{
+			name: "superres",
+			event: Event{
+				FrameSize: parser.FrameSize{SuperResEnabled: true},
+			},
+		},
+		{
+			name: "restoration",
+			event: Event{
+				Restoration: parser.RestorationParams{Type: [3]parser.RestorationType{parser.RestorationWiener}},
+			},
+		},
+		{
+			name: "film-grain",
+			event: Event{
+				FilmGrain: parser.FilmGrainParams{Apply: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters()
+			if !errors.Is(err, ErrUnsupportedPostFilter) {
+				t.Fatalf("err=%v want %v", err, ErrUnsupportedPostFilter)
+			}
+		})
+	}
+}
+
 func TestFrameWorkStateRunStepWithPostFilterAllocs(t *testing.T) {
 	pool := testFramePool(t, 1)
 	surface, output, err := pool.Acquire()

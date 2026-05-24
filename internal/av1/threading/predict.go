@@ -345,6 +345,10 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if err != nil || !present {
 		return err
 	}
+	predWidth, predHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return err
+	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch)
@@ -360,11 +364,11 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1343,6 +1347,28 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 	}
 	return x, y, width, height, color.SubsamplingX, color.SubsamplingY, true, nil
+}
+
+func frameWorkBlockPlanePredictionExtentPixels(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (int, int, error) {
+	if plane == FrameWorkPlaneY {
+		dims, ok := block.Size.Dimensions()
+		if !ok {
+			return 0, 0, ErrInvalidBatch
+		}
+		return int(dims.W4) * 4, int(dims.H4) * 4, nil
+	}
+	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
+		return 0, 0, ErrInvalidBatch
+	}
+	planeSize, err := tile.PlaneBlockSize(block.Size, color, int(plane))
+	if err != nil {
+		return 0, 0, ErrInvalidBatch
+	}
+	dims, ok := planeSize.Dimensions()
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	return int(dims.W4) * 4, int(dims.H4) * 4, nil
 }
 
 func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {

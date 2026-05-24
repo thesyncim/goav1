@@ -974,6 +974,47 @@ func TestFrameWorkBatchPredictBlockIntraCoeffClippedChromaSmooth(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockIntraClippedChromaSmooth(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 352, Height: 256, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+	ctx.Sequence = FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+		Use128x128Superblock: true,
+		ColorConfig: parser.ColorConfig{
+			BitDepth:     output.Format.BitDepth,
+			SubsamplingX: true,
+			SubsamplingY: true,
+		},
+	})
+	ctx.Jobs = []tile.Job{{SBCols: 3, SBRows: 2}}
+	for y := 0; y < 64; y++ {
+		setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, 127, y, 77)
+		setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, 127, y, 91)
+	}
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Block = tile.BlockVisit{
+		MICol: 64, MIRow: 0, MIColEnd: 88, MIRowEnd: 32,
+		X4: 0, Y4: 0, Size: tile.BlockSize128x128, VisibleW4: 24, VisibleH4: 32,
+		HaveTop: false, HaveLeft: true,
+	}
+	visit.Prediction.ChromaMode = tile.ChromaIntraModeSmooth
+	visit.Prediction.ChromaModeValid = true
+
+	var scratch FrameWorkPredictionScratch
+	if err := ctx.PredictBlock(0, visit, &scratch); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 64; y++ {
+		for x := 128; x < 176; x++ {
+			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != 77 {
+				t.Fatalf("u sample(%d,%d)=%d want 77", x, y, got)
+			}
+			if got := frameWorkTestSample(output.V, output.Layout.BytesPerSample, x, y); got != 91 {
+				t.Fatalf("v sample(%d,%d)=%d want 91", x, y, got)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockRejectsIncompletePlaneSupport(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := testIntraPredictionBatch(output)

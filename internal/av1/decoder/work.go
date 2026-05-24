@@ -69,6 +69,21 @@ type FrameWorkPostFilterContext struct {
 	ExecutedTileWork bool
 }
 
+// RequireNoActivePostFilters is a capability gate for callers that consume the
+// current reconstructed frame directly. It accepts frames whose postfilter plan
+// is a no-op and rejects frames that need loop filter, CDEF, superres, loop
+// restoration, or film grain before MD5/reference use.
+func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
+	if frameWorkLoopFilterActive(ctx.Event.LoopFilter) ||
+		frameWorkCDEFActive(ctx.Event.CDEF) ||
+		ctx.Event.FrameSize.SuperResEnabled ||
+		frameWorkRestorationActive(ctx.Event.Restoration) ||
+		ctx.Event.FilmGrain.Apply {
+		return ErrUnsupportedPostFilter
+	}
+	return nil
+}
+
 // FrameWorkPostFilterFunc applies final frame postfilters before reference
 // publication. Returning an error keeps frame work active and unpublished.
 type FrameWorkPostFilterFunc func(FrameWorkPostFilterContext) error
@@ -611,6 +626,20 @@ func (s *FrameWorkState) sequenceContext() threading.FrameWorkSequenceContext {
 		return threading.FrameWorkSequenceContext{}
 	}
 	return s.Sequence
+}
+
+func frameWorkLoopFilterActive(lf parser.LoopFilterParams) bool {
+	return lf.LevelY[0] != 0 || lf.LevelY[1] != 0 || lf.LevelU != 0 || lf.LevelV != 0
+}
+
+func frameWorkCDEFActive(cdef parser.CDEFParams) bool {
+	return cdef.Bits != 0 || cdef.YStrength[0] != 0 || cdef.UVStrength[0] != 0
+}
+
+func frameWorkRestorationActive(restoration parser.RestorationParams) bool {
+	return restoration.Type[0] != parser.RestorationNone ||
+		restoration.Type[1] != parser.RestorationNone ||
+		restoration.Type[2] != parser.RestorationNone
 }
 
 // BeginFrameWork resolves frame references, plans any inline tile work, and

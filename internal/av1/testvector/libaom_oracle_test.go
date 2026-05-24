@@ -309,6 +309,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				}
 				return nil
 			}, func(ctx decoder.FrameWorkPostFilterContext) error {
+				if err := ctx.RequireNoActivePostFilters(); err != nil {
+					return err
+				}
 				digestIndex := int(ivfFrame.Index)
 				if digestIndex >= len(digests) || digests[digestIndex].FrameIndex != ivfFrame.Index {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)

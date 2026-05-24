@@ -12,4 +12,5 @@ var (
 	ErrInvalidSurfaceReference        = errors.New("decoder: invalid surface reference")
 	ErrSurfaceReferenceBufferTooSmall = errors.New("decoder: surface reference buffer too small")
 	ErrSurfaceReleaseBufferTooSmall   = errors.New("decoder: surface release buffer too small")
+	ErrUnsupportedPostFilter          = errors.New("decoder: unsupported postfilter")
 )
