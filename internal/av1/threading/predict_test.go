@@ -105,6 +105,105 @@ func TestFrameWorkBatchPredictBlockLumaIntraStaticModes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaDirectionalKnownVectors(t *testing.T) {
+	tests := []struct {
+		name string
+		mode tile.IntraMode
+		seed func(*frame.Frame)
+		want []uint16
+	}{
+		{
+			name: "d45",
+			mode: tile.IntraModeD45,
+			seed: func(output *frame.Frame) {
+				for i, sample := range []uint16{10, 20, 30, 40, 50, 60, 70, 80} {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+i, 15, sample)
+				}
+			},
+			want: []uint16{
+				20, 30, 40, 50,
+				30, 40, 50, 60,
+				40, 50, 60, 70,
+				50, 60, 70, 80,
+			},
+		},
+		{
+			name: "d135",
+			mode: tile.IntraModeD135,
+			seed: func(output *frame.Frame) {
+				for i, sample := range []uint16{21, 31, 41, 51} {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+i, 15, sample)
+				}
+				for i, sample := range []uint16{101, 111, 121, 131} {
+					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 16+i, sample)
+				}
+				setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, 11)
+			},
+			want: []uint16{
+				11, 21, 31, 41,
+				101, 11, 21, 31,
+				111, 101, 11, 21,
+				121, 111, 101, 11,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+			ctx := testIntraPredictionBatch(output)
+			tt.seed(output)
+
+			var scratch FrameWorkIntraPredictionScratch
+			if err := ctx.PredictBlockLumaIntra(0, testIntraPrediction4x4Visit(tt.mode), &scratch); err != nil {
+				t.Fatal(err)
+			}
+			got := make([]uint16, 0, 16)
+			for y := 16; y < 20; y++ {
+				for x := 16; x < 20; x++ {
+					got = append(got, frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y))
+				}
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("prediction=%v want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaDirectionalModes(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		mode tile.IntraMode
+	}{
+		{name: "d45", mode: tile.IntraModeD45},
+		{name: "d67", mode: tile.IntraModeD67},
+		{name: "d113", mode: tile.IntraModeD113},
+		{name: "d135", mode: tile.IntraModeD135},
+		{name: "d157", mode: tile.IntraModeD157},
+		{name: "d203", mode: tile.IntraModeD203},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output := testBatchFrame(t, frame.Format{Width: 96, Height: 96, BitDepth: 10, Align: 128})
+			ctx := testIntraPredictionBatch(output)
+			seedFrameWorkDirectionalEdges(output, 0x3ff, 19, 37, 101)
+
+			var scratch FrameWorkIntraPredictionScratch
+			if err := ctx.PredictBlockLumaIntra(0, testIntraPredictionVisit(tt.mode), &scratch); err != nil {
+				t.Fatal(err)
+			}
+			for y := 16; y < 32; y++ {
+				for x := 16; x < 32; x++ {
+					if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got > 0x3ff {
+						t.Fatalf("sample(%d,%d)=%d exceeds 10-bit max", x, y, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := testIntraPredictionBatch(output)
@@ -128,7 +227,16 @@ func TestFrameWorkBatchPredictBlockLumaIntraRejectsInvalidInputs(t *testing.T) {
 			visit.Prediction.Intra = false
 			return visit
 		}(), scratch: &scratch},
-		{name: "directional not wired", ctx: ctx, visit: testIntraPredictionVisit(tile.IntraModeD45), scratch: &scratch},
+		{name: "directional missing top", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := testIntraPredictionVisit(tile.IntraModeD45)
+			visit.Block.HaveTop = false
+			return visit
+		}(), scratch: &scratch},
+		{name: "directional missing left", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := testIntraPredictionVisit(tile.IntraModeD203)
+			visit.Block.HaveLeft = false
+			return visit
+		}(), scratch: &scratch},
 		{name: "vertical missing top", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := testIntraPredictionVisit(tile.IntraModeVertical)
 			visit.Block.HaveTop = false
@@ -159,11 +267,16 @@ func TestFrameWorkBatchPredictBlockLumaIntraAllocs(t *testing.T) {
 	for y := 16; y < 32; y++ {
 		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 92)
 	}
+	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, 91)
 
 	var scratch FrameWorkIntraPredictionScratch
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	directional := testIntraPredictionVisit(tile.IntraModeD135)
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := ctx.PredictBlockLumaIntra(0, directional, &scratch); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -185,20 +298,20 @@ func FuzzFrameWorkBatchPredictBlockLumaIntra(f *testing.F) {
 		tile.IntraModeSmoothVertical,
 		tile.IntraModeSmoothHorizontal,
 		tile.IntraModePaeth,
+		tile.IntraModeD45,
+		tile.IntraModeD67,
+		tile.IntraModeD113,
+		tile.IntraModeD135,
+		tile.IntraModeD157,
+		tile.IntraModeD203,
 	}
 	f.Fuzz(func(t *testing.T, rawMode uint8, above uint16, left uint16, aboveLeft uint16) {
-		output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
+		output := testBatchFrame(t, frame.Format{Width: 96, Height: 96, BitDepth: 10, Align: 128})
 		ctx := testIntraPredictionBatch(output)
 		above &= 0x3ff
 		left &= 0x3ff
 		aboveLeft &= 0x3ff
-		for x := 16; x < 32; x++ {
-			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, above)
-		}
-		for y := 16; y < 32; y++ {
-			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, left)
-		}
-		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, aboveLeft)
+		seedFrameWorkDirectionalEdges(output, 0x3ff, above, left, aboveLeft)
 
 		var scratch FrameWorkIntraPredictionScratch
 		visit := testIntraPredictionVisit(modes[int(rawMode)%len(modes)])
@@ -243,6 +356,16 @@ func testIntraPredictionVisit(mode tile.IntraMode) tile.BlockLoopVisit {
 	}
 }
 
+func testIntraPrediction4x4Visit(mode tile.IntraMode) tile.BlockLoopVisit {
+	visit := testIntraPredictionVisit(mode)
+	visit.Block.MIColEnd = 5
+	visit.Block.MIRowEnd = 5
+	visit.Block.Size = tile.BlockSize4x4
+	visit.Block.VisibleW4 = 1
+	visit.Block.VisibleH4 = 1
+	return visit
+}
+
 func frameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
 	sample, ok := frameWorkLoadSample(plane, bytesPerSample, x, y)
 	if !ok {
@@ -259,4 +382,14 @@ func setFrameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int,
 	}
 	plane.Pix[offset] = byte(value)
 	plane.Pix[offset+1] = byte(value >> 8)
+}
+
+func seedFrameWorkDirectionalEdges(output *frame.Frame, max uint16, above uint16, left uint16, aboveLeft uint16) {
+	for x := 0; x < output.Y.Width; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, uint16((int(above)+x)&int(max)))
+	}
+	for y := 0; y < output.Y.Height; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, uint16((int(left)+y)&int(max)))
+	}
+	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, aboveLeft&max)
 }

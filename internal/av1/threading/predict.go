@@ -6,26 +6,27 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
-const frameWorkIntraPredictionMaxEdgeSamples = 128
+const (
+	frameWorkIntraPredictionMaxEdgeSamples = 128
+	frameWorkDirectionalEdgeOrigin         = 128
+	frameWorkDirectionalEdgeSamples        = 512
+)
 
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
 // intra prediction. Keep it outside FrameWorkTileResidualScratch so callers
 // that do not use built-in prediction pay no per-worker storage cost.
 type FrameWorkIntraPredictionScratch struct {
-	Above [frameWorkIntraPredictionMaxEdgeSamples]uint16
-	Left  [frameWorkIntraPredictionMaxEdgeSamples]uint16
+	Above [frameWorkDirectionalEdgeSamples]uint16
+	Left  [frameWorkDirectionalEdgeSamples]uint16
 }
 
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
-// block-loop visit into Jobs[index]'s output window. Directional intra, filter
-// intra, and chroma predictors require their own edge preparation and are left
-// for the caller until those paths are wired.
+// block-loop visit into Jobs[index]'s output window. It covers luma DC,
+// vertical, horizontal, directional, Paeth, and smooth modes; filter intra and
+// chroma predictors are wired separately because they use different syntax and
+// plane geometry.
 func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVisit, scratch *FrameWorkIntraPredictionScratch) error {
 	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
-		return ErrInvalidBatch
-	}
-	mode, ok := frameWorkLumaIntraPredictionMode(visit.Prediction.LumaMode)
-	if !ok {
 		return ErrInvalidBatch
 	}
 	width, height, ok := frameWorkBlockVisiblePixels(visit.Block)
@@ -55,6 +56,21 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	x -= window.X
 	y -= window.Y
 
+	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode); ok {
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, x, y, width, height, angle, visit.Block, scratch)
+		if err != nil {
+			return err
+		}
+		if err := prediction.PredictDirectionalIntraPlaneBlock(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
+
+	mode, ok := frameWorkLumaIntraPredictionMode(visit.Prediction.LumaMode)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	edges, err := frameWorkIntraPredictionEdges(dst, window.BytesPerSample, x, y, width, height, visit.Block, scratch)
 	if err != nil {
 		return err
@@ -81,6 +97,25 @@ func frameWorkLumaIntraPredictionMode(mode tile.IntraMode) (prediction.IntraMode
 		return prediction.IntraModeSmoothHorizontal, true
 	case tile.IntraModePaeth:
 		return prediction.IntraModePaeth, true
+	default:
+		return 0, false
+	}
+}
+
+func frameWorkLumaIntraDirectionalAngle(mode tile.IntraMode) (int, bool) {
+	switch mode {
+	case tile.IntraModeD45:
+		return 45, true
+	case tile.IntraModeD135:
+		return 135, true
+	case tile.IntraModeD113:
+		return 113, true
+	case tile.IntraModeD157:
+		return 157, true
+	case tile.IntraModeD203:
+		return 203, true
+	case tile.IntraModeD67:
+		return 67, true
 	default:
 		return 0, false
 	}
@@ -155,6 +190,94 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y
 		edges.AboveLeftAvailable = true
 	}
 	return edges, nil
+}
+
+func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) (prediction.DirectionalEdges, error) {
+	if angle <= 0 || angle >= 270 {
+		return prediction.DirectionalEdges{}, ErrInvalidBatch
+	}
+	edges := prediction.DirectionalEdges{
+		Above:       scratch.Above[:],
+		Left:        scratch.Left[:],
+		AboveOrigin: frameWorkDirectionalEdgeOrigin,
+		LeftOrigin:  frameWorkDirectionalEdgeOrigin,
+	}
+
+	switch {
+	case angle < 90:
+		if !block.HaveTop {
+			return prediction.DirectionalEdges{}, ErrInvalidBatch
+		}
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, x, y, 0, width+height-1, scratch); err != nil {
+			return prediction.DirectionalEdges{}, err
+		}
+	case angle < 180:
+		if !block.HaveTop || !block.HaveLeft {
+			return prediction.DirectionalEdges{}, ErrInvalidBatch
+		}
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, x, y, -height, width+height, scratch); err != nil {
+			return prediction.DirectionalEdges{}, err
+		}
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, x, y, -width, width+height, scratch); err != nil {
+			return prediction.DirectionalEdges{}, err
+		}
+	default:
+		if !block.HaveLeft {
+			return prediction.DirectionalEdges{}, ErrInvalidBatch
+		}
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, x, y, 0, width+height-1, scratch); err != nil {
+			return prediction.DirectionalEdges{}, err
+		}
+	}
+	return edges, nil
+}
+
+func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, x int, y int, minIndex int, maxIndex int, scratch *FrameWorkIntraPredictionScratch) error {
+	if y <= 0 || !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+		return ErrInvalidBatch
+	}
+	for i := minIndex; i <= maxIndex; i++ {
+		sampleX := x + i
+		if sampleX < 0 {
+			sampleX = 0
+		} else if sampleX >= dst.Width {
+			sampleX = dst.Width - 1
+		}
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, sampleX, y-1)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+	}
+	return nil
+}
+
+func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, x int, y int, minIndex int, maxIndex int, scratch *FrameWorkIntraPredictionScratch) error {
+	if x <= 0 || !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+		return ErrInvalidBatch
+	}
+	for i := minIndex; i <= maxIndex; i++ {
+		sampleY := y + i
+		if sampleY < 0 {
+			sampleY = 0
+		} else if sampleY >= dst.Height {
+			sampleY = dst.Height - 1
+		}
+		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, sampleY)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+	}
+	return nil
+}
+
+func frameWorkDirectionalRangeFits(minIndex int, maxIndex int) bool {
+	if minIndex > maxIndex {
+		return false
+	}
+	return frameWorkDirectionalEdgeOrigin+minIndex >= 0 &&
+		frameWorkDirectionalEdgeOrigin+maxIndex < frameWorkDirectionalEdgeSamples
 }
 
 func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
