@@ -163,6 +163,7 @@ type FrameWorkTileResidualRequest struct {
 
 	Predict           FrameWorkBlockPredictor
 	PredictionScratch *FrameWorkPredictionScratch
+	CDEFIndexMap      *FrameWorkCDEFIndexMap
 	Transforms        FrameWorkBlockTransformSelector
 
 	Int32Scratch    []int32
@@ -301,6 +302,11 @@ type frameWorkTileResidualLoopController struct {
 func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {
 	if c.userBeforeCoefficients != nil {
 		if err := c.userBeforeCoefficients(visit); err != nil {
+			return err
+		}
+	}
+	if c.req.CDEFIndexMap != nil {
+		if err := c.req.CDEFIndexMap.MarkBlock(c.batch.CDEF, visit); err != nil {
 			return err
 		}
 	}
