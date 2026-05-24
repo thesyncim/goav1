@@ -15,6 +15,7 @@ type BlockLoopCDFs struct {
 	InterRef  *InterRefCDFs
 	InterMode *InterModeCDFs
 	MV        *MVCDFs
+	Interp    *InterpFilterCDFs
 	Motion    *MotionModeCDFs
 	Blend     *CompoundBlendCDFs
 	Transform *TransformCDFs
@@ -67,6 +68,8 @@ type blockModeAboveContext struct {
 	CompIndex   [MaxBlockModeSlots]uint8
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
+	Interp      [MaxBlockModeSlots]motion.InterpFilters
+	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
 }
 
@@ -84,6 +87,8 @@ type blockModeLeftContext struct {
 	CompIndex   [MaxBlockModeSlots]uint8
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
+	Interp      [MaxBlockModeSlots]motion.InterpFilters
+	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
 }
 
@@ -122,6 +127,8 @@ type BlockLoopRequest struct {
 	RefSignBias          [referenceFrameCount]bool
 	ReferenceOrderHints  [referenceFrameCount]uint32
 	ScaledReferences     [referenceFrameCount]bool
+	InterpolationFilter  parser.InterpolationFilter
+	EnableDualFilter     bool
 	AllowHighPrecisionMV bool
 	ForceIntegerMV       bool
 
@@ -181,6 +188,7 @@ type BlockLoopStats struct {
 	InterMVReferences   int
 	MotionVectors       int
 	MVResiduals         int
+	InterpFilters       int
 	InterIntras         int
 	MotionModes         int
 	CompoundBlends      int
@@ -303,6 +311,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 									stats.MVResiduals++
 								}
 							}
+							stats.InterpFilters += visitInfo.Prediction.InterpFilterReads
 							if visitInfo.Prediction.InterIntraValid {
 								stats.InterIntras++
 							}
@@ -371,6 +380,8 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveCompIndex = above.mode.CompIndex
 		scratch.Mode.AboveInterMotion = above.mode.InterMotion
 		scratch.Mode.AboveMotionValid = above.mode.MotionValid
+		scratch.Mode.AboveInterp = above.mode.Interp
+		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
@@ -392,6 +403,8 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftCompIndex = left.mode.CompIndex
 		scratch.Mode.LeftInterMotion = left.mode.InterMotion
 		scratch.Mode.LeftMotionValid = left.mode.MotionValid
+		scratch.Mode.LeftInterp = left.mode.Interp
+		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
@@ -422,6 +435,8 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.CompIndex = scratch.Mode.AboveCompIndex
 	above.mode.InterMotion = scratch.Mode.AboveInterMotion
 	above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	above.mode.Interp = scratch.Mode.AboveInterp
+	above.mode.InterpValid = scratch.Mode.AboveInterpValid
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
 	for plane := 0; plane < 3; plane++ {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
@@ -442,6 +457,8 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.CompIndex = scratch.Mode.LeftCompIndex
 	left.mode.InterMotion = scratch.Mode.LeftInterMotion
 	left.mode.MotionValid = scratch.Mode.LeftMotionValid
+	left.mode.Interp = scratch.Mode.LeftInterp
+	left.mode.InterpValid = scratch.Mode.LeftInterpValid
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
 	for plane := 0; plane < 3; plane++ {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
@@ -712,7 +729,30 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					result.CompoundBlend = blend
 					result.CompoundBlendValid = true
 				}
+				filters, filterReads, err := s.ReadInterpFilters(cdfs.Interp, ctx, InterpFilterRequest{
+					FrameFilter:      req.InterpolationFilter,
+					EnableDualFilter: req.EnableDualFilter,
+					Size:             block.Size,
+					References:       refs,
+					Mode:             mode,
+					MotionMode:       motionMode,
+					GlobalTypes:      blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes),
+					SkipMode:         prefix.SkipMode,
+					X4:               block.X4,
+					Y4:               block.Y4,
+					HaveTop:          block.HaveTop,
+					HaveLeft:         block.HaveLeft,
+				})
+				if err != nil {
+					return BlockPredictionModeResult{}, err
+				}
+				result.InterpFilters = filters
+				result.InterpFiltersValid = true
+				result.InterpFilterReads = filterReads
 				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, motionResult.Motion); err != nil {
+					return BlockPredictionModeResult{}, err
+				}
+				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
 					return BlockPredictionModeResult{}, err
 				}
 				if result.CompoundBlendValid {
@@ -984,6 +1024,17 @@ func blockReferenceGlobalMotionType(refs InterReferencesResult, global [referenc
 		return global[refs.Ref[0]]
 	}
 	return parser.GlobalMotionIdentity
+}
+
+func blockReferenceGlobalMotionTypes(refs InterReferencesResult, global [referenceFrameCount]parser.GlobalMotionType) [2]parser.GlobalMotionType {
+	var out [2]parser.GlobalMotionType
+	if refs.Ref[0].Valid() {
+		out[0] = global[refs.Ref[0]]
+	}
+	if refs.Compound && refs.Ref[1].Valid() {
+		out[1] = global[refs.Ref[1]]
+	}
+	return out
 }
 
 func blockReferenceScaled(refs InterReferencesResult, scaled [referenceFrameCount]bool) bool {

@@ -23,16 +23,20 @@ func predictPaeth(block planeBlock, bytesPerSample int, above []uint16, left []u
 }
 
 func predictSmooth(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	weightsW, err := smoothWeightsForSize(block.width)
+	return predictSmoothWithExtent(block, bytesPerSample, block.width, block.height, above, left)
+}
+
+func predictSmoothWithExtent(block planeBlock, bytesPerSample int, predWidth int, predHeight int, above []uint16, left []uint16) error {
+	weightsW, err := smoothWeightsForSize(predWidth)
 	if err != nil {
 		return err
 	}
-	weightsH, err := smoothWeightsForSize(block.height)
+	weightsH, err := smoothWeightsForSize(predHeight)
 	if err != nil {
 		return err
 	}
-	belowPred := left[block.height-1]
-	rightPred := above[block.width-1]
+	belowPred := left[predHeight-1]
+	rightPred := above[predWidth-1]
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
@@ -47,11 +51,15 @@ func predictSmooth(block planeBlock, bytesPerSample int, above []uint16, left []
 }
 
 func predictSmoothVertical(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	weights, err := smoothWeightsForSize(block.height)
+	return predictSmoothVerticalWithExtent(block, bytesPerSample, block.height, above, left)
+}
+
+func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predHeight int, above []uint16, left []uint16) error {
+	weights, err := smoothWeightsForSize(predHeight)
 	if err != nil {
 		return err
 	}
-	belowPred := left[block.height-1]
+	belowPred := left[predHeight-1]
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
@@ -64,11 +72,15 @@ func predictSmoothVertical(block planeBlock, bytesPerSample int, above []uint16,
 }
 
 func predictSmoothHorizontal(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	weights, err := smoothWeightsForSize(block.width)
+	return predictSmoothHorizontalWithExtent(block, bytesPerSample, block.width, above, left)
+}
+
+func predictSmoothHorizontalWithExtent(block planeBlock, bytesPerSample int, predWidth int, above []uint16, left []uint16) error {
+	weights, err := smoothWeightsForSize(predWidth)
 	if err != nil {
 		return err
 	}
-	rightPred := above[block.width-1]
+	rightPred := above[predWidth-1]
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {

@@ -154,6 +154,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	intraModeReads := 0
 	residualTXBs := 0
 	residuals := 0
+	predictions := 0
 	cdefUnitsRead := 0
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -215,10 +216,17 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 						return err
 					}
 					loopReq.DecodePredictionModes = true
+					loopReq.DecodeInterModes = true
+					loopReq.DecodeMotionVectors = true
+					loopReq.DecodeInterIntra = true
+					loopReq.DecodeMotionModes = true
+					loopReq.DecodeCompoundBlend = true
 					int32Scratch, residualScratch, err := libaomResidualScratch(ctx)
 					if err != nil {
 						return err
 					}
+					var interScratch threading.FrameWorkInterPredictionScratch
+					predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
 					stats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
 						Loop:          loopReq,
 						TransformMode: ctx.TransformRef.TransformMode,
@@ -229,8 +237,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 							}
 							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
 						},
-						Int32Scratch:    int32Scratch,
-						ResidualScratch: residualScratch,
+						Int32Scratch:      int32Scratch,
+						ResidualScratch:   residualScratch,
+						PredictionScratch: &predictionScratch,
 					})
 					if err != nil {
 						return fmt.Errorf("decode/reconstruct job %d stats=%+v: %w", j, stats, err)
@@ -242,6 +251,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					intraModeReads += stats.Loop.IntraModes
 					residualTXBs += stats.TXBs
 					residuals += stats.Residuals
+					predictions += stats.Predictions
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}
@@ -319,6 +329,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	}
 	if residuals == 0 {
 		t.Fatal("no residual blocks were reconstructed")
+	}
+	if predictions == 0 {
+		t.Fatal("no prediction blocks were written")
 	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)

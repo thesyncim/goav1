@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -27,6 +28,7 @@ type FrameWorkTileResidualCDFStorage struct {
 	InterRef      tile.InterRefCDFs
 	InterMode     tile.InterModeCDFs
 	MV            tile.MVCDFs
+	Interp        tile.InterpFilterCDFs
 	Motion        tile.MotionModeCDFs
 	Blend         tile.CompoundBlendCDFs
 	Transform     tile.TransformCDFs
@@ -59,6 +61,9 @@ func (s *FrameWorkTileResidualCDFStorage) InitDefault(baseQIndex uint8) error {
 		return err
 	}
 	if err := next.MV.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Interp.InitDefault(); err != nil {
 		return err
 	}
 	if err := next.Motion.InitDefault(); err != nil {
@@ -111,6 +116,7 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 			InterRef:  &s.InterRef,
 			InterMode: &s.InterMode,
 			MV:        &s.MV,
+			Interp:    &s.Interp,
 			Motion:    &s.Motion,
 			Blend:     &s.Blend,
 			Transform: &s.Transform,
@@ -198,6 +204,11 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 	if err != nil {
 		return tile.BlockLoopRequest{}, err
 	}
+	globalMVs, globalTypes := frameWorkBlockLoopGlobalMotion(b.GlobalMotion, b.TileInfo.AllowHighPrecisionMV, b.FrameHeader.ForceIntegerMV)
+	refSignBias, err := frameWorkBlockLoopRefSignBias(b.Sequence.EnableOrderHint, b.Sequence.OrderHintBits, b.FrameHeader.OrderHint, b.ReferenceOrderHints)
+	if err != nil {
+		return tile.BlockLoopRequest{}, err
+	}
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
@@ -206,29 +217,79 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 			MIColEnd:   region.MIColEnd,
 			MIRowEnd:   region.MIRowEnd,
 		},
-		SkipMode:            b.SkipMode,
-		CDEF:                b.CDEF,
-		Segmentation:        b.Segmentation,
-		Delta:               b.Delta,
-		SBSizeMIB:           b.Sequence.SBSizeMIB,
-		Monochrome:          b.Sequence.ColorConfig.MonoChrome,
-		Color:               b.Sequence.ColorConfig,
-		Lossless:            b.Segmentation.AllLossless,
-		CurrentSegmentMap:   currentSegmentMap,
-		PreviousSegmentMap:  previousSegmentMap,
-		SegmentMapStride:    segmentMapStride,
-		FrameType:           b.FrameHeader.FrameType,
-		AllowIntrabc:        b.FrameSize.AllowIntrabc,
-		ReferenceMode:       b.TransformRef.ReferenceMode,
-		ReferenceOrderHints: b.ReferenceOrderHints,
-		EnableOrderHint:     b.Sequence.EnableOrderHint,
-		OrderHintBits:       b.Sequence.OrderHintBits,
-		CurrentOrderHint:    b.FrameHeader.OrderHint,
+		SkipMode:                 b.SkipMode,
+		CDEF:                     b.CDEF,
+		Segmentation:             b.Segmentation,
+		Delta:                    b.Delta,
+		SBSizeMIB:                b.Sequence.SBSizeMIB,
+		Monochrome:               b.Sequence.ColorConfig.MonoChrome,
+		Color:                    b.Sequence.ColorConfig,
+		Lossless:                 b.Segmentation.AllLossless,
+		CurrentSegmentMap:        currentSegmentMap,
+		PreviousSegmentMap:       previousSegmentMap,
+		SegmentMapStride:         segmentMapStride,
+		FrameType:                b.FrameHeader.FrameType,
+		AllowIntrabc:             b.FrameSize.AllowIntrabc,
+		ReferenceMode:            b.TransformRef.ReferenceMode,
+		GlobalMVs:                globalMVs,
+		GlobalMotionTypes:        globalTypes,
+		RefSignBias:              refSignBias,
+		ReferenceOrderHints:      b.ReferenceOrderHints,
+		InterpolationFilter:      b.TileInfo.InterpolationFilter,
+		EnableDualFilter:         b.Sequence.EnableDualFilter,
+		AllowHighPrecisionMV:     b.TileInfo.AllowHighPrecisionMV,
+		ForceIntegerMV:           b.FrameHeader.ForceIntegerMV,
+		EnableInterIntraCompound: b.Sequence.EnableInterIntraCompound,
+		SwitchableMotionMode:     b.TileInfo.SwitchableMotionMode,
+		AllowWarpedMotion:        b.FrameMode.AllowWarpedMotion,
+		EnableMaskedCompound:     b.Sequence.EnableMaskedCompound,
+		EnableDistWtdCompound:    b.Sequence.EnableJNTComp,
+		EnableOrderHint:          b.Sequence.EnableOrderHint,
+		OrderHintBits:            b.Sequence.OrderHintBits,
+		CurrentOrderHint:         b.FrameHeader.OrderHint,
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),
 		},
 	}, nil
+}
+
+func frameWorkBlockLoopGlobalMotion(params parser.GlobalMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool) ([parser.InterRefsPerFrame]motion.Vector, [parser.InterRefsPerFrame]parser.GlobalMotionType) {
+	var mvs [parser.InterRefsPerFrame]motion.Vector
+	var types [parser.InterRefsPerFrame]parser.GlobalMotionType
+	for i, ref := range params.Ref {
+		types[i] = ref.Type
+		if ref.Type == parser.GlobalMotionTranslation {
+			mv := motion.Vector{
+				Row: ref.Matrix[0] >> 13,
+				Col: ref.Matrix[1] >> 13,
+			}
+			if forceIntegerMV {
+				mv.Row = (mv.Row >> 3) << 3
+				mv.Col = (mv.Col >> 3) << 3
+			} else if !allowHighPrecisionMV {
+				mv.Row = (mv.Row >> 1) << 1
+				mv.Col = (mv.Col >> 1) << 1
+			}
+			mvs[i] = mv
+		}
+	}
+	return mvs, types
+}
+
+func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint32, refs [parser.InterRefsPerFrame]uint32) ([parser.InterRefsPerFrame]bool, error) {
+	var bias [parser.InterRefsPerFrame]bool
+	if !enabled {
+		return bias, nil
+	}
+	for i, ref := range refs {
+		distance, err := frameWorkRelativeOrderHint(bits, ref, current)
+		if err != nil {
+			return bias, err
+		}
+		bias[i] = distance > 0
+	}
+	return bias, nil
 }
 
 // JobBlockLoopContextRootColumns returns the number of caller-owned above-edge
@@ -351,6 +412,13 @@ func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit ti
 	if c.req.PredictionScratch == nil {
 		return nil
 	}
+	if visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+		if frameWorkVisitUsesCFL(visit) {
+			c.pendingCFLPrediction = true
+			c.cflVisit = visit
+		}
+		return nil
+	}
 	if frameWorkVisitUsesCFL(visit) {
 		if err := c.batch.PredictBlockLumaIntra(c.index, visit, &c.req.PredictionScratch.Intra); err != nil {
 			return fmt.Errorf("predict cfl luma block=%+v: %w", visit.Block, err)
@@ -361,7 +429,7 @@ func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit ti
 		return nil
 	}
 	if err := c.batch.PredictBlock(c.index, visit, c.req.PredictionScratch); err != nil {
-		return fmt.Errorf("predict block=%+v: %w", visit.Block, err)
+		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 	}
 	c.stats.Predictions++
 	return nil
@@ -424,7 +492,18 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
-	if block.Plane != 0 {
+	if c.req.Predict == nil && c.req.PredictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+		if block.Plane != 0 && frameWorkVisitUsesCFL(visit) {
+			if err := c.predictDeferredCFLChroma(); err != nil {
+				return err
+			}
+		} else {
+			if err := c.batch.PredictBlockIntraCoeff(c.index, visit, block, &c.req.PredictionScratch.Intra); err != nil {
+				return fmt.Errorf("predict intra txb plane=%d block=%+v: %w", block.Plane, block.Block, err)
+			}
+			c.stats.Predictions++
+		}
+	} else if block.Plane != 0 {
 		if err := c.predictDeferredCFLChroma(); err != nil {
 			return err
 		}

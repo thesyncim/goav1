@@ -16,12 +16,14 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		FrameWorkFrameContext: FrameWorkFrameContext{
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
 				Use128x128Superblock: true,
+				EnableDualFilter:     true,
 				EnableOrderHint:      true,
 				OrderHintBits:        5,
 				ColorConfig:          parser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
 			FrameHeader:         parser.FrameHeaderPrefix{OrderHint: 9},
 			FrameSize:           parser.FrameSize{CodedWidth: 300, Height: 260},
+			TileInfo:            parser.TileInfo{InterpolationFilter: parser.InterpolationSwitchable},
 			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 2, 3, 4, 5, 6, 7},
 			SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true},
 			CDEF:                parser.CDEFParams{Bits: 2, StrengthCount: 4},
@@ -42,6 +44,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 	if !req.SkipMode.Enabled || req.CDEF.Bits != 2 ||
 		!req.Delta.DeltaQPresent || req.SBSizeMIB != 32 || !req.Monochrome ||
 		len(req.CurrentSegmentMap) != len(segMap) || req.SegmentMapStride != 96 ||
+		req.InterpolationFilter != parser.InterpolationSwitchable || !req.EnableDualFilter ||
 		!req.EnableOrderHint || req.OrderHintBits != 5 ||
 		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 {
 		t.Fatalf("request=%+v", req)
@@ -343,6 +346,7 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 		cdfs.Loop.InterRef != &storage.InterRef ||
 		cdfs.Loop.InterMode != &storage.InterMode ||
 		cdfs.Loop.MV != &storage.MV ||
+		cdfs.Loop.Interp != &storage.Interp ||
 		cdfs.Loop.Motion != &storage.Motion ||
 		cdfs.Loop.Blend != &storage.Blend ||
 		cdfs.Loop.Transform != &storage.Transform ||
@@ -367,6 +371,9 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 	}
 	if _, err := cdfs.Loop.MV.JointCDF(); err != nil {
 		t.Fatalf("mv cdf not initialized: %v", err)
+	}
+	if _, err := cdfs.Loop.Interp.SwitchableCDF(0); err != nil {
+		t.Fatalf("interp cdf not initialized: %v", err)
 	}
 	if _, err := cdfs.Loop.Motion.MotionModeCDF(tile.BlockSize16x16); err != nil {
 		t.Fatalf("motion cdf not initialized: %v", err)

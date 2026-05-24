@@ -117,7 +117,7 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 // translation are supported; wedge compound, inter-intra, warped/global
 // refinement, scaled references, and intrabc are handled by later stages.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
-	filters, err := frameWorkMotionFilters(b.TileInfo)
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
 		return err
 	}
@@ -206,6 +206,27 @@ func (b FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVis
 	return b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneV, scratch)
 }
 
+// PredictBlockIntraCoeff writes intra prediction for one transform block from a
+// decoded block. Non-skip intra reconstruction uses this TXB-granular path so
+// top/left dependencies inside large blocks follow libaom's
+// predict-and-reconstruct order.
+func (b FrameWorkBatch) PredictBlockIntraCoeff(index int, visit tile.BlockLoopVisit, block tile.BlockCoeffBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
+		return ErrInvalidBatch
+	}
+	switch block.Plane {
+	case 0:
+		return b.predictBlockLumaIntraTransform(index, visit, block.Block, scratch)
+	case 1, 2:
+		if !visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL || visit.Prediction.CFLAlphaValid {
+			return ErrInvalidBatch
+		}
+		return b.predictBlockChromaIntraTransform(index, visit, FrameWorkPlane(block.Plane), block.Block, scratch)
+	default:
+		return ErrInvalidBatch
+	}
+}
+
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
 // block-loop visit into Jobs[index]'s output window. It covers luma DC,
 // vertical, horizontal, directional, Paeth, and smooth modes; filter intra and
@@ -267,13 +288,66 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	return nil
 }
 
+func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
+	if err != nil {
+		return err
+	}
+	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	absX, absY, err := frameWorkBlockLumaTransformPosition(visit.Block, tx)
+	if err != nil {
+		return err
+	}
+	if !frameWorkPlaneBlockFits(window, absX, absY, width, height) {
+		return ErrInvalidBatch
+	}
+	dst := frame.Plane{
+		Pix:    window.Pix,
+		Stride: window.Stride,
+		Width:  window.Width,
+		Height: window.Height,
+	}
+	x := absX - window.X
+	y := absY - window.Y
+	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, tx.X4, tx.Y4)
+	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
+
+	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch)
+		if err != nil {
+			return err
+		}
+		if err := prediction.PredictDirectionalIntraPlaneBlock(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
+
+	mode, ok := frameWorkLumaIntraPredictionMode(visit.Prediction.LumaMode)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	if err != nil {
+		return err
+	}
+	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
 func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkIntraPredictionScratch) error {
 	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !present {
 		return err
 	}
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, visit.Block, scratch)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch)
 		if err != nil {
 			return err
 		}
@@ -286,11 +360,62 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
 	if err := prediction.PredictIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mode, edges); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !present {
+		return err
+	}
+	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
+	if err != nil {
+		return err
+	}
+	baseX4 := visit.Block.X4 >> int(frameWorkSubsampleShift(geom.SubsamplingX))
+	baseY4 := visit.Block.Y4 >> int(frameWorkSubsampleShift(geom.SubsamplingY))
+	offX4 := tx.X4 - baseX4
+	offY4 := tx.Y4 - baseY4
+	if offX4 < 0 || offY4 < 0 {
+		return ErrInvalidBatch
+	}
+	absX := geom.X + offX4*4
+	absY := geom.Y + offY4*4
+	if !frameWorkPlaneBlockFits(geom.Window, absX, absY, width, height) {
+		return ErrInvalidBatch
+	}
+	x := absX
+	y := absY
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	edgeBlock = frameWorkPredictionTransformEdgeBlock(edgeBlock, baseX4, baseY4, tx.X4, tx.Y4)
+	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, geom.Window)
+
+	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch)
+		if err != nil {
+			return err
+		}
+		if err := prediction.PredictDirectionalIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
+	mode, ok := frameWorkChromaIntraPredictionMode(visit.Prediction.ChromaMode)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	if err != nil {
+		return err
+	}
+	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -323,7 +448,8 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], geom.Width, geom.Height); err != nil {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, &scratch.Intra, false)
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &scratch.Intra, false)
 	if err != nil {
 		return err
 	}
@@ -349,7 +475,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 // blending, scaled references, warped/global refinement, and chroma prediction
 // are handled by later inter-prediction stages.
 func (b FrameWorkBatch) PredictBlockLumaInter(index int, visit tile.BlockLoopVisit) error {
-	filters, err := frameWorkMotionFilters(b.TileInfo)
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
 		return err
 	}
@@ -377,7 +503,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 // scaled references, and warped/global refinement are handled by later
 // inter-prediction stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
-	filters, err := frameWorkMotionFilters(b.TileInfo)
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
 		return err
 	}
@@ -399,7 +525,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 // and difference-weighted compound. Wedge compound, inter-intra, scaled
 // references, and warped/global refinement are handled by later stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompound(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
-	filters, err := frameWorkMotionFilters(b.TileInfo)
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
 		return err
 	}
@@ -689,6 +815,55 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 	}, true, nil
 }
 
+func frameWorkPredictionPlaneEdgeBlock(block tile.BlockVisit, geom frameWorkPredictionPlaneGeometry) tile.BlockVisit {
+	return frameWorkPredictionEdgeBlockForWindow(block, geom.X, geom.Y, geom.Window)
+}
+
+func frameWorkPredictionEdgeBlockForWindow(block tile.BlockVisit, x int, y int, window FrameWorkPlaneRegion) tile.BlockVisit {
+	if x <= window.X {
+		block.HaveLeft = false
+	}
+	if y <= window.Y {
+		block.HaveTop = false
+	}
+	return block
+}
+
+func frameWorkPredictionTransformEdgeBlock(block tile.BlockVisit, baseX4 int, baseY4 int, txX4 int, txY4 int) tile.BlockVisit {
+	if txX4 > baseX4 {
+		block.HaveLeft = true
+	}
+	if txY4 > baseY4 {
+		block.HaveTop = true
+	}
+	return block
+}
+
+func frameWorkTransformVisibleAndExtentPixels(tx tile.TransformBlock) (width int, height int, predWidth int, predHeight int, err error) {
+	dims, ok := tx.Size.Dimensions()
+	if !ok || tx.VisibleW4 == 0 || tx.VisibleH4 == 0 ||
+		tx.VisibleW4 > dims.W4 || tx.VisibleH4 > dims.H4 {
+		return 0, 0, 0, 0, ErrInvalidBatch
+	}
+	width, ok = frameWorkInt64Mul4(int64(tx.VisibleW4))
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidBatch
+	}
+	height, ok = frameWorkInt64Mul4(int64(tx.VisibleH4))
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidBatch
+	}
+	predWidth, ok = frameWorkInt64Mul4(int64(dims.W4))
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidBatch
+	}
+	predHeight, ok = frameWorkInt64Mul4(int64(dims.H4))
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidBatch
+	}
+	return width, height, predWidth, predHeight, nil
+}
+
 func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, height int) (frame.Plane, error) {
 	if width <= 0 || height <= 0 || width > 128 || height > 128 || (bytesPerSample != 1 && bytesPerSample != 2) {
 		return frame.Plane{}, ErrInvalidBatch
@@ -965,6 +1140,16 @@ func frameWorkMotionFilters(info parser.TileInfo) (motion.InterpFilters, error) 
 		return motion.InterpFilters{}, ErrInvalidBatch
 	}
 	return motion.InterpFilters{X: filter, Y: filter}, nil
+}
+
+func frameWorkVisitMotionFilters(info parser.TileInfo, prediction tile.BlockPredictionModeResult) (motion.InterpFilters, error) {
+	if info.InterpolationFilter == parser.InterpolationSwitchable {
+		if !prediction.InterpFiltersValid || !prediction.InterpFilters.X.Valid() || !prediction.InterpFilters.Y.Valid() {
+			return motion.InterpFilters{}, ErrInvalidBatch
+		}
+		return prediction.InterpFilters, nil
+	}
+	return frameWorkMotionFilters(info)
 }
 
 func frameWorkReferenceFromTile(ref tile.ReferenceFrame) (FrameWorkReference, bool) {
@@ -1259,8 +1444,46 @@ func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {
 	return x, y, nil
 }
 
+func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.TransformBlock) (int, int, error) {
+	if tx.X4 < block.X4 || tx.Y4 < block.Y4 ||
+		tx.X4+int(tx.VisibleW4) > block.X4+int(block.VisibleW4) ||
+		tx.Y4+int(tx.VisibleH4) > block.Y4+int(block.VisibleH4) {
+		return 0, 0, ErrInvalidBatch
+	}
+	baseX, baseY, err := frameWorkBlockLumaPosition(block)
+	if err != nil {
+		return 0, 0, err
+	}
+	offX, ok := frameWorkInt64Mul4(int64(tx.X4 - block.X4))
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	offY, ok := frameWorkInt64Mul4(int64(tx.Y4 - block.Y4))
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	x, ok := frameWorkCheckedAdd(baseX, offX)
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	y, ok := frameWorkCheckedAdd(baseY, offY)
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	return x, y, nil
+}
+
 func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
+	return frameWorkIntraPredictionEdgesWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, block, scratch, fillMissing)
+}
+
+func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, edgeWidth int, edgeHeight int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
 	if scratch == nil {
+		return prediction.IntraEdges{}, ErrInvalidBatch
+	}
+	if edgeWidth < width || edgeHeight < height ||
+		edgeWidth > frameWorkIntraPredictionMaxEdgeSamples ||
+		edgeHeight > frameWorkIntraPredictionMaxEdgeSamples {
 		return prediction.IntraEdges{}, ErrInvalidBatch
 	}
 	var edges prediction.IntraEdges
@@ -1268,48 +1491,68 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth
 		if y <= 0 {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
-		for col := 0; col < width; col++ {
+		available := edgeWidth
+		if x+available > dst.Width {
+			available = dst.Width - x
+		}
+		if available <= 0 {
+			return prediction.IntraEdges{}, ErrInvalidBatch
+		}
+		for col := 0; col < available; col++ {
 			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x+col, y-1)
 			if !ok {
 				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			scratch.Above[col] = sample
 		}
-		edges.Above = scratch.Above[:width]
+		for col := available; col < edgeWidth; col++ {
+			scratch.Above[col] = scratch.Above[available-1]
+		}
+		edges.Above = scratch.Above[:edgeWidth]
 		edges.AboveAvailable = true
 	} else if fillMissing {
 		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for col := 0; col < width; col++ {
+		for col := 0; col < edgeWidth; col++ {
 			scratch.Above[col] = sample
 		}
-		edges.Above = scratch.Above[:width]
+		edges.Above = scratch.Above[:edgeWidth]
 		edges.AboveAvailable = true
 	}
 	if block.HaveLeft {
 		if x <= 0 {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
-		for row := 0; row < height; row++ {
+		available := edgeHeight
+		if y+available > dst.Height {
+			available = dst.Height - y
+		}
+		if available <= 0 {
+			return prediction.IntraEdges{}, ErrInvalidBatch
+		}
+		for row := 0; row < available; row++ {
 			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y+row)
 			if !ok {
 				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			scratch.Left[row] = sample
 		}
-		edges.Left = scratch.Left[:height]
+		for row := available; row < edgeHeight; row++ {
+			scratch.Left[row] = scratch.Left[available-1]
+		}
+		edges.Left = scratch.Left[:edgeHeight]
 		edges.LeftAvailable = true
 	} else if fillMissing {
 		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for row := 0; row < height; row++ {
+		for row := 0; row < edgeHeight; row++ {
 			scratch.Left[row] = sample
 		}
-		edges.Left = scratch.Left[:height]
+		edges.Left = scratch.Left[:edgeHeight]
 		edges.LeftAvailable = true
 	}
 	if block.HaveTop && block.HaveLeft {

@@ -33,6 +33,17 @@ type IntraEdges struct {
 // High-bit-depth samples are stored little-endian in two bytes. Edge storage is
 // supplied by the caller so reconstruction hot paths can reuse buffers.
 func PredictIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, mode IntraMode, edges IntraEdges) error {
+	return PredictIntraPlaneBlockWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, mode, edges)
+}
+
+// PredictIntraPlaneBlockWithExtent writes a visible sub-rectangle of an AV1
+// intra predictor whose coded transform extent may continue past the frame
+// boundary. predWidth/predHeight select the libaom smooth/DC weights and edge
+// lengths; width/height select the pixels addressable in dst.
+func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode IntraMode, edges IntraEdges) error {
+	if predWidth < width || predHeight < height {
+		return ErrInvalidPrediction
+	}
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
 	if err != nil {
 		return err
@@ -44,51 +55,51 @@ func PredictIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8,
 
 	switch mode {
 	case IntraModeDC:
-		value, err := dcPrediction(width, height, max, edges)
+		value, err := dcPrediction(predWidth, predHeight, max, edges)
 		if err != nil {
 			return err
 		}
 		fillBlock(block, bytesPerSample, value)
 	case IntraModeVertical:
-		if !edges.AboveAvailable || len(edges.Above) < width {
+		if !edges.AboveAvailable || len(edges.Above) < predWidth {
 			return ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Above[:width], max); err != nil {
+		if err := validateSamples(edges.Above[:predWidth], max); err != nil {
 			return err
 		}
 		predictVertical(block, bytesPerSample, edges.Above[:width])
 	case IntraModeHorizontal:
-		if !edges.LeftAvailable || len(edges.Left) < height {
+		if !edges.LeftAvailable || len(edges.Left) < predHeight {
 			return ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Left[:height], max); err != nil {
+		if err := validateSamples(edges.Left[:predHeight], max); err != nil {
 			return err
 		}
 		predictHorizontal(block, bytesPerSample, edges.Left[:height])
 	case IntraModePaeth:
-		if err := validateIntraDirectionalEdges(width, height, max, edges, true); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, true); err != nil {
 			return err
 		}
 		predictPaeth(block, bytesPerSample, edges.Above[:width], edges.Left[:height], edges.AboveLeft)
 	case IntraModeSmooth:
-		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
 			return err
 		}
-		if err := predictSmooth(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+		if err := predictSmoothWithExtent(block, bytesPerSample, predWidth, predHeight, edges.Above[:predWidth], edges.Left[:predHeight]); err != nil {
 			return err
 		}
 	case IntraModeSmoothVertical:
-		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
 			return err
 		}
-		if err := predictSmoothVertical(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+		if err := predictSmoothVerticalWithExtent(block, bytesPerSample, predHeight, edges.Above[:width], edges.Left[:predHeight]); err != nil {
 			return err
 		}
 	case IntraModeSmoothHorizontal:
-		if err := validateIntraDirectionalEdges(width, height, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
 			return err
 		}
-		if err := predictSmoothHorizontal(block, bytesPerSample, edges.Above[:width], edges.Left[:height]); err != nil {
+		if err := predictSmoothHorizontalWithExtent(block, bytesPerSample, predWidth, edges.Above[:predWidth], edges.Left[:height]); err != nil {
 			return err
 		}
 	default:

@@ -2,6 +2,7 @@ package tile
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -51,6 +52,10 @@ type BlockModeContext struct {
 	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
 	AboveMotionValid [MaxBlockModeSlots]uint8
 	LeftMotionValid  [MaxBlockModeSlots]uint8
+	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
+	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
+	AboveInterpValid [MaxBlockModeSlots]uint8
+	LeftInterpValid  [MaxBlockModeSlots]uint8
 	AboveBlockSize   [MaxBlockModeSlots]BlockSize
 	LeftBlockSize    [MaxBlockModeSlots]BlockSize
 }

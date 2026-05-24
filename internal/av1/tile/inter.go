@@ -2,6 +2,7 @@ package tile
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -714,6 +715,8 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.AboveCompIndex[x4+i] = compIndex
 		c.AboveInterMotion[x4+i] = InterMotionResult{}
 		c.AboveMotionValid[x4+i] = 0
+		c.AboveInterp[x4+i] = motion.InterpFilters{}
+		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
@@ -725,6 +728,8 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftCompIndex[y4+i] = compIndex
 		c.LeftInterMotion[y4+i] = InterMotionResult{}
 		c.LeftMotionValid[y4+i] = 0
+		c.LeftInterp[y4+i] = motion.InterpFilters{}
+		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
 	}
 	return nil
