@@ -22,6 +22,19 @@ func FuzzPayloadIterator(f *testing.F) {
 		if err != nil {
 			return
 		}
+		var dep Depacketizer
+		plannedUsed, plannedSpans, plannedHeader, err := dep.PushSize(0, payload)
+		if err == nil && plannedUsed <= 512 && plannedSpans <= 16 {
+			var out [512]byte
+			var spans [16]OBUSpan
+			used, count, header, err := dep.Push(out[:plannedUsed], 0, spans[:plannedSpans], payload)
+			if err != nil {
+				t.Fatalf("Push after PushSize: %v", err)
+			}
+			if used != plannedUsed || count != plannedSpans || header != plannedHeader {
+				t.Fatalf("Push used=%d count=%d header=%+v planned %d,%d,%+v", used, count, header, plannedUsed, plannedSpans, plannedHeader)
+			}
+		}
 		lastIndex := -1
 		for {
 			elem, ok, err := it.Next()

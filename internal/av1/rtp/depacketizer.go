@@ -29,9 +29,20 @@ func (d *Depacketizer) InFragment() bool {
 	return d.inFragment
 }
 
+// PushSize validates one AV1 RTP payload against the current depacketizer state
+// and reports the output bytes and OBU span slots Push would need. It does not
+// mutate d, so callers can size their dst and spans scratch before calling Push.
+func (d Depacketizer) PushSize(used int, payload []byte) (newUsed int, spanCount int, header AggregationHeader, err error) {
+	return (&d).push(nil, used, nil, payload, true)
+}
+
 // Push depacketizes one AV1 RTP payload.
 func (d *Depacketizer) Push(dst []byte, used int, spans []OBUSpan, payload []byte) (newUsed int, spanCount int, header AggregationHeader, err error) {
-	if used < 0 || used > len(dst) {
+	return d.push(dst, used, spans, payload, false)
+}
+
+func (d *Depacketizer) push(dst []byte, used int, spans []OBUSpan, payload []byte, sizing bool) (newUsed int, spanCount int, header AggregationHeader, err error) {
+	if used < 0 || (!sizing && used > len(dst)) {
 		return used, 0, AggregationHeader{}, ErrShortBuffer
 	}
 
@@ -61,10 +72,18 @@ func (d *Depacketizer) Push(dst []byte, used int, spans []OBUSpan, payload []byt
 			return newUsed, spanCount, header, ErrFragmentInterrupted
 		}
 
-		if len(dst)-newUsed < len(elem.Data) {
+		if !sizing && len(dst)-newUsed < len(elem.Data) {
 			return newUsed, spanCount, header, ErrShortBuffer
 		}
-		newUsed += copy(dst[newUsed:], elem.Data)
+		if sizing {
+			maxInt := int(^uint(0) >> 1)
+			if newUsed > maxInt-len(elem.Data) {
+				return newUsed, spanCount, header, ErrShortBuffer
+			}
+			newUsed += len(elem.Data)
+		} else {
+			newUsed += copy(dst[newUsed:], elem.Data)
+		}
 
 		if elem.ContinuesNext {
 			if !d.inFragment {
@@ -78,14 +97,16 @@ func (d *Depacketizer) Push(dst []byte, used int, spans []OBUSpan, payload []byt
 		if d.inFragment {
 			d.inFragment = false
 		}
-		if spanCount >= len(spans) {
+		if !sizing && spanCount >= len(spans) {
 			return newUsed, spanCount, header, ErrShortBuffer
 		}
-		spans[spanCount] = OBUSpan{
-			Offset:      start,
-			Length:      newUsed - start,
-			Fragmented:  fragmented,
-			NewSequence: header.StartsNewCodedVideoSequence && elem.Index == 0,
+		if !sizing {
+			spans[spanCount] = OBUSpan{
+				Offset:      start,
+				Length:      newUsed - start,
+				Fragmented:  fragmented,
+				NewSequence: header.StartsNewCodedVideoSequence && elem.Index == 0,
+			}
 		}
 		spanCount++
 	}
