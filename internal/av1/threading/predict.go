@@ -22,6 +22,28 @@ type FrameWorkIntraPredictionScratch struct {
 	Left  [frameWorkDirectionalEdgeSamples]uint16
 }
 
+// FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
+// separate from residual scratch lets callers that do not use built-in
+// prediction avoid carrying these buffers.
+type FrameWorkPredictionScratch struct {
+	Intra FrameWorkIntraPredictionScratch
+}
+
+// PredictBlockLuma dispatches luma prediction for one decoded block-loop visit.
+// It currently covers intra and single-reference translational inter modes.
+func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, scratch *FrameWorkPredictionScratch) error {
+	if !visit.Prediction.Valid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.Intra {
+		if scratch == nil {
+			return ErrInvalidBatch
+		}
+		return b.PredictBlockLumaIntra(index, visit, &scratch.Intra)
+	}
+	return b.PredictBlockLumaInter(index, visit)
+}
+
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
 // block-loop visit into Jobs[index]'s output window. It covers luma DC,
 // vertical, horizontal, directional, Paeth, and smooth modes; filter intra and

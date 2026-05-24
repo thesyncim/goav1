@@ -339,6 +339,77 @@ func TestFrameWorkBatchPredictBlockLumaInterAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaDispatchesIntraAndInter(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 10)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 50)
+	}
+
+	var scratch FrameWorkPredictionScratch
+	if err := ctx.PredictBlockLuma(0, testIntraPredictionVisit(tile.IntraModeDC), &scratch); err != nil {
+		t.Fatal(err)
+	}
+	if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16, 16); got != 30 {
+		t.Fatalf("intra dispatch sample=%d want 30", got)
+	}
+
+	inter := testInterPredictionVisit(motion.Vector{Col: 8, Row: 0})
+	if err := ctx.PredictBlockLuma(0, inter, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16, 16)
+	want := frameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, 17, 16)
+	if got != want {
+		t.Fatalf("inter dispatch sample=%d want %d", got, want)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaRejectsInvalidDispatch(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	ctx := testInterPredictionBatch(output, reference)
+	if err := ctx.PredictBlockLuma(0, tile.BlockLoopVisit{}, nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("missing prediction err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.PredictBlockLuma(0, testIntraPredictionVisit(tile.IntraModeDC), nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil intra scratch err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockLumaAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 90)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 92)
+	}
+	var scratch FrameWorkPredictionScratch
+	intra := testIntraPredictionVisit(tile.IntraModeDC)
+	inter := testInterPredictionVisit(motion.Vector{Col: 8, Row: 0})
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockLuma(0, intra, &scratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := ctx.PredictBlockLuma(0, inter, &scratch); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockLuma allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := testIntraPredictionBatch(output)
