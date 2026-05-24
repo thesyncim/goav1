@@ -37,6 +37,7 @@ type FrameWorkRestorationPostFilterScratchSize struct {
 // FrameWorkPostFilterScratchSize reports caller-owned scratch needed by the
 // supported frame-level postfilter pipeline.
 type FrameWorkPostFilterScratchSize struct {
+	LoopFilter  FrameWorkLoopFilterPostFilterScratchSize
 	CDEF        FrameWorkCDEFPostFilterScratchSize
 	Restoration FrameWorkRestorationPostFilterScratchSize
 	FilmGrain   FrameWorkFilmGrainPostFilterScratchSize
@@ -58,6 +59,7 @@ type FrameWorkRestorationPostFilterRequest struct {
 // FrameWorkPostFilterRequest carries caller-owned scratch and side data for the
 // supported frame-level postfilter stages.
 type FrameWorkPostFilterRequest struct {
+	LoopFilter  FrameWorkLoopFilterPostFilterRequest
 	CDEF        FrameWorkCDEFPostFilterRequest
 	Restoration FrameWorkRestorationPostFilterRequest
 	FilmGrain   FrameWorkFilmGrainPostFilterRequest
@@ -66,6 +68,7 @@ type FrameWorkPostFilterRequest struct {
 // FrameWorkPostFilterResult summarizes supported frame-level postfilter work.
 type FrameWorkPostFilterResult struct {
 	Completed   FrameWorkPostFilterStage
+	LoopFilter  FrameWorkLoopFilterPostFilterApplyResult
 	CDEF        FrameWorkCDEFPostFilterResult
 	Restoration tile.RestorationFrameApplyResult
 	FilmGrain   FrameWorkFilmGrainPostFilterResult
@@ -165,6 +168,13 @@ func (ctx FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWor
 		return FrameWorkPostFilterScratchSize{}, ErrUnsupportedPostFilter
 	}
 	var size FrameWorkPostFilterScratchSize
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		loopFilterSize, err := ctx.LoopFilterPostFilterScratchLen(req.LoopFilter)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.LoopFilter = loopFilterSize
+	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		cdefSize, err := ctx.CDEFPostFilterScratchLen()
 		if err != nil {
@@ -211,6 +221,15 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 			return ctx, result, err
 		}
 	}
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		loopFilterResult, err := ctx.ApplyLoopFilterEdges(req.LoopFilter)
+		if err != nil {
+			return ctx, result, err
+		}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		result.Completed |= FrameWorkPostFilterLoopFilter
+		result.LoopFilter = loopFilterResult
+	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
 		if err != nil {
@@ -242,7 +261,7 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 }
 
 func (ctx FrameWorkPostFilterContext) supportedPostFilterStages(remaining FrameWorkPostFilterStage) (FrameWorkPostFilterStage, error) {
-	supported := FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
+	supported := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
 	if remaining&^(supported|FrameWorkPostFilterFilmGrain) != 0 {
 		return supported, nil
 	}

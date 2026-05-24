@@ -242,9 +242,9 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBe
 				CodedWidth:          64,
 				UpscaledWidth:       64,
 				Height:              64,
-				SuperResDenominator: 8,
+				SuperResEnabled:     true,
+				SuperResDenominator: 16,
 			},
-			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{1}},
 			CDEF: parser.CDEFParams{
 				Damping:       5,
 				StrengthCount: 1,

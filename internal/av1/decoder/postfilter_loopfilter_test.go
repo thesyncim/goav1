@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -1081,6 +1082,68 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("ApplyLoopFilterEdges allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsLoopFilterThenCDEF(t *testing.T) {
+	const width = 32
+	const height = 16
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	before := append([]byte(nil), output.Y.Pix...)
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		LoopFilter: parser.LoopFilterParams{
+			LevelY:    [2]uint8{63},
+			Sharpness: 1,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	cdefReq := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	scratchSize, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{CDEF: cdefReq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scratchSize.LoopFilter.Edges != 1 || scratchSize.CDEF.Input != cdef.InputBufferSize {
+		t.Fatalf("scratch=%+v", scratchSize)
+	}
+
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Edges: make([]FrameWorkLoopFilterPostFilterEdge, scratchSize.LoopFilter.Edges),
+		},
+		CDEF: cdefReq,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF
+	if result.Completed != wantCompleted ||
+		result.LoopFilter.Applied != 1 ||
+		result.CDEF.Units != 1 ||
+		next.RemainingPostFilters() != 0 {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if bytes.Equal(output.Y.Pix, before) {
+		t.Fatal("supported postfilter pipeline did not change luma samples")
 	}
 }
 
