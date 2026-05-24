@@ -80,9 +80,15 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 type FrameWorkLoopFilterPostFilterApplyResult struct {
 	Plan FrameWorkLoopFilterPostFilterPlan
 
-	Active   bool
-	Edges    int
-	Applied  int
+	Active bool
+
+	Edges   int
+	Applied int
+
+	PlaneEdges    [3]int
+	PlaneApplied  [3]int
+	PlaneMaxLevel [3]uint8
+
 	MaxLevel uint8
 }
 
@@ -163,10 +169,40 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 	return plan, nil
 }
 
+// ApplyLoopFilterEdges validates the decoded loop-filter map, stores edge
+// candidates in req.Edges, and applies every stored candidate to ctx.Output. It
+// is a decoder bridge for the current stored-candidate scheduler; full
+// frame-order integration remains separate work.
+func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	plan, err := ctx.LoopFilterPostFilterPlan(req)
+	result := FrameWorkLoopFilterPostFilterApplyResult{Plan: plan}
+	if err != nil {
+		return result, err
+	}
+	if !plan.Active {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, nil
+	}
+	result.Active = true
+	if ctx.Output == nil {
+		return result, frame.ErrInvalidSlot
+	}
+	if plan.DroppedEdges != 0 || plan.StoredEdges != plan.EdgeCandidates {
+		return result, frame.ErrShortBuffer
+	}
+	edges := req.Edges[:plan.StoredEdges]
+	for i := range edges {
+		if err := ctx.applyLoopFilterEdge(edges[i]); err != nil {
+			return result, err
+		}
+		frameWorkCountAppliedLoopFilterEdge(&result, edges[i])
+	}
+	return result, nil
+}
+
 // ApplyLoopFilterLumaEdges validates the decoded loop-filter map, stores luma
-// edge candidates in req.Edges, and applies every stored candidate to ctx.Output.
-// It is a decoder bridge for the current luma-only edge scheduler; chroma and
-// full frame-order integration remain separate work.
+// edge candidates in req.Edges, and applies every stored luma candidate to
+// ctx.Output. It remains a luma-only bridge for callers that have not opted into
+// chroma edge application.
 func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
 	plan, err := ctx.LoopFilterPostFilterPlan(req)
 	result := FrameWorkLoopFilterPostFilterApplyResult{Plan: plan}
@@ -191,22 +227,24 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 		if err := ctx.applyLoopFilterLumaEdge(edges[i]); err != nil {
 			return result, err
 		}
-		result.Edges++
-		if edges[i].Level != 0 {
-			result.Applied++
-			if edges[i].Level > result.MaxLevel {
-				result.MaxLevel = edges[i].Level
-			}
-		}
+		frameWorkCountAppliedLoopFilterEdge(&result, edges[i])
 	}
 	return result, nil
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoopFilterPostFilterEdge) error {
-	if edge.Plane != loopfilter.PlaneY ||
-		edge.Length4 <= 0 ||
-		edge.Level == 0 ||
-		ctx.Output == nil {
+	if edge.Plane != loopfilter.PlaneY {
+		return loopfilter.ErrInvalidFilter
+	}
+	return ctx.applyLoopFilterEdge(edge)
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdge(edge FrameWorkLoopFilterPostFilterEdge) error {
+	if edge.Length4 <= 0 || edge.Level == 0 || ctx.Output == nil {
+		return loopfilter.ErrInvalidFilter
+	}
+	dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, edge.Plane)
+	if !ok {
 		return loopfilter.ErrInvalidFilter
 	}
 	thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
@@ -215,7 +253,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoop
 	}
 	return loopfilter.FilterEdgeByWidth(
 		edge.Width,
-		ctx.Output.Y,
+		dst,
 		ctx.Output.Layout.BytesPerSample,
 		ctx.Output.Format.BitDepth,
 		edge.Edge,
@@ -224,6 +262,40 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoop
 		edge.Length4*4,
 		thresholds,
 	)
+}
+
+func frameWorkLoopFilterOutputPlane(output frame.Frame, plane loopfilter.Plane) (frame.Plane, bool) {
+	switch plane {
+	case loopfilter.PlaneY:
+		return output.Y, true
+	case loopfilter.PlaneU:
+		return output.U, !output.Format.MonoChrome
+	case loopfilter.PlaneV:
+		return output.V, !output.Format.MonoChrome
+	default:
+		return frame.Plane{}, false
+	}
+}
+
+func frameWorkCountAppliedLoopFilterEdge(result *FrameWorkLoopFilterPostFilterApplyResult, edge FrameWorkLoopFilterPostFilterEdge) {
+	result.Edges++
+	if edge.Plane <= loopfilter.PlaneV {
+		result.PlaneEdges[int(edge.Plane)]++
+	}
+	if edge.Level == 0 {
+		return
+	}
+	result.Applied++
+	if edge.Plane <= loopfilter.PlaneV {
+		plane := int(edge.Plane)
+		result.PlaneApplied[plane]++
+		if edge.Level > result.PlaneMaxLevel[plane] {
+			result.PlaneMaxLevel[plane] = edge.Level
+		}
+	}
+	if edge.Level > result.MaxLevel {
+		result.MaxLevel = edge.Level
+	}
 }
 
 func frameWorkLoopFilterMapEmpty(filterMap FrameWorkLoopFilterMap) bool {
