@@ -95,6 +95,54 @@ func TestPoolExecuteFrameWork(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchSurface(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  FrameWorkBatch
+		want int
+	}{
+		{
+			name: "begin",
+			ctx: FrameWorkBatch{
+				Step: decodework.FrameStep{
+					Kind:  decodework.FrameStepBegin,
+					Begin: decodework.FramePlan{Surface: 3},
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "tile",
+			ctx: FrameWorkBatch{
+				Step: decodework.FrameStep{
+					Kind: decodework.FrameStepTile,
+					Tile: decodework.FrameTilePlan{Surface: 5},
+				},
+			},
+			want: 5,
+		},
+	}
+	for _, tt := range tests {
+		got, err := tt.ctx.Surface()
+		if err != nil {
+			t.Fatalf("%s: Surface err=%v", tt.name, err)
+		}
+		if got != tt.want {
+			t.Fatalf("%s: Surface=%d want %d", tt.name, got, tt.want)
+		}
+	}
+
+	for _, ctx := range []FrameWorkBatch{
+		{Step: decodework.FrameStep{Kind: decodework.FrameStepIgnored}},
+		{Step: decodework.FrameStep{Kind: decodework.FrameStepBegin, Begin: decodework.FramePlan{Surface: -1}}},
+		{Step: decodework.FrameStep{Kind: decodework.FrameStepTile, Tile: decodework.FrameTilePlan{Surface: -1}}},
+	} {
+		if _, err := ctx.Surface(); !errors.Is(err, ErrInvalidBatch) {
+			t.Fatalf("Surface err=%v want %v for ctx=%+v", err, ErrInvalidBatch, ctx)
+		}
+	}
+}
+
 func TestPoolPropagatesFirstError(t *testing.T) {
 	jobs := testJobs()
 	var batches [2]Batch

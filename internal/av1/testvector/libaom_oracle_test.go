@@ -173,6 +173,11 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	var frameSlots []frame.Frame
 	var free []int
 	var used []bool
+	var mvEntryBacking []tile.ReferenceMVEntry
+	var temporalEntryBacking []tile.TemporalMotionEntry
+	var mvFrames []tile.ReferenceMVFrame
+	var mvStore []tile.TemporalMotionReferenceFrame
+	var mvLength int
 
 	var events [16]decoder.Event
 	var referenceSurfaces [parser.InterRefsPerFrame]int
@@ -195,6 +200,8 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	residuals := 0
 	predictions := 0
 	cdefUnitsRead := 0
+	temporalReferenceResolves := 0
+	temporalMotionProjections := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -214,6 +221,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 			}
 			if !havePool {
 				pool, poolFormat, backing, frameSlots, free, used = bindLibaomVectorFramePool(t, event, 8)
+				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindLibaomVectorMotionStore(t, event, len(frameSlots))
 				havePool = true
 			} else {
 				gotFormat := frameFormatFromEvent(event)
@@ -224,7 +232,45 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 
 			var postMD5 MD5
 			postRan := false
+			currentMVSurface := -1
 			result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
+				surface, err := ctx.Surface()
+				if err != nil {
+					return err
+				}
+				if surface >= len(mvFrames) || mvLength == 0 {
+					return decoder.ErrInvalidSurfaceReference
+				}
+				if currentMVSurface != surface || mvFrames[surface].Entries == nil {
+					first := surface * mvLength
+					currentMVFrame, err := ctx.BindReferenceMVFrame(mvEntryBacking[first : first+mvLength])
+					if err != nil {
+						return err
+					}
+					mvFrames[surface] = currentMVFrame
+					currentMVSurface = surface
+				}
+				ctx.CurrentMVFrame = &mvFrames[surface]
+				if ctx.TileInfo.UseRefFrameMVS {
+					temporalMVs, err := ctx.BindTemporalMotionField(temporalEntryBacking)
+					if err != nil {
+						return err
+					}
+					ctx.TemporalMVs = &temporalMVs
+					resolved, err := decoder.ResolveTemporalMotionReferences(referenceSurfaces[:len(ctx.References)], mvStore, ctx.ReferenceMVs[:])
+					if err != nil {
+						return err
+					}
+					if resolved != len(ctx.References) {
+						return decoder.ErrInvalidSurfaceReference
+					}
+					setupStats, err := ctx.SetupTemporalMotionField()
+					if err != nil {
+						return err
+					}
+					temporalReferenceResolves += resolved
+					temporalMotionProjections += setupStats.Projections
+				}
 				_, _, cdefLen, err := ctx.CDEFIndexMapShape()
 				if err != nil {
 					return err
@@ -312,6 +358,11 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				if err := ctx.RequireNoActivePostFilters(); err != nil {
 					return err
 				}
+				if currentMVSurface >= 0 {
+					if err := decoder.PublishTemporalMotionReference(ctx.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
+						return err
+					}
+				}
 				digestIndex := int(ivfFrame.Index)
 				if digestIndex >= len(digests) || digests[digestIndex].FrameIndex != ivfFrame.Index {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
@@ -338,8 +389,8 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				if digestIndex >= len(digests) {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
 				}
-				t.Logf("frame %d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d",
-					ivfFrame.Index, postMD5, digests[digestIndex].MD5, residualTXBs, residuals, cdefUnitsRead)
+				t.Logf("frame %d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d mfmv_refs=%d mfmv_projections=%d",
+					ivfFrame.Index, postMD5, digests[digestIndex].MD5, residualTXBs, residuals, cdefUnitsRead, temporalReferenceResolves, temporalMotionProjections)
 				completed++
 			}
 		}
@@ -382,6 +433,10 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	runtime.KeepAlive(frameSlots)
 	runtime.KeepAlive(free)
 	runtime.KeepAlive(used)
+	runtime.KeepAlive(mvEntryBacking)
+	runtime.KeepAlive(temporalEntryBacking)
+	runtime.KeepAlive(mvFrames)
+	runtime.KeepAlive(mvStore)
 }
 
 func eventCompletesDecodedFrame(event decoder.Event) bool {
@@ -432,6 +487,25 @@ func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (fr
 		t.Fatal(err)
 	}
 	return pool, format, backing, frames, free, used
+}
+
+func bindLibaomVectorMotionStore(t *testing.T, event decoder.Event, count int) ([]tile.ReferenceMVEntry, []tile.TemporalMotionEntry, []tile.ReferenceMVFrame, []tile.TemporalMotionReferenceFrame, int) {
+	t.Helper()
+	miCols := libaomVectorMIExtent(event.FrameSize.CodedWidth)
+	miRows := libaomVectorMIExtent(event.FrameSize.Height)
+	length, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return make([]tile.ReferenceMVEntry, count*length),
+		make([]tile.TemporalMotionEntry, length),
+		make([]tile.ReferenceMVFrame, count),
+		make([]tile.TemporalMotionReferenceFrame, count),
+		length
+}
+
+func libaomVectorMIExtent(pixels uint32) uint32 {
+	return ((pixels + 7) >> 3) << 1
 }
 
 func frameFormatFromEvent(event decoder.Event) frame.Format {

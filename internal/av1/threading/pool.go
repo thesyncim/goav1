@@ -206,6 +206,24 @@ type FrameWorkBatch struct {
 	Jobs             []tile.Job
 }
 
+// Surface returns the frame-pool surface that this batch reconstructs into.
+func (b FrameWorkBatch) Surface() (int, error) {
+	switch b.Step.Kind {
+	case decodework.FrameStepBegin:
+		if b.Step.Begin.Surface < 0 {
+			return -1, ErrInvalidBatch
+		}
+		return b.Step.Begin.Surface, nil
+	case decodework.FrameStepTile:
+		if b.Step.Tile.Surface < 0 {
+			return -1, ErrInvalidBatch
+		}
+		return b.Step.Tile.Surface, nil
+	default:
+		return -1, ErrInvalidBatch
+	}
+}
+
 // JobPayload returns the exact tile payload bytes for Jobs[index]. The
 // returned slice aliases Payload and is valid only for the callback invocation.
 func (b FrameWorkBatch) JobPayload(index int) ([]byte, error) {
