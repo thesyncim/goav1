@@ -72,6 +72,20 @@ func AssembleFrame(dst []byte, payloads [][]byte, obus []FrameOBU) (n int, obuCo
 	return n, scan.count, nil
 }
 
+// AssembleFrameSize reports the output bytes and OBU metadata slots required by
+// AssembleFrame for payloads. It runs the same validation scan as AssembleFrame
+// without requiring caller-owned dst or FrameOBU scratch.
+func AssembleFrameSize(payloads [][]byte) (n int, obuCount int, err error) {
+	var scan frameAssembleScan
+	if err := scanPayloads(payloads, &scan); err != nil {
+		return 0, scan.count, err
+	}
+	if scan.count == 0 {
+		return 0, 0, ErrEmptyFrame
+	}
+	return scan.total, scan.count, nil
+}
+
 func scanPayloads(payloads [][]byte, scan *frameAssembleScan) error {
 	expectContinuation := false
 	for i := range payloads {
@@ -316,7 +330,7 @@ func (s *frameAssembleScan) finishOBU() error {
 	if !s.open {
 		return ErrUnexpectedContinuation
 	}
-	if s.count >= len(s.obus) {
+	if s.obus != nil && s.count >= len(s.obus) {
 		return ErrOBUBufferTooSmall
 	}
 	if s.rawSize == 0 {
@@ -329,7 +343,9 @@ func (s *frameAssembleScan) finishOBU() error {
 	}
 	info.Offset = s.total
 	info.Length = info.PrefixSize + info.PayloadSize
-	s.obus[s.count] = info
+	if s.obus != nil {
+		s.obus[s.count] = info
+	}
 	s.count++
 	s.total += info.Length
 	s.open = false

@@ -93,6 +93,85 @@ func TestAssembleFrameFragmentedOBU(t *testing.T) {
 	}
 }
 
+func TestAssembleFrameSizeMatchesAssembly(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBU(frame, obu.TypeFrameHeader, []byte{0xbb, 0xcc})
+	frame = appendPacketizerOBU(frame, obu.TypeFrame, []byte{0, 1, 2, 3, 4, 5, 6})
+
+	var packetizerOBUs [4]PacketizerOBU
+	var plans [8]PacketPlan
+	var work [8]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 8}, true, true, packetizerOBUs[:], plans[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var packetData [4][16]byte
+	var payloadSlots [4][]byte
+	payloads := payloadSlots[:0]
+	for i := 0; ; i++ {
+		n, _, ok, err := packetizer.NextPacket(packetData[i][:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		payloads = append(payloads, packetData[i][:n])
+	}
+
+	size, count, err := AssembleFrameSize(payloads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != len(frame) || count != 3 {
+		t.Fatalf("size=%d count=%d want %d,3", size, count, len(frame))
+	}
+
+	var out [64]byte
+	var obus [4]FrameOBU
+	wrote, assembledCount, err := AssembleFrame(out[:], payloads, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote != size || assembledCount != count || string(out[:wrote]) != string(frame) {
+		t.Fatalf("wrote=%d count=%d assembled=%x want size=%d count=%d frame=%x", wrote, assembledCount, out[:wrote], size, count, frame)
+	}
+}
+
+func TestAssembleFrameSizeRejectsMalformedPayloads(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload [][]byte
+		want    error
+	}{
+		{
+			name:    "dangling-fragment",
+			payload: [][]byte{{0x50, byte(obu.TypeFrame) << 3, 0xaa}},
+			want:    ErrFragmentInterrupted,
+		},
+		{
+			name:    "empty-frame",
+			payload: nil,
+			want:    ErrEmptyFrame,
+		},
+		{
+			name:    "zero-length-obu",
+			payload: [][]byte{{0x10}},
+			want:    ErrZeroLengthElement,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := AssembleFrameSize(tt.payload)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("AssembleFrameSize err=%v want %v", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestAssembleFrameHeaderOnlyStart(t *testing.T) {
 	payload0 := []byte{0x50} // Y=1, W=1.
 	payload1 := []byte{0x90, byte(obu.TypeFrame) << 3, 0xaa, 0xbb}
@@ -193,6 +272,21 @@ func TestAssembleFrameAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AssembleFrame allocated: %f", allocs)
+	}
+}
+
+func TestAssembleFrameSizeAllocs(t *testing.T) {
+	payload := []byte{0x10, byte(obu.TypeFrame) << 3, 0xaa, 0xbb}
+	payloads := [][]byte{payload}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, err := AssembleFrameSize(payloads)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("AssembleFrameSize allocated: %f", allocs)
 	}
 }
 
