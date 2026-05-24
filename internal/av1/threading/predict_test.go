@@ -225,6 +225,44 @@ func TestFrameWorkBatchPredictBlockLumaInterFullpel(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterFullpelExtendsReferenceEdges(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+
+	visit := testInterPredictionVisit(motion.Vector{Col: -16, Row: 16})
+	visit.Block = tile.BlockVisit{
+		MICol: 0, MIRow: 0, MIColEnd: 4, MIRowEnd: 4,
+		X4: 0, Y4: 0, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+	}
+	if err := ctx.PredictBlockInter(0, visit, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y)
+			want := frameWorkTestSampleClamped(reference.Y, output.Layout.BytesPerSample, x-2, y+2)
+			if got != want {
+				t.Fatalf("y sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			wantU := frameWorkTestSampleClamped(reference.U, output.Layout.BytesPerSample, x-1, y+1)
+			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != wantU {
+				t.Fatalf("u sample(%d,%d)=%d want %d", x, y, got, wantU)
+			}
+			wantV := frameWorkTestSampleClamped(reference.V, output.Layout.BytesPerSample, x-1, y+1)
+			if got := frameWorkTestSample(output.V, output.Layout.BytesPerSample, x, y); got != wantV {
+				t.Fatalf("v sample(%d,%d)=%d want %d", x, y, got, wantV)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterFractionalMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	want := testBatchFrame(t, output.Format)
@@ -1112,6 +1150,20 @@ func frameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int) ui
 		panic("bad test sample")
 	}
 	return sample
+}
+
+func frameWorkTestSampleClamped(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
+	if x < 0 {
+		x = 0
+	} else if x >= plane.Width {
+		x = plane.Width - 1
+	}
+	if y < 0 {
+		y = 0
+	} else if y >= plane.Height {
+		y = plane.Height - 1
+	}
+	return frameWorkTestSample(plane, bytesPerSample, x, y)
 }
 
 func assertFrameWorkPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, bytesPerSample int, x int, y int, width int, height int) {

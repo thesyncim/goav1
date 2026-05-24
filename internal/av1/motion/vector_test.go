@@ -317,6 +317,102 @@ func TestPredictInterPlaneBlockNegativeFractionalMatchesLibaom(t *testing.T) {
 	assertPlaneBlockEqual(t, dst, want, 1, 8, 8, 8, 8)
 }
 
+func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
+	src, _ := testPlane(4, 4, 1, 4)
+	dst, _ := testPlane(5, 3, 1, 5)
+	for y := 0; y < src.Height; y++ {
+		for x := 0; x < src.Width; x++ {
+			setSample(src, 1, x, y, uint16(10*y+x))
+		}
+	}
+	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -2, 2, 5, 3, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 5; x++ {
+			want := getSampleClamped(src, 1, x-2, y+2)
+			if got := getSample(dst, 1, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+
+	srcHigh, _ := testPlane(4, 4, 2, 8)
+	dstHigh, _ := testPlane(5, 3, 2, 10)
+	for y := 0; y < srcHigh.Height; y++ {
+		for x := 0; x < srcHigh.Width; x++ {
+			setSample(srcHigh, 2, x, y, uint16(100+10*y+x))
+		}
+	}
+	if err := PredictInterPlaneBlockFromOrigin(dstHigh, srcHigh, 2, 0, 0, 2, -2, 5, 3, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 5; x++ {
+			want := getSampleClamped(srcHigh, 2, x+2, y-2)
+			if got := getSample(dstHigh, 2, x, y); got != want {
+				t.Fatalf("highbd sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
+func TestPredictInterPlaneBlockFractionalExtendsReferenceEdges8Bit(t *testing.T) {
+	src, _ := testPlane(8, 8, 1, 8)
+	got, _ := testPlane(4, 4, 1, 4)
+	want, _ := testPlane(4, 4, 1, 4)
+	fillMotionTestPlane(src)
+
+	filters := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
+	if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 0, 0, 4, 4, 3, 5, filters); err != nil {
+		t.Fatal(err)
+	}
+	xKernel, err := interpKernel(filters.X, 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(filters.Y, 4, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomConvolve2DClampedRef(want, src, 0, 0, 0, 0, 4, 4, xKernel, yKernel)
+	assertPlaneBlockEqual(t, got, want, 1, 0, 0, 4, 4)
+}
+
+func TestPredictInterPlaneBlockOneDimensionalFractionalExtendsReferenceEdges8Bit(t *testing.T) {
+	src, _ := testPlane(8, 8, 1, 8)
+	fillMotionTestPlane(src)
+	filters := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
+
+	t.Run("x", func(t *testing.T) {
+		got, _ := testPlane(4, 4, 1, 4)
+		want, _ := testPlane(4, 4, 1, 4)
+		if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 0, 2, 4, 4, 3, 0, filters); err != nil {
+			t.Fatal(err)
+		}
+		kernel, err := interpKernel(filters.X, 4, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		libaomConvolveXClampedRef(want, src, 0, 2, 0, 0, 4, 4, kernel)
+		assertPlaneBlockEqual(t, got, want, 1, 0, 0, 4, 4)
+	})
+
+	t.Run("y", func(t *testing.T) {
+		got, _ := testPlane(4, 4, 1, 4)
+		want, _ := testPlane(4, 4, 1, 4)
+		if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 2, 0, 4, 4, 0, 5, filters); err != nil {
+			t.Fatal(err)
+		}
+		kernel, err := interpKernel(filters.Y, 4, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		libaomConvolveYClampedRef(want, src, 2, 0, 0, 0, 4, 4, kernel)
+		assertPlaneBlockEqual(t, got, want, 1, 0, 0, 4, 4)
+	})
+}
+
 func TestPredictInterPlaneBlockHighBitDepthFractionalMatchesLibaom(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -379,6 +475,62 @@ func TestPredictInterPlaneBlockHighBitDepthFractionalMatchesLibaom(t *testing.T)
 			assertPlaneBlockEqual(t, dst, want, 2, 8, 8, 8, 8)
 		})
 	}
+}
+
+func TestPredictInterPlaneBlockFractionalExtendsReferenceEdgesHighBD(t *testing.T) {
+	src, _ := testPlane(8, 8, 2, 16)
+	got, _ := testPlane(4, 4, 2, 8)
+	want, _ := testPlane(4, 4, 2, 8)
+	fillHighBDMotionTestPlane(src, 0x3ff)
+
+	filters := InterpFilters{X: InterpEightTapSmooth, Y: InterpMultiTapSharp}
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 2, 10, 0, 0, 5, 5, 4, 4, 9, 11, filters); err != nil {
+		t.Fatal(err)
+	}
+	xKernel, err := interpKernel(filters.X, 4, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(filters.Y, 4, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libaomHighBDConvolve2DClampedRef(want, src, 10, 0x3ff, 5, 5, 0, 0, 4, 4, xKernel, yKernel)
+	assertPlaneBlockEqual(t, got, want, 2, 0, 0, 4, 4)
+}
+
+func TestPredictInterPlaneBlockOneDimensionalFractionalExtendsReferenceEdgesHighBD(t *testing.T) {
+	src, _ := testPlane(8, 8, 2, 16)
+	fillHighBDMotionTestPlane(src, 0x3ff)
+	filters := InterpFilters{X: InterpEightTapSmooth, Y: InterpMultiTapSharp}
+
+	t.Run("x", func(t *testing.T) {
+		got, _ := testPlane(4, 4, 2, 8)
+		want, _ := testPlane(4, 4, 2, 8)
+		if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 2, 10, 0, 0, 0, 2, 4, 4, 9, 0, filters); err != nil {
+			t.Fatal(err)
+		}
+		kernel, err := interpKernel(filters.X, 4, 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		libaomHighBDConvolveXClampedRef(want, src, 0x3ff, 0, 2, 0, 0, 4, 4, kernel)
+		assertPlaneBlockEqual(t, got, want, 2, 0, 0, 4, 4)
+	})
+
+	t.Run("y", func(t *testing.T) {
+		got, _ := testPlane(4, 4, 2, 8)
+		want, _ := testPlane(4, 4, 2, 8)
+		if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 2, 10, 0, 0, 2, 0, 4, 4, 0, 11, filters); err != nil {
+			t.Fatal(err)
+		}
+		kernel, err := interpKernel(filters.Y, 4, 11)
+		if err != nil {
+			t.Fatal(err)
+		}
+		libaomHighBDConvolveYClampedRef(want, src, 0x3ff, 2, 0, 0, 0, 4, 4, kernel)
+		assertPlaneBlockEqual(t, got, want, 2, 0, 0, 4, 4)
+	})
 }
 
 func TestPredictInterPlaneBlockFromOriginMatchesVectorPath(t *testing.T) {
@@ -508,8 +660,8 @@ func TestPredictInterPlaneBlockFromOriginRejectsInvalidInputs(t *testing.T) {
 	if err := PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 4, 4, 4, 4, 0, 0, InterpFilters{X: interpFilterCount}); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad filter err=%v want %v", err, ErrInvalidMotion)
 	}
-	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -1, 0, 4, 4, 0, 0); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("outside ref err=%v want %v", err, ErrInvalidMotion)
+	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -1, 0, 4, 4, 0, 0); err != nil {
+		t.Fatalf("edge-extended fullpel err=%v", err)
 	}
 
 	srcHigh, _ := testPlane(16, 16, 2, 32)
@@ -554,15 +706,19 @@ func TestPredictInterPlaneBlockFromOriginAllocs(t *testing.T) {
 func TestPredictInterPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	src, _ := testPlane(4, 4, 1, 4)
 	dst, _ := testPlane(4, 4, 1, 4)
-	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, Vector{Col: 4}); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("fractional err=%v want %v", err, ErrInvalidMotion)
+	fillMotionTestPlane(src)
+	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, Vector{Col: 4}); err != nil {
+		t.Fatalf("fractional edge-extended err=%v", err)
 	}
 	mv, err := FullpelVector(-1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, mv); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("outside ref err=%v want %v", err, ErrInvalidMotion)
+	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, mv); err != nil {
+		t.Fatalf("fullpel edge-extended err=%v", err)
+	}
+	if got, want := getSample(dst, 1, 0, 0), getSample(src, 1, 0, 0); got != want {
+		t.Fatalf("fullpel clamped sample=%d want %d", got, want)
 	}
 	if err := PredictInterPlaneBlock(dst, src, 3, 0, 0, 1, 1, Vector{}); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("invalid sample width err=%v want %v", err, ErrInvalidMotion)
@@ -775,6 +931,20 @@ func getSample(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
 	return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8
 }
 
+func getSampleClamped(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
+	if x < 0 {
+		x = 0
+	} else if x >= plane.Width {
+		x = plane.Width - 1
+	}
+	if y < 0 {
+		y = 0
+	} else if y >= plane.Height {
+		y = plane.Height - 1
+	}
+	return getSample(plane, bytesPerSample, x, y)
+}
+
 func setSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) {
 	offset := y*plane.Stride + x*bytesPerSample
 	if bytesPerSample == 1 {
@@ -854,6 +1024,33 @@ func libaomHighBDConvolveYRef(dst frame.Plane, src frame.Plane, max uint16, refX
 	}
 }
 
+func libaomHighBDConvolveXClampedRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(getSampleClamped(src, 2, refX+x-fo+k, refY+y))
+			}
+			res := libaomRoundPowerOfTwo(sum, round0Bits)
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, filterBits-round0Bits), max))
+		}
+	}
+}
+
+func libaomHighBDConvolveYClampedRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(getSampleClamped(src, 2, refX+x, refY+y-fo+k))
+			}
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(sum, filterBits), max))
+		}
+	}
+}
+
 func libaomHighBDConvolve2DRef(dst frame.Plane, src frame.Plane, bitDepth uint8, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
@@ -864,6 +1061,35 @@ func libaomHighBDConvolve2DRef(dst frame.Plane, src frame.Plane, bitDepth uint8,
 			sum := 1 << (int(bitDepth) + filterBits - 1)
 			for k := 0; k < filterTaps; k++ {
 				sum += int(xKernel[k]) * int(getSample(src, 2, refX+x-foX+k, refY-foY+y))
+			}
+			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << offsetBits
+			for k := 0; k < filterTaps; k++ {
+				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+			}
+			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, bits), max))
+		}
+	}
+}
+
+func libaomHighBDConvolve2DClampedRef(dst frame.Plane, src frame.Plane, bitDepth uint8, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	for y := 0; y < height+filterTaps-1; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << (int(bitDepth) + filterBits - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int(xKernel[k]) * int(getSampleClamped(src, 2, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
 		}
@@ -910,6 +1136,33 @@ func libaomConvolveYRef(dst frame.Plane, src frame.Plane, refX int, refY int, ds
 	}
 }
 
+func libaomConvolveXClampedRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(getSampleClamped(src, 1, refX+x-fo+k, refY+y))
+			}
+			res := libaomRoundPowerOfTwo(sum, round0Bits)
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(res, filterBits-round0Bits)))
+		}
+	}
+}
+
+func libaomConvolveYClampedRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(getSampleClamped(src, 1, refX+x, refY+y-fo+k))
+			}
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(sum, filterBits)))
+		}
+	}
+}
+
 func libaomConvolve2DRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
@@ -920,6 +1173,35 @@ func libaomConvolve2DRef(dst frame.Plane, src frame.Plane, refX int, refY int, d
 			sum := 1 << (8 + filterBits - 1)
 			for k := 0; k < filterTaps; k++ {
 				sum += int(xKernel[k]) * int(src.Pix[(refY-foY+y)*src.Stride+refX+x-foX+k])
+			}
+			im[y*imStride+x] = int16(libaomRoundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := 8 + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << offsetBits
+			for k := 0; k < filterTaps; k++ {
+				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+			}
+			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(res, bits)))
+		}
+	}
+}
+
+func libaomConvolve2DClampedRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	for y := 0; y < height+filterTaps-1; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << (8 + filterBits - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int(xKernel[k]) * int(getSampleClamped(src, 1, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int16(libaomRoundPowerOfTwo(sum, round0Bits))
 		}
