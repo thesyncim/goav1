@@ -504,6 +504,9 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 		cdfs.Coeff.Transform != &storage.Transform ||
 		cdfs.Coeff.Coeff != &storage.Coeff ||
 		cdfs.TransformType != &storage.TransformType ||
+		cdfs.Restoration.Switchable != &storage.RestorationSwitchable ||
+		cdfs.Restoration.Wiener != &storage.RestorationWiener ||
+		cdfs.Restoration.SGRProj != &storage.RestorationSGRProj ||
 		cdfs.Loop.Delta.Q != &storage.DeltaQ ||
 		cdfs.Loop.Delta.LF != &storage.DeltaLF {
 		t.Fatalf("cdf pointer view does not alias storage: %+v", cdfs)
@@ -530,6 +533,9 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 	}
 	if _, err := cdfs.Loop.Blend.CompoundTypeCDF(tile.BlockSize16x16); err != nil {
 		t.Fatalf("blend cdf not initialized: %v", err)
+	}
+	if err := cdfs.Restoration.Wiener.Validate(); err != nil {
+		t.Fatalf("restoration cdf not initialized: %v", err)
 	}
 	set, err := tile.ExtTXSetTypeFor(tile.TransformSize16x16, true, false)
 	if err != nil {
@@ -593,6 +599,13 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *te
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errAfterBlock) {
 		t.Fatalf("after block err=%v want %v", err, errAfterBlock)
 	}
+
+	ctx, state, cdfs, scratch, req = testFrameWorkResidualDriver(t)
+	errBeforeSuperblock := errors.New("before superblock")
+	req.Loop.BeforeSuperblock = func(tile.BlockLoopSuperblockVisit) error { return errBeforeSuperblock }
+	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errBeforeSuperblock) {
+		t.Fatalf("before superblock err=%v want %v", err, errBeforeSuperblock)
+	}
 }
 
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsAfterBlock(t *testing.T) {
@@ -621,6 +634,51 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsAfterBlock(t *testing.T) 
 	}
 	if len(order) != 2 || order[0] != "coeff" || order[1] != "after" {
 		t.Fatalf("order=%v want [coeff after]", order)
+	}
+}
+
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsReadsRestorationUnits(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	ctx.FrameSize.UpscaledWidth = 64
+	ctx.FrameSize.CodedWidth = 64
+	ctx.FrameSize.Height = 64
+	ctx.Restoration = parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 64,
+	}
+	plan, err := ctx.RestorationFramePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordBacking := make([]tile.RestorationUnitRecord, plan.UnitRecordLen())
+	above := make([]uint16, plan.BoundaryBufferLen())
+	below := make([]uint16, plan.BoundaryBufferLen())
+	buffers, err := ctx.BindRestorationFrameBuffers(recordBacking, above, below)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		t.Fatal(err)
+	}
+	restorationReq := FrameWorkTileRestorationRequest{Buffers: buffers}
+	if err := restorationReq.InitReferences(); err != nil {
+		t.Fatal(err)
+	}
+	req.Restoration = &restorationReq
+
+	stats, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.RestorationUnits != 1 {
+		t.Fatalf("restoration units=%d stats=%+v", stats.RestorationUnits, stats)
+	}
+	got := buffers.Records[0][0]
+	if got.Index != 0 || got.Col != 0 || got.Row != 0 || got.Unit.Type != parser.RestorationNone {
+		t.Fatalf("record=%+v", got)
+	}
+	if got.StripeCount == 0 || got.Rect.Width() == 0 || got.Rect.Height() == 0 {
+		t.Fatalf("record geometry=%+v", got)
 	}
 }
 

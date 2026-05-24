@@ -16,27 +16,31 @@ type FrameWorkTileResidualCDFs struct {
 	Loop          tile.BlockLoopCDFs
 	Coeff         tile.BlockCoeffCDFs
 	TransformType *tile.TransformTypeCDFs
+	Restoration   tile.RestorationCDFs
 }
 
 // FrameWorkTileResidualCDFStorage owns the default entropy states needed for a
 // full block-loop, transform, and coefficient pass. Callers can keep one per
 // worker/tile context and pass CDFs() into DecodeAndReconstructJobResiduals.
 type FrameWorkTileResidualCDFStorage struct {
-	Partition     tile.PartitionCDFs
-	Mode          tile.BlockModeCDFs
-	Intra         tile.IntraModeCDFs
-	InterRef      tile.InterRefCDFs
-	InterMode     tile.InterModeCDFs
-	MV            tile.MVCDFs
-	Interp        tile.InterpFilterCDFs
-	Motion        tile.MotionModeCDFs
-	Blend         tile.CompoundBlendCDFs
-	Transform     tile.TransformCDFs
-	TransformType tile.TransformTypeCDFs
-	Coeff         tile.CoeffCDFs
-	DeltaQ        entropy.CDF
-	DeltaLF       entropy.CDF
-	DeltaLFMulti  [tile.FrameLoopFilterCount]entropy.CDF
+	Partition             tile.PartitionCDFs
+	Mode                  tile.BlockModeCDFs
+	Intra                 tile.IntraModeCDFs
+	InterRef              tile.InterRefCDFs
+	InterMode             tile.InterModeCDFs
+	MV                    tile.MVCDFs
+	Interp                tile.InterpFilterCDFs
+	Motion                tile.MotionModeCDFs
+	Blend                 tile.CompoundBlendCDFs
+	Transform             tile.TransformCDFs
+	TransformType         tile.TransformTypeCDFs
+	Coeff                 tile.CoeffCDFs
+	DeltaQ                entropy.CDF
+	DeltaLF               entropy.CDF
+	DeltaLFMulti          [tile.FrameLoopFilterCount]entropy.CDF
+	RestorationSwitchable entropy.CDF
+	RestorationWiener     entropy.CDF
+	RestorationSGRProj    entropy.CDF
 }
 
 // InitDefault seeds the storage with the CDF defaults ported from libaom/dav1d.
@@ -92,6 +96,13 @@ func (s *FrameWorkTileResidualCDFStorage) InitDefault(baseQIndex uint8) error {
 			return err
 		}
 	}
+	if err := tile.InitDefaultRestorationCDFs(tile.RestorationCDFs{
+		Switchable: &next.RestorationSwitchable,
+		Wiener:     &next.RestorationWiener,
+		SGRProj:    &next.RestorationSGRProj,
+	}); err != nil {
+		return err
+	}
 	*s = next
 	return nil
 }
@@ -128,6 +139,11 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 			Coeff:     &s.Coeff,
 		},
 		TransformType: &s.TransformType,
+		Restoration: tile.RestorationCDFs{
+			Switchable: &s.RestorationSwitchable,
+			Wiener:     &s.RestorationWiener,
+			SGRProj:    &s.RestorationSGRProj,
+		},
 	}
 }
 
@@ -205,6 +221,27 @@ type FrameWorkBlockTransformSelector func(tile.BlockLoopVisit) (FrameWorkBlockTr
 // residual, if any, is added to the output frame.
 type FrameWorkBlockPredictor func(tile.BlockLoopVisit) error
 
+// FrameWorkTileRestorationRequest carries frame-wide restoration unit storage
+// for one residual decode pass. References are copied into the worker-local
+// controller so Wiener/SGR ref-subexp state advances without mutating the
+// caller's request while the job runs.
+type FrameWorkTileRestorationRequest struct {
+	Buffers    FrameWorkRestorationFrameBuffers
+	References [3]tile.RestorationReferences
+}
+
+// InitReferences seeds the per-plane restoration reference state used by AV1's
+// restoration unit syntax.
+func (r *FrameWorkTileRestorationRequest) InitReferences() error {
+	if r == nil {
+		return ErrInvalidBatch
+	}
+	for plane := range r.References {
+		r.References[plane] = tile.DefaultRestorationReferences()
+	}
+	return nil
+}
+
 // FrameWorkTileResidualRequest describes one tile job residual decode pass.
 type FrameWorkTileResidualRequest struct {
 	Loop          tile.BlockLoopRequest
@@ -213,6 +250,7 @@ type FrameWorkTileResidualRequest struct {
 	Predict           FrameWorkBlockPredictor
 	PredictionScratch *FrameWorkPredictionScratch
 	CDEFIndexMap      *FrameWorkCDEFIndexMap
+	Restoration       *FrameWorkTileRestorationRequest
 	Transforms        FrameWorkBlockTransformSelector
 	AfterBlock        tile.BlockLoopVisitor
 
@@ -228,12 +266,13 @@ type FrameWorkTileResidualStats struct {
 	CoefficientBlocks int
 	SkippedBlocks     int
 
-	TXBs        int
-	NonZero     int
-	AllZero     int
-	EOBTotal    int
-	Residuals   int
-	Predictions int
+	TXBs             int
+	NonZero          int
+	AllZero          int
+	EOBTotal         int
+	Residuals        int
+	Predictions      int
+	RestorationUnits int
 }
 
 // JobBlockLoopRequest derives the block-loop request for Jobs[index] from the
@@ -397,6 +436,12 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		loopReq.ContextCarrier = &scratch.LoopContext
 	}
 	loopReq.DecodeCoefficients = true
+	var restoration FrameWorkTileRestorationRequest
+	readRestoration := false
+	if req.Restoration != nil {
+		restoration = *req.Restoration
+		readRestoration = true
+	}
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  b,
 		index:                  index,
@@ -405,8 +450,14 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		scratch:                scratch,
 		req:                    req,
 		stats:                  &scratch.stats,
+		userBeforeSuperblock:   loopReq.BeforeSuperblock,
 		userBeforeCoefficients: loopReq.BeforeCoefficients,
 		userCoeffVisitor:       loopReq.CoeffVisitor,
+		restoration:            restoration,
+		readRestoration:        readRestoration,
+	}
+	if loopReq.BeforeSuperblock != nil || readRestoration {
+		loopReq.BeforeSuperblock = scratch.controller.BeforeSuperblock
 	}
 
 	loopStats, err := tile.DecodeBlockLoopWithCoeffController(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit tile.BlockLoopVisit) error {
@@ -437,10 +488,30 @@ type frameWorkTileResidualLoopController struct {
 
 	userBeforeCoefficients tile.BlockLoopVisitor
 	userCoeffVisitor       tile.BlockLoopCoeffVisitor
+	userBeforeSuperblock   tile.BlockLoopSuperblockVisitor
+	restoration            FrameWorkTileRestorationRequest
+	readRestoration        bool
 
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
 	cflVisit             tile.BlockLoopVisit
+}
+
+func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockLoopSuperblockVisit) error {
+	if c.userBeforeSuperblock != nil {
+		if err := c.userBeforeSuperblock(visit); err != nil {
+			return err
+		}
+	}
+	if !c.readRestoration {
+		return nil
+	}
+	n, err := c.batch.ReadRestorationUnitsForSuperblock(c.index, c.state, c.cdfs.Restoration, &c.restoration, visit)
+	if err != nil {
+		return err
+	}
+	c.stats.RestorationUnits += n
+	return nil
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {

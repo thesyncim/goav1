@@ -53,3 +53,42 @@ func (b FrameWorkRestorationFrameBuffers) ResetRecords() error {
 	}
 	return nil
 }
+
+// ReadRestorationUnitsForSuperblock decodes every loop-restoration unit whose
+// top-left corner belongs to visit and writes it into the frame-wide record
+// buffers carried by req.
+func (b FrameWorkBatch) ReadRestorationUnitsForSuperblock(index int, state *tile.DecodeState, cdfs tile.RestorationCDFs, req *FrameWorkTileRestorationRequest, visit tile.BlockLoopSuperblockVisit) (int, error) {
+	if state == nil || req == nil {
+		return 0, ErrInvalidBatch
+	}
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return 0, err
+	}
+	if visit.SBSizeMIB != b.Sequence.SBSizeMIB ||
+		visit.MICol < region.MIColStart ||
+		visit.MIRow < region.MIRowStart ||
+		visit.MICol >= region.MIColEnd ||
+		visit.MIRow >= region.MIRowEnd {
+		return 0, ErrInvalidBatch
+	}
+	if req.Buffers.Plan.Planes != 1 && req.Buffers.Plan.Planes != 3 {
+		return 0, tile.ErrInvalidPlan
+	}
+	total := 0
+	for plane := 0; plane < int(req.Buffers.Plan.Planes); plane++ {
+		grid := req.Buffers.Plan.Grids[plane]
+		if req.Buffers.Plan.UnitRecords[plane] == 0 {
+			if len(req.Buffers.Records[plane]) != 0 {
+				return 0, tile.ErrInvalidPlan
+			}
+			continue
+		}
+		n, err := state.ReadRestorationUnitsForSuperblockInto(grid, visit.MICol, visit.MIRow, visit.SBSizeMIB, req.Buffers.Records[plane], &req.References[plane], cdfs)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
+}
