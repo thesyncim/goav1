@@ -287,7 +287,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 						return err
 					}
 					var storage threading.FrameWorkTileResidualCDFStorage
-					if err := storage.InitDefault(ctx.Quantization.BaseQIdx); err != nil {
+					if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
 						return err
 					}
 					var scratch threading.FrameWorkTileResidualScratch
@@ -328,6 +328,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					})
 					if err != nil {
 						return fmt.Errorf("decode/reconstruct job %d stats=%+v: %w", j, stats, err)
+					}
+					if err := ctx.RetainTileResidualCDFStorage(j, &decodeState, &storage); err != nil {
+						return err
 					}
 					partitionReads += stats.Loop.PartitionReads
 					blockPrefixReads += stats.Loop.Prefixes

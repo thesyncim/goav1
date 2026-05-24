@@ -316,6 +316,73 @@ func TestFrameWorkBatchJobDecodeState(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchTileResidualCDFStorage(t *testing.T) {
+	var initial FrameWorkTileResidualCDFStorage
+	if err := initial.InitDefault(64); err != nil {
+		t.Fatal(err)
+	}
+	if err := initial.DeltaQ.Update(2); err != nil {
+		t.Fatal(err)
+	}
+	var retained FrameWorkTileResidualCDFStorage
+	retainedValid := false
+	ctx := FrameWorkBatch{
+		Payload: []byte{0x00, 0xff},
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Quantization: parser.QuantizationParams{BaseQIdx: 91},
+		},
+		InitialTileResidualCDFs:       &initial,
+		RetainedTileResidualCDFs:      &retained,
+		RetainedTileResidualCDFsValid: &retainedValid,
+		Jobs: []tile.Job{
+			{Tile: 0, Offset: 0, Size: 1},
+			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
+		},
+	}
+	var storage FrameWorkTileResidualCDFStorage
+	if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
+		t.Fatal(err)
+	}
+	if !testCDFValuesEqual(storage.DeltaQ.Values(), initial.DeltaQ.Values()) {
+		t.Fatalf("storage delta q=%v want %v", storage.DeltaQ.Values(), initial.DeltaQ.Values())
+	}
+	if err := storage.DeltaQ.Update(1); err != nil {
+		t.Fatal(err)
+	}
+
+	var state tile.DecodeState
+	if err := ctx.JobDecodeState(0, &state); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.RetainTileResidualCDFStorage(0, &state, &storage); err != nil {
+		t.Fatal(err)
+	}
+	if retainedValid {
+		t.Fatal("non-update tile retained frame context")
+	}
+
+	if err := ctx.JobDecodeState(1, &state); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.RetainTileResidualCDFStorage(1, &state, &storage); err != nil {
+		t.Fatal(err)
+	}
+	if !retainedValid {
+		t.Fatal("update tile did not retain frame context")
+	}
+	if !testCDFValuesEqual(retained.DeltaQ.Values(), storage.DeltaQ.Values()) {
+		t.Fatalf("retained delta q=%v want %v", retained.DeltaQ.Values(), storage.DeltaQ.Values())
+	}
+
+	ctx.InitialTileResidualCDFs = nil
+	if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
+		t.Fatal(err)
+	}
+	if testCDFValuesEqual(storage.DeltaQ.Values(), initial.DeltaQ.Values()) {
+		t.Fatal("default fallback unexpectedly reused initial frame context")
+	}
+}
+
 func TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs(t *testing.T) {
 	ctx := FrameWorkBatch{
 		Payload: []byte{0xaa},
@@ -334,6 +401,25 @@ func TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs(t *testing.T) {
 	if err := ctx.JobDecodeState(0, &state); !errors.Is(err, tile.ErrInvalidPlan) {
 		t.Fatalf("invalid range err=%v want %v", err, tile.ErrInvalidPlan)
 	}
+
+	if err := ctx.InitTileResidualCDFStorage(nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil cdf storage err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.RetainTileResidualCDFStorage(0, &state, nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil retained cdf storage err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func testCDFValuesEqual(a []uint16, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestFrameWorkBatchJobRegion64SuperblockClipsFrameEdge(t *testing.T) {

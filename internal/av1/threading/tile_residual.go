@@ -131,6 +131,44 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 	}
 }
 
+// InitTileResidualCDFStorage seeds storage from the frame context selected for
+// this tile group, falling back to AV1 defaults when the batch is used outside
+// decoder-managed frame work.
+func (b FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidualCDFStorage) error {
+	if storage == nil {
+		return ErrInvalidBatch
+	}
+	if b.InitialTileResidualCDFs != nil {
+		*storage = *b.InitialTileResidualCDFs
+		return nil
+	}
+	return storage.InitDefault(b.Quantization.BaseQIdx)
+}
+
+// RetainTileResidualCDFStorage publishes storage as the adapted frame context
+// only for the context_update_tile_id job when CDF updates are enabled.
+func (b FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage) error {
+	if index < 0 || index >= len(b.Jobs) || state == nil || storage == nil {
+		return ErrInvalidBatch
+	}
+	if !state.RetainFrameContext {
+		return nil
+	}
+	updates, err := b.JobUpdatesFrameContext(index)
+	if err != nil {
+		return err
+	}
+	if !updates {
+		return nil
+	}
+	if b.RetainedTileResidualCDFs == nil || b.RetainedTileResidualCDFsValid == nil {
+		return ErrInvalidBatch
+	}
+	*b.RetainedTileResidualCDFs = *storage
+	*b.RetainedTileResidualCDFsValid = true
+	return nil
+}
+
 // FrameWorkTileResidualScratch is caller-owned state reused while decoding one
 // tile job's block loop and coefficient contexts.
 type FrameWorkTileResidualScratch struct {

@@ -103,7 +103,7 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 					return err
 				}
 				var storage threading.FrameWorkTileResidualCDFStorage
-				if err := storage.InitDefault(ctx.Quantization.BaseQIdx); err != nil {
+				if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
 					return err
 				}
 				var scratch threading.FrameWorkTileResidualScratch
@@ -169,6 +169,9 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 					PredictionScratch: &predictionScratch,
 				})
 				if err != nil {
+					return err
+				}
+				if err := ctx.RetainTileResidualCDFStorage(j, &decodeState, &storage); err != nil {
 					return err
 				}
 			}

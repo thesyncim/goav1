@@ -903,6 +903,115 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	}
 }
 
+func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T) {
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePool(t, 2)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var releases [parser.RefFrames]int
+	jobs := []tile.Job{{Tile: 0, Offset: 0, Size: 1, UpdatesFrameContext: true}}
+	batches := []threading.Batch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
+	}
+
+	key := Event{
+		Kind: EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{
+			FrameType:       parser.FrameTypeKey,
+			PrimaryRefFrame: parser.PrimaryRefNone,
+		},
+		FrameSize:    testFrameSize(16, 16),
+		TileInfo:     parser.TileInfo{RefreshContext: true, ContextUpdateTileID: 0},
+		Quantization: parser.QuantizationParams{BaseQIdx: 64},
+	}
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), key, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step.Tile.Surface = plan.Surface
+
+	var retainedDeltaQ []uint16
+	finalKey := key
+	finalKey.Kind = EventTileGroup
+	finalKey.Unit.Payload = []byte{0x00}
+	finalKey.FrameSize.RefreshFrameFlags = 0xff
+	finalKey.TileGroup = parser.TileGroup{Final: true}
+	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalKey, step, workerPool, nil, nil, finalKey.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
+		var storage threading.FrameWorkTileResidualCDFStorage
+		if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
+			return err
+		}
+		if err := storage.DeltaQ.Update(2); err != nil {
+			return err
+		}
+		retainedDeltaQ = append(retainedDeltaQ[:0], storage.DeltaQ.Values()...)
+		var decodeState tile.DecodeState
+		if err := ctx.JobDecodeState(0, &decodeState); err != nil {
+			return err
+		}
+		return ctx.RetainTileResidualCDFStorage(0, &decodeState, &storage)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inter := Event{
+		Kind: EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{
+			FrameType:       parser.FrameTypeInter,
+			PrimaryRefFrame: 0,
+		},
+		FrameSize:    testFrameSize(16, 16),
+		TileInfo:     parser.TileInfo{RefreshContext: true, ContextUpdateTileID: 0},
+		Quantization: parser.QuantizationParams{BaseQIdx: 64},
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		inter.FrameSize.RefFrameIdx[i] = 0
+	}
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	plan, _, err = state.Begin(&refs, &pool, testSequence(), inter, 32, referenceSurfaces[:], 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ReferenceCount != 0 {
+		count, err := ResolveFrameReferences(&pool, referenceSurfaces[:plan.ReferenceCount], referenceFrames[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count != plan.ReferenceCount {
+			t.Fatalf("reference count=%d want %d", count, plan.ReferenceCount)
+		}
+	}
+	step.Tile.Surface = plan.Surface
+	step.Tile.ReferenceCount = plan.ReferenceCount
+	finalInter := inter
+	finalInter.Kind = EventTileGroup
+	finalInter.Unit.Payload = []byte{0x00}
+	finalInter.FrameSize.RefreshFrameFlags = 0x01
+	finalInter.TileGroup = parser.TileGroup{Final: true}
+	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalInter, step, workerPool, nil, referenceFrames[:plan.ReferenceCount], finalInter.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
+		var storage threading.FrameWorkTileResidualCDFStorage
+		if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
+			return err
+		}
+		if !testUint16sEqual(storage.DeltaQ.Values(), retainedDeltaQ) {
+			t.Fatalf("delta q=%v want retained %v", storage.DeltaQ.Values(), retainedDeltaQ)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecuteFrameWorkStepWithPayloadRejectsInvalidPayloadRange(t *testing.T) {
 	jobs, batches, batchCount := testExecutionWork(t)
 	jobs[1].Offset = 2
@@ -1665,9 +1774,10 @@ func TestFrameWorkStateRunStepWithPostFilterAllocs(t *testing.T) {
 		ctx.Output.Y.Pix[0] ^= 1
 		return nil
 	}
+	var state FrameWorkState
 	allocs := testing.AllocsPerRun(1000, func() {
 		var refs SurfaceReferences
-		state := FrameWorkState{Surface: surface, active: true}
+		state = FrameWorkState{Surface: surface, active: true}
 		if _, err := state.RunStepWithPostFilter(&refs, &pool, event, step, nil, nil, nil, nil, nil, post); err != nil {
 			t.Fatal(err)
 		}
@@ -3560,6 +3670,18 @@ func testFrameWorkFilmGrain() parser.FilmGrainParams {
 
 func noopFrameWorkBatch(FrameWorkBatch) error {
 	return nil
+}
+
+func testUint16sEqual(a []uint16, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func showExistingWorkEvent(index uint8, frameType parser.FrameType) Event {

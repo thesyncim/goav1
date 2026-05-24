@@ -183,8 +183,8 @@ type FrameWorkFrameContext struct {
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.
-// Payload, References, CurrentMVFrame, TemporalMVs, and Jobs alias caller-owned
-// storage and are valid for the callback invocation.
+// Payload, References, CurrentMVFrame, TemporalMVs, Jobs, and CDF pointers
+// alias caller-owned storage and are valid for the callback invocation.
 type FrameWorkBatch struct {
 	Step       decodework.FrameStep
 	Output     *frame.Frame
@@ -202,8 +202,15 @@ type FrameWorkBatch struct {
 	ReferenceMVs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
-	Batch            Batch
-	Jobs             []tile.Job
+	// InitialTileResidualCDFs is the frame context selected by
+	// primary_ref_frame for this tile group. RetainedTileResidualCDFs receives
+	// the context_update_tile_id tile's adapted state when callbacks opt in via
+	// RetainTileResidualCDFStorage.
+	InitialTileResidualCDFs       *FrameWorkTileResidualCDFStorage
+	RetainedTileResidualCDFs      *FrameWorkTileResidualCDFStorage
+	RetainedTileResidualCDFsValid *bool
+	Batch                         Batch
+	Jobs                          []tile.Job
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
