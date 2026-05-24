@@ -32,6 +32,9 @@ type FrameWorkLoopFilterPostFilterEdge struct {
 	Level     uint8
 	Transform tile.TransformSize
 	Width     int
+	// LevelFromPrevious reports that AV1's fallback to the block on the other
+	// side of the boundary supplied Level because the current side resolved to 0.
+	LevelFromPrevious bool
 
 	BlockMICol uint32
 	BlockMIRow uint32
@@ -69,6 +72,7 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	ChromaTXBs           int
 	EdgeCandidates       int
 	PlaneEdgeCandidates  [3]int
+	PreviousLevelEdges   int
 	StoredEdges          int
 	DroppedEdges         int
 
@@ -155,7 +159,7 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 			if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
 				return plan, err
 			}
-			if err := frameWorkAppendLoopFilterLumaEdges(ctx, record, &plan, req.Edges); err != nil {
+			if err := frameWorkAppendLoopFilterLumaEdges(ctx, filterMap, record, &plan, req.Edges); err != nil {
 				return plan, err
 			}
 			if err := frameWorkAppendLoopFilterChromaEdges(ctx, record, &plan, req.Edges); err != nil {
@@ -384,58 +388,61 @@ func frameWorkAccumulateLoopFilterTransformStats(ctx FrameWorkPostFilterContext,
 	})
 }
 
-func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) error {
-	verticalLevel, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.PlaneY, loopfilter.EdgeVertical)
-	if err != nil {
-		return err
-	}
-	horizontalLevel, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.PlaneY, loopfilter.EdgeHorizontal)
-	if err != nil {
-		return err
-	}
-	if verticalLevel == 0 && horizontalLevel == 0 {
-		return nil
-	}
+func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) error {
 	if record.SkipTransform {
 		block := record.Block
-		if verticalLevel != 0 && block.MICol > 0 {
-			width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y)
+		if block.MICol > 0 {
+			verticalLevel, fromPrevious, err := frameWorkResolveLoopFilterLumaEdgeLevel(ctx, filterMap, record, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:      loopfilter.PlaneY,
-					Edge:       loopfilter.EdgeVertical,
-					X4:         int(block.MICol),
-					Y4:         int(block.MIRow),
-					Length4:    int(block.VisibleH4),
-					Level:      verticalLevel,
-					Transform:  record.TransformTree.Y,
-					Width:      width,
-					BlockMICol: block.MICol,
-					BlockMIRow: block.MIRow,
-				})
+			if verticalLevel != 0 {
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y)
+				if err != nil {
+					return err
+				}
+				if ok {
+					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+						Plane:             loopfilter.PlaneY,
+						Edge:              loopfilter.EdgeVertical,
+						X4:                int(block.MICol),
+						Y4:                int(block.MIRow),
+						Length4:           int(block.VisibleH4),
+						Level:             verticalLevel,
+						Transform:         record.TransformTree.Y,
+						Width:             width,
+						LevelFromPrevious: fromPrevious,
+						BlockMICol:        block.MICol,
+						BlockMIRow:        block.MIRow,
+					})
+				}
 			}
 		}
-		if horizontalLevel != 0 && block.MIRow > 0 {
-			width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y)
+		if block.MIRow > 0 {
+			horizontalLevel, fromPrevious, err := frameWorkResolveLoopFilterLumaEdgeLevel(ctx, filterMap, record, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:      loopfilter.PlaneY,
-					Edge:       loopfilter.EdgeHorizontal,
-					X4:         int(block.MICol),
-					Y4:         int(block.MIRow),
-					Length4:    int(block.VisibleW4),
-					Level:      horizontalLevel,
-					Transform:  record.TransformTree.Y,
-					Width:      width,
-					BlockMICol: block.MICol,
-					BlockMIRow: block.MIRow,
-				})
+			if horizontalLevel != 0 {
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y)
+				if err != nil {
+					return err
+				}
+				if ok {
+					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+						Plane:             loopfilter.PlaneY,
+						Edge:              loopfilter.EdgeHorizontal,
+						X4:                int(block.MICol),
+						Y4:                int(block.MIRow),
+						Length4:           int(block.VisibleW4),
+						Level:             horizontalLevel,
+						Transform:         record.TransformTree.Y,
+						Width:             width,
+						LevelFromPrevious: fromPrevious,
+						BlockMICol:        block.MICol,
+						BlockMIRow:        block.MIRow,
+					})
+				}
 			}
 		}
 		return nil
@@ -449,48 +456,108 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, record t
 	return record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
 		frameX4 := int(block.MICol) + tx.X4 - block.X4
 		frameY4 := int(block.MIRow) + tx.Y4 - block.Y4
-		if verticalLevel != 0 && frameX4 > 0 {
-			width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size)
+		if frameX4 > 0 {
+			verticalLevel, fromPrevious, err := frameWorkResolveLoopFilterLumaEdgeLevel(ctx, filterMap, record, loopfilter.EdgeVertical, frameX4, frameY4, plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:      loopfilter.PlaneY,
-					Edge:       loopfilter.EdgeVertical,
-					X4:         frameX4,
-					Y4:         frameY4,
-					Length4:    int(tx.VisibleH4),
-					Level:      verticalLevel,
-					Transform:  tx.Size,
-					Width:      width,
-					BlockMICol: block.MICol,
-					BlockMIRow: block.MIRow,
-				})
+			if verticalLevel != 0 {
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size)
+				if err != nil {
+					return err
+				}
+				if ok {
+					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+						Plane:             loopfilter.PlaneY,
+						Edge:              loopfilter.EdgeVertical,
+						X4:                frameX4,
+						Y4:                frameY4,
+						Length4:           int(tx.VisibleH4),
+						Level:             verticalLevel,
+						Transform:         tx.Size,
+						Width:             width,
+						LevelFromPrevious: fromPrevious,
+						BlockMICol:        block.MICol,
+						BlockMIRow:        block.MIRow,
+					})
+				}
 			}
 		}
-		if horizontalLevel != 0 && frameY4 > 0 {
-			width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size)
+		if frameY4 > 0 {
+			horizontalLevel, fromPrevious, err := frameWorkResolveLoopFilterLumaEdgeLevel(ctx, filterMap, record, loopfilter.EdgeHorizontal, frameX4, frameY4, plan.MICols, plan.MIRows)
 			if err != nil {
 				return err
 			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:      loopfilter.PlaneY,
-					Edge:       loopfilter.EdgeHorizontal,
-					X4:         frameX4,
-					Y4:         frameY4,
-					Length4:    int(tx.VisibleW4),
-					Level:      horizontalLevel,
-					Transform:  tx.Size,
-					Width:      width,
-					BlockMICol: block.MICol,
-					BlockMIRow: block.MIRow,
-				})
+			if horizontalLevel != 0 {
+				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size)
+				if err != nil {
+					return err
+				}
+				if ok {
+					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+						Plane:             loopfilter.PlaneY,
+						Edge:              loopfilter.EdgeHorizontal,
+						X4:                frameX4,
+						Y4:                frameY4,
+						Length4:           int(tx.VisibleW4),
+						Level:             horizontalLevel,
+						Transform:         tx.Size,
+						Width:             width,
+						LevelFromPrevious: fromPrevious,
+						BlockMICol:        block.MICol,
+						BlockMIRow:        block.MIRow,
+					})
+				}
 			}
 		}
 		return nil
 	})
+}
+
+func frameWorkResolveLoopFilterLumaEdgeLevel(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, edge loopfilter.Edge, x4 int, y4 int, cols int, rows int) (uint8, bool, error) {
+	level, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.PlaneY, edge)
+	if err != nil {
+		return 0, false, err
+	}
+	if level != 0 {
+		return level, false, nil
+	}
+	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, x4, y4, cols, rows)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	level, err = frameWorkResolveLoopFilterLevel(ctx, previous, loopfilter.PlaneY, edge)
+	if err != nil {
+		return 0, false, err
+	}
+	return level, level != 0, nil
+}
+
+func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, cols int, rows int) (threading.FrameWorkLoopFilterBlockRecord, bool, error) {
+	prevCol := x4
+	prevRow := y4
+	switch edge {
+	case loopfilter.EdgeVertical:
+		prevCol--
+	case loopfilter.EdgeHorizontal:
+		prevRow--
+	default:
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, loopfilter.ErrInvalidFilter
+	}
+	if prevCol < 0 || prevRow < 0 {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, nil
+	}
+	if prevCol >= cols || prevRow >= rows || prevRow >= filterMap.Rows || prevCol >= filterMap.Stride {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
+	}
+	record := filterMap.Records[prevRow*filterMap.Stride+prevCol]
+	if !record.Valid {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
+	}
+	if err := frameWorkValidateLoopFilterRecord(record, prevCol, prevRow, cols, rows); err != nil {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) error {
@@ -692,6 +759,9 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 	plan.EdgeCandidates++
 	if edge.Plane <= loopfilter.PlaneV {
 		plan.PlaneEdgeCandidates[int(edge.Plane)]++
+	}
+	if edge.LevelFromPrevious {
+		plan.PreviousLevelEdges++
 	}
 	if plan.StoredEdges < len(edges) {
 		edges[plan.StoredEdges] = edge

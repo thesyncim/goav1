@@ -425,6 +425,122 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsDroppedEdges(t 
 	}
 }
 
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousLumaLevelVertical(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	left := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	left.SkipTransform = true
+	right := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	right.SkipTransform = true
+	right.SegmentID = 1
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, left, right)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			Segmentation: parser.SegmentationParams{
+				Enabled: true,
+				Data: parser.SegmentationData{
+					Segments: [parser.MaxSegments]parser.SegmentData{
+						1: {DeltaLFYV: -8},
+					},
+				},
+			},
+			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 1)
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	want := FrameWorkLoopFilterPostFilterEdge{
+		Plane:             loopfilter.PlaneY,
+		Edge:              loopfilter.EdgeVertical,
+		X4:                4,
+		Y4:                0,
+		Length4:           4,
+		Level:             8,
+		Transform:         tile.TransformSize16x16,
+		Width:             14,
+		LevelFromPrevious: true,
+		BlockMICol:        4,
+		BlockMIRow:        0,
+	}
+	if edges[0] != want {
+		t.Fatalf("edge=%+v want %+v", edges[0], want)
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousLumaLevelHorizontal(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              32,
+		SuperResDenominator: 8,
+	}
+	top := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	top.SkipTransform = true
+	bottom := testFrameWorkLoopFilterPostFilterRecordAt(0, 4, 4, 8)
+	bottom.SkipTransform = true
+	bottom.SegmentID = 1
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, top, bottom)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			Segmentation: parser.SegmentationParams{
+				Enabled: true,
+				Data: parser.SegmentationData{
+					Segments: [parser.MaxSegments]parser.SegmentData{
+						1: {DeltaLFYH: -9},
+					},
+				},
+			},
+			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{0, 9}},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 1)
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	want := FrameWorkLoopFilterPostFilterEdge{
+		Plane:             loopfilter.PlaneY,
+		Edge:              loopfilter.EdgeHorizontal,
+		X4:                0,
+		Y4:                4,
+		Length4:           4,
+		Level:             9,
+		Transform:         tile.TransformSize16x16,
+		Width:             14,
+		LevelFromPrevious: true,
+		BlockMICol:        0,
+		BlockMIRow:        4,
+	}
+	if edges[0] != want {
+		t.Fatalf("edge=%+v want %+v", edges[0], want)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdges(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
