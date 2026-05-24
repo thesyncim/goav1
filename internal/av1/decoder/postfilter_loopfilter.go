@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -70,6 +71,17 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	DroppedEdges         int
 
 	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
+}
+
+// FrameWorkLoopFilterPostFilterApplyResult summarizes application of stored
+// luma edge candidates through the pure-Go loop-filter kernels.
+type FrameWorkLoopFilterPostFilterApplyResult struct {
+	Plan FrameWorkLoopFilterPostFilterPlan
+
+	Active   bool
+	Edges    int
+	Applied  int
+	MaxLevel uint8
 }
 
 // LoopFilterPostFilterScratchLen reports scratch lengths needed to collect
@@ -144,6 +156,66 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 		return plan, threading.ErrInvalidBatch
 	}
 	return plan, nil
+}
+
+// ApplyLoopFilterLumaEdges validates the decoded loop-filter map, stores luma
+// edge candidates in req.Edges, and applies every stored candidate to ctx.Output.
+// It is a decoder bridge for the current luma-only edge scheduler; chroma and
+// full frame-order integration remain separate work.
+func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	plan, err := ctx.LoopFilterPostFilterPlan(req)
+	result := FrameWorkLoopFilterPostFilterApplyResult{Plan: plan}
+	if err != nil {
+		return result, err
+	}
+	if !plan.Active {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, nil
+	}
+	result.Active = true
+	if ctx.Output == nil {
+		return result, frame.ErrInvalidSlot
+	}
+	if plan.DroppedEdges != 0 || plan.StoredEdges != plan.EdgeCandidates {
+		return result, frame.ErrShortBuffer
+	}
+	edges := req.Edges[:plan.StoredEdges]
+	for i := range edges {
+		if err := ctx.applyLoopFilterLumaEdge(edges[i]); err != nil {
+			return result, err
+		}
+		result.Edges++
+		if edges[i].Level != 0 {
+			result.Applied++
+			if edges[i].Level > result.MaxLevel {
+				result.MaxLevel = edges[i].Level
+			}
+		}
+	}
+	return result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoopFilterPostFilterEdge) error {
+	if edge.Plane != loopfilter.PlaneY ||
+		edge.Length4 <= 0 ||
+		edge.Level == 0 ||
+		ctx.Output == nil {
+		return loopfilter.ErrInvalidFilter
+	}
+	thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
+	if err != nil {
+		return err
+	}
+	return loopfilter.FilterEdgeByWidth(
+		edge.Width,
+		ctx.Output.Y,
+		ctx.Output.Layout.BytesPerSample,
+		ctx.Output.Format.BitDepth,
+		edge.Edge,
+		edge.X4*4,
+		edge.Y4*4,
+		edge.Length4*4,
+		thresholds,
+	)
 }
 
 func frameWorkLoopFilterMapEmpty(filterMap FrameWorkLoopFilterMap) bool {

@@ -1,9 +1,11 @@
 package decoder
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -293,6 +295,164 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsDroppedEdges(t 
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdges(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	first.SkipTransform = true
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	second.TransformTree = tile.TransformTreeResult{
+		Y:        tile.TransformSize16x16,
+		Variable: true,
+		Split:    [2]uint16{1, 0},
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 32, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	before := append([]byte(nil), output.Y.Pix...)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{63}, Sharpness: 1},
+		},
+		Output: output,
+	}
+
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 4)
+	wantY := append([]byte(nil), output.Y.Pix...)
+	wantPlane := output.Y
+	wantPlane.Pix = wantY
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{Map: filterMap, Edges: edges})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range edges[:plan.StoredEdges] {
+		thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := loopfilter.FilterEdgeByWidth(edge.Width, wantPlane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := ctx.ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Active || result.Edges != 4 || result.Applied != 4 || result.MaxLevel != 63 || result.Plan.StoredEdges != 4 {
+		t.Fatalf("result=%+v", result)
+	}
+	if bytes.Equal(output.Y.Pix, before) {
+		t.Fatal("loop filter luma edge bridge did not change output")
+	}
+	if !bytes.Equal(output.Y.Pix, wantY) {
+		t.Fatal("loop filter luma edge bridge output did not match direct edge application")
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesSkipsInactive(t *testing.T) {
+	result, err := (FrameWorkPostFilterContext{}).ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (FrameWorkLoopFilterPostFilterApplyResult{}) {
+		t.Fatalf("result=%+v want zero", result)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesRejectsShortEdgeScratchBeforeMutation(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              32,
+		SuperResDenominator: 8,
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size,
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 4, 4, 8),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 4, 8, 8),
+	)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	before := append([]byte(nil), output.Y.Pix...)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8, 9}},
+		},
+		Output: output,
+	}
+
+	result, err := ctx.ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: make([]FrameWorkLoopFilterPostFilterEdge, 1),
+	})
+	if !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("ApplyLoopFilterLumaEdges err=%v want %v", err, frame.ErrShortBuffer)
+	}
+	if !result.Active || result.Plan.DroppedEdges == 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	if !bytes.Equal(output.Y.Pix, before) {
+		t.Fatal("short edge scratch mutated output")
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesAllocs(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	first.SkipTransform = true
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	second.TransformTree = tile.TransformTreeResult{
+		Y:        tile.TransformSize16x16,
+		Variable: true,
+		Split:    [2]uint16{1, 0},
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 32, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+		Output: output,
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 4)
+	allocs := testing.AllocsPerRun(1000, func() {
+		testFillFrameWorkLoopFilterPattern(output.Y)
+		result, err := ctx.ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{
+			Map:   filterMap,
+			Edges: edges,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Applied != 4 {
+			t.Fatalf("result=%+v", result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ApplyLoopFilterLumaEdges allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsMissingActiveMap(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{
@@ -349,6 +509,18 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 	}
 	if plan.Blocks != 1 || plan.Missing != cols*rows-1 {
 		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func testFillFrameWorkLoopFilterPattern(plane frame.Plane) {
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			value := byte(90)
+			if (x/8+y/8)&1 != 0 {
+				value = 100
+			}
+			plane.Pix[y*plane.Stride+x] = value
+		}
 	}
 }
 
