@@ -60,8 +60,29 @@ type FrameWorkPredictionScratch struct {
 	Inter *FrameWorkInterPredictionScratch
 }
 
+// PredictBlock writes prediction pixels for one decoded block-loop visit where
+// all present planes are supported by the current prediction implementation.
+// Inter blocks cover every present plane; intra blocks are accepted only for
+// monochrome frames until chroma intra syntax/prediction is wired.
+func (b FrameWorkBatch) PredictBlock(index int, visit tile.BlockLoopVisit, scratch *FrameWorkPredictionScratch) error {
+	if !visit.Prediction.Valid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.Intra {
+		if !b.Sequence.ColorConfig.MonoChrome || scratch == nil {
+			return ErrInvalidBatch
+		}
+		return b.PredictBlockLumaIntra(index, visit, &scratch.Intra)
+	}
+	var interScratch *FrameWorkInterPredictionScratch
+	if scratch != nil {
+		interScratch = scratch.Inter
+	}
+	return b.PredictBlockInter(index, visit, interScratch)
+}
+
 // PredictBlockLuma dispatches luma prediction for one decoded block-loop visit.
-// It currently covers intra and single-reference translational inter modes.
+// It covers intra and translational inter/compound luma modes.
 func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, scratch *FrameWorkPredictionScratch) error {
 	if !visit.Prediction.Valid {
 		return ErrInvalidBatch

@@ -1,6 +1,7 @@
 package threading
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -12,6 +13,114 @@ type FrameWorkTileResidualCDFs struct {
 	Loop          tile.BlockLoopCDFs
 	Coeff         tile.BlockCoeffCDFs
 	TransformType *tile.TransformTypeCDFs
+}
+
+// FrameWorkTileResidualCDFStorage owns the default entropy states needed for a
+// full block-loop, transform, and coefficient pass. Callers can keep one per
+// worker/tile context and pass CDFs() into DecodeAndReconstructJobResiduals.
+type FrameWorkTileResidualCDFStorage struct {
+	Partition     tile.PartitionCDFs
+	Mode          tile.BlockModeCDFs
+	Intra         tile.IntraModeCDFs
+	InterRef      tile.InterRefCDFs
+	InterMode     tile.InterModeCDFs
+	MV            tile.MVCDFs
+	Motion        tile.MotionModeCDFs
+	Blend         tile.CompoundBlendCDFs
+	Transform     tile.TransformCDFs
+	TransformType tile.TransformTypeCDFs
+	Coeff         tile.CoeffCDFs
+	DeltaQ        entropy.CDF
+	DeltaLF       entropy.CDF
+	DeltaLFMulti  [tile.FrameLoopFilterCount]entropy.CDF
+}
+
+// InitDefault seeds the storage with the CDF defaults ported from libaom/dav1d.
+func (s *FrameWorkTileResidualCDFStorage) InitDefault(baseQIndex uint8) error {
+	if s == nil {
+		return ErrInvalidBatch
+	}
+	var next FrameWorkTileResidualCDFStorage
+	if err := next.Partition.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Mode.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Intra.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.InterRef.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.InterMode.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.MV.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Motion.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Blend.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Transform.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.TransformType.InitDefault(); err != nil {
+		return err
+	}
+	if err := next.Coeff.InitDefault(baseQIndex); err != nil {
+		return err
+	}
+	if err := next.DeltaQ.InitDefaultDelta(); err != nil {
+		return err
+	}
+	if err := next.DeltaLF.InitDefaultDelta(); err != nil {
+		return err
+	}
+	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+		if err := next.DeltaLFMulti[i].InitDefaultDelta(); err != nil {
+			return err
+		}
+	}
+	*s = next
+	return nil
+}
+
+// CDFs returns the pointer view consumed by the residual driver.
+func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
+	if s == nil {
+		return FrameWorkTileResidualCDFs{}
+	}
+	delta := tile.DeltaCDFs{
+		Q:  &s.DeltaQ,
+		LF: &s.DeltaLF,
+	}
+	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+		delta.LFMulti[i] = &s.DeltaLFMulti[i]
+	}
+	return FrameWorkTileResidualCDFs{
+		Loop: tile.BlockLoopCDFs{
+			Partition: &s.Partition,
+			Mode:      &s.Mode,
+			Intra:     &s.Intra,
+			InterRef:  &s.InterRef,
+			InterMode: &s.InterMode,
+			MV:        &s.MV,
+			Motion:    &s.Motion,
+			Blend:     &s.Blend,
+			Transform: &s.Transform,
+			Coeff:     &s.Coeff,
+			Delta:     delta,
+		},
+		Coeff: tile.BlockCoeffCDFs{
+			Transform: &s.Transform,
+			Coeff:     &s.Coeff,
+		},
+		TransformType: &s.TransformType,
+	}
 }
 
 // FrameWorkTileResidualScratch is caller-owned state reused while decoding one
@@ -52,8 +161,9 @@ type FrameWorkTileResidualRequest struct {
 	Loop          tile.BlockLoopRequest
 	TransformMode parser.TransformMode
 
-	Predict    FrameWorkBlockPredictor
-	Transforms FrameWorkBlockTransformSelector
+	Predict           FrameWorkBlockPredictor
+	PredictionScratch *FrameWorkPredictionScratch
+	Transforms        FrameWorkBlockTransformSelector
 
 	Int32Scratch    []int32
 	ResidualScratch []int16
@@ -196,6 +306,11 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile
 	}
 	if c.req.Predict != nil {
 		if err := c.req.Predict(visit); err != nil {
+			return err
+		}
+		c.stats.Predictions++
+	} else if c.req.PredictionScratch != nil {
+		if err := c.batch.PredictBlock(c.index, visit, c.req.PredictionScratch); err != nil {
 			return err
 		}
 		c.stats.Predictions++

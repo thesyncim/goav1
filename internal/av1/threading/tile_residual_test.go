@@ -200,6 +200,88 @@ func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
+	var storage FrameWorkTileResidualCDFStorage
+	if err := storage.InitDefault(64); err != nil {
+		t.Fatal(err)
+	}
+	cdfs := storage.CDFs()
+	if cdfs.Loop.Partition != &storage.Partition ||
+		cdfs.Loop.Mode != &storage.Mode ||
+		cdfs.Loop.Intra != &storage.Intra ||
+		cdfs.Loop.InterRef != &storage.InterRef ||
+		cdfs.Loop.InterMode != &storage.InterMode ||
+		cdfs.Loop.MV != &storage.MV ||
+		cdfs.Loop.Motion != &storage.Motion ||
+		cdfs.Loop.Blend != &storage.Blend ||
+		cdfs.Loop.Transform != &storage.Transform ||
+		cdfs.Loop.Coeff != &storage.Coeff ||
+		cdfs.Coeff.Transform != &storage.Transform ||
+		cdfs.Coeff.Coeff != &storage.Coeff ||
+		cdfs.TransformType != &storage.TransformType ||
+		cdfs.Loop.Delta.Q != &storage.DeltaQ ||
+		cdfs.Loop.Delta.LF != &storage.DeltaLF {
+		t.Fatalf("cdf pointer view does not alias storage: %+v", cdfs)
+	}
+	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+		if cdfs.Loop.Delta.LFMulti[i] != &storage.DeltaLFMulti[i] {
+			t.Fatalf("delta lf multi[%d] does not alias storage", i)
+		}
+	}
+	if _, err := cdfs.Loop.Intra.YModeCDF(0); err != nil {
+		t.Fatalf("intra cdf not initialized: %v", err)
+	}
+	if _, err := cdfs.Loop.InterRef.SingleRefCDF(0, 0); err != nil {
+		t.Fatalf("inter ref cdf not initialized: %v", err)
+	}
+	if _, err := cdfs.Loop.MV.JointCDF(); err != nil {
+		t.Fatalf("mv cdf not initialized: %v", err)
+	}
+	if _, err := cdfs.Loop.Motion.MotionModeCDF(tile.BlockSize16x16); err != nil {
+		t.Fatalf("motion cdf not initialized: %v", err)
+	}
+	if _, err := cdfs.Loop.Blend.CompoundTypeCDF(tile.BlockSize16x16); err != nil {
+		t.Fatalf("blend cdf not initialized: %v", err)
+	}
+	set, err := tile.ExtTXSetTypeFor(tile.TransformSize16x16, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := tile.ExtTXSetIndex(tile.TransformSize16x16, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbols, err := tile.ExtTXTypeCount(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cdfs.TransformType.InterCDF(index, tile.TransformSize16x16, symbols); err != nil {
+		t.Fatalf("transform type cdf not initialized: %v", err)
+	}
+}
+
+func TestFrameWorkTileResidualCDFStorageRejectsNil(t *testing.T) {
+	if err := (*FrameWorkTileResidualCDFStorage)(nil).InitDefault(0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil storage err=%v want %v", err, ErrInvalidBatch)
+	}
+	if got := (*FrameWorkTileResidualCDFStorage)(nil).CDFs(); got.Loop.Partition != nil || got.Coeff.Coeff != nil || got.TransformType != nil {
+		t.Fatalf("nil storage cdfs=%+v", got)
+	}
+}
+
+func TestFrameWorkTileResidualCDFStorageAllocs(t *testing.T) {
+	var storage FrameWorkTileResidualCDFStorage
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := storage.InitDefault(64); err != nil {
+			t.Fatal(err)
+		}
+		_ = storage.CDFs()
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkTileResidualCDFStorage allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	errPredict := errors.New("predict")
@@ -215,6 +297,39 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *te
 	}
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errTransform) {
 		t.Fatalf("transform err=%v want %v", err, errTransform)
+	}
+}
+
+func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 10)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 50)
+	}
+
+	var predictionScratch FrameWorkPredictionScratch
+	var stats FrameWorkTileResidualStats
+	controller := frameWorkTileResidualLoopController{
+		batch: ctx,
+		index: 0,
+		req: FrameWorkTileResidualRequest{
+			PredictionScratch: &predictionScratch,
+		},
+		stats: &stats,
+	}
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Prefix.SkipTransform = true
+	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16, 16); got != 30 {
+		t.Fatalf("predicted sample=%d want 30", got)
 	}
 }
 
@@ -321,37 +436,11 @@ func testFrameWorkResidualDriver(t *testing.T) (FrameWorkBatch, *tile.DecodeStat
 
 func mustFrameWorkTileResidualCDFs(t *testing.T, baseQIndex uint8) FrameWorkTileResidualCDFs {
 	t.Helper()
-	var partition tile.PartitionCDFs
-	if err := partition.InitDefault(); err != nil {
+	var storage FrameWorkTileResidualCDFStorage
+	if err := storage.InitDefault(baseQIndex); err != nil {
 		t.Fatal(err)
 	}
-	var mode tile.BlockModeCDFs
-	if err := mode.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var transformCDFs tile.TransformCDFs
-	if err := transformCDFs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var transformType tile.TransformTypeCDFs
-	if err := transformType.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var coeff tile.CoeffCDFs
-	if err := coeff.InitDefault(baseQIndex); err != nil {
-		t.Fatal(err)
-	}
-	return FrameWorkTileResidualCDFs{
-		Loop: tile.BlockLoopCDFs{
-			Partition: &partition,
-			Mode:      &mode,
-		},
-		Coeff: tile.BlockCoeffCDFs{
-			Transform: &transformCDFs,
-			Coeff:     &coeff,
-		},
-		TransformType: &transformType,
-	}
+	return storage.CDFs()
 }
 
 func testFrameWorkDCTTransforms(tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {

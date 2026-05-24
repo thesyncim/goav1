@@ -494,6 +494,80 @@ func TestFrameWorkBatchPredictBlockLumaDispatchesCompoundAverage(t *testing.T) {
 	assertFrameWorkCompoundBlendEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16, 8, 8)
 }
 
+func TestFrameWorkBatchPredictBlockDispatchesCompletePlanes(t *testing.T) {
+	mono := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	monoCtx := testIntraPredictionBatch(mono)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(mono.Y, mono.Layout.BytesPerSample, x, 15, 10)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(mono.Y, mono.Layout.BytesPerSample, 15, y, 50)
+	}
+	var predictionScratch FrameWorkPredictionScratch
+	if err := monoCtx.PredictBlock(0, testIntraPredictionVisit(tile.IntraModeDC), &predictionScratch); err != nil {
+		t.Fatal(err)
+	}
+	if got := frameWorkTestSample(mono.Y, mono.Layout.BytesPerSample, 16, 16); got != 30 {
+		t.Fatalf("mono intra sample=%d want 30", got)
+	}
+
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	mv := motion.Vector{Col: 3, Row: -5}
+	visit := testInterPredictionVisit(mv)
+	if err := ctx.PredictBlock(0, visit, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	wantY := testFrameWorkMotionPredictionPlane(t, reference.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv, motion.RegularFilters)
+	wantU := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv, true, true, motion.RegularFilters)
+	wantV := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv, true, true, motion.RegularFilters)
+	assertFrameWorkPlaneBlockEqualAt(t, output.Y, 16, 16, wantY, 0, 0, output.Layout.BytesPerSample, 16, 16)
+	assertFrameWorkPlaneBlockEqualAt(t, output.U, 8, 8, wantU, 0, 0, output.Layout.BytesPerSample, 8, 8)
+	assertFrameWorkPlaneBlockEqualAt(t, output.V, 8, 8, wantV, 0, 0, output.Layout.BytesPerSample, 8, 8)
+}
+
+func TestFrameWorkBatchPredictBlockRejectsIncompletePlaneSupport(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+	var scratch FrameWorkPredictionScratch
+	if err := ctx.PredictBlock(0, testIntraPredictionVisit(tile.IntraModeDC), &scratch); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("color intra err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.PredictBlock(0, tile.BlockLoopVisit{}, &scratch); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("missing prediction err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 90)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 92)
+	}
+	var scratch FrameWorkPredictionScratch
+	intra := testIntraPredictionVisit(tile.IntraModeDC)
+	inter := testInterPredictionVisit(motion.Vector{Col: 8, Row: 0})
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlock(0, intra, &scratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := ctx.PredictBlock(0, inter, &scratch); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlock allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	last := testBatchFrame(t, output.Format)
