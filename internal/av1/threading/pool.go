@@ -200,6 +200,9 @@ type FrameWorkBatch struct {
 	// ReferenceMVs carries resolved per-reference MV_REF metadata used to set up
 	// TemporalMVs before block prediction.
 	ReferenceMVs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	// CDEFIndexMap receives decoded cdef_idx values while tile residuals run.
+	// It is optional; callers can still pass a per-request map.
+	CDEFIndexMap *FrameWorkCDEFIndexMap
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	// InitialTileResidualCDFs is the frame context selected by

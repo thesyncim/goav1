@@ -276,6 +276,31 @@ func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsUsesBatchCDEFIndexMap(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	ctx.CDEF = parser.CDEFParams{Bits: 0, StrengthCount: 1}
+	_, _, length, err := ctx.CDEFIndexMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, err := ctx.BindCDEFIndexMap(make([]uint8, length), make([]bool, length))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.CDEFIndexMap = &cdefMap
+
+	stats, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CoefficientBlocks != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !cdefMap.Read[0] || cdefMap.Index[0] != 0 {
+		t.Fatalf("batch cdef map read=%v index=%d want true,0", cdefMap.Read[0], cdefMap.Index[0])
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsRejectsInvalidInputs(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 

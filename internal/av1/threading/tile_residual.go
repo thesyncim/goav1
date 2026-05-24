@@ -423,6 +423,9 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
 	}
 	scratch.stats = FrameWorkTileResidualStats{}
+	if req.CDEFIndexMap == nil {
+		req.CDEFIndexMap = b.CDEFIndexMap
+	}
 
 	loopCDFs := cdfs.Loop
 	if loopCDFs.Transform == nil {
