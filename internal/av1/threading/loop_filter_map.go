@@ -1,0 +1,173 @@
+package threading
+
+import (
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
+
+// FrameWorkLoopFilterBlockRecord stores the block-local syntax needed to build
+// loop-filter edge masks after tile reconstruction.
+type FrameWorkLoopFilterBlockRecord struct {
+	Valid bool
+
+	Block         tile.BlockVisit
+	TransformTree tile.TransformTreeResult
+
+	SegmentID     uint8
+	SkipTransform bool
+	Intra         bool
+	RefFrame      int
+	Mode          loopfilter.ModeDeltaClass
+
+	DeltaLFFromBase int8
+	DeltaLF         [tile.FrameLoopFilterCount]int8
+}
+
+// FrameWorkLoopFilterMap stores block-local loop-filter data in frame-level MI
+// grid order. Records is caller-owned so tile workers can fill the map without
+// allocating in the block loop.
+type FrameWorkLoopFilterMap struct {
+	Records []FrameWorkLoopFilterBlockRecord
+	Stride  int
+	Rows    int
+}
+
+// LoopFilterMapShape returns the frame-level MI grid dimensions.
+func (b FrameWorkBatch) LoopFilterMapShape() (cols int, rows int, length int, err error) {
+	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	miCols, ok := frameWorkMIExtent(b.FrameSize.CodedWidth)
+	if !ok {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	miRows, ok := frameWorkMIExtent(b.FrameSize.Height)
+	if !ok {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	length64 := uint64(miCols) * uint64(miRows)
+	maxInt := uint64(^uint(0) >> 1)
+	if miCols == 0 || miRows == 0 || length64 > maxInt {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	return int(miCols), int(miRows), int(length64), nil
+}
+
+// BindLoopFilterMap validates and slices caller-owned storage for this frame.
+func (b FrameWorkBatch) BindLoopFilterMap(records []FrameWorkLoopFilterBlockRecord) (FrameWorkLoopFilterMap, error) {
+	cols, rows, length, err := b.LoopFilterMapShape()
+	if err != nil {
+		return FrameWorkLoopFilterMap{}, err
+	}
+	if len(records) < length {
+		return FrameWorkLoopFilterMap{}, ErrInvalidBatch
+	}
+	out := FrameWorkLoopFilterMap{
+		Records: records[:length],
+		Stride:  cols,
+		Rows:    rows,
+	}
+	if err := out.Reset(); err != nil {
+		return FrameWorkLoopFilterMap{}, err
+	}
+	return out, nil
+}
+
+// Reset clears all recorded loop-filter metadata while preserving caller-owned
+// storage and shape.
+func (m FrameWorkLoopFilterMap) Reset() error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	clear(m.Records[:m.Stride*m.Rows])
+	return nil
+}
+
+// MarkBlock records block-local loop-filter metadata for every MI cell covered
+// by visit.
+func (m FrameWorkLoopFilterMap) MarkBlock(visit tile.BlockLoopVisit, state *tile.DecodeState) error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	if state == nil {
+		return ErrInvalidBatch
+	}
+	block := visit.Block
+	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow {
+		return ErrInvalidBatch
+	}
+	if block.MIColEnd > uint32(m.Stride) || block.MIRowEnd > uint32(m.Rows) {
+		return ErrInvalidBatch
+	}
+	refFrame, mode, err := frameWorkLoopFilterRefMode(visit)
+	if err != nil {
+		return err
+	}
+	record := FrameWorkLoopFilterBlockRecord{
+		Valid:           true,
+		Block:           block,
+		TransformTree:   visit.Coefficients.Tree,
+		SegmentID:       visit.SegmentID,
+		SkipTransform:   visit.Prefix.SkipTransform,
+		Intra:           !visit.Prediction.Valid || visit.Prediction.Intra,
+		RefFrame:        refFrame,
+		Mode:            mode,
+		DeltaLFFromBase: state.DeltaLFFromBase,
+		DeltaLF:         state.DeltaLF,
+	}
+	for miRow := block.MIRow; miRow < block.MIRowEnd; miRow++ {
+		row := int(miRow) * m.Stride
+		for miCol := block.MICol; miCol < block.MIColEnd; miCol++ {
+			m.Records[row+int(miCol)] = record
+		}
+	}
+	return nil
+}
+
+func (m FrameWorkLoopFilterMap) validate() error {
+	if m.Stride <= 0 || m.Rows <= 0 {
+		return ErrInvalidBatch
+	}
+	maxInt := int(^uint(0) >> 1)
+	if m.Stride > maxInt/m.Rows ||
+		uint64(m.Stride) > uint64(^uint32(0)) ||
+		uint64(m.Rows) > uint64(^uint32(0)) {
+		return ErrInvalidBatch
+	}
+	length := m.Stride * m.Rows
+	if len(m.Records) < length {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkLoopFilterRefMode(visit tile.BlockLoopVisit) (int, loopfilter.ModeDeltaClass, error) {
+	if !visit.Prediction.Valid || visit.Prediction.Intra || !visit.Prediction.InterReferencesValid {
+		return 0, loopfilter.ModeDeltaClassZero, nil
+	}
+	ref := visit.Prediction.InterReferences.Ref[0]
+	if !ref.Valid() {
+		return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
+	}
+	mode := loopfilter.ModeDeltaClassZero
+	if visit.Prediction.InterModeValid {
+		interMode := visit.Prediction.InterMode
+		if interMode.Compound {
+			components, err := interMode.CompoundMode.Components()
+			if err != nil {
+				return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
+			}
+			if components.First == tile.InterModeNewMV || components.Second == tile.InterModeNewMV {
+				mode = loopfilter.ModeDeltaClassMotion
+			}
+		} else {
+			if !interMode.Mode.Valid() {
+				return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
+			}
+			if interMode.Mode == tile.InterModeNewMV {
+				mode = loopfilter.ModeDeltaClassMotion
+			}
+		}
+	}
+	return int(ref) + 1, mode, nil
+}

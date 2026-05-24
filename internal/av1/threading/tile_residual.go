@@ -250,6 +250,7 @@ type FrameWorkTileResidualRequest struct {
 	Predict           FrameWorkBlockPredictor
 	PredictionScratch *FrameWorkPredictionScratch
 	CDEFIndexMap      *FrameWorkCDEFIndexMap
+	LoopFilterMap     *FrameWorkLoopFilterMap
 	Restoration       *FrameWorkTileRestorationRequest
 	Transforms        FrameWorkBlockTransformSelector
 	AfterBlock        tile.BlockLoopVisitor
@@ -426,6 +427,9 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	if req.CDEFIndexMap == nil {
 		req.CDEFIndexMap = b.CDEFIndexMap
 	}
+	if req.LoopFilterMap == nil {
+		req.LoopFilterMap = b.LoopFilterMap
+	}
 
 	loopCDFs := cdfs.Loop
 	if loopCDFs.Transform == nil {
@@ -468,6 +472,11 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 			return ErrInvalidBatch
 		}
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
+		if req.LoopFilterMap != nil {
+			if err := req.LoopFilterMap.MarkBlock(visit, state); err != nil {
+				return err
+			}
+		}
 		if req.AfterBlock != nil {
 			return req.AfterBlock(visit)
 		}

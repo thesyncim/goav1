@@ -203,6 +203,9 @@ type FrameWorkBatch struct {
 	// CDEFIndexMap receives decoded cdef_idx values while tile residuals run.
 	// It is optional; callers can still pass a per-request map.
 	CDEFIndexMap *FrameWorkCDEFIndexMap
+	// LoopFilterMap receives block-local loop-filter metadata while tile
+	// residuals run. It is optional; callers can still pass a per-request map.
+	LoopFilterMap *FrameWorkLoopFilterMap
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	// InitialTileResidualCDFs is the frame context selected by

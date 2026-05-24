@@ -301,6 +301,34 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsUsesBatchCDEFIndexMap(t *
 	}
 }
 
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsUsesBatchLoopFilterMap(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	_, _, length, err := ctx.LoopFilterMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfMap, err := ctx.BindLoopFilterMap(make([]FrameWorkLoopFilterBlockRecord, length))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.LoopFilterMap = &lfMap
+	state.DeltaLFFromBase = -2
+	state.DeltaLF = [tile.FrameLoopFilterCount]int8{1, 2, 3, 4}
+
+	stats, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CoefficientBlocks != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	record := lfMap.Records[0]
+	if !record.Valid || record.Block.MICol != 0 || record.Block.MIRow != 0 ||
+		record.DeltaLFFromBase != -2 || record.DeltaLF != state.DeltaLF {
+		t.Fatalf("loop filter record=%+v state delta=%v", record, state.DeltaLF)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsRejectsInvalidInputs(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 
