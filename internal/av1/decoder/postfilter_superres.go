@@ -175,8 +175,8 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 	if err != nil {
 		return FrameWorkSuperResPostFilterResult{}, err
 	}
-	if len(req.OutputFrame) < plan.OutputSize {
-		return FrameWorkSuperResPostFilterResult{}, frame.ErrShortBuffer
+	if err := ctx.validateSuperResPostFilterRequest(req); err != nil {
+		return FrameWorkSuperResPostFilterResult{}, err
 	}
 	output, err := frame.Bind(req.OutputFrame[:plan.OutputSize], plan.OutputFormat)
 	if err != nil {
@@ -217,6 +217,36 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		result.Planes++
 	}
 	return result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req FrameWorkSuperResPostFilterRequest) error {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		return nil
+	}
+	plan, err := ctx.SuperResPostFilterPlan()
+	if err != nil {
+		return err
+	}
+	if !plan.Active {
+		return nil
+	}
+	size, err := ctx.SuperResPostFilterScratchLen()
+	if err != nil {
+		return err
+	}
+	if len(req.OutputFrame) < size.OutputFrame {
+		return frame.ErrShortBuffer
+	}
+	for plane := 0; plane < len(plan.Planes); plane++ {
+		if plan.Planes[plane].OutputWidth == 0 {
+			continue
+		}
+		if len(req.CodedScratch[plane]) < size.CodedSamples[plane] ||
+			len(req.OutputScratch[plane]) < size.OutputSamples[plane] {
+			return frame.ErrShortBuffer
+		}
+	}
+	return nil
 }
 
 func frameWorkSuperResBytesPerSample(format frame.Format) int {

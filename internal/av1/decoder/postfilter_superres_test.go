@@ -200,6 +200,69 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortOutputScra
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortPlaneScratchBeforeOutputMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*FrameWorkSuperResPostFilterRequest)
+	}{
+		{
+			name: "coded-chroma",
+			mutate: func(req *FrameWorkSuperResPostFilterRequest) {
+				req.CodedScratch[1] = req.CodedScratch[1][:len(req.CodedScratch[1])-1]
+			},
+		},
+		{
+			name: "output-chroma",
+			mutate: func(req *FrameWorkSuperResPostFilterRequest) {
+				req.OutputScratch[1] = req.OutputScratch[1][:len(req.OutputScratch[1])-1]
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seq := testSequence()
+			event := Event{
+				SequenceHeader: seq,
+				FrameSize: parser.FrameSize{
+					CodedWidth:          8,
+					UpscaledWidth:       13,
+					Height:              2,
+					SuperResEnabled:     true,
+					SuperResDenominator: 13,
+				},
+			}
+			codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := testFrameWorkCDEFFrame(t, codedFormat)
+			for x, value := range []byte{0, 32, 64, 96, 128, 160, 192, 224} {
+				output.Y.Pix[x] = value
+			}
+			for x, value := range []byte{0, 64, 128, 192} {
+				output.U.Pix[x] = value
+				output.V.Pix[x] = value
+			}
+
+			ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+			req := testFrameWorkSuperResPostFilterRequest(t, ctx)
+			for i := range req.OutputFrame {
+				req.OutputFrame[i] = 0xaa
+			}
+			tt.mutate(&req)
+
+			if _, err := ctx.ApplySuperResPostFilter(req); !errors.Is(err, frame.ErrShortBuffer) {
+				t.Fatalf("ApplySuperResPostFilter err=%v want %v", err, frame.ErrShortBuffer)
+			}
+			for i, got := range req.OutputFrame {
+				if got != 0xaa {
+					t.Fatalf("output frame byte %d mutated to %#x", i, got)
+				}
+			}
+		})
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsEarlierStages(t *testing.T) {
 	seq := testSequence()
 	event := Event{
