@@ -39,6 +39,7 @@ type FrameWorkRestorationPostFilterScratchSize struct {
 type FrameWorkPostFilterScratchSize struct {
 	LoopFilter  FrameWorkLoopFilterPostFilterScratchSize
 	CDEF        FrameWorkCDEFPostFilterScratchSize
+	SuperRes    FrameWorkSuperResPostFilterScratchSize
 	Restoration FrameWorkRestorationPostFilterScratchSize
 	FilmGrain   FrameWorkFilmGrainPostFilterScratchSize
 }
@@ -61,6 +62,7 @@ type FrameWorkRestorationPostFilterRequest struct {
 type FrameWorkPostFilterRequest struct {
 	LoopFilter  FrameWorkLoopFilterPostFilterRequest
 	CDEF        FrameWorkCDEFPostFilterRequest
+	SuperRes    FrameWorkSuperResPostFilterRequest
 	Restoration FrameWorkRestorationPostFilterRequest
 	FilmGrain   FrameWorkFilmGrainPostFilterRequest
 }
@@ -72,6 +74,14 @@ type FrameWorkPostFilterResult struct {
 	CDEF        FrameWorkCDEFPostFilterResult
 	Restoration tile.RestorationFrameApplyResult
 	FilmGrain   FrameWorkFilmGrainPostFilterResult
+}
+
+// FrameWorkCallerPostFilterResult summarizes a caller-owned full postfilter
+// chain. It embeds the publishable-stage result and adds detached superres
+// output metadata.
+type FrameWorkCallerPostFilterResult struct {
+	FrameWorkPostFilterResult
+	SuperRes FrameWorkSuperResPostFilterResult
 }
 
 // FrameWorkSupportedPostFilterRunner adapts ApplySupportedPostFilters to the
@@ -248,6 +258,52 @@ func (ctx FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req FrameW
 	return size, nil
 }
 
+// CallerPostFilterScratchLen reports scratch for a caller-owned full postfilter
+// chain. When superres is active, callers can use the returned SuperRes sizes to
+// allocate req.SuperRes first; a second call with req.SuperRes.OutputFrame sized
+// will also report post-superres restoration and film-grain scratch.
+func (ctx FrameWorkPostFilterContext) CallerPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+	size, err := ctx.PreSuperResPostFilterScratchLen(req)
+	if err != nil {
+		return FrameWorkPostFilterScratchSize{}, err
+	}
+
+	tailCtx := ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF)
+	if tailCtx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		superResSize, err := tailCtx.SuperResPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.SuperRes = superResSize
+		if len(req.SuperRes.OutputFrame) < superResSize.OutputFrame {
+			return size, nil
+		}
+		tailCtx, err = tailCtx.bindSuperResPostFilterOutputContext(req.SuperRes)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+	}
+	if tailCtx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		records := req.Restoration.Records
+		if frameWorkRestorationRecordsEmpty(records) && tailCtx.RestorationFrameBuffers != nil {
+			records = tailCtx.RestorationFrameBuffers.Records
+		}
+		restorationSize, err := tailCtx.LoopRestorationPostFilterScratchLen(records, req.Restoration.Optimized)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.Restoration = restorationSize
+	}
+	if tailCtx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+		filmGrainSize, err := tailCtx.FilmGrainPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.FilmGrain = filmGrainSize
+	}
+	return size, nil
+}
+
 // ApplySupportedPostFilters runs the currently integrated postfilter stages in
 // normal AV1 order. It rejects frames requiring unsupported stages before
 // mutating ctx.Output.
@@ -313,6 +369,68 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.FilmGrain = filmGrainResult
 	}
 	return ctx, result, nil
+}
+
+// ApplyCallerPostFilters runs all active postfilters in AV1 order. Unlike the
+// supported frame-pool publication runner, this path may switch ctx.Output to
+// caller-owned superres scratch and is therefore intended for display/output
+// consumers that can keep that detached frame alive.
+func (ctx FrameWorkPostFilterContext) ApplyCallerPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkCallerPostFilterResult, error) {
+	var result FrameWorkCallerPostFilterResult
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
+			return ctx, result, err
+		}
+	}
+	validateTailCtx := ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF)
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		if err := validateTailCtx.validateSuperResPostFilterRequest(req.SuperRes); err != nil {
+			return ctx, result, err
+		}
+		var err error
+		validateTailCtx, err = validateTailCtx.bindSuperResPostFilterOutputContext(req.SuperRes)
+		if err != nil {
+			return ctx, result, err
+		}
+	}
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		if err := validateTailCtx.validateLoopRestorationPostFilterRequest(req.Restoration); err != nil {
+			return ctx, result, err
+		}
+	}
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+		if err := validateTailCtx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
+			return ctx, result, err
+		}
+	}
+
+	next, prefixResult, err := ctx.ApplyPreSuperResPostFilters(req)
+	if err != nil {
+		return ctx, result, err
+	}
+	result.Completed |= prefixResult.Completed
+	result.LoopFilter = prefixResult.LoopFilter
+	result.CDEF = prefixResult.CDEF
+
+	if next.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		superResNext, superResResult, err := next.ApplySuperResPostFilterToContext(req.SuperRes)
+		if err != nil {
+			return ctx, result, err
+		}
+		next = superResNext
+		result.Completed |= FrameWorkPostFilterSuperRes
+		result.SuperRes = superResResult
+	}
+
+	next, tailResult, err := next.ApplySupportedPostFilters(req)
+	if err != nil {
+		return ctx, result, err
+	}
+	result.Completed |= tailResult.Completed
+	result.Restoration = tailResult.Restoration
+	result.FilmGrain = tailResult.FilmGrain
+	return next, result, nil
 }
 
 // ApplyPreSuperResPostFilters runs the coded-surface postfilter prefix in AV1

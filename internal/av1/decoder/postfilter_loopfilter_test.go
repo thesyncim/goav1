@@ -1220,6 +1220,73 @@ func TestFrameWorkPostFilterContextApplyPreSuperResPostFiltersRunsLoopFilterThen
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyCallerPostFiltersRunsPreSuperResAndSuperRes(t *testing.T) {
+	const width = 32
+	const height = 16
+	const upscaledWidth = 48
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       upscaledWidth,
+		Height:              height,
+		SuperResEnabled:     true,
+		SuperResDenominator: 16,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	before := append([]byte(nil), output.Y.Pix...)
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		LoopFilter: parser.LoopFilterParams{
+			LevelY:    [2]uint8{63},
+			Sharpness: 1,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	cdefReq := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	req := FrameWorkPostFilterRequest{CDEF: cdefReq}
+	sizeReq, err := ctx.CallerPostFilterScratchLen(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizeReq.LoopFilter.Edges != 1 || sizeReq.CDEF.Input != cdef.InputBufferSize || sizeReq.SuperRes.OutputFrame == 0 {
+		t.Fatalf("scratch=%+v", sizeReq)
+	}
+	req.LoopFilter.Edges = make([]FrameWorkLoopFilterPostFilterEdge, sizeReq.LoopFilter.Edges)
+	req.SuperRes = testFrameWorkSuperResPostFilterRequest(t, ctx)
+
+	next, result, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterSuperRes
+	if result.Completed != wantCompleted ||
+		result.LoopFilter.Applied != 1 ||
+		result.CDEF.Units != 1 ||
+		result.SuperRes.Output.Format.Width != upscaledWidth ||
+		next.RemainingPostFilters() != 0 ||
+		!next.DetachedPostFilterOutput() {
+		t.Fatalf("next remaining=%b detached=%v result=%+v", next.RemainingPostFilters(), next.DetachedPostFilterOutput(), result)
+	}
+	if bytes.Equal(output.Y.Pix, before) {
+		t.Fatal("caller postfilter pipeline did not change coded luma samples before superres")
+	}
+	if err := next.RequirePublishablePostFilterOutput(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequirePublishablePostFilterOutput err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyPreSuperResPostFiltersRejectsShortCDEFScratchBeforeLoopFilterMutation(t *testing.T) {
 	const width = 32
 	const height = 16

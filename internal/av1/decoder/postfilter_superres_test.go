@@ -273,6 +273,83 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterToContextFeedsNoOpFilm
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyCallerPostFiltersRunsSuperResThenFilmGrain(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              32,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+		FilmGrain: parser.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			output.Y.Pix[y*output.Y.Stride+x] = 100
+		}
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	size, err := ctx.CallerPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.SuperRes.OutputFrame == 0 || size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("first scratch=%+v", size)
+	}
+	req := FrameWorkPostFilterRequest{
+		SuperRes: testFrameWorkSuperResPostFilterRequest(t, ctx),
+	}
+	size, err = ctx.CallerPostFilterScratchLen(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.SuperRes.OutputFrame == 0 || size.FilmGrain.LumaGrain == 0 || size.FilmGrain.LumaSamples == 0 {
+		t.Fatalf("second scratch=%+v", size)
+	}
+	req.FilmGrain = testFrameWorkFilmGrainPostFilterRequest(size.FilmGrain)
+
+	next, result, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterSuperRes | FrameWorkPostFilterFilmGrain
+	if result.Completed != wantCompleted ||
+		result.SuperRes.Output.Format.Width != 13 ||
+		result.FilmGrain.NoOp ||
+		result.FilmGrain.LumaRows != 1 ||
+		next.RemainingPostFilters() != 0 ||
+		!next.DetachedPostFilterOutput() {
+		t.Fatalf("next remaining=%b detached=%v result=%+v", next.RemainingPostFilters(), next.DetachedPostFilterOutput(), result)
+	}
+	if !testFrameWorkFilmGrainPlaneChangedFromValue(next.Output.Y, next.Output.Layout.BytesPerSample, 100) {
+		t.Fatal("film grain did not change detached superres output")
+	}
+	if output.Y.Pix[0] != 100 {
+		t.Fatalf("coded output mutated after detached stages: %d", output.Y.Pix[0])
+	}
+	if err := next.RequirePublishablePostFilterOutput(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequirePublishablePostFilterOutput err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortOutputScratch(t *testing.T) {
 	seq := testSequence()
 	event := Event{

@@ -237,6 +237,27 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilterToContext(req Frame
 	return ctx, result, nil
 }
 
+func (ctx FrameWorkPostFilterContext) bindSuperResPostFilterOutputContext(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, error) {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		return ctx, nil
+	}
+	plan, err := ctx.SuperResPostFilterPlan()
+	if err != nil {
+		return ctx, err
+	}
+	if len(req.OutputFrame) < plan.OutputSize {
+		return ctx, frame.ErrShortBuffer
+	}
+	output, err := frame.Bind(req.OutputFrame[:plan.OutputSize], plan.OutputFormat)
+	if err != nil {
+		return ctx, err
+	}
+	ctx.Output = &output
+	ctx.detachedPostFilterOutput = true
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterSuperRes)
+	return ctx, nil
+}
+
 func (ctx FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req FrameWorkSuperResPostFilterRequest) error {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
 		return nil
