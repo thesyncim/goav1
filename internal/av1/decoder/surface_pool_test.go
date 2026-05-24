@@ -58,6 +58,41 @@ func TestAcquireFrameSurface(t *testing.T) {
 	}
 }
 
+func TestFrameFormatHelpersKeepCodedSurfaceSeparateFromOutput(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:    16,
+		UpscaledWidth: 32,
+		Height:        16,
+	}
+	coded, err := codedFrameFormatFromHeaders(testSequence(), size, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := frameFormatFromHeaders(testSequence(), size, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coded != legacy || coded.Width != 16 {
+		t.Fatalf("coded=%+v legacy=%+v", coded, legacy)
+	}
+	output, err := outputFrameFormatFromHeaders(testSequence(), size, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Width != 32 || output.Height != 16 || output.BitDepth != testSequence().ColorConfig.BitDepth {
+		t.Fatalf("output=%+v", output)
+	}
+
+	pool := testFramePool(t, 1)
+	index, acquired, err := AcquireFrameSurface(&pool, testSequence(), size, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != 0 || acquired == nil || acquired.Format.Width != 16 {
+		t.Fatalf("index=%d acquired=%+v", index, acquired)
+	}
+}
+
 func TestAcquireFrameSurfaceRejectsFormatMismatch(t *testing.T) {
 	pool := testFramePool(t, 1)
 	_, _, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(32, 16), 32)

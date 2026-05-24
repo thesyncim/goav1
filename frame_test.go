@@ -24,6 +24,40 @@ func TestFrameFormatFromHeaders(t *testing.T) {
 	}
 }
 
+func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	size := FrameSize{
+		CodedWidth:    960,
+		UpscaledWidth: 1920,
+		Height:        1080,
+	}
+
+	coded, err := FrameCodedFormatFromHeaders(sequence, size, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := FrameFormatFromHeaders(sequence, size, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coded != legacy || coded.Width != 960 {
+		t.Fatalf("coded=%+v legacy=%+v", coded, legacy)
+	}
+
+	output, err := FrameOutputFormatFromHeaders(sequence, size, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Width != 1920 || output.Height != 1080 || output.BitDepth != 10 ||
+		!output.SubsamplingX || !output.SubsamplingY || output.Align != 64 {
+		t.Fatalf("output format=%+v", output)
+	}
+}
+
 func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
 	format, err := FrameFormatFromHeaders(
 		SequenceHeader{ColorConfig: ColorConfig{
@@ -49,5 +83,13 @@ func TestFrameFormatFromHeadersRejectsMissingState(t *testing.T) {
 	_, err := FrameFormatFromHeaders(SequenceHeader{}, FrameSize{CodedWidth: 16, Height: 16}, 1)
 	if !errors.Is(err, ErrFrameInvalidFormat) {
 		t.Fatalf("FrameFormatFromHeaders err=%v want %v", err, ErrFrameInvalidFormat)
+	}
+	_, err = FrameOutputFormatFromHeaders(
+		SequenceHeader{ColorConfig: ColorConfig{BitDepth: 8}},
+		FrameSize{CodedWidth: 16, Height: 16},
+		1,
+	)
+	if !errors.Is(err, ErrFrameInvalidFormat) {
+		t.Fatalf("FrameOutputFormatFromHeaders err=%v want %v", err, ErrFrameInvalidFormat)
 	}
 }

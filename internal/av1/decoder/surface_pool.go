@@ -8,7 +8,7 @@ import (
 // AcquireFrameSurface validates that pool storage matches the parsed AV1 frame
 // format before acquiring an output surface.
 func AcquireFrameSurface(pool *frame.Pool, sequence parser.SequenceHeader, size parser.FrameSize, align int) (int, *frame.Frame, error) {
-	format, err := frameFormatFromHeaders(sequence, size, align)
+	format, err := codedFrameFormatFromHeaders(sequence, size, align)
 	if err != nil {
 		return -1, nil, err
 	}
@@ -64,16 +64,28 @@ func ResolveFrameReferences(pool *frame.Pool, surfaces []int, dst []*frame.Frame
 }
 
 func frameFormatFromHeaders(sequence parser.SequenceHeader, size parser.FrameSize, align int) (frame.Format, error) {
-	if size.CodedWidth == 0 || size.Height == 0 || sequence.ColorConfig.BitDepth == 0 {
+	return codedFrameFormatFromHeaders(sequence, size, align)
+}
+
+func codedFrameFormatFromHeaders(sequence parser.SequenceHeader, size parser.FrameSize, align int) (frame.Format, error) {
+	return frameFormatFromHeaderWidth(sequence, size.CodedWidth, size.Height, align)
+}
+
+func outputFrameFormatFromHeaders(sequence parser.SequenceHeader, size parser.FrameSize, align int) (frame.Format, error) {
+	return frameFormatFromHeaderWidth(sequence, size.UpscaledWidth, size.Height, align)
+}
+
+func frameFormatFromHeaderWidth(sequence parser.SequenceHeader, width uint32, height uint32, align int) (frame.Format, error) {
+	if width == 0 || height == 0 || sequence.ColorConfig.BitDepth == 0 {
 		return frame.Format{}, frame.ErrInvalidFormat
 	}
 	maxInt := uint64(^uint(0) >> 1)
-	if uint64(size.CodedWidth) > maxInt || uint64(size.Height) > maxInt {
+	if uint64(width) > maxInt || uint64(height) > maxInt {
 		return frame.Format{}, frame.ErrInvalidFormat
 	}
 	return frame.Format{
-		Width:        int(size.CodedWidth),
-		Height:       int(size.Height),
+		Width:        int(width),
+		Height:       int(height),
 		BitDepth:     sequence.ColorConfig.BitDepth,
 		MonoChrome:   sequence.ColorConfig.MonoChrome,
 		SubsamplingX: sequence.ColorConfig.SubsamplingX,

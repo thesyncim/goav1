@@ -21,16 +21,28 @@ func FrameRequiredSize(format FrameFormat) (FrameLayout, error) {
 }
 
 func FrameFormatFromHeaders(sequence SequenceHeader, size FrameSize, align int) (FrameFormat, error) {
-	if size.CodedWidth == 0 || size.Height == 0 || sequence.ColorConfig.BitDepth == 0 {
+	return FrameCodedFormatFromHeaders(sequence, size, align)
+}
+
+func FrameCodedFormatFromHeaders(sequence SequenceHeader, size FrameSize, align int) (FrameFormat, error) {
+	return frameFormatFromHeaderWidth(sequence, size.CodedWidth, size.Height, align)
+}
+
+func FrameOutputFormatFromHeaders(sequence SequenceHeader, size FrameSize, align int) (FrameFormat, error) {
+	return frameFormatFromHeaderWidth(sequence, size.UpscaledWidth, size.Height, align)
+}
+
+func frameFormatFromHeaderWidth(sequence SequenceHeader, width uint32, height uint32, align int) (FrameFormat, error) {
+	if width == 0 || height == 0 || sequence.ColorConfig.BitDepth == 0 {
 		return FrameFormat{}, ErrFrameInvalidFormat
 	}
 	maxInt := uint64(^uint(0) >> 1)
-	if uint64(size.CodedWidth) > maxInt || uint64(size.Height) > maxInt {
+	if uint64(width) > maxInt || uint64(height) > maxInt {
 		return FrameFormat{}, ErrFrameInvalidFormat
 	}
 	return FrameFormat{
-		Width:        int(size.CodedWidth),
-		Height:       int(size.Height),
+		Width:        int(width),
+		Height:       int(height),
 		BitDepth:     sequence.ColorConfig.BitDepth,
 		MonoChrome:   sequence.ColorConfig.MonoChrome,
 		SubsamplingX: sequence.ColorConfig.SubsamplingX,
