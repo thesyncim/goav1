@@ -172,6 +172,98 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterWritesOutputScratch(t 
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySuperResPostFilterToContextCompletesStage(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              2,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for x, value := range []byte{0, 32, 64, 96, 128, 160, 192, 224} {
+		output.Y.Pix[x] = value
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkSuperResPostFilterRequest(t, ctx)
+	next, result, err := ctx.ApplySuperResPostFilterToContext(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Planes != 3 || next.RemainingPostFilters() != 0 {
+		t.Fatalf("result=%+v remaining=%b", result, next.RemainingPostFilters())
+	}
+	if next.Output == nil {
+		t.Fatal("next output is nil")
+	}
+	if next.Output == output || next.Output.Format.Width != 13 {
+		t.Fatalf("next output=%p format=%+v coded=%p", next.Output, next.Output.Format, output)
+	}
+	if got := next.Output.Y.Pix[1]; got != 11 {
+		t.Fatalf("upscaled Y[1]=%d want 11", got)
+	}
+	if output.Y.Pix[1] != 32 {
+		t.Fatalf("coded output mutated: %d", output.Y.Pix[1])
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySuperResPostFilterToContextFeedsNoOpFilmGrain(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              2,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+		FilmGrain: parser.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			BitDepth:      8,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for x, value := range []byte{0, 32, 64, 96, 128, 160, 192, 224} {
+		output.Y.Pix[x] = value
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkSuperResPostFilterRequest(t, ctx)
+	next, result, err := ctx.ApplySuperResPostFilterToContext(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output.Format.Width != 13 || next.RemainingPostFilters() != FrameWorkPostFilterFilmGrain {
+		t.Fatalf("superres result=%+v remaining=%b", result, next.RemainingPostFilters())
+	}
+	filmGrainResult, err := next.ApplyFilmGrainPostFilter(FrameWorkFilmGrainPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filmGrainResult.NoOp || filmGrainResult.Plan.Format.Width != 13 {
+		t.Fatalf("film grain result=%+v", filmGrainResult)
+	}
+	next = next.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortOutputScratch(t *testing.T) {
 	seq := testSequence()
 	event := Event{

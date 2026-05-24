@@ -161,7 +161,7 @@ func frameWorkSuperResPlanePlan(codedWidth int, outputWidth int, height int, byt
 
 // ApplySuperResPostFilter upscales ctx.Output into caller-owned scratch and
 // returns an output-format frame view. It does not replace the published frame
-// surface or mark superres complete in the normal postfilter runner.
+// surface.
 func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuperResPostFilterRequest) (FrameWorkSuperResPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	preSuperRes := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF
@@ -217,6 +217,23 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		result.Planes++
 	}
 	return result, nil
+}
+
+// ApplySuperResPostFilterToContext upscales into caller-owned scratch and
+// returns a callback-local context that reads subsequent postfilters from the
+// detached output frame. It does not replace the frame-pool surface that the
+// normal framework publication path owns.
+func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilterToContext(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkSuperResPostFilterResult, error) {
+	result, err := ctx.ApplySuperResPostFilter(req)
+	if err != nil {
+		return ctx, result, err
+	}
+	if !result.Plan.Active {
+		return ctx, result, nil
+	}
+	ctx.Output = &result.Output
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterSuperRes)
+	return ctx, result, nil
 }
 
 func (ctx FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req FrameWorkSuperResPostFilterRequest) error {
