@@ -170,6 +170,13 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsCDEF(t *testing.
 	cdefMap := req.IndexMap
 	ctx.CDEFIndexMap = &cdefMap
 	req.IndexMap = FrameWorkCDEFIndexMap{}
+	size, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{CDEF: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.CDEF.Input != cdef.InputBufferSize || size.CDEF.UnitDst != cdef.InputBufferSize {
+		t.Fatalf("CDEF scratch=%+v", size.CDEF)
+	}
 	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{CDEF: req})
 	if err != nil {
 		t.Fatal(err)
@@ -204,6 +211,9 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBe
 			},
 		},
 		Output: output,
+	}
+	if _, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{}); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("SupportedPostFilterScratchLen err=%v want %v", err, ErrUnsupportedPostFilter)
 	}
 	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{})
 	if !errors.Is(err, ErrUnsupportedPostFilter) {

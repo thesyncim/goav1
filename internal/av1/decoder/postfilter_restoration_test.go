@@ -126,6 +126,13 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterDefaultsBuffers
 		t.Fatal(err)
 	}
 	ctx := FrameWorkPostFilterContext{Event: event, Output: output, RestorationFrameBuffers: &buffers}
+	pipelineSize, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pipelineSize.Restoration.Samples.DataLen == 0 || pipelineSize.Restoration.Samples.DstLen == 0 {
+		t.Fatalf("pipeline scratch=%+v", pipelineSize.Restoration)
+	}
 	size, err := ctx.LoopRestorationPostFilterScratchLen(buffers.Records, false)
 	if err != nil {
 		t.Fatal(err)

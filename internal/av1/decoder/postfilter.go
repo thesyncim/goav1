@@ -34,6 +34,13 @@ type FrameWorkRestorationPostFilterScratchSize struct {
 	Apply   tile.RestorationUnitRecordBoundaryScratchSize
 }
 
+// FrameWorkPostFilterScratchSize reports caller-owned scratch needed by the
+// supported frame-level postfilter pipeline.
+type FrameWorkPostFilterScratchSize struct {
+	CDEF        FrameWorkCDEFPostFilterScratchSize
+	Restoration FrameWorkRestorationPostFilterScratchSize
+}
+
 // FrameWorkRestorationPostFilterRequest carries decoded loop-restoration state
 // and caller-owned scratch for ApplyLoopRestorationPostFilter.
 type FrameWorkRestorationPostFilterRequest struct {
@@ -115,6 +122,37 @@ func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
 		return ErrUnsupportedPostFilter
 	}
 	return nil
+}
+
+// SupportedPostFilterScratchLen reports scratch lengths needed by
+// ApplySupportedPostFilters. It rejects frames requiring unsupported stages
+// before callers allocate scratch for a pipeline that cannot complete.
+func (ctx FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+	remaining := ctx.RemainingPostFilters()
+	supported := FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
+	if remaining&^supported != 0 {
+		return FrameWorkPostFilterScratchSize{}, ErrUnsupportedPostFilter
+	}
+	var size FrameWorkPostFilterScratchSize
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.CDEF = cdefSize
+	}
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
+		records := req.Restoration.Records
+		if frameWorkRestorationRecordsEmpty(records) && ctx.RestorationFrameBuffers != nil {
+			records = ctx.RestorationFrameBuffers.Records
+		}
+		restorationSize, err := ctx.LoopRestorationPostFilterScratchLen(records, req.Restoration.Optimized)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.Restoration = restorationSize
+	}
+	return size, nil
 }
 
 // ApplySupportedPostFilters runs the currently integrated postfilter stages in
