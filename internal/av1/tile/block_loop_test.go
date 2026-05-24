@@ -314,7 +314,8 @@ func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
 	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1, Prefixes: 1, PredictionModes: 1, IntraModes: 1}) {
 		t.Fatalf("stats=%+v", stats)
 	}
-	if !got.Prediction.Valid || !got.Prediction.Intra || got.Prediction.LumaMode != IntraModeDC {
+	if !got.Prediction.Valid || !got.Prediction.Intra || got.Prediction.LumaMode != IntraModeDC ||
+		!got.Prediction.ChromaModeValid || got.Prediction.ChromaMode != ChromaIntraModeDC {
 		t.Fatalf("prediction=%+v", got.Prediction)
 	}
 	if scratch.Mode.AboveIntra[0] != 1 || scratch.Mode.LeftIntra[0] != 1 ||
@@ -324,6 +325,9 @@ func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
 	}
 	if got := intraCDFs.KeyframeYMode[0][0].Values()[int(intraModeCount)]; got != 1 {
 		t.Fatalf("keyframe ymode count=%d want 1", got)
+	}
+	if got := intraCDFs.UVMode[0][IntraModeDC].Values()[int(chromaIntraModeCount-1)]; got != 1 {
+		t.Fatalf("uvmode count=%d want 1", got)
 	}
 }
 
@@ -719,7 +723,7 @@ func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +776,7 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 		X4:      0,
 		Y4:      0,
 		HaveTop: true,
-	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1})
 	if !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
@@ -816,7 +820,7 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -905,7 +909,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, parser.SegmentData{RefFrame: 1})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,7 +959,7 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 		Size: BlockSize16x16,
 		X4:   0,
 		Y4:   0,
-	}, BlockModeResult{SkipMode: true}, parser.SegmentData{RefFrame: -1})
+	}, BlockModeResult{SkipMode: true}, 0, parser.SegmentData{RefFrame: -1})
 	if err != nil {
 		t.Fatal(err)
 	}

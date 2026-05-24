@@ -26,6 +26,11 @@ func TestIntraModeCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 		{name: "ymode ctx3", cdf: &cdfs.YMode[3], want: []uint16{12613, 11467, 9930, 9590, 9507, 9235, 9065, 7964, 7416, 6193, 5752, 4719, 0, 0}},
 		{name: "keyframe ymode 0,0", cdf: &cdfs.KeyframeYMode[0][0], want: []uint16{17180, 15741, 13430, 12550, 12086, 11658, 10943, 9524, 8579, 4603, 3675, 2302, 0, 0}},
 		{name: "keyframe ymode 4,4", cdf: &cdfs.KeyframeYMode[4][4], want: []uint16{25150, 24480, 22909, 22259, 17382, 14111, 9865, 3992, 3588, 1413, 966, 175, 0, 0}},
+		{name: "uv no cfl dc", cdf: &cdfs.UVMode[0][IntraModeDC], want: []uint16{10137, 8616, 7390, 7107, 6782, 6248, 5713, 4845, 4524, 2709, 1827, 807, 0, 0}},
+		{name: "uv cfl paeth", cdf: &cdfs.UVMode[1][IntraModePaeth], want: []uint16{29624, 27681, 25386, 25264, 25175, 25078, 24967, 24704, 24536, 23520, 22893, 22247, 3720, 0, 0}},
+		{name: "angle delta vertical", cdf: &cdfs.AngleDelta[0], want: []uint16{30588, 27736, 25201, 9992, 5779, 2551, 0, 0}},
+		{name: "cfl sign", cdf: &cdfs.CFLSign, want: []uint16{31350, 30645, 19428, 14363, 5796, 4425, 474, 0, 0}},
+		{name: "cfl alpha ctx0", cdf: &cdfs.CFLAlpha[0], want: []uint16{25131, 12049, 1367, 287, 111, 80, 76, 72, 68, 64, 60, 56, 52, 48, 44, 0, 0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,6 +234,94 @@ func TestReadLumaIntraMode(t *testing.T) {
 	}
 }
 
+func TestReadIntraAngleDeltaAndChromaMode(t *testing.T) {
+	var cdfs IntraModeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00}, Job{Offset: 0, Size: 2}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	delta, err := state.ReadIntraAngleDelta(&cdfs, IntraAngleDeltaRequest{
+		Size: BlockSize16x16,
+		Mode: IntraModeD45,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta != -3 {
+		t.Fatalf("angle delta=%d want -3", delta)
+	}
+	if got := cdfs.AngleDelta[IntraModeD45-IntraModeVertical].Values()[2*AngleDeltaMax+1]; got != 1 {
+		t.Fatalf("angle cdf count=%d want 1", got)
+	}
+
+	mode, alpha, err := state.ReadChromaIntraMode(&cdfs, ChromaIntraModeRequest{
+		Size:       BlockSize16x16,
+		LumaMode:   IntraModeDC,
+		CFLAllowed: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != ChromaIntraModeDC || alpha != (CFLAlphaResult{}) {
+		t.Fatalf("chroma mode=%d alpha=%+v want dc/no alpha", mode, alpha)
+	}
+	if got := cdfs.UVMode[0][IntraModeDC].Values()[int(chromaIntraModeCount-1)]; got != 1 {
+		t.Fatalf("uv cdf count=%d want 1", got)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	alpha, err = state.ReadCFLAlphas(&cdfs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alpha.JointSign != 0 || alpha.Index != 0 {
+		t.Fatalf("cfl alpha=%+v want sign=0 index=0", alpha)
+	}
+	if got := cdfs.CFLSign.Values()[CFLJointSigns]; got != 1 {
+		t.Fatalf("cfl sign count=%d want 1", got)
+	}
+	if got := cdfs.CFLAlpha[0].Values()[CFLAlphabetSize]; got != 1 {
+		t.Fatalf("cfl alpha count=%d want 1", got)
+	}
+}
+
+func TestChromaIntraCFLAllowedMatchesLibaom(t *testing.T) {
+	color420 := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	tests := []struct {
+		name     string
+		size     BlockSize
+		color    parser.ColorConfig
+		lossless bool
+		want     bool
+	}{
+		{name: "32x32", size: BlockSize32x32, color: color420, want: true},
+		{name: "64x16 too wide", size: BlockSize64x16, color: color420, want: false},
+		{name: "16x64 too high", size: BlockSize16x64, color: color420, want: false},
+		{name: "lossless 8x8 420 plane 4x4", size: BlockSize8x8, color: color420, lossless: true, want: true},
+		{name: "lossless 16x16 420 plane 8x8", size: BlockSize16x16, color: color420, lossless: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ChromaIntraCFLAllowed(tt.size, tt.color, tt.lossless)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("allowed=%v want %v", got, tt.want)
+			}
+		})
+	}
+	if _, err := ChromaIntraCFLAllowed(BlockSize8x8, parser.ColorConfig{MonoChrome: true}, false); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("monochrome err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 func TestIntraRejectsInvalidInputs(t *testing.T) {
 	var cdfs IntraModeCDFs
 	if _, err := cdfs.IntraCDF(0); !errors.Is(err, entropy.ErrInvalidCDF) {
@@ -268,6 +361,15 @@ func TestIntraRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := state.ReadLumaIntraMode(&cdfs, &ctx, LumaIntraModeRequest{Size: blockSizeCount}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad luma mode err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, err := cdfs.UVModeCDF(false, intraModeCount); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("bad uv cdf err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+	if _, err := cdfs.AngleDeltaCDF(IntraModeDC); !errors.Is(err, entropy.ErrInvalidCDF) {
+		t.Fatalf("bad angle cdf err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+	if _, _, err := state.ReadChromaIntraMode(&cdfs, ChromaIntraModeRequest{Size: blockSizeCount, LumaMode: IntraModeDC}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("bad chroma mode err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 

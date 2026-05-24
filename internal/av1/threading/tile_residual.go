@@ -207,6 +207,8 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		Delta:               b.Delta,
 		SBSizeMIB:           b.Sequence.SBSizeMIB,
 		Monochrome:          b.Sequence.ColorConfig.MonoChrome,
+		Color:               b.Sequence.ColorConfig,
+		Lossless:            b.Segmentation.AllLossless,
 		CurrentSegmentMap:   currentSegmentMap,
 		PreviousSegmentMap:  previousSegmentMap,
 		SegmentMapStride:    segmentMapStride,

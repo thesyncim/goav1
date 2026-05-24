@@ -8,6 +8,13 @@ import (
 const (
 	LumaIntraModeContexts     = 4
 	KeyframeIntraModeContexts = 5
+	CFLAllowedTypes           = 2
+	DirectionalIntraModes     = 8
+	CFLJointSigns             = 8
+	CFLAlphaContexts          = 6
+	CFLAlphabetSize           = 16
+	AngleDeltaMax             = 3
+	AngleDeltaStep            = 3
 )
 
 // IntraMode identifies an AV1 luma intra prediction mode.
@@ -30,13 +37,44 @@ const (
 	intraModeCount
 )
 
-// IntraModeCDFs contains caller-owned CDFs for AV1 intra/inter entry and luma
-// intra mode syntax.
+// ChromaIntraMode identifies an AV1 UV intra prediction mode.
+type ChromaIntraMode uint8
+
+const (
+	ChromaIntraModeDC ChromaIntraMode = iota
+	ChromaIntraModeVertical
+	ChromaIntraModeHorizontal
+	ChromaIntraModeD45
+	ChromaIntraModeD135
+	ChromaIntraModeD113
+	ChromaIntraModeD157
+	ChromaIntraModeD203
+	ChromaIntraModeD67
+	ChromaIntraModeSmooth
+	ChromaIntraModeSmoothVertical
+	ChromaIntraModeSmoothHorizontal
+	ChromaIntraModePaeth
+	ChromaIntraModeCFL
+	chromaIntraModeCount
+)
+
+// CFLAlphaResult carries libaom's packed CfL alpha index and joint-sign symbol.
+type CFLAlphaResult struct {
+	Index     uint8
+	JointSign int8
+}
+
+// IntraModeCDFs contains caller-owned CDFs for AV1 intra/inter entry, luma/UV
+// intra mode, directional angle delta, and CfL alpha syntax.
 type IntraModeCDFs struct {
 	Intra         [LumaIntraModeContexts]entropy.CDF
 	Intrabc       entropy.CDF
 	YMode         [LumaIntraModeContexts]entropy.CDF
 	KeyframeYMode [KeyframeIntraModeContexts][KeyframeIntraModeContexts]entropy.CDF
+	UVMode        [CFLAllowedTypes][intraModeCount]entropy.CDF
+	AngleDelta    [DirectionalIntraModes]entropy.CDF
+	CFLSign       entropy.CDF
+	CFLAlpha      [CFLAlphaContexts]entropy.CDF
 }
 
 // IntraFlagRequest describes the frame/block conditions used to decide whether
@@ -63,6 +101,19 @@ type LumaIntraModeRequest struct {
 	Y4        int
 }
 
+// IntraAngleDeltaRequest describes one directional intra angle delta symbol.
+type IntraAngleDeltaRequest struct {
+	Size BlockSize
+	Mode IntraMode
+}
+
+// ChromaIntraModeRequest describes one UV intra mode symbol.
+type ChromaIntraModeRequest struct {
+	Size       BlockSize
+	LumaMode   IntraMode
+	CFLAllowed bool
+}
+
 // BlockPredictionModeResult is the luma entry/mode syntax decoded after the
 // block prefix. Inter MV residuals and reconstruction are decoded by later
 // mode stages.
@@ -70,7 +121,14 @@ type BlockPredictionModeResult struct {
 	Valid bool
 	Intra bool
 
-	LumaMode IntraMode
+	LumaMode       IntraMode
+	LumaAngleDelta int8
+
+	ChromaMode       ChromaIntraMode
+	ChromaModeValid  bool
+	ChromaAngleDelta int8
+	CFLAlpha         CFLAlphaResult
+	CFLAlphaValid    bool
 
 	InterReferences      InterReferencesResult
 	InterReferencesValid bool
@@ -149,6 +207,22 @@ func (mode IntraMode) Valid() bool {
 	return mode < intraModeCount
 }
 
+// Valid reports whether mode is an AV1 UV intra prediction mode.
+func (mode ChromaIntraMode) Valid() bool {
+	return mode < chromaIntraModeCount
+}
+
+// LumaMode returns the luma predictor that libaom uses for this UV mode.
+func (mode ChromaIntraMode) LumaMode() (IntraMode, error) {
+	if !mode.Valid() {
+		return 0, ErrInvalidDecodeState
+	}
+	if mode == ChromaIntraModeCFL {
+		return IntraModeDC, nil
+	}
+	return IntraMode(mode), nil
+}
+
 // InitDefault seeds c with dav1d/libaom's default intra-mode CDFs.
 func (c *IntraModeCDFs) InitDefault() error {
 	if c == nil {
@@ -218,6 +292,75 @@ func (c *IntraModeCDFs) InitDefault() error {
 			}
 		}
 	}
+	defaultUVNoCFL := [...][chromaIntraModeCount - 2]uint16{
+		{22631, 24152, 25378, 25661, 25986, 26520, 27055, 27923, 28244, 30059, 30941, 31961},
+		{9513, 26881, 26973, 27046, 27118, 27664, 27739, 27824, 28359, 29505, 29800, 31796},
+		{9845, 9915, 28663, 28704, 28757, 28780, 29198, 29822, 29854, 30764, 31777, 32029},
+		{13639, 13897, 14171, 25331, 25606, 25727, 25953, 27148, 28577, 30612, 31355, 32493},
+		{9764, 9835, 9930, 9954, 25386, 27053, 27958, 28148, 28243, 31101, 31744, 32363},
+		{11825, 13589, 13677, 13720, 15048, 29213, 29301, 29458, 29711, 31161, 31441, 32550},
+		{14175, 14399, 16608, 16821, 17718, 17775, 28551, 30200, 30245, 31837, 32342, 32667},
+		{12885, 13038, 14978, 15590, 15673, 15748, 16176, 29128, 29267, 30643, 31961, 32461},
+		{12026, 13661, 13874, 15305, 15490, 15726, 15995, 16273, 28443, 30388, 30767, 32416},
+		{19052, 19840, 20579, 20916, 21150, 21467, 21885, 22719, 23174, 28861, 30379, 32175},
+		{18627, 19649, 20974, 21219, 21492, 21816, 22199, 23119, 23527, 27053, 31397, 32148},
+		{17026, 19004, 19997, 20339, 20586, 21103, 21349, 21907, 22482, 25896, 26541, 31819},
+		{12124, 13759, 14959, 14992, 15007, 15051, 15078, 15166, 15255, 15753, 16039, 16606},
+	}
+	defaultUVCFL := [...][chromaIntraModeCount - 1]uint16{
+		{10407, 11208, 12900, 13181, 13823, 14175, 14899, 15656, 15986, 20086, 20995, 22455, 24212},
+		{4532, 19780, 20057, 20215, 20428, 21071, 21199, 21451, 22099, 24228, 24693, 27032, 29472},
+		{5273, 5379, 20177, 20270, 20385, 20439, 20949, 21695, 21774, 23138, 24256, 24703, 26679},
+		{6740, 7167, 7662, 14152, 14536, 14785, 15034, 16741, 18371, 21520, 22206, 23389, 24182},
+		{4987, 5368, 5928, 6068, 19114, 20315, 21857, 22253, 22411, 24911, 25380, 26027, 26376},
+		{5370, 6889, 7247, 7393, 9498, 21114, 21402, 21753, 21981, 24780, 25386, 26517, 27176},
+		{4816, 4961, 7204, 7326, 8765, 8930, 20169, 20682, 20803, 23188, 23763, 24455, 24940},
+		{6608, 6740, 8529, 9049, 9257, 9356, 9735, 18827, 19059, 22336, 23204, 23964, 24793},
+		{5998, 7419, 7781, 8933, 9255, 9549, 9753, 10417, 18898, 22494, 23139, 24764, 25989},
+		{10660, 11298, 12550, 12957, 13322, 13624, 14040, 15004, 15534, 20714, 21789, 23443, 24861},
+		{10522, 11530, 12552, 12963, 13378, 13779, 14245, 15235, 15902, 20102, 22696, 23774, 25838},
+		{10099, 10691, 12639, 13049, 13386, 13665, 14125, 15163, 15636, 19676, 20474, 23519, 25208},
+		{3144, 5087, 7382, 7504, 7593, 7690, 7801, 8064, 8232, 9248, 9875, 10521, 29048},
+	}
+	for y := range defaultUVNoCFL {
+		if err := next.UVMode[0][y].Init(defaultUVNoCFL[y][:]); err != nil {
+			return err
+		}
+		if err := next.UVMode[1][y].Init(defaultUVCFL[y][:]); err != nil {
+			return err
+		}
+	}
+	defaultAngleDelta := [...][2 * AngleDeltaMax]uint16{
+		{2180, 5032, 7567, 22776, 26989, 30217},
+		{2301, 5608, 8801, 23487, 26974, 30330},
+		{3780, 11018, 13699, 19354, 23083, 31286},
+		{4581, 11226, 15147, 17138, 21834, 28397},
+		{1737, 10927, 14509, 19588, 22745, 28823},
+		{2664, 10176, 12485, 17650, 21600, 30495},
+		{2240, 11096, 15453, 20341, 22561, 28917},
+		{3605, 10428, 12459, 17676, 21244, 30655},
+	}
+	for i := range defaultAngleDelta {
+		if err := next.AngleDelta[i].Init(defaultAngleDelta[i][:]); err != nil {
+			return err
+		}
+	}
+	if err := next.CFLSign.Init([]uint16{1418, 2123, 13340, 18405, 26972, 28343, 32294}); err != nil {
+		return err
+	}
+	defaultCFLAlpha := [...][CFLAlphabetSize - 1]uint16{
+		{7637, 20719, 31401, 32481, 32657, 32688, 32692, 32696, 32700, 32704, 32708, 32712, 32716, 32720, 32724},
+		{14365, 23603, 28135, 31168, 32167, 32395, 32487, 32573, 32620, 32647, 32668, 32672, 32676, 32680, 32684},
+		{11532, 22380, 28445, 31360, 32349, 32523, 32584, 32649, 32673, 32677, 32681, 32685, 32689, 32693, 32697},
+		{26990, 31402, 32282, 32571, 32692, 32696, 32700, 32704, 32708, 32712, 32716, 32720, 32724, 32728, 32732},
+		{17248, 26058, 28904, 30608, 31305, 31877, 32126, 32321, 32394, 32464, 32516, 32560, 32576, 32593, 32622},
+		{14738, 21678, 25779, 27901, 29024, 30302, 30980, 31843, 32144, 32413, 32520, 32594, 32622, 32656, 32660},
+	}
+	for i := range defaultCFLAlpha {
+		if err := next.CFLAlpha[i].Init(defaultCFLAlpha[i][:]); err != nil {
+			return err
+		}
+	}
 	*c = next
 	return nil
 }
@@ -249,6 +392,57 @@ func (c *IntraModeCDFs) KeyframeYModeCDF(above int, left int) (*entropy.CDF, err
 	}
 	cdf := &c.KeyframeYMode[above][left]
 	if cdf.Symbols() != int(intraModeCount) {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
+// UVModeCDF returns the initialized UV intra-mode CDF for luma mode and CfL
+// availability.
+func (c *IntraModeCDFs) UVModeCDF(cflAllowed bool, lumaMode IntraMode) (*entropy.CDF, error) {
+	if c == nil || !lumaMode.Valid() {
+		return nil, entropy.ErrInvalidCDF
+	}
+	allowed := 0
+	symbols := int(chromaIntraModeCount - 1)
+	if cflAllowed {
+		allowed = 1
+		symbols = int(chromaIntraModeCount)
+	}
+	cdf := &c.UVMode[allowed][lumaMode]
+	if cdf.Symbols() != symbols {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
+// AngleDeltaCDF returns the initialized directional intra angle-delta CDF.
+func (c *IntraModeCDFs) AngleDeltaCDF(mode IntraMode) (*entropy.CDF, error) {
+	if c == nil || !isDirectionalIntraMode(mode) {
+		return nil, entropy.ErrInvalidCDF
+	}
+	cdf := &c.AngleDelta[mode-IntraModeVertical]
+	if cdf.Symbols() != 2*AngleDeltaMax+1 {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
+// CFLSignCDF returns the initialized CfL joint-sign CDF.
+func (c *IntraModeCDFs) CFLSignCDF() (*entropy.CDF, error) {
+	if c == nil || c.CFLSign.Symbols() != CFLJointSigns {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return &c.CFLSign, c.CFLSign.Validate()
+}
+
+// CFLAlphaCDF returns the initialized CfL alpha-magnitude CDF for ctx.
+func (c *IntraModeCDFs) CFLAlphaCDF(ctx int) (*entropy.CDF, error) {
+	if c == nil || ctx < 0 || ctx >= CFLAlphaContexts {
+		return nil, entropy.ErrInvalidCDF
+	}
+	cdf := &c.CFLAlpha[ctx]
+	if cdf.Symbols() != CFLAlphabetSize {
 		return nil, entropy.ErrInvalidCDF
 	}
 	return cdf, cdf.Validate()
@@ -438,6 +632,114 @@ func (s *DecodeState) ReadLumaIntraMode(cdfs *IntraModeCDFs, ctx *BlockModeConte
 	return mode, nil
 }
 
+// ReadIntraAngleDelta decodes the optional directional intra angle delta.
+func (s *DecodeState) ReadIntraAngleDelta(cdfs *IntraModeCDFs, req IntraAngleDeltaRequest) (int8, error) {
+	if s == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	read, err := shouldReadIntraAngleDelta(req.Size, req.Mode)
+	if err != nil || !read {
+		return 0, err
+	}
+	cdf, err := cdfs.AngleDeltaCDF(req.Mode)
+	if err != nil {
+		return 0, err
+	}
+	symbol, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return 0, err
+	}
+	return int8(symbol - AngleDeltaMax), nil
+}
+
+// ReadChromaIntraMode decodes the UV intra mode and optional CfL alphas.
+func (s *DecodeState) ReadChromaIntraMode(cdfs *IntraModeCDFs, req ChromaIntraModeRequest) (ChromaIntraMode, CFLAlphaResult, error) {
+	if s == nil || !req.LumaMode.Valid() {
+		return 0, CFLAlphaResult{}, ErrInvalidDecodeState
+	}
+	if _, ok := req.Size.Dimensions(); !ok {
+		return 0, CFLAlphaResult{}, ErrInvalidDecodeState
+	}
+	cdf, err := cdfs.UVModeCDF(req.CFLAllowed, req.LumaMode)
+	if err != nil {
+		return 0, CFLAlphaResult{}, err
+	}
+	symbol, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return 0, CFLAlphaResult{}, err
+	}
+	mode := ChromaIntraMode(symbol)
+	if !mode.Valid() || (!req.CFLAllowed && mode == ChromaIntraModeCFL) {
+		return 0, CFLAlphaResult{}, ErrInvalidDecodeState
+	}
+	if mode != ChromaIntraModeCFL {
+		return mode, CFLAlphaResult{}, nil
+	}
+	alpha, err := s.ReadCFLAlphas(cdfs)
+	if err != nil {
+		return 0, CFLAlphaResult{}, err
+	}
+	return mode, alpha, nil
+}
+
+// ReadCFLAlphas decodes libaom's packed CfL alpha index and joint sign.
+func (s *DecodeState) ReadCFLAlphas(cdfs *IntraModeCDFs) (CFLAlphaResult, error) {
+	if s == nil {
+		return CFLAlphaResult{}, ErrInvalidDecodeState
+	}
+	signCDF, err := cdfs.CFLSignCDF()
+	if err != nil {
+		return CFLAlphaResult{}, err
+	}
+	jointSign, err := s.Reader.ReadCDF(signCDF)
+	if err != nil {
+		return CFLAlphaResult{}, err
+	}
+	if jointSign < 0 || jointSign >= CFLJointSigns {
+		return CFLAlphaResult{}, ErrInvalidDecodeState
+	}
+	var idx uint8
+	if cflSignU(jointSign) != cflSignZero {
+		cdf, err := cdfs.CFLAlphaCDF(cflContextU(jointSign))
+		if err != nil {
+			return CFLAlphaResult{}, err
+		}
+		alpha, err := s.Reader.ReadCDF(cdf)
+		if err != nil {
+			return CFLAlphaResult{}, err
+		}
+		idx = uint8(alpha << 4)
+	}
+	if cflSignV(jointSign) != cflSignZero {
+		cdf, err := cdfs.CFLAlphaCDF(cflContextV(jointSign))
+		if err != nil {
+			return CFLAlphaResult{}, err
+		}
+		alpha, err := s.Reader.ReadCDF(cdf)
+		if err != nil {
+			return CFLAlphaResult{}, err
+		}
+		idx += uint8(alpha)
+	}
+	return CFLAlphaResult{Index: idx, JointSign: int8(jointSign)}, nil
+}
+
+// ChromaIntraCFLAllowed reports libaom/dav1d's CfL availability for a block.
+func ChromaIntraCFLAllowed(size BlockSize, color parser.ColorConfig, lossless bool) (bool, error) {
+	dims, ok := size.Dimensions()
+	if !ok || color.MonoChrome {
+		return false, ErrInvalidDecodeState
+	}
+	if lossless {
+		planeSize, err := PlaneBlockSize(size, color, 1)
+		if err != nil {
+			return false, err
+		}
+		return planeSize == BlockSize4x4, nil
+	}
+	return dims.W4 <= 8 && dims.H4 <= 8, nil
+}
+
 type intraCDFKind uint8
 
 const (
@@ -466,4 +768,39 @@ func intraModeCDF(c *IntraModeCDFs, kind intraCDFKind, ctx int, symbols int) (*e
 
 func frameTypeIsInterOrSwitch(frameType parser.FrameType) bool {
 	return frameType == parser.FrameTypeInter || frameType == parser.FrameTypeSwitch
+}
+
+const (
+	cflSignZero     = 0
+	cflSignNegative = 1
+	cflSignPositive = 2
+	cflSigns        = 3
+)
+
+func shouldReadIntraAngleDelta(size BlockSize, mode IntraMode) (bool, error) {
+	dims, ok := size.Dimensions()
+	if !ok || !mode.Valid() {
+		return false, ErrInvalidDecodeState
+	}
+	return dims.Log2W+dims.Log2H >= 2 && isDirectionalIntraMode(mode), nil
+}
+
+func isDirectionalIntraMode(mode IntraMode) bool {
+	return mode >= IntraModeVertical && mode <= IntraModeD67
+}
+
+func cflSignU(jointSign int) int {
+	return ((jointSign + 1) * 11) >> 5
+}
+
+func cflSignV(jointSign int) int {
+	return (jointSign + 1) - cflSigns*cflSignU(jointSign)
+}
+
+func cflContextU(jointSign int) int {
+	return jointSign + 1 - cflSigns
+}
+
+func cflContextV(jointSign int) int {
+	return cflSignV(jointSign)*cflSigns + cflSignU(jointSign) - cflSigns
 }

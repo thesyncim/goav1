@@ -504,7 +504,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 
 	var prediction BlockPredictionModeResult
 	if req.DecodePredictionModes {
-		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segment)
+		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment)
 		if err != nil {
 			return BlockLoopVisit{}, err
 		}
@@ -555,7 +555,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	return visit, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segment parser.SegmentData) (BlockPredictionModeResult, error) {
+func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData) (BlockPredictionModeResult, error) {
 	intra, err := s.ReadIntraFlag(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
@@ -742,6 +742,48 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		return BlockPredictionModeResult{}, err
 	}
 	result.LumaMode = mode
+	lumaAngleDelta, err := s.ReadIntraAngleDelta(cdfs.Intra, IntraAngleDeltaRequest{
+		Size: block.Size,
+		Mode: mode,
+	})
+	if err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	result.LumaAngleDelta = lumaAngleDelta
+	if HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color) {
+		lossless := req.Lossless || req.Segmentation.Lossless[segmentID]
+		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, lossless)
+		if err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		chromaMode, cflAlpha, err := s.ReadChromaIntraMode(cdfs.Intra, ChromaIntraModeRequest{
+			Size:       block.Size,
+			LumaMode:   mode,
+			CFLAllowed: cflAllowed,
+		})
+		if err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		result.ChromaMode = chromaMode
+		result.ChromaModeValid = true
+		if chromaMode == ChromaIntraModeCFL {
+			result.CFLAlpha = cflAlpha
+			result.CFLAlphaValid = true
+		} else {
+			chromaLumaMode, err := chromaMode.LumaMode()
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			chromaAngleDelta, err := s.ReadIntraAngleDelta(cdfs.Intra, IntraAngleDeltaRequest{
+				Size: block.Size,
+				Mode: chromaLumaMode,
+			})
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			result.ChromaAngleDelta = chromaAngleDelta
+		}
+	}
 	return result, nil
 }
 

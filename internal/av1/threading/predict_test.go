@@ -549,6 +549,38 @@ func TestFrameWorkBatchPredictBlockDispatchesCompletePlanes(t *testing.T) {
 		t.Fatalf("mono intra sample=%d want 30", got)
 	}
 
+	colorIntra := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	colorIntraCtx := testIntraPredictionBatch(colorIntra)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(colorIntra.Y, colorIntra.Layout.BytesPerSample, x, 15, 10)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(colorIntra.Y, colorIntra.Layout.BytesPerSample, 15, y, 50)
+	}
+	for x := 8; x < 16; x++ {
+		setFrameWorkTestSample(colorIntra.U, colorIntra.Layout.BytesPerSample, x, 7, 20)
+		setFrameWorkTestSample(colorIntra.V, colorIntra.Layout.BytesPerSample, x, 7, 30)
+	}
+	for y := 8; y < 16; y++ {
+		setFrameWorkTestSample(colorIntra.U, colorIntra.Layout.BytesPerSample, 7, y, 60)
+		setFrameWorkTestSample(colorIntra.V, colorIntra.Layout.BytesPerSample, 7, y, 70)
+	}
+	colorVisit := testIntraPredictionVisit(tile.IntraModeDC)
+	colorVisit.Prediction.ChromaMode = tile.ChromaIntraModeDC
+	colorVisit.Prediction.ChromaModeValid = true
+	if err := colorIntraCtx.PredictBlock(0, colorVisit, &predictionScratch); err != nil {
+		t.Fatal(err)
+	}
+	if got := frameWorkTestSample(colorIntra.Y, colorIntra.Layout.BytesPerSample, 16, 16); got != 30 {
+		t.Fatalf("color intra y sample=%d want 30", got)
+	}
+	if got := frameWorkTestSample(colorIntra.U, colorIntra.Layout.BytesPerSample, 8, 8); got != 40 {
+		t.Fatalf("color intra u sample=%d want 40", got)
+	}
+	if got := frameWorkTestSample(colorIntra.V, colorIntra.Layout.BytesPerSample, 8, 8); got != 50 {
+		t.Fatalf("color intra v sample=%d want 50", got)
+	}
+
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	reference := testBatchFrame(t, output.Format)
 	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
@@ -572,7 +604,14 @@ func TestFrameWorkBatchPredictBlockRejectsIncompletePlaneSupport(t *testing.T) {
 	ctx := testIntraPredictionBatch(output)
 	var scratch FrameWorkPredictionScratch
 	if err := ctx.PredictBlock(0, testIntraPredictionVisit(tile.IntraModeDC), &scratch); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("color intra err=%v want %v", err, ErrInvalidBatch)
+		t.Fatalf("missing chroma mode err=%v want %v", err, ErrInvalidBatch)
+	}
+	cfl := testIntraPredictionVisit(tile.IntraModeDC)
+	cfl.Prediction.ChromaMode = tile.ChromaIntraModeCFL
+	cfl.Prediction.ChromaModeValid = true
+	cfl.Prediction.CFLAlphaValid = true
+	if err := ctx.PredictBlock(0, cfl, &scratch); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("cfl intra err=%v want %v", err, ErrInvalidBatch)
 	}
 	if err := ctx.PredictBlock(0, tile.BlockLoopVisit{}, &scratch); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("missing prediction err=%v want %v", err, ErrInvalidBatch)
