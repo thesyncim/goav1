@@ -98,12 +98,32 @@ func PredictInterPlaneBlock(dst frame.Plane, ref frame.Plane, bytesPerSample int
 	return PredictInterPlaneBlockWithFilter(dst, ref, bytesPerSample, dstX, dstY, width, height, mv, RegularFilters)
 }
 
+// PredictInterPlaneBlockBitDepth predicts a block with explicit bit depth.
+// Use this entry point for high-bit-depth fractional vectors so clipping can
+// distinguish 10-bit from 12-bit output.
+func PredictInterPlaneBlockBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv Vector) error {
+	return PredictInterPlaneBlockWithFilterBitDepth(dst, ref, bytesPerSample, bitDepth, dstX, dstY, width, height, mv, RegularFilters)
+}
+
 // PredictInterPlaneBlockWithFilter predicts a translational single-reference
 // inter block. Low-bit-depth fractional vectors use libaom's av1_convolve_*_sr_c
-// filter path; high-bit-depth fractional interpolation is kept for the highbd
-// convolve port.
+// filter path. High-bit-depth fractional callers should use
+// PredictInterPlaneBlockWithFilterBitDepth.
 func PredictInterPlaneBlockWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, mv Vector, filters InterpFilters) error {
+	return predictInterPlaneBlockWithFilter(dst, ref, bytesPerSample, 8, false, dstX, dstY, width, height, mv, filters)
+}
+
+// PredictInterPlaneBlockWithFilterBitDepth predicts a translational
+// single-reference inter block with explicit clipping bit depth.
+func PredictInterPlaneBlockWithFilterBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv Vector, filters InterpFilters) error {
+	return predictInterPlaneBlockWithFilter(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, width, height, mv, filters)
+}
+
+func predictInterPlaneBlockWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, width int, height int, mv Vector, filters InterpFilters) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
+		return ErrInvalidMotion
+	}
+	if explicitBitDepth && !bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
 		return ErrInvalidMotion
 	}
 	refX, refY, subX, subY, err := referenceOrigin(dstX, dstY, mv)
@@ -117,6 +137,12 @@ func PredictInterPlaneBlockWithFilter(dst frame.Plane, ref frame.Plane, bytesPer
 		return nil
 	}
 	if bytesPerSample != 1 {
+		if bytesPerSample == 2 && explicitBitDepth {
+			if err := predictInterPlaneBlockHighBD(dst, ref, bitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
+				return ErrInvalidMotion
+			}
+			return nil
+		}
 		return ErrInvalidMotion
 	}
 	if err := predictInterPlaneBlock8(dst, ref, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
@@ -178,6 +204,44 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	return nil
 }
 
+func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+	max, ok := highBDMax(bitDepth)
+	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
+		return ErrInvalidMotion
+	}
+	if !planeRegionFits(dst, 2, dstX, dstY, width, height) {
+		return ErrInvalidMotion
+	}
+	xKernel, err := interpKernel(filters.X, width, subX)
+	if err != nil {
+		return err
+	}
+	yKernel, err := interpKernel(filters.Y, height, subY)
+	if err != nil {
+		return err
+	}
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	switch {
+	case subX != 0 && subY != 0:
+		if !planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+			return ErrInvalidMotion
+		}
+		convolve2DHighBD(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	case subX != 0:
+		if !planeRegionFits(ref, 2, refX-foX, refY, width+filterTaps-1, height) {
+			return ErrInvalidMotion
+		}
+		convolveXHighBD(dst, ref, max, dstX, dstY, refX, refY, width, height, xKernel)
+	case subY != 0:
+		if !planeRegionFits(ref, 2, refX, refY-foY, width, height+filterTaps-1) {
+			return ErrInvalidMotion
+		}
+		convolveYHighBD(dst, ref, max, dstX, dstY, refX, refY, width, height, yKernel)
+	}
+	return nil
+}
+
 func convolveX8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	for y := 0; y < height; y++ {
@@ -233,6 +297,74 @@ func convolve2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int,
 			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
 		}
 	}
+}
+
+func convolveXHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(loadHighBDSample(ref, refX+x-fo+k, refY+y))
+			}
+			res := roundPowerOfTwo(sum, round0Bits)
+			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, filterBits-round0Bits), max))
+		}
+	}
+}
+
+func convolveYHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 0
+			for k := 0; k < filterTaps; k++ {
+				sum += int(kernel[k]) * int(loadHighBDSample(ref, refX+x, refY+y-fo+k))
+			}
+			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(sum, filterBits), max))
+		}
+	}
+}
+
+func convolve2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	imH := height + filterTaps - 1
+	for y := 0; y < imH; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << (int(bitDepth) + filterBits - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int(xKernel[k]) * int(loadHighBDSample(ref, refX+x-foX+k, refY-foY+y))
+			}
+			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			sum := 1 << offsetBits
+			for k := 0; k < filterTaps; k++ {
+				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+			}
+			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, bits), max))
+		}
+	}
+}
+
+func loadHighBDSample(plane frame.Plane, x int, y int) uint16 {
+	offset := y*plane.Stride + x*2
+	return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8
+}
+
+func storeHighBDSample(plane frame.Plane, x int, y int, value uint16) {
+	offset := y*plane.Stride + x*2
+	plane.Pix[offset] = byte(value)
+	plane.Pix[offset+1] = byte(value >> 8)
 }
 
 func planeRegionFits(plane frame.Plane, bytesPerSample int, x int, y int, width int, height int) bool {
@@ -292,6 +424,30 @@ func clipPixel(v int) uint8 {
 		return 255
 	}
 	return uint8(v)
+}
+
+func clipPixelHighBD(v int, max uint16) uint16 {
+	if v < 0 {
+		return 0
+	}
+	if v > int(max) {
+		return max
+	}
+	return uint16(v)
+}
+
+func highBDMax(bitDepth uint8) (uint16, bool) {
+	switch bitDepth {
+	case 10, 12:
+		return uint16((1 << bitDepth) - 1), true
+	default:
+		return 0, false
+	}
+}
+
+func bitDepthMatchesSampleWidth(bytesPerSample int, bitDepth uint8) bool {
+	return (bytesPerSample == 1 && bitDepth == 8) ||
+		(bytesPerSample == 2 && (bitDepth == 10 || bitDepth == 12))
 }
 
 func scaleFullpel(v int) (int32, bool) {
