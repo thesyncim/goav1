@@ -73,30 +73,40 @@ var filterIntraTaps = [FilterIntraModes][8][8]int8{
 // prediction. The AV1 filter-intra predictor is defined for transform blocks up
 // to 32x32 whose width is a multiple of four and height is a multiple of two.
 func PredictFilterIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, mode FilterIntraMode, edges IntraEdges) error {
+	return PredictFilterIntraPlaneBlockWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, mode, edges)
+}
+
+// PredictFilterIntraPlaneBlockWithExtent writes the visible sub-rectangle of a
+// filter-intra predictor whose coded transform extent may continue past the
+// frame boundary.
+func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode FilterIntraMode, edges IntraEdges) error {
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
 	if err != nil {
 		return err
 	}
-	if width > 32 || height > 32 || width%4 != 0 || height%2 != 0 || mode >= FilterIntraModes {
+	if predWidth < width || predHeight < height ||
+		predWidth > 32 || predHeight > 32 ||
+		predWidth%4 != 0 || predHeight%2 != 0 ||
+		mode >= FilterIntraModes {
 		return ErrInvalidPrediction
 	}
 	max, err := sampleMax(bytesPerSample, bitDepth)
 	if err != nil {
 		return err
 	}
-	if err := validateIntraDirectionalEdges(width, height, max, edges, true); err != nil {
+	if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, true); err != nil {
 		return err
 	}
 
 	var buffer [33][33]uint16
-	for row := 0; row < height; row++ {
+	for row := 0; row < predHeight; row++ {
 		buffer[row+1][0] = edges.Left[row]
 	}
 	buffer[0][0] = edges.AboveLeft
-	copy(buffer[0][1:width+1], edges.Above[:width])
+	copy(buffer[0][1:predWidth+1], edges.Above[:predWidth])
 
-	for row := 1; row < height+1; row += 2 {
-		for col := 1; col < width+1; col += 4 {
+	for row := 1; row < predHeight+1; row += 2 {
+		for col := 1; col < predWidth+1; col += 4 {
 			p := [7]uint16{
 				buffer[row-1][col-1],
 				buffer[row-1][col],

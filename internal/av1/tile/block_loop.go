@@ -121,6 +121,7 @@ type BlockLoopRequest struct {
 	DecodeMotionModes     bool
 	DecodeCompoundBlend   bool
 	DecodeCoefficients    bool
+	EnableFilterIntra     bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
 	GlobalMotion         [referenceFrameCount]parser.WarpedMotionParams
@@ -825,6 +826,17 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.ChromaAngleDelta = chromaAngleDelta
 		}
 	}
+	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{
+		EnableFilterIntra: req.EnableFilterIntra,
+		Size:              block.Size,
+		LumaMode:          mode,
+		PaletteYSize:      0,
+	})
+	if err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	result.FilterIntraMode = filterMode
+	result.FilterIntraValid = filterValid
 	return result, nil
 }
 

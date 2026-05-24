@@ -17,6 +17,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
 				Use128x128Superblock: true,
 				EnableDualFilter:     true,
+				EnableFilterIntra:    true,
 				EnableOrderHint:      true,
 				OrderHintBits:        5,
 				ColorConfig:          parser.ColorConfig{BitDepth: 8, MonoChrome: true},
@@ -46,6 +47,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		!req.Delta.DeltaQPresent || req.SBSizeMIB != 32 || !req.Monochrome ||
 		len(req.CurrentSegmentMap) != len(segMap) || req.SegmentMapStride != 96 ||
 		req.InterpolationFilter != parser.InterpolationSwitchable || !req.EnableDualFilter ||
+		!req.EnableFilterIntra ||
 		req.GlobalMotion[0] != parser.DefaultWarpedMotionParams() ||
 		!req.EnableOrderHint || req.OrderHintBits != 5 ||
 		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 {

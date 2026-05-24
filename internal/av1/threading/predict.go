@@ -229,9 +229,7 @@ func (b FrameWorkBatch) PredictBlockIntraCoeff(index int, visit tile.BlockLoopVi
 
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
 // block-loop visit into Jobs[index]'s output window. It covers luma DC,
-// vertical, horizontal, directional, Paeth, and smooth modes; filter intra and
-// chroma predictors are wired separately because they use different syntax and
-// plane geometry.
+// vertical, horizontal, directional, filter-intra, Paeth, and smooth modes.
 func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVisit, scratch *FrameWorkIntraPredictionScratch) error {
 	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
 		return ErrInvalidBatch
@@ -262,6 +260,21 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	}
 	x -= window.X
 	y -= window.Y
+
+	if visit.Prediction.FilterIntraValid {
+		mode, ok := frameWorkFilterIntraPredictionMode(visit.Prediction.FilterIntraMode)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		edges, err := frameWorkIntraPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, visit.Block, scratch, true)
+		if err != nil {
+			return err
+		}
+		if err := prediction.PredictFilterIntraPlaneBlock(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, mode, edges); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, visit.Block, scratch)
@@ -314,6 +327,21 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	y := absY - window.Y
 	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, tx.X4, tx.Y4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
+
+	if visit.Prediction.FilterIntraValid {
+		mode, ok := frameWorkFilterIntraPredictionMode(visit.Prediction.FilterIntraMode)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, true)
+		if err != nil {
+			return err
+		}
+		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch)
@@ -1213,6 +1241,23 @@ func frameWorkLumaIntraPredictionMode(mode tile.IntraMode) (prediction.IntraMode
 		return prediction.IntraModeSmoothHorizontal, true
 	case tile.IntraModePaeth:
 		return prediction.IntraModePaeth, true
+	default:
+		return 0, false
+	}
+}
+
+func frameWorkFilterIntraPredictionMode(mode tile.FilterIntraMode) (prediction.FilterIntraMode, bool) {
+	switch mode {
+	case tile.FilterIntraModeDC:
+		return prediction.FilterIntraModeDC, true
+	case tile.FilterIntraModeVertical:
+		return prediction.FilterIntraModeVertical, true
+	case tile.FilterIntraModeHorizontal:
+		return prediction.FilterIntraModeHorizontal, true
+	case tile.FilterIntraModeD157:
+		return prediction.FilterIntraModeD157, true
+	case tile.FilterIntraModePaeth:
+		return prediction.FilterIntraModePaeth, true
 	default:
 		return 0, false
 	}

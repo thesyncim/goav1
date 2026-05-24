@@ -38,6 +38,43 @@ func TestFrameWorkBatchPredictBlockLumaIntraDC(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaFilterIntra(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	testFillFrame(output, 0)
+	ctx := testIntraPredictionBatch(output)
+
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, uint16(20+x))
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, uint16(40+y))
+	}
+	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, 33)
+
+	edges := testFrameWorkIntraEdges(output, output.Y, 16, 16, 16, 16)
+	wantPix := make([]byte, 16*16)
+	want := frame.Plane{Pix: wantPix, Stride: 16, Width: 16, Height: 16}
+	if err := prediction.PredictFilterIntraPlaneBlock(want, 1, 8, 0, 0, 16, 16, prediction.FilterIntraModePaeth, edges); err != nil {
+		t.Fatal(err)
+	}
+
+	var scratch FrameWorkIntraPredictionScratch
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Prediction.FilterIntraValid = true
+	visit.Prediction.FilterIntraMode = tile.FilterIntraModePaeth
+	if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+x, 16+y)
+			if want := uint16(wantPix[y*16+x]); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", 16+x, 16+y, got, want)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraStaticModes(t *testing.T) {
 	for _, tt := range []struct {
 		name string

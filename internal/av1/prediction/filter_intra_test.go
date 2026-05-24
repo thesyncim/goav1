@@ -95,6 +95,30 @@ func TestFilterIntraPredictorMatchesLibaomKnownVector(t *testing.T) {
 	}
 }
 
+func TestFilterIntraPredictorWithExtentClipsVisiblePixels(t *testing.T) {
+	edges := IntraEdges{
+		Above:              []uint16{10, 40, 100, 180, 220, 230, 240, 250},
+		Left:               []uint16{20, 60, 120, 200, 210, 220, 230, 240},
+		AboveLeft:          30,
+		AboveAvailable:     true,
+		LeftAvailable:      true,
+		AboveLeftAvailable: true,
+	}
+	plane, _ := testPlane(6, 6, 1, 6)
+	if err := PredictFilterIntraPlaneBlockWithExtent(plane, 1, 8, 0, 0, 6, 6, 8, 8, FilterIntraModePaeth, edges); err != nil {
+		t.Fatal(err)
+	}
+	full := filterIntraLibaomReference(8, 8, FilterIntraModePaeth, edges, 0xff)
+	got := collectPlaneSamples(plane, 1, 6, 6)
+	for row := 0; row < 6; row++ {
+		for col := 0; col < 6; col++ {
+			if want := full[row*8+col]; got[row*6+col] != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", col, row, got[row*6+col], want)
+			}
+		}
+	}
+}
+
 func TestFilterIntraPredictorMatchesLibaomCorpus(t *testing.T) {
 	for _, bitDepth := range []uint8{8, 10, 12} {
 		bytesPerSample := 1

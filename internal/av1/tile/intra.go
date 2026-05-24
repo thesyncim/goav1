@@ -11,6 +11,7 @@ const (
 	KeyframeIntraModeContexts = 5
 	CFLAllowedTypes           = 2
 	DirectionalIntraModes     = 8
+	FilterIntraModes          = 5
 	CFLJointSigns             = 8
 	CFLAlphaContexts          = 6
 	CFLAlphabetSize           = 16
@@ -36,6 +37,17 @@ const (
 	IntraModeSmoothHorizontal
 	IntraModePaeth
 	intraModeCount
+)
+
+// FilterIntraMode identifies libaom's FILTER_INTRA_MODE values.
+type FilterIntraMode uint8
+
+const (
+	FilterIntraModeDC FilterIntraMode = iota
+	FilterIntraModeVertical
+	FilterIntraModeHorizontal
+	FilterIntraModeD157
+	FilterIntraModePaeth
 )
 
 // ChromaIntraMode identifies an AV1 UV intra prediction mode.
@@ -68,14 +80,16 @@ type CFLAlphaResult struct {
 // IntraModeCDFs contains caller-owned CDFs for AV1 intra/inter entry, luma/UV
 // intra mode, directional angle delta, and CfL alpha syntax.
 type IntraModeCDFs struct {
-	Intra         [LumaIntraModeContexts]entropy.CDF
-	Intrabc       entropy.CDF
-	YMode         [LumaIntraModeContexts]entropy.CDF
-	KeyframeYMode [KeyframeIntraModeContexts][KeyframeIntraModeContexts]entropy.CDF
-	UVMode        [CFLAllowedTypes][intraModeCount]entropy.CDF
-	AngleDelta    [DirectionalIntraModes]entropy.CDF
-	CFLSign       entropy.CDF
-	CFLAlpha      [CFLAlphaContexts]entropy.CDF
+	Intra           [LumaIntraModeContexts]entropy.CDF
+	Intrabc         entropy.CDF
+	YMode           [LumaIntraModeContexts]entropy.CDF
+	KeyframeYMode   [KeyframeIntraModeContexts][KeyframeIntraModeContexts]entropy.CDF
+	UVMode          [CFLAllowedTypes][intraModeCount]entropy.CDF
+	AngleDelta      [DirectionalIntraModes]entropy.CDF
+	CFLSign         entropy.CDF
+	CFLAlpha        [CFLAlphaContexts]entropy.CDF
+	FilterIntra     [blockSizeCount]entropy.CDF
+	FilterIntraMode entropy.CDF
 }
 
 // IntraFlagRequest describes the frame/block conditions used to decide whether
@@ -115,6 +129,14 @@ type ChromaIntraModeRequest struct {
 	CFLAllowed bool
 }
 
+// FilterIntraRequest describes one optional filter-intra mode symbol.
+type FilterIntraRequest struct {
+	EnableFilterIntra bool
+	Size              BlockSize
+	LumaMode          IntraMode
+	PaletteYSize      uint8
+}
+
 // BlockPredictionModeResult is the luma entry/mode syntax decoded after the
 // block prefix. Inter MV residuals and reconstruction are decoded by later
 // mode stages.
@@ -124,6 +146,9 @@ type BlockPredictionModeResult struct {
 
 	LumaMode       IntraMode
 	LumaAngleDelta int8
+
+	FilterIntraMode  FilterIntraMode
+	FilterIntraValid bool
 
 	ChromaMode       ChromaIntraMode
 	ChromaModeValid  bool
@@ -210,6 +235,11 @@ var intraModeContext = [intraModeCount]int{
 // Valid reports whether mode is an AV1 luma intra prediction mode.
 func (mode IntraMode) Valid() bool {
 	return mode < intraModeCount
+}
+
+// Valid reports whether mode is an AV1 filter-intra prediction mode.
+func (mode FilterIntraMode) Valid() bool {
+	return mode < FilterIntraModes
 }
 
 // Valid reports whether mode is an AV1 UV intra prediction mode.
@@ -366,6 +396,38 @@ func (c *IntraModeCDFs) InitDefault() error {
 			return err
 		}
 	}
+	defaultFilterIntra := [blockSizeCount]uint16{
+		BlockSize128x128: 16384,
+		BlockSize128x64:  16384,
+		BlockSize64x128:  16384,
+		BlockSize64x64:   16384,
+		BlockSize64x32:   16384,
+		BlockSize64x16:   16384,
+		BlockSize32x64:   16384,
+		BlockSize32x32:   22343,
+		BlockSize32x16:   12756,
+		BlockSize32x8:    18101,
+		BlockSize16x64:   16384,
+		BlockSize16x32:   14301,
+		BlockSize16x16:   12408,
+		BlockSize16x8:    9394,
+		BlockSize16x4:    10368,
+		BlockSize8x32:    20229,
+		BlockSize8x16:    12551,
+		BlockSize8x8:     7866,
+		BlockSize8x4:     5893,
+		BlockSize4x16:    12770,
+		BlockSize4x8:     6743,
+		BlockSize4x4:     4621,
+	}
+	for i := range defaultFilterIntra {
+		if err := next.FilterIntra[i].Init([]uint16{defaultFilterIntra[i]}); err != nil {
+			return err
+		}
+	}
+	if err := next.FilterIntraMode.Init([]uint16{8949, 12776, 17211, 29558}); err != nil {
+		return err
+	}
 	*c = next
 	return nil
 }
@@ -451,6 +513,26 @@ func (c *IntraModeCDFs) CFLAlphaCDF(ctx int) (*entropy.CDF, error) {
 		return nil, entropy.ErrInvalidCDF
 	}
 	return cdf, cdf.Validate()
+}
+
+// FilterIntraCDF returns the initialized filter-intra use flag CDF for size.
+func (c *IntraModeCDFs) FilterIntraCDF(size BlockSize) (*entropy.CDF, error) {
+	if c == nil || size >= blockSizeCount {
+		return nil, entropy.ErrInvalidCDF
+	}
+	cdf := &c.FilterIntra[size]
+	if cdf.Symbols() != 2 {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, cdf.Validate()
+}
+
+// FilterIntraModeCDF returns the initialized filter-intra mode CDF.
+func (c *IntraModeCDFs) FilterIntraModeCDF() (*entropy.CDF, error) {
+	if c == nil || c.FilterIntraMode.Symbols() != FilterIntraModes {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return &c.FilterIntraMode, c.FilterIntraMode.Validate()
 }
 
 // IntraContext returns dav1d's get_intra_ctx() value.
@@ -731,6 +813,54 @@ func (s *DecodeState) ReadCFLAlphas(cdfs *IntraModeCDFs) (CFLAlphaResult, error)
 		idx += uint8(alpha)
 	}
 	return CFLAlphaResult{Index: idx, JointSign: int8(jointSign)}, nil
+}
+
+// ReadFilterIntraMode decodes libaom's read_filter_intra_mode_info().
+func (s *DecodeState) ReadFilterIntraMode(cdfs *IntraModeCDFs, req FilterIntraRequest) (FilterIntraMode, bool, error) {
+	if s == nil {
+		return 0, false, ErrInvalidDecodeState
+	}
+	allowed, err := FilterIntraAllowed(req)
+	if err != nil || !allowed {
+		return 0, false, err
+	}
+	cdf, err := cdfs.FilterIntraCDF(req.Size)
+	if err != nil {
+		return 0, false, err
+	}
+	useFilter, err := s.Reader.ReadCDF(cdf)
+	if err != nil {
+		return 0, false, err
+	}
+	if useFilter == 0 {
+		return 0, false, nil
+	}
+	modeCDF, err := cdfs.FilterIntraModeCDF()
+	if err != nil {
+		return 0, false, err
+	}
+	symbol, err := s.Reader.ReadCDF(modeCDF)
+	if err != nil {
+		return 0, false, err
+	}
+	mode := FilterIntraMode(symbol)
+	if !mode.Valid() {
+		return 0, false, ErrInvalidDecodeState
+	}
+	return mode, true, nil
+}
+
+// FilterIntraAllowed reports libaom's av1_filter_intra_allowed() gate.
+func FilterIntraAllowed(req FilterIntraRequest) (bool, error) {
+	dims, ok := req.Size.Dimensions()
+	if !ok || !req.LumaMode.Valid() {
+		return false, ErrInvalidDecodeState
+	}
+	return req.EnableFilterIntra &&
+		req.LumaMode == IntraModeDC &&
+		req.PaletteYSize == 0 &&
+		int(dims.W4)*4 <= 32 &&
+		int(dims.H4)*4 <= 32, nil
 }
 
 // ChromaIntraCFLAllowed reports libaom/dav1d's CfL availability for a block.

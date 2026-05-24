@@ -31,6 +31,8 @@ func TestIntraModeCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 		{name: "angle delta vertical", cdf: &cdfs.AngleDelta[0], want: []uint16{30588, 27736, 25201, 9992, 5779, 2551, 0, 0}},
 		{name: "cfl sign", cdf: &cdfs.CFLSign, want: []uint16{31350, 30645, 19428, 14363, 5796, 4425, 474, 0, 0}},
 		{name: "cfl alpha ctx0", cdf: &cdfs.CFLAlpha[0], want: []uint16{25131, 12049, 1367, 287, 111, 80, 76, 72, 68, 64, 60, 56, 52, 48, 44, 0, 0}},
+		{name: "filter intra 4x16", cdf: &cdfs.FilterIntra[BlockSize4x16], want: []uint16{19998, 0, 0}},
+		{name: "filter intra mode", cdf: &cdfs.FilterIntraMode, want: []uint16{23819, 19992, 15557, 3210, 0, 0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,6 +290,106 @@ func TestReadIntraAngleDeltaAndChromaMode(t *testing.T) {
 	}
 	if got := cdfs.CFLAlpha[0].Values()[CFLAlphabetSize]; got != 1 {
 		t.Fatalf("cfl alpha count=%d want 1", got)
+	}
+}
+
+func TestReadFilterIntraMode(t *testing.T) {
+	var cdfs IntraModeCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	mode, valid, err := state.ReadFilterIntraMode(&cdfs, FilterIntraRequest{
+		EnableFilterIntra: true,
+		Size:              BlockSize4x16,
+		LumaMode:          IntraModeDC,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid || mode != 0 {
+		t.Fatalf("filter intra mode=%d valid=%v want disabled", mode, valid)
+	}
+	if got := cdfs.FilterIntra[BlockSize4x16].Values()[2]; got != 1 {
+		t.Fatalf("filter intra cdf count=%d want 1", got)
+	}
+	if got := cdfs.FilterIntraMode.Values()[FilterIntraModes]; got != 0 {
+		t.Fatalf("filter intra mode cdf count=%d want 0", got)
+	}
+
+	foundEnabled := false
+	for b := 0; b <= 255 && !foundEnabled; b++ {
+		if err := cdfs.InitDefault(); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Reset([]byte{byte(b), 0xff}, Job{Offset: 0, Size: 2}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		mode, valid, err = state.ReadFilterIntraMode(&cdfs, FilterIntraRequest{
+			EnableFilterIntra: true,
+			Size:              BlockSize4x16,
+			LumaMode:          IntraModeDC,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if valid {
+			if !mode.Valid() {
+				t.Fatalf("enabled filter intra invalid mode=%d", mode)
+			}
+			if got := cdfs.FilterIntraMode.Values()[FilterIntraModes]; got != 1 {
+				t.Fatalf("filter intra mode cdf count=%d want 1", got)
+			}
+			foundEnabled = true
+		}
+	}
+	if !foundEnabled {
+		t.Fatal("no single-byte payload decoded enabled filter intra")
+	}
+
+	before := cdfs.FilterIntra[BlockSize4x16].Values()[2]
+	mode, valid, err = state.ReadFilterIntraMode(&cdfs, FilterIntraRequest{
+		EnableFilterIntra: false,
+		Size:              BlockSize4x16,
+		LumaMode:          IntraModeDC,
+	})
+	if err != nil || valid || mode != 0 {
+		t.Fatalf("disabled filter intra mode=%d valid=%v err=%v", mode, valid, err)
+	}
+	if got := cdfs.FilterIntra[BlockSize4x16].Values()[2]; got != before {
+		t.Fatalf("disabled gate consumed cdf count=%d want %d", got, before)
+	}
+}
+
+func TestFilterIntraAllowedMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		name string
+		req  FilterIntraRequest
+		want bool
+	}{
+		{name: "disabled sequence", req: FilterIntraRequest{Size: BlockSize4x16, LumaMode: IntraModeDC}, want: false},
+		{name: "dc small block", req: FilterIntraRequest{EnableFilterIntra: true, Size: BlockSize4x16, LumaMode: IntraModeDC}, want: true},
+		{name: "non dc mode", req: FilterIntraRequest{EnableFilterIntra: true, Size: BlockSize4x16, LumaMode: IntraModeVertical}, want: false},
+		{name: "palette y present", req: FilterIntraRequest{EnableFilterIntra: true, Size: BlockSize4x16, LumaMode: IntraModeDC, PaletteYSize: 2}, want: false},
+		{name: "too wide", req: FilterIntraRequest{EnableFilterIntra: true, Size: BlockSize64x16, LumaMode: IntraModeDC}, want: false},
+		{name: "too high", req: FilterIntraRequest{EnableFilterIntra: true, Size: BlockSize16x64, LumaMode: IntraModeDC}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FilterIntraAllowed(tt.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("allowed=%v want %v", got, tt.want)
+			}
+		})
+	}
+	if _, err := FilterIntraAllowed(FilterIntraRequest{EnableFilterIntra: true, Size: blockSizeCount, LumaMode: IntraModeDC}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("bad size err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 
