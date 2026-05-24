@@ -123,6 +123,7 @@ type BlockLoopRequest struct {
 	DecodeCoefficients    bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
+	GlobalMotion         [referenceFrameCount]parser.WarpedMotionParams
 	GlobalMotionTypes    [referenceFrameCount]parser.GlobalMotionType
 	RefSignBias          [referenceFrameCount]bool
 	ReferenceOrderHints  [referenceFrameCount]uint32
@@ -607,7 +608,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		}
 		result.InterReferences = refs
 		result.InterReferencesValid = true
-		globalMVs := blockReferenceGlobalMVs(refs, req.GlobalMVs)
+		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		if req.DecodeInterModes {
 			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
 				Size:        block.Size,
@@ -1017,6 +1018,111 @@ func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameC
 		out[1] = global[refs.Ref[1]]
 	}
 	return out
+}
+
+func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback [referenceFrameCount]motion.Vector, global [referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) [2]motion.Vector {
+	out := blockReferenceGlobalMVs(refs, fallback)
+	if refs.Ref[0].Valid() {
+		if mv, ok := globalMotionVector(global[refs.Ref[0]], allowHighPrecisionMV, forceIntegerMV, block); ok {
+			out[0] = mv
+		}
+	}
+	if refs.Compound && refs.Ref[1].Valid() {
+		if mv, ok := globalMotionVector(global[refs.Ref[1]], allowHighPrecisionMV, forceIntegerMV, block); ok {
+			out[1] = mv
+		}
+	}
+	return out
+}
+
+func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
+	if !globalMotionParamsInitialized(params) {
+		return motion.Vector{}, false
+	}
+	switch params.Type {
+	case parser.GlobalMotionIdentity:
+		return motion.Vector{}, true
+	case parser.GlobalMotionTranslation:
+		mv := motion.Vector{
+			Row: params.Matrix[0] >> globalMotionTransOnlyPrecDiff,
+			Col: params.Matrix[1] >> globalMotionTransOnlyPrecDiff,
+		}
+		if forceIntegerMV {
+			mv.Row = globalMotionIntegerMVPrecision(mv.Row)
+			mv.Col = globalMotionIntegerMVPrecision(mv.Col)
+		}
+		return mv, true
+	case parser.GlobalMotionRotZoom, parser.GlobalMotionAffine:
+		dims, ok := block.Size.Dimensions()
+		if !ok {
+			return motion.Vector{}, false
+		}
+		x := int64(block.MICol)*4 + int64(dims.W4)*2 - 1
+		y := int64(block.MIRow)*4 + int64(dims.H4)*2 - 1
+		mat := params.Matrix
+		xc := int64(mat[2]-(1<<globalMotionWarpedModelPrecBits))*x + int64(mat[3])*y + int64(mat[0])
+		yc := int64(mat[4])*x + int64(mat[5]-(1<<globalMotionWarpedModelPrecBits))*y + int64(mat[1])
+		mv := motion.Vector{
+			Row: globalMotionConvertToTransPrec(yc, allowHighPrecisionMV),
+			Col: globalMotionConvertToTransPrec(xc, allowHighPrecisionMV),
+		}
+		if forceIntegerMV {
+			mv.Row = globalMotionIntegerMVPrecision(mv.Row)
+			mv.Col = globalMotionIntegerMVPrecision(mv.Col)
+		}
+		return mv, true
+	default:
+		return motion.Vector{}, false
+	}
+}
+
+const (
+	globalMotionWarpedModelPrecBits = 16
+	globalMotionTransOnlyPrecDiff   = globalMotionWarpedModelPrecBits - 3
+)
+
+func globalMotionParamsInitialized(params parser.WarpedMotionParams) bool {
+	if params.Type != parser.GlobalMotionIdentity {
+		return true
+	}
+	return params.Matrix[2] == 1<<globalMotionWarpedModelPrecBits ||
+		params.Matrix[5] == 1<<globalMotionWarpedModelPrecBits ||
+		params.Matrix[0] != 0 ||
+		params.Matrix[1] != 0 ||
+		params.Matrix[3] != 0 ||
+		params.Matrix[4] != 0
+}
+
+func globalMotionConvertToTransPrec(value int64, allowHighPrecisionMV bool) int32 {
+	if allowHighPrecisionMV {
+		return int32(globalMotionRoundPowerOfTwoSigned(value, globalMotionWarpedModelPrecBits-3))
+	}
+	return int32(globalMotionRoundPowerOfTwoSigned(value, globalMotionWarpedModelPrecBits-2)) * 2
+}
+
+func globalMotionRoundPowerOfTwoSigned(value int64, bits uint) int64 {
+	if value < 0 {
+		return -((-value + (1 << (bits - 1))) >> bits)
+	}
+	return (value + (1 << (bits - 1))) >> bits
+}
+
+func globalMotionIntegerMVPrecision(v int32) int32 {
+	mod := v % 8
+	if mod == 0 {
+		return v
+	}
+	v -= mod
+	if mod < 0 {
+		if -mod > 4 {
+			v -= 8
+		}
+		return v
+	}
+	if mod > 4 {
+		v += 8
+	}
+	return v
 }
 
 func blockReferenceGlobalMotionType(refs InterReferencesResult, global [referenceFrameCount]parser.GlobalMotionType) parser.GlobalMotionType {

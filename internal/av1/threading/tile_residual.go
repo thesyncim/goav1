@@ -232,6 +232,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		AllowIntrabc:             b.FrameSize.AllowIntrabc,
 		ReferenceMode:            b.TransformRef.ReferenceMode,
 		GlobalMVs:                globalMVs,
+		GlobalMotion:             b.GlobalMotion.Ref,
 		GlobalMotionTypes:        globalTypes,
 		RefSignBias:              refSignBias,
 		ReferenceOrderHints:      b.ReferenceOrderHints,

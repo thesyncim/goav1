@@ -688,6 +688,44 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 	}
 }
 
+func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	block := BlockVisit{MICol: 4, MIRow: 8, Size: BlockSize16x16}
+	var global [referenceFrameCount]parser.WarpedMotionParams
+	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
+	global[ReferenceFrameLast].Type = parser.GlobalMotionRotZoom
+	global[ReferenceFrameLast].Matrix = [6]int32{
+		8192, -4096,
+		1<<16 + 2048, 1024,
+		-1024, 1<<16 + 2048,
+	}
+
+	got := blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, true, false, block)
+	if got[0] != (motion.Vector{Row: 6, Col: 12}) {
+		t.Fatalf("rotzoom global mv=%+v want row=6 col=12", got[0])
+	}
+
+	got = blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, true, true, block)
+	if got[0] != (motion.Vector{Row: 8, Col: 8}) {
+		t.Fatalf("integer rotzoom global mv=%+v want row=8 col=8", got[0])
+	}
+
+	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
+	global[ReferenceFrameLast].Type = parser.GlobalMotionTranslation
+	global[ReferenceFrameLast].Matrix[0] = 13 << 13
+	global[ReferenceFrameLast].Matrix[1] = -7 << 13
+	got = blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, false, true, block)
+	if got[0] != (motion.Vector{Row: 16, Col: -8}) {
+		t.Fatalf("translation global mv=%+v want row=16 col=-8", got[0])
+	}
+
+	fallback := [referenceFrameCount]motion.Vector{ReferenceFrameLast: {Row: 3, Col: -5}}
+	got = blockReferenceGlobalMVsForBlock(refs, fallback, [referenceFrameCount]parser.WarpedMotionParams{}, true, false, block)
+	if got[0] != fallback[ReferenceFrameLast] {
+		t.Fatalf("fallback global mv=%+v want %+v", got[0], fallback[ReferenceFrameLast])
+	}
+}
+
 func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 4}, DecodeOptions{}); err != nil {
