@@ -60,6 +60,8 @@ type blockModeAboveContext struct {
 	SegmentPred [MaxBlockModeSlots]uint8
 	Intra       [MaxBlockModeSlots]uint8
 	Mode        [MaxBlockModeSlots]IntraMode
+	ChromaIntra [MaxBlockModeSlots]uint8
+	ChromaMode  [MaxBlockModeSlots]ChromaIntraMode
 	TxIntra     [MaxBlockModeSlots]uint8
 	Tx          [MaxBlockModeSlots]uint8
 	Ref         [2][MaxBlockModeSlots]ReferenceFrame
@@ -79,6 +81,8 @@ type blockModeLeftContext struct {
 	SegmentPred [MaxBlockModeSlots]uint8
 	Intra       [MaxBlockModeSlots]uint8
 	Mode        [MaxBlockModeSlots]IntraMode
+	ChromaIntra [MaxBlockModeSlots]uint8
+	ChromaMode  [MaxBlockModeSlots]ChromaIntraMode
 	TxIntra     [MaxBlockModeSlots]uint8
 	Tx          [MaxBlockModeSlots]uint8
 	Ref         [2][MaxBlockModeSlots]ReferenceFrame
@@ -374,6 +378,8 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveSegmentPred = above.mode.SegmentPred
 		scratch.Mode.AboveIntra = above.mode.Intra
 		scratch.Mode.AboveMode = above.mode.Mode
+		scratch.Mode.AboveChromaIntra = above.mode.ChromaIntra
+		scratch.Mode.AboveChromaMode = above.mode.ChromaMode
 		scratch.Mode.AboveTxIntra = above.mode.TxIntra
 		scratch.Mode.AboveTx = above.mode.Tx
 		scratch.Mode.AboveRef = above.mode.Ref
@@ -397,6 +403,8 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftSegmentPred = left.mode.SegmentPred
 		scratch.Mode.LeftIntra = left.mode.Intra
 		scratch.Mode.LeftMode = left.mode.Mode
+		scratch.Mode.LeftChromaIntra = left.mode.ChromaIntra
+		scratch.Mode.LeftChromaMode = left.mode.ChromaMode
 		scratch.Mode.LeftTxIntra = left.mode.TxIntra
 		scratch.Mode.LeftTx = left.mode.Tx
 		scratch.Mode.LeftRef = left.mode.Ref
@@ -429,6 +437,8 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
 	above.mode.Intra = scratch.Mode.AboveIntra
 	above.mode.Mode = scratch.Mode.AboveMode
+	above.mode.ChromaIntra = scratch.Mode.AboveChromaIntra
+	above.mode.ChromaMode = scratch.Mode.AboveChromaMode
 	above.mode.TxIntra = scratch.Mode.AboveTxIntra
 	above.mode.Tx = scratch.Mode.AboveTx
 	above.mode.Ref = scratch.Mode.AboveRef
@@ -451,6 +461,8 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
 	left.mode.Intra = scratch.Mode.LeftIntra
 	left.mode.Mode = scratch.Mode.LeftMode
+	left.mode.ChromaIntra = scratch.Mode.LeftChromaIntra
+	left.mode.ChromaMode = scratch.Mode.LeftChromaMode
 	left.mode.TxIntra = scratch.Mode.LeftTxIntra
 	left.mode.Tx = scratch.Mode.LeftTx
 	left.mode.Ref = scratch.Mode.LeftRef
@@ -813,6 +825,18 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		}
 		result.ChromaMode = chromaMode
 		result.ChromaModeValid = true
+		chromaHaveTop, chromaHaveLeft, err := blockChromaNeighborAvailability(req, block)
+		if err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		chromaSmoothNeighbor, err := ctx.ChromaIntraEdgeSmoothNeighbor(block.X4, block.Y4, chromaHaveTop, chromaHaveLeft, req.Color.SubsamplingX, req.Color.SubsamplingY)
+		if err != nil {
+			return BlockPredictionModeResult{}, err
+		}
+		result.ChromaIntraEdgeSmoothNeighbor = chromaSmoothNeighbor
+		if err := ctx.MarkChromaIntra(block.Size, block.X4, block.Y4, true, chromaMode); err != nil {
+			return BlockPredictionModeResult{}, err
+		}
 		if chromaMode == ChromaIntraModeCFL {
 			result.CFLAlpha = cflAlpha
 			result.CFLAlphaValid = true
@@ -843,6 +867,24 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	result.FilterIntraMode = filterMode
 	result.FilterIntraValid = filterValid
 	return result, nil
+}
+
+func blockChromaNeighborAvailability(req BlockLoopRequest, block BlockVisit) (haveTop bool, haveLeft bool, err error) {
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return false, false, ErrInvalidDecodeState
+	}
+	haveTop = block.HaveTop
+	haveLeft = block.HaveLeft
+	if req.Color.SubsamplingY && dims.H4 < 2 {
+		start := req.Walk.neighborMIRowStart()
+		haveTop = block.MIRow > 0 && block.MIRow-1 > start
+	}
+	if req.Color.SubsamplingX && dims.W4 < 2 {
+		start := req.Walk.neighborMIColStart()
+		haveLeft = block.MICol > 0 && block.MICol-1 > start
+	}
+	return haveTop, haveLeft, nil
 }
 
 func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, skip bool) (uint8, bool, parser.SegmentData, error) {

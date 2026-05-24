@@ -147,7 +147,8 @@ type BlockPredictionModeResult struct {
 	LumaMode       IntraMode
 	LumaAngleDelta int8
 
-	IntraEdgeSmoothNeighbor bool
+	IntraEdgeSmoothNeighbor       bool
+	ChromaIntraEdgeSmoothNeighbor bool
 
 	FilterIntraMode  FilterIntraMode
 	FilterIntraValid bool
@@ -594,6 +595,47 @@ func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool,
 	return false, nil
 }
 
+// ChromaIntraEdgeSmoothNeighbor reports libaom's chroma
+// get_intra_edge_filter_type() decision: whether the immediate above or left
+// chroma neighbor is an intra smooth UV mode. It must be called before the
+// current block is marked into the chroma top/left mode context.
+func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool, haveLeft bool, subsamplingX bool, subsamplingY bool) (bool, error) {
+	if c == nil {
+		return false, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return false, err
+	}
+	ssX := int(boolToShift(subsamplingX))
+	ssY := int(boolToShift(subsamplingY))
+	baseX4 := x4 - (x4 & ssX)
+	baseY4 := y4 - (y4 & ssY)
+	aboveX4 := baseX4 + ssX
+	leftY4 := baseY4 + ssY
+	if aboveX4 < 0 || aboveX4 >= MaxBlockModeSlots || leftY4 < 0 || leftY4 >= MaxBlockModeSlots {
+		return false, ErrInvalidDecodeState
+	}
+	if haveTop && c.AboveChromaIntra[aboveX4] != 0 {
+		smooth, err := chromaModeIsSmooth(c.AboveChromaMode[aboveX4])
+		if err != nil {
+			return false, err
+		}
+		if smooth {
+			return true, nil
+		}
+	}
+	if haveLeft && c.LeftChromaIntra[leftY4] != 0 {
+		smooth, err := chromaModeIsSmooth(c.LeftChromaMode[leftY4])
+		if err != nil {
+			return false, err
+		}
+		if smooth {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // KeyframeYModeContext returns libaom's intra_mode_context[] pair for the
 // above/left luma prediction modes.
 func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error) {
@@ -618,6 +660,19 @@ func intraModeIsSmooth(mode IntraMode) (bool, error) {
 	case IntraModeDC, IntraModeVertical, IntraModeHorizontal, IntraModeD45,
 		IntraModeD135, IntraModeD113, IntraModeD157, IntraModeD203,
 		IntraModeD67, IntraModePaeth:
+		return false, nil
+	default:
+		return false, ErrInvalidDecodeState
+	}
+}
+
+func chromaModeIsSmooth(mode ChromaIntraMode) (bool, error) {
+	switch mode {
+	case ChromaIntraModeSmooth, ChromaIntraModeSmoothVertical, ChromaIntraModeSmoothHorizontal:
+		return true, nil
+	case ChromaIntraModeDC, ChromaIntraModeVertical, ChromaIntraModeHorizontal, ChromaIntraModeD45,
+		ChromaIntraModeD135, ChromaIntraModeD113, ChromaIntraModeD157, ChromaIntraModeD203,
+		ChromaIntraModeD67, ChromaIntraModePaeth, ChromaIntraModeCFL:
 		return false, nil
 	default:
 		return false, ErrInvalidDecodeState
@@ -692,6 +747,36 @@ func (c *BlockModeContext) MarkIntraEntry(size BlockSize, x4 int, y4 int, intra 
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = intraValue
 		c.LeftMode[y4+i] = mode
+	}
+	return nil
+}
+
+// MarkChromaIntra updates the top/left chroma intra mode context for blocks
+// that carry chroma samples.
+func (c *BlockModeContext) MarkChromaIntra(size BlockSize, x4 int, y4 int, intra bool, mode ChromaIntraMode) error {
+	if c == nil || (intra && !mode.Valid()) {
+		return ErrInvalidDecodeState
+	}
+	if !intra {
+		mode = ChromaIntraModeDC
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return ErrInvalidDecodeState
+	}
+	if x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	intraValue := boolByte(intra)
+	for i := 0; i < int(dims.W4); i++ {
+		c.AboveChromaIntra[x4+i] = intraValue
+		c.AboveChromaMode[x4+i] = mode
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		c.LeftChromaIntra[y4+i] = intraValue
+		c.LeftChromaMode[y4+i] = mode
 	}
 	return nil
 }

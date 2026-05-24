@@ -708,6 +708,8 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	compIndex := uint8(1)
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = 0
+		c.AboveChromaIntra[x4+i] = 0
+		c.AboveChromaMode[x4+i] = ChromaIntraModeDC
 		c.AboveRef[0][x4+i] = result.Ref[0]
 		c.AboveRef[1][x4+i] = result.Ref[1]
 		c.AboveCompound[x4+i] = compound
@@ -721,6 +723,8 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
+		c.LeftChromaIntra[y4+i] = 0
+		c.LeftChromaMode[y4+i] = ChromaIntraModeDC
 		c.LeftRef[0][y4+i] = result.Ref[0]
 		c.LeftRef[1][y4+i] = result.Ref[1]
 		c.LeftCompound[y4+i] = compound

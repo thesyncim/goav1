@@ -36,6 +36,10 @@ type BlockModeContext struct {
 	LeftIntra        [MaxBlockModeSlots]uint8
 	AboveMode        [MaxBlockModeSlots]IntraMode
 	LeftMode         [MaxBlockModeSlots]IntraMode
+	AboveChromaIntra [MaxBlockModeSlots]uint8
+	LeftChromaIntra  [MaxBlockModeSlots]uint8
+	AboveChromaMode  [MaxBlockModeSlots]ChromaIntraMode
+	LeftChromaMode   [MaxBlockModeSlots]ChromaIntraMode
 	AboveTxIntra     [MaxBlockModeSlots]uint8
 	LeftTxIntra      [MaxBlockModeSlots]uint8
 	AboveTx          [MaxBlockModeSlots]uint8

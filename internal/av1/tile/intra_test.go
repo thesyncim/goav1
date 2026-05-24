@@ -101,6 +101,34 @@ func TestIntraEdgeSmoothNeighborMatchesLibaomLumaType(t *testing.T) {
 	}
 }
 
+func TestChromaIntraEdgeSmoothNeighborMatchesLibaomUVType(t *testing.T) {
+	var ctx BlockModeContext
+	if err := ctx.MarkChromaIntra(BlockSize8x8, 2, 3, true, ChromaIntraModeSmoothHorizontal); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(2, 3, true, false, false, false); err != nil || !got {
+		t.Fatalf("top chroma smooth=%v err=%v want true", got, err)
+	}
+	if err := ctx.MarkChromaIntra(BlockSize4x4, 6, 7, true, ChromaIntraModeD45); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(6, 7, true, true, false, false); err != nil || got {
+		t.Fatalf("directional chroma smooth=%v err=%v want false", got, err)
+	}
+	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(8, 9, true, true, false, false); err != nil || got {
+		t.Fatalf("inter chroma neighbor smooth=%v err=%v want false", got, err)
+	}
+	if err := ctx.MarkChromaIntra(BlockSize4x4, 5, 4, true, ChromaIntraModeSmooth); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(4, 5, true, false, true, true); err != nil || !got {
+		t.Fatalf("subsampled chroma smooth=%v err=%v want true", got, err)
+	}
+}
+
 func TestMarkIntraEntryLeavesInterRefsForReferenceReader(t *testing.T) {
 	var ctx BlockModeContext
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, InterReferencesResult{

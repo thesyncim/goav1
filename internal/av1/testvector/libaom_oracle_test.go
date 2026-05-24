@@ -320,6 +320,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				if err != nil {
 					return err
 				}
+				if ivfFrame.Index == 0 && got != digests[digestIndex].MD5 {
+					return fmt.Errorf("frame 0 md5 got=%x official=%x", got, digests[digestIndex].MD5)
+				}
 				postMD5 = got
 				postRan = true
 				return nil

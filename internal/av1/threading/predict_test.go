@@ -471,6 +471,27 @@ func TestFrameWorkChromaDirectionalExtendedEdgesMatchesLibaomCases(t *testing.T)
 			absX: 16, absY: 4, width: 4, height: 4,
 			wantTopRight: true, wantBottomLeft: true,
 		},
+		{
+			name: "rightmost 420 chroma tx denies top-right at tile edge",
+			block: tile.BlockVisit{
+				MICol: 84, MIRow: 8, MIColEnd: 88, MIRowEnd: 12,
+				Partition: tile.PartitionNone, Size: tile.BlockSize16x16,
+				VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true,
+			},
+			originX: 168, originY: 16,
+			absX: 172, absY: 16, width: 4, height: 4,
+		},
+		{
+			name: "bottom 420 chroma tx denies bottom-left at tile edge",
+			block: tile.BlockVisit{
+				MICol: 8, MIRow: 68, MIColEnd: 12, MIRowEnd: 72,
+				Partition: tile.PartitionNone, Size: tile.BlockSize16x16,
+				VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true,
+			},
+			originX: 16, originY: 136,
+			absX: 16, absY: 140, width: 4, height: 4,
+			wantTopRight: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -497,6 +518,7 @@ func TestFrameWorkChromaAvailabilityBlockSizeMatchesLibaom(t *testing.T) {
 		{name: "8x4 440", size: tile.BlockSize8x4, subsamplingY: true, want: tile.BlockSize8x8},
 		{name: "4x16 420", size: tile.BlockSize4x16, subsamplingX: true, subsamplingY: true, want: tile.BlockSize8x16},
 		{name: "16x4 420", size: tile.BlockSize16x4, subsamplingX: true, subsamplingY: true, want: tile.BlockSize16x8},
+		{name: "16x16 420 unchanged", size: tile.BlockSize16x16, subsamplingX: true, subsamplingY: true, want: tile.BlockSize16x16},
 		{name: "16x8 420 unchanged", size: tile.BlockSize16x8, subsamplingX: true, subsamplingY: true, want: tile.BlockSize16x8},
 	}
 	for _, tt := range tests {
@@ -505,6 +527,14 @@ func TestFrameWorkChromaAvailabilityBlockSizeMatchesLibaom(t *testing.T) {
 				t.Fatalf("size=%d want %d", got, tt.want)
 			}
 		})
+	}
+	got := frameWorkChromaAvailabilityBlockSize(tile.BlockSize16x16, true, true)
+	plane, err := tile.PlaneBlockSize(tile.BlockSize16x16, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == plane {
+		t.Fatalf("availability size used residual plane size %d", plane)
 	}
 }
 
