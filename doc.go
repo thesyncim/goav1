@@ -6,9 +6,10 @@
 // and network scheduling stay caller-owned.
 //
 // The implementation is built from byte-exact transport and parser primitives
-// inward. Public helpers expose OBU parsing, AV1 RTP payload iteration and
-// construction, and sequence-header parsing. The decoder and encoder APIs will
-// grow at this top level as the internal pipeline stabilizes.
+// inward. Public helpers expose OBU parsing, AV1 RTP payload iteration,
+// construction, caller-owned RTP sizing, and sequence-header parsing. The
+// decoder and encoder APIs will grow at this top level as the internal pipeline
+// stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly

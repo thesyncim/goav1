@@ -12,6 +12,7 @@ type RTPPayloadSizeLimits = internalrtp.PayloadSizeLimits
 type RTPPacketizer = internalrtp.Packetizer
 type RTPPacketizerOBU = internalrtp.PacketizerOBU
 type RTPPacketPlan = internalrtp.PacketPlan
+type RTPPacketizerScratchSize = internalrtp.PacketizerScratchSize
 type RTPFrameOBU = internalrtp.FrameOBU
 
 var (
@@ -54,6 +55,14 @@ func NewRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, keyFrame bool
 	return internalrtp.NewPacketizer(payload, limits, keyFrame, lastFrameInPicture, obuScratch, packetScratch, workScratch)
 }
 
+func RTPPacketizerScratchLen(payload []byte, limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU) (RTPPacketizerScratchSize, error) {
+	return internalrtp.PacketizerScratchLen(payload, limits, obuScratch)
+}
+
 func AssembleRTPFrame(dst []byte, payloads [][]byte, obus []RTPFrameOBU) (n int, obuCount int, err error) {
 	return internalrtp.AssembleFrame(dst, payloads, obus)
+}
+
+func AssembleRTPFrameSize(payloads [][]byte) (n int, obuCount int, err error) {
+	return internalrtp.AssembleFrameSize(payloads)
 }
