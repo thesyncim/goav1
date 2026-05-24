@@ -209,6 +209,10 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 	if err != nil {
 		return tile.BlockLoopRequest{}, err
 	}
+	refFrameSide, err := frameWorkBlockLoopRefFrameSide(b.Sequence.EnableOrderHint, b.Sequence.OrderHintBits, b.FrameHeader.OrderHint, b.ReferenceOrderHints)
+	if err != nil {
+		return tile.BlockLoopRequest{}, err
+	}
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
@@ -235,6 +239,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		GlobalMotion:                b.GlobalMotion.Ref,
 		GlobalMotionTypes:           globalTypes,
 		RefSignBias:                 refSignBias,
+		RefFrameSide:                refFrameSide,
 		ReferenceOrderHints:         b.ReferenceOrderHints,
 		InterpolationFilter:         b.TileInfo.InterpolationFilter,
 		EnableDualFilter:            b.Sequence.EnableDualFilter,
@@ -294,6 +299,25 @@ func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint32, ref
 		bias[i] = distance > 0
 	}
 	return bias, nil
+}
+
+func frameWorkBlockLoopRefFrameSide(enabled bool, bits uint8, current uint32, refs [parser.InterRefsPerFrame]uint32) ([parser.InterRefsPerFrame]int8, error) {
+	var side [parser.InterRefsPerFrame]int8
+	if !enabled {
+		return side, nil
+	}
+	for i, ref := range refs {
+		distance, err := frameWorkRelativeOrderHint(bits, ref, current)
+		if err != nil {
+			return side, err
+		}
+		if distance > 0 {
+			side[i] = 1
+		} else if ref == current {
+			side[i] = -1
+		}
+	}
+	return side, nil
 }
 
 // JobBlockLoopContextRootColumns returns the number of caller-owned above-edge

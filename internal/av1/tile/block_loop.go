@@ -131,6 +131,7 @@ type BlockLoopRequest struct {
 	GlobalMotion         [referenceFrameCount]parser.WarpedMotionParams
 	GlobalMotionTypes    [referenceFrameCount]parser.GlobalMotionType
 	RefSignBias          [referenceFrameCount]bool
+	RefFrameSide         [referenceFrameCount]int8
 	ReferenceOrderHints  [referenceFrameCount]uint32
 	ScaledReferences     [referenceFrameCount]bool
 	InterpolationFilter  parser.InterpolationFilter
@@ -153,6 +154,7 @@ type BlockLoopRequest struct {
 	TemporalMVSampleUnavailable bool
 	OrderHintBits               uint8
 	CurrentOrderHint            uint32
+	CurrentMVFrame              *ReferenceMVFrame
 
 	Color               parser.ColorConfig
 	TransformMode       parser.TransformMode
@@ -553,6 +555,18 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		Prefix:           prefix,
 		Prediction:       prediction,
 		Delta:            delta,
+	}
+	if req.CurrentMVFrame != nil {
+		if err := req.CurrentMVFrame.MarkBlock(ReferenceMVFrameBlockRequest{
+			MICol:        block.MICol,
+			MIRow:        block.MIRow,
+			VisibleW4:    block.VisibleW4,
+			VisibleH4:    block.VisibleH4,
+			Prediction:   prediction,
+			RefFrameSide: req.RefFrameSide,
+		}); err != nil {
+			return BlockLoopVisit{}, err
+		}
 	}
 	if req.DecodeCoefficients {
 		if hasCoeffController {

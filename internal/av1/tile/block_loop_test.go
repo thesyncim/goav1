@@ -616,6 +616,14 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 		seg.Data.Segments[i].RefFrame = -1
 	}
 	seg.Data.Segments[0].GlobalMV = true
+	currentMVEntries, err := ReferenceMVFrameEntries(16, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentMVFrame ReferenceMVFrame
+	if err := currentMVFrame.Init(16, 16, make([]ReferenceMVEntry, currentMVEntries)); err != nil {
+		t.Fatal(err)
+	}
 	req := BlockLoopRequest{
 		Walk: BlockWalkRequest{
 			Root:       BlockLevel64x64,
@@ -633,6 +641,7 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 		GlobalMVs: [referenceFrameCount]motion.Vector{
 			ReferenceFrameLast: {Row: 4, Col: -6},
 		},
+		CurrentMVFrame: &currentMVFrame,
 	}
 
 	var scratch BlockLoopScratch
@@ -679,6 +688,16 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 	}
 	if !got.Prediction.InterMotionValid || got.Prediction.InterMotion.MV[0] != (motion.Vector{Row: 4, Col: -6}) {
 		t.Fatalf("inter motion=%+v valid=%v", got.Prediction.InterMotion, got.Prediction.InterMotionValid)
+	}
+	for i, entry := range currentMVFrame.Entries {
+		want := ReferenceMVEntry{
+			Ref:   ReferenceFrameLast,
+			MV:    motion.Vector{Row: 4, Col: -6},
+			Valid: true,
+		}
+		if entry != want {
+			t.Fatalf("current MV entry %d=%+v want %+v", i, entry, want)
+		}
 	}
 	if scratch.Mode.AboveRef[0][0] != ReferenceFrameLast || scratch.Mode.LeftRef[0][0] != ReferenceFrameLast ||
 		scratch.Mode.AboveMotionValid[0] != 1 || scratch.Mode.LeftMotionValid[0] != 1 {

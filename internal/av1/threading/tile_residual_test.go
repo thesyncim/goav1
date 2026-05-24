@@ -26,7 +26,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 			FrameSize:           parser.FrameSize{CodedWidth: 300, Height: 260},
 			TileInfo:            parser.TileInfo{InterpolationFilter: parser.InterpolationSwitchable, UseRefFrameMVS: true},
 			GlobalMotion:        parser.DefaultGlobalMotionParams(),
-			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 2, 3, 4, 5, 6, 7},
+			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 9, 10, 4, 5, 6, 7},
 			SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true},
 			CDEF:                parser.CDEFParams{Bits: 2, StrengthCount: 4},
 			Delta:               parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
@@ -51,6 +51,8 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		req.GlobalMotion[0] != parser.DefaultWarpedMotionParams() ||
 		!req.EnableOrderHint || req.OrderHintBits != 5 ||
 		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 ||
+		req.RefFrameSide[tile.ReferenceFrameLast2] != -1 ||
+		req.RefFrameSide[tile.ReferenceFrameLast3] != 1 ||
 		!req.UseRefFrameMVS || !req.TemporalMVSampleUnavailable {
 		t.Fatalf("request=%+v", req)
 	}
@@ -60,6 +62,32 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 	}
 	if rootCols != 2 {
 		t.Fatalf("root context cols=%d want 2", rootCols)
+	}
+}
+
+func TestFrameWorkBlockLoopRefFrameSideMatchesLibaom(t *testing.T) {
+	refs := [parser.InterRefsPerFrame]uint32{7, 8, 9, 24, 4, 5, 6}
+	side, err := frameWorkBlockLoopRefFrameSide(true, 5, 8, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if side[tile.ReferenceFrameLast] != 0 ||
+		side[tile.ReferenceFrameLast2] != -1 ||
+		side[tile.ReferenceFrameLast3] != 1 ||
+		side[tile.ReferenceFrameGolden] != 0 {
+		t.Fatalf("side=%v", side)
+	}
+
+	disabled, err := frameWorkBlockLoopRefFrameSide(false, 0, 8, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled != ([parser.InterRefsPerFrame]int8{}) {
+		t.Fatalf("disabled side=%v want zero", disabled)
+	}
+
+	if _, err := frameWorkBlockLoopRefFrameSide(true, 0, 8, refs); err == nil {
+		t.Fatal("expected invalid order-hint bits error")
 	}
 }
 
