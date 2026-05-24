@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -399,6 +400,42 @@ func TestReadInterTransformTypeUsesLibaomCDF(t *testing.T) {
 	}
 	if got := cdfs.Inter[3][3].Values()[2]; got != 1 {
 		t.Fatalf("inter ext tx cdf count=%d want 1", got)
+	}
+}
+
+func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector InterCoeffTransformSelector
+	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
+	}, transform.TypeADSTDCT); err != nil {
+		t.Fatal(err)
+	}
+
+	before := state.Reader.BitsRead()
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeADSTDCT {
+		t.Fatalf("chroma tx type=%d want %d", got, transform.TypeADSTDCT)
+	}
+	if after := state.Reader.BitsRead(); after != before {
+		t.Fatalf("chroma tx type read bits=%d want %d", after, before)
+	}
+	if _, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 2,
+		Block: TransformBlock{X4: 7, Y4: 7, Size: TransformSize4x4},
+	}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("missing tx type map err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 

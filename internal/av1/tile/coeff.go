@@ -78,6 +78,8 @@ type TXBDecodeRequest struct {
 	Plane           CoeffPlaneType
 	Class           transform.Class
 	TXBSkipContext  int
+	TXBSkipKnown    bool
+	TXBSkip         bool
 	DCSignContext   int
 	EOBMultiContext int
 }
@@ -600,9 +602,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		levelsScratch[i] = 0
 	}
 
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
-	if err != nil {
-		return TXBDecodeResult{}, err
+	allZero := req.TXBSkip
+	if !req.TXBSkipKnown {
+		var err error
+		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
+		if err != nil {
+			return TXBDecodeResult{}, err
+		}
 	}
 	if allZero {
 		return TXBDecodeResult{AllZero: true}, nil

@@ -131,6 +131,45 @@ func TestDecodeLumaCoefficientsSelectsTransformPerTXB(t *testing.T) {
 	}
 }
 
+func TestDecodeLumaCoefficientsSkipsTransformSelectForTXBSkip(t *testing.T) {
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0xff}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var ctx CoeffEntropyContext
+	var scratch LumaCoeffTreeScratch
+	calls := 0
+	var got LumaCoeffBlock
+	stats, err := state.DecodeLumaCoefficients(&cdfs, &ctx, &scratch, LumaCoeffTreeRequest{
+		TreeRequest: TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1},
+		Tree:        TransformTreeResult{Y: TransformSize4x4},
+		Class:       transform.Class2D,
+		TransformSelect: CoeffTransformSelectorFunc(func(CoeffTransformRequest) (transform.Type, error) {
+			calls++
+			return transform.TypeADSTDCT, nil
+		}),
+	}, func(block LumaCoeffBlock) error {
+		got = block
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TXBs != 1 || stats.AllZero != 1 || stats.NonZero != 0 {
+		t.Fatalf("stats=%+v want one all-zero txb", stats)
+	}
+	if calls != 0 {
+		t.Fatalf("selector calls=%d want 0 for txb_skip", calls)
+	}
+	if got.Transform != transform.TypeDCTDCT || !got.Result.AllZero {
+		t.Fatalf("block transform=%d result=%+v want DCT_DCT all-zero", got.Transform, got.Result)
+	}
+}
+
 func TestDecodeLumaCoefficientsSkipTransformResetsContext(t *testing.T) {
 	var state DecodeState
 	var cdfs CoeffCDFs

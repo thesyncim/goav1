@@ -2,6 +2,7 @@ package tile
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -43,15 +44,27 @@ type InterCoeffTransformSelector struct {
 	ReducedTXSet  bool
 	SkipTransform bool
 	Lossless      bool
+	Color         parser.ColorConfig
+	Map           InterTransformTypeMap
+}
+
+type InterTransformTypeMap struct {
+	Type  [MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
+	Valid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 }
 
 func (s *InterCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool) {
+	s.ResetForColor(state, cdfs, reducedTXSet, skipTransform, lossless, parser.ColorConfig{})
+}
+
+func (s *InterCoeffTransformSelector) ResetForColor(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, color parser.ColorConfig) {
 	*s = InterCoeffTransformSelector{
 		State:         state,
 		CDFs:          cdfs,
 		ReducedTXSet:  reducedTXSet,
 		SkipTransform: skipTransform,
 		Lossless:      lossless,
+		Color:         color,
 	}
 }
 
@@ -59,12 +72,75 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 	if s == nil || s.State == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	return s.State.ReadInterTransformType(s.CDFs, InterTransformTypeRequest{
+	if req.Plane != 0 {
+		return s.Map.ChromaType(req.Block, s.Color)
+	}
+	typ, err := s.State.ReadInterTransformType(s.CDFs, InterTransformTypeRequest{
 		Size:          req.Block.Size,
 		ReducedTXSet:  s.ReducedTXSet,
 		SkipTransform: s.SkipTransform,
 		Lossless:      s.Lossless,
 	})
+	if err != nil {
+		return 0, err
+	}
+	return typ, nil
+}
+
+func (s *InterCoeffTransformSelector) RecordCoeffTransform(req CoeffTransformRequest, typ transform.Type) error {
+	if s == nil {
+		return ErrInvalidDecodeState
+	}
+	if req.Plane != 0 {
+		return nil
+	}
+	return s.Map.Set(req.Block, typ)
+}
+
+func (m *InterTransformTypeMap) Reset() {
+	if m == nil {
+		return
+	}
+	*m = InterTransformTypeMap{}
+}
+
+func (m *InterTransformTypeMap) Set(block TransformBlock, typ transform.Type) error {
+	if m == nil || !typ.Valid() {
+		return ErrInvalidDecodeState
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok || block.X4 < 0 || block.Y4 < 0 ||
+		block.X4+int(dims.W4) > MaxBlockModeSlots ||
+		block.Y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	for y := 0; y < int(dims.H4); y++ {
+		for x := 0; x < int(dims.W4); x++ {
+			m.Type[block.Y4+y][block.X4+x] = typ
+			m.Valid[block.Y4+y][block.X4+x] = 1
+		}
+	}
+	return nil
+}
+
+func (m *InterTransformTypeMap) At(x4 int, y4 int) (transform.Type, error) {
+	if m == nil || x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots ||
+		m.Valid[y4][x4] == 0 {
+		return 0, ErrInvalidDecodeState
+	}
+	return m.Type[y4][x4], nil
+}
+
+func (m *InterTransformTypeMap) ChromaType(block TransformBlock, color parser.ColorConfig) (transform.Type, error) {
+	x4 := block.X4
+	y4 := block.Y4
+	if color.SubsamplingX {
+		x4 <<= 1
+	}
+	if color.SubsamplingY {
+		y4 <<= 1
+	}
+	return m.At(x4, y4)
 }
 
 var transformSizeSquare = [transformSizeCount]TransformSize{

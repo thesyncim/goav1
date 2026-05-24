@@ -106,15 +106,7 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 
 	var stats LumaCoeffStats
 	err := req.Tree.ForEachLumaTXB(req.TreeRequest, func(block TransformBlock) error {
-		typ, class, err := resolveCoeffTransform(req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, 0, block)
-		if err != nil {
-			return err
-		}
-		coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, class)
-		if err != nil {
-			return err
-		}
-		result, err := s.ReadCoefficientsTXBWithContext(cdfs, ctx, CoeffContextRequest{
+		ctxReq := CoeffContextRequest{
 			Plane:      0,
 			PlaneBlock: req.TreeRequest.Size,
 			Size:       block.Size,
@@ -122,10 +114,13 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 			Y4:         block.Y4,
 			VisibleW4:  block.VisibleW4,
 			VisibleH4:  block.VisibleH4,
-		}, TXBDecodeRequest{
-			Class:           class,
+		}
+		typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 			EOBMultiContext: req.EOBMultiContext,
-		}, coeffs, scan, levels)
+		}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+			Plane: 0,
+			Block: block,
+		})
 		if err != nil {
 			return err
 		}
@@ -199,15 +194,7 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				VisibleW4: uint8(minInt(int(uvDims.W4), visibleW4-x)),
 				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
 			}
-			typ, class, err := resolveCoeffTransform(req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, req.Plane, block)
-			if err != nil {
-				return stats, err
-			}
-			coeffs, scan, levels, err := scratch.coeffBuffers(block.Size, class)
-			if err != nil {
-				return stats, err
-			}
-			result, err := s.ReadCoefficientsTXBWithContext(cdfs, ctx, CoeffContextRequest{
+			ctxReq := CoeffContextRequest{
 				Plane:      req.Plane,
 				PlaneBlock: planeBlock,
 				Size:       block.Size,
@@ -215,10 +202,13 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				Y4:         block.Y4,
 				VisibleW4:  block.VisibleW4,
 				VisibleH4:  block.VisibleH4,
-			}, TXBDecodeRequest{
-				Class:           class,
+			}
+			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 				EOBMultiContext: req.EOBMultiContext,
-			}, coeffs, scan, levels)
+			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+				Plane: req.Plane,
+				Block: block,
+			})
 			if err != nil {
 				return stats, err
 			}
@@ -242,6 +232,47 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 		}
 	}
 	return stats, nil
+}
+
+type coeffTransformRecorder interface {
+	RecordCoeffTransform(CoeffTransformRequest, transform.Type) error
+}
+
+func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
+	req, allZero, err := s.ReadTXBSkipWithContext(cdfs, ctx, ctxReq, req)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+
+	selected := transform.TypeDCTDCT
+	selectedClass := transform.Class2D
+	if !allZero {
+		selected, selectedClass, err = resolveCoeffTransform(selector, typ, useType, class, transformReq.Plane, transformReq.Block)
+		if err != nil {
+			return 0, TXBDecodeResult{}, nil, nil, err
+		}
+	}
+
+	coeffs, scan, levels, err := scratch.coeffBuffers(ctxReq.Size, selectedClass)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+	req.Class = selectedClass
+	req.TXBSkipKnown = true
+	req.TXBSkip = allZero
+	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+	if err := ctx.MarkTXB(ctxReq, result); err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+	if recorder, ok := selector.(coeffTransformRecorder); ok {
+		if err := recorder.RecordCoeffTransform(transformReq, selected); err != nil {
+			return 0, TXBDecodeResult{}, nil, nil, err
+		}
+	}
+	return selected, result, coeffs, scan, nil
 }
 
 func resolveCoeffTransform(selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, plane int, block TransformBlock) (transform.Type, transform.Class, error) {
