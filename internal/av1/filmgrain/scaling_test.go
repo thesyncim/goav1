@@ -104,3 +104,42 @@ func TestScalingRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("low bit depth err=%v want %v", err, ErrInvalidParams)
 	}
 }
+
+func TestScalingAllocs(t *testing.T) {
+	points := [...]ScalingPoint{{Value: 3, Scaling: 7}, {Value: 8, Scaling: 11}, {Value: 20, Scaling: 2}}
+	var lut [ScalingLUTSize]uint8
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := BuildScalingLUT(lut[:], points[:]); err != nil {
+			t.Fatal(err)
+		}
+		for _, index := range [...]int{0, 17, 255, 510, 1023, 2047, 4095} {
+			if _, err := ScaleLUT(lut[:], index, 12); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("filmgrain scaling allocated: %f", allocs)
+	}
+}
+
+func BenchmarkBuildScalingLUT(b *testing.B) {
+	points := [...]ScalingPoint{{Value: 3, Scaling: 7}, {Value: 8, Scaling: 11}, {Value: 20, Scaling: 2}}
+	var lut [ScalingLUTSize]uint8
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = BuildScalingLUT(lut[:], points[:])
+	}
+}
+
+func BenchmarkScaleLUT(b *testing.B) {
+	points := [...]ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}
+	var lut [ScalingLUTSize]uint8
+	if err := BuildScalingLUT(lut[:], points[:]); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ScaleLUT(lut[:], i&4095, 12)
+	}
+}

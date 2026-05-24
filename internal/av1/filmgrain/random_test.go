@@ -72,3 +72,31 @@ func TestRandomRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("NewStripeRandom err=%v want %v", err, ErrInvalidParams)
 	}
 }
+
+func TestRandomAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		rng := NewRandom(0x1234)
+		for i := 0; i < 64; i++ {
+			if _, err := rng.Number(11); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := NewPlaneRandom(rng.Register(), 1); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewStripeRandom(rng.Register(), 64); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("filmgrain random allocated: %f", allocs)
+	}
+}
+
+func BenchmarkRandomNumber(b *testing.B) {
+	rng := NewRandom(0x1234)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = rng.Number(11)
+	}
+}
