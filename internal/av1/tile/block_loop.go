@@ -32,9 +32,66 @@ type BlockLoopScratch struct {
 	CoeffCtx  CoeffEntropyContext
 }
 
+// BlockLoopContextCarrier holds caller-owned edge contexts when a block-loop
+// request walks more than one root block. Above must contain one slot per root
+// column in the request; Left carries the previous root in the current root row.
+// Keeping this carrier optional preserves the single-root zero-value path.
+type BlockLoopContextCarrier struct {
+	Above []BlockLoopRootAboveContext
+	Left  BlockLoopRootLeftContext
+}
+
+type BlockLoopRootAboveContext struct {
+	Partition [MaxPartitionSlots]uint8
+	mode      blockModeAboveContext
+	Coeff     [3][MaxBlockModeSlots]uint8
+}
+
+type BlockLoopRootLeftContext struct {
+	Partition [MaxPartitionSlots]uint8
+	mode      blockModeLeftContext
+	Coeff     [3][MaxBlockModeSlots]uint8
+}
+
+type blockModeAboveContext struct {
+	Skip        [MaxBlockModeSlots]uint8
+	SkipMode    [MaxBlockModeSlots]uint8
+	SegmentPred [MaxBlockModeSlots]uint8
+	Intra       [MaxBlockModeSlots]uint8
+	Mode        [MaxBlockModeSlots]IntraMode
+	TxIntra     [MaxBlockModeSlots]uint8
+	Tx          [MaxBlockModeSlots]uint8
+	Ref         [2][MaxBlockModeSlots]ReferenceFrame
+	Compound    [MaxBlockModeSlots]uint8
+	CompGroup   [MaxBlockModeSlots]uint8
+	CompIndex   [MaxBlockModeSlots]uint8
+	InterMotion [MaxBlockModeSlots]InterMotionResult
+	MotionValid [MaxBlockModeSlots]uint8
+	BlockSize   [MaxBlockModeSlots]BlockSize
+}
+
+type blockModeLeftContext struct {
+	Skip        [MaxBlockModeSlots]uint8
+	SkipMode    [MaxBlockModeSlots]uint8
+	SegmentPred [MaxBlockModeSlots]uint8
+	Intra       [MaxBlockModeSlots]uint8
+	Mode        [MaxBlockModeSlots]IntraMode
+	TxIntra     [MaxBlockModeSlots]uint8
+	Tx          [MaxBlockModeSlots]uint8
+	Ref         [2][MaxBlockModeSlots]ReferenceFrame
+	Compound    [MaxBlockModeSlots]uint8
+	CompGroup   [MaxBlockModeSlots]uint8
+	CompIndex   [MaxBlockModeSlots]uint8
+	InterMotion [MaxBlockModeSlots]InterMotionResult
+	MotionValid [MaxBlockModeSlots]uint8
+	BlockSize   [MaxBlockModeSlots]BlockSize
+}
+
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
 type BlockLoopRequest struct {
 	Walk BlockWalkRequest
+
+	ContextCarrier *BlockLoopContextCarrier
 
 	SkipMode     parser.SkipModeParams
 	CDEF         parser.CDEFParams
@@ -189,10 +246,10 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 	rootSize := uint32(req.Walk.Root.Size4x4())
 	for miRow := req.Walk.MIRowStart; miRow < req.Walk.MIRowEnd; miRow += rootSize {
 		for miCol := req.Walk.MIColStart; miCol < req.Walk.MIColEnd; miCol += rootSize {
-			scratch.Partition = PartitionContext{}
-			scratch.Mode = BlockModeContext{}
-			scratch.CDEF.Reset()
-			scratch.CoeffCtx = CoeffEntropyContext{}
+			rootColIndex := int((miCol - req.Walk.MIColStart) / rootSize)
+			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > req.Walk.neighborMIRowStart(), miCol > req.Walk.neighborMIColStart()); err != nil {
+				return stats, err
+			}
 			rootReq := BlockWalkRequest{
 				Root:               req.Walk.Root,
 				MIColStart:         miCol,
@@ -279,9 +336,117 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			if err != nil {
 				return stats, err
 			}
+			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex); err != nil {
+				return stats, err
+			}
 		}
 	}
 	return stats, nil
+}
+
+func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool) error {
+	scratch.Partition = PartitionContext{}
+	scratch.Mode = BlockModeContext{}
+	scratch.CDEF.Reset()
+	scratch.CoeffCtx = CoeffEntropyContext{}
+	if carrier == nil {
+		return nil
+	}
+	if rootColIndex < 0 || rootColIndex >= len(carrier.Above) {
+		return ErrInvalidDecodeState
+	}
+	if haveTop {
+		above := carrier.Above[rootColIndex]
+		scratch.Partition.Above = above.Partition
+		scratch.Mode.AboveSkip = above.mode.Skip
+		scratch.Mode.AboveSkipMode = above.mode.SkipMode
+		scratch.Mode.AboveSegmentPred = above.mode.SegmentPred
+		scratch.Mode.AboveIntra = above.mode.Intra
+		scratch.Mode.AboveMode = above.mode.Mode
+		scratch.Mode.AboveTxIntra = above.mode.TxIntra
+		scratch.Mode.AboveTx = above.mode.Tx
+		scratch.Mode.AboveRef = above.mode.Ref
+		scratch.Mode.AboveCompound = above.mode.Compound
+		scratch.Mode.AboveCompGroup = above.mode.CompGroup
+		scratch.Mode.AboveCompIndex = above.mode.CompIndex
+		scratch.Mode.AboveInterMotion = above.mode.InterMotion
+		scratch.Mode.AboveMotionValid = above.mode.MotionValid
+		scratch.Mode.AboveBlockSize = above.mode.BlockSize
+		for plane := 0; plane < 3; plane++ {
+			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
+		}
+	}
+	if haveLeft {
+		left := carrier.Left
+		scratch.Partition.Left = left.Partition
+		scratch.Mode.LeftSkip = left.mode.Skip
+		scratch.Mode.LeftSkipMode = left.mode.SkipMode
+		scratch.Mode.LeftSegmentPred = left.mode.SegmentPred
+		scratch.Mode.LeftIntra = left.mode.Intra
+		scratch.Mode.LeftMode = left.mode.Mode
+		scratch.Mode.LeftTxIntra = left.mode.TxIntra
+		scratch.Mode.LeftTx = left.mode.Tx
+		scratch.Mode.LeftRef = left.mode.Ref
+		scratch.Mode.LeftCompound = left.mode.Compound
+		scratch.Mode.LeftCompGroup = left.mode.CompGroup
+		scratch.Mode.LeftCompIndex = left.mode.CompIndex
+		scratch.Mode.LeftInterMotion = left.mode.InterMotion
+		scratch.Mode.LeftMotionValid = left.mode.MotionValid
+		scratch.Mode.LeftBlockSize = left.mode.BlockSize
+		for plane := 0; plane < 3; plane++ {
+			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
+		}
+	}
+	return nil
+}
+
+func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int) error {
+	if carrier == nil {
+		return nil
+	}
+	if rootColIndex < 0 || rootColIndex >= len(carrier.Above) {
+		return ErrInvalidDecodeState
+	}
+	above := &carrier.Above[rootColIndex]
+	above.Partition = scratch.Partition.Above
+	above.mode.Skip = scratch.Mode.AboveSkip
+	above.mode.SkipMode = scratch.Mode.AboveSkipMode
+	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
+	above.mode.Intra = scratch.Mode.AboveIntra
+	above.mode.Mode = scratch.Mode.AboveMode
+	above.mode.TxIntra = scratch.Mode.AboveTxIntra
+	above.mode.Tx = scratch.Mode.AboveTx
+	above.mode.Ref = scratch.Mode.AboveRef
+	above.mode.Compound = scratch.Mode.AboveCompound
+	above.mode.CompGroup = scratch.Mode.AboveCompGroup
+	above.mode.CompIndex = scratch.Mode.AboveCompIndex
+	above.mode.InterMotion = scratch.Mode.AboveInterMotion
+	above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	above.mode.BlockSize = scratch.Mode.AboveBlockSize
+	for plane := 0; plane < 3; plane++ {
+		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
+	}
+
+	left := &carrier.Left
+	left.Partition = scratch.Partition.Left
+	left.mode.Skip = scratch.Mode.LeftSkip
+	left.mode.SkipMode = scratch.Mode.LeftSkipMode
+	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
+	left.mode.Intra = scratch.Mode.LeftIntra
+	left.mode.Mode = scratch.Mode.LeftMode
+	left.mode.TxIntra = scratch.Mode.LeftTxIntra
+	left.mode.Tx = scratch.Mode.LeftTx
+	left.mode.Ref = scratch.Mode.LeftRef
+	left.mode.Compound = scratch.Mode.LeftCompound
+	left.mode.CompGroup = scratch.Mode.LeftCompGroup
+	left.mode.CompIndex = scratch.Mode.LeftCompIndex
+	left.mode.InterMotion = scratch.Mode.LeftInterMotion
+	left.mode.MotionValid = scratch.Mode.LeftMotionValid
+	left.mode.BlockSize = scratch.Mode.LeftBlockSize
+	for plane := 0; plane < 3; plane++ {
+		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
+	}
+	return nil
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
@@ -685,12 +850,25 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 	if rootSize == 0 || req.Walk.MIColStart%rootSize != 0 || req.Walk.MIRowStart%rootSize != 0 {
 		return ErrInvalidDecodeState
 	}
+	if req.ContextCarrier != nil {
+		rootCols := blockLoopRootColumns(req.Walk, rootSize)
+		if rootCols <= 0 || len(req.ContextCarrier.Above) < rootCols {
+			return ErrInvalidDecodeState
+		}
+	}
 	if req.Segmentation.Enabled && (req.Segmentation.UpdateMap || len(req.PreviousSegmentMap) != 0) {
 		if req.SegmentMapStride <= 0 {
 			return ErrInvalidDecodeState
 		}
 	}
 	return nil
+}
+
+func blockLoopRootColumns(req BlockWalkRequest, rootSize uint32) int {
+	if rootSize == 0 || req.MIColEnd <= req.MIColStart {
+		return 0
+	}
+	return int((req.MIColEnd - req.MIColStart + rootSize - 1) / rootSize)
 }
 
 func previousBlockSegmentID(req BlockLoopRequest, block BlockVisit) (uint8, error) {

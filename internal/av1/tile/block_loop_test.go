@@ -117,6 +117,104 @@ func TestDecodeBlockLoopPreservesNeighborAvailabilityAcrossRoots(t *testing.T) {
 	}
 }
 
+func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
+	var scratch BlockLoopScratch
+	scratch.Partition.Above[2] = 9
+	scratch.Partition.Left[3] = 7
+	scratch.Mode.AboveSkip[0] = 1
+	scratch.Mode.AboveRef[1][2] = ReferenceFrameBWD
+	scratch.Mode.AboveInterMotion[4] = InterMotionResult{MV: [2]motion.Vector{{Row: 3, Col: -5}}}
+	scratch.Mode.AboveMotionValid[4] = 1
+	scratch.Mode.LeftSkip[5] = 1
+	scratch.Mode.LeftRef[0][6] = ReferenceFrameGolden
+	scratch.Mode.LeftCompIndex[6] = 1
+	scratch.Mode.LeftInterMotion[6] = InterMotionResult{MV: [2]motion.Vector{{Row: -2, Col: 7}}}
+	scratch.Mode.LeftMotionValid[6] = 1
+	scratch.CoeffCtx.Above[2][8] = 13
+	scratch.CoeffCtx.Left[1][9] = 11
+
+	carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
+	if err := blockLoopStoreRootContext(&scratch, &carrier, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	scratch = BlockLoopScratch{}
+	scratch.CDEF.Read[0] = true
+	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, true, true); err != nil {
+		t.Fatal(err)
+	}
+	if scratch.CDEF.Read[0] {
+		t.Fatal("CDEF context persisted across root load")
+	}
+	if scratch.Partition.Above[2] != 9 || scratch.Partition.Left[3] != 7 {
+		t.Fatalf("partition context above=%d left=%d", scratch.Partition.Above[2], scratch.Partition.Left[3])
+	}
+	if scratch.Mode.AboveSkip[0] != 1 ||
+		scratch.Mode.AboveRef[1][2] != ReferenceFrameBWD ||
+		scratch.Mode.AboveInterMotion[4].MV[0] != (motion.Vector{Row: 3, Col: -5}) ||
+		scratch.Mode.AboveMotionValid[4] != 1 ||
+		scratch.Mode.LeftSkip[5] != 1 ||
+		scratch.Mode.LeftRef[0][6] != ReferenceFrameGolden ||
+		scratch.Mode.LeftCompIndex[6] != 1 ||
+		scratch.Mode.LeftInterMotion[6].MV[0] != (motion.Vector{Row: -2, Col: 7}) ||
+		scratch.Mode.LeftMotionValid[6] != 1 {
+		t.Fatalf("mode context did not round-trip: %+v", scratch.Mode)
+	}
+	if scratch.CoeffCtx.Above[2][8] != 13 || scratch.CoeffCtx.Left[1][9] != 11 {
+		t.Fatalf("coeff context above=%d left=%d", scratch.CoeffCtx.Above[2][8], scratch.CoeffCtx.Left[1][9])
+	}
+
+	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if scratch.Partition.Above[2] != 0 || scratch.Partition.Left[3] != 0 ||
+		scratch.Mode.AboveSkip[0] != 0 || scratch.Mode.LeftSkip[5] != 0 ||
+		scratch.CoeffCtx.Above[2][8] != 0 || scratch.CoeffCtx.Left[1][9] != 0 {
+		t.Fatalf("boundary load kept neighbor contexts: partition=%+v mode=%+v coeff=%+v", scratch.Partition, scratch.Mode, scratch.CoeffCtx)
+	}
+}
+
+func TestDecodeBlockLoopContextCarrierStoresRootEdges(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 16), Job{Offset: 0, Size: 16}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+	seg := parser.SegmentationParams{Enabled: true}
+	for i := range seg.Data.Segments {
+		seg.Data.Segments[i].RefFrame = -1
+	}
+	seg.Data.Segments[0].Skip = true
+	carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
+	req := BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel64x64,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   32,
+			MIRowEnd:   16,
+		},
+		ContextCarrier: &carrier,
+		Segmentation:   seg,
+		SBSizeMIB:      16,
+	}
+
+	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+		Delta:     deltaCDFs,
+	}, &BlockLoopScratch{}, req, func(BlockLoopVisit) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Blocks != 2 || stats.Prefixes != 2 {
+		t.Fatalf("stats=%+v want two roots", stats)
+	}
+	if carrier.Above[0].mode.Skip[0] != 1 || carrier.Above[1].mode.Skip[0] != 1 || carrier.Left.mode.Skip[0] != 1 {
+		t.Fatalf("carrier skip contexts above0=%d above1=%d left=%d", carrier.Above[0].mode.Skip[0], carrier.Above[1].mode.Skip[0], carrier.Left.mode.Skip[0])
+	}
+}
+
 func TestDecodeBlockLoopSegmentationPreskipAndMaps(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
@@ -969,6 +1067,12 @@ func TestDecodeBlockLoopRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := state.DecodeBlockLoop(BlockLoopCDFs{Partition: &partitionCDFs, Mode: &modeCDFs}, nil, validReq, func(BlockLoopVisit) error { return nil }); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil scratch err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	badCarrierReq := validReq
+	badCarrierReq.Walk.MIColEnd = 32
+	badCarrierReq.ContextCarrier = &BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 1)}
+	if _, err := state.DecodeBlockLoop(BlockLoopCDFs{Partition: &partitionCDFs, Mode: &modeCDFs}, &BlockLoopScratch{}, badCarrierReq, func(BlockLoopVisit) error { return nil }); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("short context carrier err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	badReq := validReq
 	badReq.DecodeCoefficients = true
