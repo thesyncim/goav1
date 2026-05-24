@@ -814,6 +814,18 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	if err := state.SetCDEFIndexMap(cdefMap); err != nil {
 		t.Fatal(err)
 	}
+	_, _, lfMapLen, err := cdefContext.LoopFilterMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfMap, err := cdefContext.BindLoopFilterMap(make([]threading.FrameWorkLoopFilterBlockRecord, lfMapLen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfMap.Records[0].Valid = true
+	if err := state.SetLoopFilterMap(lfMap); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
 		if !ctx.DisableCDFUpdate {
@@ -830,6 +842,17 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 			t.Fatalf("CDEFIndexMap was not reset before propagation: read=%v index=%d", ctx.CDEFIndexMap.Read[0], ctx.CDEFIndexMap.Index[0])
 		}
 		ctx.CDEFIndexMap.Read[0] = true
+		if ctx.LoopFilterMap == nil {
+			t.Fatal("LoopFilterMap not propagated")
+		}
+		if ctx.LoopFilterMap.Stride != lfMap.Stride || ctx.LoopFilterMap.Rows != lfMap.Rows ||
+			len(ctx.LoopFilterMap.Records) != lfMapLen {
+			t.Fatalf("LoopFilterMap=%+v len=%d want stride=%d rows=%d len=%d", ctx.LoopFilterMap, len(ctx.LoopFilterMap.Records), lfMap.Stride, lfMap.Rows, lfMapLen)
+		}
+		if ctx.LoopFilterMap.Records[0].Valid {
+			t.Fatal("LoopFilterMap was not reset before propagation")
+		}
+		ctx.LoopFilterMap.Records[0].Valid = true
 		if ctx.Quantization.BaseQIdx != 73 {
 			t.Fatalf("BaseQIdx=%d want 73", ctx.Quantization.BaseQIdx)
 		}
@@ -927,6 +950,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	}
 	if !state.cdefIndexMap.Read[0] {
 		t.Fatal("CDEFIndexMap update did not alias frame state")
+	}
+	if !state.loopFilterMap.Records[0].Valid {
+		t.Fatal("LoopFilterMap update did not alias frame state")
 	}
 }
 
