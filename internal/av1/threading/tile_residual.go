@@ -18,6 +18,7 @@ type FrameWorkTileResidualCDFs struct {
 // tile job's block loop and coefficient contexts.
 type FrameWorkTileResidualScratch struct {
 	Loop         tile.BlockLoopScratch
+	LoopContext  tile.BlockLoopContextCarrier
 	Coeff        tile.BlockCoeffScratch
 	CoeffContext tile.CoeffEntropyContext
 	InterTX      tile.InterCoeffTransformSelector
@@ -112,6 +113,21 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 	}, nil
 }
 
+// JobBlockLoopContextRootColumns returns the number of caller-owned above-edge
+// carrier slots needed by Jobs[index]'s block-loop request.
+func (b FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) {
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return 0, err
+	}
+	root := tile.RootBlockLevel(b.Sequence.Use128x128Superblock)
+	rootSize := uint32(root.Size4x4())
+	if rootSize == 0 || region.MIColEnd <= region.MIColStart {
+		return 0, ErrInvalidBatch
+	}
+	return int((region.MIColEnd - region.MIColStart + rootSize - 1) / rootSize), nil
+}
+
 // DecodeAndReconstructJobResiduals walks one tile job's blocks, invokes the
 // caller's prediction hook, decodes residual TXBs, and reconstructs each decoded
 // TXB into the batch output frame.
@@ -129,6 +145,9 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		loopCDFs.Coeff = cdfs.Coeff.Coeff
 	}
 	loopReq := req.Loop
+	if loopReq.ContextCarrier == nil && scratch.LoopContext.Above != nil {
+		loopReq.ContextCarrier = &scratch.LoopContext
+	}
 	loopReq.DecodeCoefficients = true
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  b,

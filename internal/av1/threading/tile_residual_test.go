@@ -46,6 +46,13 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 {
 		t.Fatalf("request=%+v", req)
 	}
+	rootCols, err := ctx.JobBlockLoopContextRootColumns(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootCols != 2 {
+		t.Fatalf("root context cols=%d want 2", rootCols)
+	}
 }
 
 func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
@@ -129,6 +136,11 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsRejectsInvalidInputs(t *t
 	noTransforms.Transforms = nil
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, noTransforms); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("nil transforms err=%v want %v", err, ErrInvalidBatch)
+	}
+	shortCarrier := req
+	scratch.LoopContext.Above = []tile.BlockLoopRootAboveContext{}
+	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, shortCarrier); !errors.Is(err, tile.ErrInvalidDecodeState) {
+		t.Fatalf("short scratch context carrier err=%v want %v", err, tile.ErrInvalidDecodeState)
 	}
 }
 
