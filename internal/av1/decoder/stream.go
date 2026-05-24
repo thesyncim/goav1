@@ -104,6 +104,14 @@ func (s *Stream) InRTPFragment() bool {
 	return s.rtp.InFragment()
 }
 
+// PushRTPPayloadSize validates one RTP payload against the stream's current RTP
+// fragment state and reports the dst bytes and event slots PushRTPPayload would
+// need. It does not mutate the stream.
+func (s *Stream) PushRTPPayloadSize(used int, payload []byte) (newUsed int, eventCount int, err error) {
+	newUsed, eventCount, _, err = s.rtp.PushSize(used, payload)
+	return newUsed, eventCount, err
+}
+
 func (s *Stream) PushLowOverhead(src []byte, events []Event) (int, error) {
 	it := obu.NewLowOverheadIterator(src)
 	count := 0

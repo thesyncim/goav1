@@ -590,6 +590,47 @@ func TestStreamRTPPayload(t *testing.T) {
 	}
 }
 
+func TestStreamRTPPayloadSizeMatchesPush(t *testing.T) {
+	elements := []rtp.Element{
+		{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))},
+		{Data: appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())},
+	}
+	var payload [128]byte
+	n, err := rtp.PutPayload(payload[:], rtp.AggregationHeader{
+		ElementCount:                2,
+		StartsNewCodedVideoSequence: true,
+	}, elements)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var dec Stream
+	plannedUsed, plannedEvents, err := dec.PushRTPPayloadSize(0, payload[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plannedUsed == 0 || plannedEvents != 2 {
+		t.Fatalf("planned used=%d events=%d", plannedUsed, plannedEvents)
+	}
+	if dec.HasSequenceHeader() || dec.InRTPFragment() {
+		t.Fatal("PushRTPPayloadSize mutated stream state")
+	}
+
+	var out [128]byte
+	var spans [4]rtp.OBUSpan
+	var events [4]Event
+	used, count, err := dec.PushRTPPayload(out[:plannedUsed], 0, spans[:plannedEvents], events[:plannedEvents], payload[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != plannedUsed || count != plannedEvents {
+		t.Fatalf("push used=%d count=%d planned %d,%d", used, count, plannedUsed, plannedEvents)
+	}
+	if events[0].Kind != EventSequenceHeader || events[1].Kind != EventFrameHeader {
+		t.Fatalf("events=%+v,%+v", events[0], events[1])
+	}
+}
+
 func TestStreamRTPPayloadFragmentedFrameHeader(t *testing.T) {
 	var dec Stream
 	var out [256]byte
@@ -623,6 +664,13 @@ func TestStreamRTPPayloadFragmentedFrameHeader(t *testing.T) {
 		t.Fatal("expected frame header to need a second fragment")
 	}
 	used = 0
+	plannedUsed, plannedEvents, err := dec.PushRTPPayloadSize(used, packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plannedUsed == 0 || plannedEvents != 0 || dec.InRTPFragment() {
+		t.Fatalf("first fragment plan used=%d events=%d inFragment=%v", plannedUsed, plannedEvents, dec.InRTPFragment())
+	}
 	used, count, err = dec.PushRTPPayload(out[:], used, spans[:], events[:], packet[:n])
 	if err != nil {
 		t.Fatal(err)
@@ -637,6 +685,13 @@ func TestStreamRTPPayloadFragmentedFrameHeader(t *testing.T) {
 	}
 	if more {
 		t.Fatal("unexpected third fragment")
+	}
+	plannedUsed, plannedEvents, err = dec.PushRTPPayloadSize(used, packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plannedUsed != len(frameHeader) || plannedEvents != 1 || !dec.InRTPFragment() {
+		t.Fatalf("final fragment plan used=%d events=%d inFragment=%v", plannedUsed, plannedEvents, dec.InRTPFragment())
 	}
 	used, count, err = dec.PushRTPPayload(out[:], used, spans[:], events[:], packet[:n])
 	if err != nil {
@@ -669,6 +724,13 @@ func TestStreamRTPPayloadAllocs(t *testing.T) {
 	var events [4]Event
 	allocs := testing.AllocsPerRun(1000, func() {
 		var dec Stream
+		plannedUsed, plannedEvents, err := dec.PushRTPPayloadSize(0, payload[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plannedUsed == 0 || plannedEvents != 2 {
+			t.Fatalf("planned used=%d events=%d", plannedUsed, plannedEvents)
+		}
 		used, count, err := dec.PushRTPPayload(out[:], 0, spans[:], events[:], payload[:n])
 		if err != nil {
 			t.Fatal(err)
