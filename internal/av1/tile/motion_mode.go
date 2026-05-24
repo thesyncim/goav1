@@ -54,8 +54,9 @@ type OverlappableNeighborRequest struct {
 	VisibleW4 uint8
 	VisibleH4 uint8
 
-	HaveTop  bool
-	HaveLeft bool
+	HaveTop      bool
+	HaveLeft     bool
+	HaveTopRight bool
 }
 
 const MaxOverlappableNeighbors = 4
@@ -76,10 +77,14 @@ type OverlappableNeighbor struct {
 
 // OverlappableNeighborSet carries the above and left OBMC neighbor lists.
 type OverlappableNeighborSet struct {
-	Above      [MaxOverlappableNeighbors]OverlappableNeighbor
-	AboveCount int
-	Left       [MaxOverlappableNeighbors]OverlappableNeighbor
-	LeftCount  int
+	Above         [MaxOverlappableNeighbors]OverlappableNeighbor
+	AboveCount    int
+	Left          [MaxOverlappableNeighbors]OverlappableNeighbor
+	LeftCount     int
+	TopLeft       OverlappableNeighbor
+	TopLeftValid  bool
+	TopRight      OverlappableNeighbor
+	TopRightValid bool
 }
 
 func (s OverlappableNeighborSet) MotionModeCount() int {
@@ -105,6 +110,12 @@ func (s OverlappableNeighborSet) WarpSampleCount(ref ReferenceFrame) int {
 		if warpSampleNeighborMatches(s.Left[i], ref) {
 			count++
 		}
+	}
+	if s.TopLeftValid && count < maxWarpSamples && warpSampleNeighborMatches(s.TopLeft, ref) {
+		count++
+	}
+	if s.TopRightValid && count < maxWarpSamples && warpSampleNeighborMatches(s.TopRight, ref) {
+		count++
 	}
 	return count
 }
@@ -240,6 +251,18 @@ func (c *BlockModeContext) CollectOverlappableNeighbors(req OverlappableNeighbor
 	}
 	if req.HaveLeft && leftMax > 0 {
 		c.collectOverlappableLeft(req.Y4, visibleH, leftMax, &set)
+	}
+	if req.HaveTop && req.HaveLeft {
+		if neighbor, ok := c.gridOverlappableNeighbor(req.X4-1, req.Y4-1, 0, 0); ok {
+			set.TopLeft = neighbor
+			set.TopLeftValid = true
+		}
+	}
+	if req.HaveTopRight {
+		if neighbor, ok := c.gridOverlappableNeighbor(req.X4+visibleW, req.Y4-1, visibleW, 0); ok {
+			set.TopRight = neighbor
+			set.TopRightValid = true
+		}
 	}
 	return set, nil
 }
@@ -399,11 +422,27 @@ func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int)
 	}
 }
 
+func (c *BlockModeContext) gridOverlappableNeighbor(x4 int, y4 int, relX4 int, relY4 int) (OverlappableNeighbor, bool) {
+	motionResult, size, ok := c.gridInterMotion(x4, y4)
+	if !ok {
+		return OverlappableNeighbor{}, false
+	}
+	return OverlappableNeighbor{
+		RelX4:       relX4,
+		RelY4:       relY4,
+		Span4:       1,
+		Size:        size,
+		Motion:      motionResult,
+		MotionValid: true,
+	}, true
+}
+
 const maxWarpSamples = 8
 const warpLeastSquaresMVMax = 256
 
 func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool {
 	return n.MotionValid &&
+		!n.Motion.InterIntra &&
 		!n.Motion.References.Compound &&
 		n.Motion.References.Ref[0] == ref &&
 		n.Motion.References.Ref[1] == ReferenceFrameNone
@@ -449,6 +488,26 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 			}
 		}
 	}
+	if s.TopLeftValid && count < maxWarpSamples {
+		sample, ok, err := warpSampleTopLeft(s.TopLeft, ref)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			samples[count] = sample
+			count++
+		}
+	}
+	if s.TopRightValid && count < maxWarpSamples {
+		sample, ok, err := warpSampleTopRight(s.TopRight, ref)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			samples[count] = sample
+			count++
+		}
+	}
 	return count, nil
 }
 
@@ -472,6 +531,28 @@ func warpSampleLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, boo
 		return warpSample{}, false, ErrInvalidDecodeState
 	}
 	return recordWarpSample(n.Motion.MV[0], 0, int(n.RelY4), -1, 1, int(dims.W4), int(dims.H4)), true, nil
+}
+
+func warpSampleTopLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+	if !warpSampleNeighborMatches(n, ref) {
+		return warpSample{}, false, nil
+	}
+	dims, ok := n.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	return recordWarpSample(n.Motion.MV[0], 0, 0, -1, -1, int(dims.W4), int(dims.H4)), true, nil
+}
+
+func warpSampleTopRight(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+	if !warpSampleNeighborMatches(n, ref) {
+		return warpSample{}, false, nil
+	}
+	dims, ok := n.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	return recordWarpSample(n.Motion.MV[0], int(n.RelX4), 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
 }
 
 func recordWarpSample(mv motion.Vector, colOffset4 int, rowOffset4 int, signC int, signR int, w4 int, h4 int) warpSample {

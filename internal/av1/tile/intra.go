@@ -726,6 +726,7 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
 	}
+	c.clearGridInterMotion(x4, y4, dims)
 	return nil
 }
 

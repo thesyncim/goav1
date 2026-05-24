@@ -663,14 +663,15 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		if req.DecodeInterModes {
 			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
-				Size:        block.Size,
-				References:  refs,
-				X4:          block.X4,
-				Y4:          block.Y4,
-				HaveTop:     block.HaveTop,
-				HaveLeft:    block.HaveLeft,
-				GlobalMVs:   globalMVs,
-				RefSignBias: req.RefSignBias,
+				Size:         block.Size,
+				References:   refs,
+				X4:           block.X4,
+				Y4:           block.Y4,
+				HaveTop:      block.HaveTop,
+				HaveLeft:     block.HaveLeft,
+				HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+				GlobalMVs:    globalMVs,
+				RefSignBias:  req.RefSignBias,
 
 				MICol:          block.MICol,
 				MIRow:          block.MIRow,
@@ -754,16 +755,20 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					}
 					result.InterIntra = interIntra
 					result.InterIntraValid = true
+					if interIntra.Enabled {
+						result.InterMotion.InterIntra = true
+					}
 				}
 				if req.DecodeMotionModes {
 					overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
-						Size:      block.Size,
-						X4:        block.X4,
-						Y4:        block.Y4,
-						VisibleW4: block.VisibleW4,
-						VisibleH4: block.VisibleH4,
-						HaveTop:   block.HaveTop,
-						HaveLeft:  block.HaveLeft,
+						Size:         block.Size,
+						X4:           block.X4,
+						Y4:           block.Y4,
+						VisibleW4:    block.VisibleW4,
+						VisibleH4:    block.VisibleH4,
+						HaveTop:      block.HaveTop,
+						HaveLeft:     block.HaveLeft,
+						HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
 					})
 					if err != nil {
 						return BlockPredictionModeResult{}, err
@@ -847,7 +852,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				result.InterpFilters = filters
 				result.InterpFiltersValid = true
 				result.InterpFilterReads = filterReads
-				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, motionResult.Motion); err != nil {
+				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
 					return BlockPredictionModeResult{}, err
 				}
 				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {

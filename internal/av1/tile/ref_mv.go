@@ -14,6 +14,7 @@ type InterMotionResult struct {
 	References InterReferencesResult
 	Mode       InterModeResult
 	MV         [2]motion.Vector
+	InterIntra bool
 }
 
 // ReferenceMVCandidate mirrors libaom's CANDIDATE_MV/ref_mv_weight entry.
@@ -36,10 +37,11 @@ type ReferenceMVStackRequest struct {
 	Size       BlockSize
 	References InterReferencesResult
 
-	X4       int
-	Y4       int
-	HaveTop  bool
-	HaveLeft bool
+	X4           int
+	Y4           int
+	HaveTop      bool
+	HaveLeft     bool
+	HaveTopRight bool
 
 	MICol uint32
 	MIRow uint32
@@ -287,7 +289,40 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 		c.LeftMotionValid[y4+i] = 1
 		c.LeftBlockSize[y4+i] = size
 	}
+	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
+}
+
+func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, dims BlockDimensions) {
+	for y := y4; y < y4+int(dims.H4); y++ {
+		if y < 0 || y >= MaxBlockModeSlots {
+			continue
+		}
+		for x := x4; x < x4+int(dims.W4); x++ {
+			if x < 0 || x >= MaxBlockModeSlots {
+				continue
+			}
+			c.GridInterMotion[y][x] = result
+			c.GridMotionValid[y][x] = 1
+			c.GridBlockSize[y][x] = size
+		}
+	}
+}
+
+func (c *BlockModeContext) clearGridInterMotion(x4 int, y4 int, dims BlockDimensions) {
+	for y := y4; y < y4+int(dims.H4); y++ {
+		if y < 0 || y >= MaxBlockModeSlots {
+			continue
+		}
+		for x := x4; x < x4+int(dims.W4); x++ {
+			if x < 0 || x >= MaxBlockModeSlots {
+				continue
+			}
+			c.GridInterMotion[y][x] = InterMotionResult{}
+			c.GridMotionValid[y][x] = 0
+			c.GridBlockSize[y][x] = 0
+		}
+	}
 }
 
 // BuildReferenceMVStack ports the spatial part of libaom's setup_ref_mv_list()
@@ -301,20 +336,25 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		return ReferenceMVStackResult{}, err
 	}
 
+	searchMaxRowOffset, searchMaxColOffset, gridMaxRowOffset, gridMaxColOffset := referenceMVSearchOffsets(req, dims)
+	processedRows := 0
+	processedCols := 0
 	var result ReferenceMVStackResult
-	if req.HaveTop {
-		c.scanAboveReferenceMVs(req, dims, &result)
+	if req.HaveTop && absInt(searchMaxRowOffset) >= 1 {
+		c.scanAboveReferenceMVs(req, dims, searchMaxRowOffset, &processedRows, &result)
 	}
-	if req.HaveLeft {
-		c.scanLeftReferenceMVs(req, dims, &result)
+	if req.HaveLeft && absInt(searchMaxColOffset) >= 1 {
+		c.scanLeftReferenceMVs(req, dims, searchMaxColOffset, &processedCols, &result)
+	}
+	if req.HaveTopRight {
+		c.scanTopRightReferenceMV(req, dims, &result)
 	}
 	nearestMatch := boolInt(result.RowMatches > 0) + boolInt(result.ColumnMatches > 0)
-	refMatchCount := nearestMatch
 	result.NearestCount = result.Stack.Count
 	for i := 0; i < result.NearestCount; i++ {
 		result.Stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
-	result.ModeContext = referenceMVModeContext(nearestMatch, refMatchCount, result.NewMVMatches)
+	modeContextFlags := uint16(0)
 	temporalUnavailable := req.TemporalMVSampleUnavailable
 	if req.UseRefFrameMVS && req.TemporalMVs != nil {
 		temporal, err := req.temporalReferenceMVs(dims, &result.Stack)
@@ -323,12 +363,15 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		}
 		temporalUnavailable = !temporal.FirstAvailable
 		if temporal.GlobalMVDifferent {
-			result.ModeContext |= 1 << globalMVOffset
+			modeContextFlags |= 1 << globalMVOffset
 		}
 	}
 	if req.UseRefFrameMVS && temporalUnavailable {
-		result.ModeContext |= 1 << globalMVOffset
+		modeContextFlags |= 1 << globalMVOffset
 	}
+	c.scanOuterReferenceMVs(req, dims, gridMaxRowOffset, gridMaxColOffset, processedRows, processedCols, &result)
+	refMatchCount := boolInt(result.RowMatches > 0) + boolInt(result.ColumnMatches > 0)
+	result.ModeContext = referenceMVModeContext(nearestMatch, refMatchCount, result.NewMVMatches) | modeContextFlags
 	sortReferenceMVStack(&result.Stack, 0, result.NearestCount)
 
 	if req.References.Compound {
@@ -339,6 +382,11 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
 	return result, nil
 }
+
+const (
+	refMVRowCols       = 3
+	refMVMaxScanBlock4 = 16
+)
 
 type temporalReferenceMVResult struct {
 	FirstAvailable    bool
@@ -472,12 +520,35 @@ func absInt32(v int32) int32 {
 	return v
 }
 
-func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
-	for off := 0; off < int(dims.W4); {
+func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, result *ReferenceMVStackResult) {
+	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	end = minInt(end, refMVMaxScanBlock4)
+	for off := 0; off < end; {
 		slot := req.X4 + off
-		step := c.aboveCandidateStep(slot, int(dims.W4)-off)
+		size := c.AboveBlockSize[slot]
+		step := c.aboveCandidateStep(slot, end-off)
+		weight := 2
+		if c.AboveMotionValid[slot] != 0 {
+			sizeW4 := blockSizeWidth4(size)
+			sizeH4 := blockSizeHeight4(size)
+			step = minInt(int(dims.W4), sizeW4)
+			if dims.W4 >= refMVMaxScanBlock4 {
+				step = maxInt(step, 4)
+			}
+			if step > end-off {
+				step = end - off
+			}
+			if step <= 0 {
+				step = 1
+			}
+			if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
+				inc := minInt(-maxRowOffset, sizeH4)
+				weight = maxInt(weight, inc)
+				*processedRows = inc
+			}
+		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], req.References, uint16(step*2))
+			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], req.References, uint16(step*weight))
 			result.RowMatches += matches
 			result.NewMVMatches += newMatches
 		}
@@ -485,17 +556,247 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 	}
 }
 
-func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
-	for off := 0; off < int(dims.H4); {
+func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, result *ReferenceMVStackResult) {
+	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	end = minInt(end, refMVMaxScanBlock4)
+	for off := 0; off < end; {
 		slot := req.Y4 + off
-		step := c.leftCandidateStep(slot, int(dims.H4)-off)
+		size := c.LeftBlockSize[slot]
+		step := c.leftCandidateStep(slot, end-off)
+		weight := 2
+		if c.LeftMotionValid[slot] != 0 {
+			sizeW4 := blockSizeWidth4(size)
+			sizeH4 := blockSizeHeight4(size)
+			step = minInt(int(dims.H4), sizeH4)
+			if dims.H4 >= refMVMaxScanBlock4 {
+				step = maxInt(step, 4)
+			}
+			if step > end-off {
+				step = end - off
+			}
+			if step <= 0 {
+				step = 1
+			}
+			if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
+				inc := minInt(-maxColOffset, sizeW4)
+				weight = maxInt(weight, inc)
+				*processedCols = inc
+			}
+		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], req.References, uint16(step*2))
+			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], req.References, uint16(step*weight))
 			result.ColumnMatches += matches
 			result.NewMVMatches += newMatches
 		}
 		off += step
 	}
+}
+
+func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
+	candidate, ok := c.topRightInterMotion(req, dims)
+	if !ok {
+		return
+	}
+	matches, newMatches := result.Stack.addDirectCandidate(candidate, req.References, 4)
+	result.RowMatches += matches
+	result.NewMVMatches += newMatches
+}
+
+func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions) (int, int, int, int) {
+	rowAdj := 0
+	if dims.H4 < 2 && req.MIRow&1 != 0 {
+		rowAdj = 1
+	}
+	colAdj := 0
+	if dims.W4 < 2 && req.MICol&1 != 0 {
+		colAdj = 1
+	}
+	maxRowOffset := 0
+	if req.HaveTop {
+		searchRows := refMVRowCols
+		if dims.H4 < 2 {
+			searchRows = 2
+		}
+		maxRowOffset = -(searchRows << 1) + rowAdj
+		if req.TileMIRowEnd > req.TileMIRowStart && req.MIRow >= req.TileMIRowStart && req.MIRow < req.TileMIRowEnd {
+			maxRowOffset = clampInt(maxRowOffset, int(req.TileMIRowStart)-int(req.MIRow), int(req.TileMIRowEnd)-int(req.MIRow)-1)
+		}
+	}
+	maxColOffset := 0
+	if req.HaveLeft {
+		searchCols := refMVRowCols
+		if dims.W4 < 2 {
+			searchCols = 2
+		}
+		maxColOffset = -(searchCols << 1) + colAdj
+		if req.TileMIColEnd > req.TileMIColStart && req.MICol >= req.TileMIColStart && req.MICol < req.TileMIColEnd {
+			maxColOffset = clampInt(maxColOffset, int(req.TileMIColStart)-int(req.MICol), int(req.TileMIColEnd)-int(req.MICol)-1)
+		}
+	}
+	gridMaxRowOffset := maxRowOffset
+	if req.HaveTop {
+		gridMaxRowOffset = maxInt(gridMaxRowOffset, -req.Y4)
+	}
+	gridMaxColOffset := maxColOffset
+	if req.HaveLeft {
+		gridMaxColOffset = maxInt(gridMaxColOffset, -req.X4)
+	}
+	return maxRowOffset, maxColOffset, gridMaxRowOffset, gridMaxColOffset
+}
+
+func (c *BlockModeContext) scanOuterReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, processedRows int, processedCols int, result *ReferenceMVStackResult) {
+	var dummyNewMV int
+	c.scanGridBlockReferenceMV(req, -1, -1, &result.RowMatches, &dummyNewMV, &result.Stack)
+	rowAdj := 0
+	if dims.H4 < 2 && req.MIRow&1 != 0 {
+		rowAdj = 1
+	}
+	colAdj := 0
+	if dims.W4 < 2 && req.MICol&1 != 0 {
+		colAdj = 1
+	}
+	for idx := 2; idx <= refMVRowCols; idx++ {
+		rowOffset := -(idx << 1) + 1 + rowAdj
+		colOffset := -(idx << 1) + 1 + colAdj
+		if absInt(rowOffset) <= absInt(maxRowOffset) && absInt(rowOffset) > processedRows {
+			c.scanGridRowReferenceMVs(req, dims, rowOffset, maxRowOffset, &processedRows, &result.RowMatches, &dummyNewMV, &result.Stack)
+		}
+		if absInt(colOffset) <= absInt(maxColOffset) && absInt(colOffset) > processedCols {
+			c.scanGridColReferenceMVs(req, dims, colOffset, maxColOffset, &processedCols, &result.ColumnMatches, &dummyNewMV, &result.Stack)
+		}
+	}
+}
+
+func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, rowOffset int, maxRowOffset int, processedRows *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	end = minInt(end, refMVMaxScanBlock4)
+	colOffset := 0
+	if absInt(rowOffset) > 1 {
+		colOffset = 1
+		if req.MICol&1 != 0 && dims.W4 < 2 {
+			colOffset--
+		}
+	}
+	for i := 0; i < end; {
+		x := req.X4 + colOffset + i
+		y := req.Y4 + rowOffset
+		candidate, size, ok := c.gridInterMotion(x, y)
+		if !ok {
+			i++
+			continue
+		}
+		sizeW4 := blockSizeWidth4(size)
+		sizeH4 := blockSizeHeight4(size)
+		step := minInt(int(dims.W4), sizeW4)
+		if dims.W4 >= refMVMaxScanBlock4 {
+			step = maxInt(step, 4)
+		} else if absInt(rowOffset) > 1 {
+			step = maxInt(step, 2)
+		}
+		if step <= 0 {
+			step = 1
+		}
+		weight := 2
+		if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
+			inc := minInt(-maxRowOffset+rowOffset+1, sizeH4)
+			weight = maxInt(weight, inc)
+			*processedRows = inc - rowOffset - 1
+		}
+		m, n := stack.addDirectCandidate(candidate, req.References, uint16(step*weight))
+		*matches += m
+		*newMatches += n
+		i += step
+	}
+}
+
+func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, colOffset int, maxColOffset int, processedCols *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	end = minInt(end, refMVMaxScanBlock4)
+	rowOffset := 0
+	if absInt(colOffset) > 1 {
+		rowOffset = 1
+		if req.MIRow&1 != 0 && dims.H4 < 2 {
+			rowOffset--
+		}
+	}
+	for i := 0; i < end; {
+		x := req.X4 + colOffset
+		y := req.Y4 + rowOffset + i
+		candidate, size, ok := c.gridInterMotion(x, y)
+		if !ok {
+			i++
+			continue
+		}
+		sizeW4 := blockSizeWidth4(size)
+		sizeH4 := blockSizeHeight4(size)
+		step := minInt(int(dims.H4), sizeH4)
+		if dims.H4 >= refMVMaxScanBlock4 {
+			step = maxInt(step, 4)
+		} else if absInt(colOffset) > 1 {
+			step = maxInt(step, 2)
+		}
+		if step <= 0 {
+			step = 1
+		}
+		weight := 2
+		if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
+			inc := minInt(-maxColOffset+colOffset+1, sizeW4)
+			weight = maxInt(weight, inc)
+			*processedCols = inc - colOffset - 1
+		}
+		m, n := stack.addDirectCandidate(candidate, req.References, uint16(step*weight))
+		*matches += m
+		*newMatches += n
+		i += step
+	}
+}
+
+func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+	candidate, _, ok := c.gridInterMotion(req.X4+colOffset, req.Y4+rowOffset)
+	if !ok {
+		return
+	}
+	m, n := stack.addDirectCandidate(candidate, req.References, 4)
+	*matches += m
+	*newMatches += n
+}
+
+func (c *BlockModeContext) gridInterMotion(x4 int, y4 int) (InterMotionResult, BlockSize, bool) {
+	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots ||
+		c.GridMotionValid[y4][x4] == 0 {
+		return InterMotionResult{}, 0, false
+	}
+	return c.GridInterMotion[y4][x4], c.GridBlockSize[y4][x4], true
+}
+
+func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims BlockDimensions) (InterMotionResult, bool) {
+	x := req.X4 + int(dims.W4)
+	y := req.Y4 - 1
+	if y >= 0 {
+		candidate, _, ok := c.gridInterMotion(x, y)
+		return candidate, ok
+	}
+	if !req.HaveTop || x < 0 || x >= MaxBlockModeSlots ||
+		c.AboveIntra[x] != 0 || c.AboveMotionValid[x] == 0 {
+		return InterMotionResult{}, false
+	}
+	return c.AboveInterMotion[x], true
+}
+
+func blockSizeWidth4(size BlockSize) int {
+	dims, ok := size.Dimensions()
+	if !ok || dims.W4 == 0 {
+		return 1
+	}
+	return int(dims.W4)
+}
+
+func blockSizeHeight4(size BlockSize) int {
+	dims, ok := size.Dimensions()
+	if !ok || dims.H4 == 0 {
+		return 1
+	}
+	return int(dims.H4)
 }
 
 func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, stack *ReferenceMVStack) {
@@ -656,6 +957,53 @@ func validateInterReferences(refs InterReferencesResult) error {
 		return ErrInvalidDecodeState
 	}
 	return nil
+}
+
+func blockHasTopRight(sbSizeMIB uint8, block BlockVisit) bool {
+	dims, ok := block.Size.Dimensions()
+	if !ok || sbSizeMIB == 0 {
+		return false
+	}
+	bs := maxInt(int(dims.W4), int(dims.H4))
+	if bs <= 0 || bs > blockSizeWidth4(BlockSize64x64) {
+		return false
+	}
+	sbSize := int(sbSizeMIB)
+	maskRow := int(block.MIRow) & (sbSize - 1)
+	maskCol := int(block.MICol) & (sbSize - 1)
+	hasTopRight := !((maskRow&bs) != 0 && (maskCol&bs) != 0)
+	for cur := bs; cur < sbSize; cur <<= 1 {
+		if (maskCol & cur) == 0 {
+			break
+		}
+		if (maskCol&(2*cur)) != 0 && (maskRow&(2*cur)) != 0 {
+			hasTopRight = false
+			break
+		}
+	}
+	if dims.W4 < dims.H4 && !blockIsLastVerticalRect(block, dims) {
+		hasTopRight = true
+	}
+	if dims.W4 > dims.H4 && !blockIsFirstHorizontalRect(block) {
+		hasTopRight = false
+	}
+	return hasTopRight
+}
+
+func blockIsFirstHorizontalRect(block BlockVisit) bool {
+	levelSize := int(block.Level.Size4x4())
+	if levelSize <= 0 {
+		return true
+	}
+	return (int(block.MIRow) & (levelSize - 1)) == 0
+}
+
+func blockIsLastVerticalRect(block BlockVisit, dims BlockDimensions) bool {
+	levelSize := int(block.Level.Size4x4())
+	if levelSize <= 0 {
+		return true
+	}
+	return (int(block.MICol)&(levelSize-1))+int(dims.W4) >= levelSize
 }
 
 func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, refs InterReferencesResult, weight uint16) (int, int) {

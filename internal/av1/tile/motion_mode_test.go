@@ -161,6 +161,51 @@ func TestOverlappableNeighborSetCountsWarpSamples(t *testing.T) {
 	}
 }
 
+func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
+	}
+
+	var ctx BlockModeContext
+	if err := ctx.MarkInterMotion(BlockSize4x8, 6, 10, inter); err != nil {
+		t.Fatal(err)
+	}
+	set, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:         BlockSize8x8,
+		X4:           4,
+		Y4:           12,
+		VisibleW4:    2,
+		VisibleH4:    2,
+		HaveTop:      true,
+		HaveLeft:     true,
+		HaveTopRight: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := set.WarpSampleCount(ReferenceFrameLast)
+	if got != 1 {
+		t.Fatalf("top-right samples=%d want 1", got)
+	}
+	last, err := LastMotionModeAllowed(MotionModeRequest{
+		Size:                  BlockSize8x8,
+		Mode:                  InterModeNewMV,
+		SwitchableMotionMode:  true,
+		AllowWarpedMotion:     true,
+		OverlappableNeighbors: 1,
+		NumProjRef:            got,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != MotionModeWarp {
+		t.Fatalf("last motion mode=%d want warp", last)
+	}
+}
+
 func TestWarpProjectionDerivesAffineModel(t *testing.T) {
 	mv := motion.Vector{Row: 5, Col: 3}
 	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
@@ -283,6 +328,28 @@ func TestLastMotionModeAllowedMatchesLibaom(t *testing.T) {
 				t.Fatalf("allowed=%d want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWarpSampleCountSkipsInterIntraNeighbors(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	neighbor := OverlappableNeighbor{
+		MotionValid: true,
+		Motion: InterMotionResult{
+			References: refs,
+			Mode:       InterModeResult{Mode: InterModeNewMV},
+			MV:         [2]motion.Vector{{Row: 4, Col: -2}},
+		},
+	}
+	set := OverlappableNeighborSet{Above: [MaxOverlappableNeighbors]OverlappableNeighbor{neighbor}, AboveCount: 1}
+	if got := set.WarpSampleCount(ReferenceFrameLast); got != 1 {
+		t.Fatalf("warp samples=%d want 1", got)
+	}
+
+	neighbor.Motion.InterIntra = true
+	set.Above[0] = neighbor
+	if got := set.WarpSampleCount(ReferenceFrameLast); got != 0 {
+		t.Fatalf("inter-intra warp samples=%d want 0", got)
 	}
 }
 

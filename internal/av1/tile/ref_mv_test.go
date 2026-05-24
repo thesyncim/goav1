@@ -394,7 +394,7 @@ func TestBlockModeContextBuildReferenceMVStackCompound(t *testing.T) {
 	if result.Stack.Count != 2 || result.NearestCount != 1 {
 		t.Fatalf("counts stack=%d nearest=%d", result.Stack.Count, result.NearestCount)
 	}
-	if result.Stack.Candidates[0] != (ReferenceMVCandidate{This: direct.MV[0], Compound: direct.MV[1], Weight: RefMVCategoryLevel + 8}) {
+	if result.Stack.Candidates[0] != (ReferenceMVCandidate{This: direct.MV[0], Compound: direct.MV[1], Weight: RefMVCategoryLevel + 16}) {
 		t.Fatalf("direct candidate=%+v", result.Stack.Candidates[0])
 	}
 	if result.Stack.Candidates[1] != (ReferenceMVCandidate{This: fallback.MV[0], Compound: direct.MV[0], Weight: 2}) {
@@ -412,7 +412,7 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveMotionValid[0] == 0 || ctx.LeftMotionValid[0] == 0 {
+	if ctx.AboveMotionValid[0] == 0 || ctx.LeftMotionValid[0] == 0 || ctx.GridMotionValid[0][0] == 0 {
 		t.Fatal("motion was not marked valid")
 	}
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, motionResult.References); err != nil {
@@ -421,11 +421,143 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatal("inter reference mark left stale motion valid")
 	}
+	if ctx.GridMotionValid[0][0] != 0 {
+		t.Fatal("inter reference mark left stale grid motion valid")
+	}
+	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult); err != nil {
+		t.Fatal(err)
+	}
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeDC); err != nil {
 		t.Fatal(err)
 	}
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatal("intra mark left stale motion valid")
+	}
+	if ctx.GridMotionValid[0][0] != 0 {
+		t.Fatal("intra mark left stale grid motion valid")
+	}
+}
+
+func TestBlockModeContextMarkInterMotionFillsGrid(t *testing.T) {
+	var ctx BlockModeContext
+	motionResult := InterMotionResult{
+		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
+	}
+	if err := ctx.MarkInterMotion(BlockSize8x8, 4, 6, motionResult); err != nil {
+		t.Fatal(err)
+	}
+	for y := 6; y < 8; y++ {
+		for x := 4; x < 6; x++ {
+			if ctx.GridMotionValid[y][x] == 0 {
+				t.Fatalf("grid valid[%d][%d]=0", y, x)
+			}
+			if ctx.GridInterMotion[y][x] != motionResult || ctx.GridBlockSize[y][x] != BlockSize8x8 {
+				t.Fatalf("grid[%d][%d] motion=%+v size=%v", y, x, ctx.GridInterMotion[y][x], ctx.GridBlockSize[y][x])
+			}
+		}
+	}
+	if ctx.GridMotionValid[5][4] != 0 || ctx.GridMotionValid[6][3] != 0 {
+		t.Fatal("grid fill leaked outside the block")
+	}
+}
+
+func TestBuildReferenceMVStackUsesOuterGridCandidateForNearMV(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	left := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: 0, Col: -6}},
+	}
+	outer := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
+	}
+	seedLeftMotion(&ctx, 0, BlockSize8x8, left)
+	dims, _ := BlockSize8x8.Dimensions()
+	ctx.markGridInterMotion(BlockSize8x8, 0, 0, outer, dims)
+
+	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
+		Size:       BlockSize8x8,
+		References: target,
+		X4:         4,
+		Y4:         0,
+		MICol:      4,
+		MIRow:      0,
+		HaveLeft:   true,
+		GlobalMVs:  [2]motion.Vector{{Row: -1, Col: -8}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 2 || result.NearestCount != 1 {
+		t.Fatalf("counts stack=%d nearest=%d stack=%+v", result.Stack.Count, result.NearestCount, result.Stack)
+	}
+	nearest, near, err := result.Stack.BestSingleReferenceMVs(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nearest != left.MV[0] || near != outer.MV[0] {
+		t.Fatalf("nearest=%+v near=%+v want %+v %+v", nearest, near, left.MV[0], outer.MV[0])
+	}
+	if result.Stack.Candidates[1] != (ReferenceMVCandidate{This: outer.MV[0], Weight: 4}) {
+		t.Fatalf("outer candidate=%+v", result.Stack.Candidates[1])
+	}
+}
+
+func TestBuildReferenceMVStackUsesTopRightBeforeNearestCutoff(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	above := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
+	}
+	left := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: -1, Col: -8}},
+	}
+	topRight := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearMV},
+		MV:         [2]motion.Vector{{Row: -1, Col: -7}},
+	}
+	seedAboveMotion(&ctx, 6, BlockSize8x8, above)
+	seedLeftMotion(&ctx, 8, BlockSize8x4, left)
+	dims, _ := BlockSize8x8.Dimensions()
+	ctx.markGridInterMotion(BlockSize8x8, 8, 6, topRight, dims)
+
+	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
+		Size:         BlockSize8x4,
+		References:   target,
+		X4:           6,
+		Y4:           8,
+		MICol:        6,
+		MIRow:        8,
+		HaveTop:      true,
+		HaveLeft:     true,
+		HaveTopRight: true,
+		GlobalMVs:    [2]motion.Vector{{Row: 0, Col: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NearestCount != 3 {
+		t.Fatalf("nearest count=%d stack=%+v", result.NearestCount, result.Stack)
+	}
+	nearest, near, err := result.Stack.BestSingleReferenceMVs(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nearest != above.MV[0] || near != topRight.MV[0] {
+		t.Fatalf("nearest=%+v near=%+v want %+v %+v", nearest, near, above.MV[0], topRight.MV[0])
+	}
+	if result.Stack.Candidates[2].This != left.MV[0] {
+		t.Fatalf("left candidate should sort after top-right: stack=%+v", result.Stack)
 	}
 }
 
