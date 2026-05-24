@@ -190,11 +190,8 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 		return result, frame.ErrShortBuffer
 	}
 	edges := req.Edges[:plan.StoredEdges]
-	for i := range edges {
-		if err := ctx.applyLoopFilterEdge(edges[i]); err != nil {
-			return result, err
-		}
-		frameWorkCountAppliedLoopFilterEdge(&result, edges[i])
+	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneV); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -223,13 +220,32 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 		return result, ErrUnsupportedPostFilter
 	}
 	edges := req.Edges[:plan.StoredEdges]
-	for i := range edges {
-		if err := ctx.applyLoopFilterLumaEdge(edges[i]); err != nil {
-			return result, err
-		}
-		frameWorkCountAppliedLoopFilterEdge(&result, edges[i])
+	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneY); err != nil {
+		return result, err
 	}
 	return result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, maxPlane loopfilter.Plane) error {
+	before := result.Edges
+	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+		for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
+			for i := range edges {
+				edge := edges[i]
+				if edge.Plane != plane || edge.Edge != edgeKind {
+					continue
+				}
+				if err := ctx.applyLoopFilterEdge(edge); err != nil {
+					return err
+				}
+				frameWorkCountAppliedLoopFilterEdge(result, edge)
+			}
+		}
+	}
+	if result.Edges-before != len(edges) {
+		return loopfilter.ErrInvalidFilter
+	}
+	return nil
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoopFilterPostFilterEdge) error {

@@ -3,6 +3,7 @@ package decoder
 import (
 	"bytes"
 	"errors"
+	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -487,6 +488,74 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLumaAndChroma(t *testing.
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyLoopFilterEdgesUsesPlanePassOrder(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              32,
+		SuperResDenominator: 8,
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size,
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4),
+		testFrameWorkLoopFilterPostFilterRecordAt(0, 4, 4, 8),
+		testFrameWorkLoopFilterPostFilterRecordAt(4, 4, 8, 8),
+	)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	rng := rand.New(rand.NewSource(1))
+	testFillFrameWorkLoopFilterOrderPattern(output.Y, rng)
+	testFillFrameWorkLoopFilterOrderPattern(output.U, rng)
+	testFillFrameWorkLoopFilterOrderPattern(output.V, rng)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY: [2]uint8{63, 63},
+				LevelU: 63,
+				LevelV: 63,
+			},
+		},
+		Output: output,
+	}
+
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 12)
+	wantFrame := testCloneFrameWorkLoopFilterFrame(output)
+	storedOrderFrame := testCloneFrameWorkLoopFilterFrame(output)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{Map: filterMap, Edges: edges})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.StoredEdges != len(edges) || plan.PlaneEdgeCandidates != [3]int{4, 4, 4} {
+		t.Fatalf("plan=%+v", plan)
+	}
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	testApplyFrameWorkLoopFilterEdgesStoredOrder(t, storedOrderFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	if bytes.Equal(storedOrderFrame.Y.Pix, wantFrame.Y.Pix) &&
+		bytes.Equal(storedOrderFrame.U.Pix, wantFrame.U.Pix) &&
+		bytes.Equal(storedOrderFrame.V.Pix, wantFrame.V.Pix) {
+		t.Fatal("test fixture did not distinguish stored order from plane/pass order")
+	}
+
+	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Edges != 12 ||
+		result.PlaneEdges != [3]int{4, 4, 4} ||
+		result.PlaneApplied != [3]int{4, 4, 4} {
+		t.Fatalf("result=%+v", result)
+	}
+	if !bytes.Equal(output.Y.Pix, wantFrame.Y.Pix) ||
+		!bytes.Equal(output.U.Pix, wantFrame.U.Pix) ||
+		!bytes.Equal(output.V.Pix, wantFrame.V.Pix) {
+		t.Fatal("loop filter all-plane bridge did not use plane/pass order")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopFilterEdgesAllocs(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
@@ -738,20 +807,64 @@ func testFillFrameWorkLoopFilterPattern(plane frame.Plane) {
 	}
 }
 
+func testFillFrameWorkLoopFilterOrderPattern(plane frame.Plane, rng *rand.Rand) {
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			value := 88 + rng.Intn(25)
+			if x >= plane.Width/2 {
+				value += rng.Intn(8)
+			}
+			if y >= plane.Height/2 {
+				value += rng.Intn(8)
+			}
+			plane.Pix[y*plane.Stride+x] = byte(value)
+		}
+	}
+}
+
+func testCloneFrameWorkLoopFilterFrame(src *frame.Frame) frame.Frame {
+	clone := *src
+	clone.Y.Pix = append([]byte(nil), src.Y.Pix...)
+	if !src.Format.MonoChrome {
+		clone.U.Pix = append([]byte(nil), src.U.Pix...)
+		clone.V.Pix = append([]byte(nil), src.V.Pix...)
+	}
+	return clone
+}
+
 func testApplyFrameWorkLoopFilterEdgesDirect(t *testing.T, output frame.Frame, sharpness uint8, edges []FrameWorkLoopFilterPostFilterEdge) {
 	t.Helper()
+	for plane := loopfilter.PlaneY; plane <= loopfilter.PlaneV; plane++ {
+		for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
+			for _, edge := range edges {
+				if edge.Plane != plane || edge.Edge != edgeKind {
+					continue
+				}
+				testApplyFrameWorkLoopFilterEdgeDirect(t, output, sharpness, edge)
+			}
+		}
+	}
+}
+
+func testApplyFrameWorkLoopFilterEdgesStoredOrder(t *testing.T, output frame.Frame, sharpness uint8, edges []FrameWorkLoopFilterPostFilterEdge) {
+	t.Helper()
 	for _, edge := range edges {
-		thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, sharpness)
-		if err != nil {
-			t.Fatal(err)
-		}
-		plane, ok := frameWorkLoopFilterOutputPlane(output, edge.Plane)
-		if !ok {
-			t.Fatalf("missing output plane for edge=%+v", edge)
-		}
-		if err := loopfilter.FilterEdgeByWidth(edge.Width, plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
-			t.Fatal(err)
-		}
+		testApplyFrameWorkLoopFilterEdgeDirect(t, output, sharpness, edge)
+	}
+}
+
+func testApplyFrameWorkLoopFilterEdgeDirect(t *testing.T, output frame.Frame, sharpness uint8, edge FrameWorkLoopFilterPostFilterEdge) {
+	t.Helper()
+	thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, sharpness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plane, ok := frameWorkLoopFilterOutputPlane(output, edge.Plane)
+	if !ok {
+		t.Fatalf("missing output plane for edge=%+v", edge)
+	}
+	if err := loopfilter.FilterEdgeByWidth(edge.Width, plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+		t.Fatal(err)
 	}
 }
 
