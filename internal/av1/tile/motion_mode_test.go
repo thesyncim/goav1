@@ -161,6 +161,83 @@ func TestOverlappableNeighborSetCountsWarpSamples(t *testing.T) {
 	}
 }
 
+func TestWarpProjectionDerivesAffineModel(t *testing.T) {
+	mv := motion.Vector{Row: 5, Col: 3}
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	set := OverlappableNeighborSet{
+		LeftCount: 1,
+		Left: [MaxOverlappableNeighbors]OverlappableNeighbor{
+			{
+				RelY4:       0,
+				Span4:       4,
+				Size:        BlockSize16x16,
+				Motion:      InterMotionResult{References: refs, MV: [2]motion.Vector{mv}},
+				MotionValid: true,
+			},
+		},
+	}
+	block := BlockVisit{
+		MICol:    4,
+		MIRow:    0,
+		Size:     BlockSize16x16,
+		HaveLeft: true,
+	}
+
+	model, invalid, err := set.WarpProjection(block, ReferenceFrameLast, mv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid {
+		t.Fatal("projection marked invalid")
+	}
+	if model.Params.Type != parser.GlobalMotionAffine {
+		t.Fatalf("type=%d want affine", model.Params.Type)
+	}
+	if !warpAffineShearAllowed(model.Alpha, model.Beta, model.Gamma, model.Delta) {
+		t.Fatalf("invalid shear alpha=%d beta=%d gamma=%d delta=%d", model.Alpha, model.Beta, model.Gamma, model.Delta)
+	}
+
+	dims, _ := block.Size.Dimensions()
+	centerX := int(block.MICol)*4 + int(dims.W4)*2 - 1
+	centerY := int(block.MIRow)*4 + int(dims.H4)*2 - 1
+	gotX := (int64(model.Params.Matrix[2])-warpedModelOne)*int64(centerX) +
+		int64(model.Params.Matrix[3])*int64(centerY) +
+		int64(model.Params.Matrix[0])
+	gotY := int64(model.Params.Matrix[4])*int64(centerX) +
+		(int64(model.Params.Matrix[5])-warpedModelOne)*int64(centerY) +
+		int64(model.Params.Matrix[1])
+	wantX := int64(mv.Col) * (1 << (warpedModelPrecBits - motion.SubpelBits))
+	wantY := int64(mv.Row) * (1 << (warpedModelPrecBits - motion.SubpelBits))
+	if gotX != wantX || gotY != wantY {
+		t.Fatalf("center motion=(%d,%d) want (%d,%d)", gotX, gotY, wantX, wantY)
+	}
+}
+
+func TestWarpProjectionAllocs(t *testing.T) {
+	mv := motion.Vector{Row: 5, Col: 3}
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	set := OverlappableNeighborSet{
+		LeftCount: 1,
+		Left: [MaxOverlappableNeighbors]OverlappableNeighbor{
+			{
+				Size:        BlockSize16x16,
+				Motion:      InterMotionResult{References: refs, MV: [2]motion.Vector{mv}},
+				MotionValid: true,
+			},
+		},
+	}
+	block := BlockVisit{Size: BlockSize16x16, HaveLeft: true}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, _, err := set.WarpProjection(block, ReferenceFrameLast, mv); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warp projection allocated: %f", allocs)
+	}
+}
+
 func TestLastMotionModeAllowedMatchesLibaom(t *testing.T) {
 	base := MotionModeRequest{
 		Size:                  BlockSize16x16,

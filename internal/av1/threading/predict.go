@@ -667,7 +667,10 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 }
 
 func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
-	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode != tile.MotionModeTranslation {
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeWarp && !visit.Prediction.WarpedMotionInvalid {
+		return b.predictBlockInterWarpPlane(index, visit, plane)
+	}
+	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslation(visit.Prediction) {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -677,6 +680,54 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) bool {
+	if pred.MotionMode == tile.MotionModeTranslation {
+		return true
+	}
+	return pred.MotionMode == tile.MotionModeWarp && pred.WarpedMotionInvalid
+}
+
+func (b FrameWorkBatch) predictBlockInterWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	if !visit.Prediction.Valid ||
+		visit.Prediction.Intra ||
+		!visit.Prediction.InterMotionValid ||
+		!visit.Prediction.WarpedMotionValid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !ok {
+		return err
+	}
+	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, plane)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	model := visit.Prediction.WarpedMotion
+	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
 }
 
 func (b FrameWorkBatch) predictBlockInterOBMCPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {

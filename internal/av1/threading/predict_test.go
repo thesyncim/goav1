@@ -721,6 +721,53 @@ func TestFrameWorkBatchPredictBlockLumaInterFractionalMatchesMotion(t *testing.T
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
+func TestFrameWorkBatchPredictBlockLumaInterInvalidWarpFallsBackToTranslation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	want := testBatchFrame(t, output.Format)
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	mv := motion.Vector{Col: 3, Row: 5}
+	filters := motion.InterpFilters{X: motion.InterpMultiTapSharp, Y: motion.InterpEightTapSmooth}
+	visit := testInterPredictionVisit(mv)
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	visit.Prediction.WarpedMotionInvalid = true
+
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+		t.Fatal(err)
+	}
+	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
+}
+
+func TestFrameWorkBatchPredictBlockLumaInterWarpIdentityConstant(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	testFillFrame(reference, 0xab)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.WarpedMotionValid = true
+
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			if got := output.Y.Pix[y*output.Y.Stride+x]; got != 0xab {
+				t.Fatalf("sample(%d,%d)=%d want 0xab", x, y, got)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
 	want := testBatchFrame(t, output.Format)

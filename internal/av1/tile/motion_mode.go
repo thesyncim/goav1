@@ -109,6 +109,11 @@ func (s OverlappableNeighborSet) WarpSampleCount(ref ReferenceFrame) int {
 	return count
 }
 
+func (s OverlappableNeighborSet) WarpProjectionInvalid(block BlockVisit, ref ReferenceFrame, mv motion.Vector) (bool, error) {
+	_, invalid, err := s.WarpProjection(block, ref, mv)
+	return invalid, err
+}
+
 var motionModeDefaultCDF = [blockSizeCount][2]uint16{
 	BlockSize128x128: {32507, 32558},
 	BlockSize128x64:  {30878, 31335},
@@ -395,12 +400,123 @@ func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int)
 }
 
 const maxWarpSamples = 8
+const warpLeastSquaresMVMax = 256
 
 func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool {
 	return n.MotionValid &&
 		!n.Motion.References.Compound &&
 		n.Motion.References.Ref[0] == ref &&
 		n.Motion.References.Ref[1] == ReferenceFrameNone
+}
+
+type warpSample struct {
+	X      int
+	Y      int
+	RefX   int
+	RefY   int
+	Motion motion.Vector
+}
+
+func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFrame, samples *[maxWarpSamples]warpSample) (int, error) {
+	if !ref.Valid() {
+		return 0, ErrInvalidDecodeState
+	}
+	if samples == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	count := 0
+	if block.HaveTop {
+		for i := 0; i < s.AboveCount && count < maxWarpSamples; i++ {
+			sample, ok, err := warpSampleAbove(s.Above[i], ref)
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				samples[count] = sample
+				count++
+			}
+		}
+	}
+	if block.HaveLeft {
+		for i := 0; i < s.LeftCount && count < maxWarpSamples; i++ {
+			sample, ok, err := warpSampleLeft(s.Left[i], ref)
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				samples[count] = sample
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+func warpSampleAbove(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+	if !warpSampleNeighborMatches(n, ref) {
+		return warpSample{}, false, nil
+	}
+	dims, ok := n.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	return recordWarpSample(n.Motion.MV[0], int(n.RelX4), 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
+}
+
+func warpSampleLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+	if !warpSampleNeighborMatches(n, ref) {
+		return warpSample{}, false, nil
+	}
+	dims, ok := n.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	return recordWarpSample(n.Motion.MV[0], 0, int(n.RelY4), -1, 1, int(dims.W4), int(dims.H4)), true, nil
+}
+
+func recordWarpSample(mv motion.Vector, colOffset4 int, rowOffset4 int, signC int, signR int, w4 int, h4 int) warpSample {
+	x := colOffset4*4 + signC*(w4*4)/2 - 1
+	y := rowOffset4*4 + signR*(h4*4)/2 - 1
+	return warpSample{
+		X:      x * motion.SubpelScale,
+		Y:      y * motion.SubpelScale,
+		RefX:   x*motion.SubpelScale + int(mv.Col),
+		RefY:   y*motion.SubpelScale + int(mv.Row),
+		Motion: mv,
+	}
+}
+
+func selectWarpSamples(samples []warpSample, size BlockSize, mv motion.Vector) int {
+	dims, ok := size.Dimensions()
+	if !ok {
+		return len(samples)
+	}
+	thresh := maxInt(int(dims.W4)*4, int(dims.H4)*4)
+	thresh = minInt(maxInt(thresh, 16), 112)
+	ret := 0
+	for i := range samples {
+		diff := absInt(samples[i].RefX-samples[i].X-int(mv.Col)) +
+			absInt(samples[i].RefY-samples[i].Y-int(mv.Row))
+		if diff > thresh {
+			continue
+		}
+		if ret != i {
+			samples[ret] = samples[i]
+		}
+		ret++
+	}
+	if ret == 0 {
+		return 1
+	}
+	return ret
+}
+
+func warpLeastSquaresSquare(a int) int {
+	return (a*a*4 + a*4*motion.SubpelScale + motion.SubpelScale*motion.SubpelScale*2) >> 4
+}
+
+func warpLeastSquaresProduct1(a int, b int) int {
+	return (a*b*4 + (a+b)*2*motion.SubpelScale + motion.SubpelScale*motion.SubpelScale) >> 4
 }
 
 func (c *BlockModeContext) aboveOverlappable(slot int) bool {

@@ -189,6 +189,12 @@ type BlockPredictionModeResult struct {
 
 	MotionMode      MotionMode
 	MotionModeValid bool
+	// WarpedMotionInvalid mirrors libaom's wm_params.invalid for coded
+	// WARPED_CAUSAL blocks whose local projection cannot produce a usable
+	// affine model. Such blocks fall back to translational prediction.
+	WarpedMotionInvalid bool
+	WarpedMotion        WarpedMotionModel
+	WarpedMotionValid   bool
 
 	OverlappableNeighbors      OverlappableNeighborSet
 	OverlappableNeighborsValid bool

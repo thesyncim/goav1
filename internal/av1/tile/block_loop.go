@@ -788,6 +788,17 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					}
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
+					if motionMode == MotionModeWarp {
+						model, invalid, err := overlappableNeighbors.WarpProjection(block, refs.Ref[0], motionResult.Motion.MV[0])
+						if err != nil {
+							return BlockPredictionModeResult{}, err
+						}
+						result.WarpedMotionInvalid = invalid
+						if !invalid {
+							result.WarpedMotion = model
+							result.WarpedMotionValid = true
+						}
+					}
 					if motionMode == MotionModeOBMC {
 						result.OverlappableNeighbors = overlappableNeighbors
 						result.OverlappableNeighborsValid = true
