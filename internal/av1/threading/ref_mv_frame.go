@@ -61,6 +61,24 @@ func (b FrameWorkBatch) BindTemporalMotionField(entries []tile.TemporalMotionEnt
 	return field, nil
 }
 
+// SetupTemporalMotionField clears and projects TemporalMVs from resolved
+// reference MV metadata using libaom's av1_setup_motion_field() ordering.
+func (b FrameWorkBatch) SetupTemporalMotionField() (tile.TemporalMotionSetupStats, error) {
+	if b.TemporalMVs == nil {
+		return tile.TemporalMotionSetupStats{}, ErrInvalidBatch
+	}
+	stats, err := b.TemporalMVs.Setup(tile.TemporalMotionSetupRequest{
+		EnableOrderHint:  b.Sequence.EnableOrderHint,
+		OrderHintBits:    b.Sequence.OrderHintBits,
+		CurrentOrderHint: b.FrameHeader.OrderHint,
+		References:       b.ReferenceMVs,
+	})
+	if err != nil {
+		return tile.TemporalMotionSetupStats{}, ErrInvalidBatch
+	}
+	return stats, nil
+}
+
 func (b FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint32, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return 0, 0, ErrInvalidBatch

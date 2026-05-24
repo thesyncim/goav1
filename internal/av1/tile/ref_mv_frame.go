@@ -72,9 +72,10 @@ func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []Referenc
 // MarkBlock ports libaom's intra_copy_frame_mvs()/av1_copy_frame_mvs() update
 // for one decoded block.
 func (f *ReferenceMVFrame) MarkBlock(req ReferenceMVFrameBlockRequest) error {
-	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
-		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols ||
-		req.VisibleW4 == 0 || req.VisibleH4 == 0 {
+	if err := f.Validate(); err != nil {
+		return err
+	}
+	if req.VisibleW4 == 0 || req.VisibleH4 == 0 {
 		return ErrInvalidDecodeState
 	}
 	col := int(req.MICol >> 1)
@@ -94,6 +95,15 @@ func (f *ReferenceMVFrame) MarkBlock(req ReferenceMVFrameBlockRequest) error {
 		for x := range line {
 			line[x] = entry
 		}
+	}
+	return nil
+}
+
+// Validate checks that f carries a well-formed caller-owned MV_REF grid.
+func (f *ReferenceMVFrame) Validate() error {
+	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
+		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
+		return ErrInvalidDecodeState
 	}
 	return nil
 }

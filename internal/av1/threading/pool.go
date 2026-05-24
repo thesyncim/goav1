@@ -197,6 +197,9 @@ type FrameWorkBatch struct {
 	// TemporalMVs carries projected ref-frame-MVS samples consumed by
 	// BuildReferenceMVStack when use_ref_frame_mvs is enabled.
 	TemporalMVs *tile.TemporalMotionField
+	// ReferenceMVs carries resolved per-reference MV_REF metadata used to set up
+	// TemporalMVs before block prediction.
+	ReferenceMVs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	Batch            Batch

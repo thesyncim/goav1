@@ -267,11 +267,7 @@ func (f *TemporalMotionField) validate() error {
 }
 
 func validateReferenceMVFrame(f *ReferenceMVFrame) error {
-	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
-		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
-		return ErrInvalidDecodeState
-	}
-	return nil
+	return f.Validate()
 }
 
 func temporalReferenceOrderHints(refs [referenceFrameCount]TemporalMotionReferenceFrame) [referenceFrameCount]uint32 {
