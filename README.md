@@ -28,10 +28,10 @@ The initial implementation covers:
 - AV1 LEB128 read/write helpers.
 - Zero-allocation AV1 IVF test-vector container parsing for DKIF/AV01 streams.
 - Strict OBU header parsing and low-overhead OBU iteration.
-- Zero-allocation Section 5 temporal-unit iteration for `.obu` conformance
-  streams.
-- Zero-allocation Annex B temporal/frame/OBU-unit iteration for length-prefixed
-  AV1 streams.
+- Public zero-allocation Section 5 temporal-unit iteration for `.obu`
+  conformance streams.
+- Public zero-allocation Annex B temporal/frame/OBU-unit iteration for
+  length-prefixed AV1 streams.
 - WebRTC-compatible OBU normalization that restores low-overhead size fields.
 - AV1 RTP aggregation header parsing, payload iteration, payload building,
   single-OBU fragmentation, and fragment reassembly.

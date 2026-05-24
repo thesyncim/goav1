@@ -20,14 +20,21 @@ const (
 type OBUHeader = internalobu.Header
 type OBUUnit = internalobu.Unit
 type LowOverheadIterator = internalobu.LowOverheadIterator
+type TemporalUnit = internalobu.TemporalUnit
+type TemporalUnitIterator = internalobu.TemporalUnitIterator
+type AnnexBUnit = internalobu.AnnexBUnit
+type AnnexBIterator = internalobu.AnnexBIterator
 
 var (
-	ErrOBUShortHeader      = internalobu.ErrShortHeader
-	ErrOBUForbiddenBit     = internalobu.ErrForbiddenBit
-	ErrOBUReservedBit      = internalobu.ErrReservedBit
-	ErrOBUMissingSizeField = internalobu.ErrMissingSizeField
-	ErrOBUSizeMismatch     = internalobu.ErrSizeMismatch
-	ErrOBUShortPayload     = internalobu.ErrShortPayload
+	ErrOBUShortHeader              = internalobu.ErrShortHeader
+	ErrOBUForbiddenBit             = internalobu.ErrForbiddenBit
+	ErrOBUReservedBit              = internalobu.ErrReservedBit
+	ErrOBUInvalidType              = internalobu.ErrInvalidType
+	ErrOBUInvalidAnnexB            = internalobu.ErrInvalidAnnexB
+	ErrOBUMissingSizeField         = internalobu.ErrMissingSizeField
+	ErrOBUMissingTemporalDelimiter = internalobu.ErrMissingTemporalDelimiter
+	ErrOBUSizeMismatch             = internalobu.ErrSizeMismatch
+	ErrOBUShortPayload             = internalobu.ErrShortPayload
 )
 
 func ParseOBUHeader(src []byte) (OBUHeader, int, error) {
@@ -52,4 +59,16 @@ func NormalizeLowOverheadOBU(dst []byte, raw []byte) (int, error) {
 
 func NewLowOverheadIterator(src []byte) LowOverheadIterator {
 	return internalobu.NewLowOverheadIterator(src)
+}
+
+func NewTemporalUnitIterator(src []byte) TemporalUnitIterator {
+	return internalobu.NewTemporalUnitIterator(src)
+}
+
+func ParseAnnexBElement(src []byte) (OBUUnit, int, error) {
+	return internalobu.ParseAnnexBElement(src)
+}
+
+func NewAnnexBIterator(src []byte) AnnexBIterator {
+	return internalobu.NewAnnexBIterator(src)
 }

@@ -1,0 +1,210 @@
+package goav1_test
+
+import (
+	"errors"
+	"testing"
+
+	av1 "github.com/thesyncim/goav1"
+)
+
+func TestPublicTemporalUnitIterator(t *testing.T) {
+	var stream []byte
+	firstStart := len(stream)
+	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
+	stream = appendPublicLowOverheadOBU(stream, av1.OBUSequenceHeader, []byte{0xaa})
+	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrameHeader, []byte{0xbb})
+	firstEnd := len(stream)
+	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
+	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrame, []byte{0xcc})
+	secondEnd := len(stream)
+
+	it := av1.NewTemporalUnitIterator(stream)
+	first, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("first ok=%v err=%v", ok, err)
+	}
+	if first.Index != 0 || string(first.Raw) != string(stream[firstStart:firstEnd]) {
+		t.Fatalf("first=%+v want=%x", first, stream[firstStart:firstEnd])
+	}
+	second, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("second ok=%v err=%v", ok, err)
+	}
+	if second.Index != 1 || string(second.Raw) != string(stream[firstEnd:secondEnd]) {
+		t.Fatalf("second=%+v want=%x", second, stream[firstEnd:secondEnd])
+	}
+	_, ok, err = it.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unexpected third temporal unit")
+	}
+}
+
+func TestPublicTemporalUnitIteratorRejectsMissingDelimiter(t *testing.T) {
+	stream := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, []byte{0xaa})
+	it := av1.NewTemporalUnitIterator(stream)
+	_, _, err := it.Next()
+	if !errors.Is(err, av1.ErrOBUMissingTemporalDelimiter) {
+		t.Fatalf("err=%v want %v", err, av1.ErrOBUMissingTemporalDelimiter)
+	}
+}
+
+func TestPublicAnnexBIterator(t *testing.T) {
+	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
+	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0xaa}
+	frameHeader := []byte{byte(av1.OBUFrameHeader) << 3, 0xbb}
+	frame := []byte{byte(av1.OBUFrame) << 3, 0xcc}
+	stream := appendPublicAnnexBStream(nil,
+		[][][]byte{{td, seq}, {frameHeader}},
+		[][][]byte{{td, frame}},
+	)
+
+	want := []struct {
+		raw      []byte
+		typ      av1.OBUType
+		temporal uint32
+		frame    uint32
+		obu      uint32
+	}{
+		{raw: td, typ: av1.OBUTemporalDelimiter, temporal: 0, frame: 0, obu: 0},
+		{raw: seq, typ: av1.OBUSequenceHeader, temporal: 0, frame: 0, obu: 1},
+		{raw: frameHeader, typ: av1.OBUFrameHeader, temporal: 0, frame: 1, obu: 0},
+		{raw: td, typ: av1.OBUTemporalDelimiter, temporal: 1, frame: 0, obu: 0},
+		{raw: frame, typ: av1.OBUFrame, temporal: 1, frame: 0, obu: 1},
+	}
+
+	it := av1.NewAnnexBIterator(stream)
+	for i, wantUnit := range want {
+		unit, ok, err := it.Next()
+		if err != nil || !ok {
+			t.Fatalf("unit %d ok=%v err=%v", i, ok, err)
+		}
+		if string(unit.Raw) != string(wantUnit.raw) || unit.OBU.Header.Type != wantUnit.typ {
+			t.Fatalf("unit %d raw=%x type=%d want raw=%x type=%d", i, unit.Raw, unit.OBU.Header.Type, wantUnit.raw, wantUnit.typ)
+		}
+		if unit.TemporalUnitIndex != wantUnit.temporal || unit.FrameUnitIndex != wantUnit.frame || unit.OBUIndex != wantUnit.obu {
+			t.Fatalf("unit %d indices=%d/%d/%d want %d/%d/%d", i,
+				unit.TemporalUnitIndex, unit.FrameUnitIndex, unit.OBUIndex,
+				wantUnit.temporal, wantUnit.frame, wantUnit.obu)
+		}
+		start := int(unit.Offset)
+		end := start + len(unit.Raw)
+		if end > len(stream) || string(unit.Raw) != string(stream[start:end]) {
+			t.Fatalf("unit %d does not alias stream at offset %d", i, unit.Offset)
+		}
+	}
+	_, ok, err := it.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unexpected extra Annex B unit")
+	}
+}
+
+func TestPublicParseAnnexBElement(t *testing.T) {
+	src := []byte{0x03, byte(av1.OBUFrame)<<3 | 0x02, 0x01, 0xdd}
+	unit, consumed, err := av1.ParseAnnexBElement(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed != len(src) || unit.Header.Type != av1.OBUFrame || string(unit.Payload) != string([]byte{0xdd}) {
+		t.Fatalf("unit=%+v consumed=%d", unit, consumed)
+	}
+}
+
+func TestPublicAnnexBIteratorRejectsInvalid(t *testing.T) {
+	it := av1.NewAnnexBIterator([]byte{0x00})
+	_, _, err := it.Next()
+	if !errors.Is(err, av1.ErrOBUInvalidAnnexB) {
+		t.Fatalf("err=%v want %v", err, av1.ErrOBUInvalidAnnexB)
+	}
+}
+
+func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
+	lowOverhead := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
+	lowOverhead = appendPublicLowOverheadOBU(lowOverhead, av1.OBUFrame, []byte{0xaa})
+	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
+	annexElement := []byte{0x02, byte(av1.OBUFrame) << 3, 0xdd}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		tuIt := av1.NewTemporalUnitIterator(lowOverhead)
+		unit, ok, err := tuIt.Next()
+		if err != nil || !ok || len(unit.Raw) == 0 {
+			t.Fatalf("temporal unit=%+v ok=%v err=%v", unit, ok, err)
+		}
+
+		annexIt := av1.NewAnnexBIterator(annexB)
+		count := 0
+		for {
+			annexUnit, ok, err := annexIt.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				break
+			}
+			if len(annexUnit.Raw) == 0 {
+				t.Fatal("empty Annex B unit")
+			}
+			count++
+		}
+		if count != 2 {
+			t.Fatalf("annex count=%d want 2", count)
+		}
+
+		element, consumed, err := av1.ParseAnnexBElement(annexElement)
+		if err != nil || consumed != 3 || element.Header.Type != av1.OBUFrame {
+			t.Fatalf("element=%+v consumed=%d err=%v", element, consumed, err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("public OBU stream iterators allocated: %f", allocs)
+	}
+}
+
+func appendPublicLowOverheadOBU(dst []byte, typ av1.OBUType, payload []byte) []byte {
+	var header [2]byte
+	n, err := av1.PutOBUHeader(header[:], av1.OBUHeader{Type: typ, HasSizeField: true})
+	if err != nil {
+		panic(err)
+	}
+	dst = append(dst, header[:n]...)
+	dst = appendPublicLEB128(dst, uint32(len(payload)))
+	dst = append(dst, payload...)
+	return dst
+}
+
+func appendPublicAnnexBStream(dst []byte, temporalUnits ...[][][]byte) []byte {
+	for _, temporalUnit := range temporalUnits {
+		var temporal []byte
+		for _, frameUnit := range temporalUnit {
+			var frame []byte
+			for _, obu := range frameUnit {
+				frame = appendPublicLEB128(frame, uint32(len(obu)))
+				frame = append(frame, obu...)
+			}
+			temporal = appendPublicLEB128(temporal, uint32(len(frame)))
+			temporal = append(temporal, frame...)
+		}
+		dst = appendPublicLEB128(dst, uint32(len(temporal)))
+		dst = append(dst, temporal...)
+	}
+	return dst
+}
+
+func appendPublicLEB128(dst []byte, value uint32) []byte {
+	for {
+		b := byte(value & 0x7f)
+		value >>= 7
+		if value != 0 {
+			b |= 0x80
+		}
+		dst = append(dst, b)
+		if value == 0 {
+			return dst
+		}
+	}
+}
