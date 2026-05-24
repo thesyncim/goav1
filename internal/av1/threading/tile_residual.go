@@ -256,6 +256,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		TemporalMVSampleUnavailable: b.TileInfo.UseRefFrameMVS,
 		OrderHintBits:               b.Sequence.OrderHintBits,
 		CurrentOrderHint:            b.FrameHeader.OrderHint,
+		CurrentMVFrame:              b.CurrentMVFrame,
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),

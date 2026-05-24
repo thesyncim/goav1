@@ -1,0 +1,257 @@
+package tile
+
+import "github.com/thesyncim/goav1/internal/av1/motion"
+
+const (
+	motionFieldMaxFrameDistance = 31
+	motionFieldMVUpper          = 1 << 14
+	motionFieldMVLower          = -(1 << 14)
+	motionFieldMaxOffsetWidth   = 64
+	motionFieldMaxOffsetHeight  = 0
+)
+
+var motionFieldDivMult = [32]int32{
+	0, 16384, 8192, 5461, 4096, 3276, 2730, 2340,
+	2048, 1820, 1638, 1489, 1365, 1260, 1170, 1092,
+	1024, 963, 910, 862, 819, 780, 744, 712,
+	682, 655, 630, 606, 585, 564, 546, 528,
+}
+
+// TemporalMotionField stores libaom's current-frame tpl_mvs side data at the
+// same half-MI granularity as ReferenceMVFrame.
+type TemporalMotionField struct {
+	Rows    int
+	Cols    int
+	Stride  int
+	Entries []TemporalMotionEntry
+}
+
+// TemporalMotionEntry mirrors the TPL_MV_REF payload needed by add_tpl_ref_mv.
+type TemporalMotionEntry struct {
+	MV             motion.Vector
+	RefFrameOffset int
+	Valid          bool
+}
+
+// TemporalMotionProjectionRequest describes one libaom motion_field_projection
+// pass from a decoded reference frame's MV_REF grid into the current frame.
+type TemporalMotionProjectionRequest struct {
+	StartFrame *ReferenceMVFrame
+
+	OrderHintBits      uint8
+	CurrentOrderHint   uint32
+	StartOrderHint     uint32
+	StartRefOrderHints [referenceFrameCount]uint32
+
+	// Backward matches libaom's dir == 2 path used for LAST/LAST2 projection.
+	Backward bool
+}
+
+// Init attaches caller-owned storage and clears it to invalid temporal samples.
+func (f *TemporalMotionField) Init(miRows uint32, miCols uint32, entries []TemporalMotionEntry) error {
+	if f == nil {
+		return ErrInvalidDecodeState
+	}
+	need, err := ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		return err
+	}
+	if len(entries) < need {
+		return ErrInvalidDecodeState
+	}
+	rows := int((miRows + 1) >> 1)
+	cols := int((miCols + 1) >> 1)
+	f.Rows = rows
+	f.Cols = cols
+	f.Stride = cols
+	f.Entries = entries[:need]
+	f.Clear()
+	return nil
+}
+
+// Clear invalidates all temporal samples while preserving caller-owned storage.
+func (f *TemporalMotionField) Clear() {
+	if f == nil {
+		return
+	}
+	for i := range f.Entries {
+		f.Entries[i] = TemporalMotionEntry{}
+	}
+}
+
+// ProjectReferenceFrame ports libaom's motion_field_projection() inner pass.
+// The field is not cleared; callers should Clear or Init once before applying
+// the ordered set of reference-frame projections for the current frame.
+func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjectionRequest) (bool, error) {
+	if err := f.validate(); err != nil {
+		return false, err
+	}
+	start := req.StartFrame
+	if start == nil {
+		return false, nil
+	}
+	if err := validateReferenceMVFrame(start); err != nil {
+		return false, err
+	}
+	if start.Rows != f.Rows || start.Cols != f.Cols {
+		return false, nil
+	}
+
+	startToCurrent, err := motionFieldRelativeOrderHint(req.OrderHintBits, req.StartOrderHint, req.CurrentOrderHint)
+	if err != nil {
+		return false, err
+	}
+	if req.Backward {
+		startToCurrent = -startToCurrent
+	}
+	refOffsets, err := motionFieldRefOffsets(req.OrderHintBits, req.StartOrderHint, req.StartRefOrderHints)
+	if err != nil {
+		return false, err
+	}
+
+	for blkRow := 0; blkRow < start.Rows; blkRow++ {
+		for blkCol := 0; blkCol < start.Cols; blkCol++ {
+			mvRef := start.Entries[blkRow*start.Stride+blkCol]
+			if !mvRef.Valid || !mvRef.Ref.Valid() {
+				continue
+			}
+			refFrameOffset := refOffsets[mvRef.Ref]
+			if absInt(refFrameOffset) > motionFieldMaxFrameDistance ||
+				refFrameOffset <= 0 ||
+				absInt(startToCurrent) > motionFieldMaxFrameDistance {
+				continue
+			}
+			projected, err := motionFieldProjectMV(mvRef.MV, startToCurrent, refFrameOffset)
+			if err != nil {
+				return false, err
+			}
+			row, col, ok := motionFieldBlockPosition(f.Rows, f.Cols, blkRow, blkCol, projected, req.Backward)
+			if !ok {
+				continue
+			}
+			f.Entries[row*f.Stride+col] = TemporalMotionEntry{
+				MV:             mvRef.MV,
+				RefFrameOffset: refFrameOffset,
+				Valid:          true,
+			}
+		}
+	}
+	return true, nil
+}
+
+func (f *TemporalMotionField) validate() error {
+	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
+		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
+		return ErrInvalidDecodeState
+	}
+	return nil
+}
+
+func validateReferenceMVFrame(f *ReferenceMVFrame) error {
+	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
+		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
+		return ErrInvalidDecodeState
+	}
+	return nil
+}
+
+func motionFieldRefOffsets(bits uint8, start uint32, refs [referenceFrameCount]uint32) ([referenceFrameCount]int, error) {
+	var offsets [referenceFrameCount]int
+	for ref := ReferenceFrameLast; ref < referenceFrameCount; ref++ {
+		offset, err := motionFieldRelativeOrderHint(bits, start, refs[ref])
+		if err != nil {
+			return offsets, err
+		}
+		offsets[ref] = offset
+	}
+	return offsets, nil
+}
+
+func motionFieldRelativeOrderHint(bits uint8, a uint32, b uint32) (int, error) {
+	if bits == 0 || bits > 31 {
+		return 0, ErrInvalidDecodeState
+	}
+	limit := uint32(1) << bits
+	if a >= limit || b >= limit {
+		return 0, ErrInvalidDecodeState
+	}
+	mask := int32(1 << (bits - 1))
+	diff := int32(a) - int32(b)
+	return int((diff & (mask - 1)) - (diff & mask)), nil
+}
+
+func motionFieldProjectMV(ref motion.Vector, num int, den int) (motion.Vector, error) {
+	if den <= 0 {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	if den > motionFieldMaxFrameDistance {
+		den = motionFieldMaxFrameDistance
+	}
+	if num > motionFieldMaxFrameDistance {
+		num = motionFieldMaxFrameDistance
+	} else if num < -motionFieldMaxFrameDistance {
+		num = -motionFieldMaxFrameDistance
+	}
+	row := roundPowerOfTwoSigned(int64(ref.Row)*int64(num)*int64(motionFieldDivMult[den]), 14)
+	col := roundPowerOfTwoSigned(int64(ref.Col)*int64(num)*int64(motionFieldDivMult[den]), 14)
+	return motion.Vector{
+		Row: int32(clampInt64(row, motionFieldMVLower+1, motionFieldMVUpper-1)),
+		Col: int32(clampInt64(col, motionFieldMVLower+1, motionFieldMVUpper-1)),
+	}, nil
+}
+
+func motionFieldBlockPosition(rows int, cols int, blkRow int, blkCol int, mv motion.Vector, backward bool) (int, int, bool) {
+	baseBlkRow := (blkRow >> 3) << 3
+	baseBlkCol := (blkCol >> 3) << 3
+	rowOffset := motionFieldBlockOffset(mv.Row)
+	colOffset := motionFieldBlockOffset(mv.Col)
+
+	row := blkRow + rowOffset
+	col := blkCol + colOffset
+	if backward {
+		row = blkRow - rowOffset
+		col = blkCol - colOffset
+	}
+
+	if row < 0 || row >= rows || col < 0 || col >= cols {
+		return 0, 0, false
+	}
+	if row < baseBlkRow-(motionFieldMaxOffsetHeight>>3) ||
+		row >= baseBlkRow+8+(motionFieldMaxOffsetHeight>>3) ||
+		col < baseBlkCol-(motionFieldMaxOffsetWidth>>3) ||
+		col >= baseBlkCol+8+(motionFieldMaxOffsetWidth>>3) {
+		return 0, 0, false
+	}
+	return row, col, true
+}
+
+func motionFieldBlockOffset(v int32) int {
+	if v < 0 {
+		return -int((-int64(v)) >> (4 + 2))
+	}
+	return int(v >> (4 + 2))
+}
+
+func roundPowerOfTwoSigned(value int64, bits uint) int64 {
+	if value < 0 {
+		return -((-value + (1 << (bits - 1))) >> bits)
+	}
+	return (value + (1 << (bits - 1))) >> bits
+}
+
+func clampInt64(v int64, lo int64, hi int64) int64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

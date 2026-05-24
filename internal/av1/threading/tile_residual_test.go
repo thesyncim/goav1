@@ -34,6 +34,15 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		Jobs: []tile.Job{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
 	}
 	segMap := make([]uint8, 96*96)
+	_, _, mvLength, err := ctx.ReferenceMVFrameShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentMVFrame, err := ctx.BindReferenceMVFrame(make([]tile.ReferenceMVEntry, mvLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.CurrentMVFrame = &currentMVFrame
 	req, err := ctx.JobBlockLoopRequest(0, segMap, nil, 96)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +62,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 ||
 		req.RefFrameSide[tile.ReferenceFrameLast2] != -1 ||
 		req.RefFrameSide[tile.ReferenceFrameLast3] != 1 ||
+		req.CurrentMVFrame != &currentMVFrame ||
 		!req.UseRefFrameMVS || !req.TemporalMVSampleUnavailable {
 		t.Fatalf("request=%+v", req)
 	}
@@ -62,6 +72,78 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 	}
 	if rootCols != 2 {
 		t.Fatalf("root context cols=%d want 2", rootCols)
+	}
+}
+
+func TestFrameWorkBatchReferenceMVFrameShapeAndBind(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 130, Height: 65},
+		},
+	}
+	cols, rows, length, err := ctx.ReferenceMVFrameShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols != 17 || rows != 9 || length != 153 {
+		t.Fatalf("shape cols=%d rows=%d length=%d want 17,9,153", cols, rows, length)
+	}
+
+	entries := make([]tile.ReferenceMVEntry, length+1)
+	for i := range entries {
+		entries[i] = tile.ReferenceMVEntry{
+			Ref:   tile.ReferenceFrameGolden,
+			Valid: true,
+		}
+	}
+	got, err := ctx.BindReferenceMVFrame(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cols != cols || got.Rows != rows || got.Stride != cols || len(got.Entries) != length {
+		t.Fatalf("mv frame=%+v len=%d", got, len(got.Entries))
+	}
+	for i, entry := range got.Entries {
+		if entry != (tile.ReferenceMVEntry{Ref: tile.ReferenceFrameNone}) {
+			t.Fatalf("entry %d=%+v want NONE", i, entry)
+		}
+	}
+	if !entries[length].Valid || entries[length].Ref != tile.ReferenceFrameGolden {
+		t.Fatalf("caller storage past MV_REF grid was modified: %+v", entries[length])
+	}
+
+	if _, err := ctx.BindReferenceMVFrame(entries[:length-1]); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("short bind err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, _, _, err := (FrameWorkBatch{}).ReferenceMVFrameShape(); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("invalid shape err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchReferenceMVFrameBindAllocs(t *testing.T) {
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 64, Height: 64},
+		},
+	}
+	_, _, length, err := ctx.ReferenceMVFrameShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]tile.ReferenceMVEntry, length)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ctx.BindReferenceMVFrame(entries); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindReferenceMVFrame allocated: %f", allocs)
 	}
 }
 
