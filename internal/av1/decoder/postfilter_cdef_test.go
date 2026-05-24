@@ -141,6 +141,82 @@ func TestFrameWorkPostFilterContextApplyCDEFPostFilterDefaultsIndexMapFromContex
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsCDEF(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkCDEFPlane(output.Y)
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	cdefMap := req.IndexMap
+	ctx.CDEFIndexMap = &cdefMap
+	req.IndexMap = FrameWorkCDEFIndexMap{}
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{CDEF: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != FrameWorkPostFilterCDEF || result.CDEF.Planes != 1 || result.CDEF.Units != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("supported postfilter pipeline did not change luma samples")
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBeforeMutation(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 32})
+	output.Y.Pix[0] = 0x44
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FrameSize: parser.FrameSize{
+				CodedWidth:          64,
+				UpscaledWidth:       64,
+				Height:              64,
+				SuperResDenominator: 8,
+			},
+			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{1}},
+			CDEF: parser.CDEFParams{
+				Damping:       5,
+				StrengthCount: 1,
+				YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+			},
+		},
+		Output: output,
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{})
+	if !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("ApplySupportedPostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+	if next.RemainingPostFilters() != ctx.RemainingPostFilters() || result != (FrameWorkPostFilterResult{}) {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if output.Y.Pix[0] != 0x44 {
+		t.Fatalf("output sample=%d want 0x44", output.Y.Pix[0])
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersChromaWithLumaDirectionPass(t *testing.T) {
 	const width = 128
 	const height = 64

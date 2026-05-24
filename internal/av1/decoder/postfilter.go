@@ -47,6 +47,20 @@ type FrameWorkRestorationPostFilterRequest struct {
 	Optimized bool
 }
 
+// FrameWorkPostFilterRequest carries caller-owned scratch and side data for the
+// supported frame-level postfilter stages.
+type FrameWorkPostFilterRequest struct {
+	CDEF        FrameWorkCDEFPostFilterRequest
+	Restoration FrameWorkRestorationPostFilterRequest
+}
+
+// FrameWorkPostFilterResult summarizes supported frame-level postfilter work.
+type FrameWorkPostFilterResult struct {
+	Completed   FrameWorkPostFilterStage
+	CDEF        FrameWorkCDEFPostFilterResult
+	Restoration tile.RestorationFrameApplyResult
+}
+
 // ActivePostFilters returns the frame-level postfilter stages signaled by this
 // final-frame context.
 func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterStage {
@@ -101,6 +115,37 @@ func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
 		return ErrUnsupportedPostFilter
 	}
 	return nil
+}
+
+// ApplySupportedPostFilters runs the currently integrated postfilter stages in
+// normal AV1 order. It rejects frames requiring unsupported stages before
+// mutating ctx.Output.
+func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
+	var result FrameWorkPostFilterResult
+	remaining := ctx.RemainingPostFilters()
+	supported := FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
+	if remaining&^supported != 0 {
+		return ctx, result, ErrUnsupportedPostFilter
+	}
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
+		if err != nil {
+			return ctx, result, err
+		}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterCDEF)
+		result.Completed |= FrameWorkPostFilterCDEF
+		result.CDEF = cdefResult
+	}
+	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		restorationResult, err := ctx.ApplyLoopRestorationPostFilter(req.Restoration)
+		if err != nil {
+			return ctx, result, err
+		}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopRestoration)
+		result.Completed |= FrameWorkPostFilterLoopRestoration
+		result.Restoration = restorationResult
+	}
+	return ctx, result, nil
 }
 
 // LoopRestorationPostFilterPlan returns the frame-level loop-restoration plan
