@@ -590,6 +590,122 @@ func TestStreamRTPPayload(t *testing.T) {
 	}
 }
 
+func TestStreamRTPPayloadFragmentedFrameHeader(t *testing.T) {
+	var dec Stream
+	var out [256]byte
+	var spans [4]rtp.OBUSpan
+	var events [4]Event
+
+	sequence := []rtp.Element{{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))}}
+	var payload [128]byte
+	n, err := rtp.PutPayload(payload[:], rtp.AggregationHeader{
+		ElementCount:                1,
+		StartsNewCodedVideoSequence: true,
+	}, sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used, count, err := dec.PushRTPPayload(out[:], 0, spans[:], events[:], payload[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used == 0 || count != 1 || events[0].Kind != EventSequenceHeader {
+		t.Fatalf("sequence used=%d count=%d event=%+v", used, count, events[0])
+	}
+
+	frameHeader := appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())
+	var packet [8]byte
+	n, next, more, err := rtp.PutFragment(packet[:], frameHeader, 0, 4, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !more {
+		t.Fatal("expected frame header to need a second fragment")
+	}
+	used = 0
+	used, count, err = dec.PushRTPPayload(out[:], used, spans[:], events[:], packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || !dec.InRTPFragment() {
+		t.Fatalf("first fragment count=%d inFragment=%v", count, dec.InRTPFragment())
+	}
+
+	n, _, more, err = rtp.PutFragment(packet[:], frameHeader, next, len(packet), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if more {
+		t.Fatal("unexpected third fragment")
+	}
+	used, count, err = dec.PushRTPPayload(out[:], used, spans[:], events[:], packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used != len(frameHeader) || count != 1 || dec.InRTPFragment() {
+		t.Fatalf("final fragment used=%d count=%d inFragment=%v", used, count, dec.InRTPFragment())
+	}
+	if events[0].Kind != EventFrameHeader || events[0].FrameHeader.FrameType != parser.FrameTypeKey {
+		t.Fatalf("frame header event=%+v", events[0])
+	}
+}
+
+func TestStreamRTPPayloadAllocs(t *testing.T) {
+	elements := []rtp.Element{
+		{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))},
+		{Data: appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())},
+	}
+	var payload [128]byte
+	n, err := rtp.PutPayload(payload[:], rtp.AggregationHeader{
+		ElementCount:                2,
+		StartsNewCodedVideoSequence: true,
+	}, elements)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out [128]byte
+	var spans [4]rtp.OBUSpan
+	var events [4]Event
+	allocs := testing.AllocsPerRun(1000, func() {
+		var dec Stream
+		used, count, err := dec.PushRTPPayload(out[:], 0, spans[:], events[:], payload[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if used == 0 || count != 2 {
+			t.Fatalf("used=%d count=%d", used, count)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("Stream.PushRTPPayload allocated: %f", allocs)
+	}
+}
+
+func BenchmarkStreamRTPPayload(b *testing.B) {
+	elements := []rtp.Element{
+		{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))},
+		{Data: appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload())},
+	}
+	var payload [128]byte
+	n, err := rtp.PutPayload(payload[:], rtp.AggregationHeader{
+		ElementCount:                2,
+		StartsNewCodedVideoSequence: true,
+	}, elements)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var out [128]byte
+	var spans [4]rtp.OBUSpan
+	var events [4]Event
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var dec Stream
+		_, _, _ = dec.PushRTPPayload(out[:], 0, spans[:], events[:], payload[:n])
+	}
+}
+
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
