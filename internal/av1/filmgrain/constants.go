@@ -8,8 +8,16 @@ const (
 	LumaGrainHeight  = 73
 	LumaGrainSamples = LumaGrainWidth * LumaGrainHeight
 
-	MaxLumaScalingPoints = 14
-	MaxLumaARCoeffs      = 24
+	ChromaGrainWidth            = LumaGrainWidth
+	ChromaGrainHeight           = LumaGrainHeight
+	ChromaGrainSamples          = ChromaGrainWidth * ChromaGrainHeight
+	ChromaSubsampledGrainWidth  = 44
+	ChromaSubsampledGrainHeight = 38
+	ChromaPlaneCb               = 1
+	ChromaPlaneCr               = 2
+	MaxChromaARCoeffs           = 25
+	MaxLumaScalingPoints        = 14
+	MaxLumaARCoeffs             = 24
 
 	LumaBlockSize         = 32
 	NoiseStripeHeight     = 34
