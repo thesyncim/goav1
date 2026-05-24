@@ -226,6 +226,11 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 			return ctx, result, err
 		}
 	}
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
+		if err := ctx.validateLoopRestorationPostFilterRequest(req.Restoration); err != nil {
+			return ctx, result, err
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		loopFilterResult, err := ctx.ApplyLoopFilterEdges(req.LoopFilter)
 		if err != nil {
@@ -358,7 +363,40 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWo
 			req.Boundaries = ctx.RestorationFrameBuffers.Boundaries
 		}
 	}
+	if err := ctx.validateLoopRestorationPostFilterRequest(req); err != nil {
+		return tile.RestorationFrameApplyResult{}, err
+	}
 	return tile.ApplyRestorationFrameToFrame(plan, *ctx.Output, req.Records, req.Boundaries, req.DataScratch, req.DstScratch, req.Scratch, req.Optimized)
+}
+
+func (ctx FrameWorkPostFilterContext) validateLoopRestorationPostFilterRequest(req FrameWorkRestorationPostFilterRequest) error {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	records := req.Records
+	if frameWorkRestorationRecordsEmpty(records) && ctx.RestorationFrameBuffers != nil {
+		records = ctx.RestorationFrameBuffers.Records
+	}
+	size, err := ctx.LoopRestorationPostFilterScratchLen(records, req.Optimized)
+	if err != nil {
+		return err
+	}
+	if len(req.DataScratch) < size.Samples.DataLen || len(req.DstScratch) < size.Samples.DstLen {
+		return tile.ErrJobBufferTooSmall
+	}
+	if len(req.DataScratch) != size.Samples.DataLen || len(req.DstScratch) != size.Samples.DstLen {
+		return tile.ErrInvalidPlan
+	}
+	if len(req.Scratch.Unit.Wiener) < size.Apply.Unit.Wiener ||
+		len(req.Scratch.Unit.SGRProj) < size.Apply.Unit.SGRProj ||
+		len(req.Scratch.Boundary.Above) < size.Apply.Boundary.Above ||
+		len(req.Scratch.Boundary.Below) < size.Apply.Boundary.Below {
+		return tile.ErrInvalidPlan
+	}
+	return nil
 }
 
 func frameWorkRestorationRecordsEmpty(records [3][]tile.RestorationUnitRecord) bool {

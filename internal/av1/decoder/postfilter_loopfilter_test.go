@@ -1203,6 +1203,88 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsShortCDEFScra
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsShortRestorationScratchBeforeLoopFilterMutation(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filler := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
+	filler.Block.Size = tile.BlockSize64x64
+	filler.SkipTransform = true
+	filler.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize64x64, UV: tile.TransformSize32x32, HasUV: true}
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	second.SkipTransform = true
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, filler, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	beforeY := append([]byte(nil), output.Y.Pix...)
+	event := Event{
+		SequenceHeader: testSequence(),
+		FrameSize:      size,
+		LoopFilter: parser.LoopFilterParams{
+			LevelY:    [2]uint8{63},
+			Sharpness: 1,
+		},
+		Restoration: parser.RestorationParams{
+			Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			UnitSizeY: 64,
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	loopScratch, err := ctx.LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := ctx.LoopRestorationPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := tile.BindRestorationFrameRecordBuffers(plan, make([]tile.RestorationUnitRecord, plan.UnitRecordLen()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tile.ResetRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
+		t.Fatal(err)
+	}
+	restorationScratch, err := ctx.LoopRestorationPostFilterScratchLen(records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restorationScratch.Samples.DataLen == 0 {
+		t.Fatalf("restoration scratch=%+v", restorationScratch)
+	}
+
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Edges: make([]FrameWorkLoopFilterPostFilterEdge, loopScratch.Edges),
+		},
+		Restoration: FrameWorkRestorationPostFilterRequest{
+			Records:     records,
+			DataScratch: make([]uint16, restorationScratch.Samples.DataLen-1),
+			DstScratch:  make([]uint16, restorationScratch.Samples.DstLen),
+			Scratch:     testFrameWorkRestorationPostFilterScratch(restorationScratch.Apply),
+		},
+	})
+	if !errors.Is(err, tile.ErrJobBufferTooSmall) {
+		t.Fatalf("ApplySupportedPostFilters err=%v want %v", err, tile.ErrJobBufferTooSmall)
+	}
+	if result != (FrameWorkPostFilterResult{}) || next.RemainingPostFilters() != ctx.RemainingPostFilters() {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if !bytes.Equal(output.Y.Pix, beforeY) {
+		t.Fatal("short restoration scratch mutated output through earlier loop filter")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesSkipsInactive(t *testing.T) {
 	result, err := (FrameWorkPostFilterContext{}).ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{})
 	if err != nil {
