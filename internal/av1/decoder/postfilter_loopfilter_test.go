@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"math/rand"
 	"testing"
@@ -232,6 +233,76 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *
 		if edges[i] != want[i] {
 			t.Fatalf("edge[%d]=%+v want %+v", i, edges[i], want[i])
 		}
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaSubsamplingGeometries(t *testing.T) {
+	tests := []struct {
+		name    string
+		ssX     bool
+		ssY     bool
+		wantX4  int
+		wantY4  int
+		wantLen int
+	}{
+		{name: "444", wantX4: 4, wantY4: 0, wantLen: 4},
+		{name: "422", ssX: true, wantX4: 2, wantY4: 0, wantLen: 4},
+		{name: "420", ssX: true, ssY: true, wantX4: 2, wantY4: 0, wantLen: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			size := parser.FrameSize{
+				CodedWidth:          32,
+				UpscaledWidth:       32,
+				Height:              16,
+				SuperResDenominator: 8,
+			}
+			seq := testSequence()
+			seq.ColorConfig.SubsamplingX = tt.ssX
+			seq.ColorConfig.SubsamplingY = tt.ssY
+			first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+			first.SkipTransform = true
+			second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+			second.SkipTransform = true
+			filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+			ctx := FrameWorkPostFilterContext{
+				Event: Event{
+					SequenceHeader: seq,
+					FrameSize:      size,
+					LoopFilter: parser.LoopFilterParams{
+						LevelY: [2]uint8{8},
+						LevelU: 7,
+					},
+				},
+			}
+			edges := make([]FrameWorkLoopFilterPostFilterEdge, 2)
+
+			plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+				Map:   filterMap,
+				Edges: edges,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.EdgeCandidates != 2 || plan.StoredEdges != 2 || plan.PlaneEdgeCandidates != [3]int{1, 1, 0} {
+				t.Fatalf("plan=%+v", plan)
+			}
+			wantU := FrameWorkLoopFilterPostFilterEdge{
+				Plane:      loopfilter.PlaneU,
+				Edge:       loopfilter.EdgeVertical,
+				X4:         tt.wantX4,
+				Y4:         tt.wantY4,
+				Length4:    tt.wantLen,
+				Level:      7,
+				Transform:  tile.TransformSize8x8,
+				Width:      8,
+				BlockMICol: 4,
+				BlockMIRow: 0,
+			}
+			if edges[1] != wantU {
+				t.Fatalf("U edge=%+v want %+v", edges[1], wantU)
+			}
+		})
 	}
 }
 
@@ -485,6 +556,66 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLumaAndChroma(t *testing.
 	}
 	if !bytes.Equal(output.Y.Pix, wantY) || !bytes.Equal(output.U.Pix, wantU) || !bytes.Equal(output.V.Pix, wantV) {
 		t.Fatal("loop filter all-plane bridge output did not match direct edge application")
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyLoopFilterEdgesHighBitDepthChroma(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	seq := testSequence()
+	seq.ColorConfig.BitDepth = 10
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 32, Height: 16, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	testFillFrameWorkLoopFilterSamplePattern(output.Y, output.Layout.BytesPerSample)
+	testFillFrameWorkLoopFilterSamplePattern(output.U, output.Layout.BytesPerSample)
+	testFillFrameWorkLoopFilterSamplePattern(output.V, output.Layout.BytesPerSample)
+	beforeU := append([]byte(nil), output.U.Pix...)
+	beforeV := append([]byte(nil), output.V.Pix...)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: seq,
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY:    [2]uint8{63},
+				LevelU:    63,
+				LevelV:    63,
+				Sharpness: 1,
+			},
+		},
+		Output: output,
+	}
+
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 3)
+	wantFrame := testCloneFrameWorkLoopFilterFrame(output)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{Map: filterMap, Edges: edges})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+
+	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PlaneApplied != [3]int{1, 1, 1} || result.MaxLevel != 63 {
+		t.Fatalf("result=%+v", result)
+	}
+	if bytes.Equal(output.U.Pix, beforeU) || bytes.Equal(output.V.Pix, beforeV) {
+		t.Fatal("high-bit-depth chroma loop filter did not change U and V")
+	}
+	if !bytes.Equal(output.Y.Pix, wantFrame.Y.Pix) ||
+		!bytes.Equal(output.U.Pix, wantFrame.U.Pix) ||
+		!bytes.Equal(output.V.Pix, wantFrame.V.Pix) {
+		t.Fatal("high-bit-depth loop filter output did not match direct edge application")
 	}
 }
 
@@ -805,6 +936,27 @@ func testFillFrameWorkLoopFilterPattern(plane frame.Plane) {
 			plane.Pix[y*plane.Stride+x] = value
 		}
 	}
+}
+
+func testFillFrameWorkLoopFilterSamplePattern(plane frame.Plane, bytesPerSample int) {
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			value := uint16(360)
+			if (x/8+y/8)&1 != 0 {
+				value = 400
+			}
+			testSetFrameWorkLoopFilterSample(plane, bytesPerSample, x, y, value)
+		}
+	}
+}
+
+func testSetFrameWorkLoopFilterSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) {
+	offset := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		plane.Pix[offset] = byte(value)
+		return
+	}
+	binary.LittleEndian.PutUint16(plane.Pix[offset:], value)
 }
 
 func testFillFrameWorkLoopFilterOrderPattern(plane frame.Plane, rng *rand.Rand) {
