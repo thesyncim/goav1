@@ -801,11 +801,35 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	}
 	payload := []byte{0x00, 0x00, 0x00}
 	state := FrameWorkState{active: true}
+	cdefContext := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(event, threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader))}
+	_, _, cdefMapLen, err := cdefContext.CDEFIndexMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, err := cdefContext.BindCDEFIndexMap(make([]uint8, cdefMapLen), make([]bool, cdefMapLen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap.Read[0] = true
+	if err := state.SetCDEFIndexMap(cdefMap); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
 		if !ctx.DisableCDFUpdate {
 			t.Fatal("DisableCDFUpdate not propagated")
 		}
+		if ctx.CDEFIndexMap == nil {
+			t.Fatal("CDEFIndexMap not propagated")
+		}
+		if ctx.CDEFIndexMap.Stride != cdefMap.Stride || ctx.CDEFIndexMap.Rows != cdefMap.Rows ||
+			len(ctx.CDEFIndexMap.Index) != cdefMapLen || len(ctx.CDEFIndexMap.Read) != cdefMapLen {
+			t.Fatalf("CDEFIndexMap=%+v len=%d/%d want stride=%d rows=%d len=%d", ctx.CDEFIndexMap, len(ctx.CDEFIndexMap.Index), len(ctx.CDEFIndexMap.Read), cdefMap.Stride, cdefMap.Rows, cdefMapLen)
+		}
+		if ctx.CDEFIndexMap.Read[0] || ctx.CDEFIndexMap.Index[0] != 0 {
+			t.Fatalf("CDEFIndexMap was not reset before propagation: read=%v index=%d", ctx.CDEFIndexMap.Read[0], ctx.CDEFIndexMap.Index[0])
+		}
+		ctx.CDEFIndexMap.Read[0] = true
 		if ctx.Quantization.BaseQIdx != 73 {
 			t.Fatalf("BaseQIdx=%d want 73", ctx.Quantization.BaseQIdx)
 		}
@@ -900,6 +924,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	}
 	if !result.ExecutedTileWork {
 		t.Fatal("not executed")
+	}
+	if !state.cdefIndexMap.Read[0] {
+		t.Fatal("CDEFIndexMap update did not alias frame state")
 	}
 }
 
