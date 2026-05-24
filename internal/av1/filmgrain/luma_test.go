@@ -88,3 +88,43 @@ func TestGenerateLumaGrainRejectsInvalidInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateLumaGrainAllocs(t *testing.T) {
+	grain := make([]int16, LumaGrainSamples)
+	params := LumaGrainParams{
+		Seed:            0x1234,
+		BitDepth:        8,
+		NumYPoints:      1,
+		ARCoeffLag:      1,
+		ARCoeffShift:    6,
+		GrainScaleShift: 0,
+	}
+	params.ARCoeffs[3] = 64
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := GenerateLumaGrain(grain, params); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("GenerateLumaGrain allocated: %f", allocs)
+	}
+}
+
+func BenchmarkGenerateLumaGrain(b *testing.B) {
+	grain := make([]int16, LumaGrainSamples)
+	params := LumaGrainParams{
+		Seed:            0x1234,
+		BitDepth:        8,
+		NumYPoints:      1,
+		ARCoeffLag:      1,
+		ARCoeffShift:    6,
+		GrainScaleShift: 0,
+	}
+	params.ARCoeffs[3] = 64
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := GenerateLumaGrain(grain, params); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

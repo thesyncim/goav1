@@ -290,6 +290,93 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsActiveFilmGra
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsCDEFThenNoOpFilmGrain(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+		FilmGrain: parser.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x4321,
+			BitDepth:      8,
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkCDEFPlane(output.Y)
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	size, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{CDEF: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.CDEF.Input == 0 || size.CDEF.UnitDst == 0 || size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("scratch=%+v", size)
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{CDEF: req})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != FrameWorkPostFilterCDEF|FrameWorkPostFilterFilmGrain ||
+		result.CDEF.Planes != 1 ||
+		!result.FilmGrain.NoOp ||
+		result.FilmGrain.Plan.Seed != 0x4321 {
+		t.Fatalf("result=%+v", result)
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("CDEF stage did not run before film grain")
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersNoOpFilmGrainAllocs(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0x1234,
+				BitDepth:      8,
+			},
+		},
+		Output: output,
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Completed != FrameWorkPostFilterFilmGrain || !result.FilmGrain.NoOp || next.RemainingPostFilters() != 0 {
+			t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("no-op film grain postfilter pipeline allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanRejectsNilOutput(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{

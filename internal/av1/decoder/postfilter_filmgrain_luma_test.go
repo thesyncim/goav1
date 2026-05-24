@@ -67,3 +67,36 @@ func TestFrameWorkPostFilterContextGenerateFilmGrainLumaGrainRejectsShortScratch
 		t.Fatalf("GenerateFilmGrainLumaGrain err=%v want %v", err, frame.ErrShortBuffer)
 	}
 }
+
+func TestFrameWorkPostFilterContextGenerateFilmGrainLumaGrainAllocs(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0x1234,
+				BitDepth:      8,
+				NumYPoints:    1,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 16}},
+				ARCoeffLag:    1,
+				ARCoeffShift:  6,
+				ARCoeffsY:     [parser.MaxFilmGrainYCoeffs]int8{3: 64},
+			},
+		},
+		Output: output,
+	}
+	grain := make([]int16, filmgrain.LumaGrainSamples)
+	allocs := testing.AllocsPerRun(1000, func() {
+		result, err := ctx.GenerateFilmGrainLumaGrain(grain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Active || len(result.Grain) != filmgrain.LumaGrainSamples {
+			t.Fatalf("result=%+v", result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("GenerateFilmGrainLumaGrain allocated: %f", allocs)
+	}
+}
