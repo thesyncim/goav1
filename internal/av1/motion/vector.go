@@ -92,6 +92,24 @@ func FullpelReferenceOrigin(dstX int, dstY int, mv Vector) (int, int, error) {
 	return refX, refY, nil
 }
 
+// ReferenceOrigin returns the integer reference-plane origin plus AV1 Q4
+// subpel offsets for a block whose output-plane origin is (dstX, dstY).
+func ReferenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX int, subY int, err error) {
+	dx := int(mv.Col >> SubpelBits)
+	dy := int(mv.Row >> SubpelBits)
+	refX, ok := checkedAdd(dstX, dx)
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidMotion
+	}
+	refY, ok = checkedAdd(dstY, dy)
+	if !ok {
+		return 0, 0, 0, 0, ErrInvalidMotion
+	}
+	subX = int(mv.Col&(SubpelScale-1)) << 1
+	subY = int(mv.Row&(SubpelScale-1)) << 1
+	return refX, refY, subX, subY, nil
+}
+
 // PredictInterPlaneBlock predicts a block using AV1's regular translational
 // interpolation filter for fractional vectors.
 func PredictInterPlaneBlock(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, mv Vector) error {
@@ -120,15 +138,49 @@ func PredictInterPlaneBlockWithFilterBitDepth(dst frame.Plane, ref frame.Plane, 
 }
 
 func predictInterPlaneBlockWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, width int, height int, mv Vector, filters InterpFilters) error {
+	refX, refY, subX, subY, err := referenceOrigin(dstX, dstY, mv)
+	if err != nil {
+		return err
+	}
+	return predictInterPlaneBlockFromOriginWithFilter(dst, ref, bytesPerSample, bitDepth, explicitBitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters)
+}
+
+// PredictInterPlaneBlockFromOrigin predicts a translational inter block from an
+// already-resolved reference origin and AV1 Q4 subpel offsets. This is useful
+// for compound and scaled-reference paths that predict into caller-owned
+// scratch buffers whose destination origin differs from the current frame.
+func PredictInterPlaneBlockFromOrigin(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int) error {
+	return PredictInterPlaneBlockFromOriginWithFilter(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height, subX, subY, RegularFilters)
+}
+
+// PredictInterPlaneBlockFromOriginBitDepth is PredictInterPlaneBlockFromOrigin
+// with explicit high-bit-depth clipping.
+func PredictInterPlaneBlockFromOriginBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int) error {
+	return PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, bytesPerSample, bitDepth, dstX, dstY, refX, refY, width, height, subX, subY, RegularFilters)
+}
+
+// PredictInterPlaneBlockFromOriginWithFilter is PredictInterPlaneBlockFromOrigin
+// with explicit interpolation filters.
+func PredictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+	return predictInterPlaneBlockFromOriginWithFilter(dst, ref, bytesPerSample, 8, false, dstX, dstY, refX, refY, width, height, subX, subY, filters)
+}
+
+// PredictInterPlaneBlockFromOriginWithFilterBitDepth is
+// PredictInterPlaneBlockFromOriginWithFilter with explicit high-bit-depth
+// clipping.
+func PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+	return predictInterPlaneBlockFromOriginWithFilter(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, subX, subY, filters)
+}
+
+func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
+		return ErrInvalidMotion
+	}
+	if subX < 0 || subX > subpelQ4Mask || subY < 0 || subY > subpelQ4Mask {
 		return ErrInvalidMotion
 	}
 	if explicitBitDepth && !bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
 		return ErrInvalidMotion
-	}
-	refX, refY, subX, subY, err := referenceOrigin(dstX, dstY, mv)
-	if err != nil {
-		return err
 	}
 	if subX == 0 && subY == 0 {
 		if err := dsp.CopyPlaneBlock(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height); err != nil {
@@ -152,19 +204,7 @@ func predictInterPlaneBlockWithFilter(dst frame.Plane, ref frame.Plane, bytesPer
 }
 
 func referenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX int, subY int, err error) {
-	dx := int(mv.Col >> SubpelBits)
-	dy := int(mv.Row >> SubpelBits)
-	refX, ok := checkedAdd(dstX, dx)
-	if !ok {
-		return 0, 0, 0, 0, ErrInvalidMotion
-	}
-	refY, ok = checkedAdd(dstY, dy)
-	if !ok {
-		return 0, 0, 0, 0, ErrInvalidMotion
-	}
-	subX = int(mv.Col&(SubpelScale-1)) << 1
-	subY = int(mv.Row&(SubpelScale-1)) << 1
-	return refX, refY, subX, subY, nil
+	return ReferenceOrigin(dstX, dstY, mv)
 }
 
 func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {

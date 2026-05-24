@@ -12,6 +12,7 @@ const (
 	frameWorkIntraPredictionMaxEdgeSamples = 128
 	frameWorkDirectionalEdgeOrigin         = 128
 	frameWorkDirectionalEdgeSamples        = 512
+	frameWorkInterPredictionMaxBlockBytes  = 128 * 128 * 2
 )
 
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
@@ -22,11 +23,20 @@ type FrameWorkIntraPredictionScratch struct {
 	Left  [frameWorkDirectionalEdgeSamples]uint16
 }
 
+// FrameWorkInterPredictionScratch carries caller-owned temporary buffers for
+// compound inter prediction. It stays separate from intra/residual scratch so
+// callers that do not predict compound blocks pay no storage cost.
+type FrameWorkInterPredictionScratch struct {
+	First  [frameWorkInterPredictionMaxBlockBytes]byte
+	Second [frameWorkInterPredictionMaxBlockBytes]byte
+}
+
 // FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
 // separate from residual scratch lets callers that do not use built-in
 // prediction avoid carrying these buffers.
 type FrameWorkPredictionScratch struct {
 	Intra FrameWorkIntraPredictionScratch
+	Inter *FrameWorkInterPredictionScratch
 }
 
 // PredictBlockLuma dispatches luma prediction for one decoded block-loop visit.
@@ -40,6 +50,12 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 			return ErrInvalidBatch
 		}
 		return b.PredictBlockLumaIntra(index, visit, &scratch.Intra)
+	}
+	if visit.Prediction.InterMotion.References.Compound {
+		if scratch == nil || scratch.Inter == nil {
+			return ErrInvalidBatch
+		}
+		return b.PredictBlockLumaInterCompoundAverage(index, visit, scratch.Inter)
 	}
 	return b.PredictBlockLumaInter(index, visit)
 }
@@ -170,6 +186,203 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+// PredictBlockLumaInterCompoundAverage writes average compound luma inter
+// prediction for one decoded block-loop visit. Masked, diff-wtd, dist-wtd,
+// inter-intra, scaled references, and warped/global refinement are handled by
+// later inter-prediction stages.
+func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	filters, err := frameWorkMotionFilters(b.TileInfo)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockLumaInterCompoundAverageWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockLumaInterCompoundAverageWithFilters is
+// PredictBlockLumaInterCompoundAverage with explicit interpolation filters. It
+// only accepts decoded CompoundTypeAverage blocks.
+func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if scratch == nil ||
+		!visit.Prediction.Valid ||
+		visit.Prediction.Intra ||
+		!visit.Prediction.InterMotionValid ||
+		!visit.Prediction.CompoundBlendValid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode != tile.MotionModeTranslation {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.CompoundBlend.Type != tile.CompoundTypeAverage {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if !motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		!motionResult.References.Ref[1].Valid() {
+		return ErrInvalidBatch
+	}
+	width, height, ok := frameWorkBlockVisiblePixels(visit.Block)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	x, y, err := frameWorkBlockLumaPosition(visit.Block)
+	if err != nil {
+		return err
+	}
+	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
+		return ErrInvalidBatch
+	}
+	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	output, _, _, ok := frameWorkFramePlane(b.Output, FrameWorkPlaneY)
+	if !ok || b.Output.Layout.BytesPerSample <= 0 {
+		return ErrInvalidBatch
+	}
+	first, err := frameWorkInterScratchPlane(scratch.First[:], b.Output.Layout.BytesPerSample, width, height)
+	if err != nil {
+		return err
+	}
+	second, err := frameWorkInterScratchPlane(scratch.Second[:], b.Output.Layout.BytesPerSample, width, height)
+	if err != nil {
+		return err
+	}
+	if err := b.predictBlockLumaInterToScratch(first, motionResult.References.Ref[0], motionResult.MV[0], x, y, width, height, filters); err != nil {
+		return err
+	}
+	if err := b.predictBlockLumaInterToScratch(second, motionResult.References.Ref[1], motionResult.MV[1], x, y, width, height, filters); err != nil {
+		return err
+	}
+	if err := frameWorkAverageCompoundBlock(output, first, second, b.Output.Layout.BytesPerSample, x, y, width, height); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b FrameWorkBatch) predictBlockLumaInterToScratch(dst frame.Plane, refFrame tile.ReferenceFrame, mv motion.Vector, dstX int, dstY int, width int, height int, filters motion.InterpFilters) error {
+	reference, ok := frameWorkReferenceFromTile(refFrame)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	refX, refY, subX, subY, err := motion.ReferenceOrigin(dstX, dstY, mv)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, b.Output.Layout.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, width, height, subX, subY, filters); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, height int) (frame.Plane, error) {
+	if width <= 0 || height <= 0 || width > 128 || height > 128 || (bytesPerSample != 1 && bytesPerSample != 2) {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	stride, ok := frameWorkCheckedMul(width, bytesPerSample)
+	if !ok {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	size, ok := frameWorkCheckedMul(stride, height)
+	if !ok || size > len(buf) {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	return frame.Plane{
+		Pix:    buf[:size],
+		Stride: stride,
+		Width:  width,
+		Height: height,
+	}, nil
+}
+
+func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int) error {
+	if !frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
+		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
+		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) {
+		return ErrInvalidBatch
+	}
+	switch bytesPerSample {
+	case 1:
+		for row := 0; row < height; row++ {
+			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
+			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
+			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
+			for col := 0; col < width; col++ {
+				dstLine[col] = byte((uint16(firstLine[col]) + uint16(secondLine[col]) + 1) >> 1)
+			}
+		}
+	case 2:
+		for row := 0; row < height; row++ {
+			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
+			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
+			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
+			for col := 0; col < width; col++ {
+				i := col * 2
+				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
+				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
+				out := uint16((uint32(a) + uint32(b) + 1) >> 1)
+				dstLine[i] = byte(out)
+				dstLine[i+1] = byte(out >> 8)
+			}
+		}
+	default:
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkPlaneBlockAddressable(plane frame.Plane, bytesPerSample int, x int, y int, width int, height int) bool {
+	if (bytesPerSample != 1 && bytesPerSample != 2) ||
+		x < 0 || y < 0 ||
+		width <= 0 || height <= 0 ||
+		x > plane.Width-width ||
+		y > plane.Height-height {
+		return false
+	}
+	rowBytes, ok := frameWorkCheckedMul(width, bytesPerSample)
+	if !ok || rowBytes <= 0 || rowBytes > plane.Stride {
+		return false
+	}
+	rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
+	if !ok {
+		return false
+	}
+	colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
+	if !ok {
+		return false
+	}
+	offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
+	if !ok || offset < 0 {
+		return false
+	}
+	lastRowOffset, ok := frameWorkCheckedMul(height-1, plane.Stride)
+	if !ok {
+		return false
+	}
+	windowLen, ok := frameWorkCheckedAdd(lastRowOffset, rowBytes)
+	if !ok {
+		return false
+	}
+	end, ok := frameWorkCheckedAdd(offset, windowLen)
+	return ok && end <= len(plane.Pix)
 }
 
 func frameWorkMotionFilters(info parser.TileInfo) (motion.InterpFilters, error) {
