@@ -35,6 +35,12 @@ type FrameWorkLoopFilterPostFilterEdge struct {
 	BlockMIRow uint32
 }
 
+// FrameWorkLoopFilterPostFilterScratchSize reports caller-owned scratch needed
+// for loop-filter planning and eventual application.
+type FrameWorkLoopFilterPostFilterScratchSize struct {
+	Edges int
+}
+
 // FrameWorkLoopFilterPostFilterLevelStats summarizes resolved levels for one
 // plane/edge class.
 type FrameWorkLoopFilterPostFilterLevelStats struct {
@@ -63,6 +69,19 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	DroppedEdges         int
 
 	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
+}
+
+// LoopFilterPostFilterScratchLen reports scratch lengths needed to collect
+// luma edge candidates for the current decoded loop-filter map.
+func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchLen(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterScratchSize, error) {
+	req.Edges = nil
+	plan, err := ctx.LoopFilterPostFilterPlan(req)
+	if err != nil {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, err
+	}
+	return FrameWorkLoopFilterPostFilterScratchSize{
+		Edges: plan.EdgeCandidates,
+	}, nil
 }
 
 // LoopFilterPostFilterPlan validates decoded loop-filter side data and resolves

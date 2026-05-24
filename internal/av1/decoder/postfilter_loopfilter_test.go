@@ -18,6 +18,13 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSkipsInactive(t *test
 	if plan != (FrameWorkLoopFilterPostFilterPlan{}) {
 		t.Fatalf("plan=%+v want zero", plan)
 	}
+	size, err := (FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != (FrameWorkLoopFilterPostFilterScratchSize{}) {
+		t.Fatalf("scratch=%+v want zero", size)
+	}
 }
 
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolvesLevels(t *testing.T) {
@@ -136,6 +143,13 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *te
 		},
 	}
 	edges := make([]FrameWorkLoopFilterPostFilterEdge, 4)
+	scratchSize, err := ctx.LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{Map: filterMap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scratchSize.Edges != len(edges) {
+		t.Fatalf("scratch=%+v want %d edges", scratchSize, len(edges))
+	}
 
 	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
 		Map:   filterMap,
@@ -209,6 +223,9 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsMissingActiveM
 	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{})
 	if !errors.Is(err, threading.ErrInvalidBatch) {
 		t.Fatalf("LoopFilterPostFilterPlan err=%v want %v", err, threading.ErrInvalidBatch)
+	}
+	if _, err := ctx.LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{}); !errors.Is(err, threading.ErrInvalidBatch) {
+		t.Fatalf("LoopFilterPostFilterScratchLen err=%v want %v", err, threading.ErrInvalidBatch)
 	}
 	if !plan.Active || plan.MICols != 4 || plan.MIRows != 4 {
 		t.Fatalf("plan=%+v", plan)
