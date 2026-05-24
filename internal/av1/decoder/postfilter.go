@@ -203,6 +203,30 @@ func (ctx FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWor
 	return size, nil
 }
 
+// PreSuperResPostFilterScratchLen reports scratch for the coded-surface
+// postfilter stages that AV1 runs before superres. It intentionally ignores
+// superres and later stages so callers can allocate and run this prefix before
+// switching to caller-owned upscaled output scratch.
+func (ctx FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+	remaining := ctx.RemainingPostFilters()
+	var size FrameWorkPostFilterScratchSize
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		loopFilterSize, err := ctx.LoopFilterPostFilterScratchLen(req.LoopFilter)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.LoopFilter = loopFilterSize
+	}
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.CDEF = cdefSize
+	}
+	return size, nil
+}
+
 // ApplySupportedPostFilters runs the currently integrated postfilter stages in
 // normal AV1 order. It rejects frames requiring unsupported stages before
 // mutating ctx.Output.
@@ -266,6 +290,38 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
 		result.Completed |= FrameWorkPostFilterFilmGrain
 		result.FilmGrain = filmGrainResult
+	}
+	return ctx, result, nil
+}
+
+// ApplyPreSuperResPostFilters runs the coded-surface postfilter prefix in AV1
+// order: loop filter, then CDEF. It leaves superres, loop restoration, and film
+// grain remaining for caller-owned follow-up stages.
+func (ctx FrameWorkPostFilterContext) ApplyPreSuperResPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
+	var result FrameWorkPostFilterResult
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
+			return ctx, result, err
+		}
+	}
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		loopFilterResult, err := ctx.ApplyLoopFilterEdges(req.LoopFilter)
+		if err != nil {
+			return ctx, result, err
+		}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		result.Completed |= FrameWorkPostFilterLoopFilter
+		result.LoopFilter = loopFilterResult
+	}
+	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
+		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
+		if err != nil {
+			return ctx, result, err
+		}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterCDEF)
+		result.Completed |= FrameWorkPostFilterCDEF
+		result.CDEF = cdefResult
 	}
 	return ctx, result, nil
 }
