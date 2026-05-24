@@ -71,6 +71,9 @@ func TestFrameWorkPostFilterContextSuperResPostFilterPlanReportsOutputGeometry(t
 	if scratch.OutputFrame != outputLayout.Size {
 		t.Fatalf("scratch=%+v want output frame %d", scratch, outputLayout.Size)
 	}
+	if scratch.CodedSamples[0] == 0 || scratch.OutputSamples[0] == 0 {
+		t.Fatalf("scratch samples=%+v", scratch)
+	}
 }
 
 func TestFrameWorkPostFilterContextSuperResPostFilterPlanRejectsInvalidActiveState(t *testing.T) {
@@ -109,4 +112,130 @@ func TestFrameWorkPostFilterContextSuperResPostFilterPlanRejectsOutputMismatch(t
 	if _, err := ctx.SuperResPostFilterPlan(); !errors.Is(err, frame.ErrInvalidFormat) {
 		t.Fatalf("SuperResPostFilterPlan err=%v want %v", err, frame.ErrInvalidFormat)
 	}
+}
+
+func TestFrameWorkPostFilterContextApplySuperResPostFilterWritesOutputScratch(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              2,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for x, value := range []byte{0, 32, 64, 96, 128, 160, 192, 224} {
+		output.Y.Pix[x] = value
+		output.Y.Pix[output.Y.Stride+x] = 100
+	}
+	for x, value := range []byte{0, 64, 128, 192} {
+		output.U.Pix[x] = value
+		output.V.Pix[x] = 55
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkSuperResPostFilterRequest(t, ctx)
+	result, err := ctx.ApplySuperResPostFilter(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Planes != 3 || result.Output.Format.Width != 13 || result.OutputSize != len(req.OutputFrame) {
+		t.Fatalf("result=%+v", result)
+	}
+	for x, want := range []byte{0, 11, 33, 54, 73, 92, 112, 132, 151, 171, 191, 214, 226} {
+		if got := result.Output.Y.Pix[x]; got != want {
+			t.Fatalf("Y[%d]=%d want %d", x, got, want)
+		}
+	}
+	for x := 0; x < 13; x++ {
+		if got := result.Output.Y.Pix[result.Output.Y.Stride+x]; got != 100 {
+			t.Fatalf("Y row1[%d]=%d want 100", x, got)
+		}
+	}
+	for x, want := range []byte{0, 19, 59, 96, 134, 174, 197} {
+		if got := result.Output.U.Pix[x]; got != want {
+			t.Fatalf("U[%d]=%d want %d", x, got, want)
+		}
+		if got := result.Output.V.Pix[x]; got != 55 {
+			t.Fatalf("V[%d]=%d want 55", x, got)
+		}
+	}
+	if output.Y.Pix[1] != 32 {
+		t.Fatalf("coded output mutated: %d", output.Y.Pix[1])
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortOutputScratch(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              2,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	size, err := ctx.SuperResPostFilterScratchLen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := FrameWorkSuperResPostFilterRequest{OutputFrame: make([]byte, size.OutputFrame-1)}
+	if _, err := ctx.ApplySuperResPostFilter(req); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("ApplySuperResPostFilter err=%v want %v", err, frame.ErrShortBuffer)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsEarlierStages(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              2,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+		CDEF: parser.CDEFParams{StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{4}},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	if _, err := ctx.ApplySuperResPostFilter(FrameWorkSuperResPostFilterRequest{}); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("ApplySuperResPostFilter err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+}
+
+func testFrameWorkSuperResPostFilterRequest(t *testing.T, ctx FrameWorkPostFilterContext) FrameWorkSuperResPostFilterRequest {
+	t.Helper()
+	size, err := ctx.SuperResPostFilterScratchLen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := FrameWorkSuperResPostFilterRequest{
+		OutputFrame: make([]byte, size.OutputFrame),
+	}
+	for plane := 0; plane < 3; plane++ {
+		req.CodedScratch[plane] = make([]uint16, size.CodedSamples[plane])
+		req.OutputScratch[plane] = make([]uint16, size.OutputSamples[plane])
+	}
+	return req
 }

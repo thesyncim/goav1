@@ -1,7 +1,10 @@
 package decoder
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/superres"
 )
 
 // FrameWorkSuperResPostFilterPlanePlan describes one plane's coded and
@@ -35,6 +38,27 @@ type FrameWorkSuperResPostFilterPlan struct {
 // by the eventual superres resampler.
 type FrameWorkSuperResPostFilterScratchSize struct {
 	OutputFrame int
+
+	CodedSamples  [3]int
+	OutputSamples [3]int
+}
+
+// FrameWorkSuperResPostFilterRequest carries caller-owned scratch for
+// ApplySuperResPostFilter.
+type FrameWorkSuperResPostFilterRequest struct {
+	OutputFrame []byte
+
+	CodedScratch  [3][]uint16
+	OutputScratch [3][]uint16
+}
+
+// FrameWorkSuperResPostFilterResult summarizes a scratch-targeted superres
+// upscale. Output aliases the caller-owned request buffer.
+type FrameWorkSuperResPostFilterResult struct {
+	Plan       FrameWorkSuperResPostFilterPlan
+	Output     frame.Frame
+	OutputSize int
+	Planes     int
 }
 
 // SuperResPostFilterPlan returns the frame-level superres geometry for the
@@ -99,7 +123,29 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkS
 	if !plan.Active {
 		return FrameWorkSuperResPostFilterScratchSize{}, nil
 	}
-	return FrameWorkSuperResPostFilterScratchSize{OutputFrame: plan.OutputSize}, nil
+	size := FrameWorkSuperResPostFilterScratchSize{OutputFrame: plan.OutputSize}
+	for plane := 0; plane < len(plan.Planes); plane++ {
+		planePlan := plan.Planes[plane]
+		if planePlan.OutputWidth == 0 {
+			continue
+		}
+		srcPlane, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		if !ok {
+			continue
+		}
+		bytesPerSample := frameWorkSuperResBytesPerSample(plan.CodedFormat)
+		codedSamples, err := frame.SamplePlaneLen(srcPlane, bytesPerSample)
+		if err != nil {
+			return FrameWorkSuperResPostFilterScratchSize{}, err
+		}
+		outputSamples, err := frameWorkSuperResSampleScratchLen(planePlan.OutputWidth, planePlan.Height, planePlan.OutputStride, bytesPerSample)
+		if err != nil {
+			return FrameWorkSuperResPostFilterScratchSize{}, err
+		}
+		size.CodedSamples[plane] = codedSamples
+		size.OutputSamples[plane] = outputSamples
+	}
+	return size, nil
 }
 
 func frameWorkSuperResPlanePlan(codedWidth int, outputWidth int, height int, bytesPerSample int, outputStride int) FrameWorkSuperResPostFilterPlanePlan {
@@ -111,4 +157,86 @@ func frameWorkSuperResPlanePlan(codedWidth int, outputWidth int, height int, byt
 		BytesPerRow:  outputWidth * bytesPerSample,
 		OutputStride: outputStride,
 	}
+}
+
+// ApplySuperResPostFilter upscales ctx.Output into caller-owned scratch and
+// returns an output-format frame view. It does not replace the published frame
+// surface or mark superres complete in the normal postfilter runner.
+func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuperResPostFilterRequest) (FrameWorkSuperResPostFilterResult, error) {
+	remaining := ctx.RemainingPostFilters()
+	preSuperRes := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF
+	if remaining&preSuperRes != 0 {
+		return FrameWorkSuperResPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterSuperRes) {
+		return FrameWorkSuperResPostFilterResult{}, nil
+	}
+	plan, err := ctx.SuperResPostFilterPlan()
+	if err != nil {
+		return FrameWorkSuperResPostFilterResult{}, err
+	}
+	if len(req.OutputFrame) < plan.OutputSize {
+		return FrameWorkSuperResPostFilterResult{}, frame.ErrShortBuffer
+	}
+	output, err := frame.Bind(req.OutputFrame[:plan.OutputSize], plan.OutputFormat)
+	if err != nil {
+		return FrameWorkSuperResPostFilterResult{}, err
+	}
+	result := FrameWorkSuperResPostFilterResult{
+		Plan:       plan,
+		Output:     output,
+		OutputSize: plan.OutputSize,
+	}
+	for plane := 0; plane < len(plan.Planes); plane++ {
+		planePlan := plan.Planes[plane]
+		if planePlan.OutputWidth == 0 {
+			continue
+		}
+		srcPlane, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		if !ok {
+			continue
+		}
+		dstPlane, ok := frameWorkCDEFPlane(output, plane)
+		if !ok {
+			continue
+		}
+		srcSamples, err := frame.LoadSamplePlane(req.CodedScratch[plane], srcPlane, ctx.Output.Layout.BytesPerSample)
+		if err != nil {
+			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres coded scratch plane %d: %w", plane, err)
+		}
+		dstSamples, err := frame.LoadSamplePlane(req.OutputScratch[plane], dstPlane, output.Layout.BytesPerSample)
+		if err != nil {
+			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres output scratch plane %d: %w", plane, err)
+		}
+		if err := superres.UpscalePlane(srcSamples, dstSamples, plan.OutputFormat.BitDepth); err != nil {
+			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres upscale plane %d: %w", plane, err)
+		}
+		if err := frame.StoreSamplePlane(dstPlane, output.Layout.BytesPerSample, dstSamples); err != nil {
+			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres store plane %d: %w", plane, err)
+		}
+		result.Planes++
+	}
+	return result, nil
+}
+
+func frameWorkSuperResBytesPerSample(format frame.Format) int {
+	if format.BitDepth > 8 {
+		return 2
+	}
+	return 1
+}
+
+func frameWorkSuperResSampleScratchLen(width int, height int, stride int, bytesPerSample int) (int, error) {
+	if width <= 0 || height <= 0 || bytesPerSample <= 0 || stride <= 0 || stride%bytesPerSample != 0 {
+		return 0, frame.ErrInvalidPlane
+	}
+	strideSamples := stride / bytesPerSample
+	if strideSamples < width {
+		return 0, frame.ErrInvalidPlane
+	}
+	maxInt := int(^uint(0) >> 1)
+	if height > maxInt/strideSamples {
+		return 0, frame.ErrInvalidPlane
+	}
+	return height * strideSamples, nil
 }
