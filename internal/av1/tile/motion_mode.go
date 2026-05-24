@@ -69,6 +69,7 @@ type OverlappableNeighbor struct {
 	Size BlockSize
 
 	Motion             InterMotionResult
+	MotionValid        bool
 	InterpFilters      motion.InterpFilters
 	InterpFiltersValid bool
 }
@@ -86,6 +87,26 @@ func (s OverlappableNeighborSet) MotionModeCount() int {
 		return s.AboveCount
 	}
 	return s.LeftCount
+}
+
+// WarpSampleCount returns the count of neighboring single-reference samples
+// that can seed AV1's warped-motion projection for a block using ref.
+func (s OverlappableNeighborSet) WarpSampleCount(ref ReferenceFrame) int {
+	if !ref.Valid() {
+		return 0
+	}
+	count := 0
+	for i := 0; i < s.AboveCount && count < maxWarpSamples; i++ {
+		if warpSampleNeighborMatches(s.Above[i], ref) {
+			count++
+		}
+	}
+	for i := 0; i < s.LeftCount && count < maxWarpSamples; i++ {
+		if warpSampleNeighborMatches(s.Left[i], ref) {
+			count++
+		}
+	}
+	return count
 }
 
 var motionModeDefaultCDF = [blockSizeCount][2]uint16{
@@ -355,6 +376,7 @@ func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int
 		Span4:              uint8(maxInt(0, span)),
 		Size:               c.AboveBlockSize[slot],
 		Motion:             c.AboveInterMotion[slot],
+		MotionValid:        c.AboveMotionValid[slot] != 0,
 		InterpFilters:      c.AboveInterp[slot],
 		InterpFiltersValid: c.AboveInterpValid[slot] != 0,
 	}
@@ -366,9 +388,19 @@ func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int)
 		Span4:              uint8(maxInt(0, span)),
 		Size:               c.LeftBlockSize[slot],
 		Motion:             c.LeftInterMotion[slot],
+		MotionValid:        c.LeftMotionValid[slot] != 0,
 		InterpFilters:      c.LeftInterp[slot],
 		InterpFiltersValid: c.LeftInterpValid[slot] != 0,
 	}
+}
+
+const maxWarpSamples = 8
+
+func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool {
+	return n.MotionValid &&
+		!n.Motion.References.Compound &&
+		n.Motion.References.Ref[0] == ref &&
+		n.Motion.References.Ref[1] == ReferenceFrameNone
 }
 
 func (c *BlockModeContext) aboveOverlappable(slot int) bool {

@@ -768,6 +768,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					if err != nil {
 						return BlockPredictionModeResult{}, err
 					}
+					numProjRef := overlappableNeighbors.WarpSampleCount(refs.Ref[0])
 					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
 						Size:                  block.Size,
 						Mode:                  mode.Mode,
@@ -780,7 +781,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
 						ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
 						OverlappableNeighbors: overlappableNeighbors.MotionModeCount(),
-						NumProjRef:            req.NumProjRef,
+						NumProjRef:            numProjRef,
 					})
 					if err != nil {
 						return BlockPredictionModeResult{}, err

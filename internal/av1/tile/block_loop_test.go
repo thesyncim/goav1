@@ -995,7 +995,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		EnableMaskedCompound:     true,
 		EnableDistWtdCompound:    true,
 		AllowHighPrecisionMV:     true,
-		AllowWarpedMotion:        false,
+		AllowWarpedMotion:        true,
 		EnableOrderHint:          true,
 		OrderHintBits:            4,
 		CurrentOrderHint:         8,
@@ -1009,7 +1009,6 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		AllowIntrabc:             false,
 		ReferenceMode:            parser.ReferenceModeSingle,
 		SkipModeRefs:             [2]ReferenceFrame{},
-		NumProjRef:               0,
 	}, BlockVisit{
 		Size:     BlockSize16x16,
 		X4:       0,
@@ -1032,8 +1031,11 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 	if got := blendCDFs.InterIntra[yModeSizeContext[BlockSize16x16]].Values()[2]; got != 1 {
 		t.Fatalf("inter-intra cdf count=%d want 1", got)
 	}
-	if got := motionCDFs.OBMC[BlockSize16x16].Values()[2]; got != 1 {
-		t.Fatalf("obmc cdf count=%d want 1", got)
+	if got := motionCDFs.MotionMode[BlockSize16x16].Values()[3]; got != 1 {
+		t.Fatalf("motion mode cdf count=%d want 1", got)
+	}
+	if got := motionCDFs.OBMC[BlockSize16x16].Values()[2]; got != 0 {
+		t.Fatalf("obmc cdf count=%d want 0", got)
 	}
 }
 

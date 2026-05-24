@@ -131,6 +131,36 @@ func TestCountOverlappableNeighborsPortsFourByFourPairing(t *testing.T) {
 	}
 }
 
+func TestOverlappableNeighborSetCountsWarpSamples(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	otherRefs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone}}
+	compoundRefs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref}, Compound: true}
+	var ctx BlockModeContext
+	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{References: refs})
+	seedLeftMotion(&ctx, 0, BlockSize8x8, InterMotionResult{References: otherRefs})
+	seedLeftMotion(&ctx, 2, BlockSize8x8, InterMotionResult{References: compoundRefs})
+
+	set, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize16x16,
+		VisibleW4: 4,
+		VisibleH4: 4,
+		HaveTop:   true,
+		HaveLeft:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := set.WarpSampleCount(ReferenceFrameLast); got != 1 {
+		t.Fatalf("last samples=%d want 1", got)
+	}
+	if got := set.WarpSampleCount(ReferenceFrameGolden); got != 1 {
+		t.Fatalf("golden samples=%d want 1", got)
+	}
+	if got := set.WarpSampleCount(ReferenceFrameAltref); got != 0 {
+		t.Fatalf("compound second ref samples=%d want 0", got)
+	}
+}
+
 func TestLastMotionModeAllowedMatchesLibaom(t *testing.T) {
 	base := MotionModeRequest{
 		Size:                  BlockSize16x16,
