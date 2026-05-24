@@ -667,6 +667,20 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	}
 }
 
+func TestReferenceOrderHintsFromReferenceState(t *testing.T) {
+	refs := parser.ReferenceState{}
+	refs.Frames[2] = parser.ReferenceFrame{Valid: true, OrderHint: 11}
+	refs.Frames[5] = parser.ReferenceFrame{Valid: true, OrderHint: 21}
+	size := parser.FrameSize{
+		RefFrameIdx: [parser.InterRefsPerFrame]uint8{2, 5, 2, 5, 2, 5, 2},
+	}
+	got := referenceOrderHints(size, &refs)
+	want := [parser.InterRefsPerFrame]uint32{11, 21, 11, 21, 11, 21, 11}
+	if got != want {
+		t.Fatalf("reference order hints=%v want %v", got, want)
+	}
+}
+
 func TestStreamCarriesReferenceFrameHeaderState(t *testing.T) {
 	var dec Stream
 	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {

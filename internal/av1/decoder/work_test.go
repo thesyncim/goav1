@@ -789,10 +789,11 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 			TransformMode: parser.TransformModeSwitchable,
 			ReferenceMode: parser.ReferenceModeSelect,
 		},
-		SkipMode:     parser.SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{1, 2}},
-		FrameMode:    parser.FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true},
-		GlobalMotion: globalMotion,
-		FilmGrain:    filmGrain,
+		SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{1, 2}},
+		FrameMode:           parser.FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true},
+		GlobalMotion:        globalMotion,
+		FilmGrain:           filmGrain,
+		ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{4, 5, 6, 7, 8, 9, 10},
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
@@ -849,6 +850,9 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		}
 		if ctx.FilmGrain != event.FilmGrain {
 			t.Fatalf("FilmGrain=%+v want %+v", ctx.FilmGrain, event.FilmGrain)
+		}
+		if ctx.ReferenceOrderHints != event.ReferenceOrderHints {
+			t.Fatalf("ReferenceOrderHints=%v want %v", ctx.ReferenceOrderHints, event.ReferenceOrderHints)
 		}
 		r, err := ctx.JobEntropyReader(1)
 		if err != nil {

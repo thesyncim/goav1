@@ -35,41 +35,43 @@ type Event struct {
 	NewTemporalUnit            bool
 	OperatingParametersChanged bool
 
-	SequenceHeader parser.SequenceHeader
-	FrameHeader    parser.FrameHeaderPrefix
-	FrameSize      parser.FrameSize
-	TileInfo       parser.TileInfo
-	Quantization   parser.QuantizationParams
-	Segmentation   parser.SegmentationParams
-	Delta          parser.DeltaParams
-	LoopFilter     parser.LoopFilterParams
-	CDEF           parser.CDEFParams
-	Restoration    parser.RestorationParams
-	TransformRef   parser.TransformReferenceParams
-	SkipMode       parser.SkipModeParams
-	FrameMode      parser.FrameModeParams
-	GlobalMotion   parser.GlobalMotionParams
-	FilmGrain      parser.FilmGrainParams
-	TileGroup      parser.TileGroup
-	ExistingFrame  parser.ReferenceFrame
+	SequenceHeader      parser.SequenceHeader
+	FrameHeader         parser.FrameHeaderPrefix
+	FrameSize           parser.FrameSize
+	TileInfo            parser.TileInfo
+	Quantization        parser.QuantizationParams
+	Segmentation        parser.SegmentationParams
+	Delta               parser.DeltaParams
+	LoopFilter          parser.LoopFilterParams
+	CDEF                parser.CDEFParams
+	Restoration         parser.RestorationParams
+	TransformRef        parser.TransformReferenceParams
+	SkipMode            parser.SkipModeParams
+	FrameMode           parser.FrameModeParams
+	GlobalMotion        parser.GlobalMotionParams
+	FilmGrain           parser.FilmGrainParams
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
+	TileGroup           parser.TileGroup
+	ExistingFrame       parser.ReferenceFrame
 }
 
 type frameState struct {
-	SequenceHeader parser.SequenceHeader
-	FrameHeader    parser.FrameHeaderPrefix
-	FrameSize      parser.FrameSize
-	TileInfo       parser.TileInfo
-	Quantization   parser.QuantizationParams
-	Segmentation   parser.SegmentationParams
-	Delta          parser.DeltaParams
-	LoopFilter     parser.LoopFilterParams
-	CDEF           parser.CDEFParams
-	Restoration    parser.RestorationParams
-	TransformRef   parser.TransformReferenceParams
-	SkipMode       parser.SkipModeParams
-	FrameMode      parser.FrameModeParams
-	GlobalMotion   parser.GlobalMotionParams
-	FilmGrain      parser.FilmGrainParams
+	SequenceHeader      parser.SequenceHeader
+	FrameHeader         parser.FrameHeaderPrefix
+	FrameSize           parser.FrameSize
+	TileInfo            parser.TileInfo
+	Quantization        parser.QuantizationParams
+	Segmentation        parser.SegmentationParams
+	Delta               parser.DeltaParams
+	LoopFilter          parser.LoopFilterParams
+	CDEF                parser.CDEFParams
+	Restoration         parser.RestorationParams
+	TransformRef        parser.TransformReferenceParams
+	SkipMode            parser.SkipModeParams
+	FrameMode           parser.FrameModeParams
+	GlobalMotion        parser.GlobalMotionParams
+	FilmGrain           parser.FilmGrainParams
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
 }
 
 type Stream struct {
@@ -290,6 +292,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			event.FrameMode = frameMode
 			event.GlobalMotion = globalMotion
 			event.FilmGrain = filmGrain
+			event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
 			event.TileGroup = tileGroup
 			s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 			s.tileInfo = tileInfo
@@ -421,6 +424,7 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	event.FrameMode = frameMode
 	event.GlobalMotion = globalMotion
 	event.FilmGrain = filmGrain
+	event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
 	s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 	s.tileInfo = tileInfo
 	s.nextTile = 0
@@ -474,21 +478,22 @@ func (s *Stream) clearPendingFrame() {
 
 func (s *Stream) storeFrameState(event Event) {
 	s.frame = frameState{
-		SequenceHeader: event.SequenceHeader,
-		FrameHeader:    event.FrameHeader,
-		FrameSize:      event.FrameSize,
-		TileInfo:       event.TileInfo,
-		Quantization:   event.Quantization,
-		Segmentation:   event.Segmentation,
-		Delta:          event.Delta,
-		LoopFilter:     event.LoopFilter,
-		CDEF:           event.CDEF,
-		Restoration:    event.Restoration,
-		TransformRef:   event.TransformRef,
-		SkipMode:       event.SkipMode,
-		FrameMode:      event.FrameMode,
-		GlobalMotion:   event.GlobalMotion,
-		FilmGrain:      event.FilmGrain,
+		SequenceHeader:      event.SequenceHeader,
+		FrameHeader:         event.FrameHeader,
+		FrameSize:           event.FrameSize,
+		TileInfo:            event.TileInfo,
+		Quantization:        event.Quantization,
+		Segmentation:        event.Segmentation,
+		Delta:               event.Delta,
+		LoopFilter:          event.LoopFilter,
+		CDEF:                event.CDEF,
+		Restoration:         event.Restoration,
+		TransformRef:        event.TransformRef,
+		SkipMode:            event.SkipMode,
+		FrameMode:           event.FrameMode,
+		GlobalMotion:        event.GlobalMotion,
+		FilmGrain:           event.FilmGrain,
+		ReferenceOrderHints: event.ReferenceOrderHints,
 	}
 }
 
@@ -508,6 +513,21 @@ func (s *Stream) applyFrameState(event *Event) {
 	event.FrameMode = s.frame.FrameMode
 	event.GlobalMotion = s.frame.GlobalMotion
 	event.FilmGrain = s.frame.FilmGrain
+	event.ReferenceOrderHints = s.frame.ReferenceOrderHints
+}
+
+func referenceOrderHints(size parser.FrameSize, refs *parser.ReferenceState) [parser.InterRefsPerFrame]uint32 {
+	var hints [parser.InterRefsPerFrame]uint32
+	if refs == nil {
+		return hints
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		slot := size.RefFrameIdx[i]
+		if slot < parser.RefFrames {
+			hints[i] = refs.Frames[slot].OrderHint
+		}
+	}
+	return hints
 }
 
 func (s *Stream) previousSegmentationData(prefix parser.FrameHeaderPrefix, size parser.FrameSize) *parser.SegmentationData {

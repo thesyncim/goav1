@@ -587,21 +587,22 @@ func frameWorkFrameContext(event Event, fallback threading.FrameWorkSequenceCont
 		sequence = fallback
 	}
 	return FrameWorkFrameContext{
-		Sequence:     sequence,
-		FrameHeader:  event.FrameHeader,
-		FrameSize:    event.FrameSize,
-		TileInfo:     event.TileInfo,
-		Quantization: event.Quantization,
-		Segmentation: event.Segmentation,
-		Delta:        event.Delta,
-		LoopFilter:   event.LoopFilter,
-		CDEF:         event.CDEF,
-		Restoration:  event.Restoration,
-		TransformRef: event.TransformRef,
-		SkipMode:     event.SkipMode,
-		FrameMode:    event.FrameMode,
-		GlobalMotion: event.GlobalMotion,
-		FilmGrain:    event.FilmGrain,
+		Sequence:            sequence,
+		FrameHeader:         event.FrameHeader,
+		FrameSize:           event.FrameSize,
+		TileInfo:            event.TileInfo,
+		Quantization:        event.Quantization,
+		Segmentation:        event.Segmentation,
+		Delta:               event.Delta,
+		LoopFilter:          event.LoopFilter,
+		CDEF:                event.CDEF,
+		Restoration:         event.Restoration,
+		TransformRef:        event.TransformRef,
+		SkipMode:            event.SkipMode,
+		FrameMode:           event.FrameMode,
+		GlobalMotion:        event.GlobalMotion,
+		FilmGrain:           event.FilmGrain,
+		ReferenceOrderHints: event.ReferenceOrderHints,
 	}
 }
 

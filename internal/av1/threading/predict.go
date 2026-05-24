@@ -13,7 +13,23 @@ const (
 	frameWorkDirectionalEdgeOrigin         = 128
 	frameWorkDirectionalEdgeSamples        = 512
 	frameWorkInterPredictionMaxBlockBytes  = 128 * 128 * 2
+	frameWorkMaxFrameDistance              = 31
+	frameWorkDistPrecisionBits             = 4
 )
+
+var frameWorkQuantDistWeight = [4][2]int{
+	{2, 3},
+	{2, 5},
+	{2, 7},
+	{1, frameWorkMaxFrameDistance},
+}
+
+var frameWorkQuantDistLookup = [4][2]int{
+	{9, 7},
+	{11, 5},
+	{12, 4},
+	{13, 3},
+}
 
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
 // intra prediction. Keep it outside FrameWorkTileResidualScratch so callers
@@ -55,7 +71,7 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 		if scratch == nil || scratch.Inter == nil {
 			return ErrInvalidBatch
 		}
-		return b.PredictBlockLumaInterCompoundAverage(index, visit, scratch.Inter)
+		return b.PredictBlockLumaInterCompound(index, visit, scratch.Inter)
 	}
 	return b.PredictBlockLumaInter(index, visit)
 }
@@ -204,6 +220,27 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit ti
 // PredictBlockLumaInterCompoundAverage with explicit interpolation filters. It
 // only accepts decoded CompoundTypeAverage blocks.
 func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit.Prediction.CompoundBlend.Type != tile.CompoundTypeAverage {
+		return ErrInvalidBatch
+	}
+	return b.PredictBlockLumaInterCompoundWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockLumaInterCompound writes compound luma inter prediction for one
+// decoded block-loop visit. It currently covers average and distance-weighted
+// compound. Masked, diff-wtd, inter-intra, scaled references, and warped/global
+// refinement are handled by later inter-prediction stages.
+func (b FrameWorkBatch) PredictBlockLumaInterCompound(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	filters, err := frameWorkMotionFilters(b.TileInfo)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockLumaInterCompoundWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockLumaInterCompoundWithFilters is PredictBlockLumaInterCompound
+// with explicit interpolation filters.
+func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
 	if scratch == nil ||
 		!visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
@@ -217,7 +254,8 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode != tile.MotionModeTranslation {
 		return ErrInvalidBatch
 	}
-	if visit.Prediction.CompoundBlend.Type != tile.CompoundTypeAverage {
+	blend := visit.Prediction.CompoundBlend
+	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -262,10 +300,87 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 	if err := b.predictBlockLumaInterToScratch(second, motionResult.References.Ref[1], motionResult.MV[1], x, y, width, height, filters); err != nil {
 		return err
 	}
-	if err := frameWorkAverageCompoundBlock(output, first, second, b.Output.Layout.BytesPerSample, x, y, width, height); err != nil {
+	fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
+	if err != nil {
+		return err
+	}
+	if err := frameWorkBlendCompoundBlock(output, first, second, b.Output.Layout.BytesPerSample, x, y, width, height, fwdOffset, bckOffset); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (b FrameWorkBatch) frameWorkCompoundOffsets(refs tile.InterReferencesResult, blend tile.CompoundBlendResult) (int, int, error) {
+	switch blend.Type {
+	case tile.CompoundTypeAverage:
+		return 8, 8, nil
+	case tile.CompoundTypeDistWtd:
+		if blend.CompoundIndex != 0 || !b.Sequence.EnableOrderHint || b.Sequence.OrderHintBits == 0 || b.Sequence.OrderHintBits > 31 {
+			return 0, 0, ErrInvalidBatch
+		}
+		if !refs.Compound || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() {
+			return 0, 0, ErrInvalidBatch
+		}
+		ref0 := b.ReferenceOrderHints[refs.Ref[0]]
+		ref1 := b.ReferenceOrderHints[refs.Ref[1]]
+		return frameWorkDistanceWeightedCompoundOffsets(b.Sequence.OrderHintBits, b.FrameHeader.OrderHint, ref0, ref1)
+	default:
+		return 0, 0, ErrInvalidBatch
+	}
+}
+
+func frameWorkDistanceWeightedCompoundOffsets(orderHintBits uint8, currentOrderHint uint32, ref0OrderHint uint32, ref1OrderHint uint32) (int, int, error) {
+	d0, err := frameWorkRelativeOrderHint(orderHintBits, ref1OrderHint, currentOrderHint)
+	if err != nil {
+		return 0, 0, ErrInvalidBatch
+	}
+	d1, err := frameWorkRelativeOrderHint(orderHintBits, currentOrderHint, ref0OrderHint)
+	if err != nil {
+		return 0, 0, ErrInvalidBatch
+	}
+	if d0 < 0 {
+		d0 = -d0
+	}
+	if d1 < 0 {
+		d1 = -d1
+	}
+	if d0 > frameWorkMaxFrameDistance {
+		d0 = frameWorkMaxFrameDistance
+	}
+	if d1 > frameWorkMaxFrameDistance {
+		d1 = frameWorkMaxFrameDistance
+	}
+	order := 0
+	if d0 <= d1 {
+		order = 1
+	}
+	if d0 == 0 || d1 == 0 {
+		return frameWorkQuantDistLookup[3][order], frameWorkQuantDistLookup[3][1-order], nil
+	}
+	i := 0
+	for ; i < 3; i++ {
+		c0 := frameWorkQuantDistWeight[i][order]
+		c1 := frameWorkQuantDistWeight[i][1-order]
+		d0c0 := d0 * c0
+		d1c1 := d1 * c1
+		if (d0 > d1 && d0c0 < d1c1) || (d0 <= d1 && d0c0 > d1c1) {
+			break
+		}
+	}
+	return frameWorkQuantDistLookup[i][order], frameWorkQuantDistLookup[i][1-order], nil
+}
+
+func frameWorkRelativeOrderHint(bits uint8, a uint32, b uint32) (int, error) {
+	if bits == 0 || bits > 31 {
+		return 0, ErrInvalidBatch
+	}
+	limit := uint32(1) << bits
+	if a >= limit || b >= limit {
+		return 0, ErrInvalidBatch
+	}
+	mask := int32(1 << (bits - 1))
+	diff := int32(a) - int32(b)
+	return int((diff & (mask - 1)) - (diff & mask)), nil
 }
 
 func (b FrameWorkBatch) predictBlockLumaInterToScratch(dst frame.Plane, refFrame tile.ReferenceFrame, mv motion.Vector, dstX int, dstY int, width int, height int, filters motion.InterpFilters) error {
@@ -314,9 +429,16 @@ func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, heigh
 }
 
 func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int) error {
+	return frameWorkBlendCompoundBlock(dst, first, second, bytesPerSample, dstX, dstY, width, height, 8, 8)
+}
+
+func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int) error {
 	if !frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
 		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
 		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) {
+		return ErrInvalidBatch
+	}
+	if fwdOffset < 0 || bckOffset < 0 || fwdOffset+bckOffset != 1<<frameWorkDistPrecisionBits {
 		return ErrInvalidBatch
 	}
 	switch bytesPerSample {
@@ -326,7 +448,8 @@ func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second fr
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
 			for col := 0; col < width; col++ {
-				dstLine[col] = byte((uint16(firstLine[col]) + uint16(secondLine[col]) + 1) >> 1)
+				out := (uint32(firstLine[col])*uint32(fwdOffset) + uint32(secondLine[col])*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits
+				dstLine[col] = byte(out)
 			}
 		}
 	case 2:
@@ -338,7 +461,7 @@ func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second fr
 				i := col * 2
 				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
 				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
-				out := uint16((uint32(a) + uint32(b) + 1) >> 1)
+				out := uint16((uint32(a)*uint32(fwdOffset) + uint32(b)*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits)
 				dstLine[i] = byte(out)
 				dstLine[i+1] = byte(out >> 8)
 			}

@@ -164,21 +164,22 @@ type FrameWorkLoopRestorationPlan struct {
 // callbacks can map tile jobs to frame geometry and frame-level syntax without
 // reparsing payload headers.
 type FrameWorkFrameContext struct {
-	Sequence     FrameWorkSequenceContext
-	FrameHeader  parser.FrameHeaderPrefix
-	FrameSize    parser.FrameSize
-	TileInfo     parser.TileInfo
-	Quantization parser.QuantizationParams
-	Segmentation parser.SegmentationParams
-	Delta        parser.DeltaParams
-	LoopFilter   parser.LoopFilterParams
-	CDEF         parser.CDEFParams
-	Restoration  parser.RestorationParams
-	TransformRef parser.TransformReferenceParams
-	SkipMode     parser.SkipModeParams
-	FrameMode    parser.FrameModeParams
-	GlobalMotion parser.GlobalMotionParams
-	FilmGrain    parser.FilmGrainParams
+	Sequence            FrameWorkSequenceContext
+	FrameHeader         parser.FrameHeaderPrefix
+	FrameSize           parser.FrameSize
+	TileInfo            parser.TileInfo
+	Quantization        parser.QuantizationParams
+	Segmentation        parser.SegmentationParams
+	Delta               parser.DeltaParams
+	LoopFilter          parser.LoopFilterParams
+	CDEF                parser.CDEFParams
+	Restoration         parser.RestorationParams
+	TransformRef        parser.TransformReferenceParams
+	SkipMode            parser.SkipModeParams
+	FrameMode           parser.FrameModeParams
+	GlobalMotion        parser.GlobalMotionParams
+	FilmGrain           parser.FilmGrainParams
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.

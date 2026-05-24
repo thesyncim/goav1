@@ -16,12 +16,16 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 		FrameWorkFrameContext: FrameWorkFrameContext{
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
 				Use128x128Superblock: true,
+				EnableOrderHint:      true,
+				OrderHintBits:        5,
 				ColorConfig:          parser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
-			FrameSize: parser.FrameSize{CodedWidth: 300, Height: 260},
-			SkipMode:  parser.SkipModeParams{Allowed: true, Enabled: true},
-			CDEF:      parser.CDEFParams{Bits: 2, StrengthCount: 4},
-			Delta:     parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+			FrameHeader:         parser.FrameHeaderPrefix{OrderHint: 9},
+			FrameSize:           parser.FrameSize{CodedWidth: 300, Height: 260},
+			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 2, 3, 4, 5, 6, 7},
+			SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true},
+			CDEF:                parser.CDEFParams{Bits: 2, StrengthCount: 4},
+			Delta:               parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
 		},
 		Jobs: []tile.Job{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
 	}
@@ -37,7 +41,9 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 	}
 	if !req.SkipMode.Enabled || req.CDEF.Bits != 2 ||
 		!req.Delta.DeltaQPresent || req.SBSizeMIB != 32 || !req.Monochrome ||
-		len(req.CurrentSegmentMap) != len(segMap) || req.SegmentMapStride != 96 {
+		len(req.CurrentSegmentMap) != len(segMap) || req.SegmentMapStride != 96 ||
+		!req.EnableOrderHint || req.OrderHintBits != 5 ||
+		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 {
 		t.Fatalf("request=%+v", req)
 	}
 }

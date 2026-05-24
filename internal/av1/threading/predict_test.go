@@ -279,7 +279,7 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *test
 			filters: motion.InterpFilters{X: motion.InterpMultiTapSharp, Y: motion.InterpEightTapSmooth},
 		},
 		{
-			name:    "highbd",
+			name:    "highbd-dist-wtd",
 			format:  frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128},
 			max:     0x3ff,
 			mv0:     motion.Vector{Col: 4, Row: 6},
@@ -295,18 +295,81 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *test
 			fillFrameWorkInterReference(last, tt.max)
 			fillFrameWorkInterReferenceVariant(bwd, tt.max, 37)
 			ctx := testCompoundInterPredictionBatch(output, last, bwd)
-			visit := testCompoundInterPredictionVisit(tt.mv0, tt.mv1, tile.CompoundTypeAverage)
+			compoundType := tile.CompoundTypeAverage
+			if tt.name == "highbd-dist-wtd" {
+				compoundType = tile.CompoundTypeDistWtd
+			}
+			visit := testCompoundInterPredictionVisit(tt.mv0, tt.mv1, compoundType)
 
 			var scratch FrameWorkInterPredictionScratch
-			if err := ctx.PredictBlockLumaInterCompoundAverageWithFilters(0, visit, &scratch, tt.filters); err != nil {
+			if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, tt.filters); err != nil {
 				t.Fatal(err)
 			}
 
 			first := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, tt.mv0, tt.filters)
 			second := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, tt.mv1, tt.filters)
-			assertFrameWorkCompoundAverageEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16)
+			fwdOffset, bckOffset, err := ctx.frameWorkCompoundOffsets(visit.Prediction.InterMotion.References, visit.Prediction.CompoundBlend)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFrameWorkCompoundBlendEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16, fwdOffset, bckOffset)
 		})
 	}
+}
+
+func TestFrameWorkCompoundDistanceWeightedOffsetsMatchLibaom(t *testing.T) {
+	tests := []struct {
+		name string
+		cur  uint32
+		ref0 uint32
+		ref1 uint32
+		want [2]int
+	}{
+		{name: "equal distance", cur: 8, ref0: 4, ref1: 12, want: [2]int{7, 9}},
+		{name: "forward nearer", cur: 8, ref0: 2, ref1: 10, want: [2]int{4, 12}},
+		{name: "backward nearer", cur: 8, ref0: 6, ref1: 15, want: [2]int{13, 3}},
+		{name: "zero distance", cur: 8, ref0: 8, ref1: 12, want: [2]int{13, 3}},
+		{name: "wraparound", cur: 1, ref0: 14, ref1: 4, want: [2]int{7, 9}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd, bck, err := frameWorkDistanceWeightedCompoundOffsets(4, tt.cur, tt.ref0, tt.ref1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := [2]int{fwd, bck}; got != tt.want {
+				t.Fatalf("offsets=%v want %v", got, tt.want)
+			}
+		})
+	}
+	if _, _, err := frameWorkDistanceWeightedCompoundOffsets(0, 0, 0, 0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad bits err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, _, err := frameWorkDistanceWeightedCompoundOffsets(4, 16, 0, 1); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("out of range hint err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func FuzzFrameWorkDistanceWeightedCompoundOffsets(f *testing.F) {
+	f.Add(uint8(4), uint32(8), uint32(4), uint32(12))
+	f.Add(uint8(4), uint32(8), uint32(2), uint32(10))
+	f.Add(uint8(4), uint32(1), uint32(14), uint32(4))
+	f.Add(uint8(5), uint32(16), uint32(3), uint32(28))
+
+	f.Fuzz(func(t *testing.T, bits uint8, cur uint32, ref0 uint32, ref1 uint32) {
+		bits = bits%8 + 1
+		limit := uint32(1) << bits
+		cur %= limit
+		ref0 %= limit
+		ref1 %= limit
+		fwd, bck, err := frameWorkDistanceWeightedCompoundOffsets(bits, cur, ref0, ref1)
+		if err != nil {
+			t.Fatalf("frameWorkDistanceWeightedCompoundOffsets err=%v", err)
+		}
+		if fwd < 0 || bck < 0 || fwd+bck != 16 {
+			t.Fatalf("offsets=%d,%d", fwd, bck)
+		}
+	})
 }
 
 func TestFrameWorkBatchPredictBlockLumaDispatchesCompoundAverage(t *testing.T) {
@@ -325,7 +388,7 @@ func TestFrameWorkBatchPredictBlockLumaDispatchesCompoundAverage(t *testing.T) {
 	}
 	first := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, visit.Prediction.InterMotion.MV[0], motion.RegularFilters)
 	second := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, visit.Prediction.InterMotion.MV[1], motion.RegularFilters)
-	assertFrameWorkCompoundAverageEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16)
+	assertFrameWorkCompoundBlendEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16, 8, 8)
 }
 
 func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(t *testing.T) {
@@ -348,7 +411,12 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(
 			visit.Prediction.CompoundBlendValid = false
 			return visit
 		}(), scratch: &scratch},
-		{name: "dist wtd", ctx: ctx, visit: testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeDistWtd), scratch: &scratch},
+		{name: "wedge", ctx: ctx, visit: testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeWedge), scratch: &scratch},
+		{name: "dist wtd without order hint", ctx: func() FrameWorkBatch {
+			next := ctx
+			next.Sequence.EnableOrderHint = false
+			return next
+		}(), visit: testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeDistWtd), scratch: &scratch},
 		{name: "single ref", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := valid
 			refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
@@ -717,6 +785,11 @@ func testCompoundInterPredictionBatch(output *frame.Frame, last *frame.Frame, bw
 	refs[int(FrameWorkReferenceLast)] = last
 	refs[int(FrameWorkReferenceBwd)] = bwd
 	ctx.References = refs
+	ctx.Sequence.EnableOrderHint = true
+	ctx.Sequence.OrderHintBits = 4
+	ctx.FrameHeader.OrderHint = 8
+	ctx.ReferenceOrderHints[tile.ReferenceFrameLast] = 4
+	ctx.ReferenceOrderHints[tile.ReferenceFrameBWD] = 12
 	return ctx
 }
 
@@ -759,6 +832,10 @@ func testInterPredictionVisit(mv motion.Vector) tile.BlockLoopVisit {
 
 func testCompoundInterPredictionVisit(mv0 motion.Vector, mv1 motion.Vector, compoundType tile.CompoundType) tile.BlockLoopVisit {
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameBWD}, Compound: true}
+	compoundIndex := uint8(0)
+	if compoundType == tile.CompoundTypeAverage {
+		compoundIndex = 1
+	}
 	return tile.BlockLoopVisit{
 		Block: tile.BlockVisit{
 			MICol: 4, MIRow: 4, MIColEnd: 8, MIRowEnd: 8,
@@ -788,7 +865,7 @@ func testCompoundInterPredictionVisit(mv0 motion.Vector, mv1 motion.Vector, comp
 			MotionModeValid:  true,
 			CompoundBlend: tile.CompoundBlendResult{
 				Type:          compoundType,
-				CompoundIndex: 1,
+				CompoundIndex: compoundIndex,
 			},
 			CompoundBlendValid: true,
 		},
@@ -826,13 +903,13 @@ func assertFrameWorkPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Pl
 	}
 }
 
-func assertFrameWorkCompoundAverageEqual(t *testing.T, got frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, x int, y int, width int, height int) {
+func assertFrameWorkCompoundBlendEqual(t *testing.T, got frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, x int, y int, width int, height int, fwdOffset int, bckOffset int) {
 	t.Helper()
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			a := frameWorkTestSample(first, bytesPerSample, col, row)
 			b := frameWorkTestSample(second, bytesPerSample, col, row)
-			want := uint16((uint32(a) + uint32(b) + 1) >> 1)
+			want := uint16((uint32(a)*uint32(fwdOffset) + uint32(b)*uint32(bckOffset) + 8) >> 4)
 			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
 			if g != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, g, want)
