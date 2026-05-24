@@ -51,9 +51,35 @@ func FuzzPacketizer(f *testing.F) {
 		var obus [16]PacketizerOBU
 		var packets [128]PacketPlan
 		var work [128]PacketPlan
-		packetizer, err := NewPacketizer(payload, PayloadSizeLimits{MaxPayloadLen: limit}, true, true, obus[:], packets[:], work[:])
+
+		obuCount, err := CountPacketizerOBUs(payload)
 		if err != nil {
 			return
+		}
+		if obuCount > len(obus) {
+			return
+		}
+		parsed, err := ParsePacketizerOBUs(payload, obus[:])
+		if err != nil {
+			t.Fatalf("ParsePacketizerOBUs after count: %v", err)
+		}
+		if parsed != obuCount {
+			t.Fatalf("parsed=%d count=%d", parsed, obuCount)
+		}
+		packetCount, err := PacketizeOBUCount(obus[:parsed], PayloadSizeLimits{MaxPayloadLen: limit})
+		if err != nil {
+			t.Fatalf("PacketizeOBUCount: %v", err)
+		}
+		if packetCount > len(packets) {
+			return
+		}
+
+		packetizer, err := NewPacketizer(payload, PayloadSizeLimits{MaxPayloadLen: limit}, true, true, obus[:], packets[:], work[:])
+		if err != nil {
+			t.Fatalf("NewPacketizer after sizing: %v", err)
+		}
+		if packetizer.NumPackets() != packetCount {
+			t.Fatalf("NumPackets=%d count=%d", packetizer.NumPackets(), packetCount)
 		}
 
 		var out [128]byte
@@ -93,9 +119,19 @@ func FuzzAssembleFrame(f *testing.F) {
 	f.Fuzz(func(t *testing.T, payload []byte) {
 		var out [512]byte
 		var obus [16]FrameOBU
-		wrote, _, err := AssembleFrame(out[:], [][]byte{payload}, obus[:])
+		size, count, err := AssembleFrameSize([][]byte{payload})
 		if err != nil {
 			return
+		}
+		if size > len(out) || count > len(obus) {
+			return
+		}
+		wrote, assembledCount, err := AssembleFrame(out[:], [][]byte{payload}, obus[:])
+		if err != nil {
+			t.Fatalf("AssembleFrame after sizing: %v", err)
+		}
+		if wrote != size || assembledCount != count {
+			t.Fatalf("assembled size=%d count=%d want %d,%d", wrote, assembledCount, size, count)
 		}
 
 		it := obu.NewLowOverheadIterator(out[:wrote])
