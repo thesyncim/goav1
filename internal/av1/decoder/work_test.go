@@ -1711,8 +1711,14 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 	final.Kind = EventTileGroup
 	final.TileGroup.Final = true
 	final.FrameSize.RefreshFrameFlags = 1
+	final.FrameSize.UpscaledWidth = 64
+	final.FrameSize.SuperResDenominator = 8
 	final.CDEF = parser.CDEFParams{Damping: 5, StrengthCount: 1, YStrength: [parser.MaxCDEFStrengths]uint8{8}}
 	final.LoopFilter = parser.LoopFilterParams{LevelY: [2]uint8{1}}
+	final.Restoration = parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener},
+		UnitSizeY: 64,
+	}
 	ctx := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(final, threading.FrameWorkSequenceContextFromHeader(final.SequenceHeader))}
 	_, _, cdefLen, err := ctx.CDEFIndexMapShape()
 	if err != nil {
@@ -1736,6 +1742,21 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 	if err := state.SetLoopFilterMap(lfMap); err != nil {
 		t.Fatal(err)
 	}
+	restorationPlan, err := ctx.RestorationFramePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorationBuffers, err := ctx.BindRestorationFrameBuffers(
+		make([]tile.RestorationUnitRecord, restorationPlan.UnitRecordLen()),
+		make([]uint16, restorationPlan.BoundaryBufferLen()),
+		make([]uint16, restorationPlan.BoundaryBufferLen()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetRestorationFrameBuffers(restorationBuffers); err != nil {
+		t.Fatal(err)
+	}
 
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,
@@ -1750,8 +1771,12 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 		if post.LoopFilterMap == nil || post.LoopFilterMap.Stride != lfMap.Stride || post.LoopFilterMap.Rows != lfMap.Rows {
 			t.Fatalf("LoopFilterMap=%+v want stride=%d rows=%d", post.LoopFilterMap, lfMap.Stride, lfMap.Rows)
 		}
+		if post.RestorationFrameBuffers == nil || len(post.RestorationFrameBuffers.Records[0]) != restorationPlan.UnitRecords[0] {
+			t.Fatalf("RestorationFrameBuffers=%+v want records=%d", post.RestorationFrameBuffers, restorationPlan.UnitRecords[0])
+		}
 		post.CDEFIndexMap.Read[0] = true
 		post.LoopFilterMap.Records[0].Valid = true
+		post.RestorationFrameBuffers.Records[0][0].Unit.Type = parser.RestorationWiener
 		return nil
 	})
 	if err != nil {
@@ -1765,6 +1790,9 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 	}
 	if !lfMap.Records[0].Valid {
 		t.Fatal("postfilter LoopFilterMap did not alias caller storage")
+	}
+	if restorationBuffers.Records[0][0].Unit.Type != parser.RestorationWiener {
+		t.Fatal("postfilter RestorationFrameBuffers did not alias caller storage")
 	}
 }
 

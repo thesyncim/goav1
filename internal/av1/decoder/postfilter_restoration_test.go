@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -75,6 +76,73 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterAllNoneRecords(
 	}
 	if output.Y.Pix[0] != 0x5a {
 		t.Fatalf("output sample=%d want 0x5a", output.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterDefaultsBuffersFromContext(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	pool := testFramePoolForSize(t, width, height, 1)
+	_, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Y.Pix[0] = 0x6b
+
+	event := Event{
+		SequenceHeader: testSequence(),
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		Restoration: parser.RestorationParams{
+			Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			UnitSizeY: 64,
+		},
+	}
+	batch := threading.FrameWorkBatch{
+		FrameWorkFrameContext: threading.FrameWorkFrameContext{
+			Sequence:    threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader),
+			FrameSize:   event.FrameSize,
+			Restoration: event.Restoration,
+		},
+	}
+	plan, err := batch.RestorationFramePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffers, err := batch.BindRestorationFrameBuffers(
+		make([]tile.RestorationUnitRecord, plan.UnitRecordLen()),
+		make([]uint16, plan.BoundaryBufferLen()),
+		make([]uint16, plan.BoundaryBufferLen()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, RestorationFrameBuffers: &buffers}
+	size, err := ctx.LoopRestorationPostFilterScratchLen(buffers.Records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ctx.ApplyLoopRestorationPostFilter(FrameWorkRestorationPostFilterRequest{
+		DataScratch: make([]uint16, size.Samples.DataLen),
+		DstScratch:  make([]uint16, size.Samples.DstLen),
+		Scratch:     testFrameWorkRestorationPostFilterScratch(size.Apply),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Planes != 1 || result.Records != 1 || result.FilteredRecords != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	if output.Y.Pix[0] != 0x6b {
+		t.Fatalf("output sample=%d want 0x6b", output.Y.Pix[0])
 	}
 }
 

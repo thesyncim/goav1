@@ -215,5 +215,31 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWo
 	if err != nil {
 		return tile.RestorationFrameApplyResult{}, err
 	}
+	if ctx.RestorationFrameBuffers != nil {
+		if frameWorkRestorationRecordsEmpty(req.Records) {
+			req.Records = ctx.RestorationFrameBuffers.Records
+		}
+		if frameWorkRestorationBoundariesEmpty(req.Boundaries) {
+			req.Boundaries = ctx.RestorationFrameBuffers.Boundaries
+		}
+	}
 	return tile.ApplyRestorationFrameToFrame(plan, *ctx.Output, req.Records, req.Boundaries, req.DataScratch, req.DstScratch, req.Scratch, req.Optimized)
+}
+
+func frameWorkRestorationRecordsEmpty(records [3][]tile.RestorationUnitRecord) bool {
+	for plane := range records {
+		if len(records[plane]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func frameWorkRestorationBoundariesEmpty(boundaries [3]tile.RestorationStripeBoundaries) bool {
+	for plane := range boundaries {
+		if len(boundaries[plane].Above) != 0 || len(boundaries[plane].Below) != 0 || boundaries[plane].Stride != 0 {
+			return false
+		}
+	}
+	return true
 }
