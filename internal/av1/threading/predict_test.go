@@ -244,6 +244,116 @@ func TestFrameWorkBatchPredictBlockLumaDirectionalModes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaDirectionalIntraEdgeUpsample(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+	ctx.Sequence.EnableIntraEdgeFilter = true
+	leftSamples := []uint16{97, 100, 103, 107, 109, 111, 112, 113}
+	for y, sample := range leftSamples {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, sample)
+	}
+	visit := testIntraPrediction4x4Visit(tile.IntraModeD203)
+	visit.Block.MIRow = 0
+	visit.Block.MIRowEnd = 1
+	visit.Block.Y4 = 0
+	visit.Block.HaveTop = false
+	visit.Block.HaveLeft = true
+
+	left := make([]uint16, frameWorkDirectionalEdgeSamples)
+	origin := frameWorkDirectionalEdgeOrigin
+	left[origin-1] = leftSamples[0]
+	copy(left[origin:], leftSamples)
+	scratch := make([]uint16, frameWorkIntraEdgeScratchSamples)
+	if err := prediction.UpsampleIntraEdge(left, origin, 8, scratch, 8); err != nil {
+		t.Fatal(err)
+	}
+	wantPix := make([]byte, 16)
+	want := frame.Plane{Pix: wantPix, Stride: 4, Width: 4, Height: 4}
+	edges := prediction.DirectionalEdges{
+		Left:         left,
+		LeftOrigin:   origin,
+		UpsampleLeft: true,
+	}
+	if err := prediction.PredictDirectionalIntraPlaneBlock(want, 1, 8, 0, 0, 4, 4, 203, edges); err != nil {
+		t.Fatal(err)
+	}
+
+	var predScratch FrameWorkIntraPredictionScratch
+	if err := ctx.PredictBlockLumaIntra(0, visit, &predScratch); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+x, y)
+			if want := uint16(wantPix[y*4+x]); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", 16+x, y, got, want)
+			}
+		}
+	}
+}
+
+func TestFrameWorkLumaTransformDirectionalExtendedEdgesMatchesLibaomCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		block          tile.BlockVisit
+		absX           int
+		absY           int
+		width          int
+		height         int
+		wantTopRight   bool
+		wantBottomLeft bool
+	}{
+		{
+			name: "d203 right-half 8x4 cannot use bottom-left",
+			block: tile.BlockVisit{
+				MICol: 56, MIRow: 0, MIColEnd: 58, MIRowEnd: 1,
+				Size: tile.BlockSize8x4, VisibleW4: 2, VisibleH4: 1, HaveLeft: true,
+			},
+			absX: 228, absY: 0, width: 4, height: 4,
+		},
+		{
+			name: "d203 left-half 8x4 table allows bottom-left",
+			block: tile.BlockVisit{
+				MICol: 56, MIRow: 0, MIColEnd: 58, MIRowEnd: 1,
+				Size: tile.BlockSize8x4, VisibleW4: 2, VisibleH4: 1, HaveLeft: true,
+			},
+			absX: 224, absY: 0, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
+		},
+		{
+			name: "d203 4x8 table denies bottom-left",
+			block: tile.BlockVisit{
+				MICol: 66, MIRow: 0, MIColEnd: 67, MIRowEnd: 2,
+				Size: tile.BlockSize4x8, VisibleW4: 1, VisibleH4: 2, HaveLeft: true,
+			},
+			absX: 264, absY: 4, width: 4, height: 4,
+		},
+		{
+			name: "d45 right-half 8x8 cannot use top-right",
+			block: tile.BlockVisit{
+				MICol: 74, MIRow: 2, MIColEnd: 76, MIRowEnd: 4,
+				Size: tile.BlockSize8x8, VisibleW4: 2, VisibleH4: 2, HaveTop: true, HaveLeft: true,
+			},
+			absX: 300, absY: 8, width: 4, height: 4,
+		},
+		{
+			name: "d45 left-half 8x8 has internal top-right",
+			block: tile.BlockVisit{
+				MICol: 74, MIRow: 2, MIColEnd: 76, MIRowEnd: 4,
+				Size: tile.BlockSize8x8, VisibleW4: 2, VisibleH4: 2, HaveTop: true, HaveLeft: true,
+			},
+			absX: 296, absY: 8, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTopRight, gotBottomLeft := frameWorkLumaTransformDirectionalExtendedEdges(tt.block, 32, tt.absX, tt.absY, tt.width, tt.height)
+			if gotTopRight != tt.wantTopRight || gotBottomLeft != tt.wantBottomLeft {
+				t.Fatalf("topRight=%v bottomLeft=%v want %v/%v", gotTopRight, gotBottomLeft, tt.wantTopRight, tt.wantBottomLeft)
+			}
+		})
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 	tests := []struct {
 		name  string

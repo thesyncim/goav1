@@ -126,6 +126,20 @@ func TestFilterIntraEdgeStrengthZeroDoesNotRequireScratch(t *testing.T) {
 	}
 }
 
+func TestFilterIntraEdgeCornerMatchesLibaomKnownVector(t *testing.T) {
+	above := []uint16{0, 25, 40, 55}
+	left := []uint16{0, 25, 100, 120}
+	if err := FilterIntraEdgeCorner(above, 2, left, 2, 8); err != nil {
+		t.Fatal(err)
+	}
+	if above[1] != 53 || left[1] != 53 {
+		t.Fatalf("corner above=%v left=%v want shared 53", above, left)
+	}
+	if above[2] != 40 || left[2] != 100 {
+		t.Fatalf("edge endpoints changed above=%v left=%v", above, left)
+	}
+}
+
 func TestFilterIntraEdgeAllocs(t *testing.T) {
 	edge := make([]uint16, intraEdgeMaxSize)
 	scratch := make([]uint16, intraEdgeMaxSize)

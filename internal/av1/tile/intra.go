@@ -147,6 +147,8 @@ type BlockPredictionModeResult struct {
 	LumaMode       IntraMode
 	LumaAngleDelta int8
 
+	IntraEdgeSmoothNeighbor bool
+
 	FilterIntraMode  FilterIntraMode
 	FilterIntraValid bool
 
@@ -560,6 +562,38 @@ func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft b
 	return 0, nil
 }
 
+// IntraEdgeSmoothNeighbor reports libaom's luma get_intra_edge_filter_type()
+// decision: whether the immediate above or left luma neighbor is an intra
+// smooth mode. It must be called before the current block is marked into the
+// top/left mode context.
+func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool, haveLeft bool) (bool, error) {
+	if c == nil {
+		return false, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return false, err
+	}
+	if haveTop && c.AboveIntra[x4] != 0 {
+		smooth, err := intraModeIsSmooth(c.AboveMode[x4])
+		if err != nil {
+			return false, err
+		}
+		if smooth {
+			return true, nil
+		}
+	}
+	if haveLeft && c.LeftIntra[y4] != 0 {
+		smooth, err := intraModeIsSmooth(c.LeftMode[y4])
+		if err != nil {
+			return false, err
+		}
+		if smooth {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // KeyframeYModeContext returns libaom's intra_mode_context[] pair for the
 // above/left luma prediction modes.
 func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error) {
@@ -575,6 +609,19 @@ func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error
 		return 0, 0, ErrInvalidDecodeState
 	}
 	return intraModeContext[above], intraModeContext[left], nil
+}
+
+func intraModeIsSmooth(mode IntraMode) (bool, error) {
+	switch mode {
+	case IntraModeSmooth, IntraModeSmoothVertical, IntraModeSmoothHorizontal:
+		return true, nil
+	case IntraModeDC, IntraModeVertical, IntraModeHorizontal, IntraModeD45,
+		IntraModeD135, IntraModeD113, IntraModeD157, IntraModeD203,
+		IntraModeD67, IntraModePaeth:
+		return false, nil
+	default:
+		return false, ErrInvalidDecodeState
+	}
 }
 
 // MarkIntra updates the top/left intra contexts after a decoded intra/inter

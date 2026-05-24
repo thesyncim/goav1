@@ -780,6 +780,11 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	if err != nil {
 		return BlockPredictionModeResult{}, err
 	}
+	smoothNeighbor, err := ctx.IntraEdgeSmoothNeighbor(block.X4, block.Y4, block.HaveTop, block.HaveLeft)
+	if err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	result.IntraEdgeSmoothNeighbor = smoothNeighbor
 	if err := ctx.MarkIntra(block.Size, block.X4, block.Y4, true, mode); err != nil {
 		return BlockPredictionModeResult{}, err
 	}

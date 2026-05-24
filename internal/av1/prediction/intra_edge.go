@@ -93,6 +93,28 @@ func UpsampleIntraEdge(edge []uint16, origin int, size int, scratch []uint16, bi
 	return nil
 }
 
+// FilterIntraEdgeCorner applies libaom's filter_intra_edge_corner smoothing to
+// above[-1] and left[-1]. aboveOrigin and leftOrigin identify above[0] and
+// left[0] inside the supplied slices.
+func FilterIntraEdgeCorner(above []uint16, aboveOrigin int, left []uint16, leftOrigin int, bitDepth uint8) error {
+	if aboveOrigin <= 0 || aboveOrigin >= len(above) || leftOrigin <= 0 || leftOrigin >= len(left) {
+		return ErrInvalidPrediction
+	}
+	max, err := intraEdgeSampleMax(bitDepth)
+	if err != nil {
+		return err
+	}
+	if above[aboveOrigin-1] > max || above[aboveOrigin] > max ||
+		left[leftOrigin-1] > max || left[leftOrigin] > max {
+		return ErrInvalidPrediction
+	}
+	sum := int(left[leftOrigin])*5 + int(above[aboveOrigin-1])*6 + int(above[aboveOrigin])*5
+	sample := uint16((sum + 8) >> 4)
+	above[aboveOrigin-1] = sample
+	left[leftOrigin-1] = sample
+	return nil
+}
+
 // IntraEdgeFilterStrength matches libaom's intra_edge_filter_strength helper.
 func IntraEdgeFilterStrength(blockSize0 int, blockSize1 int, delta int, smoothNeighbor bool) uint8 {
 	d := absInt(delta)

@@ -79,6 +79,28 @@ func TestIntraContextsMatchDav1dAndLibaom(t *testing.T) {
 	}
 }
 
+func TestIntraEdgeSmoothNeighborMatchesLibaomLumaType(t *testing.T) {
+	var ctx BlockModeContext
+	if err := ctx.MarkIntra(BlockSize8x8, 2, 3, true, IntraModeSmoothVertical); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.IntraEdgeSmoothNeighbor(2, 3, true, false); err != nil || !got {
+		t.Fatalf("top smooth=%v err=%v want true", got, err)
+	}
+	if err := ctx.MarkIntra(BlockSize4x4, 6, 7, true, IntraModeD203); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.IntraEdgeSmoothNeighbor(6, 7, true, true); err != nil || got {
+		t.Fatalf("directional smooth=%v err=%v want false", got, err)
+	}
+	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.IntraEdgeSmoothNeighbor(8, 9, true, true); err != nil || got {
+		t.Fatalf("inter neighbor smooth=%v err=%v want false", got, err)
+	}
+}
+
 func TestMarkIntraEntryLeavesInterRefsForReferenceReader(t *testing.T) {
 	var ctx BlockModeContext
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, InterReferencesResult{
