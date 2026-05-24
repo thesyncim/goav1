@@ -192,6 +192,47 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsCDEF(t *testing.
 	}
 }
 
+func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkCDEFPlane(output.Y)
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	cdefMap := req.IndexMap
+	ctx.CDEFIndexMap = &cdefMap
+	req.IndexMap = FrameWorkCDEFIndexMap{}
+	runner := FrameWorkSupportedPostFilterRunner{Request: FrameWorkPostFilterRequest{CDEF: req}}
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Result.Completed != FrameWorkPostFilterCDEF || runner.Context.RemainingPostFilters() != 0 {
+		t.Fatalf("runner result=%+v remaining=%b", runner.Result, runner.Context.RemainingPostFilters())
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("runner did not change luma samples")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBeforeMutation(t *testing.T) {
 	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 32})
 	output.Y.Pix[0] = 0x44

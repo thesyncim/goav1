@@ -68,6 +68,31 @@ type FrameWorkPostFilterResult struct {
 	Restoration tile.RestorationFrameApplyResult
 }
 
+// FrameWorkSupportedPostFilterRunner adapts ApplySupportedPostFilters to the
+// FrameWorkPostFilterFunc callback shape.
+type FrameWorkSupportedPostFilterRunner struct {
+	Request FrameWorkPostFilterRequest
+	Context FrameWorkPostFilterContext
+	Result  FrameWorkPostFilterResult
+}
+
+// Apply runs supported postfilters and rejects any remaining active stage.
+func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrInvalidFrameWorkState
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(r.Request)
+	if err != nil {
+		return err
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		return err
+	}
+	r.Context = next
+	r.Result = result
+	return nil
+}
+
 // ActivePostFilters returns the frame-level postfilter stages signaled by this
 // final-frame context.
 func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterStage {
