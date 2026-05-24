@@ -366,6 +366,60 @@ func TestFrameWorkBatchPredictBlockInterCompoundChromaSubsampledMatchesMotion(t 
 	assertFrameWorkCompoundBlendEqual(t, output.V, firstV, secondV, output.Layout.BytesPerSample, 8, 8, 8, 8, fwdOffset, bckOffset)
 }
 
+func TestFrameWorkBatchPredictBlockLumaInterCompoundDiffWtdMatchesLibaom(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0x3ff, 29)
+	fillFrameWorkInterReferenceVariant(bwd, 0x3ff, 113)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 3, Row: 5}
+	mv1 := motion.Vector{Col: -5, Row: 1}
+	filters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpMultiTapSharp}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeDiffWtd)
+	visit.Prediction.CompoundBlend.MaskType = tile.DiffWtdMaskType38Inv
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	first := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv0, filters)
+	second := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv1, filters)
+	mask := testFrameWorkDiffWtdMask(t, first, second, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, tile.DiffWtdMaskType38Inv)
+	assertFrameWorkMaskedCompoundEqual(t, output.Y, first, second, mask, 16, false, false, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16)
+}
+
+func TestFrameWorkBatchPredictBlockInterCompoundDiffWtdChromaSubsampledMatchesLibaom(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 17)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 191)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 5, Row: -3}
+	mv1 := motion.Vector{Col: -1, Row: 7}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeDiffWtd)
+	visit.Prediction.CompoundBlend.MaskType = tile.DiffWtdMaskType38
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	firstY := testFrameWorkMotionPredictionPlane(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv0, filters)
+	secondY := testFrameWorkMotionPredictionPlane(t, bwd.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv1, filters)
+	mask := testFrameWorkDiffWtdMask(t, firstY, secondY, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, tile.DiffWtdMaskType38)
+	firstU := testFrameWorkMotionPredictionPlaneSubsampled(t, last.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondU := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	firstV := testFrameWorkMotionPredictionPlaneSubsampled(t, last.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondV := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	assertFrameWorkMaskedCompoundEqual(t, output.Y, firstY, secondY, mask, 16, false, false, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16)
+	assertFrameWorkMaskedCompoundEqual(t, output.U, firstU, secondU, mask, 16, true, true, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8)
+	assertFrameWorkMaskedCompoundEqual(t, output.V, firstV, secondV, mask, 16, true, true, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8)
+}
+
 func TestFrameWorkCompoundDistanceWeightedOffsetsMatchLibaom(t *testing.T) {
 	tests := []struct {
 		name string
@@ -500,6 +554,21 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaInterCompoundRejectsInvalidDiffWtdMask(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 11)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 97)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	visit := testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeDiffWtd)
+	visit.Prediction.CompoundBlend.MaskType = tile.DiffWtdMaskType(99)
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageAllocs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
 	last := testBatchFrame(t, output.Format)
@@ -518,6 +587,28 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageAllocs(t *testing.T) 
 	})
 	if allocs != 0 {
 		t.Fatalf("PredictBlockLumaInterCompoundAverage allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterCompoundDiffWtdAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 31)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 157)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	visit := testCompoundInterPredictionVisit(motion.Vector{Col: 3, Row: 5}, motion.Vector{Col: -1, Row: 7}, tile.CompoundTypeDiffWtd)
+	visit.Prediction.CompoundBlend.MaskType = tile.DiffWtdMaskType38
+	var scratch FrameWorkInterPredictionScratch
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockInter diff-wtd allocated: %f", allocs)
 	}
 }
 
@@ -982,6 +1073,26 @@ func assertFrameWorkCompoundBlendEqual(t *testing.T, got frame.Plane, first fram
 	}
 }
 
+func assertFrameWorkMaskedCompoundEqual(t *testing.T, got frame.Plane, first frame.Plane, second frame.Plane, mask []byte, maskStride int, subX bool, subY bool, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int) {
+	t.Helper()
+	max := uint16((1 << bitDepth) - 1)
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			a := frameWorkTestSample(first, bytesPerSample, col, row)
+			b := frameWorkTestSample(second, bytesPerSample, col, row)
+			if a > max || b > max {
+				t.Fatalf("input sample(%d,%d)=%d/%d exceeds max %d", col, row, a, b, max)
+			}
+			m := testFrameWorkBlendMaskSample(t, mask, maskStride, row, col, subX, subY)
+			want := uint16((uint32(m)*uint32(a) + uint32(64-m)*uint32(b) + 32) >> 6)
+			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
+			if g != want {
+				t.Fatalf("sample(%d,%d)=%d want %d mask=%d", x+col, y+row, g, want, m)
+			}
+		}
+	}
+}
+
 func setFrameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) {
 	offset := y*plane.Stride + x*bytesPerSample
 	if bytesPerSample == 1 {
@@ -1028,6 +1139,59 @@ func testFrameWorkMotionPredictionPlaneSubsampled(t *testing.T, reference frame.
 		t.Fatal(err)
 	}
 	return dst
+}
+
+func testFrameWorkDiffWtdMask(t *testing.T, first frame.Plane, second frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int, maskType tile.DiffWtdMaskType) []byte {
+	t.Helper()
+	mask := make([]byte, width*height)
+	shift := uint8(0)
+	if bitDepth > 8 {
+		shift = bitDepth - 8
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			a := frameWorkTestSample(first, bytesPerSample, x, y)
+			b := frameWorkTestSample(second, bytesPerSample, x, y)
+			var diff uint16
+			if a > b {
+				diff = a - b
+			} else {
+				diff = b - a
+			}
+			diff >>= shift
+			m := 38 + int(diff)/16
+			if m > 64 {
+				m = 64
+			}
+			if maskType == tile.DiffWtdMaskType38Inv {
+				m = 64 - m
+			}
+			mask[y*width+x] = byte(m)
+		}
+	}
+	return mask
+}
+
+func testFrameWorkBlendMaskSample(t *testing.T, mask []byte, stride int, row int, col int, subX bool, subY bool) uint8 {
+	t.Helper()
+	var m int
+	switch {
+	case !subX && !subY:
+		m = int(mask[row*stride+col])
+	case subX && subY:
+		m = (int(mask[(2*row)*stride+2*col]) +
+			int(mask[(2*row+1)*stride+2*col]) +
+			int(mask[(2*row)*stride+2*col+1]) +
+			int(mask[(2*row+1)*stride+2*col+1]) + 2) >> 2
+	case subX:
+		m = (int(mask[row*stride+2*col]) + int(mask[row*stride+2*col+1]) + 1) >> 1
+	default:
+		m = (int(mask[(2*row)*stride+col]) + int(mask[(2*row+1)*stride+col]) + 1) >> 1
+	}
+	if m < 0 || m > 64 {
+		t.Fatalf("mask sample=%d outside A64 range", m)
+	}
+	return uint8(m)
 }
 
 func fillFrameWorkInterReference(reference *frame.Frame, max uint16) {

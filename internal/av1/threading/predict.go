@@ -13,8 +13,12 @@ const (
 	frameWorkDirectionalEdgeOrigin         = 128
 	frameWorkDirectionalEdgeSamples        = 512
 	frameWorkInterPredictionMaxBlockBytes  = 128 * 128 * 2
+	frameWorkInterPredictionMaxMaskSamples = 128 * 128
 	frameWorkMaxFrameDistance              = 31
 	frameWorkDistPrecisionBits             = 4
+	frameWorkDiffWtdMaskBase               = 38
+	frameWorkDiffWtdFactor                 = 16
+	frameWorkBlendA64MaxAlpha              = 64
 )
 
 var frameWorkQuantDistWeight = [4][2]int{
@@ -45,6 +49,7 @@ type FrameWorkIntraPredictionScratch struct {
 type FrameWorkInterPredictionScratch struct {
 	First  [frameWorkInterPredictionMaxBlockBytes]byte
 	Second [frameWorkInterPredictionMaxBlockBytes]byte
+	Mask   [frameWorkInterPredictionMaxMaskSamples]byte
 }
 
 // FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
@@ -78,7 +83,7 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 
 // PredictBlockInter writes inter prediction pixels for every present plane of
 // one decoded inter block. Single-reference and average/dist-wtd compound
-// translation are supported; masked compound, inter-intra, warped/global
+// translation are supported; wedge compound, inter-intra, warped/global
 // refinement, scaled references, and intrabc are handled by later stages.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkMotionFilters(b.TileInfo)
@@ -203,9 +208,9 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 }
 
 // PredictBlockLumaInterCompoundAverage writes average compound luma inter
-// prediction for one decoded block-loop visit. Masked, diff-wtd, dist-wtd,
-// inter-intra, scaled references, and warped/global refinement are handled by
-// later inter-prediction stages.
+// prediction for one decoded block-loop visit. Wedge compound, inter-intra,
+// scaled references, and warped/global refinement are handled by later
+// inter-prediction stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkMotionFilters(b.TileInfo)
 	if err != nil {
@@ -225,9 +230,9 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 }
 
 // PredictBlockLumaInterCompound writes compound luma inter prediction for one
-// decoded block-loop visit. It currently covers average and distance-weighted
-// compound. Masked, diff-wtd, inter-intra, scaled references, and warped/global
-// refinement are handled by later inter-prediction stages.
+// decoded block-loop visit. It currently covers average, distance-weighted,
+// and difference-weighted compound. Wedge compound, inter-intra, scaled
+// references, and warped/global refinement are handled by later stages.
 func (b FrameWorkBatch) PredictBlockLumaInterCompound(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkMotionFilters(b.TileInfo)
 	if err != nil {
@@ -253,7 +258,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 		return ErrInvalidBatch
 	}
 	blend := visit.Prediction.CompoundBlend
-	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd {
+	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd && blend.Type != tile.CompoundTypeDiffWtd {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -286,7 +291,7 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 		return ErrInvalidBatch
 	}
 	blend := visit.Prediction.CompoundBlend
-	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd {
+	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd && blend.Type != tile.CompoundTypeDiffWtd {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -313,12 +318,31 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 	if err := b.predictBlockInterReferencePlaneToScratch(second, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
 		return err
 	}
-	fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
-	if err != nil {
-		return err
-	}
-	if err := frameWorkBlendCompoundBlock(geom.Output, first, second, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
-		return err
+	switch blend.Type {
+	case tile.CompoundTypeAverage, tile.CompoundTypeDistWtd:
+		fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
+		if err != nil {
+			return err
+		}
+		if err := frameWorkBlendCompoundBlock(geom.Output, first, second, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
+			return err
+		}
+	case tile.CompoundTypeDiffWtd:
+		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		maskStride := lumaWidth
+		if plane == FrameWorkPlaneY {
+			if err := frameWorkBuildDiffWtdMask(scratch.Mask[:], maskStride, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.Width, geom.Height, blend.MaskType); err != nil {
+				return err
+			}
+		}
+		if err := frameWorkBlendMaskedCompoundBlock(geom.Output, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+			return err
+		}
+	default:
+		return ErrInvalidBatch
 	}
 	return nil
 }
@@ -562,6 +586,167 @@ func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second fram
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, second frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int, maskType tile.DiffWtdMaskType) error {
+	if !maskType.Valid() ||
+		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
+		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) ||
+		!frameWorkMaskBlockFits(len(mask), maskStride, width, height) {
+		return ErrInvalidBatch
+	}
+	shift := uint8(0)
+	if bitDepth > 8 {
+		shift = bitDepth - 8
+	} else if bitDepth != 8 {
+		return ErrInvalidBatch
+	}
+	invert := maskType == tile.DiffWtdMaskType38Inv
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			a, ok := frameWorkLoadSample(first, bytesPerSample, col, row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			b, ok := frameWorkLoadSample(second, bytesPerSample, col, row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			diff := int(a)
+			if b > a {
+				diff = int(b - a)
+			} else {
+				diff -= int(b)
+			}
+			if shift != 0 {
+				diff >>= shift
+			}
+			m := frameWorkDiffWtdMaskBase + diff/frameWorkDiffWtdFactor
+			if m > frameWorkBlendA64MaxAlpha {
+				m = frameWorkBlendA64MaxAlpha
+			}
+			if invert {
+				m = frameWorkBlendA64MaxAlpha - m
+			}
+			mask[row*maskStride+col] = byte(m)
+		}
+	}
+	return nil
+}
+
+func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mask []byte, maskStride int, subX bool, subY bool) error {
+	max, ok := frameWorkSampleMax(bitDepth)
+	if !ok ||
+		!frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
+		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
+		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) ||
+		!frameWorkMaskBlockFits(len(mask), maskStride, frameWorkMaskWidth(width, subX), frameWorkMaskHeight(height, subY)) {
+		return ErrInvalidBatch
+	}
+	switch bytesPerSample {
+	case 1:
+		for row := 0; row < height; row++ {
+			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
+			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
+			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
+			for col := 0; col < width; col++ {
+				m, ok := frameWorkBlendMaskSample(mask, maskStride, row, col, subX, subY)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				a := uint16(firstLine[col])
+				b := uint16(secondLine[col])
+				if a > max || b > max {
+					return ErrInvalidBatch
+				}
+				dstLine[col] = byte(frameWorkBlendA64(uint16(m), a, b))
+			}
+		}
+	case 2:
+		for row := 0; row < height; row++ {
+			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
+			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
+			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
+			for col := 0; col < width; col++ {
+				i := col * 2
+				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
+				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
+				m, ok := frameWorkBlendMaskSample(mask, maskStride, row, col, subX, subY)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				if a > max || b > max {
+					return ErrInvalidBatch
+				}
+				out := frameWorkBlendA64(uint16(m), a, b)
+				dstLine[i] = byte(out)
+				dstLine[i+1] = byte(out >> 8)
+			}
+		}
+	default:
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkBlendA64(mask uint16, first uint16, second uint16) uint16 {
+	return uint16((uint32(mask)*uint32(first) + uint32(frameWorkBlendA64MaxAlpha-mask)*uint32(second) + 32) >> 6)
+}
+
+func frameWorkBlendMaskSample(mask []byte, stride int, row int, col int, subX bool, subY bool) (uint8, bool) {
+	var out uint8
+	switch {
+	case !subX && !subY:
+		out = mask[row*stride+col]
+	case subX && subY:
+		sum := int(mask[(2*row)*stride+2*col]) +
+			int(mask[(2*row+1)*stride+2*col]) +
+			int(mask[(2*row)*stride+2*col+1]) +
+			int(mask[(2*row+1)*stride+2*col+1])
+		out = uint8((sum + 2) >> 2)
+	case subX:
+		sum := int(mask[row*stride+2*col]) + int(mask[row*stride+2*col+1])
+		out = uint8((sum + 1) >> 1)
+	default:
+		sum := int(mask[(2*row)*stride+col]) + int(mask[(2*row+1)*stride+col])
+		out = uint8((sum + 1) >> 1)
+	}
+	return out, out <= frameWorkBlendA64MaxAlpha
+}
+
+func frameWorkMaskBlockFits(length int, stride int, width int, height int) bool {
+	if width <= 0 || height <= 0 || stride < width {
+		return false
+	}
+	lastRow, ok := frameWorkCheckedMul(height-1, stride)
+	if !ok {
+		return false
+	}
+	needed, ok := frameWorkCheckedAdd(lastRow, width)
+	return ok && needed <= length
+}
+
+func frameWorkMaskWidth(width int, subX bool) int {
+	if subX {
+		return width << 1
+	}
+	return width
+}
+
+func frameWorkMaskHeight(height int, subY bool) int {
+	if subY {
+		return height << 1
+	}
+	return height
+}
+
+func frameWorkSampleMax(bitDepth uint8) (uint16, bool) {
+	switch bitDepth {
+	case 8, 10, 12:
+		return uint16((1 << bitDepth) - 1), true
+	default:
+		return 0, false
+	}
 }
 
 func frameWorkPlaneBlockAddressable(plane frame.Plane, bytesPerSample int, x int, y int, width int, height int) bool {
