@@ -11,12 +11,13 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
-	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 func TestLibaomQuantizer00OfficialMD5Manifest(t *testing.T) {
@@ -148,9 +149,12 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	retainedContexts := 0
 	partitionReads := 0
 	blockPrefixReads := 0
-	blockDeltaReads := 0
-	intraEntryReads := 0
-	transformPathReads := 0
+	blockDeltaPaths := 0
+	predictionModeReads := 0
+	intraModeReads := 0
+	residualTXBs := 0
+	residuals := 0
+	cdefUnitsRead := 0
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -181,109 +185,67 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 			var postMD5 MD5
 			postRan := false
 			result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
+				_, _, cdefLen, err := ctx.CDEFIndexMapShape()
+				if err != nil {
+					return err
+				}
+				cdefIndex := make([]uint8, cdefLen)
+				cdefRead := make([]bool, cdefLen)
+				cdefMap, err := ctx.BindCDEFIndexMap(cdefIndex, cdefRead)
+				if err != nil {
+					return err
+				}
 				for j := 0; j < len(ctx.Jobs); j++ {
 					var decodeState tile.DecodeState
 					if err := ctx.JobDecodeState(j, &decodeState); err != nil {
 						return err
 					}
-					region, err := ctx.JobRegion(j)
+					var storage threading.FrameWorkTileResidualCDFStorage
+					if err := storage.InitDefault(ctx.Quantization.BaseQIdx); err != nil {
+						return err
+					}
+					var scratch threading.FrameWorkTileResidualScratch
+					rootCols, err := ctx.JobBlockLoopContextRootColumns(j)
 					if err != nil {
 						return err
 					}
-					var partitionCDFs tile.PartitionCDFs
-					if err := partitionCDFs.InitDefault(); err != nil {
-						return err
-					}
-					root := tile.RootBlockLevel(ctx.Sequence.Use128x128Superblock)
-					var partitionCtx tile.PartitionContext
-					blockSize, reads, err := readFirstLibaomLeafBlock(&decodeState, &partitionCDFs, &partitionCtx, root, region)
+					scratch.LoopContext.Above = make([]tile.BlockLoopRootAboveContext, rootCols)
+					loopReq, err := ctx.JobBlockLoopRequest(j, nil, nil, 0)
 					if err != nil {
 						return err
 					}
-					partitionReads += reads
-					if !ctx.Segmentation.Enabled {
-						var modeCDFs tile.BlockModeCDFs
-						if err := modeCDFs.InitDefault(); err != nil {
-							return err
-						}
-						var modeCtx tile.BlockModeContext
-						prefix, err := decodeState.ReadBlockModePrefix(&modeCDFs, &modeCtx, tile.BlockModeRequest{
-							Size:     blockSize,
-							SkipMode: ctx.SkipMode,
-							CDEF:     ctx.CDEF,
-							Segment:  parser.SegmentData{RefFrame: -1},
-						})
-						if err != nil {
-							return err
-						}
-						blockPrefixReads++
-						if region.MIColStart == 0 && region.MIRowStart == 0 {
-							dims, ok := blockSize.Dimensions()
-							if !ok {
-								return fmt.Errorf("invalid block size %d", blockSize)
-							}
-							block, err := ctx.JobBlockDeltaContext(j, region.MIColStart, region.MIRowStart,
-								dims.W4 == ctx.Sequence.SBSizeMIB && dims.H4 == ctx.Sequence.SBSizeMIB,
-								prefix.SkipTransform)
-							if err != nil {
-								return err
-							}
-							deltaCDFs, err := initLibaomDeltaCDFs()
-							if err != nil {
-								return err
-							}
-							if err := decodeState.ReadBlockDeltas(ctx.Delta, block, deltaCDFs); err != nil {
-								return err
-							}
-							blockDeltaReads++
-
-							var intraCDFs tile.IntraModeCDFs
-							if err := intraCDFs.InitDefault(); err != nil {
-								return err
-							}
-							intra, err := decodeState.ReadIntraFlag(&intraCDFs, &modeCtx, tile.IntraFlagRequest{
-								FrameType:           ctx.FrameHeader.FrameType,
-								AllowIntrabc:        ctx.FrameSize.AllowIntrabc,
-								SkipMode:            prefix.SkipMode,
-								SegmentationEnabled: ctx.Segmentation.Enabled,
-								Segment:             parser.SegmentData{RefFrame: -1},
-							})
-							if err != nil {
-								return err
-							}
-							intraEntryReads++
-							if intra {
-								mode, err := decodeState.ReadLumaIntraMode(&intraCDFs, &modeCtx, tile.LumaIntraModeRequest{
-									FrameType: ctx.FrameHeader.FrameType,
-									Size:      blockSize,
-								})
-								if err != nil {
-									return err
-								}
-								if err := modeCtx.MarkIntra(blockSize, 0, 0, true, mode); err != nil {
-									return err
-								}
-								if ctx.TransformRef.TransformMode != parser.TransformModeSwitchable || ctx.Segmentation.Lossless[0] {
-									var txCDFs tile.TransformCDFs
-									if err := txCDFs.InitDefault(); err != nil {
-										return err
-									}
-									tx, err := decodeState.ReadSelectedTransformSize(&txCDFs, &modeCtx, tile.SelectedTransformRequest{
-										Size:          blockSize,
-										TransformMode: ctx.TransformRef.TransformMode,
-										Lossless:      ctx.Segmentation.Lossless[0],
-									})
-									if err != nil {
-										return err
-									}
-									if err := modeCtx.MarkTransform(blockSize, 0, 0, tx, true); err != nil {
-										return err
-									}
-									transformPathReads++
-								}
-							}
-						}
+					loopReq.DecodePredictionModes = true
+					int32Scratch, residualScratch, err := libaomResidualScratch(ctx)
+					if err != nil {
+						return err
 					}
+					stats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
+						Loop:          loopReq,
+						TransformMode: ctx.TransformRef.TransformMode,
+						CDEFIndexMap:  &cdefMap,
+						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
+							if visit.Prediction.Valid && !visit.Prediction.Intra {
+								return ctx.ReadInterBlockTransforms(&decodeState, visit)
+							}
+							return threading.FrameWorkBlockTransforms{
+								Inter:  false,
+								Luma:   transform.TypeDCTDCT,
+								Chroma: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
+							}, nil
+						},
+						Int32Scratch:    int32Scratch,
+						ResidualScratch: residualScratch,
+					})
+					if err != nil {
+						return fmt.Errorf("decode/reconstruct job %d stats=%+v: %w", j, stats, err)
+					}
+					partitionReads += stats.Loop.PartitionReads
+					blockPrefixReads += stats.Loop.Prefixes
+					blockDeltaPaths += stats.Loop.Blocks
+					predictionModeReads += stats.Loop.PredictionModes
+					intraModeReads += stats.Loop.IntraModes
+					residualTXBs += stats.TXBs
+					residuals += stats.Residuals
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}
@@ -293,6 +255,11 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					tileJobs++
 					if decodeState.RetainFrameContext {
 						retainedContexts++
+					}
+				}
+				for _, read := range cdefMap.Read {
+					if read {
+						cdefUnitsRead++
 					}
 				}
 				return nil
@@ -320,9 +287,8 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				if digestIndex >= len(digests) {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
 				}
-				if postMD5 == digests[digestIndex].MD5 {
-					t.Fatalf("frame %d unexpectedly matched official md5 before reconstruction is wired", ivfFrame.Index)
-				}
+				t.Logf("frame %d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d",
+					ivfFrame.Index, postMD5, digests[digestIndex].MD5, residualTXBs, residuals, cdefUnitsRead)
 				completed++
 			}
 		}
@@ -343,14 +309,20 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	if blockPrefixReads == 0 {
 		t.Fatal("no block prefix syntax was read")
 	}
-	if blockDeltaReads == 0 {
+	if blockDeltaPaths == 0 {
 		t.Fatal("no block delta syntax path ran")
 	}
-	if intraEntryReads == 0 {
-		t.Fatal("no intra entry syntax was read")
+	if predictionModeReads == 0 {
+		t.Fatal("no prediction mode syntax was read")
 	}
-	if transformPathReads == 0 {
-		t.Fatal("no transform size syntax path ran")
+	if intraModeReads == 0 {
+		t.Fatal("no intra mode syntax was read")
+	}
+	if residualTXBs == 0 {
+		t.Fatal("no residual TXBs were decoded")
+	}
+	if residuals == 0 {
+		t.Fatal("no residual blocks were reconstructed")
 	}
 	runtime.KeepAlive(backing)
 	runtime.KeepAlive(frameSlots)
@@ -371,57 +343,23 @@ func eventRunsFrameWork(event decoder.Event) bool {
 	}
 }
 
-func readFirstLibaomLeafBlock(state *tile.DecodeState, cdfs *tile.PartitionCDFs, ctx *tile.PartitionContext, root tile.BlockLevel, region threading.FrameWorkJobRegion) (tile.BlockSize, int, error) {
-	level := root
-	x4 := uint32(0)
-	y4 := uint32(0)
-	reads := 0
-	for {
-		partitionCtx, err := ctx.Context(level, int(y4), int(x4))
-		if err != nil {
-			return 0, reads, err
-		}
-		half := uint32(level.HalfSize4x4())
-		partition, err := state.ReadPartition(cdfs, level, partitionCtx,
-			region.MIRowEnd > region.MIRowStart+y4+half,
-			region.MIColEnd > region.MIColStart+x4+half)
-		if err != nil {
-			return 0, reads, err
-		}
-		reads++
-		if !partition.ValidForLevel(level) {
-			return 0, reads, fmt.Errorf("partition %d invalid for level %d", partition, level)
-		}
-		if partition == tile.PartitionSplit && level != tile.BlockLevel8x8 {
-			level++
-			continue
-		}
-		blockSize, _, ok := partition.BlockSizes(level)
-		if !ok {
-			return 0, reads, fmt.Errorf("partition %d has no block size at level %d", partition, level)
-		}
-		return blockSize, reads, nil
+func libaomResidualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
+	q, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY)
+	if err != nil {
+		return nil, nil, err
 	}
-}
-
-func initLibaomDeltaCDFs() (tile.DeltaCDFs, error) {
-	var q entropy.CDF
-	var lf entropy.CDF
-	var multi [tile.FrameLoopFilterCount]entropy.CDF
-	if err := q.InitDefaultDelta(); err != nil {
-		return tile.DeltaCDFs{}, err
+	// Allocate for the largest supported residual scratch; each decoded TXB
+	// still carries its own lossless decision through ReconstructBlockCoeff.
+	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
+		Size:      transform.Size{Width: 64, Height: 64},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: q,
+		Lossless:  false,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	if err := lf.InitDefaultDelta(); err != nil {
-		return tile.DeltaCDFs{}, err
-	}
-	cdfs := tile.DeltaCDFs{Q: &q, LF: &lf}
-	for i := 0; i < tile.FrameLoopFilterCount; i++ {
-		if err := multi[i].InitDefaultDelta(); err != nil {
-			return tile.DeltaCDFs{}, err
-		}
-		cdfs.LFMulti[i] = &multi[i]
-	}
-	return cdfs, nil
+	return make([]int32, int32Len), make([]int16, int16Len), nil
 }
 
 func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, frame.Format, []byte, []frame.Frame, []int, []bool) {

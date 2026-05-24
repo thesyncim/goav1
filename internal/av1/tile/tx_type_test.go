@@ -439,6 +439,29 @@ func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
 	}
 }
 
+func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector InterCoeffTransformSelector
+	selector.ResetForColor(&state, nil, false, false, true, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	before := state.Reader.BitsRead()
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{X4: 10, Y4: 4, Size: TransformSize4x4},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("lossless chroma tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+	if after := state.Reader.BitsRead(); after != before {
+		t.Fatalf("lossless chroma tx type read bits=%d want %d", after, before)
+	}
+}
+
 func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	if _, err := TransformSizeSquare(transformSizeCount); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad square err=%v want %v", err, ErrInvalidDecodeState)

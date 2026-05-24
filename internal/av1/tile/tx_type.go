@@ -72,6 +72,9 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 	if s == nil || s.State == nil {
 		return 0, ErrInvalidDecodeState
 	}
+	if s.SkipTransform || s.Lossless {
+		return transform.TypeDCTDCT, nil
+	}
 	if req.Plane != 0 {
 		return s.Map.ChromaType(req.Block, s.Color)
 	}

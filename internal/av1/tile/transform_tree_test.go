@@ -35,6 +35,32 @@ func TestDecodeTransformTreeIntraSelectedMarksContexts(t *testing.T) {
 	}
 }
 
+func TestDecodeTransformTreeLosslessForcesChroma4x4(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var cdfs TransformCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+	result, err := state.DecodeTransformTree(&cdfs, &ctx, TransformTreeRequest{
+		Size:          BlockSize4x8,
+		VisibleW4:     1,
+		VisibleH4:     2,
+		Color:         parser.ColorConfig{BitDepth: 8},
+		TransformMode: parser.TransformModeSwitchable,
+		Lossless:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Y != TransformSize4x4 || result.UV != TransformSize4x4 || !result.HasUV {
+		t.Fatalf("lossless transform tree=%+v want y=4x4 uv=4x4", result)
+	}
+}
+
 func TestMaxTransformSizeTableMatchesDav1d(t *testing.T) {
 	tests := []struct {
 		block BlockSize

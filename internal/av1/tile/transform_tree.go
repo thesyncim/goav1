@@ -64,9 +64,13 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 	}
 	result := TransformTreeResult{Y: maxY}
 	if !req.Color.MonoChrome {
-		uv, err := MaxTransformSize(req.Size, req.Color, 1)
-		if err != nil {
-			return TransformTreeResult{}, err
+		uv := TransformSize4x4
+		if !req.Lossless {
+			var err error
+			uv, err = MaxTransformSize(req.Size, req.Color, 1)
+			if err != nil {
+				return TransformTreeResult{}, err
+			}
 		}
 		result.UV = uv
 		result.HasUV = true
