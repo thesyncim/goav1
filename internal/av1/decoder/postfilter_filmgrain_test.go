@@ -345,6 +345,103 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesLumaFilmGrain
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesHighBitDepthLumaFilmGrain(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 32, BitDepth: 10, Align: 64})
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			setTestFrameWorkFilmGrainPlaneSample(output.Y, output.Layout.BytesPerSample, x, y, 400)
+		}
+	}
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0x1234,
+				BitDepth:      10,
+				NumYPoints:    1,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+				ScalingShift:  8,
+				Overlap:       true,
+			},
+		},
+		Output: output,
+	}
+	size, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := FrameWorkPostFilterRequest{
+		FilmGrain: FrameWorkFilmGrainPostFilterRequest{
+			LumaGrain:   make([]int16, size.FilmGrain.LumaGrain),
+			LumaSamples: make([]uint16, size.FilmGrain.LumaSamples),
+		},
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != FrameWorkPostFilterFilmGrain ||
+		result.FilmGrain.LumaRows != 1 ||
+		next.RemainingPostFilters() != 0 {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("film grain did not change high-bit-depth luma output")
+	}
+	if got := getTestFrameWorkFilmGrainPlaneSample(output.Y, output.Layout.BytesPerSample, 0, 0); got > 1023 {
+		t.Fatalf("high-bit-depth sample=%d outside 10-bit range", got)
+	}
+}
+
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesPartialFinalLumaRow(t *testing.T) {
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 34, Height: 33, BitDepth: 8, Align: 32})
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			output.Y.Pix[y*output.Y.Stride+x] = 100
+		}
+	}
+	before := testCopyFrameWorkCDEFPlane(output.Y)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			FilmGrain: parser.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          0x1234,
+				BitDepth:      8,
+				NumYPoints:    1,
+				YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+				ScalingShift:  8,
+				Overlap:       true,
+			},
+		},
+		Output: output,
+	}
+	size, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := FrameWorkPostFilterRequest{
+		FilmGrain: FrameWorkFilmGrainPostFilterRequest{
+			LumaGrain:   make([]int16, size.FilmGrain.LumaGrain),
+			LumaSamples: make([]uint16, size.FilmGrain.LumaSamples),
+		},
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completed != FrameWorkPostFilterFilmGrain ||
+		result.FilmGrain.LumaRows != 2 ||
+		next.RemainingPostFilters() != 0 {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
+		t.Fatal("film grain did not change partial-row luma output")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsLumaFilmGrainShortScratchBeforeMutation(t *testing.T) {
 	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
 	output.Y.Pix[0] = 0x44
@@ -428,6 +525,24 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersLumaFilmGrainAllocs(
 	if allocs != 0 {
 		t.Fatalf("luma film grain postfilter pipeline allocated: %f", allocs)
 	}
+}
+
+func getTestFrameWorkFilmGrainPlaneSample(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
+	offset := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		return uint16(plane.Pix[offset])
+	}
+	return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8
+}
+
+func setTestFrameWorkFilmGrainPlaneSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) {
+	offset := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		plane.Pix[offset] = byte(value)
+		return
+	}
+	plane.Pix[offset] = byte(value)
+	plane.Pix[offset+1] = byte(value >> 8)
 }
 
 func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsCDEFThenNoOpFilmGrain(t *testing.T) {
