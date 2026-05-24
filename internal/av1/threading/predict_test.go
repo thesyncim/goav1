@@ -296,6 +296,8 @@ func TestFrameWorkLumaTransformDirectionalExtendedEdgesMatchesLibaomCases(t *tes
 	tests := []struct {
 		name           string
 		block          tile.BlockVisit
+		miColEnd       uint32
+		miRowEnd       uint32
 		absX           int
 		absY           int
 		width          int
@@ -317,7 +319,7 @@ func TestFrameWorkLumaTransformDirectionalExtendedEdgesMatchesLibaomCases(t *tes
 				MICol: 56, MIRow: 0, MIColEnd: 58, MIRowEnd: 1,
 				Size: tile.BlockSize8x4, VisibleW4: 2, VisibleH4: 1, HaveLeft: true,
 			},
-			absX: 224, absY: 0, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
+			absX: 224, absY: 0, width: 4, height: 4, wantBottomLeft: true,
 		},
 		{
 			name: "d203 4x8 table denies bottom-left",
@@ -343,14 +345,81 @@ func TestFrameWorkLumaTransformDirectionalExtendedEdgesMatchesLibaomCases(t *tes
 			},
 			absX: 296, absY: 8, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
 		},
+		{
+			name: "quantizer00 d67 4x4 table allows top-right",
+			block: tile.BlockVisit{
+				MICol: 8, MIRow: 2, MIColEnd: 9, MIRowEnd: 3,
+				Partition: tile.PartitionSplit, Size: tile.BlockSize4x4,
+				VisibleW4: 1, VisibleH4: 1, HaveTop: true, HaveLeft: true,
+			},
+			miColEnd: 88, miRowEnd: 72,
+			absX: 32, absY: 8, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
+		},
+		{
+			name: "quantizer00 d67 4x4 denies top-right at tile edge",
+			block: tile.BlockVisit{
+				MICol: 8, MIRow: 2, MIColEnd: 9, MIRowEnd: 3,
+				Partition: tile.PartitionSplit, Size: tile.BlockSize4x4,
+				VisibleW4: 1, VisibleH4: 1, HaveTop: true, HaveLeft: true,
+			},
+			miColEnd: 9, miRowEnd: 72,
+			absX: 32, absY: 8, width: 4, height: 4, wantBottomLeft: true,
+		},
+		{
+			name: "quantizer00 internal transform top edge allows top-right",
+			block: func() tile.BlockVisit {
+				parent := tile.BlockVisit{
+					MICol: 24, MIRow: 0, MIColEnd: 28, MIRowEnd: 2,
+					X4: 24, Y4: 0, Partition: tile.PartitionTBottomSplit, Size: tile.BlockSize16x8,
+					VisibleW4: 4, VisibleH4: 2, HaveLeft: true,
+				}
+				return frameWorkPredictionTransformEdgeBlock(parent, parent.X4, parent.Y4, 24, 1)
+			}(),
+			miColEnd: 88, miRowEnd: 72,
+			absX: 96, absY: 4, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotTopRight, gotBottomLeft := frameWorkLumaTransformDirectionalExtendedEdges(tt.block, 32, tt.absX, tt.absY, tt.width, tt.height)
+			miColEnd := tt.miColEnd
+			if miColEnd == 0 {
+				miColEnd = 88
+			}
+			miRowEnd := tt.miRowEnd
+			if miRowEnd == 0 {
+				miRowEnd = 72
+			}
+			gotTopRight, gotBottomLeft := frameWorkLumaDirectionalExtendedEdges(tt.block, 32, miColEnd, miRowEnd, tt.absX, tt.absY, tt.width, tt.height)
 			if gotTopRight != tt.wantTopRight || gotBottomLeft != tt.wantBottomLeft {
 				t.Fatalf("topRight=%v bottomLeft=%v want %v/%v", gotTopRight, gotBottomLeft, tt.wantTopRight, tt.wantBottomLeft)
 			}
 		})
+	}
+}
+
+func TestFrameWorkDirectionalAvailabilityTablesCoverBlockSizes(t *testing.T) {
+	sizes := []tile.BlockSize{
+		tile.BlockSize4x4, tile.BlockSize4x8, tile.BlockSize8x4, tile.BlockSize8x8,
+		tile.BlockSize8x16, tile.BlockSize16x8, tile.BlockSize16x16,
+		tile.BlockSize16x32, tile.BlockSize32x16, tile.BlockSize32x32,
+		tile.BlockSize32x64, tile.BlockSize64x32, tile.BlockSize64x64,
+		tile.BlockSize64x128, tile.BlockSize128x64, tile.BlockSize128x128,
+		tile.BlockSize4x16, tile.BlockSize16x4, tile.BlockSize8x32,
+		tile.BlockSize32x8, tile.BlockSize16x64, tile.BlockSize64x16,
+	}
+	for _, size := range sizes {
+		if table := frameWorkTopRightAvailabilityTable(tile.PartitionNone, size); len(table) == 0 {
+			t.Fatalf("missing top-right table for size %d", size)
+		}
+		if table := frameWorkBottomLeftAvailabilityTable(tile.PartitionNone, size); len(table) == 0 {
+			t.Fatalf("missing bottom-left table for size %d", size)
+		}
+	}
+	if table := frameWorkTopRightAvailabilityTable(tile.PartitionTLeftSplit, tile.BlockSize8x8); len(table) == 0 || table[2] != 0 {
+		t.Fatalf("mixed-vertical top-right table not selected: %v", table)
+	}
+	if table := frameWorkBottomLeftAvailabilityTable(tile.PartitionTRightSplit, tile.BlockSize8x8); len(table) == 0 || table[0] != 254 {
+		t.Fatalf("mixed-vertical bottom-left table not selected: %v", table)
 	}
 }
 

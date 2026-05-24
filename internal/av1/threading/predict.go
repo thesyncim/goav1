@@ -244,6 +244,10 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		return ErrInvalidBatch
 	}
 
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return err
+	}
 	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
 	if err != nil {
 		return err
@@ -261,6 +265,8 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		Width:  window.Width,
 		Height: window.Height,
 	}
+	absX := x
+	absY := y
 	x -= window.X
 	y -= window.Y
 
@@ -280,7 +286,8 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, true, true)
+		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(visit.Block, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, width, height)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
 		if err != nil {
 			return err
 		}
@@ -306,6 +313,10 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 
 func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
 	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
+	if err != nil {
+		return err
+	}
+	region, err := b.JobRegion(index)
 	if err != nil {
 		return err
 	}
@@ -347,7 +358,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
-		allowTopRight, allowBottomLeft := frameWorkLumaTransformDirectionalExtendedEdges(visit.Block, b.Sequence.SBSizeMIB, absX, absY, predWidth, predHeight)
+		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, predWidth, predHeight)
 		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
 		if err != nil {
 			return err
@@ -895,18 +906,70 @@ func frameWorkPredictionTransformEdgeBlock(block tile.BlockVisit, baseX4 int, ba
 	return block
 }
 
-func frameWorkLumaTransformDirectionalExtendedEdges(block tile.BlockVisit, sbSizeMIB uint8, absX int, absY int, width int, height int) (allowTopRight bool, allowBottomLeft bool) {
+func frameWorkLumaDirectionalExtendedEdges(block tile.BlockVisit, sbSizeMIB uint8, miColEnd uint32, miRowEnd uint32, absX int, absY int, width int, height int) (allowTopRight bool, allowBottomLeft bool) {
 	blockX := int(block.MICol) * 4
 	blockY := int(block.MIRow) * 4
-	blockW := int(block.VisibleW4) * 4
 	colOff := absX - blockX
 	rowOff := absY - blockY
-	allowTopRight = colOff+width < blockW
-	allowBottomLeft = frameWorkLumaTransformHasBottomLeft(block, sbSizeMIB, colOff, rowOff, height)
+	allowTopRight = frameWorkLumaHasTopRight(block, sbSizeMIB, miColEnd, colOff, rowOff, width)
+	allowBottomLeft = frameWorkLumaHasBottomLeft(block, sbSizeMIB, miRowEnd, colOff, rowOff, height)
 	return allowTopRight, allowBottomLeft
 }
 
-func frameWorkLumaTransformHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8, colOffPx int, rowOffPx int, height int) bool {
+func frameWorkLumaHasTopRight(block tile.BlockVisit, sbSizeMIB uint8, miColEnd uint32, colOffPx int, rowOffPx int, width int) bool {
+	if !block.HaveTop || sbSizeMIB == 0 || colOffPx < 0 || rowOffPx < 0 || width <= 0 ||
+		colOffPx%4 != 0 || rowOffPx%4 != 0 || width%4 != 0 {
+		return false
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return false
+	}
+	colOff := colOffPx >> 2
+	rowOff := rowOffPx >> 2
+	txW := width >> 2
+	if block.MICol+uint32(colOff+txW) >= miColEnd {
+		return false
+	}
+	blockW := int(dims.W4)
+	if rowOff > 0 {
+		if blockW > 16 {
+			if rowOff == 16 && colOff+txW == 16 {
+				return true
+			}
+			colOff64 := colOff % 16
+			return colOff64+txW < 16
+		}
+		return colOff+txW < blockW
+	}
+	if colOff+txW < blockW {
+		return true
+	}
+	bwLog2 := int(dims.Log2W)
+	bhLog2 := int(dims.Log2H)
+	sb := int(sbSizeMIB)
+	if sb <= 0 {
+		return false
+	}
+	blkRowInSB := int(block.MIRow&uint32(sb-1)) >> bhLog2
+	blkColInSB := int(block.MICol&uint32(sb-1)) >> bwLog2
+	if blkRowInSB == 0 {
+		return true
+	}
+	if ((blkColInSB + 1) << bwLog2) >= sb {
+		return false
+	}
+	table := frameWorkTopRightAvailabilityTable(block.Partition, block.Size)
+	if len(table) == 0 {
+		return false
+	}
+	thisBlockIndex := blkRowInSB<<(frameWorkMaxMIBSizeLog2-bwLog2) + blkColInSB
+	idx1 := thisBlockIndex >> 3
+	idx2 := thisBlockIndex & 7
+	return idx1 >= 0 && idx1 < len(table) && ((table[idx1]>>idx2)&1) != 0
+}
+
+func frameWorkLumaHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8, miRowEnd uint32, colOffPx int, rowOffPx int, height int) bool {
 	if !block.HaveLeft || sbSizeMIB == 0 || colOffPx < 0 || rowOffPx < 0 || height <= 0 ||
 		colOffPx%4 != 0 || rowOffPx%4 != 0 || height%4 != 0 {
 		return false
@@ -918,6 +981,21 @@ func frameWorkLumaTransformHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8,
 	colOff := colOffPx >> 2
 	rowOff := rowOffPx >> 2
 	txH := height >> 2
+	if block.MIRow+uint32(rowOff+txH) >= miRowEnd {
+		return false
+	}
+	blockW := int(dims.W4)
+	if blockW > 16 && colOff > 0 {
+		colOff64 := colOff % 16
+		if colOff64 == 0 {
+			rowOff64 := rowOff % 16
+			blockH64 := int(dims.H4)
+			if blockH64 > 16 {
+				blockH64 = 16
+			}
+			return rowOff64+txH < blockH64
+		}
+	}
 	if colOff > 0 {
 		return false
 	}
@@ -940,7 +1018,7 @@ func frameWorkLumaTransformHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8,
 	if ((blkRowInSB + 1) << bhLog2) >= sb {
 		return false
 	}
-	table := frameWorkBottomLeftAvailabilityTable(block.Size)
+	table := frameWorkBottomLeftAvailabilityTable(block.Partition, block.Size)
 	if len(table) == 0 {
 		return false
 	}
@@ -950,7 +1028,110 @@ func frameWorkLumaTransformHasBottomLeft(block tile.BlockVisit, sbSizeMIB uint8,
 	return idx1 >= 0 && idx1 < len(table) && ((table[idx1]>>idx2)&1) != 0
 }
 
-func frameWorkBottomLeftAvailabilityTable(size tile.BlockSize) []uint8 {
+func frameWorkTopRightAvailabilityTable(partition tile.Partition, size tile.BlockSize) []uint8 {
+	if frameWorkPartitionUsesVerticalOrder(partition) {
+		switch size {
+		case tile.BlockSize4x8:
+			return frameWorkHasTopRight4x8[:]
+		case tile.BlockSize8x8:
+			return frameWorkHasTopRightVert8x8[:]
+		case tile.BlockSize8x16:
+			return frameWorkHasTopRight8x16[:]
+		case tile.BlockSize16x16:
+			return frameWorkHasTopRightVert16x16[:]
+		case tile.BlockSize16x32:
+			return frameWorkHasTopRight16x32[:]
+		case tile.BlockSize32x32:
+			return frameWorkHasTopRightVert32x32[:]
+		case tile.BlockSize32x64:
+			return frameWorkHasTopRight32x64[:]
+		case tile.BlockSize64x64:
+			return frameWorkHasTopRightVert64x64[:]
+		case tile.BlockSize64x128:
+			return frameWorkHasTopRight64x128[:]
+		case tile.BlockSize128x128:
+			return frameWorkHasTopRight128x128[:]
+		default:
+			return nil
+		}
+	}
+	switch size {
+	case tile.BlockSize4x4:
+		return frameWorkHasTopRight4x4[:]
+	case tile.BlockSize4x8:
+		return frameWorkHasTopRight4x8[:]
+	case tile.BlockSize8x4:
+		return frameWorkHasTopRight8x4[:]
+	case tile.BlockSize8x8:
+		return frameWorkHasTopRight8x8[:]
+	case tile.BlockSize8x16:
+		return frameWorkHasTopRight8x16[:]
+	case tile.BlockSize16x8:
+		return frameWorkHasTopRight16x8[:]
+	case tile.BlockSize16x16:
+		return frameWorkHasTopRight16x16[:]
+	case tile.BlockSize16x32:
+		return frameWorkHasTopRight16x32[:]
+	case tile.BlockSize32x16:
+		return frameWorkHasTopRight32x16[:]
+	case tile.BlockSize32x32:
+		return frameWorkHasTopRight32x32[:]
+	case tile.BlockSize32x64:
+		return frameWorkHasTopRight32x64[:]
+	case tile.BlockSize64x32:
+		return frameWorkHasTopRight64x32[:]
+	case tile.BlockSize64x64:
+		return frameWorkHasTopRight64x64[:]
+	case tile.BlockSize64x128:
+		return frameWorkHasTopRight64x128[:]
+	case tile.BlockSize128x64:
+		return frameWorkHasTopRight128x64[:]
+	case tile.BlockSize128x128:
+		return frameWorkHasTopRight128x128[:]
+	case tile.BlockSize4x16:
+		return frameWorkHasTopRight4x16[:]
+	case tile.BlockSize16x4:
+		return frameWorkHasTopRight16x4[:]
+	case tile.BlockSize8x32:
+		return frameWorkHasTopRight8x32[:]
+	case tile.BlockSize32x8:
+		return frameWorkHasTopRight32x8[:]
+	case tile.BlockSize16x64:
+		return frameWorkHasTopRight16x64[:]
+	case tile.BlockSize64x16:
+		return frameWorkHasTopRight64x16[:]
+	default:
+		return nil
+	}
+}
+
+func frameWorkBottomLeftAvailabilityTable(partition tile.Partition, size tile.BlockSize) []uint8 {
+	if frameWorkPartitionUsesVerticalOrder(partition) {
+		switch size {
+		case tile.BlockSize4x8:
+			return frameWorkHasBottomLeft4x8[:]
+		case tile.BlockSize8x8:
+			return frameWorkHasBottomLeftVert8x8[:]
+		case tile.BlockSize8x16:
+			return frameWorkHasBottomLeft8x16[:]
+		case tile.BlockSize16x16:
+			return frameWorkHasBottomLeftVert16x16[:]
+		case tile.BlockSize16x32:
+			return frameWorkHasBottomLeft16x32[:]
+		case tile.BlockSize32x32:
+			return frameWorkHasBottomLeftVert32x32[:]
+		case tile.BlockSize32x64:
+			return frameWorkHasBottomLeft32x64[:]
+		case tile.BlockSize64x64:
+			return frameWorkHasBottomLeftVert64x64[:]
+		case tile.BlockSize64x128:
+			return frameWorkHasBottomLeft64x128[:]
+		case tile.BlockSize128x128:
+			return frameWorkHasBottomLeft128x128[:]
+		default:
+			return nil
+		}
+	}
 	switch size {
 	case tile.BlockSize4x4:
 		return frameWorkHasBottomLeft4x4[:]
@@ -960,16 +1141,148 @@ func frameWorkBottomLeftAvailabilityTable(size tile.BlockSize) []uint8 {
 		return frameWorkHasBottomLeft8x4[:]
 	case tile.BlockSize8x8:
 		return frameWorkHasBottomLeft8x8[:]
+	case tile.BlockSize8x16:
+		return frameWorkHasBottomLeft8x16[:]
+	case tile.BlockSize16x8:
+		return frameWorkHasBottomLeft16x8[:]
+	case tile.BlockSize16x16:
+		return frameWorkHasBottomLeft16x16[:]
+	case tile.BlockSize16x32:
+		return frameWorkHasBottomLeft16x32[:]
+	case tile.BlockSize32x16:
+		return frameWorkHasBottomLeft32x16[:]
+	case tile.BlockSize32x32:
+		return frameWorkHasBottomLeft32x32[:]
+	case tile.BlockSize32x64:
+		return frameWorkHasBottomLeft32x64[:]
+	case tile.BlockSize64x32:
+		return frameWorkHasBottomLeft64x32[:]
+	case tile.BlockSize64x64:
+		return frameWorkHasBottomLeft64x64[:]
+	case tile.BlockSize64x128:
+		return frameWorkHasBottomLeft64x128[:]
+	case tile.BlockSize128x64:
+		return frameWorkHasBottomLeft128x64[:]
+	case tile.BlockSize128x128:
+		return frameWorkHasBottomLeft128x128[:]
 	case tile.BlockSize4x16:
 		return frameWorkHasBottomLeft4x16[:]
 	case tile.BlockSize16x4:
 		return frameWorkHasBottomLeft16x4[:]
+	case tile.BlockSize8x32:
+		return frameWorkHasBottomLeft8x32[:]
+	case tile.BlockSize32x8:
+		return frameWorkHasBottomLeft32x8[:]
+	case tile.BlockSize16x64:
+		return frameWorkHasBottomLeft16x64[:]
+	case tile.BlockSize64x16:
+		return frameWorkHasBottomLeft64x16[:]
 	default:
 		return nil
 	}
 }
 
+func frameWorkPartitionUsesVerticalOrder(partition tile.Partition) bool {
+	return partition == tile.PartitionTLeftSplit || partition == tile.PartitionTRightSplit
+}
+
 var (
+	frameWorkHasTopRight4x4 = [...]uint8{
+		255, 255, 255, 255, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		127, 127, 127, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		255, 127, 255, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		127, 127, 127, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		255, 255, 255, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		127, 127, 127, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		255, 127, 255, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+		127, 127, 127, 127, 85, 85, 85, 85, 119, 119, 119, 119, 85, 85, 85, 85,
+	}
+	frameWorkHasTopRight4x8 = [...]uint8{
+		255, 255, 255, 255, 119, 119, 119, 119, 127, 127, 127, 127, 119, 119, 119, 119,
+		255, 127, 255, 127, 119, 119, 119, 119, 127, 127, 127, 127, 119, 119, 119, 119,
+		255, 255, 255, 127, 119, 119, 119, 119, 127, 127, 127, 127, 119, 119, 119, 119,
+		255, 127, 255, 127, 119, 119, 119, 119, 127, 127, 127, 127, 119, 119, 119, 119,
+	}
+	frameWorkHasTopRight8x4 = [...]uint8{
+		255, 255, 0, 0, 85, 85, 0, 0, 119, 119, 0, 0, 85, 85, 0, 0,
+		127, 127, 0, 0, 85, 85, 0, 0, 119, 119, 0, 0, 85, 85, 0, 0,
+		255, 127, 0, 0, 85, 85, 0, 0, 119, 119, 0, 0, 85, 85, 0, 0,
+		127, 127, 0, 0, 85, 85, 0, 0, 119, 119, 0, 0, 85, 85, 0, 0,
+	}
+	frameWorkHasTopRight8x8 = [...]uint8{
+		255, 255, 85, 85, 119, 119, 85, 85, 127, 127, 85, 85, 119, 119, 85, 85,
+		255, 127, 85, 85, 119, 119, 85, 85, 127, 127, 85, 85, 119, 119, 85, 85,
+	}
+	frameWorkHasTopRight8x16 = [...]uint8{
+		255, 255, 119, 119, 127, 127, 119, 119, 255, 127, 119, 119, 127, 127, 119, 119,
+	}
+	frameWorkHasTopRight16x8 = [...]uint8{
+		255, 0, 85, 0, 119, 0, 85, 0, 127, 0, 85, 0, 119, 0, 85, 0,
+	}
+	frameWorkHasTopRight16x16 = [...]uint8{
+		255, 85, 119, 85, 127, 85, 119, 85,
+	}
+	frameWorkHasTopRight16x32 = [...]uint8{
+		255, 119, 127, 119,
+	}
+	frameWorkHasTopRight32x16 = [...]uint8{
+		15, 5, 7, 5,
+	}
+	frameWorkHasTopRight32x32 = [...]uint8{
+		95, 87,
+	}
+	frameWorkHasTopRight32x64 = [...]uint8{
+		127,
+	}
+	frameWorkHasTopRight64x32 = [...]uint8{
+		19,
+	}
+	frameWorkHasTopRight64x64 = [...]uint8{
+		7,
+	}
+	frameWorkHasTopRight64x128 = [...]uint8{
+		3,
+	}
+	frameWorkHasTopRight128x64 = [...]uint8{
+		1,
+	}
+	frameWorkHasTopRight128x128 = [...]uint8{
+		1,
+	}
+	frameWorkHasTopRight4x16 = [...]uint8{
+		255, 255, 255, 255, 127, 127, 127, 127, 255, 127, 255, 127, 127, 127, 127, 127,
+		255, 255, 255, 127, 127, 127, 127, 127, 255, 127, 255, 127, 127, 127, 127, 127,
+	}
+	frameWorkHasTopRight16x4 = [...]uint8{
+		255, 0, 0, 0, 85, 0, 0, 0, 119, 0, 0, 0, 85, 0, 0, 0,
+		127, 0, 0, 0, 85, 0, 0, 0, 119, 0, 0, 0, 85, 0, 0, 0,
+	}
+	frameWorkHasTopRight8x32 = [...]uint8{
+		255, 255, 127, 127, 255, 127, 127, 127,
+	}
+	frameWorkHasTopRight32x8 = [...]uint8{
+		15, 0, 5, 0, 7, 0, 5, 0,
+	}
+	frameWorkHasTopRight16x64 = [...]uint8{
+		255, 127,
+	}
+	frameWorkHasTopRight64x16 = [...]uint8{
+		3, 1,
+	}
+	frameWorkHasTopRightVert8x8 = [...]uint8{
+		255, 255, 0, 0, 119, 119, 0, 0, 127, 127, 0, 0, 119, 119, 0, 0,
+		255, 127, 0, 0, 119, 119, 0, 0, 127, 127, 0, 0, 119, 119, 0, 0,
+	}
+	frameWorkHasTopRightVert16x16 = [...]uint8{
+		255, 0, 119, 0, 127, 0, 119, 0,
+	}
+	frameWorkHasTopRightVert32x32 = [...]uint8{
+		15, 7,
+	}
+	frameWorkHasTopRightVert64x64 = [...]uint8{
+		3,
+	}
+
 	frameWorkHasBottomLeft4x4 = [...]uint8{
 		84, 85, 85, 85, 16, 17, 17, 17, 84, 85, 85, 85, 0, 1, 1, 1,
 		84, 85, 85, 85, 16, 17, 17, 17, 84, 85, 85, 85, 0, 0, 1, 0,
@@ -996,6 +1309,42 @@ var (
 		84, 85, 16, 17, 84, 85, 0, 1, 84, 85, 16, 17, 84, 85, 0, 0,
 		84, 85, 16, 17, 84, 85, 0, 1, 84, 85, 16, 17, 84, 85, 0, 0,
 	}
+	frameWorkHasBottomLeft8x16 = [...]uint8{
+		16, 17, 0, 1, 16, 17, 0, 0, 16, 17, 0, 1, 16, 17, 0, 0,
+	}
+	frameWorkHasBottomLeft16x8 = [...]uint8{
+		254, 84, 254, 16, 254, 84, 254, 0, 254, 84, 254, 16, 254, 84, 254, 0,
+	}
+	frameWorkHasBottomLeft16x16 = [...]uint8{
+		84, 16, 84, 0, 84, 16, 84, 0,
+	}
+	frameWorkHasBottomLeft16x32 = [...]uint8{
+		16, 0, 16, 0,
+	}
+	frameWorkHasBottomLeft32x16 = [...]uint8{
+		78, 14, 78, 14,
+	}
+	frameWorkHasBottomLeft32x32 = [...]uint8{
+		4, 4,
+	}
+	frameWorkHasBottomLeft32x64 = [...]uint8{
+		0,
+	}
+	frameWorkHasBottomLeft64x32 = [...]uint8{
+		34,
+	}
+	frameWorkHasBottomLeft64x64 = [...]uint8{
+		0,
+	}
+	frameWorkHasBottomLeft64x128 = [...]uint8{
+		0,
+	}
+	frameWorkHasBottomLeft128x64 = [...]uint8{
+		0,
+	}
+	frameWorkHasBottomLeft128x128 = [...]uint8{
+		0,
+	}
 	frameWorkHasBottomLeft4x16 = [...]uint8{
 		0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0,
 		0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0,
@@ -1003,6 +1352,31 @@ var (
 	frameWorkHasBottomLeft16x4 = [...]uint8{
 		254, 254, 254, 84, 254, 254, 254, 16, 254, 254, 254, 84, 254, 254, 254, 0,
 		254, 254, 254, 84, 254, 254, 254, 16, 254, 254, 254, 84, 254, 254, 254, 0,
+	}
+	frameWorkHasBottomLeft8x32 = [...]uint8{
+		0, 1, 0, 0, 0, 1, 0, 0,
+	}
+	frameWorkHasBottomLeft32x8 = [...]uint8{
+		238, 78, 238, 14, 238, 78, 238, 14,
+	}
+	frameWorkHasBottomLeft16x64 = [...]uint8{
+		0, 0,
+	}
+	frameWorkHasBottomLeft64x16 = [...]uint8{
+		42, 42,
+	}
+	frameWorkHasBottomLeftVert8x8 = [...]uint8{
+		254, 255, 16, 17, 254, 255, 0, 1, 254, 255, 16, 17, 254, 255, 0, 0,
+		254, 255, 16, 17, 254, 255, 0, 1, 254, 255, 16, 17, 254, 255, 0, 0,
+	}
+	frameWorkHasBottomLeftVert16x16 = [...]uint8{
+		254, 16, 254, 0, 254, 16, 254, 0,
+	}
+	frameWorkHasBottomLeftVert32x32 = [...]uint8{
+		14, 14,
+	}
+	frameWorkHasBottomLeftVert64x64 = [...]uint8{
+		2,
 	}
 )
 
