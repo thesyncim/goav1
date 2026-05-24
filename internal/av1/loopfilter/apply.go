@@ -11,13 +11,23 @@ type DeltaState struct {
 	Multi    [DeltaCount]int8
 }
 
-// Filter4Request describes one narrow deblocking edge in plane coordinates.
-type Filter4Request struct {
+// FilterEdgeRequest describes one deblocking edge in plane coordinates.
+type FilterEdgeRequest struct {
 	LevelRequest
 
 	X      int
 	Y      int
 	Length int
+}
+
+// Filter4Request describes one narrow deblocking edge in plane coordinates.
+type Filter4Request = FilterEdgeRequest
+
+// FilterBlockRequest describes one resolved-width deblocking edge.
+type FilterBlockRequest struct {
+	FilterEdgeRequest
+
+	Width int
 }
 
 // FilterResult reports the resolved setup used for one edge filter call.
@@ -41,6 +51,49 @@ func ResolveBlockLevel(params parser.LoopFilterParams, seg parser.SegmentationPa
 // Filter4BlockEdge resolves loop-filter level and thresholds, then applies
 // AV1's narrow four-sample deblocking filter when the resolved level is nonzero.
 func Filter4BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req Filter4Request) (FilterResult, error) {
+	return filterBlockEdgeWidth(dst, bytesPerSample, bitDepth, params, seg, delta, state, FilterBlockRequest{
+		FilterEdgeRequest: req,
+		Width:             4,
+	})
+}
+
+// Filter6BlockEdge resolves loop-filter level and thresholds, then applies
+// AV1's six-sample deblocking filter when the resolved level is nonzero.
+func Filter6BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req FilterEdgeRequest) (FilterResult, error) {
+	return filterBlockEdgeWidth(dst, bytesPerSample, bitDepth, params, seg, delta, state, FilterBlockRequest{
+		FilterEdgeRequest: req,
+		Width:             6,
+	})
+}
+
+// Filter8BlockEdge resolves loop-filter level and thresholds, then applies
+// AV1's eight-sample deblocking filter when the resolved level is nonzero.
+func Filter8BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req FilterEdgeRequest) (FilterResult, error) {
+	return filterBlockEdgeWidth(dst, bytesPerSample, bitDepth, params, seg, delta, state, FilterBlockRequest{
+		FilterEdgeRequest: req,
+		Width:             8,
+	})
+}
+
+// Filter14BlockEdge resolves loop-filter level and thresholds, then applies
+// AV1's fourteen-sample deblocking filter when the resolved level is nonzero.
+func Filter14BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req FilterEdgeRequest) (FilterResult, error) {
+	return filterBlockEdgeWidth(dst, bytesPerSample, bitDepth, params, seg, delta, state, FilterBlockRequest{
+		FilterEdgeRequest: req,
+		Width:             14,
+	})
+}
+
+// FilterBlockEdge resolves loop-filter level and thresholds, then dispatches to
+// the requested AV1 deblocking width when the resolved level is nonzero.
+func FilterBlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req FilterBlockRequest) (FilterResult, error) {
+	return filterBlockEdgeWidth(dst, bytesPerSample, bitDepth, params, seg, delta, state, req)
+}
+
+func filterBlockEdgeWidth(dst frame.Plane, bytesPerSample int, bitDepth uint8, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req FilterBlockRequest) (FilterResult, error) {
+	if !validFilterWidth(req.Width) {
+		return FilterResult{}, ErrInvalidFilter
+	}
 	if params.Sharpness > MaxSharpness {
 		return FilterResult{}, ErrInvalidFilter
 	}
@@ -55,7 +108,7 @@ func Filter4BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, param
 	if err != nil {
 		return FilterResult{}, err
 	}
-	if err := Filter4Edge(dst, bytesPerSample, bitDepth, req.Edge, req.X, req.Y, req.Length, thresholds); err != nil {
+	if err := FilterEdgeByWidth(req.Width, dst, bytesPerSample, bitDepth, req.Edge, req.X, req.Y, req.Length, thresholds); err != nil {
 		return FilterResult{}, err
 	}
 	return FilterResult{
@@ -63,4 +116,24 @@ func Filter4BlockEdge(dst frame.Plane, bytesPerSample int, bitDepth uint8, param
 		Thresholds: thresholds,
 		Applied:    true,
 	}, nil
+}
+
+// FilterEdgeByWidth applies one AV1 deblocking edge with precomputed thresholds.
+func FilterEdgeByWidth(width int, dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int, thresholds Thresholds) error {
+	switch width {
+	case 4:
+		return Filter4Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	case 6:
+		return Filter6Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	case 8:
+		return Filter8Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	case 14:
+		return Filter14Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	default:
+		return ErrInvalidFilter
+	}
+}
+
+func validFilterWidth(width int) bool {
+	return width == 4 || width == 6 || width == 8 || width == 14
 }

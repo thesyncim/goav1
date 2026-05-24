@@ -1,6 +1,7 @@
 package loopfilter
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -85,6 +86,92 @@ func TestFilter4BlockEdgeAppliesResolvedLevel(t *testing.T) {
 	}
 }
 
+func TestFilterBlockEdgeDispatchesResolvedWidths(t *testing.T) {
+	for _, width := range []int{4, 6, 8, 14} {
+		plane := testPlane(32, 32, 1, 32)
+		for y := 0; y < plane.Height; y++ {
+			for x := 0; x < plane.Width; x++ {
+				setSample(plane, 1, x, y, uint16((x*5+y*7)&0xff))
+			}
+		}
+		want := cloneTestPlane(plane)
+		thresholds, err := ThresholdsForLevel(16, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := FilterEdgeByWidth(width, want, 1, 8, EdgeHorizontal, 0, 16, 32, thresholds); err != nil {
+			t.Fatalf("width=%d direct err=%v", width, err)
+		}
+
+		result, err := FilterBlockEdge(plane, 1, 8,
+			parser.LoopFilterParams{LevelY: [2]uint8{0, 16}},
+			parser.SegmentationParams{},
+			parser.DeltaParams{},
+			DeltaState{},
+			FilterBlockRequest{
+				FilterEdgeRequest: FilterEdgeRequest{
+					LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeHorizontal, SegmentID: 0, RefFrame: 0},
+					X:            0,
+					Y:            16,
+					Length:       32,
+				},
+				Width: width,
+			},
+		)
+		if err != nil {
+			t.Fatalf("width=%d FilterBlockEdge err=%v", width, err)
+		}
+		if !result.Applied || result.Level != 16 || result.Thresholds != thresholds {
+			t.Fatalf("width=%d result=%+v thresholds=%+v", width, result, thresholds)
+		}
+		if !bytes.Equal(plane.Pix, want.Pix) {
+			t.Fatalf("width=%d dispatch output mismatch", width)
+		}
+	}
+}
+
+func TestSpecificBlockEdgeWrappersMatchGenericDispatcher(t *testing.T) {
+	for _, width := range []int{6, 8, 14} {
+		plane := testPlane(32, 32, 1, 32)
+		for y := 0; y < plane.Height; y++ {
+			for x := 0; x < plane.Width; x++ {
+				setSample(plane, 1, x, y, uint16((x*11+y*13)&0xff))
+			}
+		}
+		want := cloneTestPlane(plane)
+		req := FilterEdgeRequest{
+			LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeHorizontal, SegmentID: 0, RefFrame: 0},
+			X:            0,
+			Y:            16,
+			Length:       32,
+		}
+		params := parser.LoopFilterParams{LevelY: [2]uint8{0, 16}}
+		if _, err := FilterBlockEdge(want, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, FilterBlockRequest{FilterEdgeRequest: req, Width: width}); err != nil {
+			t.Fatalf("width=%d generic err=%v", width, err)
+		}
+
+		var result FilterResult
+		var err error
+		switch width {
+		case 6:
+			result, err = Filter6BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
+		case 8:
+			result, err = Filter8BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
+		case 14:
+			result, err = Filter14BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
+		}
+		if err != nil {
+			t.Fatalf("width=%d wrapper err=%v", width, err)
+		}
+		if !result.Applied || result.Level != 16 {
+			t.Fatalf("width=%d result=%+v", width, result)
+		}
+		if !bytes.Equal(plane.Pix, want.Pix) {
+			t.Fatalf("width=%d wrapper output mismatch", width)
+		}
+	}
+}
+
 func TestFilter4BlockEdgeSkipsZeroLevel(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
 	for x := 0; x < 4; x++ {
@@ -119,7 +206,7 @@ func TestFilter4BlockEdgeSkipsZeroLevel(t *testing.T) {
 	}
 }
 
-func TestFilter4BlockEdgeRejectsInvalidInputs(t *testing.T) {
+func TestFilterBlockEdgeRejectsInvalidInputs(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
 	_, err := Filter4BlockEdge(plane, 1, 8,
 		parser.LoopFilterParams{LevelY: [2]uint8{16, 0}, Sharpness: MaxSharpness + 1},
@@ -141,6 +228,20 @@ func TestFilter4BlockEdgeRejectsInvalidInputs(t *testing.T) {
 	)
 	if !errors.Is(err, ErrInvalidFilter) {
 		t.Fatalf("invalid level request err=%v want %v", err, ErrInvalidFilter)
+	}
+
+	_, err = FilterBlockEdge(plane, 1, 8,
+		parser.LoopFilterParams{LevelY: [2]uint8{16, 0}},
+		parser.SegmentationParams{},
+		parser.DeltaParams{},
+		DeltaState{},
+		FilterBlockRequest{
+			FilterEdgeRequest: FilterEdgeRequest{LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeVertical, SegmentID: 0, RefFrame: 0}, X: 2, Y: 0, Length: 4},
+			Width:             5,
+		},
+	)
+	if !errors.Is(err, ErrInvalidFilter) {
+		t.Fatalf("invalid width err=%v want %v", err, ErrInvalidFilter)
 	}
 }
 
