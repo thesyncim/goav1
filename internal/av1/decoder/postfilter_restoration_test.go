@@ -103,6 +103,75 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterRejectsEarlierA
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterAllowsCompletedEarlierStages(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	pool := testFramePoolForSize(t, width, height, 1)
+	_, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Y.Pix[0] = 0x33
+
+	event := Event{
+		SequenceHeader: testSequence(),
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResEnabled:     true,
+			SuperResDenominator: 16,
+		},
+		LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{1}},
+		CDEF: parser.CDEFParams{
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{1},
+		},
+		Restoration: parser.RestorationParams{
+			Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			UnitSizeY: 64,
+		},
+		FilmGrain: parser.FilmGrainParams{Apply: true},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}.WithCompletedPostFilters(
+		FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterSuperRes,
+	)
+	if got := ctx.RemainingPostFilters(); got != FrameWorkPostFilterLoopRestoration|FrameWorkPostFilterFilmGrain {
+		t.Fatalf("remaining=%b", got)
+	}
+	plan, err := ctx.LoopRestorationPostFilterPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := tile.BindRestorationFrameRecordBuffers(plan, make([]tile.RestorationUnitRecord, plan.UnitRecordLen()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tile.ResetRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
+		t.Fatal(err)
+	}
+	size, err := ctx.LoopRestorationPostFilterScratchLen(records, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ctx.ApplyLoopRestorationPostFilter(FrameWorkRestorationPostFilterRequest{
+		Records:     records,
+		DataScratch: make([]uint16, size.Samples.DataLen),
+		DstScratch:  make([]uint16, size.Samples.DstLen),
+		Scratch:     testFrameWorkRestorationPostFilterScratch(size.Apply),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Planes != 1 || result.Records != 1 || result.FilteredRecords != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	if output.Y.Pix[0] != 0x33 {
+		t.Fatalf("output sample=%d want 0x33", output.Y.Pix[0])
+	}
+}
+
 func testFrameWorkRestorationPostFilterScratch(size tile.RestorationUnitRecordBoundaryScratchSize) tile.RestorationUnitRecordBoundaryScratch {
 	return tile.RestorationUnitRecordBoundaryScratch{
 		Unit: tile.RestorationUnitScratch{

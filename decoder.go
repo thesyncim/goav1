@@ -27,6 +27,9 @@ type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
 type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
 type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
 type DecoderFrameWorkPostFilterFunc = internaldecoder.FrameWorkPostFilterFunc
+type DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterStage
+type DecoderFrameWorkRestorationPostFilterRequest = internaldecoder.FrameWorkRestorationPostFilterRequest
+type DecoderFrameWorkRestorationPostFilterScratchSize = internaldecoder.FrameWorkRestorationPostFilterScratchSize
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
 type TileJob = internaltile.Job
@@ -65,6 +68,12 @@ const (
 	DecoderFrameWorkReferenceBwd     DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceBwd
 	DecoderFrameWorkReferenceAltRef2 DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceAltRef2
 	DecoderFrameWorkReferenceAltRef  DecoderFrameWorkReference = internaldecoder.FrameWorkReferenceAltRef
+
+	DecoderFrameWorkPostFilterLoopFilter      DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterLoopFilter
+	DecoderFrameWorkPostFilterCDEF            DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterCDEF
+	DecoderFrameWorkPostFilterSuperRes        DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterSuperRes
+	DecoderFrameWorkPostFilterLoopRestoration DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterLoopRestoration
+	DecoderFrameWorkPostFilterFilmGrain       DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterFilmGrain
 )
 
 var (

@@ -162,6 +162,43 @@ func TestFrameWorkPostFilterContextRequireNoActivePostFiltersRejectsActiveCompon
 	}
 }
 
+func TestFrameWorkPostFilterContextRemainingPostFilters(t *testing.T) {
+	active := FrameWorkPostFilterLoopFilter |
+		FrameWorkPostFilterCDEF |
+		FrameWorkPostFilterSuperRes |
+		FrameWorkPostFilterLoopRestoration |
+		FrameWorkPostFilterFilmGrain
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			LoopFilter:  parser.LoopFilterParams{LevelY: [2]uint8{1}},
+			CDEF:        parser.CDEFParams{Bits: 1},
+			FrameSize:   parser.FrameSize{SuperResEnabled: true},
+			Restoration: parser.RestorationParams{Type: [3]parser.RestorationType{parser.RestorationWiener}},
+			FilmGrain:   parser.FilmGrainParams{Apply: true},
+		},
+	}
+	if got := ctx.ActivePostFilters(); got != active {
+		t.Fatalf("active=%b want %b", got, active)
+	}
+	if got := ctx.RemainingPostFilters(); got != active {
+		t.Fatalf("remaining=%b want %b", got, active)
+	}
+
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterSuperRes | FrameWorkPostFilterStage(0x80))
+	want := FrameWorkPostFilterLoopRestoration | FrameWorkPostFilterFilmGrain
+	if got := ctx.RemainingPostFilters(); got != want {
+		t.Fatalf("remaining after pre-restoration stages=%b want %b", got, want)
+	}
+	if err := ctx.RequireNoActivePostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequireNoActivePostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopRestoration | FrameWorkPostFilterFilmGrain)
+	if got := ctx.RemainingPostFilters(); got != 0 {
+		t.Fatalf("remaining after all stages=%b want 0", got)
+	}
+}
+
 func TestFrameWorkStateRunStepWithPostFilterGateRejectsBeforePublish(t *testing.T) {
 	pool := testFramePool(t, 1)
 	surface, output, err := pool.Acquire()

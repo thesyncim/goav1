@@ -67,6 +67,8 @@ type FrameWorkPostFilterContext struct {
 	Output           *frame.Frame
 	ReferenceCount   int
 	ExecutedTileWork bool
+
+	completedPostFilters FrameWorkPostFilterStage
 }
 
 // FrameWorkPostFilterFunc applies final frame postfilters before reference

@@ -69,6 +69,20 @@ func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterSta
 	return stages
 }
 
+// WithCompletedPostFilters returns a callback-local view of ctx with stages
+// marked complete. It does not change ActivePostFilters, which remains the syntax
+// capability gate for callers that cannot run postfilters.
+func (ctx FrameWorkPostFilterContext) WithCompletedPostFilters(stages FrameWorkPostFilterStage) FrameWorkPostFilterContext {
+	ctx.completedPostFilters |= stages & ctx.ActivePostFilters()
+	return ctx
+}
+
+// RemainingPostFilters returns active stages that have not been marked complete
+// in this callback-local context.
+func (ctx FrameWorkPostFilterContext) RemainingPostFilters() FrameWorkPostFilterStage {
+	return ctx.ActivePostFilters() &^ ctx.completedPostFilters
+}
+
 // RequireNoActivePostFilters is a capability gate for callers that consume the
 // current reconstructed frame directly. It accepts frames whose postfilter plan
 // is a no-op and rejects frames that need loop filter, CDEF, superres, loop
@@ -129,15 +143,15 @@ func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(record
 }
 
 // ApplyLoopRestorationPostFilter applies loop restoration to ctx.Output. Earlier
-// postfilter stages that feed restoration must already be inactive; this keeps
-// the pipeline order explicit until deblock, CDEF, and superres have whole-frame
-// orchestration.
+// postfilter stages that feed restoration must already be inactive or marked
+// complete with WithCompletedPostFilters.
 func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWorkRestorationPostFilterRequest) (tile.RestorationFrameApplyResult, error) {
-	active := ctx.ActivePostFilters()
-	if active&^FrameWorkPostFilterLoopRestoration != 0 {
+	remaining := ctx.RemainingPostFilters()
+	preRestoration := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterSuperRes
+	if remaining&preRestoration != 0 {
 		return tile.RestorationFrameApplyResult{}, ErrUnsupportedPostFilter
 	}
-	if !active.Has(FrameWorkPostFilterLoopRestoration) {
+	if !remaining.Has(FrameWorkPostFilterLoopRestoration) {
 		return tile.RestorationFrameApplyResult{}, nil
 	}
 	if ctx.Output == nil {
