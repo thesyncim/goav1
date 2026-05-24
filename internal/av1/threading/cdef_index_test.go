@@ -147,6 +147,9 @@ func TestFrameWorkCDEFIndexMapMarkBlockRejectsInvalidInputs(t *testing.T) {
 	if err := shortMap.MarkBlock(ctx.CDEF, valid); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("short map err=%v want %v", err, ErrInvalidBatch)
 	}
+	if err := shortMap.Reset(); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("short reset err=%v want %v", err, ErrInvalidBatch)
+	}
 }
 
 func TestFrameWorkTileResidualControllerRecordsCDEFIndexMap(t *testing.T) {
@@ -192,6 +195,14 @@ func TestFrameWorkTileResidualControllerRecordsCDEFIndexMap(t *testing.T) {
 	if !cdefMap.Read[1] || cdefMap.Index[1] != 3 || stats.CoefficientBlocks != 2 {
 		t.Fatalf("second map read=%v index=%d stats=%+v", cdefMap.Read[1], cdefMap.Index[1], stats)
 	}
+	if err := cdefMap.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	for i := range cdefMap.Index {
+		if cdefMap.Read[i] || cdefMap.Index[i] != 0 {
+			t.Fatalf("reset unit %d read=%v index=%d want false,0", i, cdefMap.Read[i], cdefMap.Index[i])
+		}
+	}
 }
 
 func TestFrameWorkCDEFIndexMapAllocs(t *testing.T) {
@@ -212,6 +223,9 @@ func TestFrameWorkCDEFIndexMapAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := cdefMap.MarkBlock(ctx.CDEF, visit); err != nil {
+			t.Fatal(err)
+		}
+		if err := cdefMap.Reset(); err != nil {
 			t.Fatal(err)
 		}
 	})

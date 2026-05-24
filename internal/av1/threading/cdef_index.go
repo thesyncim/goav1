@@ -17,6 +17,17 @@ type FrameWorkCDEFIndexMap struct {
 	Rows   int
 }
 
+// Reset clears all decoded CDEF-unit state while preserving caller-owned
+// storage and shape.
+func (m FrameWorkCDEFIndexMap) Reset() error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	clear(m.Index[:m.Stride*m.Rows])
+	clear(m.Read[:m.Stride*m.Rows])
+	return nil
+}
+
 // CDEFIndexMapShape returns the frame-level 64x64 CDEF-unit grid dimensions.
 func (b FrameWorkBatch) CDEFIndexMapShape() (cols int, rows int, length int, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
