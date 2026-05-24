@@ -149,6 +149,74 @@ func (m RemoteManifest) SelectRemote(level SuiteLevel, labels VectorLabel, dst [
 	return dst
 }
 
+// LoadRemoteSuite downloads the selected remote vectors into cacheDir and
+// returns a byte-backed test suite plus parsed oracle digests. The downloaded
+// files stay in the caller's ignored cache; only checksum-pinned metadata is
+// expected to live in git.
+func LoadRemoteSuite(ctx context.Context, manifest RemoteManifest, cacheDir string, level SuiteLevel, labels VectorLabel) (Suite, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	return LoadRemoteSuiteWithClient(ctx, client, manifest, cacheDir, level, labels)
+}
+
+func LoadRemoteSuiteWithClient(ctx context.Context, client *http.Client, manifest RemoteManifest, cacheDir string, level SuiteLevel, labels VectorLabel) (Suite, error) {
+	if client == nil || cacheDir == "" {
+		return Suite{}, ErrInvalidRemote
+	}
+	if err := manifest.Validate(); err != nil {
+		return Suite{}, err
+	}
+	selected := manifest.SelectRemote(level, labels, nil)
+	if len(selected) == 0 {
+		return Suite{}, ErrMissingVector
+	}
+
+	vectors := make([]Vector, 0, len(selected))
+	var digests []FrameDigest
+	for _, remote := range selected {
+		streamPath, err := EnsureRemoteFileWithClient(ctx, client, cacheDir, manifest.BaseURL, remote.Stream)
+		if err != nil {
+			return Suite{}, err
+		}
+		streamData, err := os.ReadFile(streamPath)
+		if err != nil {
+			return Suite{}, err
+		}
+		vectors = append(vectors, Vector{
+			Tag:   remote.Tag,
+			Kind:  remote.Kind,
+			Name:  remote.Name,
+			Input: streamData,
+		})
+
+		switch remote.Oracle {
+		case OracleFrameMD5:
+			md5Path, err := EnsureRemoteFileWithClient(ctx, client, cacheDir, manifest.BaseURL, remote.MD5)
+			if err != nil {
+				return Suite{}, err
+			}
+			md5Data, err := os.ReadFile(md5Path)
+			if err != nil {
+				return Suite{}, err
+			}
+			parsed, err := ParseLibaomMD5Digests(remote.Tag, md5Data)
+			if err != nil {
+				return Suite{}, err
+			}
+			digests = append(digests, parsed...)
+		default:
+			return Suite{}, ErrInvalidRemote
+		}
+	}
+
+	return Suite{
+		Name: manifest.Name,
+		Manifest: Manifest{
+			Vectors: vectors,
+			Digests: digests,
+		},
+	}, nil
+}
+
 // EnsureRemoteFile returns a checksum-verified cache path for file, downloading
 // it from baseURL only when the cached copy is absent or corrupted.
 func EnsureRemoteFile(ctx context.Context, cacheDir string, baseURL string, file RemoteFile) (string, error) {

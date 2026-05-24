@@ -2,11 +2,13 @@ package threading
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -618,6 +620,118 @@ func TestFrameWorkBatchPredictBlockRejectsIncompletePlaneSupport(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockChromaCFLMatchesPrimitives(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	want := testBatchFrame(t, output.Format)
+	visit := testCFLPredictionVisit()
+	seedFrameWorkCFLPredictionFrame(output)
+	seedFrameWorkCFLPredictionFrame(want)
+
+	ctx := testIntraPredictionBatch(output)
+	var scratch FrameWorkCFLPredictionScratch
+	if err := ctx.PredictBlockChromaCFL(0, visit, &scratch); err != nil {
+		t.Fatal(err)
+	}
+
+	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
+	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneV)
+	assertFrameWorkPlaneBlockEqual(t, output.U, want.U, output.Layout.BytesPerSample, 8, 8, 8, 8)
+	assertFrameWorkPlaneBlockEqual(t, output.V, want.V, output.Layout.BytesPerSample, 8, 8, 8, 8)
+}
+
+func TestFrameWorkSubsampleLumaCFLQ3MatchesPrimitives(t *testing.T) {
+	tests := []struct {
+		name     string
+		bitDepth uint8
+		subX     bool
+		subY     bool
+	}{
+		{name: "lowbd-420", bitDepth: 8, subX: true, subY: true},
+		{name: "highbd-444", bitDepth: 10},
+		{name: "highbd-422", bitDepth: 12, subX: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			format := frame.Format{Width: 64, Height: 64, BitDepth: tt.bitDepth, SubsamplingX: tt.subX, SubsamplingY: tt.subY, Align: 128}
+			output := testBatchFrame(t, format)
+			bytesPerSample := output.Layout.BytesPerSample
+			const x = 16
+			const y = 16
+			const width = 16
+			const height = 16
+			stride := width + 5
+			max := int((1 << tt.bitDepth) - 1)
+			var got [prediction.CFLBufSquare]uint16
+			var want [prediction.CFLBufSquare]uint16
+			if bytesPerSample == 1 {
+				src := make([]uint8, stride*height)
+				for row := 0; row < height; row++ {
+					for col := 0; col < width; col++ {
+						value := uint8((17 + row*13 + col*19) & max)
+						src[row*stride+col] = value
+						setFrameWorkTestSample(output.Y, bytesPerSample, x+col, y+row, uint16(value))
+					}
+				}
+				if err := prediction.SubsampleLuma8ToQ3(want[:], src, stride, width, height, tt.subX, tt.subY); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				src := make([]uint16, stride*height)
+				for row := 0; row < height; row++ {
+					for col := 0; col < width; col++ {
+						value := uint16((257 + row*83 + col*41) & max)
+						src[row*stride+col] = value
+						setFrameWorkTestSample(output.Y, bytesPerSample, x+col, y+row, value)
+					}
+				}
+				if err := prediction.SubsampleLuma16ToQ3(want[:], src, stride, width, height, tt.subX, tt.subY, tt.bitDepth); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := frameWorkSubsampleLumaCFLQ3(got[:], output.Y, bytesPerSample, tt.bitDepth, x, y, width, height, tt.subX, tt.subY); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got[:], want[:]) {
+				t.Fatalf("subsample mismatch")
+			}
+		})
+	}
+}
+
+func TestFrameWorkBatchPredictBlockChromaCFLRejectsInvalidInputs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+	valid := testCFLPredictionVisit()
+	var scratch FrameWorkCFLPredictionScratch
+	if err := ctx.PredictBlockChromaCFL(0, valid, nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil scratch err=%v want %v", err, ErrInvalidBatch)
+	}
+	if err := ctx.PredictBlockChromaCFL(0, testIntraPredictionVisit(tile.IntraModeDC), &scratch); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("non-cfl err=%v want %v", err, ErrInvalidBatch)
+	}
+	noAlpha := valid
+	noAlpha.Prediction.CFLAlphaValid = false
+	if err := ctx.PredictBlockChromaCFL(0, noAlpha, &scratch); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("missing alpha err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockChromaCFLAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	seedFrameWorkCFLPredictionFrame(output)
+	ctx := testIntraPredictionBatch(output)
+	visit := testCFLPredictionVisit()
+	var scratch FrameWorkCFLPredictionScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockChromaCFL(0, visit, &scratch); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockChromaCFL allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockAllocs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	reference := testBatchFrame(t, output.Format)
@@ -1040,6 +1154,89 @@ func FuzzFrameWorkBatchPredictBlockLumaIntra(f *testing.F) {
 			}
 		}
 	})
+}
+
+func testCFLPredictionVisit() tile.BlockLoopVisit {
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Prediction.ChromaMode = tile.ChromaIntraModeCFL
+	visit.Prediction.ChromaModeValid = true
+	visit.Prediction.CFLAlpha = tile.CFLAlphaResult{Index: 0x21, JointSign: 7}
+	visit.Prediction.CFLAlphaValid = true
+	return visit
+}
+
+func seedFrameWorkCFLPredictionFrame(output *frame.Frame) {
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			value := uint16(35 + ((x-16)*7+(y-16)*11)%180)
+			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y, value)
+		}
+	}
+	for x := 8; x < 16; x++ {
+		setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, x, 7, uint16(50+x))
+		setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, x, 7, uint16(70+x))
+	}
+	for y := 8; y < 16; y++ {
+		setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, 7, y, uint16(90+y))
+		setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, 7, y, uint16(110+y))
+	}
+	setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, 7, 7, 80)
+	setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, 7, 7, 100)
+}
+
+func testPredictFrameWorkCFLWant(t *testing.T, output *frame.Frame, visit tile.BlockLoopVisit, plane FrameWorkPlane) {
+	t.Helper()
+	var dst frame.Plane
+	var predType prediction.CFLPredType
+	switch plane {
+	case FrameWorkPlaneU:
+		dst = output.U
+		predType = prediction.CFLPredU
+	case FrameWorkPlaneV:
+		dst = output.V
+		predType = prediction.CFLPredV
+	default:
+		t.Fatalf("bad plane=%d", plane)
+	}
+	recon := make([]uint16, prediction.CFLBufSquare)
+	ac := make([]int16, prediction.CFLBufSquare)
+	offset := 16*output.Y.Stride + 16
+	if err := prediction.SubsampleLuma8ToQ3(recon, output.Y.Pix[offset:], output.Y.Stride, 16, 16, true, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := prediction.SubtractCFLAverage(recon, ac, 8, 8); err != nil {
+		t.Fatal(err)
+	}
+	edges := testFrameWorkIntraEdges(output, dst, 8, 8, 8, 8)
+	if err := prediction.PredictIntraPlaneBlock(dst, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, prediction.IntraModeDC, edges); err != nil {
+		t.Fatal(err)
+	}
+	alphaQ3, err := prediction.CFLAlphaQ3(visit.Prediction.CFLAlpha.Index, visit.Prediction.CFLAlpha.JointSign, predType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prediction.PredictCFLPlaneBlock(dst, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, ac, alphaQ3); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testFrameWorkIntraEdges(output *frame.Frame, plane frame.Plane, x int, y int, width int, height int) prediction.IntraEdges {
+	above := make([]uint16, width)
+	left := make([]uint16, height)
+	for col := 0; col < width; col++ {
+		above[col] = frameWorkTestSample(plane, output.Layout.BytesPerSample, x+col, y-1)
+	}
+	for row := 0; row < height; row++ {
+		left[row] = frameWorkTestSample(plane, output.Layout.BytesPerSample, x-1, y+row)
+	}
+	return prediction.IntraEdges{
+		Above:              above,
+		Left:               left,
+		AboveAvailable:     true,
+		LeftAvailable:      true,
+		AboveLeft:          frameWorkTestSample(plane, output.Layout.BytesPerSample, x-1, y-1),
+		AboveLeftAvailable: true,
+	}
 }
 
 func testIntraPredictionBatch(output *frame.Frame) FrameWorkBatch {

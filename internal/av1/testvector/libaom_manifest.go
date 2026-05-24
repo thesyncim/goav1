@@ -2,6 +2,7 @@ package testvector
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 )
 
@@ -164,6 +165,10 @@ func LibaomRemoteManifest() RemoteManifest {
 
 func LibaomRemoteVector(tag Tag) (RemoteVector, bool) {
 	return LibaomRemoteManifest().FindRemote(tag)
+}
+
+func LibaomRemoteSuite(ctx context.Context, cacheDir string, level SuiteLevel, labels VectorLabel) (Suite, error) {
+	return LoadRemoteSuite(ctx, LibaomRemoteManifest(), cacheDir, level, labels)
 }
 
 func ParseLibaomMD5Digests(tag Tag, src []byte) ([]FrameDigest, error) {

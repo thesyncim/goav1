@@ -123,6 +123,110 @@ func TestEnsureRemoteFileDownloadsCachesAndRepairs(t *testing.T) {
 	}
 }
 
+func TestLoadRemoteSuiteDownloadsSelectedStreamsAndDigests(t *testing.T) {
+	files := map[string][]byte{
+		"quantizer.ivf":     []byte("quantizer stream"),
+		"quantizer.ivf.md5": []byte("00112233445566778899aabbccddeeff  frame0\nffeeddccbbaa99887766554433221100  frame1\n"),
+		"motion.ivf":        []byte("motion stream"),
+		"motion.ivf.md5":    []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  frame0\n"),
+	}
+	requests := make(map[string]int)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Path
+		if len(name) > 0 && name[0] == '/' {
+			name = name[1:]
+		}
+		payload, ok := files[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		requests[name]++
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manifest := RemoteManifest{
+		Name:    "remote-suite",
+		BaseURL: server.URL,
+		Vectors: []RemoteVector{
+			{
+				Tag:    TagDecoderLibaomQuantizer00,
+				Kind:   KindDecoder,
+				Name:   "quantizer",
+				Stream: RemoteFile{Name: "quantizer.ivf", SHA1: sha1Hex(files["quantizer.ivf"])},
+				MD5:    RemoteFile{Name: "quantizer.ivf.md5", SHA1: sha1Hex(files["quantizer.ivf.md5"])},
+				Oracle: OracleFrameMD5,
+				Levels: SuiteLevelFast | SuiteLevelFull,
+				Labels: VectorLabelQuantizer,
+			},
+			{
+				Tag:    TagDecoderLibaomMV,
+				Kind:   KindDecoder,
+				Name:   "motion",
+				Stream: RemoteFile{Name: "motion.ivf", SHA1: sha1Hex(files["motion.ivf"])},
+				MD5:    RemoteFile{Name: "motion.ivf.md5", SHA1: sha1Hex(files["motion.ivf.md5"])},
+				Oracle: OracleFrameMD5,
+				Levels: SuiteLevelRelevant | SuiteLevelFull,
+				Labels: VectorLabelMotion,
+			},
+		},
+	}
+
+	suite, err := LoadRemoteSuite(context.Background(), manifest, t.TempDir(), SuiteLevelFast, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suite.Name != manifest.Name {
+		t.Fatalf("suite name=%q want %q", suite.Name, manifest.Name)
+	}
+	if err := suite.Manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(suite.Manifest.Vectors) != 1 || string(suite.Manifest.Vectors[0].Input) != "quantizer stream" {
+		t.Fatalf("vectors=%+v", suite.Manifest.Vectors)
+	}
+	if len(suite.Manifest.Digests) != 2 || suite.Manifest.Digests[1].FrameIndex != 1 {
+		t.Fatalf("digests=%+v", suite.Manifest.Digests)
+	}
+	if requests["quantizer.ivf"] != 1 || requests["quantizer.ivf.md5"] != 1 ||
+		requests["motion.ivf"] != 0 || requests["motion.ivf.md5"] != 0 {
+		t.Fatalf("requests=%+v", requests)
+	}
+
+	motion, err := LoadRemoteSuite(context.Background(), manifest, t.TempDir(), SuiteLevelRelevant, VectorLabelMotion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(motion.Manifest.Vectors) != 1 || motion.Manifest.Vectors[0].Tag != TagDecoderLibaomMV {
+		t.Fatalf("motion vectors=%+v", motion.Manifest.Vectors)
+	}
+	if digest, ok := motion.Manifest.FindDigest(TagDecoderLibaomMV, 0); !ok || digest.MD5[0] != 0xaa {
+		t.Fatalf("motion digest=%x ok=%v", digest.MD5, ok)
+	}
+}
+
+func TestLoadRemoteSuiteRejectsEmptySelection(t *testing.T) {
+	manifest := RemoteManifest{
+		Name:    "empty-selection",
+		BaseURL: "https://example.invalid",
+		Vectors: []RemoteVector{{
+			Tag:    TagDecoderLibaomQuantizer00,
+			Kind:   KindDecoder,
+			Name:   "quantizer",
+			Stream: RemoteFile{Name: "quantizer.ivf", SHA1: sha1Hex([]byte("stream"))},
+			MD5:    RemoteFile{Name: "quantizer.ivf.md5", SHA1: sha1Hex([]byte("md5"))},
+			Oracle: OracleFrameMD5,
+			Levels: SuiteLevelFast,
+			Labels: VectorLabelQuantizer,
+		}},
+	}
+	_, err := LoadRemoteSuite(context.Background(), manifest, t.TempDir(), SuiteLevelRelevant, VectorLabelMotion)
+	if !errors.Is(err, ErrMissingVector) {
+		t.Fatalf("err=%v want %v", err, ErrMissingVector)
+	}
+}
+
 func TestEnsureRemoteFileRejectsChecksumMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("wrong"))

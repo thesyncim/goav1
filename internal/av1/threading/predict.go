@@ -36,11 +36,20 @@ var frameWorkQuantDistLookup = [4][2]int{
 }
 
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
-// intra prediction. Keep it outside FrameWorkTileResidualScratch so callers
-// that do not use built-in prediction pay no per-worker storage cost.
+// and chroma intra prediction. Keep it outside FrameWorkTileResidualScratch so
+// callers that do not use built-in prediction pay no per-worker storage cost.
 type FrameWorkIntraPredictionScratch struct {
 	Above [frameWorkDirectionalEdgeSamples]uint16
 	Left  [frameWorkDirectionalEdgeSamples]uint16
+}
+
+// FrameWorkCFLPredictionScratch carries caller-owned CfL luma AC buffers.
+// Callers only need this scratch when scheduling chroma CfL after luma
+// reconstruction.
+type FrameWorkCFLPredictionScratch struct {
+	Intra   FrameWorkIntraPredictionScratch
+	ReconQ3 [prediction.CFLBufSquare]uint16
+	ACQ3    [prediction.CFLBufSquare]int16
 }
 
 // FrameWorkInterPredictionScratch carries caller-owned temporary buffers for
@@ -142,14 +151,24 @@ func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.Block
 
 // PredictBlockIntra writes intra prediction pixels for every present plane of
 // one decoded intra block. Chroma DC, vertical, horizontal, directional, Paeth,
-// and smooth modes are supported; CfL is rejected until reconstruction can
-// predict chroma after luma residuals have been applied.
+// and smooth modes are supported. CfL callers should schedule
+// PredictBlockLumaIntra, luma residual reconstruction, then PredictBlockChromaCFL.
 func (b FrameWorkBatch) PredictBlockIntra(index int, visit tile.BlockLoopVisit, scratch *FrameWorkIntraPredictionScratch) error {
 	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
 		return ErrInvalidBatch
 	}
 	if err := b.PredictBlockLumaIntra(index, visit, scratch); err != nil {
 		return err
+	}
+	return b.PredictBlockChromaIntra(index, visit, scratch)
+}
+
+// PredictBlockChromaIntra writes non-CfL chroma intra prediction for one
+// decoded block-loop visit. It is split from PredictBlockIntra so the decode
+// loop can run luma prediction/reconstruction before CfL chroma.
+func (b FrameWorkBatch) PredictBlockChromaIntra(index int, visit tile.BlockLoopVisit, scratch *FrameWorkIntraPredictionScratch) error {
+	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
+		return ErrInvalidBatch
 	}
 	if b.Sequence.ColorConfig.MonoChrome {
 		return nil
@@ -166,6 +185,25 @@ func (b FrameWorkBatch) PredictBlockIntra(index int, visit tile.BlockLoopVisit, 
 		}
 	}
 	return nil
+}
+
+// PredictBlockChromaCFL writes CfL chroma prediction for one decoded block-loop
+// visit. The luma block in the output frame must already contain reconstructed
+// samples, matching libaom's luma-first CfL scheduling.
+func (b FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVisit, scratch *FrameWorkCFLPredictionScratch) error {
+	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra ||
+		!visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode != tile.ChromaIntraModeCFL ||
+		!visit.Prediction.CFLAlphaValid {
+		return ErrInvalidBatch
+	}
+	if b.Sequence.ColorConfig.MonoChrome ||
+		!tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: visit.Block.X4, Y4: visit.Block.Y4}, b.Sequence.ColorConfig) {
+		return ErrInvalidBatch
+	}
+	if err := b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneU, scratch); err != nil {
+		return err
+	}
+	return b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneV, scratch)
 }
 
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
@@ -253,6 +291,54 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 		return err
 	}
 	if err := prediction.PredictIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mode, edges); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {
+	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !present {
+		return err
+	}
+	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	luma := b.Output.Y
+	lumaX := geom.X
+	lumaY := geom.Y
+	lumaW := geom.Width
+	lumaH := geom.Height
+	if geom.SubsamplingX {
+		lumaX <<= 1
+		lumaW <<= 1
+	}
+	if geom.SubsamplingY {
+		lumaY <<= 1
+		lumaH <<= 1
+	}
+	if err := frameWorkSubsampleLumaCFLQ3(scratch.ReconQ3[:], luma, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, lumaX, lumaY, lumaW, lumaH, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		return err
+	}
+	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], geom.Width, geom.Height); err != nil {
+		return ErrInvalidBatch
+	}
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, &scratch.Intra)
+	if err != nil {
+		return err
+	}
+	if err := prediction.PredictIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, prediction.IntraModeDC, edges); err != nil {
+		return ErrInvalidBatch
+	}
+	predType := prediction.CFLPredU
+	if plane == FrameWorkPlaneV {
+		predType = prediction.CFLPredV
+	}
+	alphaQ3, err := prediction.CFLAlphaQ3(visit.Prediction.CFLAlpha.Index, visit.Prediction.CFLAlpha.JointSign, predType)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := prediction.PredictCFLPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.ACQ3[:], alphaQ3); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1052,6 +1138,110 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 	}
 	return x, y, width, height, color.SubsamplingX, color.SubsamplingY, true, nil
+}
+
+func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {
+	if !frameWorkPlaneBlockAddressable(plane, bytesPerSample, x, y, width, height) {
+		return ErrInvalidBatch
+	}
+	outW := width
+	outH := height
+	if subX {
+		if width&1 != 0 {
+			return ErrInvalidBatch
+		}
+		outW >>= 1
+	}
+	if subY {
+		if height&1 != 0 {
+			return ErrInvalidBatch
+		}
+		outH >>= 1
+	}
+	if outW <= 0 || outH <= 0 ||
+		width > prediction.CFLBufLine || height > prediction.CFLBufLine ||
+		!frameWorkMaskBlockFits(len(dst), prediction.CFLBufLine, outW, outH) {
+		return ErrInvalidBatch
+	}
+	if bytesPerSample == 1 {
+		if bitDepth != 8 {
+			return ErrInvalidBatch
+		}
+		rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		offset, ok := frameWorkCheckedAdd(rowOffset, x)
+		if !ok || offset < 0 || offset >= len(plane.Pix) {
+			return ErrInvalidBatch
+		}
+		if err := prediction.SubsampleLuma8ToQ3(dst, plane.Pix[offset:], plane.Stride, width, height, subX, subY); err != nil {
+			return ErrInvalidBatch
+		}
+		return nil
+	}
+	if bytesPerSample != 2 {
+		return ErrInvalidBatch
+	}
+	max, ok := frameWorkSampleMax(bitDepth)
+	if !ok || bitDepth <= 8 {
+		return ErrInvalidBatch
+	}
+	switch {
+	case subX && subY:
+		for row := 0; row < height; row += 2 {
+			outRow := row >> 1
+			for col := 0; col < width; col += 2 {
+				p0, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col, y+row)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				p1, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col+1, y+row)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				p2, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col, y+row+1)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				p3, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col+1, y+row+1)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				dst[outRow*prediction.CFLBufLine+(col>>1)] = (p0 + p1 + p2 + p3) << 1
+			}
+		}
+	case subX:
+		for row := 0; row < outH; row++ {
+			for col := 0; col < width; col += 2 {
+				p0, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col, y+row)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				p1, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col+1, y+row)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				dst[row*prediction.CFLBufLine+(col>>1)] = (p0 + p1) << 2
+			}
+		}
+	default:
+		for row := 0; row < outH; row++ {
+			for col := 0; col < outW; col++ {
+				p, ok := frameWorkLoadCFLSourceSample(plane, bytesPerSample, max, x+col, y+row)
+				if !ok {
+					return ErrInvalidBatch
+				}
+				dst[row*prediction.CFLBufLine+col] = p << 3
+			}
+		}
+	}
+	return nil
+}
+
+func frameWorkLoadCFLSourceSample(plane frame.Plane, bytesPerSample int, max uint16, x int, y int) (uint16, bool) {
+	sample, ok := frameWorkLoadSample(plane, bytesPerSample, x, y)
+	return sample, ok && sample <= max
 }
 
 func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {
