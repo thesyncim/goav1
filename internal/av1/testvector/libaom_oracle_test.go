@@ -39,6 +39,45 @@ func TestLibaomQuantizer00OfficialMD5Manifest(t *testing.T) {
 	}
 }
 
+func TestLibaomRemoteSuiteFullDownloads(t *testing.T) {
+	if os.Getenv("GOAV1_FULL_LIBAOM_VECTORS") != "1" {
+		t.Skip("set GOAV1_FULL_LIBAOM_VECTORS=1 to download the full libaom vector manifest")
+	}
+	manifest := LibaomRemoteManifest()
+	selected := manifest.SelectRemote(SuiteLevelFull, 0, nil)
+	if len(selected) == 0 {
+		t.Fatal("full libaom manifest selected no vectors")
+	}
+	suite, err := LibaomRemoteSuite(context.Background(), libaomCacheDir(t), SuiteLevelFull, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suite.Name != manifest.Name {
+		t.Fatalf("suite name=%q want %q", suite.Name, manifest.Name)
+	}
+	if err := suite.Manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(suite.Manifest.Vectors) != len(selected) {
+		t.Fatalf("vectors=%d want %d", len(suite.Manifest.Vectors), len(selected))
+	}
+	if len(suite.Manifest.Digests) < len(selected) {
+		t.Fatalf("digests=%d want at least %d", len(suite.Manifest.Digests), len(selected))
+	}
+	for _, remote := range selected {
+		vector, ok := suite.Manifest.Find(remote.Tag)
+		if !ok {
+			t.Fatalf("missing downloaded vector tag=%x", remote.Tag)
+		}
+		if vector.Name != remote.Name || len(vector.Input) == 0 {
+			t.Fatalf("vector tag=%x got name=%q bytes=%d", remote.Tag, vector.Name, len(vector.Input))
+		}
+		if _, ok := suite.Manifest.FindDigest(remote.Tag, 0); !ok {
+			t.Fatalf("missing frame0 digest for tag=%x", remote.Tag)
+		}
+	}
+}
+
 func TestLibaomQuantizer00StreamEvents(t *testing.T) {
 	vector := mustLibaomRemoteVector(t, TagDecoderLibaomQuantizer00)
 	ivfData := readLibaomRemoteFile(t, vector.Stream)

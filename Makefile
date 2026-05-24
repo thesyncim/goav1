@@ -136,6 +136,7 @@ testvectors-fast:
 	go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomQuantizer00|TestFrameMD5|TestOracleEnabled|TestLibaomRemoteManifest' -count=1
 
 testvectors-full: testvectors
+	GOAV1_FULL_LIBAOM_VECTORS=1 go test -tags goav1_oracle ./internal/av1/testvector -run TestLibaomRemoteSuiteFullDownloads -count=1
 
 test-motion-conformance:
 	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
