@@ -37,6 +37,19 @@ var frameWorkQuantDistLookup = [4][2]int{
 	{13, 3},
 }
 
+var frameWorkOBMCMask1 = [1]uint8{64}
+var frameWorkOBMCMask2 = [2]uint8{45, 64}
+var frameWorkOBMCMask4 = [4]uint8{39, 50, 59, 64}
+var frameWorkOBMCMask8 = [8]uint8{36, 42, 48, 53, 57, 61, 64, 64}
+var frameWorkOBMCMask16 = [16]uint8{34, 37, 40, 43, 46, 49, 52, 54, 56, 58, 60, 61, 64, 64, 64, 64}
+var frameWorkOBMCMask32 = [32]uint8{33, 35, 36, 38, 40, 41, 43, 44, 45, 47, 48, 50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 60, 61, 62, 64, 64, 64, 64, 64, 64, 64, 64}
+var frameWorkOBMCMask64 = [64]uint8{
+	33, 34, 35, 35, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 44, 44,
+	45, 46, 47, 47, 48, 49, 50, 51, 51, 51, 52, 52, 53, 54, 55, 56,
+	56, 56, 57, 57, 58, 58, 59, 60, 60, 60, 60, 60, 61, 62, 62, 62,
+	62, 62, 63, 63, 63, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+}
+
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
 // and chroma intra prediction. Keep it outside FrameWorkTileResidualScratch so
 // callers that do not use built-in prediction pay no per-worker storage cost.
@@ -112,6 +125,12 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 		}
 		return b.PredictBlockLumaInterCompound(index, visit, scratch.Inter)
 	}
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeOBMC {
+		if scratch == nil || scratch.Inter == nil {
+			return ErrInvalidBatch
+		}
+		return b.PredictBlockLumaInterOBMC(index, visit, scratch.Inter)
+	}
 	return b.PredictBlockLumaInter(index, visit)
 }
 
@@ -139,6 +158,17 @@ func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.Block
 		}
 		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
 			if err := b.predictBlockInterCompoundPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeOBMC {
+		if scratch == nil {
+			return ErrInvalidBatch
+		}
+		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+			if err := b.predictBlockInterOBMCPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
 				return err
 			}
 		}
@@ -555,6 +585,22 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 	return b.predictBlockInterPlaneWithFilters(index, visit, FrameWorkPlaneY, filters)
 }
 
+// PredictBlockLumaInterOBMC writes single-reference luma inter prediction and
+// blends the above/left OBMC neighbor predictors selected by motion_mode.
+func (b FrameWorkBatch) PredictBlockLumaInterOBMC(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockLumaInterOBMCWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockLumaInterOBMCWithFilters is PredictBlockLumaInterOBMC with
+// explicit interpolation filters for the current block's base predictor.
+func (b FrameWorkBatch) PredictBlockLumaInterOBMCWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	return b.predictBlockInterOBMCPlaneWithFilters(index, visit, FrameWorkPlaneY, scratch, filters)
+}
+
 // PredictBlockLumaInterCompoundAverage writes average compound luma inter
 // prediction for one decoded block-loop visit. Inter-intra, scaled references,
 // and warped/global refinement are handled by later inter-prediction stages.
@@ -631,6 +677,50 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+func (b FrameWorkBatch) predictBlockInterOBMCPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if scratch == nil ||
+		!visit.Prediction.Valid ||
+		visit.Prediction.Intra ||
+		!visit.Prediction.InterMotionValid ||
+		!visit.Prediction.MotionModeValid ||
+		visit.Prediction.MotionMode != tile.MotionModeOBMC ||
+		!visit.Prediction.OverlappableNeighborsValid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !ok {
+		return err
+	}
+	if err := b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters); err != nil {
+		return err
+	}
+	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		return err
+	}
+	neighbors := visit.Prediction.OverlappableNeighbors
+	for i := 0; i < neighbors.AboveCount; i++ {
+		if err := b.predictAndBlendOBMCAbove(plane, geom, tmp, visit.Block, neighbors.Above[i]); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < neighbors.LeftCount; i++ {
+		if err := b.predictAndBlendOBMCLeft(plane, geom, tmp, visit.Block, neighbors.Left[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
@@ -852,6 +942,106 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		return ErrInvalidBatch
 	}
 	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor) error {
+	if !neighbor.InterpFiltersValid {
+		return ErrInvalidBatch
+	}
+	relX, ok := frameWorkOBMCPlaneOffset(neighbor.RelX4, geom.SubsamplingX)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	width, ok := frameWorkOBMCPlaneSpan(neighbor.Span4, geom.SubsamplingX)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	height, err := frameWorkOBMCAboveHeight(block.Size, geom)
+	if err != nil {
+		return err
+	}
+	if width > geom.Width-relX {
+		width = geom.Width - relX
+	}
+	if width <= 0 || height <= 0 {
+		return ErrInvalidBatch
+	}
+	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, relX, 0, geom.X+relX, geom.Y, width, height); err != nil {
+		return err
+	}
+	mask, ok := frameWorkOBMCMask(height)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	return frameWorkBlendOBMCV(geom.Output, tmp, geom.BytesPerSample, geom.X+relX, geom.Y, relX, 0, width, height, mask)
+}
+
+func (b FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor) error {
+	if !neighbor.InterpFiltersValid {
+		return ErrInvalidBatch
+	}
+	relY, ok := frameWorkOBMCPlaneOffset(neighbor.RelY4, geom.SubsamplingY)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	height, ok := frameWorkOBMCPlaneSpan(neighbor.Span4, geom.SubsamplingY)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	width, err := frameWorkOBMCLeftWidth(block.Size, geom)
+	if err != nil {
+		return err
+	}
+	if height > geom.Height-relY {
+		height = geom.Height - relY
+	}
+	if width <= 0 || height <= 0 {
+		return ErrInvalidBatch
+	}
+	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, 0, relY, geom.X, geom.Y+relY, width, height); err != nil {
+		return err
+	}
+	mask, ok := frameWorkOBMCMask(width)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	return frameWorkBlendOBMCH(geom.Output, tmp, geom.BytesPerSample, geom.X, geom.Y+relY, 0, relY, width, height, mask)
+}
+
+func (b FrameWorkBatch) predictOBMCNeighborToScratch(dst frame.Plane, plane FrameWorkPlane, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int) error {
+	motionResult := neighbor.Motion
+	if !motionResult.References.Ref[0].Valid() {
+		return ErrInvalidBatch
+	}
+	return b.predictInterReferenceAreaToScratch(dst, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, dstX, dstY, absX, absY, width, height, neighbor.InterpFilters)
+}
+
+func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filters motion.InterpFilters) error {
+	if !frameWorkPlaneBlockAddressable(dst, geom.BytesPerSample, dstX, dstY, width, height) {
+		return ErrInvalidBatch
+	}
+	reference, ok := frameWorkReferenceFromTile(refFrame)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, plane)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(absX, absY, mv, geom.SubsamplingX, geom.SubsamplingY)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1502,6 +1692,140 @@ func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, heigh
 
 func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int) error {
 	return frameWorkBlendCompoundBlock(dst, first, second, bytesPerSample, dstX, dstY, width, height, 8, 8)
+}
+
+func frameWorkOBMCAboveHeight(size tile.BlockSize, geom frameWorkPredictionPlaneGeometry) (int, error) {
+	dims, ok := size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	overlap := int(dims.H4) * 4
+	if overlap > 64 {
+		overlap = 64
+	}
+	overlap >>= 1
+	if geom.SubsamplingY {
+		overlap >>= 1
+	}
+	if overlap < 1 {
+		overlap = 1
+	}
+	if overlap > geom.Height {
+		overlap = geom.Height
+	}
+	return overlap, nil
+}
+
+func frameWorkOBMCLeftWidth(size tile.BlockSize, geom frameWorkPredictionPlaneGeometry) (int, error) {
+	dims, ok := size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	overlap := int(dims.W4) * 4
+	if overlap > 64 {
+		overlap = 64
+	}
+	overlap >>= 1
+	if geom.SubsamplingX {
+		overlap >>= 1
+	}
+	if overlap < 1 {
+		overlap = 1
+	}
+	if overlap > geom.Width {
+		overlap = geom.Width
+	}
+	return overlap, nil
+}
+
+func frameWorkOBMCPlaneOffset(rel4 int, subsampled bool) (int, bool) {
+	offset := rel4 * 4
+	if subsampled {
+		if offset&1 != 0 {
+			return 0, false
+		}
+		offset >>= 1
+	}
+	return offset, offset >= 0
+}
+
+func frameWorkOBMCPlaneSpan(span4 uint8, subsampled bool) (int, bool) {
+	span := int(span4) * 4
+	if subsampled {
+		span = (span + 1) >> 1
+	}
+	return span, span > 0
+}
+
+func frameWorkOBMCMask(length int) ([]uint8, bool) {
+	switch length {
+	case 1:
+		return frameWorkOBMCMask1[:], true
+	case 2:
+		return frameWorkOBMCMask2[:], true
+	case 4:
+		return frameWorkOBMCMask4[:], true
+	case 8:
+		return frameWorkOBMCMask8[:], true
+	case 16:
+		return frameWorkOBMCMask16[:], true
+	case 32:
+		return frameWorkOBMCMask32[:], true
+	case 64:
+		return frameWorkOBMCMask64[:], true
+	default:
+		return nil, false
+	}
+}
+
+func frameWorkBlendOBMCV(dst frame.Plane, tmp frame.Plane, bytesPerSample int, dstX int, dstY int, tmpX int, tmpY int, width int, height int, mask []uint8) error {
+	if len(mask) < height ||
+		!frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
+		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
+		return ErrInvalidBatch
+	}
+	for row := 0; row < height; row++ {
+		m := uint16(mask[row])
+		for col := 0; col < width; col++ {
+			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			b, ok := frameWorkLoadSample(tmp, bytesPerSample, tmpX+col, tmpY+row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			if !frameWorkStoreSample(dst, bytesPerSample, dstX+col, dstY+row, frameWorkBlendA64(m, a, b)) {
+				return ErrInvalidBatch
+			}
+		}
+	}
+	return nil
+}
+
+func frameWorkBlendOBMCH(dst frame.Plane, tmp frame.Plane, bytesPerSample int, dstX int, dstY int, tmpX int, tmpY int, width int, height int, mask []uint8) error {
+	if len(mask) < width ||
+		!frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
+		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
+		return ErrInvalidBatch
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			m := uint16(mask[col])
+			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			b, ok := frameWorkLoadSample(tmp, bytesPerSample, tmpX+col, tmpY+row)
+			if !ok {
+				return ErrInvalidBatch
+			}
+			if !frameWorkStoreSample(dst, bytesPerSample, dstX+col, dstY+row, frameWorkBlendA64(m, a, b)) {
+				return ErrInvalidBatch
+			}
+		}
+	}
+	return nil
 }
 
 func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int) error {
@@ -2554,4 +2878,38 @@ func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (u
 	default:
 		return 0, false
 	}
+}
+
+func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) bool {
+	if x < 0 || y < 0 || x >= plane.Width || y >= plane.Height {
+		return false
+	}
+	rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
+	if !ok {
+		return false
+	}
+	colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
+	if !ok {
+		return false
+	}
+	offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
+	if !ok || offset < 0 {
+		return false
+	}
+	switch bytesPerSample {
+	case 1:
+		if value > 0xff || offset >= len(plane.Pix) {
+			return false
+		}
+		plane.Pix[offset] = byte(value)
+	case 2:
+		if offset > len(plane.Pix)-2 {
+			return false
+		}
+		plane.Pix[offset] = byte(value)
+		plane.Pix[offset+1] = byte(value >> 8)
+	default:
+		return false
+	}
+	return true
 }

@@ -190,6 +190,9 @@ type BlockPredictionModeResult struct {
 	MotionMode      MotionMode
 	MotionModeValid bool
 
+	OverlappableNeighbors      OverlappableNeighborSet
+	OverlappableNeighborsValid bool
+
 	CompoundBlend      CompoundBlendResult
 	CompoundBlendValid bool
 }

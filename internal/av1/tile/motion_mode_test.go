@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -34,6 +35,99 @@ func TestMotionModeCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 
 	if _, err := cdfs.MotionModeCDF(BlockSize16x4); !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("disallowed motion cdf err=%v want %v", err, entropy.ErrInvalidCDF)
+	}
+}
+
+func TestCountOverlappableNeighborsMatchesLibaomScan(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: -5}},
+	}
+
+	var ctx BlockModeContext
+	seedAboveMotion(&ctx, 0, BlockSize8x8, inter)
+	seedAboveMotion(&ctx, 2, BlockSize8x8, inter)
+	seedLeftMotion(&ctx, 0, BlockSize8x8, inter)
+
+	count, err := ctx.CountOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize16x16,
+		VisibleW4: 4,
+		VisibleH4: 4,
+		HaveTop:   true,
+		HaveLeft:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d want two above neighbors and no left scan", count)
+	}
+
+	ctx = BlockModeContext{}
+	if err := ctx.MarkIntra(BlockSize16x16, 0, 0, true, IntraModeDC); err != nil {
+		t.Fatal(err)
+	}
+	seedLeftMotion(&ctx, 0, BlockSize8x8, inter)
+	seedLeftMotion(&ctx, 2, BlockSize8x8, inter)
+	count, err = ctx.CountOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize16x16,
+		VisibleW4: 4,
+		VisibleH4: 4,
+		HaveTop:   true,
+		HaveLeft:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d want left neighbors when above has none", count)
+	}
+}
+
+func TestCountOverlappableNeighborsPortsFourByFourPairing(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 1, Col: 2}},
+	}
+
+	var ctx BlockModeContext
+	if err := ctx.MarkIntra(BlockSize4x4, 0, 0, true, IntraModeDC); err != nil {
+		t.Fatal(err)
+	}
+	seedAboveMotion(&ctx, 1, BlockSize4x4, inter)
+	count, err := ctx.CountOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize8x8,
+		VisibleW4: 2,
+		VisibleH4: 2,
+		HaveTop:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("count=%d want paired 4x4 above neighbor", count)
+	}
+
+	ctx = BlockModeContext{}
+	if err := ctx.MarkIntra(BlockSize4x4, 0, 0, true, IntraModeDC); err != nil {
+		t.Fatal(err)
+	}
+	seedLeftMotion(&ctx, 1, BlockSize4x4, inter)
+	count, err = ctx.CountOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize8x8,
+		VisibleW4: 2,
+		VisibleH4: 2,
+		HaveLeft:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("count=%d want paired 4x4 left neighbor", count)
 	}
 }
 

@@ -739,6 +739,53 @@ func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
+func TestFrameWorkBatchPredictBlockLumaInterOBMCLeftMatchesLibaomMask(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(reference, 0xff, 17)
+	ctx := testInterPredictionBatch(output, reference)
+
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.MotionMode = tile.MotionModeOBMC
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.OverlappableNeighborsValid = true
+	visit.Prediction.OverlappableNeighbors.LeftCount = 1
+	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+		RelY4: 0,
+		Span4: 4,
+		Size:  tile.BlockSize16x16,
+		Motion: tile.InterMotionResult{
+			References: visit.Prediction.InterMotion.References,
+			MV:         [2]motion.Vector{{Col: 8}},
+		},
+		InterpFilters:      motion.RegularFilters,
+		InterpFiltersValid: true,
+	}
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterOBMCWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+
+	mask, ok := frameWorkOBMCMask(8)
+	if !ok {
+		t.Fatal("missing 8-wide obmc mask")
+	}
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			base := frameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y)
+			want := base
+			if x < 24 {
+				neighbor := frameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x+1, y)
+				want = frameWorkBlendA64(uint16(mask[x-16]), base, neighbor)
+			}
+			if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterChromaSubsampledMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128})
 	reference := testBatchFrame(t, output.Format)

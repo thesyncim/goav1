@@ -141,7 +141,6 @@ type BlockLoopRequest struct {
 	EnableInterIntraCompound bool
 	SwitchableMotionMode     bool
 	AllowWarpedMotion        bool
-	OverlappableNeighbors    int
 	NumProjRef               int
 
 	EnableMaskedCompound  bool
@@ -700,6 +699,18 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					result.InterIntraValid = true
 				}
 				if req.DecodeMotionModes {
+					overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
+						Size:      block.Size,
+						X4:        block.X4,
+						Y4:        block.Y4,
+						VisibleW4: block.VisibleW4,
+						VisibleH4: block.VisibleH4,
+						HaveTop:   block.HaveTop,
+						HaveLeft:  block.HaveLeft,
+					})
+					if err != nil {
+						return BlockPredictionModeResult{}, err
+					}
 					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
 						Size:                  block.Size,
 						Mode:                  mode.Mode,
@@ -711,7 +722,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						ForceIntegerMV:        req.ForceIntegerMV,
 						GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
 						ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
-						OverlappableNeighbors: req.OverlappableNeighbors,
+						OverlappableNeighbors: overlappableNeighbors.MotionModeCount(),
 						NumProjRef:            req.NumProjRef,
 					})
 					if err != nil {
@@ -719,6 +730,10 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					}
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
+					if motionMode == MotionModeOBMC {
+						result.OverlappableNeighbors = overlappableNeighbors
+						result.OverlappableNeighborsValid = true
+					}
 				}
 				if req.DecodeCompoundBlend && refs.Compound {
 					blend, err := s.ReadCompoundBlend(cdfs.Blend, ctx, CompoundBlendRequest{
