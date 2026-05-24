@@ -108,8 +108,8 @@ func TestFrameWorkCDEFIndexMapMarkBlockSkipsUncodedSyntax(t *testing.T) {
 	if err := cdefMap.MarkBlock(singleStrength, nonSkip); err != nil {
 		t.Fatal(err)
 	}
-	if cdefMap.Read[0] || cdefMap.Index[0] != 0 {
-		t.Fatalf("single strength marked read=%v index=%d want false,0", cdefMap.Read[0], cdefMap.Index[0])
+	if !cdefMap.Read[0] || cdefMap.Index[0] != 0 {
+		t.Fatalf("single strength marked read=%v index=%d want true,0", cdefMap.Read[0], cdefMap.Index[0])
 	}
 }
 
