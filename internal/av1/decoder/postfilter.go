@@ -206,6 +206,11 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 	if remaining&^supported != 0 {
 		return ctx, result, ErrUnsupportedPostFilter
 	}
+	if remaining.Has(FrameWorkPostFilterFilmGrain) {
+		if err := ctx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
+			return ctx, result, err
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
 		if err != nil {

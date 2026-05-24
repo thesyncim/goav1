@@ -44,20 +44,25 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	ScalingPoints [3]int
 	ARCoeffs      [3]int
 
-	LumaGrain  int
-	LumaLine   int
-	LumaColumn int
+	LumaGrain   int
+	LumaSamples int
+	LumaLine    int
+	LumaColumn  int
 }
 
 // FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
-// ApplyFilmGrainPostFilter. The currently supported no-op subset needs none.
-type FrameWorkFilmGrainPostFilterRequest struct{}
+// ApplyFilmGrainPostFilter.
+type FrameWorkFilmGrainPostFilterRequest struct {
+	LumaGrain   []int16
+	LumaSamples []uint16
+}
 
 // FrameWorkFilmGrainPostFilterResult summarizes film-grain postfilter work.
 type FrameWorkFilmGrainPostFilterResult struct {
 	Plan FrameWorkFilmGrainPostFilterPlan
 
-	NoOp bool
+	NoOp     bool
+	LumaRows int
 }
 
 // FrameWorkFilmGrainPostFilterScalingLUTs contains the 8-bit-domain scaling
@@ -175,6 +180,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 	}
 	if plan.Planes[0].Active {
 		size.LumaGrain = filmgrain.LumaGrainSamples
+		size.LumaSamples = plan.Planes[0].Stride * plan.Planes[0].Height
 		size.LumaLine = filmgrain.LumaOverlapSamples * plan.Planes[0].Stride
 		size.LumaColumn = filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples
 	}
@@ -280,7 +286,6 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []
 // It only completes the stage when the signaled grain is a true no-op; active
 // synthesis still rejects before mutating ctx.Output.
 func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilmGrainPostFilterRequest) (FrameWorkFilmGrainPostFilterResult, error) {
-	_ = req
 	remaining := ctx.RemainingPostFilters()
 	preFilmGrain := FrameWorkPostFilterLoopFilter |
 		FrameWorkPostFilterCDEF |
@@ -297,7 +302,35 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 		return FrameWorkFilmGrainPostFilterResult{}, err
 	}
 	if !frameWorkFilmGrainNoOp(plan.Params) {
-		return FrameWorkFilmGrainPostFilterResult{}, ErrUnsupportedPostFilter
+		if !frameWorkFilmGrainLumaOnlySupported(plan) {
+			return FrameWorkFilmGrainPostFilterResult{}, ErrUnsupportedPostFilter
+		}
+		if plan.Params.ScalingShift < 8 || plan.Params.ScalingShift > 11 {
+			return FrameWorkFilmGrainPostFilterResult{}, frame.ErrInvalidFormat
+		}
+		luts, err := ctx.FilmGrainPostFilterScalingLUTs()
+		if err != nil {
+			return FrameWorkFilmGrainPostFilterResult{}, err
+		}
+		grain, err := ctx.GenerateFilmGrainLumaGrain(req.LumaGrain)
+		if err != nil {
+			return FrameWorkFilmGrainPostFilterResult{}, err
+		}
+		luma, err := frame.LoadSamplePlane(req.LumaSamples, ctx.Output.Y, ctx.Output.Layout.BytesPerSample)
+		if err != nil {
+			return FrameWorkFilmGrainPostFilterResult{}, err
+		}
+		rows := (plan.Planes[0].Height + filmgrain.LumaBlockSize - 1) / filmgrain.LumaBlockSize
+		for row := 0; row < rows; row++ {
+			rowStart := row * filmgrain.LumaBlockSize * luma.Stride
+			if _, err := ctx.ApplyFilmGrainLumaRow(luma.Pix[rowStart:], luma.Pix[rowStart:], grain.Grain, luts.LUTs[0][:], row); err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, err
+			}
+		}
+		if err := frame.StoreSamplePlane(ctx.Output.Y, ctx.Output.Layout.BytesPerSample, luma); err != nil {
+			return FrameWorkFilmGrainPostFilterResult{}, err
+		}
+		return FrameWorkFilmGrainPostFilterResult{Plan: plan, LumaRows: rows}, nil
 	}
 	return FrameWorkFilmGrainPostFilterResult{Plan: plan, NoOp: true}, nil
 }
@@ -307,7 +340,34 @@ func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, erro
 	if err != nil {
 		return false, err
 	}
-	return plan.Active && frameWorkFilmGrainNoOp(plan.Params), nil
+	return plan.Active && (frameWorkFilmGrainNoOp(plan.Params) || frameWorkFilmGrainLumaOnlySupported(plan)), nil
+}
+
+func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req FrameWorkFilmGrainPostFilterRequest) error {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return err
+	}
+	if !plan.Active || frameWorkFilmGrainNoOp(plan.Params) {
+		return nil
+	}
+	if !frameWorkFilmGrainLumaOnlySupported(plan) {
+		return ErrUnsupportedPostFilter
+	}
+	if plan.Params.ScalingShift < 8 || plan.Params.ScalingShift > 11 {
+		return frame.ErrInvalidFormat
+	}
+	size, err := ctx.FilmGrainPostFilterScratchLen()
+	if err != nil {
+		return err
+	}
+	if len(req.LumaGrain) < size.LumaGrain || len(req.LumaSamples) < size.LumaSamples {
+		return frame.ErrShortBuffer
+	}
+	if _, err := ctx.FilmGrainPostFilterScalingLUTs(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format frame.Format) error {
@@ -367,6 +427,10 @@ func frameWorkFilmGrainNoOp(params parser.FilmGrainParams) bool {
 		params.NumYPoints == 0 &&
 		params.NumCbPoints == 0 &&
 		params.NumCrPoints == 0
+}
+
+func frameWorkFilmGrainLumaOnlySupported(plan FrameWorkFilmGrainPostFilterPlan) bool {
+	return plan.Planes[0].Active && !plan.Planes[1].Active && !plan.Planes[2].Active
 }
 
 func frameWorkFilmGrainSampleStride(strideBytes int, bytesPerSample int) int {
