@@ -58,6 +58,9 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolve
 	if !plan.Active || plan.MICols != cols || plan.MIRows != rows || plan.Cells != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
 		t.Fatalf("plan=%+v", plan)
 	}
+	if plan.TransformReadyBlocks != 1 || plan.SkipTransformBlocks != 0 || plan.LumaTXBs != 1 {
+		t.Fatalf("transform stats=%+v", plan)
+	}
 	wantYV := FrameWorkLoopFilterPostFilterLevelStats{Blocks: 1, NonZero: 1, MaxLevel: 14}
 	if got := plan.Levels[loopfilter.PlaneY][loopfilter.EdgeVertical]; got != wantYV {
 		t.Fatalf("Y vertical=%+v want %+v", got, wantYV)
@@ -73,6 +76,39 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolve
 	wantV := FrameWorkLoopFilterPostFilterLevelStats{Blocks: 1, NonZero: 1, MaxLevel: 3}
 	if got := plan.Levels[loopfilter.PlaneV][loopfilter.EdgeVertical]; got != wantV {
 		t.Fatalf("V vertical=%+v want %+v", got, wantV)
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsTransformReplay(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          32,
+		UpscaledWidth:       32,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	first.SkipTransform = true
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	second.TransformTree = tile.TransformTreeResult{
+		Y:        tile.TransformSize16x16,
+		Variable: true,
+		Split:    [2]uint16{1, 0},
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+	}
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{Map: filterMap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Blocks != 2 || plan.TransformReadyBlocks != 2 || plan.SkipTransformBlocks != 1 || plan.LumaTXBs != 4 {
+		t.Fatalf("plan=%+v", plan)
 	}
 }
 
@@ -133,15 +169,29 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 }
 
 func testFrameWorkLoopFilterPostFilterRecord(cols int, rows int) threading.FrameWorkLoopFilterBlockRecord {
+	return testFrameWorkLoopFilterPostFilterRecordAt(0, 0, cols, rows)
+}
+
+func testFrameWorkLoopFilterPostFilterRecordAt(col0 int, row0 int, col1 int, row1 int) threading.FrameWorkLoopFilterBlockRecord {
+	visibleW4 := uint8(col1 - col0)
+	visibleH4 := uint8(row1 - row0)
 	return threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
 		Block: tile.BlockVisit{
-			MIColEnd: uint32(cols),
-			MIRowEnd: uint32(rows),
+			MICol:     uint32(col0),
+			MIRow:     uint32(row0),
+			MIColEnd:  uint32(col1),
+			MIRowEnd:  uint32(row1),
+			X4:        col0,
+			Y4:        row0,
+			Size:      tile.BlockSize16x16,
+			VisibleW4: visibleW4,
+			VisibleH4: visibleH4,
 		},
-		SegmentID: 0,
-		RefFrame:  0,
-		Mode:      loopfilter.ModeDeltaClassZero,
+		TransformTree: tile.TransformTreeResult{Y: tile.TransformSize16x16},
+		SegmentID:     0,
+		RefFrame:      0,
+		Mode:          loopfilter.ModeDeltaClassZero,
 	}
 }
 

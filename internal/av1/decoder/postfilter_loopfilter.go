@@ -4,6 +4,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
+	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 // FrameWorkLoopFilterMap is the decoded frame-level loop-filter metadata map.
@@ -34,6 +35,10 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	Cells   int
 	Blocks  int
 	Missing int
+
+	TransformReadyBlocks int
+	SkipTransformBlocks  int
+	LumaTXBs             int
 
 	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
 }
@@ -83,6 +88,9 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 			}
 			plan.Blocks++
 			if err := frameWorkResolveLoopFilterLevels(ctx, record, &plan); err != nil {
+				return plan, err
+			}
+			if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
 				return plan, err
 			}
 		}
@@ -136,6 +144,42 @@ func frameWorkValidateLoopFilterMap(filterMap FrameWorkLoopFilterMap, cols int, 
 		return threading.ErrInvalidBatch
 	}
 	return nil
+}
+
+func frameWorkAccumulateLoopFilterTransformStats(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan) error {
+	req, err := frameWorkLoopFilterTransformTreeRequest(ctx, record)
+	if err != nil {
+		return err
+	}
+	plan.TransformReadyBlocks++
+	if record.SkipTransform {
+		plan.SkipTransformBlocks++
+		return nil
+	}
+	return record.TransformTree.ForEachLumaTXB(req, func(tile.TransformBlock) error {
+		plan.LumaTXBs++
+		return nil
+	})
+}
+
+func frameWorkLoopFilterTransformTreeRequest(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord) (tile.TransformTreeRequest, error) {
+	block := record.Block
+	dims, ok := block.Size.Dimensions()
+	if !ok || block.VisibleW4 == 0 || block.VisibleH4 == 0 ||
+		block.VisibleW4 > dims.W4 || block.VisibleH4 > dims.H4 ||
+		block.X4 < 0 || block.Y4 < 0 {
+		return tile.TransformTreeRequest{}, threading.ErrInvalidBatch
+	}
+	return tile.TransformTreeRequest{
+		Size:          block.Size,
+		X4:            block.X4,
+		Y4:            block.Y4,
+		VisibleW4:     block.VisibleW4,
+		VisibleH4:     block.VisibleH4,
+		Color:         ctx.Event.SequenceHeader.ColorConfig,
+		Inter:         !record.Intra,
+		SkipTransform: record.SkipTransform,
+	}, nil
 }
 
 func frameWorkValidateLoopFilterRecord(record threading.FrameWorkLoopFilterBlockRecord, col int, row int, cols int, rows int) error {
