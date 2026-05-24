@@ -4,6 +4,7 @@ import "github.com/thesyncim/goav1/internal/av1/motion"
 
 const (
 	motionFieldMaxFrameDistance = 31
+	motionFieldMFMVStackSize    = 3
 	motionFieldMVUpper          = 1 << 14
 	motionFieldMVLower          = -(1 << 14)
 	motionFieldMaxOffsetWidth   = 64
@@ -31,6 +32,34 @@ type TemporalMotionEntry struct {
 	MV             motion.Vector
 	RefFrameOffset int
 	Valid          bool
+}
+
+// TemporalMotionReferenceFrame describes one resolved AV1 reference frame's
+// MV_REF side data and order-hint metadata.
+type TemporalMotionReferenceFrame struct {
+	Frame *ReferenceMVFrame
+
+	OrderHint     uint32
+	RefOrderHints [referenceFrameCount]uint32
+
+	IntraOnly bool
+}
+
+// TemporalMotionSetupRequest describes libaom's av1_setup_motion_field() pass
+// for the current frame.
+type TemporalMotionSetupRequest struct {
+	EnableOrderHint  bool
+	OrderHintBits    uint8
+	CurrentOrderHint uint32
+
+	References [referenceFrameCount]TemporalMotionReferenceFrame
+}
+
+// TemporalMotionSetupStats reports which setup projections were attempted.
+type TemporalMotionSetupStats struct {
+	Projections int
+	LastOverlay bool
+	RefStamp    int
 }
 
 // TemporalMotionProjectionRequest describes one libaom motion_field_projection
@@ -77,6 +106,81 @@ func (f *TemporalMotionField) Clear() {
 	for i := range f.Entries {
 		f.Entries[i] = TemporalMotionEntry{}
 	}
+}
+
+// Setup ports libaom's av1_setup_motion_field() projection order. The field is
+// cleared only when order hints are enabled, matching libaom's early return.
+func (f *TemporalMotionField) Setup(req TemporalMotionSetupRequest) (TemporalMotionSetupStats, error) {
+	if err := f.validate(); err != nil {
+		return TemporalMotionSetupStats{}, err
+	}
+	stats := TemporalMotionSetupStats{RefStamp: motionFieldMFMVStackSize - 1}
+	if !req.EnableOrderHint {
+		return stats, nil
+	}
+	if _, err := motionFieldRelativeOrderHint(req.OrderHintBits, 0, req.CurrentOrderHint); err != nil {
+		return TemporalMotionSetupStats{}, err
+	}
+	f.Clear()
+
+	refOrderHints := temporalReferenceOrderHints(req.References)
+	if req.References[ReferenceFrameLast].Frame != nil {
+		stats.LastOverlay = req.References[ReferenceFrameLast].RefOrderHints[ReferenceFrameAltref] == refOrderHints[ReferenceFrameGolden]
+		if !stats.LastOverlay {
+			projected, err := f.projectSetupReference(req, ReferenceFrameLast, true)
+			if err != nil {
+				return TemporalMotionSetupStats{}, err
+			}
+			if projected {
+				stats.Projections++
+			}
+		}
+		stats.RefStamp--
+	}
+
+	for _, ref := range [...]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref2} {
+		future, err := temporalReferenceFuture(req.OrderHintBits, refOrderHints[ref], req.CurrentOrderHint)
+		if err != nil {
+			return TemporalMotionSetupStats{}, err
+		}
+		if !future {
+			continue
+		}
+		projected, err := f.projectSetupReference(req, ref, false)
+		if err != nil {
+			return TemporalMotionSetupStats{}, err
+		}
+		if projected {
+			stats.RefStamp--
+			stats.Projections++
+		}
+	}
+
+	future, err := temporalReferenceFuture(req.OrderHintBits, refOrderHints[ReferenceFrameAltref], req.CurrentOrderHint)
+	if err != nil {
+		return TemporalMotionSetupStats{}, err
+	}
+	if future && stats.RefStamp >= 0 {
+		projected, err := f.projectSetupReference(req, ReferenceFrameAltref, false)
+		if err != nil {
+			return TemporalMotionSetupStats{}, err
+		}
+		if projected {
+			stats.RefStamp--
+			stats.Projections++
+		}
+	}
+
+	if stats.RefStamp >= 0 {
+		projected, err := f.projectSetupReference(req, ReferenceFrameLast2, true)
+		if err != nil {
+			return TemporalMotionSetupStats{}, err
+		}
+		if projected {
+			stats.Projections++
+		}
+	}
+	return stats, nil
 }
 
 // ProjectReferenceFrame ports libaom's motion_field_projection() inner pass.
@@ -139,6 +243,21 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 	return true, nil
 }
 
+func (f *TemporalMotionField) projectSetupReference(req TemporalMotionSetupRequest, ref ReferenceFrame, backward bool) (bool, error) {
+	start := req.References[ref]
+	if start.Frame == nil || start.IntraOnly {
+		return false, nil
+	}
+	return f.ProjectReferenceFrame(TemporalMotionProjectionRequest{
+		StartFrame:         start.Frame,
+		OrderHintBits:      req.OrderHintBits,
+		CurrentOrderHint:   req.CurrentOrderHint,
+		StartOrderHint:     start.OrderHint,
+		StartRefOrderHints: start.RefOrderHints,
+		Backward:           backward,
+	})
+}
+
 func (f *TemporalMotionField) validate() error {
 	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
 		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
@@ -153,6 +272,22 @@ func validateReferenceMVFrame(f *ReferenceMVFrame) error {
 		return ErrInvalidDecodeState
 	}
 	return nil
+}
+
+func temporalReferenceOrderHints(refs [referenceFrameCount]TemporalMotionReferenceFrame) [referenceFrameCount]uint32 {
+	var hints [referenceFrameCount]uint32
+	for ref := ReferenceFrameLast; ref < referenceFrameCount; ref++ {
+		hints[ref] = refs[ref].OrderHint
+	}
+	return hints
+}
+
+func temporalReferenceFuture(bits uint8, ref uint32, current uint32) (bool, error) {
+	distance, err := motionFieldRelativeOrderHint(bits, ref, current)
+	if err != nil {
+		return false, err
+	}
+	return distance > 0, nil
 }
 
 func motionFieldRefOffsets(bits uint8, start uint32, refs [referenceFrameCount]uint32) ([referenceFrameCount]int, error) {

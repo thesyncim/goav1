@@ -160,6 +160,122 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 	}
 }
 
+func TestTemporalMotionFieldSetupMatchesLibaomOverlayAndLast2(t *testing.T) {
+	field := newTemporalMotionFieldForTest(t, 16, 16)
+	field.Entries[0] = TemporalMotionEntry{
+		MV:    motion.Vector{Row: 99, Col: 99},
+		Valid: true,
+	}
+	last := newReferenceMVFrameForTest(t, 16, 16)
+	last.Entries[4*last.Stride+4] = ReferenceMVEntry{
+		Ref:   ReferenceFrameLast,
+		MV:    motion.Vector{Row: 64, Col: 128},
+		Valid: true,
+	}
+	last2 := newReferenceMVFrameForTest(t, 16, 16)
+	last2.Entries[4*last2.Stride+4] = ReferenceMVEntry{
+		Ref:   ReferenceFrameLast,
+		MV:    motion.Vector{Row: 128, Col: 64},
+		Valid: true,
+	}
+
+	var refs [referenceFrameCount]TemporalMotionReferenceFrame
+	refs[ReferenceFrameLast] = temporalReferenceFrameForSetupTest(last, 4, ReferenceFrameLast, 0)
+	refs[ReferenceFrameLast].RefOrderHints[ReferenceFrameAltref] = 12
+	refs[ReferenceFrameLast2] = temporalReferenceFrameForSetupTest(last2, 4, ReferenceFrameLast, 0)
+	refs[ReferenceFrameGolden].OrderHint = 12
+
+	stats, err := field.Setup(TemporalMotionSetupRequest{
+		EnableOrderHint:  true,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		References:       refs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (TemporalMotionSetupStats{Projections: 1, LastOverlay: true, RefStamp: 1}) {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if field.Entries[0].Valid {
+		t.Fatalf("stale entry was not cleared: %+v", field.Entries[0])
+	}
+	if got := field.Entries[3*field.Stride+2]; got.Valid {
+		t.Fatalf("overlay LAST projection wrote entry: %+v", got)
+	}
+	want := TemporalMotionEntry{
+		MV:             motion.Vector{Row: 128, Col: 64},
+		RefFrameOffset: 4,
+		Valid:          true,
+	}
+	if got := field.Entries[2*field.Stride+3]; got != want {
+		t.Fatalf("LAST2 entry=%+v want %+v", got, want)
+	}
+}
+
+func TestTemporalMotionFieldSetupPortsLibaomProjectionBudget(t *testing.T) {
+	field := newTemporalMotionFieldForTest(t, 16, 16)
+	last := newReferenceMVFrameForTest(t, 16, 16)
+	last.Entries[7*last.Stride+7] = ReferenceMVEntry{Ref: ReferenceFrameLast, Valid: true}
+	bwd := newReferenceMVFrameForTest(t, 16, 16)
+	bwd.Entries[0] = ReferenceMVEntry{Ref: ReferenceFrameLast, MV: motion.Vector{Row: 8}, Valid: true}
+	altref2 := newReferenceMVFrameForTest(t, 16, 16)
+	altref2.Entries[1] = ReferenceMVEntry{Ref: ReferenceFrameLast, MV: motion.Vector{Row: 16}, Valid: true}
+	altref := newReferenceMVFrameForTest(t, 16, 16)
+	altref.Entries[2] = ReferenceMVEntry{Ref: ReferenceFrameLast, MV: motion.Vector{Row: 24}, Valid: true}
+
+	var refs [referenceFrameCount]TemporalMotionReferenceFrame
+	refs[ReferenceFrameLast] = temporalReferenceFrameForSetupTest(last, 4, ReferenceFrameLast, 0)
+	refs[ReferenceFrameLast].RefOrderHints[ReferenceFrameAltref] = 3
+	refs[ReferenceFrameBWD] = temporalReferenceFrameForSetupTest(bwd, 12, ReferenceFrameLast, 8)
+	refs[ReferenceFrameAltref2] = temporalReferenceFrameForSetupTest(altref2, 13, ReferenceFrameLast, 9)
+	refs[ReferenceFrameAltref] = temporalReferenceFrameForSetupTest(altref, 14, ReferenceFrameLast, 10)
+
+	stats, err := field.Setup(TemporalMotionSetupRequest{
+		EnableOrderHint:  true,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		References:       refs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (TemporalMotionSetupStats{Projections: 3, RefStamp: -1}) {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if got := field.Entries[7*field.Stride+7]; !got.Valid {
+		t.Fatalf("LAST projection missing: %+v", got)
+	}
+	if got := field.Entries[0]; got != (TemporalMotionEntry{MV: motion.Vector{Row: 8}, RefFrameOffset: 4, Valid: true}) {
+		t.Fatalf("BWD projection=%+v", got)
+	}
+	if got := field.Entries[1]; got != (TemporalMotionEntry{MV: motion.Vector{Row: 16}, RefFrameOffset: 4, Valid: true}) {
+		t.Fatalf("ALTREF2 projection=%+v", got)
+	}
+	if got := field.Entries[2]; got.Valid {
+		t.Fatalf("ALTREF should be skipped after projection budget: %+v", got)
+	}
+}
+
+func TestTemporalMotionFieldSetupDisabledMatchesLibaomEarlyReturn(t *testing.T) {
+	field := newTemporalMotionFieldForTest(t, 16, 16)
+	field.Entries[0] = TemporalMotionEntry{
+		MV:             motion.Vector{Row: 5, Col: 7},
+		RefFrameOffset: 3,
+		Valid:          true,
+	}
+	stats, err := field.Setup(TemporalMotionSetupRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (TemporalMotionSetupStats{RefStamp: motionFieldMFMVStackSize - 1}) {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if got := field.Entries[0]; got != (TemporalMotionEntry{MV: motion.Vector{Row: 5, Col: 7}, RefFrameOffset: 3, Valid: true}) {
+		t.Fatalf("disabled setup changed field entry=%+v", got)
+	}
+}
+
 func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 	start := newReferenceMVFrameForTest(t, 16, 16)
 	start.Entries[4*start.Stride+4] = ReferenceMVEntry{
@@ -176,14 +292,35 @@ func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 		StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
 		Backward:           true,
 	}
+	var setupRefs [referenceFrameCount]TemporalMotionReferenceFrame
+	setupRefs[ReferenceFrameLast] = temporalReferenceFrameForSetupTest(start, 4, ReferenceFrameLast, 0)
+	setup := TemporalMotionSetupRequest{
+		EnableOrderHint:  true,
+		OrderHintBits:    5,
+		CurrentOrderHint: 8,
+		References:       setupRefs,
+	}
 	allocs := testing.AllocsPerRun(1000, func() {
 		field.Clear()
 		if _, err := field.ProjectReferenceFrame(req); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := field.Setup(setup); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if allocs != 0 {
-		t.Fatalf("ProjectReferenceFrame allocated: %f", allocs)
+		t.Fatalf("motion field projection allocated: %f", allocs)
+	}
+}
+
+func temporalReferenceFrameForSetupTest(frame *ReferenceMVFrame, orderHint uint32, ref ReferenceFrame, refOrderHint uint32) TemporalMotionReferenceFrame {
+	var hints [referenceFrameCount]uint32
+	hints[ref] = refOrderHint
+	return TemporalMotionReferenceFrame{
+		Frame:         frame,
+		OrderHint:     orderHint,
+		RefOrderHints: hints,
 	}
 }
 
