@@ -49,6 +49,9 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeTransformTree
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterReferences
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterMode
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadMotionVector
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReferenceMVStack
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildReferenceMVStack
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadMotionMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterIntra
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCompoundBlend
@@ -92,6 +95,7 @@ fuzz-smoke:
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzIntraEdgeDecisions
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzCFLSubsampleAndPredict
 	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlock
+	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlockFromOriginFullpel
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobPayload
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobEntropyReader
@@ -99,6 +103,8 @@ fuzz-smoke:
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchLoopRestorationPlan
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchReconstructBlockCoeff
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchDecodeAndReconstructJobResiduals
+	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkDistanceWeightedCompoundOffsets
+	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchPredictBlockLumaIntra
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseQuantizationParams
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseSegmentationParams
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseDeltaParams
