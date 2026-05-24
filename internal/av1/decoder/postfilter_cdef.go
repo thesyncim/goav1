@@ -92,6 +92,9 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
 		return FrameWorkCDEFPostFilterResult{}, nil
 	}
+	if err := ctx.validateCDEFPostFilterRequest(req); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
 	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
@@ -104,17 +107,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		return FrameWorkCDEFPostFilterResult{}, err
 	}
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
-	unitCount := cols * rows
-	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
-		return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
-	}
-	if len(req.InputScratch) < cdef.InputBufferSize || len(req.UnitDstScratch) < cdef.InputBufferSize {
-		return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
-	}
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
-	if coeffShift < 0 || coeffShift > 4 {
-		return FrameWorkCDEFPostFilterResult{}, frame.ErrInvalidFormat
-	}
 
 	var result FrameWorkCDEFPostFilterResult
 	var directions cdef.DirectionGrid
@@ -150,6 +143,59 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		result.Planes++
 	}
 	return result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWorkCDEFPostFilterRequest) error {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return nil
+	}
+	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return err
+	}
+	indexMap := req.IndexMap
+	if frameWorkCDEFIndexMapEmpty(indexMap) && ctx.CDEFIndexMap != nil {
+		indexMap = *ctx.CDEFIndexMap
+	}
+	if err := frameWorkValidateCDEFIndexMap(indexMap, cols, rows); err != nil {
+		return err
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	unitCount := cols * rows
+	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
+		return frame.ErrShortBuffer
+	}
+	if len(req.InputScratch) < cdef.InputBufferSize || len(req.UnitDstScratch) < cdef.InputBufferSize {
+		return frame.ErrShortBuffer
+	}
+	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	if coeffShift < 0 || coeffShift > 4 {
+		return frame.ErrInvalidFormat
+	}
+	for plane := 0; plane < 3; plane++ {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		need, err := frame.SamplePlaneLen(planeFrame, ctx.Output.Layout.BytesPerSample)
+		if err != nil {
+			return err
+		}
+		if len(req.SampleScratch[plane]) < need || len(req.DstScratch[plane]) < need {
+			return frame.ErrShortBuffer
+		}
+	}
+	return nil
 }
 
 func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {

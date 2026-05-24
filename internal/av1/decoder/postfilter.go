@@ -221,6 +221,11 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 			return ctx, result, err
 		}
 	}
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
+			return ctx, result, err
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		loopFilterResult, err := ctx.ApplyLoopFilterEdges(req.LoopFilter)
 		if err != nil {

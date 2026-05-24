@@ -1147,6 +1147,62 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsLoopFilterThenCD
 	}
 }
 
+func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsShortCDEFScratchBeforeLoopFilterMutation(t *testing.T) {
+	const width = 32
+	const height = 16
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	first := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 4, 4)
+	second := testFrameWorkLoopFilterPostFilterRecordAt(4, 0, 8, 4)
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, first, second)
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	beforeY := append([]byte(nil), output.Y.Pix...)
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		LoopFilter: parser.LoopFilterParams{
+			LevelY:    [2]uint8{63},
+			Sharpness: 1,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	cdefReq := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	scratchSize, err := ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{CDEF: cdefReq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefReq.InputScratch = cdefReq.InputScratch[:len(cdefReq.InputScratch)-1]
+
+	next, result, err := ctx.ApplySupportedPostFilters(FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Edges: make([]FrameWorkLoopFilterPostFilterEdge, scratchSize.LoopFilter.Edges),
+		},
+		CDEF: cdefReq,
+	})
+	if !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("ApplySupportedPostFilters err=%v want %v", err, frame.ErrShortBuffer)
+	}
+	if result != (FrameWorkPostFilterResult{}) || next.RemainingPostFilters() != ctx.RemainingPostFilters() {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if !bytes.Equal(output.Y.Pix, beforeY) {
+		t.Fatal("short CDEF scratch mutated output through earlier loop filter")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesSkipsInactive(t *testing.T) {
 	result, err := (FrameWorkPostFilterContext{}).ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{})
 	if err != nil {
