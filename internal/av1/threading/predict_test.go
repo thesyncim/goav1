@@ -261,6 +261,26 @@ func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
+func TestFrameWorkBatchPredictBlockInterChromaSubsampledMatchesMotion(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0x3ff)
+	ctx := testInterPredictionBatch(output, reference)
+	mv := motion.Vector{Col: 3, Row: -5}
+	filters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpMultiTapSharp}
+	visit := testInterPredictionVisit(mv)
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	wantY := testFrameWorkMotionPredictionPlane(t, reference.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv, filters)
+	wantU := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv, true, true, filters)
+	wantV := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv, true, true, filters)
+	assertFrameWorkPlaneBlockEqualAt(t, output.Y, 16, 16, wantY, 0, 0, output.Layout.BytesPerSample, 16, 16)
+	assertFrameWorkPlaneBlockEqualAt(t, output.U, 8, 8, wantU, 0, 0, output.Layout.BytesPerSample, 8, 8)
+	assertFrameWorkPlaneBlockEqualAt(t, output.V, 8, 8, wantV, 0, 0, output.Layout.BytesPerSample, 8, 8)
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -315,6 +335,35 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *test
 			assertFrameWorkCompoundBlendEqual(t, output.Y, first, second, output.Layout.BytesPerSample, 16, 16, 16, 16, fwdOffset, bckOffset)
 		})
 	}
+}
+
+func TestFrameWorkBatchPredictBlockInterCompoundChromaSubsampledMatchesMotion(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceVariant(last, 0xff, 19)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 73)
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 3, Row: 5}
+	mv1 := motion.Vector{Col: -5, Row: 1}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeDistWtd)
+
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	firstU := testFrameWorkMotionPredictionPlaneSubsampled(t, last.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondU := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	firstV := testFrameWorkMotionPredictionPlaneSubsampled(t, last.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv0, true, true, filters)
+	secondV := testFrameWorkMotionPredictionPlaneSubsampled(t, bwd.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 8, 8, mv1, true, true, filters)
+	fwdOffset, bckOffset, err := ctx.frameWorkCompoundOffsets(visit.Prediction.InterMotion.References, visit.Prediction.CompoundBlend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkCompoundBlendEqual(t, output.U, firstU, secondU, output.Layout.BytesPerSample, 8, 8, 8, 8, fwdOffset, bckOffset)
+	assertFrameWorkCompoundBlendEqual(t, output.V, firstV, secondV, output.Layout.BytesPerSample, 8, 8, 8, 8, fwdOffset, bckOffset)
 }
 
 func TestFrameWorkCompoundDistanceWeightedOffsetsMatchLibaom(t *testing.T) {
@@ -756,7 +805,12 @@ func testIntraPredictionBatch(output *frame.Frame) FrameWorkBatch {
 		Output: output,
 		FrameWorkFrameContext: FrameWorkFrameContext{
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: output.Format.BitDepth},
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     output.Format.BitDepth,
+					MonoChrome:   output.Format.MonoChrome,
+					SubsamplingX: output.Format.SubsamplingX,
+					SubsamplingY: output.Format.SubsamplingY,
+				},
 			}),
 			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
 		},
@@ -770,7 +824,12 @@ func testInterPredictionBatch(output *frame.Frame, reference *frame.Frame) Frame
 		References: []*frame.Frame{reference},
 		FrameWorkFrameContext: FrameWorkFrameContext{
 			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: output.Format.BitDepth},
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     output.Format.BitDepth,
+					MonoChrome:   output.Format.MonoChrome,
+					SubsamplingX: output.Format.SubsamplingX,
+					SubsamplingY: output.Format.SubsamplingY,
+				},
 			}),
 			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
 			TileInfo:  parser.TileInfo{InterpolationFilter: parser.InterpolationEightTap},
@@ -892,12 +951,17 @@ func frameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int) ui
 
 func assertFrameWorkPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, bytesPerSample int, x int, y int, width int, height int) {
 	t.Helper()
+	assertFrameWorkPlaneBlockEqualAt(t, got, x, y, want, x, y, bytesPerSample, width, height)
+}
+
+func assertFrameWorkPlaneBlockEqualAt(t *testing.T, got frame.Plane, gotX int, gotY int, want frame.Plane, wantX int, wantY int, bytesPerSample int, width int, height int) {
+	t.Helper()
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
-			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
-			w := frameWorkTestSample(want, bytesPerSample, x+col, y+row)
+			g := frameWorkTestSample(got, bytesPerSample, gotX+col, gotY+row)
+			w := frameWorkTestSample(want, bytesPerSample, wantX+col, wantY+row)
 			if g != w {
-				t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, g, w)
+				t.Fatalf("sample(%d,%d)=%d want %d", gotX+col, gotY+row, g, w)
 			}
 		}
 	}
@@ -947,6 +1011,25 @@ func testFrameWorkMotionPredictionPlane(t *testing.T, reference frame.Plane, byt
 	return dst
 }
 
+func testFrameWorkMotionPredictionPlaneSubsampled(t *testing.T, reference frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv motion.Vector, subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) frame.Plane {
+	t.Helper()
+	stride := width * bytesPerSample
+	dst := frame.Plane{
+		Pix:    make([]byte, stride*height),
+		Stride: stride,
+		Width:  width,
+		Height: height,
+	}
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, reference, bytesPerSample, bitDepth, 0, 0, refX, refY, width, height, subX, subY, filters); err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
 func fillFrameWorkInterReference(reference *frame.Frame, max uint16) {
 	for y := 0; y < reference.Y.Height; y++ {
 		for x := 0; x < reference.Y.Width; x++ {
@@ -955,10 +1038,26 @@ func fillFrameWorkInterReference(reference *frame.Frame, max uint16) {
 	}
 }
 
+func fillFrameWorkInterReferenceAllPlanes(reference *frame.Frame, max uint16) {
+	fillFrameWorkInterReference(reference, max)
+	for y := 0; y < reference.U.Height; y++ {
+		for x := 0; x < reference.U.Width; x++ {
+			setFrameWorkTestSample(reference.U, reference.Layout.BytesPerSample, x, y, uint16((5*x*x+7*y*y+13*x+19*y+23)&int(max)))
+			setFrameWorkTestSample(reference.V, reference.Layout.BytesPerSample, x, y, uint16((11*x*x+3*y*y+29*x+31*y+37)&int(max)))
+		}
+	}
+}
+
 func fillFrameWorkInterReferenceVariant(reference *frame.Frame, max uint16, seed uint16) {
 	for y := 0; y < reference.Y.Height; y++ {
 		for x := 0; x < reference.Y.Width; x++ {
 			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((29*x+31*y+int(seed))&int(max)))
+		}
+	}
+	for y := 0; y < reference.U.Height; y++ {
+		for x := 0; x < reference.U.Width; x++ {
+			setFrameWorkTestSample(reference.U, reference.Layout.BytesPerSample, x, y, uint16((17*x+23*y+int(seed)*3)&int(max)))
+			setFrameWorkTestSample(reference.V, reference.Layout.BytesPerSample, x, y, uint16((41*x+43*y+int(seed)*5)&int(max)))
 		}
 	}
 }

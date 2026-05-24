@@ -162,6 +162,34 @@ func TestWalkBlocksBoundaryForcedSplit(t *testing.T) {
 	}
 }
 
+func TestWalkBlocksNeighborBoundsCanSpanRootRequests(t *testing.T) {
+	reader := scriptedPartitionReader{partitions: []Partition{PartitionNone}}
+	var ctx PartitionContext
+	var got BlockVisit
+	stats, err := walkBlocks(&ctx, BlockWalkRequest{
+		Root:               BlockLevel64x64,
+		MIColStart:         16,
+		MIRowStart:         0,
+		MIColEnd:           32,
+		MIRowEnd:           16,
+		UseNeighborBounds:  true,
+		NeighborMIColStart: 0,
+		NeighborMIRowStart: 0,
+	}, reader.read, func(visit BlockVisit) error {
+		got = visit
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (BlockWalkStats{PartitionReads: 1, Blocks: 1}) {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !got.HaveLeft || got.HaveTop || got.X4 != 0 || got.Y4 != 0 {
+		t.Fatalf("visit=%+v want left neighbor across root and root-local x/y", got)
+	}
+}
+
 func TestWalkBlocksScriptedH4V4EdgeClipping(t *testing.T) {
 	reader := scriptedPartitionReader{partitions: []Partition{PartitionH4, PartitionV4}}
 	var ctx PartitionContext

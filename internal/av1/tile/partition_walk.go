@@ -9,6 +9,14 @@ type BlockWalkRequest struct {
 	MIRowStart uint32
 	MIColEnd   uint32
 	MIRowEnd   uint32
+
+	// NeighborMI*Start names the tile/job boundary used for HaveTop and
+	// HaveLeft when UseNeighborBounds is set. Block-loop callers that walk one
+	// root at a time set these to the full job origin so block mode syntax
+	// still sees neighbors across root boundaries.
+	UseNeighborBounds  bool
+	NeighborMIColStart uint32
+	NeighborMIRowStart uint32
 }
 
 // BlockVisit describes one decoded leaf block from AV1's partition tree.
@@ -317,9 +325,23 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 		Size:      size,
 		VisibleW4: uint8(miEndCol - miCol),
 		VisibleH4: uint8(miEndRow - miRow),
-		HaveTop:   miRow > w.req.MIRowStart,
-		HaveLeft:  miCol > w.req.MIColStart,
+		HaveTop:   miRow > w.req.neighborMIRowStart(),
+		HaveLeft:  miCol > w.req.neighborMIColStart(),
 	})
+}
+
+func (req BlockWalkRequest) neighborMIColStart() uint32 {
+	if req.UseNeighborBounds {
+		return req.NeighborMIColStart
+	}
+	return req.MIColStart
+}
+
+func (req BlockWalkRequest) neighborMIRowStart() uint32 {
+	if req.UseNeighborBounds {
+		return req.NeighborMIRowStart
+	}
+	return req.MIRowStart
 }
 
 func partitionContextSlot(rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) (int, int, error) {

@@ -73,6 +73,50 @@ func TestDecodeBlockLoopReadsPrefixDeltaAndSegments(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockLoopPreservesNeighborAvailabilityAcrossRoots(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 16), Job{Offset: 0, Size: 16}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
+	req := BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			Root:       BlockLevel64x64,
+			MIColStart: 0,
+			MIRowStart: 0,
+			MIColEnd:   32,
+			MIRowEnd:   16,
+		},
+		SBSizeMIB: 16,
+	}
+
+	var scratch BlockLoopScratch
+	var visits []BlockLoopVisit
+	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
+		Partition: &partitionCDFs,
+		Mode:      &modeCDFs,
+		Delta:     deltaCDFs,
+	}, &scratch, req, func(visit BlockLoopVisit) error {
+		visits = append(visits, visit)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Blocks != 2 || stats.PartitionReads != 2 {
+		t.Fatalf("stats=%+v want two root blocks", stats)
+	}
+	if len(visits) != 2 {
+		t.Fatalf("visits=%d want 2", len(visits))
+	}
+	if visits[0].Block.HaveLeft || visits[1].Block.HaveTop || !visits[1].Block.HaveLeft {
+		t.Fatalf("neighbor flags first=%+v second=%+v", visits[0].Block, visits[1].Block)
+	}
+	if visits[1].Block.X4 != 0 || visits[1].Block.MICol != 16 {
+		t.Fatalf("second root x4/mi=%+v", visits[1].Block)
+	}
+}
+
 func TestDecodeBlockLoopSegmentationPreskipAndMaps(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {

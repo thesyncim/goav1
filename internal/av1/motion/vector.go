@@ -110,6 +110,31 @@ func ReferenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX in
 	return refX, refY, subX, subY, nil
 }
 
+// ReferenceOriginSubsampled returns the reference-plane origin and AV1 Q4
+// subpel offsets for a plane that may be chroma-subsampled. This ports
+// libaom's init_subpel_params() position rule: luma uses mv*2 to convert Q3
+// motion vectors to Q4 filter offsets, while a subsampled chroma axis uses mv
+// directly in that plane's Q4 units.
+func ReferenceOriginSubsampled(dstX int, dstY int, mv Vector, subsamplingX bool, subsamplingY bool) (refX int, refY int, subX int, subY int, err error) {
+	scaleX := int64(2)
+	if subsamplingX {
+		scaleX = 1
+	}
+	scaleY := int64(2)
+	if subsamplingY {
+		scaleY = 1
+	}
+	refX, subX, err = referenceOriginQ4(dstX, int64(mv.Col)*scaleX)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	refY, subY, err = referenceOriginQ4(dstY, int64(mv.Row)*scaleY)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return refX, refY, subX, subY, nil
+}
+
 // PredictInterPlaneBlock predicts a block using AV1's regular translational
 // interpolation filter for fractional vectors.
 func PredictInterPlaneBlock(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, mv Vector) error {
@@ -205,6 +230,15 @@ func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane
 
 func referenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX int, subY int, err error) {
 	return ReferenceOrigin(dstX, dstY, mv)
+}
+
+func referenceOriginQ4(dst int, mvQ4 int64) (int, int, error) {
+	pos := int64(dst)*16 + mvQ4
+	ref := pos >> 4
+	if ref < int64(minInt) || ref > int64(maxInt) {
+		return 0, 0, ErrInvalidMotion
+	}
+	return int(ref), int(pos & 15), nil
 }
 
 func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {

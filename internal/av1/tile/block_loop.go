@@ -194,11 +194,14 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			scratch.CDEF.Reset()
 			scratch.CoeffCtx = CoeffEntropyContext{}
 			rootReq := BlockWalkRequest{
-				Root:       req.Walk.Root,
-				MIColStart: miCol,
-				MIRowStart: miRow,
-				MIColEnd:   minUint32(req.Walk.MIColEnd, miCol+rootSize),
-				MIRowEnd:   minUint32(req.Walk.MIRowEnd, miRow+rootSize),
+				Root:               req.Walk.Root,
+				MIColStart:         miCol,
+				MIRowStart:         miRow,
+				MIColEnd:           minUint32(req.Walk.MIColEnd, miCol+rootSize),
+				MIRowEnd:           minUint32(req.Walk.MIRowEnd, miRow+rootSize),
+				UseNeighborBounds:  true,
+				NeighborMIColStart: req.Walk.neighborMIColStart(),
+				NeighborMIRowStart: req.Walk.neighborMIRowStart(),
 			}
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)

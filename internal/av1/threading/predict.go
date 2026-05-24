@@ -76,6 +76,43 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 	return b.PredictBlockLumaInter(index, visit)
 }
 
+// PredictBlockInter writes inter prediction pixels for every present plane of
+// one decoded inter block. Single-reference and average/dist-wtd compound
+// translation are supported; masked compound, inter-intra, warped/global
+// refinement, scaled references, and intrabc are handled by later stages.
+func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	filters, err := frameWorkMotionFilters(b.TileInfo)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockInterWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockInterWithFilters is PredictBlockInter with explicit interpolation
+// filters, matching callers that have already decoded switchable filter syntax.
+func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if !visit.Prediction.Valid || visit.Prediction.Intra || !visit.Prediction.InterMotionValid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterMotion.References.Compound {
+		if scratch == nil {
+			return ErrInvalidBatch
+		}
+		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+			if err := b.predictBlockInterCompoundPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+		if err := b.predictBlockInterPlaneWithFilters(index, visit, plane, filters); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PredictBlockLumaIntra writes luma intra prediction pixels for one decoded
 // block-loop visit into Jobs[index]'s output window. It covers luma DC,
 // vertical, horizontal, directional, Paeth, and smooth modes; filter intra and
@@ -162,46 +199,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.B
 		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
-	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
-	if !ok {
-		return ErrInvalidBatch
-	}
-	width, height, ok := frameWorkBlockVisiblePixels(visit.Block)
-	if !ok {
-		return ErrInvalidBatch
-	}
-	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
-	if err != nil {
-		return err
-	}
-	x, y, err := frameWorkBlockLumaPosition(visit.Block)
-	if err != nil {
-		return err
-	}
-	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
-		return ErrInvalidBatch
-	}
-	if b.Output == nil {
-		return ErrInvalidBatch
-	}
-	output, _, _, ok := frameWorkFramePlane(b.Output, FrameWorkPlaneY)
-	if !ok || b.Output.Layout.BytesPerSample <= 0 {
-		return ErrInvalidBatch
-	}
-	refWindow, err := b.ReferencePlane(reference, FrameWorkPlaneY)
-	if err != nil {
-		return err
-	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
-	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(output, ref, b.Output.Layout.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, motionResult.MV[0], filters); err != nil {
-		return ErrInvalidBatch
-	}
-	return nil
+	return b.predictBlockInterPlaneWithFilters(index, visit, FrameWorkPlaneY, filters)
 }
 
 // PredictBlockLumaInterCompoundAverage writes average compound luma inter
@@ -264,47 +262,62 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 		!motionResult.References.Ref[1].Valid() {
 		return ErrInvalidBatch
 	}
-	width, height, ok := frameWorkBlockVisiblePixels(visit.Block)
-	if !ok {
+	return b.predictBlockInterCompoundPlaneWithFilters(index, visit, FrameWorkPlaneY, scratch, filters)
+}
+
+func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
-	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
+	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if scratch == nil {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode != tile.MotionModeTranslation {
+		return ErrInvalidBatch
+	}
+	blend := visit.Prediction.CompoundBlend
+	if blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if !motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		!motionResult.References.Ref[1].Valid() {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !ok {
+		return err
+	}
+	first, err := frameWorkInterScratchPlane(scratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
 	if err != nil {
 		return err
 	}
-	x, y, err := frameWorkBlockLumaPosition(visit.Block)
+	second, err := frameWorkInterScratchPlane(scratch.Second[:], geom.BytesPerSample, geom.Width, geom.Height)
 	if err != nil {
 		return err
 	}
-	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
-		return ErrInvalidBatch
-	}
-	if b.Output == nil {
-		return ErrInvalidBatch
-	}
-	output, _, _, ok := frameWorkFramePlane(b.Output, FrameWorkPlaneY)
-	if !ok || b.Output.Layout.BytesPerSample <= 0 {
-		return ErrInvalidBatch
-	}
-	first, err := frameWorkInterScratchPlane(scratch.First[:], b.Output.Layout.BytesPerSample, width, height)
-	if err != nil {
+	if err := b.predictBlockInterReferencePlaneToScratch(first, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
 		return err
 	}
-	second, err := frameWorkInterScratchPlane(scratch.Second[:], b.Output.Layout.BytesPerSample, width, height)
-	if err != nil {
-		return err
-	}
-	if err := b.predictBlockLumaInterToScratch(first, motionResult.References.Ref[0], motionResult.MV[0], x, y, width, height, filters); err != nil {
-		return err
-	}
-	if err := b.predictBlockLumaInterToScratch(second, motionResult.References.Ref[1], motionResult.MV[1], x, y, width, height, filters); err != nil {
+	if err := b.predictBlockInterReferencePlaneToScratch(second, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
 		return err
 	}
 	fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
 	if err != nil {
 		return err
 	}
-	if err := frameWorkBlendCompoundBlock(output, first, second, b.Output.Layout.BytesPerSample, x, y, width, height, fwdOffset, bckOffset); err != nil {
+	if err := frameWorkBlendCompoundBlock(geom.Output, first, second, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
 		return err
 	}
 	return nil
@@ -383,12 +396,31 @@ func frameWorkRelativeOrderHint(bits uint8, a uint32, b uint32) (int, error) {
 	return int((diff & (mask - 1)) - (diff & mask)), nil
 }
 
-func (b FrameWorkBatch) predictBlockLumaInterToScratch(dst frame.Plane, refFrame tile.ReferenceFrame, mv motion.Vector, dstX int, dstY int, width int, height int, filters motion.InterpFilters) error {
+type frameWorkPredictionPlaneGeometry struct {
+	Output frame.Plane
+	Window FrameWorkPlaneRegion
+
+	X      int
+	Y      int
+	Width  int
+	Height int
+
+	SubsamplingX bool
+	SubsamplingY bool
+
+	BytesPerSample int
+}
+
+func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters) error {
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, block, plane)
+	if err != nil || !ok {
+		return err
+	}
 	reference, ok := frameWorkReferenceFromTile(refFrame)
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, FrameWorkPlaneY)
+	refWindow, err := b.ReferencePlane(reference, plane)
 	if err != nil {
 		return err
 	}
@@ -398,14 +430,74 @@ func (b FrameWorkBatch) predictBlockLumaInterToScratch(dst frame.Plane, refFrame
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
-	refX, refY, subX, subY, err := motion.ReferenceOrigin(dstX, dstY, mv)
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, b.Output.Layout.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, width, height, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters) error {
+	reference, ok := frameWorkReferenceFromTile(refFrame)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, plane)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.BlockVisit, plane FrameWorkPlane) (frameWorkPredictionPlaneGeometry, bool, error) {
+	x, y, width, height, subsamplingX, subsamplingY, ok, err := frameWorkBlockPlanePosition(block, b.Sequence.ColorConfig, plane)
+	if err != nil || !ok {
+		return frameWorkPredictionPlaneGeometry{}, ok, err
+	}
+	window, err := b.JobOutputPlane(index, plane)
+	if err != nil {
+		return frameWorkPredictionPlaneGeometry{}, false, err
+	}
+	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	if b.Output == nil {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
+	if !ok || b.Output.Layout.BytesPerSample <= 0 {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	if outputSubX != subsamplingX || outputSubY != subsamplingY {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	return frameWorkPredictionPlaneGeometry{
+		Output:         output,
+		Window:         window,
+		X:              x,
+		Y:              y,
+		Width:          width,
+		Height:         height,
+		SubsamplingX:   subsamplingX,
+		SubsamplingY:   subsamplingY,
+		BytesPerSample: b.Output.Layout.BytesPerSample,
+	}, true, nil
 }
 
 func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, height int) (frame.Plane, error) {
@@ -599,6 +691,74 @@ func frameWorkBlockVisiblePixels(block tile.BlockVisit) (int, int, bool) {
 		return 0, 0, false
 	}
 	return width, height, true
+}
+
+func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (x int, y int, width int, height int, subsamplingX bool, subsamplingY bool, present bool, err error) {
+	if plane == FrameWorkPlaneY {
+		width, height, present = frameWorkBlockVisiblePixels(block)
+		if !present {
+			return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+		}
+		x, y, err = frameWorkBlockLumaPosition(block)
+		return x, y, width, height, false, false, true, err
+	}
+	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	if color.MonoChrome {
+		return 0, 0, 0, 0, false, false, false, nil
+	}
+	req := tile.TransformTreeRequest{
+		Size:      block.Size,
+		X4:        block.X4,
+		Y4:        block.Y4,
+		VisibleW4: block.VisibleW4,
+		VisibleH4: block.VisibleH4,
+	}
+	if !tile.HasChromaBlock(req, color) {
+		return 0, 0, 0, 0, false, false, false, nil
+	}
+	if _, err := tile.PlaneBlockSize(block.Size, color, int(plane)); err != nil {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok || block.VisibleW4 == 0 || block.VisibleH4 == 0 || block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	ssX := int(frameWorkSubsampleShift(color.SubsamplingX))
+	ssY := int(frameWorkSubsampleShift(color.SubsamplingY))
+	miCol := block.MICol
+	miRow := block.MIRow
+	if ssX != 0 && miCol&1 != 0 && dims.W4 == 1 {
+		miCol--
+	}
+	if ssY != 0 && miRow&1 != 0 && dims.H4 == 1 {
+		miRow--
+	}
+	x, ok = frameWorkInt64Mul4(int64(miCol))
+	if !ok {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	y, ok = frameWorkInt64Mul4(int64(miRow))
+	if !ok {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	x >>= ssX
+	y >>= ssY
+	visibleW4 := ((block.X4 + int(block.VisibleW4) + ssX) >> ssX) - (block.X4 >> ssX)
+	visibleH4 := ((block.Y4 + int(block.VisibleH4) + ssY) >> ssY) - (block.Y4 >> ssY)
+	if visibleW4 <= 0 || visibleH4 <= 0 {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	width, ok = frameWorkInt64Mul4(int64(visibleW4))
+	if !ok {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	height, ok = frameWorkInt64Mul4(int64(visibleH4))
+	if !ok {
+		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
+	}
+	return x, y, width, height, color.SubsamplingX, color.SubsamplingY, true, nil
 }
 
 func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {

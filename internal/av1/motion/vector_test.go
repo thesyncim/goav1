@@ -44,6 +44,86 @@ func TestFullpelVectorAndReferenceOrigin(t *testing.T) {
 	}
 }
 
+func TestReferenceOriginSubsampledMatchesLibaomPositionRule(t *testing.T) {
+	tests := []struct {
+		name               string
+		dstX, dstY         int
+		mv                 Vector
+		subsamplingX       bool
+		subsamplingY       bool
+		wantX, wantY       int
+		wantSubX, wantSubY int
+		compareLumaOrigin  bool
+	}{
+		{
+			name:              "luma matches existing origin",
+			dstX:              5,
+			dstY:              6,
+			mv:                Vector{Col: -1, Row: 5},
+			wantX:             4,
+			wantY:             6,
+			wantSubX:          14,
+			wantSubY:          10,
+			compareLumaOrigin: true,
+		},
+		{
+			name:         "subsampled positive fractional",
+			dstX:         8,
+			dstY:         9,
+			mv:           Vector{Col: 3, Row: 5},
+			subsamplingX: true,
+			subsamplingY: true,
+			wantX:        8,
+			wantY:        9,
+			wantSubX:     3,
+			wantSubY:     5,
+		},
+		{
+			name:         "subsampled negative fractional floors",
+			dstX:         8,
+			dstY:         9,
+			mv:           Vector{Col: -1, Row: -9},
+			subsamplingX: true,
+			subsamplingY: true,
+			wantX:        7,
+			wantY:        8,
+			wantSubX:     15,
+			wantSubY:     7,
+		},
+		{
+			name:         "mixed subsampling axes",
+			dstX:         4,
+			dstY:         7,
+			mv:           Vector{Col: 7, Row: 7},
+			subsamplingY: true,
+			wantX:        4,
+			wantY:        7,
+			wantSubX:     14,
+			wantSubY:     7,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotX, gotY, gotSubX, gotSubY, err := ReferenceOriginSubsampled(tt.dstX, tt.dstY, tt.mv, tt.subsamplingX, tt.subsamplingY)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotX != tt.wantX || gotY != tt.wantY || gotSubX != tt.wantSubX || gotSubY != tt.wantSubY {
+				t.Fatalf("origin=%d,%d sub=%d,%d want %d,%d sub=%d,%d", gotX, gotY, gotSubX, gotSubY, tt.wantX, tt.wantY, tt.wantSubX, tt.wantSubY)
+			}
+			if tt.compareLumaOrigin {
+				refX, refY, subX, subY, err := ReferenceOrigin(tt.dstX, tt.dstY, tt.mv)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if gotX != refX || gotY != refY || gotSubX != subX || gotSubY != subY {
+					t.Fatalf("subsampled luma origin=%d,%d sub=%d,%d want ReferenceOrigin=%d,%d sub=%d,%d", gotX, gotY, gotSubX, gotSubY, refX, refY, subX, subY)
+				}
+			}
+		})
+	}
+}
+
 func TestLowerPrecisionMatchesLibaom(t *testing.T) {
 	tests := []struct {
 		name               string
