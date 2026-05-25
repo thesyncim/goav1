@@ -147,6 +147,8 @@ The initial implementation covers:
   block-edge application helpers for deblocking paths.
 - Public zero-allocation CDEF and loop-restoration primitive helpers with
   caller-owned scratch for post-reconstruction filtering paths.
+- Public zero-allocation tile block, partition, transform-size, and extended
+  transform-set geometry helpers for caller-owned tile decode planning.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
