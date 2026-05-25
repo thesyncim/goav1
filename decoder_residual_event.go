@@ -192,6 +192,10 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		return DecoderFrameWorkEventResult{}, err
 	}
 
+	if err := req.Runner.ResetStats(); err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
+
 	tile, referenceCount, hasTile, err := decoderFrameWorkEventStepTile(step)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err

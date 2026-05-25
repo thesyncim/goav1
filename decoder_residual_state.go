@@ -368,6 +368,7 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 	if err != nil {
 		return err
 	}
+	r.Stats[worker] = DecoderFrameWorkTileResidualStats{}
 	req, err := r.workerRequest(worker)
 	if err != nil {
 		return err
