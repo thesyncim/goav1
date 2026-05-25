@@ -1056,6 +1056,121 @@ func BenchmarkPublicDecoderResidualEventListRunner(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	lowOverhead := publicDecoderResidualLowOverheadStream()
+	rtpPayload := publicDecoderResidualRTPPayload()
+	var probeStream av1.DecoderStream
+	var probeEvents [4]av1.DecoderEvent
+	count, err := probeStream.PushLowOverhead(lowOverhead, probeEvents[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	sequence, ok := probeStream.SequenceHeader()
+	if !ok {
+		b.Fatal("probe stream missing sequence")
+	}
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	eventScratch, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, probeEvents[:count], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
+		Width:        int(probeEvents[count-1].FrameSize.CodedWidth),
+		Height:       int(probeEvents[count-1].FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 1)
+	var stream av1.DecoderStream
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var side av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualEventScratch(eventScratch)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, probeEvents[count-1], av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &side,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var events [4]av1.DecoderEvent
+	var rtpBuffer [128]byte
+	var rtpSpans [4]av1.RTPObuSpan
+	runner := av1.DecoderFrameWorkResidualStreamRunner{
+		Stream:          &stream,
+		EventRunner:     eventRunner,
+		Events:          events[:],
+		SideDataScratch: scratch.SideData,
+		RTPBuffer:       rtpBuffer[:],
+		RTPSpans:        rtpSpans[:],
+	}
+
+	b.Run("low-overhead", func(b *testing.B) {
+		b.SetBytes(int64(len(lowOverhead)))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			stream.Reset()
+			result, err := runner.RunLowOverhead(lowOverhead, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if result.Run.CompletedFrames != 1 {
+				b.Fatalf("result=%+v", result)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("rtp", func(b *testing.B) {
+		b.SetBytes(int64(len(rtpPayload)))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			stream.Reset()
+			runner.RTPUsed = 0
+			result, err := runner.RunRTPPayload(rtpPayload, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
+				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+}
+
 func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
 	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderBlockCoeffSimpleBatch(output)
