@@ -96,6 +96,23 @@ type FrameWorkSideDataRunner interface {
 	BindFrameWorkSideData(*FrameWorkState, FrameWorkBatch) error
 }
 
+// FrameWorkBoundSideDataRunner binds caller-owned frame-level side-data buffers
+// for active postfilter stages before tile work executes.
+type FrameWorkBoundSideDataRunner struct {
+	CDEFIndex []uint8
+	CDEFRead  []bool
+
+	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
+
+	RestorationRecords []tile.RestorationUnitRecord
+	RestorationAbove   []uint16
+	RestorationBelow   []uint16
+
+	CDEFIndexMap            threading.FrameWorkCDEFIndexMap
+	LoopFilterMap           threading.FrameWorkLoopFilterMap
+	RestorationFrameBuffers threading.FrameWorkRestorationFrameBuffers
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -891,6 +908,60 @@ func (fn FrameWorkSideDataFunc) BindFrameWorkSideData(s *FrameWorkState, b Frame
 		return nil
 	}
 	return fn(s, b)
+}
+
+// BindFrameWorkSideData binds side-data storage for any active CDEF,
+// loop-filter, or loop-restoration stage and attaches the views to state.
+func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
+	if r == nil {
+		return ErrInvalidFrameWorkState
+	}
+	if frameWorkCDEFActive(b.CDEF) || len(r.CDEFIndex) != 0 || len(r.CDEFRead) != 0 {
+		_, _, length, err := b.CDEFIndexMapShape()
+		if err != nil {
+			return err
+		}
+		if len(r.CDEFIndex) < length || len(r.CDEFRead) < length {
+			return threading.ErrInvalidBatch
+		}
+		cdefMap, err := b.BindCDEFIndexMap(r.CDEFIndex, r.CDEFRead)
+		if err != nil {
+			return err
+		}
+		if err := s.SetCDEFIndexMap(cdefMap); err != nil {
+			return err
+		}
+		r.CDEFIndexMap = cdefMap
+	}
+	if frameWorkLoopFilterActive(b.LoopFilter) || len(r.LoopFilterRecords) != 0 {
+		_, _, length, err := b.LoopFilterMapShape()
+		if err != nil {
+			return err
+		}
+		if len(r.LoopFilterRecords) < length {
+			return threading.ErrInvalidBatch
+		}
+		lfMap, err := b.BindLoopFilterMap(r.LoopFilterRecords)
+		if err != nil {
+			return err
+		}
+		if err := s.SetLoopFilterMap(lfMap); err != nil {
+			return err
+		}
+		r.LoopFilterMap = lfMap
+	}
+	if frameWorkRestorationActive(b.Restoration) || len(r.RestorationRecords) != 0 ||
+		len(r.RestorationAbove) != 0 || len(r.RestorationBelow) != 0 {
+		buffers, err := b.BindRestorationFrameBuffers(r.RestorationRecords, r.RestorationAbove, r.RestorationBelow)
+		if err != nil {
+			return err
+		}
+		if err := s.SetRestorationFrameBuffers(buffers); err != nil {
+			return err
+		}
+		r.RestorationFrameBuffers = buffers
+	}
+	return nil
 }
 
 func (s *FrameWorkState) bindFrameWorkEventSideData(event Event, step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, side FrameWorkSideDataRunner) error {
