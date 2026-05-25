@@ -141,6 +141,8 @@ The initial implementation covers:
   and narrow-filter fallback for 8/10/12-bit reconstruction planes.
 - Pure-Go fourteen-sample wide loop-filter edge deblocking with AV1's wide flat
   filter and eight-/four-sample fallback for 8/10/12-bit reconstruction planes.
+- Public zero-allocation loop-filter level, threshold, direct-edge, and
+  block-edge application helpers for deblocking paths.
 - Public zero-allocation CDEF and loop-restoration primitive helpers with
   caller-owned scratch for post-reconstruction filtering paths.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
