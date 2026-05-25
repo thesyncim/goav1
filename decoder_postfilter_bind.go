@@ -109,6 +109,40 @@ type DecoderFrameWorkPostFilterRequestScratch struct {
 	Int32Scratch  []int32
 }
 
+// DecoderFrameWorkSideDataScratchSize reports caller-owned side-data backing
+// lengths for tile residual decode and final postfilter planning.
+type DecoderFrameWorkSideDataScratchSize struct {
+	CDEFIndexMap int
+	CDEFReadMap  int
+
+	LoopFilterMap int
+
+	RestorationRecords       int
+	RestorationBoundaryAbove int
+	RestorationBoundaryBelow int
+}
+
+// DecoderFrameWorkSideDataScratch carries typed caller-owned side-data backing
+// for BindDecoderFrameWorkSideData.
+type DecoderFrameWorkSideDataScratch struct {
+	CDEFIndexMap []uint8
+	CDEFReadMap  []bool
+
+	LoopFilterMap []DecoderFrameWorkLoopFilterBlockRecord
+
+	RestorationRecords       []TileRestorationUnitRecord
+	RestorationBoundaryAbove []uint16
+	RestorationBoundaryBelow []uint16
+}
+
+// DecoderFrameWorkSideData groups frame-level side maps shared by tile
+// residual decode and postfilter planning.
+type DecoderFrameWorkSideData struct {
+	CDEFIndexMap            DecoderFrameWorkCDEFIndexMap
+	LoopFilterMap           DecoderFrameWorkLoopFilterMap
+	RestorationFrameBuffers DecoderFrameWorkRestorationFrameBuffers
+}
+
 // DecoderFrameWorkPostFilterRequestScratchLen reports the flat typed arena
 // lengths needed for size.
 func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {
@@ -139,6 +173,90 @@ func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilter
 		Uint16Scratch:     uint16Scratch,
 		Int16Scratch:      int16Scratch,
 		Int32Scratch:      size.Restoration.Apply.Unit.SGRProj,
+	}
+}
+
+func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams) (DecoderFrameWorkSideDataScratchSize, error) {
+	_, _, cdefLength, err := DecoderFrameWorkCDEFIndexMapShape(sequence, size)
+	if err != nil {
+		return DecoderFrameWorkSideDataScratchSize{}, err
+	}
+	_, _, loopFilterLength, err := DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		return DecoderFrameWorkSideDataScratchSize{}, err
+	}
+	restorationPlan, err := DecoderFrameWorkRestorationFramePlan(sequence, size, restoration)
+	if err != nil {
+		return DecoderFrameWorkSideDataScratchSize{}, err
+	}
+	boundaryLength := restorationPlan.BoundaryBufferLen()
+	return DecoderFrameWorkSideDataScratchSize{
+		CDEFIndexMap:             cdefLength,
+		CDEFReadMap:              cdefLength,
+		LoopFilterMap:            loopFilterLength,
+		RestorationRecords:       restorationPlan.UnitRecordLen(),
+		RestorationBoundaryAbove: boundaryLength,
+		RestorationBoundaryBelow: boundaryLength,
+	}, nil
+}
+
+func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+	scratchSize, err := DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
+	if err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	if decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFIndexMap, scratchSize.CDEFIndexMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFReadMap, scratchSize.CDEFReadMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMap, scratchSize.LoopFilterMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationRecords, scratchSize.RestorationRecords) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryAbove, scratchSize.RestorationBoundaryAbove) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, scratchSize.RestorationBoundaryBelow) {
+		return DecoderFrameWorkSideData{}, ErrFrameShortBuffer
+	}
+	cdefMap, err := BindDecoderFrameWorkCDEFIndexMap(
+		sequence,
+		size,
+		cdef,
+		scratch.CDEFIndexMap[:scratchSize.CDEFIndexMap],
+		scratch.CDEFReadMap[:scratchSize.CDEFReadMap],
+	)
+	if err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	if err := cdefMap.Reset(); err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	loopFilterMap, err := BindDecoderFrameWorkLoopFilterMap(sequence, size, scratch.LoopFilterMap[:scratchSize.LoopFilterMap])
+	if err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	restorationBuffers, err := BindDecoderFrameWorkRestorationFrameBuffers(
+		sequence,
+		size,
+		restoration,
+		scratch.RestorationRecords[:scratchSize.RestorationRecords],
+		scratch.RestorationBoundaryAbove[:scratchSize.RestorationBoundaryAbove],
+		scratch.RestorationBoundaryBelow[:scratchSize.RestorationBoundaryBelow],
+	)
+	if err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	if err := restorationBuffers.ResetRecords(); err != nil {
+		return DecoderFrameWorkSideData{}, err
+	}
+	return DecoderFrameWorkSideData{
+		CDEFIndexMap:            cdefMap,
+		LoopFilterMap:           loopFilterMap,
+		RestorationFrameBuffers: restorationBuffers,
+	}, nil
+}
+
+func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFrameWorkPostFilterRequestSideData {
+	return DecoderFrameWorkPostFilterRequestSideData{
+		LoopFilterMap:         side.LoopFilterMap,
+		CDEFIndexMap:          side.CDEFIndexMap,
+		RestorationRecords:    side.RestorationFrameBuffers.Records,
+		RestorationBoundaries: side.RestorationFrameBuffers.Boundaries,
 	}
 }
 

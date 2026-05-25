@@ -208,6 +208,97 @@ func TestPublicDecoderRestorationFrameBuffersBinding(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkSideDataBinding(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 96, SuperResDenominator: 8}
+	cdef := av1.CDEFParams{Bits: 1, StrengthCount: 2}
+	restoration := av1.RestorationParams{
+		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	scratchSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, cdefLen, err := av1.DecoderFrameWorkCDEFIndexMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, loopLen, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorationPlan, err := av1.DecoderFrameWorkRestorationFramePlan(sequence, size, restoration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scratchSize.CDEFIndexMap != cdefLen || scratchSize.CDEFReadMap != cdefLen ||
+		scratchSize.LoopFilterMap != loopLen ||
+		scratchSize.RestorationRecords != restorationPlan.UnitRecordLen() ||
+		scratchSize.RestorationBoundaryAbove != restorationPlan.BoundaryBufferLen() ||
+		scratchSize.RestorationBoundaryBelow != restorationPlan.BoundaryBufferLen() {
+		t.Fatalf("side scratch=%+v cdef=%d loop=%d restoration=%+v", scratchSize, cdefLen, loopLen, restorationPlan)
+	}
+
+	scratch := av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, scratchSize.CDEFIndexMap+1),
+		CDEFReadMap:              make([]bool, scratchSize.CDEFReadMap+1),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, scratchSize.LoopFilterMap+1),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, scratchSize.RestorationRecords+1),
+		RestorationBoundaryAbove: make([]uint16, scratchSize.RestorationBoundaryAbove+1),
+		RestorationBoundaryBelow: make([]uint16, scratchSize.RestorationBoundaryBelow+1),
+	}
+	scratch.CDEFIndexMap[0] = 1
+	scratch.CDEFReadMap[0] = true
+	scratch.CDEFIndexMap[scratchSize.CDEFIndexMap] = 7
+	scratch.CDEFReadMap[scratchSize.CDEFReadMap] = true
+	scratch.LoopFilterMap[0].Valid = true
+	scratch.LoopFilterMap[scratchSize.LoopFilterMap].Valid = true
+	scratch.RestorationRecords[0].Index = 99
+	scratch.RestorationRecords[scratchSize.RestorationRecords].Index = 77
+	scratch.RestorationBoundaryAbove[scratchSize.RestorationBoundaryAbove] = 55
+	scratch.RestorationBoundaryBelow[scratchSize.RestorationBoundaryBelow] = 66
+
+	side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(side.CDEFIndexMap.Index) != scratchSize.CDEFIndexMap ||
+		len(side.CDEFIndexMap.Read) != scratchSize.CDEFReadMap ||
+		len(side.LoopFilterMap.Records) != scratchSize.LoopFilterMap ||
+		side.RestorationFrameBuffers.Plan != restorationPlan {
+		t.Fatalf("side data=%+v", side)
+	}
+	if side.CDEFIndexMap.Index[0] != 0 || side.CDEFIndexMap.Read[0] ||
+		side.LoopFilterMap.Records[0].Valid ||
+		side.RestorationFrameBuffers.Records[0][0].Index != 0 ||
+		side.RestorationFrameBuffers.Records[0][0].Unit.Type != av1.RestorationNone {
+		t.Fatalf("side data was not reset: cdef=%d/%v loop=%+v restoration=%+v",
+			side.CDEFIndexMap.Index[0], side.CDEFIndexMap.Read[0], side.LoopFilterMap.Records[0], side.RestorationFrameBuffers.Records[0][0])
+	}
+	if scratch.CDEFIndexMap[scratchSize.CDEFIndexMap] != 7 ||
+		!scratch.CDEFReadMap[scratchSize.CDEFReadMap] ||
+		!scratch.LoopFilterMap[scratchSize.LoopFilterMap].Valid ||
+		scratch.RestorationRecords[scratchSize.RestorationRecords].Index != 77 ||
+		scratch.RestorationBoundaryAbove[scratchSize.RestorationBoundaryAbove] != 55 ||
+		scratch.RestorationBoundaryBelow[scratchSize.RestorationBoundaryBelow] != 66 {
+		t.Fatal("side-data bind touched storage past requested lengths")
+	}
+	postSide := av1.DecoderFrameWorkPostFilterSideData(side)
+	if postSide.CDEFIndexMap.Index == nil ||
+		len(postSide.RestorationRecords[0]) != len(side.RestorationFrameBuffers.Records[0]) ||
+		len(postSide.RestorationBoundaries[0].Above) != len(side.RestorationFrameBuffers.Boundaries[0].Above) {
+		t.Fatalf("postfilter side data=%+v", postSide)
+	}
+
+	shortScratch := scratch
+	shortScratch.RestorationBoundaryBelow = shortScratch.RestorationBoundaryBelow[:scratchSize.RestorationBoundaryBelow-1]
+	if _, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, shortScratch); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short side-data scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
 func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
@@ -580,27 +671,26 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
-	_, _, loopFilterLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loopFilterRecords := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopFilterLength)
 	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4}
 	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, loopFilterSize.Edges)
+	cdefParams := av1.CDEFParams{Bits: 1, StrengthCount: 2}
 	restorationBuffersParams := av1.RestorationParams{
 		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
 		UnitSizeY:  128,
 		UnitSizeUV: 64,
 	}
-	restorationBuffersPlan, err := av1.DecoderFrameWorkRestorationFramePlan(sequence, size, restorationBuffersParams)
+	sideScratchSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdefParams, restorationBuffersParams)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restorationRecordBacking := make([]av1.TileRestorationUnitRecord, restorationBuffersPlan.UnitRecordLen())
-	restorationAbove := make([]uint16, restorationBuffersPlan.BoundaryBufferLen())
-	restorationBelow := make([]uint16, restorationBuffersPlan.BoundaryBufferLen())
-	index := make([]uint8, 1)
-	read := make([]bool, 1)
+	sideScratch := av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, sideScratchSize.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, sideScratchSize.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideScratchSize.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideScratchSize.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, sideScratchSize.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, sideScratchSize.RestorationBoundaryBelow),
+	}
 	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{Samples: [3]int{64, 16, 16}, Dst: [3]int{64, 16, 16}, DirectionGrid: 1, VarianceGrid: 1, Input: av1.CDEFInputBufferSize, UnitDst: av1.CDEFInputBufferSize}
 	var sampleScratch [3][]uint16
 	var dstScratch [3][]uint16
@@ -684,50 +774,40 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, _, _, err = av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
-		if err != nil {
-			return
-		}
-		loopFilterMap, bindErr := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, loopFilterRecords)
+		sideData, bindErr := av1.BindDecoderFrameWorkSideData(sequence, size, cdefParams, restorationBuffersParams, sideScratch)
 		if bindErr != nil {
 			err = bindErr
 			return
 		}
-		postFilterBuffers.LoopFilterMap = loopFilterMap
-		postFilterSide.LoopFilterMap = loopFilterMap
-		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopFilterMap, loopFilterEdges)
+		postFilterBuffers.LoopFilterMap = sideData.LoopFilterMap
+		postFilterBuffers.CDEFIndexMap = sideData.CDEFIndexMap
+		postFilterBuffers.RestorationRecords = sideData.RestorationFrameBuffers.Records
+		postFilterBuffers.RestorationBoundaries = sideData.RestorationFrameBuffers.Boundaries
+		postFilterSide = av1.DecoderFrameWorkPostFilterSideData(sideData)
+		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, sideData.LoopFilterMap, loopFilterEdges)
 		if err != nil {
 			return
 		}
-		restorationBuffers, bindErr := av1.BindDecoderFrameWorkRestorationFrameBuffers(sequence, size, restorationBuffersParams, restorationRecordBacking, restorationAbove, restorationBelow)
-		if bindErr != nil {
-			err = bindErr
-			return
-		}
-		err = restorationBuffers.ResetRecords()
+		_, err = av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, sideData.CDEFIndexMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		if err != nil {
 			return
 		}
-		postFilterBuffers.RestorationRecords = restorationBuffers.Records
-		postFilterBuffers.RestorationBoundaries = restorationBuffers.Boundaries
-		postFilterSide.RestorationRecords = restorationBuffers.Records
-		postFilterSide.RestorationBoundaries = restorationBuffers.Boundaries
-		_, _, _, err = av1.DecoderFrameWorkCDEFIndexMapShape(sequence, size)
-		if err != nil {
-			return
-		}
-		cdefMap, bindErr := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, size, av1.CDEFParams{Bits: 1, StrengthCount: 2}, index, read)
-		if bindErr != nil {
-			err = bindErr
-			return
-		}
-		postFilterBuffers.CDEFIndexMap = cdefMap
-		postFilterSide.CDEFIndexMap = cdefMap
-		_, err = av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		_, err = av1.BindDecoderFrameWorkSuperResPostFilterRequest(superSize, outputFrame, codedScratch, outputScratch)
+		if err != nil {
+			return
+		}
 		_, err = av1.BindDecoderFrameWorkRestorationPostFilterRequest(restorationSize, [3][]av1.TileRestorationUnitRecord{}, [3]av1.TileRestorationStripeBoundaries{}, dataScratch, restorationDst, wienerScratch, sgrScratch, aboveScratch, belowScratch, false)
+		if err != nil {
+			return
+		}
 		_, err = av1.BindDecoderFrameWorkFilmGrainPostFilterRequest(filmSize, lumaGrain, chromaGrain, lumaSamples, chromaSamples)
+		if err != nil {
+			return
+		}
 		_, err = av1.BindDecoderFrameWorkPostFilterRequest(postFilterSize, postFilterBuffers)
+		if err != nil {
+			return
+		}
 		_, err = av1.BindDecoderFrameWorkPostFilterRequestFromScratch(postFilterSize, postFilterSide, postFilterArena)
 	})
 	if err != nil {
