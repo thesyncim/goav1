@@ -102,7 +102,7 @@ type DecoderFrameWorkResidualEventBindPlan struct {
 // HasEvent reports whether Event/EventIndex refer to a bind-relevant parsed
 // event.
 func (p DecoderFrameWorkResidualEventBindPlan) HasEvent() bool {
-	return p.EventIndex >= 0
+	return p.EventIndex >= 0 && decoderFrameWorkResidualEventBindCandidate(p.Event)
 }
 
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch

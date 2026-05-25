@@ -22,6 +22,20 @@ type DecoderFrameWorkResidualStreamResult struct {
 	Run        DecoderFrameWorkResidualEventsResult
 }
 
+// DecoderFrameWorkResidualStreamPlan reports both the caller-owned scratch
+// required for a residual stream-runner call and the sequence/event pair callers
+// should use to bind a reusable residual event runner for that stream shape.
+type DecoderFrameWorkResidualStreamPlan struct {
+	Size DecoderFrameWorkResidualStreamScratchSize
+	Bind DecoderFrameWorkResidualEventBindPlan
+}
+
+// HasEvent reports whether Bind identifies an event that needs residual-event
+// binding or can emit a decoded/display output.
+func (p DecoderFrameWorkResidualStreamPlan) HasEvent() bool {
+	return p.Bind.HasEvent()
+}
+
 // DecoderFrameWorkResidualStreamScratchSize reports caller-owned stream parser
 // and residual-event scratch needed for one stream-runner call.
 type DecoderFrameWorkResidualStreamScratchSize struct {
@@ -127,25 +141,37 @@ func decoderFrameWorkResidualStreamScratchErr(size DecoderFrameWorkResidualStrea
 // run its residual events. stream is passed by value so the live decoder stream
 // is not mutated by sizing.
 func DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream DecoderStream, src []byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
+	plan, err := DecoderFrameWorkResidualLowOverheadStreamPlan(stream, src, workers, events, spans, jobs, batches)
+	return plan.Size, err
+}
+
+// DecoderFrameWorkResidualLowOverheadStreamPlan parses a low-overhead OBU
+// buffer through a copy of stream and reports both caller-owned scratch and the
+// bind context for a reusable residual stream runner. stream is passed by value
+// so the live decoder stream is not mutated by planning.
+func DecoderFrameWorkResidualLowOverheadStreamPlan(stream DecoderStream, src []byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
 	eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(src)
-	size := DecoderFrameWorkResidualStreamScratchSize{Events: eventCount}
+	plan := DecoderFrameWorkResidualStreamPlan{
+		Size: DecoderFrameWorkResidualStreamScratchSize{Events: eventCount},
+	}
 	if err != nil {
-		return size, err
+		return plan, err
 	}
 	if len(events) < eventCount {
-		return size, ErrDecoderEventBufferTooSmall
-	}
-	count, err := stream.PushLowOverhead(src, events[:eventCount])
-	if err != nil {
-		return size, err
+		return plan, ErrDecoderEventBufferTooSmall
 	}
 	sequence, _ := stream.SequenceHeader()
+	count, err := stream.PushLowOverhead(src, events[:eventCount])
+	if err != nil {
+		return plan, err
+	}
 	eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
 	if err != nil {
-		return size, err
+		return plan, err
 	}
-	size.Event = eventSize
-	return size, nil
+	plan.Size.Event = eventSize
+	plan.Bind = DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+	return plan, nil
 }
 
 // DecoderFrameWorkResidualRTPPayloadStreamScratchLen validates one AV1 RTP
@@ -153,36 +179,49 @@ func DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream DecoderStream, s
 // scratch needed to run completed residual events. If used is non-zero, rtpBuffer
 // must contain the preserved fragment bytes from the live stream runner.
 func DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream DecoderStream, used int, payload []byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
+	plan, err := DecoderFrameWorkResidualRTPPayloadStreamPlan(stream, used, payload, workers, rtpBuffer, rtpSpans, events, spans, jobs, batches)
+	return plan.Size, err
+}
+
+// DecoderFrameWorkResidualRTPPayloadStreamPlan validates one AV1 RTP payload
+// against a copy of stream and reports both caller-owned RTP/event/residual
+// scratch and the bind context for completed residual events. If used is
+// non-zero, rtpBuffer must contain the preserved fragment bytes from the live
+// stream runner.
+func DecoderFrameWorkResidualRTPPayloadStreamPlan(stream DecoderStream, used int, payload []byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
 	plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payload)
-	size := DecoderFrameWorkResidualStreamScratchSize{
-		Events:    eventCount,
-		RTPBuffer: plannedUsed,
-		RTPSpans:  eventCount,
+	plan := DecoderFrameWorkResidualStreamPlan{
+		Size: DecoderFrameWorkResidualStreamScratchSize{
+			Events:    eventCount,
+			RTPBuffer: plannedUsed,
+			RTPSpans:  eventCount,
+		},
 	}
 	if err != nil {
-		return size, err
+		return plan, err
 	}
 	if len(rtpBuffer) < plannedUsed || len(rtpSpans) < eventCount {
-		return size, ErrRTPShortBuffer
+		return plan, ErrRTPShortBuffer
 	}
 	if len(events) < eventCount {
-		return size, ErrDecoderEventBufferTooSmall
+		return plan, ErrDecoderEventBufferTooSmall
 	}
 
+	sequence, _ := stream.SequenceHeader()
 	actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payload)
 	if err != nil {
-		return size, err
+		return plan, err
 	}
 	if actualUsed != plannedUsed || count != eventCount {
-		return size, ErrDecoderInvalidFrameWorkState
+		return plan, ErrDecoderInvalidFrameWorkState
 	}
-	sequence, _ := stream.SequenceHeader()
 	eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
 	if err != nil {
-		return size, err
+		return plan, err
 	}
-	size.Event = eventSize
-	return size, nil
+	plan.Size.Event = eventSize
+	plan.Bind = DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+	return plan, nil
 }
 
 // DecoderFrameWorkResidualRTPPayloadsStreamScratchLen validates an ordered AV1
@@ -190,7 +229,17 @@ func DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream DecoderStream, us
 // needed by RunRTPPayloads. If used is non-zero, rtpBuffer must contain the
 // preserved fragment bytes from the live stream runner.
 func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
-	var size DecoderFrameWorkResidualStreamScratchSize
+	plan, err := DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream, used, payloads, workers, rtpBuffer, rtpSpans, events, spans, jobs, batches)
+	return plan.Size, err
+}
+
+// DecoderFrameWorkResidualRTPPayloadsStreamPlan validates an ordered AV1 RTP
+// payload batch against a copy of stream and reports reusable max scratch plus
+// the last bind-relevant event across the payload batch. If used is non-zero,
+// rtpBuffer must contain the preserved fragment bytes from the live stream
+// runner.
+func DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
+	var plan DecoderFrameWorkResidualStreamPlan
 	outputs := 0
 	for i := range payloads {
 		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payloads[i])
@@ -199,39 +248,45 @@ func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, u
 			RTPBuffer: plannedUsed,
 			RTPSpans:  eventCount,
 		}
-		size = size.Max(nextSize)
+		plan.Size = plan.Size.Max(nextSize)
 		if err != nil {
-			return size, err
+			return plan, err
 		}
 		if len(rtpBuffer) < plannedUsed || len(rtpSpans) < eventCount {
-			return size, ErrRTPShortBuffer
+			return plan, ErrRTPShortBuffer
 		}
 		if len(events) < eventCount {
-			return size, ErrDecoderEventBufferTooSmall
+			return plan, ErrDecoderEventBufferTooSmall
 		}
 
+		sequence, _ := stream.SequenceHeader()
 		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payloads[i])
 		if err != nil {
-			return size, err
+			return plan, err
 		}
 		if actualUsed != plannedUsed || count != eventCount {
-			return size, ErrDecoderInvalidFrameWorkState
+			return plan, ErrDecoderInvalidFrameWorkState
 		}
-		sequence, _ := stream.SequenceHeader()
 		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
 		if err != nil {
-			return size, err
+			return plan, err
+		}
+		nextBind := DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+		if nextBind.HasEvent() {
+			plan.Bind = nextBind
+		} else if !plan.Bind.HasEvent() {
+			plan.Bind.Sequence = nextBind.Sequence
 		}
 		nextSize.Event = eventSize
 		outputs += eventSize.Outputs
-		size = size.Max(nextSize)
-		size.Event.Outputs = outputs
+		plan.Size = plan.Size.Max(nextSize)
+		plan.Size.Event.Outputs = outputs
 		used = actualUsed
 		if !stream.InRTPFragment() {
 			used = 0
 		}
 	}
-	return size, nil
+	return plan, nil
 }
 
 // RunLowOverhead parses a low-overhead OBU buffer into caller-owned event

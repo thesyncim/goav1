@@ -2074,6 +2074,84 @@ func TestPublicDecoderFrameWorkResidualEventsBindPlan(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamPlan(t *testing.T) {
+	lowOverhead := publicDecoderResidualLowOverheadStream()
+	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	var rtpBuffer [256]byte
+	var rtpSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+
+	lowPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamPlan(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lowPlan.HasEvent() ||
+		lowPlan.Size.Events != 3 ||
+		lowPlan.Size.Event.Outputs != 1 ||
+		lowPlan.Bind.EventIndex != 2 ||
+		lowPlan.Bind.Event.Kind != av1.DecoderEventTileGroup ||
+		lowPlan.Bind.Sequence.ColorConfig.BitDepth != 8 {
+		t.Fatalf("low-overhead stream plan=%+v", lowPlan)
+	}
+	lowSize, err := av1.DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lowPlan.Size != lowSize {
+		t.Fatalf("low-overhead plan size=%+v scratch size=%+v", lowPlan.Size, lowSize)
+	}
+
+	rtpPlan, err := av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rtpPlan.HasEvent() ||
+		rtpPlan.Size.Events != 3 ||
+		rtpPlan.Size.RTPSpans != 3 ||
+		rtpPlan.Size.Event.Outputs != 1 ||
+		rtpPlan.Bind.EventIndex != 2 ||
+		rtpPlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("rtp stream plan=%+v", rtpPlan)
+	}
+
+	batchPlan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream, 0, rtpPayloads[:], 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !batchPlan.HasEvent() ||
+		batchPlan.Size.Events != 3 ||
+		batchPlan.Size.RTPSpans != 3 ||
+		batchPlan.Size.Event.Outputs != 2 ||
+		batchPlan.Bind.EventIndex != 1 ||
+		batchPlan.Bind.Event.Kind != av1.DecoderEventTileGroup ||
+		batchPlan.Bind.Event.FrameHeader.OrderHint != rtpPlan.Bind.Event.FrameHeader.OrderHint {
+		t.Fatalf("rtp payload batch stream plan=%+v", batchPlan)
+	}
+	batchSize, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, rtpPayloads[:], 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batchPlan.Size != batchSize {
+		t.Fatalf("batch plan size=%+v scratch size=%+v", batchPlan.Size, batchSize)
+	}
+
+	shortPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamPlan(stream, lowOverhead, 1, events[:2], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if !errors.Is(err, av1.ErrDecoderEventBufferTooSmall) {
+		t.Fatalf("short plan err=%v want %v", err, av1.ErrDecoderEventBufferTooSmall)
+	}
+	if shortPlan.Size.Events != 3 || shortPlan.HasEvent() {
+		t.Fatalf("short low-overhead stream plan=%+v", shortPlan)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayload(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -2299,18 +2377,24 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloadsMultipleOutputs(t 
 	var scratchSpans [1]av1.TileSpan
 	var scratchJobs [1]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	plan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
+	size := plan.Size
 	if size.Events != 3 || size.RTPSpans != 3 || size.Event.Outputs != 2 {
 		t.Fatalf("multi-output RTP batch scratch size=%+v", size)
 	}
 	if probeEvents[0].Kind != av1.DecoderEventFrameHeader || probeEvents[1].Kind != av1.DecoderEventTileGroup {
 		t.Fatalf("last RTP batch events=%+v", probeEvents[:2])
 	}
-	sequence := probeEvents[1].SequenceHeader
-	tile := probeEvents[1]
+	if !plan.HasEvent() ||
+		plan.Bind.EventIndex != 1 ||
+		plan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("multi-output RTP batch bind plan=%+v", plan)
+	}
+	sequence := plan.Bind.Sequence
+	tile := plan.Bind.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(tile.FrameSize.CodedWidth),
@@ -2394,21 +2478,20 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	var scratchSpans [1]av1.TileSpan
 	var scratchJobs [1]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	lowSize, err := av1.DecoderFrameWorkResidualLowOverheadStreamScratchLen(probeStream, lowOverhead, 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	lowPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamPlan(probeStream, lowOverhead, 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	rtpSize, err := av1.DecoderFrameWorkResidualRTPPayloadStreamScratchLen(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	rtpPlan, err := av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	streamSize := lowSize.Max(rtpSize)
-	plan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, probeEvents[:streamSize.Events])
-	if !plan.HasEvent() || plan.Event.Kind != av1.DecoderEventTileGroup {
-		t.Fatalf("stream bind plan=%+v events=%+v", plan, probeEvents[:streamSize.Events])
+	streamSize := lowPlan.Size.Max(rtpPlan.Size)
+	if !rtpPlan.HasEvent() || rtpPlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream bind plan=%+v", rtpPlan)
 	}
-	sequence := plan.Sequence
-	tile := plan.Event
+	sequence := rtpPlan.Bind.Sequence
+	tile := rtpPlan.Bind.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(tile.FrameSize.CodedWidth),
@@ -2523,18 +2606,18 @@ func TestPublicBindDecoderFrameWorkResidualStreamEventRunner(t *testing.T) {
 	var scratchSpans [1]av1.TileSpan
 	var scratchJobs [1]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	plan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, probeEvents[:2])
+	size := plan.Size
 	if !plan.HasEvent() ||
-		plan.EventIndex != 1 ||
-		plan.Event.Kind != av1.DecoderEventTileGroup {
-		t.Fatalf("stream event bind plan=%+v events=%+v", plan, probeEvents[:2])
+		plan.Bind.EventIndex != 1 ||
+		plan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream event bind plan=%+v", plan)
 	}
-	sequence := plan.Sequence
-	event := plan.Event
+	sequence := plan.Bind.Sequence
+	event := plan.Bind.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(event.FrameSize.CodedWidth),
@@ -3061,6 +3144,51 @@ func TestPublicDecoderFrameWorkResidualEventsBindPlanAllocs(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("DecoderFrameWorkResidualEventsBindPlan allocated: %f", allocs)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualStreamPlanAllocs(t *testing.T) {
+	lowOverhead := publicDecoderResidualLowOverheadStream()
+	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var events [4]av1.DecoderEvent
+	var rtpBuffer [256]byte
+	var rtpSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	var err error
+	var lowPlan av1.DecoderFrameWorkResidualStreamPlan
+	var rtpPlan av1.DecoderFrameWorkResidualStreamPlan
+	var batchPlan av1.DecoderFrameWorkResidualStreamPlan
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		var stream av1.DecoderStream
+		lowPlan, err = av1.DecoderFrameWorkResidualLowOverheadStreamPlan(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		if err != nil {
+			return
+		}
+		rtpPlan, err = av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		if err != nil {
+			return
+		}
+		batchPlan, err = av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream, 0, rtpPayloads[:], 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lowPlan.HasEvent() ||
+		!rtpPlan.HasEvent() ||
+		!batchPlan.HasEvent() ||
+		batchPlan.Size.Event.Outputs != 2 ||
+		batchPlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream plans low=%+v rtp=%+v batch=%+v", lowPlan, rtpPlan, batchPlan)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualStreamPlan allocated: %f", allocs)
 	}
 }
 
