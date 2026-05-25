@@ -12,6 +12,8 @@ const maxOBUPrefixBytes = 2 + bitstream.MaxLEB128Bytes
 // The exported fields are stable caller-visible metadata. The unexported fields
 // carry the exact prefix and raw-skip state used by the second assembly pass.
 type FrameOBU struct {
+	Header obu.Header
+
 	Offset      int
 	Length      int
 	PrefixSize  int
@@ -19,6 +21,23 @@ type FrameOBU struct {
 
 	prefix  [7]byte
 	rawSkip int
+}
+
+// End reports the exclusive end offset of the normalized low-overhead OBU in
+// the assembled frame.
+func (o FrameOBU) End() int {
+	return o.Offset + o.Length
+}
+
+// PayloadOffset reports the payload start offset inside the assembled frame.
+func (o FrameOBU) PayloadOffset() int {
+	return o.Offset + o.PrefixSize
+}
+
+// PayloadEnd reports the exclusive payload end offset inside the assembled
+// frame.
+func (o FrameOBU) PayloadEnd() int {
+	return o.End()
 }
 
 type frameAssembleScan struct {
@@ -383,6 +402,7 @@ func (s *frameAssembleScan) calculateOBUInfo() (FrameOBU, error) {
 
 	header.HasSizeField = true
 	info := FrameOBU{
+		Header:      header,
 		PrefixSize:  headerLen,
 		PayloadSize: payloadSize,
 		rawSkip:     rawSkip,

@@ -94,6 +94,58 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	if string(assembled[:wrote]) != string(frame) {
 		t.Fatalf("assembled=%x want %x", assembled[:wrote], frame)
 	}
+	if assembledOBUs[0].Header.Type != OBUSequenceHeader ||
+		!assembledOBUs[0].Header.HasSizeField ||
+		assembledOBUs[0].Offset != 0 ||
+		assembledOBUs[0].PrefixSize != 2 ||
+		assembledOBUs[0].PayloadSize != 1 ||
+		assembledOBUs[0].PayloadOffset() != 2 ||
+		assembledOBUs[0].PayloadEnd() != 3 {
+		t.Fatalf("assembled OBU0=%+v", assembledOBUs[0])
+	}
+	if assembledOBUs[1].Header.Type != OBUFrame ||
+		!assembledOBUs[1].Header.HasSizeField ||
+		assembledOBUs[1].Offset != 3 ||
+		assembledOBUs[1].PrefixSize != 2 ||
+		assembledOBUs[1].PayloadSize != 10 ||
+		assembledOBUs[1].PayloadOffset() != 5 ||
+		assembledOBUs[1].PayloadEnd() != wrote {
+		t.Fatalf("assembled OBU1=%+v wrote=%d", assembledOBUs[1], wrote)
+	}
+}
+
+func TestPublicRTPAssembleFrameOBUMetadata(t *testing.T) {
+	payloads := [][]byte{{
+		0x10,
+		byte(OBUTileGroup)<<3 | 0x04,
+		(1 << 5) | (2 << 3),
+		0xaa,
+	}}
+
+	var assembled [16]byte
+	var obus [1]RTPFrameOBU
+	wrote, count, err := AssembleRTPFrame(assembled[:], payloads, obus[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{byte(OBUTileGroup)<<3 | 0x06, (1 << 5) | (2 << 3), 0x01, 0xaa}
+	if count != 1 || string(assembled[:wrote]) != string(want) {
+		t.Fatalf("count=%d assembled=%x want=%x", count, assembled[:wrote], want)
+	}
+	if obus[0].Header.Type != OBUTileGroup ||
+		!obus[0].Header.Extension ||
+		!obus[0].Header.HasSizeField ||
+		obus[0].Header.TemporalID != 1 ||
+		obus[0].Header.SpatialID != 2 ||
+		obus[0].Offset != 0 ||
+		obus[0].Length != wrote ||
+		obus[0].PrefixSize != 3 ||
+		obus[0].PayloadSize != 1 ||
+		obus[0].PayloadOffset() != 3 ||
+		obus[0].PayloadEnd() != 4 ||
+		obus[0].End() != 4 {
+		t.Fatalf("obu=%+v wrote=%d", obus[0], wrote)
+	}
 }
 
 func TestPublicRTPDepacketizerPushSize(t *testing.T) {

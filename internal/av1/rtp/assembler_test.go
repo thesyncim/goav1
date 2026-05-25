@@ -42,10 +42,26 @@ func TestAssembleFrameSinglePacket(t *testing.T) {
 	if string(out[:wrote]) != string(frame) {
 		t.Fatalf("assembled=%x want=%x", out[:wrote], frame)
 	}
-	if obus[0].Offset != 0 || obus[0].Length != 3 || obus[0].PayloadSize != 1 {
+	if obus[0].Header.Type != obu.TypeSequenceHeader ||
+		!obus[0].Header.HasSizeField ||
+		obus[0].Offset != 0 ||
+		obus[0].Length != 3 ||
+		obus[0].PrefixSize != 2 ||
+		obus[0].PayloadSize != 1 ||
+		obus[0].PayloadOffset() != 2 ||
+		obus[0].PayloadEnd() != 3 ||
+		obus[0].End() != 3 {
 		t.Fatalf("obu0=%+v", obus[0])
 	}
-	if obus[1].Offset != 3 || obus[1].Length != 4 || obus[1].PayloadSize != 2 {
+	if obus[1].Header.Type != obu.TypeFrameHeader ||
+		!obus[1].Header.HasSizeField ||
+		obus[1].Offset != 3 ||
+		obus[1].Length != 4 ||
+		obus[1].PrefixSize != 2 ||
+		obus[1].PayloadSize != 2 ||
+		obus[1].PayloadOffset() != 5 ||
+		obus[1].PayloadEnd() != 7 ||
+		obus[1].End() != 7 {
 		t.Fatalf("obu1=%+v", obus[1])
 	}
 }
@@ -90,6 +106,14 @@ func TestAssembleFrameFragmentedOBU(t *testing.T) {
 	}
 	if string(out[:wrote]) != string(frame) {
 		t.Fatalf("assembled=%x want=%x", out[:wrote], frame)
+	}
+	if obus[0].Header.Type != obu.TypeFrame ||
+		!obus[0].Header.HasSizeField ||
+		obus[0].PrefixSize != 2 ||
+		obus[0].PayloadSize != len(payloadBytes) ||
+		obus[0].PayloadOffset() != 2 ||
+		obus[0].PayloadEnd() != wrote {
+		t.Fatalf("obu=%+v wrote=%d", obus[0], wrote)
 	}
 }
 
@@ -225,6 +249,16 @@ func TestAssembleFramePrefixAcrossFragments(t *testing.T) {
 	}
 	if count != 1 || string(out[:wrote]) != string(frame) {
 		t.Fatalf("count=%d assembled=%x want=%x", count, out[:wrote], frame)
+	}
+	if obus[0].Header.Type != obu.TypeTileGroup ||
+		!obus[0].Header.Extension ||
+		!obus[0].Header.HasSizeField ||
+		obus[0].Header.TemporalID != 1 ||
+		obus[0].Header.SpatialID != 2 ||
+		obus[0].PrefixSize != 3 ||
+		obus[0].PayloadOffset() != 3 ||
+		obus[0].PayloadEnd() != wrote {
+		t.Fatalf("obu=%+v wrote=%d", obus[0], wrote)
 	}
 }
 

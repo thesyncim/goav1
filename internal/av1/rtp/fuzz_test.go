@@ -169,14 +169,34 @@ func FuzzAssembleFrame(f *testing.F) {
 		}
 
 		it := obu.NewLowOverheadIterator(out[:wrote])
+		offset := 0
+		index := 0
 		for {
-			_, ok, err := it.Next()
+			unit, ok, err := it.Next()
 			if err != nil {
 				t.Fatalf("assembled low-overhead parse failed: %v", err)
 			}
 			if !ok {
+				if index != assembledCount || offset != wrote {
+					t.Fatalf("parsed index=%d offset=%d want count=%d wrote=%d", index, offset, assembledCount, wrote)
+				}
 				return
 			}
+			if index >= assembledCount {
+				t.Fatalf("parsed more OBUs than metadata count=%d", assembledCount)
+			}
+			info := obus[index]
+			if info.Header != unit.Header ||
+				info.Offset != offset ||
+				info.Length != len(unit.Raw) ||
+				info.PrefixSize != unit.HeaderLen+unit.SizeLen ||
+				info.PayloadSize != len(unit.Payload) ||
+				info.PayloadOffset() != offset+unit.HeaderLen+unit.SizeLen ||
+				info.PayloadEnd() != offset+len(unit.Raw) {
+				t.Fatalf("metadata[%d]=%+v unit=%+v offset=%d", index, info, unit, offset)
+			}
+			offset += len(unit.Raw)
+			index++
 		}
 	})
 }
