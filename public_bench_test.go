@@ -143,12 +143,16 @@ func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 			if count >= len(packetBytes) {
 				b.Fatal("too many RTP payloads")
 			}
-			n, _, ok, err := packetizer.NextPacket(packetBytes[count][:])
+			next, ok := packetizer.NextPacketSize()
+			if !ok {
+				break
+			}
+			n, _, ok, err := packetizer.NextPacket(packetBytes[count][:next])
 			if err != nil {
 				b.Fatal(err)
 			}
-			if !ok {
-				break
+			if !ok || n != next {
+				b.Fatalf("packet n=%d ok=%v want %d,true", n, ok, next)
 			}
 			payloads[count] = packetBytes[count][:n]
 			count++

@@ -107,6 +107,15 @@ func (p *Packetizer) NumPackets() int {
 	return len(p.packets) - p.packetIndex
 }
 
+// NextPacketSize reports the exact dst length required by the next NextPacket
+// call without advancing the packetizer.
+func (p *Packetizer) NextPacketSize() (int, bool) {
+	if p.packetIndex >= len(p.packets) {
+		return 0, false
+	}
+	return 1 + p.packets[p.packetIndex].PacketSize, true
+}
+
 func (p *Packetizer) NextPacket(dst []byte) (n int, marker bool, ok bool, err error) {
 	if p.packetIndex >= len(p.packets) {
 		return 0, false, false, nil

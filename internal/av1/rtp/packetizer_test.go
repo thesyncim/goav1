@@ -155,6 +155,49 @@ func TestPacketizerWritesLengthForMoreThanThreeOBUs(t *testing.T) {
 	}
 }
 
+func TestPacketizerNextPacketSize(t *testing.T) {
+	payloadBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	frame := appendPacketizerOBU(nil, obu.TypeFrame, payloadBytes)
+
+	var obus [2]PacketizerOBU
+	var packets [8]PacketPlan
+	var work [8]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 6}, false, true, obus[:], packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	size, ok := packetizer.NextPacketSize()
+	if !ok || size != 6 {
+		t.Fatalf("first size=%d ok=%v want 6,true", size, ok)
+	}
+	var short [5]byte
+	if _, _, _, err := packetizer.NextPacket(short[:]); !errors.Is(err, ErrShortBuffer) {
+		t.Fatalf("short NextPacket err=%v want %v", err, ErrShortBuffer)
+	}
+	if retrySize, ok := packetizer.NextPacketSize(); !ok || retrySize != size || packetizer.NumPackets() != 3 {
+		t.Fatalf("retry size=%d ok=%v remaining=%d want %d,true,3", retrySize, ok, packetizer.NumPackets(), size)
+	}
+
+	var payload [16]byte
+	for i := 0; i < 3; i++ {
+		size, ok := packetizer.NextPacketSize()
+		if !ok {
+			t.Fatalf("missing size for packet %d", i)
+		}
+		n, _, ok, err := packetizer.NextPacket(payload[:size])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok || n != size {
+			t.Fatalf("packet %d n=%d ok=%v want %d,true", i, n, ok, size)
+		}
+	}
+	if size, ok := packetizer.NextPacketSize(); ok || size != 0 {
+		t.Fatalf("done size=%d ok=%v want 0,false", size, ok)
+	}
+}
+
 func TestPacketizerFragmentsOBU(t *testing.T) {
 	payloadBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	frame := appendPacketizerOBU(nil, obu.TypeFrame, payloadBytes)

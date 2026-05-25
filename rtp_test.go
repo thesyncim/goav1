@@ -54,12 +54,16 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		if payloadCount >= len(payloads) {
 			t.Fatal("too many packets")
 		}
-		n, marker, ok, err := packetizer.NextPacket(packetBytes[payloadCount][:])
+		size, ok := packetizer.NextPacketSize()
+		if !ok {
+			break
+		}
+		n, marker, ok, err := packetizer.NextPacket(packetBytes[payloadCount][:size])
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !ok {
-			break
+		if !ok || n != size {
+			t.Fatalf("packet %d n=%d ok=%v want %d,true", payloadCount, n, ok, size)
 		}
 		if marker != (packetizer.NumPackets() == 0) {
 			t.Fatalf("packet %d marker=%v remaining=%d", payloadCount, marker, packetizer.NumPackets())
@@ -69,6 +73,9 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	}
 	if payloadCount != size.Packets {
 		t.Fatalf("payloadCount=%d scratch packets=%d", payloadCount, size.Packets)
+	}
+	if next, ok := packetizer.NextPacketSize(); ok || next != 0 {
+		t.Fatalf("done packet size=%d ok=%v want 0,false", next, ok)
 	}
 
 	assembledLen, obuCount, err := AssembleRTPFrameSize(payloads[:payloadCount])
@@ -161,12 +168,16 @@ func TestPublicRTPSizingAllocs(t *testing.T) {
 		}
 		count := 0
 		for {
-			n, _, ok, err := packetizer.NextPacket(packetBytes[count][:])
+			next, ok := packetizer.NextPacketSize()
+			if !ok {
+				break
+			}
+			n, _, ok, err := packetizer.NextPacket(packetBytes[count][:next])
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !ok {
-				break
+			if !ok || n != next {
+				t.Fatalf("packet n=%d ok=%v want %d,true", n, ok, next)
 			}
 			payloads[count] = packetBytes[count][:n]
 			count++

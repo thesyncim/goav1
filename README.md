@@ -37,7 +37,7 @@ The initial implementation covers:
 - AV1 RTP aggregation header parsing, payload iteration, payload building,
   single-OBU fragmentation, and fragment reassembly.
 - WebRTC-compatible low-overhead OBU RTP packetization with caller-owned
-  scratch and public two-pass scratch sizing.
+  scratch, public two-pass scratch sizing, and exact next-packet output sizing.
 - Caller-buffer AV1 RTP depacketization into complete OBU spans with
   allocation-free size preflight.
 - WebRTC-compatible RTP frame assembly that restores low-overhead OBU size
