@@ -18,7 +18,11 @@ func FrameMD5(f frame.Frame) (MD5, error) {
 	if err := addFramePlaneMD5(h, f.Y, f.Layout.BytesPerSample); err != nil {
 		return MD5{}, err
 	}
-	if !f.Format.MonoChrome {
+	if f.Format.MonoChrome {
+		if err := addMonochromeNeutralChromaMD5(h, f.Format, f.Layout.BytesPerSample); err != nil {
+			return MD5{}, err
+		}
+	} else {
 		if err := addFramePlaneMD5(h, f.U, f.Layout.BytesPerSample); err != nil {
 			return MD5{}, err
 		}
@@ -60,6 +64,51 @@ func addFramePlaneMD5(h hash.Hash, plane frame.Plane, bytesPerSample int) error 
 		row := y * plane.Stride
 		if _, err := h.Write(plane.Pix[row : row+rowBytes]); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func addMonochromeNeutralChromaMD5(h hash.Hash, format frame.Format, bytesPerSample int) error {
+	if format.Width <= 0 || format.Height <= 0 || format.BitDepth == 0 {
+		return frame.ErrInvalidFormat
+	}
+	width := format.Width
+	height := format.Height
+	if format.SubsamplingX {
+		width = (width + 1) >> 1
+	}
+	if format.SubsamplingY {
+		height = (height + 1) >> 1
+	}
+	if width <= 0 || height <= 0 {
+		return frame.ErrInvalidFormat
+	}
+	rowBytes := width * bytesPerSample
+	if rowBytes/bytesPerSample != width {
+		return frame.ErrInvalidPlane
+	}
+	var row [4096]byte
+	neutral := uint16(1) << (format.BitDepth - 1)
+	for i := 0; i+bytesPerSample <= len(row); i += bytesPerSample {
+		row[i] = byte(neutral)
+		if bytesPerSample == 2 {
+			row[i+1] = byte(neutral >> 8)
+		}
+	}
+	for plane := 0; plane < 2; plane++ {
+		for y := 0; y < height; y++ {
+			remaining := rowBytes
+			for remaining > 0 {
+				chunk := remaining
+				if chunk > len(row) {
+					chunk = len(row)
+				}
+				if _, err := h.Write(row[:chunk]); err != nil {
+					return err
+				}
+				remaining -= chunk
+			}
 		}
 	}
 	return nil

@@ -45,6 +45,26 @@ func TestFrameMD5MatchesMonochrome(t *testing.T) {
 	}
 }
 
+func TestFrameMD5MatchesSubsampledMonochromeNeutralChroma(t *testing.T) {
+	f, expected := testDigestFrame(t, frame.Format{
+		Width:        5,
+		Height:       3,
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        8,
+	})
+
+	got, err := FrameMD5(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := MD5(md5.Sum(expected)); got != want {
+		t.Fatalf("md5=%x want %x", got, want)
+	}
+}
+
 func TestFrameMD5MatchesHighBitDepthRows(t *testing.T) {
 	f, expected := testDigestFrame(t, frame.Format{
 		Width:        3,
@@ -93,7 +113,9 @@ func testDigestFrame(t *testing.T, format frame.Format) (frame.Frame, []byte) {
 
 	expected := make([]byte, 0, visibleFrameBytes(f))
 	fillDigestPlane(&f.Y, f.Layout.BytesPerSample, 0x10, &expected)
-	if !f.Format.MonoChrome {
+	if f.Format.MonoChrome {
+		fillNeutralChromaDigest(f.Format, f.Layout.BytesPerSample, &expected)
+	} else {
 		fillDigestPlane(&f.U, f.Layout.BytesPerSample, 0x70, &expected)
 		fillDigestPlane(&f.V, f.Layout.BytesPerSample, 0xa0, &expected)
 	}
@@ -116,9 +138,41 @@ func fillDigestPlane(plane *frame.Plane, bytesPerSample int, seed byte, expected
 	}
 }
 
+func fillNeutralChromaDigest(format frame.Format, bytesPerSample int, expected *[]byte) {
+	width := format.Width
+	height := format.Height
+	if format.SubsamplingX {
+		width = (width + 1) >> 1
+	}
+	if format.SubsamplingY {
+		height = (height + 1) >> 1
+	}
+	neutral := uint16(1) << (format.BitDepth - 1)
+	for plane := 0; plane < 2; plane++ {
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				*expected = append(*expected, byte(neutral))
+				if bytesPerSample == 2 {
+					*expected = append(*expected, byte(neutral>>8))
+				}
+			}
+		}
+	}
+}
+
 func visibleFrameBytes(f frame.Frame) int {
 	bytes := f.Y.Width * f.Y.Height * f.Layout.BytesPerSample
-	if !f.Format.MonoChrome {
+	if f.Format.MonoChrome {
+		width := f.Format.Width
+		height := f.Format.Height
+		if f.Format.SubsamplingX {
+			width = (width + 1) >> 1
+		}
+		if f.Format.SubsamplingY {
+			height = (height + 1) >> 1
+		}
+		bytes += 2 * width * height * f.Layout.BytesPerSample
+	} else {
 		bytes += (f.U.Width*f.U.Height + f.V.Width*f.V.Height) * f.Layout.BytesPerSample
 	}
 	return bytes
