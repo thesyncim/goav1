@@ -200,6 +200,148 @@ func libaomIADST8(input []int32, output []int32) {
 	bf1[7] = -bf0[1]
 }
 
+// libaomIDCT16 reproduces libaom's av1_idct16 for cos_bit=12 and 16-bit stage
+// range.
+func libaomIDCT16(input []int32, output []int32) {
+	cospi := libaomCospi12[:]
+	halfBtf := libaomHalfBtf
+	clamp := libaomClamp16
+	var step [16]int32
+	bf0 := output
+	bf1 := output
+
+	bf1[0] = input[0]
+	bf1[1] = input[8]
+	bf1[2] = input[4]
+	bf1[3] = input[12]
+	bf1[4] = input[2]
+	bf1[5] = input[10]
+	bf1[6] = input[6]
+	bf1[7] = input[14]
+	bf1[8] = input[1]
+	bf1[9] = input[9]
+	bf1[10] = input[5]
+	bf1[11] = input[13]
+	bf1[12] = input[3]
+	bf1[13] = input[11]
+	bf1[14] = input[7]
+	bf1[15] = input[15]
+
+	bf0 = output
+	bf1 = step[:]
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = halfBtf(cospi[60], bf0[8], -cospi[4], bf0[15])
+	bf1[9] = halfBtf(cospi[28], bf0[9], -cospi[36], bf0[14])
+	bf1[10] = halfBtf(cospi[44], bf0[10], -cospi[20], bf0[13])
+	bf1[11] = halfBtf(cospi[12], bf0[11], -cospi[52], bf0[12])
+	bf1[12] = halfBtf(cospi[52], bf0[11], cospi[12], bf0[12])
+	bf1[13] = halfBtf(cospi[20], bf0[10], cospi[44], bf0[13])
+	bf1[14] = halfBtf(cospi[36], bf0[9], cospi[28], bf0[14])
+	bf1[15] = halfBtf(cospi[4], bf0[8], cospi[60], bf0[15])
+
+	bf0 = step[:]
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = halfBtf(cospi[56], bf0[4], -cospi[8], bf0[7])
+	bf1[5] = halfBtf(cospi[24], bf0[5], -cospi[40], bf0[6])
+	bf1[6] = halfBtf(cospi[40], bf0[5], cospi[24], bf0[6])
+	bf1[7] = halfBtf(cospi[8], bf0[4], cospi[56], bf0[7])
+	bf1[8] = clamp(bf0[8] + bf0[9])
+	bf1[9] = clamp(bf0[8] - bf0[9])
+	bf1[10] = clamp(-bf0[10] + bf0[11])
+	bf1[11] = clamp(bf0[10] + bf0[11])
+	bf1[12] = clamp(bf0[12] + bf0[13])
+	bf1[13] = clamp(bf0[12] - bf0[13])
+	bf1[14] = clamp(-bf0[14] + bf0[15])
+	bf1[15] = clamp(bf0[14] + bf0[15])
+
+	bf0 = output
+	bf1 = step[:]
+	bf1[0] = halfBtf(cospi[32], bf0[0], cospi[32], bf0[1])
+	bf1[1] = halfBtf(cospi[32], bf0[0], -cospi[32], bf0[1])
+	bf1[2] = halfBtf(cospi[48], bf0[2], -cospi[16], bf0[3])
+	bf1[3] = halfBtf(cospi[16], bf0[2], cospi[48], bf0[3])
+	bf1[4] = clamp(bf0[4] + bf0[5])
+	bf1[5] = clamp(bf0[4] - bf0[5])
+	bf1[6] = clamp(-bf0[6] + bf0[7])
+	bf1[7] = clamp(bf0[6] + bf0[7])
+	bf1[8] = bf0[8]
+	bf1[9] = halfBtf(-cospi[16], bf0[9], cospi[48], bf0[14])
+	bf1[10] = halfBtf(-cospi[48], bf0[10], -cospi[16], bf0[13])
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = halfBtf(-cospi[16], bf0[10], cospi[48], bf0[13])
+	bf1[14] = halfBtf(cospi[48], bf0[9], cospi[16], bf0[14])
+	bf1[15] = bf0[15]
+
+	bf0 = step[:]
+	bf1 = output
+	bf1[0] = clamp(bf0[0] + bf0[3])
+	bf1[1] = clamp(bf0[1] + bf0[2])
+	bf1[2] = clamp(bf0[1] - bf0[2])
+	bf1[3] = clamp(bf0[0] - bf0[3])
+	bf1[4] = bf0[4]
+	bf1[5] = halfBtf(-cospi[32], bf0[5], cospi[32], bf0[6])
+	bf1[6] = halfBtf(cospi[32], bf0[5], cospi[32], bf0[6])
+	bf1[7] = bf0[7]
+	bf1[8] = clamp(bf0[8] + bf0[11])
+	bf1[9] = clamp(bf0[9] + bf0[10])
+	bf1[10] = clamp(bf0[9] - bf0[10])
+	bf1[11] = clamp(bf0[8] - bf0[11])
+	bf1[12] = clamp(-bf0[12] + bf0[15])
+	bf1[13] = clamp(-bf0[13] + bf0[14])
+	bf1[14] = clamp(bf0[13] + bf0[14])
+	bf1[15] = clamp(bf0[12] + bf0[15])
+
+	bf0 = output
+	bf1 = step[:]
+	bf1[0] = clamp(bf0[0] + bf0[7])
+	bf1[1] = clamp(bf0[1] + bf0[6])
+	bf1[2] = clamp(bf0[2] + bf0[5])
+	bf1[3] = clamp(bf0[3] + bf0[4])
+	bf1[4] = clamp(bf0[3] - bf0[4])
+	bf1[5] = clamp(bf0[2] - bf0[5])
+	bf1[6] = clamp(bf0[1] - bf0[6])
+	bf1[7] = clamp(bf0[0] - bf0[7])
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = halfBtf(-cospi[32], bf0[10], cospi[32], bf0[13])
+	bf1[11] = halfBtf(-cospi[32], bf0[11], cospi[32], bf0[12])
+	bf1[12] = halfBtf(cospi[32], bf0[11], cospi[32], bf0[12])
+	bf1[13] = halfBtf(cospi[32], bf0[10], cospi[32], bf0[13])
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+
+	bf0 = step[:]
+	bf1 = output
+	bf1[0] = clamp(bf0[0] + bf0[15])
+	bf1[1] = clamp(bf0[1] + bf0[14])
+	bf1[2] = clamp(bf0[2] + bf0[13])
+	bf1[3] = clamp(bf0[3] + bf0[12])
+	bf1[4] = clamp(bf0[4] + bf0[11])
+	bf1[5] = clamp(bf0[5] + bf0[10])
+	bf1[6] = clamp(bf0[6] + bf0[9])
+	bf1[7] = clamp(bf0[7] + bf0[8])
+	bf1[8] = clamp(bf0[7] - bf0[8])
+	bf1[9] = clamp(bf0[6] - bf0[9])
+	bf1[10] = clamp(bf0[5] - bf0[10])
+	bf1[11] = clamp(bf0[4] - bf0[11])
+	bf1[12] = clamp(bf0[3] - bf0[12])
+	bf1[13] = clamp(bf0[2] - bf0[13])
+	bf1[14] = clamp(bf0[1] - bf0[14])
+	bf1[15] = clamp(bf0[0] - bf0[15])
+}
+
 func TestInverseDCT4BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	for trial := 0; trial < 5000; trial++ {
@@ -233,6 +375,25 @@ func TestInverseDCT8BitExactLibaom(t *testing.T) {
 		for i := range got {
 			if got[i] != want[i] {
 				t.Fatalf("trial=%d input=%v got=%v want=%v", trial, input, got, want)
+			}
+		}
+	}
+}
+
+func TestInverseDCT16BitExactLibaom(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	for trial := 0; trial < 5000; trial++ {
+		var input [16]int32
+		for i := range input {
+			input[i] = int32(rng.Intn(65536) - 32768)
+		}
+		got := input
+		inverseDCT16(got[:], 1, minInt16, maxInt16)
+		var want [16]int32
+		libaomIDCT16(input[:], want[:])
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("trial=%d coeff=%d got=%d want=%d", trial, i, got[i], want[i])
 			}
 		}
 	}
