@@ -326,6 +326,73 @@ func TestPublicDecoderFrameWorkBatchResidualScratchBinding(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkBatchResidualRunner(t *testing.T) {
+	batch, _, _, _, _ := publicDecoderResidualBatchDriver(t)
+	size, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Workers != 2 || size.Int32Scratch != size.Batch.Int32Scratch*2 ||
+		size.ResidualScratch != size.Batch.ResidualScratch*2 ||
+		size.LoopContextAbove != size.Batch.LoopContextAbove*2 {
+		t.Fatalf("runner scratch size=%+v", size)
+	}
+	scratch := publicDecoderBatchResidualRunnerScratch(size)
+	scratch.Int32Scratch[size.Int32Scratch] = 33
+	scratch.ResidualScratch[size.ResidualScratch] = 44
+	scratch.LoopContextAboveScratch[size.LoopContextAbove].Partition[0] = 66
+	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(size, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scratch.PredictionScratch[1].Inter != &scratch.InterPredictionScratch[1] {
+		t.Fatal("runner did not bind inter prediction scratch")
+	}
+
+	batch.Batch = av1.TileBatch{Worker: 1}
+	statsErr := runner.ResetStats()
+	if statsErr != nil {
+		t.Fatal(statsErr)
+	}
+	if err := runner.Run(batch); err != nil {
+		t.Fatal(err)
+	}
+	stats := runner.Stats[1]
+	if stats.Loop.Blocks != 2 || stats.TXBs != 2 || stats.Residuals != 2 {
+		t.Fatalf("runner stats=%+v", stats)
+	}
+	total, err := runner.TotalStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total.Loop.Blocks != stats.Loop.Blocks || total.TXBs != stats.TXBs {
+		t.Fatalf("total stats=%+v worker stats=%+v", total, stats)
+	}
+	if scratch.Int32Scratch[size.Int32Scratch] != 33 ||
+		scratch.ResidualScratch[size.ResidualScratch] != 44 ||
+		scratch.LoopContextAboveScratch[size.LoopContextAbove].Partition[0] != 66 {
+		t.Fatal("runner bind touched storage past requested lengths")
+	}
+
+	badWorker := batch
+	badWorker.Batch.Worker = 2
+	if err := runner.Run(badWorker); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("bad worker err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+	shortScratch := publicDecoderBatchResidualRunnerScratch(size)
+	shortScratch.Int32Scratch = shortScratch.Int32Scratch[:size.Int32Scratch-1]
+	if _, err := av1.BindDecoderFrameWorkBatchResidualRunner(size, shortScratch); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short runner scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	if _, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, 0); !errors.Is(err, av1.ErrThreadingInvalidWorkerCount) {
+		t.Fatalf("zero-worker scratch err=%v want %v", err, av1.ErrThreadingInvalidWorkerCount)
+	}
+	var nilRunner *av1.DecoderFrameWorkBatchResidualRunner
+	if err := nilRunner.Run(batch); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("nil runner err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
 	predictions := 0
@@ -656,6 +723,26 @@ func TestPublicDecodeAndRetainDecoderFrameWorkBatchResidualsAllocs(t *testing.T)
 	}
 }
 
+func TestPublicDecoderFrameWorkBatchResidualRunnerAllocs(t *testing.T) {
+	batch, _, _, _, _ := publicDecoderResidualBatchDriver(t)
+	size, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(size, publicDecoderBatchResidualRunnerScratch(size))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := runner.Run(batch); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("allocs=%v want 0", allocs)
+	}
+}
+
 func publicDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
 	return av1.DecoderFrameWorkBatch{
 		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
@@ -778,6 +865,20 @@ func publicDecoderResidualBatchDriver(t *testing.T) (av1.DecoderFrameWorkBatch, 
 		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, loopContextLen),
 	}
 	return batch, state, storage, scratch, req
+}
+
+func publicDecoderBatchResidualRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
+	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]av1.TileDecodeState, size.Workers+1),
+		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers+1),
+		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers+1),
+		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers+1),
+		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers+1),
+		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers+1),
+		Int32Scratch:            make([]int32, size.Int32Scratch+1),
+		ResidualScratch:         make([]int16, size.ResidualScratch+1),
+		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove+1),
+	}
 }
 
 func publicCDFValuesEqual(a []uint16, b []uint16) bool {

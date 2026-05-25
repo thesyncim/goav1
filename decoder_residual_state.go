@@ -150,6 +150,52 @@ type DecoderFrameWorkBatchResidualScratch struct {
 	LoopContextAbove []TileBlockLoopRootAboveContext
 }
 
+// DecoderFrameWorkBatchResidualRunnerScratchSize reports the caller-owned
+// per-worker state and flat scratch needed by DecoderFrameWorkBatchResidualRunner.
+type DecoderFrameWorkBatchResidualRunnerScratchSize struct {
+	Workers int
+	Batch   DecoderFrameWorkBatchResidualScratchSize
+
+	Int32Scratch     int
+	ResidualScratch  int
+	LoopContextAbove int
+}
+
+// DecoderFrameWorkBatchResidualRunnerScratch carries caller-owned storage for
+// BindDecoderFrameWorkBatchResidualRunner.
+type DecoderFrameWorkBatchResidualRunnerScratch struct {
+	States                  []TileDecodeState
+	Storages                []DecoderFrameWorkTileResidualCDFStorage
+	TileScratch             []DecoderFrameWorkTileResidualScratch
+	PredictionScratch       []DecoderFrameWorkPredictionScratch
+	InterPredictionScratch  []DecoderFrameWorkInterPredictionScratch
+	Stats                   []DecoderFrameWorkTileResidualStats
+	Int32Scratch            []int32
+	ResidualScratch         []int16
+	LoopContextAboveScratch []TileBlockLoopRootAboveContext
+}
+
+// DecoderFrameWorkBatchResidualRunner adapts the public residual batch decoder
+// to DecoderFrameWorkBatchFunc with caller-owned per-worker state.
+type DecoderFrameWorkBatchResidualRunner struct {
+	Request DecoderFrameWorkBatchResidualRequest
+	// UseDefaultPrediction wires each worker's PredictionScratch into Request
+	// when Request.Tile.PredictionScratch is nil.
+	UseDefaultPrediction bool
+
+	States                 []TileDecodeState
+	Storages               []DecoderFrameWorkTileResidualCDFStorage
+	TileScratch            []DecoderFrameWorkTileResidualScratch
+	PredictionScratch      []DecoderFrameWorkPredictionScratch
+	InterPredictionScratch []DecoderFrameWorkInterPredictionScratch
+	Stats                  []DecoderFrameWorkTileResidualStats
+
+	BatchScratchSize DecoderFrameWorkBatchResidualScratchSize
+	Int32Scratch     []int32
+	ResidualScratch  []int16
+	LoopContextAbove []TileBlockLoopRootAboveContext
+}
+
 func DecoderFrameWorkResidualMaxFrameScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (int32Len int, int16Len int, err error) {
 	planes := [3]DecoderFrameWorkPlane{DecoderFrameWorkPlaneY}
 	planeCount := 1
@@ -195,6 +241,35 @@ func DecoderFrameWorkBatchResidualScratchLen(batch DecoderFrameWorkBatch, curren
 	}, nil
 }
 
+func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, workers int) (DecoderFrameWorkBatchResidualRunnerScratchSize, error) {
+	if workers <= 0 {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrThreadingInvalidWorkerCount
+	}
+	batchSize, err := DecoderFrameWorkBatchResidualScratchLen(batch, batch.Quantization.BaseQIdx)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, err
+	}
+	int32Len, ok := decoderFrameWorkResidualCheckedMul(batchSize.Int32Scratch, workers)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrFrameShortBuffer
+	}
+	residualLen, ok := decoderFrameWorkResidualCheckedMul(batchSize.ResidualScratch, workers)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrFrameShortBuffer
+	}
+	loopContextLen, ok := decoderFrameWorkResidualCheckedMul(batchSize.LoopContextAbove, workers)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrFrameShortBuffer
+	}
+	return DecoderFrameWorkBatchResidualRunnerScratchSize{
+		Workers:          workers,
+		Batch:            batchSize,
+		Int32Scratch:     int32Len,
+		ResidualScratch:  residualLen,
+		LoopContextAbove: loopContextLen,
+	}, nil
+}
+
 func BindDecoderFrameWorkBatchResidualRequestScratch(size DecoderFrameWorkBatchResidualScratchSize, scratch DecoderFrameWorkBatchResidualScratch) (DecoderFrameWorkBatchResidualRequest, error) {
 	if decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
 		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
@@ -208,6 +283,83 @@ func BindDecoderFrameWorkBatchResidualRequestScratch(size DecoderFrameWorkBatchR
 		},
 		LoopContextAbove: scratch.LoopContextAbove[:size.LoopContextAbove],
 	}, nil
+}
+
+func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualRunnerScratchSize, scratch DecoderFrameWorkBatchResidualRunnerScratch) (DecoderFrameWorkBatchResidualRunner, error) {
+	if size.Workers <= 0 {
+		return DecoderFrameWorkBatchResidualRunner{}, ErrThreadingInvalidWorkerCount
+	}
+	if size.Batch.Int32Scratch < 0 || size.Batch.ResidualScratch < 0 || size.Batch.LoopContextAbove < 0 {
+		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.States, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Storages, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.TileScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.PredictionScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.InterPredictionScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Stats, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.LoopContextAboveScratch, size.LoopContextAbove) {
+		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
+	}
+	predictionScratch := scratch.PredictionScratch[:size.Workers]
+	interScratch := scratch.InterPredictionScratch[:size.Workers]
+	for i := range predictionScratch {
+		predictionScratch[i].Inter = &interScratch[i]
+	}
+	return DecoderFrameWorkBatchResidualRunner{
+		States:                 scratch.States[:size.Workers],
+		Storages:               scratch.Storages[:size.Workers],
+		TileScratch:            scratch.TileScratch[:size.Workers],
+		PredictionScratch:      predictionScratch,
+		InterPredictionScratch: interScratch,
+		Stats:                  scratch.Stats[:size.Workers],
+		BatchScratchSize:       size.Batch,
+		Int32Scratch:           scratch.Int32Scratch[:size.Int32Scratch],
+		ResidualScratch:        scratch.ResidualScratch[:size.ResidualScratch],
+		LoopContextAbove:       scratch.LoopContextAboveScratch[:size.LoopContextAbove],
+	}, nil
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) error {
+	worker, err := r.workerIndex(batch)
+	if err != nil {
+		return err
+	}
+	req, err := r.workerRequest(worker)
+	if err != nil {
+		return err
+	}
+	req.Tile.TransformMode = batch.TransformRef.TransformMode
+	if req.Tile.Transforms == nil {
+		req.Tile.UseDefaultTransforms = true
+	}
+	if err := InitDecoderFrameWorkTileResidualCDFStorage(batch, &r.Storages[worker]); err != nil {
+		return err
+	}
+	stats, err := DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req)
+	r.Stats[worker] = stats
+	return err
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) ResetStats() error {
+	if r == nil {
+		return ErrThreadingInvalidBatch
+	}
+	clear(r.Stats)
+	return nil
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) TotalStats() (DecoderFrameWorkTileResidualStats, error) {
+	if r == nil {
+		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
+	}
+	var total DecoderFrameWorkTileResidualStats
+	for _, stats := range r.Stats {
+		decoderFrameWorkAccumulateResidualStats(&total, stats)
+	}
+	return total, nil
 }
 
 func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatch) (int, error) {
@@ -256,6 +408,69 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 		}
 	}
 	return total, nil
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) workerIndex(batch DecoderFrameWorkBatch) (int, error) {
+	if r == nil {
+		return 0, ErrThreadingInvalidBatch
+	}
+	worker := int(batch.Batch.Worker)
+	if worker < 0 || worker >= len(r.States) ||
+		worker >= len(r.Storages) ||
+		worker >= len(r.TileScratch) ||
+		worker >= len(r.PredictionScratch) ||
+		worker >= len(r.InterPredictionScratch) ||
+		worker >= len(r.Stats) {
+		return 0, ErrThreadingInvalidBatch
+	}
+	return worker, nil
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) workerRequest(worker int) (DecoderFrameWorkBatchResidualRequest, error) {
+	req := r.Request
+	int32Offset, ok := decoderFrameWorkResidualCheckedMul(worker, r.BatchScratchSize.Int32Scratch)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+	}
+	residualOffset, ok := decoderFrameWorkResidualCheckedMul(worker, r.BatchScratchSize.ResidualScratch)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+	}
+	loopOffset, ok := decoderFrameWorkResidualCheckedMul(worker, r.BatchScratchSize.LoopContextAbove)
+	if !ok {
+		return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+	}
+	if int32Offset > len(r.Int32Scratch) ||
+		residualOffset > len(r.ResidualScratch) ||
+		loopOffset > len(r.LoopContextAbove) {
+		return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+	}
+	scratch := DecoderFrameWorkBatchResidualScratch{
+		Int32Scratch:     r.Int32Scratch[int32Offset:],
+		ResidualScratch:  r.ResidualScratch[residualOffset:],
+		LoopContextAbove: r.LoopContextAbove[loopOffset:],
+	}
+	bound, err := BindDecoderFrameWorkBatchResidualRequestScratch(r.BatchScratchSize, scratch)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualRequest{}, err
+	}
+	req.Tile.Int32Scratch = bound.Tile.Int32Scratch
+	req.Tile.ResidualScratch = bound.Tile.ResidualScratch
+	req.LoopContextAbove = bound.LoopContextAbove
+	if req.Tile.PredictionScratch == nil && r.UseDefaultPrediction {
+		req.Tile.PredictionScratch = &r.PredictionScratch[worker]
+	}
+	return req, nil
+}
+
+func decoderFrameWorkResidualCheckedMul(a int, b int) (int, bool) {
+	if a < 0 || b < 0 {
+		return 0, false
+	}
+	if a != 0 && b > int(^uint(0)>>1)/a {
+		return 0, false
+	}
+	return a * b, true
 }
 
 func decoderFrameWorkResidualScratchTooShort[T any](scratch []T, need int) bool {
