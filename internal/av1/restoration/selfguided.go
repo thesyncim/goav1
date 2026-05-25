@@ -175,7 +175,14 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 			if params.Radius[1] > 0 {
 				v += int32(xq[1]) * (flt1[k] - u)
 			}
-			w := roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)
+			// libaom casts the rounded projection to int16_t before clipping,
+			// so a value beyond [-32768, 32767] wraps modulo 2^16 and is then
+			// re-extended to int32 inside clip_pixel_highbd. Match that exactly
+			// instead of clamping the wider int32 directly, otherwise extreme
+			// projections (very negative or very large) diverge by entire-pixel
+			// values.
+			rounded := roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)
+			w := int32(int16(rounded))
 			dst[row*dstStride+col] = uint16(clampInt32(w, 0, int32(max)))
 		}
 	}
