@@ -65,6 +65,10 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 	if !result.Completed.Empty() {
 		t.Fatalf("result=%+v", result)
 	}
+	var callerRunner av1.DecoderFrameWorkCallerPostFilterRunner
+	if callerRunner.Result.Completed != result.Completed {
+		t.Fatalf("caller runner=%+v result=%+v", callerRunner, result)
+	}
 
 	var postScratch av1.DecoderFrameWorkPostFilterScratchSize
 	postScratch.Restoration = av1.DecoderFrameWorkRestorationPostFilterScratchSize{

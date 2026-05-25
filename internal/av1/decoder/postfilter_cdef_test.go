@@ -239,6 +239,21 @@ func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
 	}
 }
 
+func TestFrameWorkCallerPostFilterRunnerAllocs(t *testing.T) {
+	runner := FrameWorkCallerPostFilterRunner{}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := runner.Apply(FrameWorkPostFilterContext{}); err != nil {
+			t.Fatal(err)
+		}
+		if runner.Context.RemainingPostFilters() != 0 || runner.Result.Completed != 0 {
+			t.Fatalf("runner context=%+v result=%+v", runner.Context, runner.Result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkCallerPostFilterRunner allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBeforeMutation(t *testing.T) {
 	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 32})
 	output.Y.Pix[0] = 0x44

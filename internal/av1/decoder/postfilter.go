@@ -92,6 +92,15 @@ type FrameWorkSupportedPostFilterRunner struct {
 	Result  FrameWorkPostFilterResult
 }
 
+// FrameWorkCallerPostFilterRunner adapts ApplyCallerPostFilters to the
+// FrameWorkPostFilterFunc callback shape for display/output consumers that can
+// retain caller-owned detached output.
+type FrameWorkCallerPostFilterRunner struct {
+	Request FrameWorkPostFilterRequest
+	Context FrameWorkPostFilterContext
+	Result  FrameWorkCallerPostFilterResult
+}
+
 // Apply runs supported postfilters and rejects any remaining active stage.
 func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
 	if r == nil {
@@ -102,6 +111,23 @@ func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContex
 		return err
 	}
 	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return err
+	}
+	r.Context = next
+	r.Result = result
+	return nil
+}
+
+// Apply runs the full caller-owned postfilter chain and allows detached output.
+func (r *FrameWorkCallerPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrInvalidFrameWorkState
+	}
+	next, result, err := ctx.ApplyCallerPostFilters(r.Request)
+	if err != nil {
+		return err
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
 		return err
 	}
 	r.Context = next

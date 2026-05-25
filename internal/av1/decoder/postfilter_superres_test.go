@@ -350,6 +350,55 @@ func TestFrameWorkPostFilterContextApplyCallerPostFiltersRunsSuperResThenFilmGra
 	}
 }
 
+func TestFrameWorkCallerPostFilterRunnerApplyRunsSuperRes(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              16,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			output.Y.Pix[y*output.Y.Stride+x] = byte(64 + x)
+		}
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := FrameWorkPostFilterRequest{
+		SuperRes: testFrameWorkSuperResPostFilterRequest(t, ctx),
+	}
+	runner := FrameWorkCallerPostFilterRunner{Request: req}
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Result.Completed != FrameWorkPostFilterSuperRes ||
+		runner.Result.SuperRes.Output.Format.Width != 13 ||
+		runner.Context.RemainingPostFilters() != 0 ||
+		!runner.Context.DetachedPostFilterOutput() ||
+		runner.Context.Output.Format.Width != 13 {
+		t.Fatalf("runner context detached=%v remaining=%b result=%+v", runner.Context.DetachedPostFilterOutput(), runner.Context.RemainingPostFilters(), runner.Result)
+	}
+	if err := runner.Context.RequireNoRemainingPostFilters(); err != nil {
+		t.Fatalf("RequireNoRemainingPostFilters err=%v", err)
+	}
+	if err := runner.Context.RequirePublishablePostFilterOutput(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequirePublishablePostFilterOutput err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+	if output.Format.Width != 8 || output.Y.Pix[0] != 64 {
+		t.Fatalf("coded output mutated: width=%d first=%d", output.Format.Width, output.Y.Pix[0])
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsShortOutputScratch(t *testing.T) {
 	seq := testSequence()
 	event := Event{
