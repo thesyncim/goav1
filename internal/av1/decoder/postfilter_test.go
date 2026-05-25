@@ -333,6 +333,167 @@ func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 	}
 }
 
+func TestFrameWorkPostFilterScratchSizeBindRequest(t *testing.T) {
+	size := testFrameWorkPostFilterScratchSize()
+	scratch := testFrameWorkPostFilterScratchStorage(size)
+	var outputView frame.Frame
+	options := FrameWorkPostFilterBindOptions{
+		CDEFIndexMap: FrameWorkCDEFIndexMap{
+			Index:  make([]uint8, 4),
+			Read:   make([]bool, 4),
+			Stride: 2,
+			Rows:   2,
+		},
+		SuperResOutputView: &outputView,
+		RestorationRecords: [3][]tile.RestorationUnitRecord{
+			{{Index: 3}},
+		},
+		RestorationBoundaries: [3]tile.RestorationStripeBoundaries{
+			{Stride: 16},
+		},
+		RestorationOptimized: true,
+	}
+	req, err := size.BindRequest(options, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.LoopFilter.Edges) != size.LoopFilter.Edges ||
+		len(req.CDEF.SampleScratch[0]) != size.CDEF.Samples[0] ||
+		len(req.SuperRes.OutputFrame) != size.SuperRes.OutputFrame ||
+		req.SuperRes.OutputView != &outputView ||
+		len(req.Restoration.DataScratch) != size.Restoration.Samples.DataLen ||
+		len(req.Restoration.Scratch.Unit.Wiener) != size.Restoration.Apply.Unit.Wiener ||
+		!req.Restoration.Optimized ||
+		len(req.Restoration.Records[0]) != 1 ||
+		req.Restoration.Boundaries[0].Stride != 16 ||
+		len(req.FilmGrain.LumaGrain) != size.FilmGrain.LumaGrain ||
+		len(req.FilmGrain.ChromaSamples[1]) != size.FilmGrain.ChromaSamples[1] {
+		t.Fatalf("request=%+v", req)
+	}
+}
+
+func TestFrameWorkPostFilterScratchSizeBindRequestRejectsShortStageScratch(t *testing.T) {
+	size := testFrameWorkPostFilterScratchSize()
+	scratch := testFrameWorkPostFilterScratchStorage(size)
+	tests := []struct {
+		name   string
+		mutate func(*FrameWorkPostFilterScratch)
+		want   error
+	}{
+		{name: "loop-filter", mutate: func(s *FrameWorkPostFilterScratch) { s.LoopFilterEdges = s.LoopFilterEdges[:len(s.LoopFilterEdges)-1] }, want: frame.ErrShortBuffer},
+		{name: "cdef", mutate: func(s *FrameWorkPostFilterScratch) { s.CDEFInput = s.CDEFInput[:len(s.CDEFInput)-1] }, want: frame.ErrShortBuffer},
+		{name: "superres", mutate: func(s *FrameWorkPostFilterScratch) {
+			s.SuperResOutputFrame = s.SuperResOutputFrame[:len(s.SuperResOutputFrame)-1]
+		}, want: frame.ErrShortBuffer},
+		{name: "restoration", mutate: func(s *FrameWorkPostFilterScratch) { s.RestorationData = s.RestorationData[:len(s.RestorationData)-1] }, want: tile.ErrJobBufferTooSmall},
+		{name: "film-grain", mutate: func(s *FrameWorkPostFilterScratch) {
+			s.FilmGrainLumaSamples = s.FilmGrainLumaSamples[:len(s.FilmGrainLumaSamples)-1]
+		}, want: frame.ErrShortBuffer},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			short := scratch
+			tt.mutate(&short)
+			if _, err := size.BindRequest(FrameWorkPostFilterBindOptions{}, short); !errors.Is(err, tt.want) {
+				t.Fatalf("BindRequest err=%v want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFrameWorkPostFilterScratchSizeBindRequestAllocs(t *testing.T) {
+	size := testFrameWorkPostFilterScratchSize()
+	scratch := testFrameWorkPostFilterScratchStorage(size)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := size.BindRequest(FrameWorkPostFilterBindOptions{}, scratch); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindRequest allocated: %f", allocs)
+	}
+}
+
+func BenchmarkFrameWorkPostFilterScratchSizeBindRequest(b *testing.B) {
+	size := testFrameWorkPostFilterScratchSize()
+	scratch := testFrameWorkPostFilterScratchStorage(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := size.BindRequest(FrameWorkPostFilterBindOptions{}, scratch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func testFrameWorkPostFilterScratchSize() FrameWorkPostFilterScratchSize {
+	return FrameWorkPostFilterScratchSize{
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 8},
+		CDEF: FrameWorkCDEFPostFilterScratchSize{
+			Samples:       [3]int{64, 32, 32},
+			Dst:           [3]int{64, 32, 32},
+			DirectionGrid: 4,
+			VarianceGrid:  4,
+			Input:         16,
+			UnitDst:       16,
+		},
+		SuperRes: FrameWorkSuperResPostFilterScratchSize{
+			OutputFrame:   128,
+			CodedSamples:  [3]int{64, 32, 32},
+			OutputSamples: [3]int{96, 48, 48},
+		},
+		Restoration: FrameWorkRestorationPostFilterScratchSize{
+			Samples: tile.RestorationFrameSampleScratchSize{
+				DataLen: 256,
+				DstLen:  256,
+			},
+			Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+				Unit:     tile.RestorationUnitScratchSize{Wiener: 32, SGRProj: 24},
+				Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 16, Below: 16},
+			},
+		},
+		FilmGrain: FrameWorkFilmGrainPostFilterScratchSize{
+			LumaGrain:     64,
+			ChromaGrain:   [2]int{32, 32},
+			LumaSamples:   128,
+			ChromaSamples: [2]int{64, 64},
+		},
+	}
+}
+
+func testFrameWorkPostFilterScratchStorage(size FrameWorkPostFilterScratchSize) FrameWorkPostFilterScratch {
+	cdefSamples, cdefDst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size.CDEF)
+	superResOutputFrame, superResCoded, superResOutput := testFrameWorkSuperResScratchStorage(size.SuperRes)
+	restorationData, restorationDst, restorationWiener, restorationSGR, restorationAbove, restorationBelow := testFrameWorkRestorationPostFilterScratchStorage(size.Restoration)
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size.FilmGrain)
+	return FrameWorkPostFilterScratch{
+		LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
+
+		CDEFSamples:       cdefSamples,
+		CDEFDst:           cdefDst,
+		CDEFDirectionGrid: directionGrid,
+		CDEFVarianceGrid:  varianceGrid,
+		CDEFInput:         input,
+		CDEFUnitDst:       unitDst,
+
+		SuperResOutputFrame: superResOutputFrame,
+		SuperResCoded:       superResCoded,
+		SuperResOutput:      superResOutput,
+
+		RestorationData:   restorationData,
+		RestorationDst:    restorationDst,
+		RestorationWiener: restorationWiener,
+		RestorationSGR:    restorationSGR,
+		RestorationAbove:  restorationAbove,
+		RestorationBelow:  restorationBelow,
+
+		FilmGrainLumaGrain:     lumaGrain,
+		FilmGrainChromaGrain:   chromaGrain,
+		FilmGrainLumaSamples:   lumaSamples,
+		FilmGrainChromaSamples: chromaSamples,
+	}
+}
+
 func TestFrameWorkStateRunStepWithPostFilterGateRejectsBeforePublish(t *testing.T) {
 	pool := testFramePool(t, 1)
 	surface, output, err := pool.Acquire()

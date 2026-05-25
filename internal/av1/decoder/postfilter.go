@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -42,6 +43,84 @@ type FrameWorkPostFilterScratchSize struct {
 	SuperRes    FrameWorkSuperResPostFilterScratchSize
 	Restoration FrameWorkRestorationPostFilterScratchSize
 	FilmGrain   FrameWorkFilmGrainPostFilterScratchSize
+}
+
+// FrameWorkPostFilterBindOptions carries decoded side data that is not part of
+// the reusable scratch arena.
+type FrameWorkPostFilterBindOptions struct {
+	LoopFilterMap FrameWorkLoopFilterMap
+	CDEFIndexMap  FrameWorkCDEFIndexMap
+
+	SuperResOutputView *frame.Frame
+
+	RestorationRecords    [3][]tile.RestorationUnitRecord
+	RestorationBoundaries [3]tile.RestorationStripeBoundaries
+	RestorationOptimized  bool
+}
+
+// FrameWorkPostFilterScratch carries caller-owned backing storage for the full
+// postfilter request. Callers can reuse one instance across frames after sizing
+// it with FrameWorkPostFilterScratchSize.Max.
+type FrameWorkPostFilterScratch struct {
+	LoopFilterEdges []FrameWorkLoopFilterPostFilterEdge
+
+	CDEFSamples       [3][]uint16
+	CDEFDst           [3][]uint16
+	CDEFDirectionGrid []cdef.DirectionGrid
+	CDEFVarianceGrid  []cdef.VarianceGrid
+	CDEFInput         []uint16
+	CDEFUnitDst       []uint16
+
+	SuperResOutputFrame []byte
+	SuperResCoded       [3][]uint16
+	SuperResOutput      [3][]uint16
+
+	RestorationData   []uint16
+	RestorationDst    []uint16
+	RestorationWiener []uint16
+	RestorationSGR    []int32
+	RestorationAbove  []uint16
+	RestorationBelow  []uint16
+
+	FilmGrainLumaGrain     []int16
+	FilmGrainChromaGrain   [2][]int16
+	FilmGrainLumaSamples   []uint16
+	FilmGrainChromaSamples [2][]uint16
+}
+
+// BindRequest validates and slices caller-owned storage for the full
+// postfilter request surface.
+func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterBindOptions, scratch FrameWorkPostFilterScratch) (FrameWorkPostFilterRequest, error) {
+	edges, err := s.LoopFilter.BindEdges(scratch.LoopFilterEdges)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
+	cdefReq, err := s.CDEF.BindRequest(options.CDEFIndexMap, scratch.CDEFSamples, scratch.CDEFDst, scratch.CDEFDirectionGrid, scratch.CDEFVarianceGrid, scratch.CDEFInput, scratch.CDEFUnitDst)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
+	superResReq, err := s.SuperRes.BindRequest(scratch.SuperResOutputFrame, scratch.SuperResCoded, scratch.SuperResOutput, options.SuperResOutputView)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
+	restorationReq, err := s.Restoration.BindRequest(options.RestorationRecords, options.RestorationBoundaries, scratch.RestorationData, scratch.RestorationDst, scratch.RestorationWiener, scratch.RestorationSGR, scratch.RestorationAbove, scratch.RestorationBelow, options.RestorationOptimized)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
+	filmGrainReq, err := s.FilmGrain.BindRequest(scratch.FilmGrainLumaGrain, scratch.FilmGrainChromaGrain, scratch.FilmGrainLumaSamples, scratch.FilmGrainChromaSamples)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
+	return FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Map:   options.LoopFilterMap,
+			Edges: edges,
+		},
+		CDEF:        cdefReq,
+		SuperRes:    superResReq,
+		Restoration: restorationReq,
+		FilmGrain:   filmGrainReq,
+	}, nil
 }
 
 // Max returns the per-field maximum scratch size needed to satisfy either
