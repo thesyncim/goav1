@@ -88,7 +88,9 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 			if size.IsRect2() {
 				v = rect2Scale(v)
 			}
-			tmpLine[col] = v
+			// libaom clamps the row transform input to bd+8 bits (16 bits for
+			// 8-bit content). Mirror that clamp to keep rounding aligned.
+			tmpLine[col] = clipRange(int64(v), minInt16, maxInt16)
 		}
 		inverse1D(tmpLine, 1, size.Width, horizontal, minInt16, maxInt16)
 	}
@@ -96,6 +98,13 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 	if shift > 0 {
 		for i := 0; i < scratchLen; i++ {
 			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), minInt16, maxInt16)
+		}
+	} else {
+		// libaom also clamps the column transform input to max(bd+6, 16) bits
+		// after applying shift[0]. For 4x4 (shift==0) the round-shift above is
+		// skipped but the clamp still applies.
+		for i := 0; i < scratchLen; i++ {
+			scratch[i] = clipRange(int64(scratch[i]), minInt16, maxInt16)
 		}
 	}
 
