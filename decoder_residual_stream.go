@@ -31,6 +31,16 @@ type DecoderFrameWorkResidualStreamScratchSize struct {
 	Event     DecoderFrameWorkResidualEventScratchSize
 }
 
+// DecoderFrameWorkResidualStreamScratch carries typed caller-owned parser and
+// event side-data arenas for BindDecoderFrameWorkResidualStreamRunner.
+type DecoderFrameWorkResidualStreamScratch struct {
+	Events   []DecoderEvent
+	SideData DecoderFrameWorkSideDataScratch
+
+	RTPBuffer []byte
+	RTPSpans  []RTPObuSpan
+}
+
 // Max returns per-arena maximum lengths for reusable residual stream scratch.
 func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkResidualStreamScratchSize) DecoderFrameWorkResidualStreamScratchSize {
 	return DecoderFrameWorkResidualStreamScratchSize{
@@ -39,6 +49,40 @@ func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkRes
 		RTPSpans:  max(s.RTPSpans, other.RTPSpans),
 		Event:     s.Event.Max(other.Event),
 	}
+}
+
+// BindDecoderFrameWorkResidualStreamRunner binds a stream runner from
+// caller-owned parser and side-data scratch. The eventRunner is owned by the
+// caller and is copied into the returned stream runner.
+func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, eventRunner DecoderFrameWorkResidualEventRunner, scratch DecoderFrameWorkResidualStreamScratch) (DecoderFrameWorkResidualStreamRunner, error) {
+	if stream == nil {
+		return DecoderFrameWorkResidualStreamRunner{}, ErrDecoderInvalidFrameWorkState
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.Events, size.Events) {
+		return DecoderFrameWorkResidualStreamRunner{}, ErrDecoderEventBufferTooSmall
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.RTPBuffer, size.RTPBuffer) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.RTPSpans, size.RTPSpans) {
+		return DecoderFrameWorkResidualStreamRunner{}, ErrRTPShortBuffer
+	}
+	if decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch.SideData, size.Event.SideData) {
+		return DecoderFrameWorkResidualStreamRunner{}, ErrFrameShortBuffer
+	}
+	return DecoderFrameWorkResidualStreamRunner{
+		Stream:      stream,
+		EventRunner: eventRunner,
+		Events:      scratch.Events[:size.Events],
+		SideDataScratch: DecoderFrameWorkSideDataScratch{
+			CDEFIndexMap:             scratch.SideData.CDEFIndexMap[:size.Event.SideData.CDEFIndexMap],
+			CDEFReadMap:              scratch.SideData.CDEFReadMap[:size.Event.SideData.CDEFReadMap],
+			LoopFilterMap:            scratch.SideData.LoopFilterMap[:size.Event.SideData.LoopFilterMap],
+			RestorationRecords:       scratch.SideData.RestorationRecords[:size.Event.SideData.RestorationRecords],
+			RestorationBoundaryAbove: scratch.SideData.RestorationBoundaryAbove[:size.Event.SideData.RestorationBoundaryAbove],
+			RestorationBoundaryBelow: scratch.SideData.RestorationBoundaryBelow[:size.Event.SideData.RestorationBoundaryBelow],
+		},
+		RTPBuffer: scratch.RTPBuffer[:size.RTPBuffer],
+		RTPSpans:  scratch.RTPSpans[:size.RTPSpans],
+	}, nil
 }
 
 // DecoderFrameWorkResidualLowOverheadStreamScratchLen parses a low-overhead
@@ -193,4 +237,13 @@ func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
 		}
 		count++
 	}
+}
+
+func decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch DecoderFrameWorkSideDataScratch, size DecoderFrameWorkSideDataScratchSize) bool {
+	return decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFIndexMap, size.CDEFIndexMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFReadMap, size.CDEFReadMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMap, size.LoopFilterMap) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationRecords, size.RestorationRecords) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryAbove, size.RestorationBoundaryAbove) ||
+		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, size.RestorationBoundaryBelow)
 }
