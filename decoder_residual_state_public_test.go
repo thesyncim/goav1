@@ -2553,10 +2553,8 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheads(t *testing.T) {
 		t.Fatal(err)
 	}
 	result = av1.DecoderFrameWorkResidualStreamResult{}
-	for i := range payloads {
-		if err := runner.RunLowOverheadInto(&result, payloads[i], nil); err != nil {
-			t.Fatal(err)
-		}
+	if err := runner.RunLowOverheadsInto(&result, payloads[:], nil); err != nil {
+		t.Fatal(err)
 	}
 	if result.EventCount != 5 ||
 		result.Run.CompletedFrames != 2 ||
@@ -2567,6 +2565,138 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheads(t *testing.T) {
 		stats.TXBs == 0 ||
 		stats.Residuals == 0 {
 		t.Fatalf("low-overhead into result=%+v outputs=%p/%p stats=%+v", result, streamScratch.Outputs[0], streamScratch.Outputs[1], stats)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloadAfterLoss(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	payloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var probeStream av1.DecoderStream
+	var probeEvents [4]av1.DecoderEvent
+	var probeRTPBuffer [256]byte
+	var probeRTPSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	plan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
+		Height:       int(plan.Bind.Event.FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 2)
+	var stream av1.DecoderStream
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var side av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	streamScratch := publicDecoderResidualStreamScratch(plan.Size)
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &side,
+		Stats:             &stats,
+	}, streamScratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fragmented := publicDecoderResidualFragmentedRTPPayloads()
+	if _, err := runner.RunRTPPayload(fragmented[0], nil); err != nil {
+		t.Fatal(err)
+	}
+	firstFragment, err := runner.RunRTPPayload(fragmented[1], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstFragment.EventCount != 0 || firstFragment.RTPUsed == 0 || runner.RTPUsed == 0 || !runner.State().InRTPFragment {
+		t.Fatalf("first fragment result=%+v state=%+v", firstFragment, runner.State())
+	}
+	if _, err := runner.RunRTPPayload(payloads[1], nil); !errors.Is(err, av1.ErrRTPFragmentInterrupted) {
+		t.Fatalf("interrupted fragment err=%v want %v", err, av1.ErrRTPFragmentInterrupted)
+	}
+	if runner.RTPUsed == 0 || !runner.State().InRTPFragment {
+		t.Fatalf("interrupted fragment did not retain state=%+v", runner.State())
+	}
+
+	recovered, err := runner.RunRTPPayloadAfterLoss(payloads[1], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.EventCount != 2 ||
+		recovered.RTPUsed != 0 ||
+		runner.RTPUsed != 0 ||
+		runner.State().InRTPFragment ||
+		recovered.Run.CompletedFrames != 1 ||
+		recovered.Run.OutputCount != 1 ||
+		recovered.Run.Last.Output == nil ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("recovered result=%+v state=%+v stats=%+v", recovered, runner.State(), stats)
+	}
+
+	pool.Reset()
+	refs.Reset()
+	state.Reset()
+	stats = av1.DecoderFrameWorkTileResidualStats{}
+	if err := runner.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	var result av1.DecoderFrameWorkResidualStreamResult
+	if err := runner.RunRTPPayloadsInto(&result, payloads[:1], nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.RunRTPPayload(fragmented[1], nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RunRTPPayloadAfterLossInto(&result, payloads[1], nil); err != nil {
+		t.Fatal(err)
+	}
+	if result.EventCount != 5 ||
+		result.Run.CompletedFrames != 2 ||
+		result.Run.OutputCount != 2 ||
+		result.Run.Outputs[0] != streamScratch.Outputs[0] ||
+		result.Run.Outputs[1] != streamScratch.Outputs[1] ||
+		result.Run.Last.Output != streamScratch.Outputs[1] ||
+		runner.RTPUsed != 0 ||
+		runner.State().InRTPFragment ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("recovered into result=%+v state=%+v outputs=%p/%p stats=%+v", result, runner.State(), streamScratch.Outputs[0], streamScratch.Outputs[1], stats)
+	}
+
+	var nilRunner *av1.DecoderFrameWorkResidualStreamRunner
+	if _, err := nilRunner.RunRTPPayloadAfterLoss(payloads[0], nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil after-loss err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	var nilResult *av1.DecoderFrameWorkResidualStreamResult
+	if err := runner.RunRTPPayloadAfterLossInto(nilResult, payloads[0], nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil after-loss result err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
 	}
 }
 
@@ -2851,14 +2981,15 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloadInto(t *testing.T) 
 	if err := runner.RunRTPPayloadInto(nilResult, payloads[0], nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
 		t.Fatalf("nil result err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
 	}
+	if err := runner.RunRTPPayloadsInto(nilResult, nil, nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil batch result err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
 	var result av1.DecoderFrameWorkResidualStreamResult
-	for i := range payloads {
-		if err := runner.RunRTPPayloadInto(&result, payloads[i], nil); err != nil {
-			t.Fatal(err)
-		}
-		if result.RTPUsed != 0 || runner.RTPUsed != 0 {
-			t.Fatalf("payload %d retained result=%d runner=%d", i, result.RTPUsed, runner.RTPUsed)
-		}
+	if err := runner.RunRTPPayloadsInto(&result, payloads[:], nil); err != nil {
+		t.Fatal(err)
+	}
+	if result.RTPUsed != 0 || runner.RTPUsed != 0 {
+		t.Fatalf("retained result=%d runner=%d", result.RTPUsed, runner.RTPUsed)
 	}
 	if result.EventCount != 5 ||
 		result.Run.Count != 5 ||
@@ -3756,11 +3887,9 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 			return
 		}
 		result = av1.DecoderFrameWorkResidualStreamResult{}
-		for i := range lowOverheads {
-			if runErr = runner.RunLowOverheadInto(&result, lowOverheads[i], nil); runErr != nil {
-				err = runErr
-				return
-			}
+		if runErr = runner.RunLowOverheadsInto(&result, lowOverheads[:], nil); runErr != nil {
+			err = runErr
+			return
 		}
 		if result.Run.CompletedFrames != 2 || result.Run.OutputCount != 2 || outputs[1] != result.Run.Last.Output || stats.TXBs == 0 {
 			err = av1.ErrThreadingInvalidBatch
@@ -3808,11 +3937,34 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 			return
 		}
 		result = av1.DecoderFrameWorkResidualStreamResult{}
-		for i := range rtpPayloads {
-			if runErr = runner.RunRTPPayloadInto(&result, rtpPayloads[i], nil); runErr != nil {
-				err = runErr
-				return
-			}
+		if runErr = runner.RunRTPPayloadsInto(&result, rtpPayloads, nil); runErr != nil {
+			err = runErr
+			return
+		}
+		if result.Run.CompletedFrames != 1 || result.Run.OutputCount != 1 || outputs[0] != result.Run.Last.Output || stats.TXBs == 0 || runner.RTPUsed != 0 {
+			err = av1.ErrThreadingInvalidBatch
+			return
+		}
+
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		if resetErr := runner.Reset(); resetErr != nil {
+			err = resetErr
+			return
+		}
+		result = av1.DecoderFrameWorkResidualStreamResult{}
+		if runErr = runner.RunRTPPayloadsInto(&result, rtpPayloads[:2], nil); runErr != nil {
+			err = runErr
+			return
+		}
+		if runner.RTPUsed == 0 {
+			err = av1.ErrThreadingInvalidBatch
+			return
+		}
+		if runErr = runner.RunRTPPayloadAfterLossInto(&result, rtpPayload, nil); runErr != nil {
+			err = runErr
+			return
 		}
 		if result.Run.CompletedFrames != 1 || result.Run.OutputCount != 1 || outputs[0] != result.Run.Last.Output || stats.TXBs == 0 || runner.RTPUsed != 0 {
 			err = av1.ErrThreadingInvalidBatch

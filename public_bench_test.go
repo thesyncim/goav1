@@ -1196,10 +1196,8 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 				b.Fatal(err)
 			}
 			var result av1.DecoderFrameWorkResidualStreamResult
-			for j := range lowOverheads {
-				if err := runner.RunLowOverheadInto(&result, lowOverheads[j], nil); err != nil {
-					b.Fatal(err)
-				}
+			if err := runner.RunLowOverheadsInto(&result, lowOverheads[:], nil); err != nil {
+				b.Fatal(err)
 			}
 			if result.Run.CompletedFrames != 2 {
 				b.Fatalf("result=%+v", result)
@@ -1264,10 +1262,36 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 				b.Fatal(err)
 			}
 			var result av1.DecoderFrameWorkResidualStreamResult
-			for j := range rtpPayloads {
-				if err := runner.RunRTPPayloadInto(&result, rtpPayloads[j], nil); err != nil {
-					b.Fatal(err)
-				}
+			if err := runner.RunRTPPayloadsInto(&result, rtpPayloads, nil); err != nil {
+				b.Fatal(err)
+			}
+			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
+				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("rtp-after-loss-into", func(b *testing.B) {
+		b.SetBytes(int64(rtpPayloadsBytes + len(rtpPayload)))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
+			var result av1.DecoderFrameWorkResidualStreamResult
+			if err := runner.RunRTPPayloadsInto(&result, rtpPayloads[:2], nil); err != nil {
+				b.Fatal(err)
+			}
+			if runner.RTPUsed == 0 {
+				b.Fatalf("missing retained fragment result=%+v", result)
+			}
+			if err := runner.RunRTPPayloadAfterLossInto(&result, rtpPayload, nil); err != nil {
+				b.Fatal(err)
 			}
 			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
 				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)

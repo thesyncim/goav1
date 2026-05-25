@@ -492,6 +492,18 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsWithPostFilterRunn
 	return r.runLowOverheads(srcs, nil, post)
 }
 
+// RunLowOverheadsInto parses and runs an ordered batch of low-overhead OBU
+// buffers, then appends their counters and outputs into result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsInto(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterFunc) error {
+	return r.runLowOverheadsInto(result, srcs, post, nil)
+}
+
+// RunLowOverheadsIntoWithPostFilterRunner is RunLowOverheadsInto using a
+// direct postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterRunner) error {
+	return r.runLowOverheadsInto(result, srcs, nil, post)
+}
+
 // RunRTPPayload depacketizes one AV1 RTP payload into caller-owned OBU/event
 // scratch and immediately runs any completed parsed events. RTPUsed is retained
 // only while the underlying stream is inside an OBU fragment.
@@ -503,6 +515,19 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayload(payload []byte, pos
 // runner instead of a postfilter callback.
 func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadWithPostFilterRunner(payload []byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayload(payload, nil, post)
+}
+
+// RunRTPPayloadAfterLoss clears any retained RTP fragment bytes, then
+// depacketizes and runs one AV1 RTP payload. Parser sequence/reference state is
+// preserved, matching ResetRTP.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLoss(payload []byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runRTPPayloadAfterLoss(payload, post, nil)
+}
+
+// RunRTPPayloadAfterLossWithPostFilterRunner is RunRTPPayloadAfterLoss using a
+// direct postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossWithPostFilterRunner(payload []byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runRTPPayloadAfterLoss(payload, nil, post)
 }
 
 // RunRTPPayloadInto depacketizes and runs one AV1 RTP payload, then appends its
@@ -518,6 +543,20 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadIntoWithPostFilterRu
 	return r.runRTPPayloadInto(result, payload, nil, post)
 }
 
+// RunRTPPayloadAfterLossInto clears any retained RTP fragment bytes, then
+// depacketizes and runs one AV1 RTP payload and appends its counters and outputs
+// into result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc) error {
+	return r.runRTPPayloadAfterLossInto(result, payload, post, nil)
+}
+
+// RunRTPPayloadAfterLossIntoWithPostFilterRunner is
+// RunRTPPayloadAfterLossInto using a direct postfilter runner instead of a
+// postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterRunner) error {
+	return r.runRTPPayloadAfterLossInto(result, payload, nil, post)
+}
+
 // RunRTPPayloads depacketizes and runs an ordered batch of AV1 RTP payloads,
 // preserving RTP fragment state across payloads and aggregating completed event
 // work into one result.
@@ -529,6 +568,18 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloads(payloads [][]byte,
 // postfilter runner instead of a postfilter callback.
 func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsWithPostFilterRunner(payloads [][]byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloads(payloads, nil, post)
+}
+
+// RunRTPPayloadsInto depacketizes and runs an ordered batch of AV1 RTP
+// payloads, then appends their counters and outputs into result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsInto(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterFunc) error {
+	return r.runRTPPayloadsInto(result, payloads, post, nil)
+}
+
+// RunRTPPayloadsIntoWithPostFilterRunner is RunRTPPayloadsInto using a direct
+// postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterRunner) error {
+	return r.runRTPPayloadsInto(result, payloads, nil, post)
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
@@ -566,6 +617,21 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheads(srcs [][]byte, po
 	return result, nil
 }
 
+func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadsInto(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+	if result == nil || r == nil || r.Stream == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	if post != nil && postRunner != nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	for i := range srcs {
+		if err := r.runLowOverheadInto(result, srcs[i], post, postRunner); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadWithOutputOffset(src []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
 		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
@@ -588,6 +654,13 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, pos
 	return r.runRTPPayloadWithOutputOffset(payload, 0, post, postRunner)
 }
 
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLoss(payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	if err := r.ResetRTP(); err != nil {
+		return DecoderFrameWorkResidualStreamResult{}, err
+	}
+	return r.runRTPPayload(payload, post, postRunner)
+}
+
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
 	if result == nil {
 		return ErrDecoderInvalidFrameWorkState
@@ -598,6 +671,16 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *Decoder
 	}
 	decoderFrameWorkResidualStreamBindResultOutputs(result, r.EventRunner.Outputs)
 	return err
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLossInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+	if result == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	if err := r.ResetRTP(); err != nil {
+		return err
+	}
+	return r.runRTPPayloadInto(result, payload, post, postRunner)
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(payload []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
@@ -639,6 +722,21 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte,
 		}
 	}
 	return result, nil
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadsInto(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+	if result == nil || r == nil || r.Stream == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	if post != nil && postRunner != nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	for i := range payloads {
+		if err := r.runRTPPayloadInto(result, payloads[i], post, postRunner); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
