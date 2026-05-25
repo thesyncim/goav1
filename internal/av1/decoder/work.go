@@ -954,7 +954,10 @@ func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize
 		}
 		size.CDEF = length
 	}
-	if frameWorkLoopFilterActive(b.LoopFilter) {
+	// The loop-filter map carries the per-MI SkipTransform bit consumed by
+	// CDEF block-list construction (libaom's is_8x8_block_skip), so bind the
+	// map whenever either LF or CDEF is active.
+	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
 		_, _, length, err := b.LoopFilterMapShape()
 		if err != nil {
 			return FrameWorkSideDataScratchSize{}, err
@@ -1016,7 +1019,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		}
 		r.CDEFIndexMap = cdefMap
 	}
-	if frameWorkLoopFilterActive(b.LoopFilter) {
+	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
 		_, _, length, err := b.LoopFilterMapShape()
 		if err != nil {
 			return err

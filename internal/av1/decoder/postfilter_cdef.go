@@ -148,6 +148,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	}
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	skipMap := ctx.LoopFilterMap
 
 	var result FrameWorkCDEFPostFilterResult
 	var directions cdef.DirectionGrid
@@ -171,7 +172,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
 		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, skipMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -243,7 +244,7 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, cols int, rows int, src frame.SamplePlane, dst frame.SamplePlane, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {
+func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.SamplePlane, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {
 	units := 0
 	blocksTotal := 0
 	unitSizeX := cdef.BlockSize >> xDec
@@ -276,13 +277,16 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 			if unitW <= 0 || unitH <= 0 {
 				continue
 			}
+			blocks := frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+			if len(blocks) == 0 {
+				continue
+			}
 			for i := range input {
 				input[i] = cdef.VeryLarge
 			}
 			if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
-			blocks := frameWorkCDEFBlockPositions(blockStorage, unitW, unitH, blockWidth, blockHeight)
 			unitIndex := unitRow*cols + unitCol
 			unitDirections := directions
 			unitVariances := variances
@@ -334,15 +338,61 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 }
 
 func frameWorkCDEFBlockPositions(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int) []cdef.BlockPosition {
+	return frameWorkCDEFBlockPositionsFiltered(storage, unitW, unitH, blockW, blockH, nil, 0, 0)
+}
+
+// frameWorkCDEFBlockPositionsFiltered enumerates 8x8 CDEF blocks inside the
+// current 64x64 unit, skipping those whose luma MI cells all report
+// SkipTransform=true. Block indexing follows libaom: by/bx are luma 8x8
+// indices reused across planes, so the skip lookup is in luma MI coordinates
+// regardless of plane subsampling. When skipMap is nil every block is kept,
+// matching the previous behaviour.
+func frameWorkCDEFBlockPositionsFiltered(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int, skipMap *FrameWorkLoopFilterMap, unitRow int, unitCol int) []cdef.BlockPosition {
 	cols := (unitW + blockW - 1) / blockW
 	rows := (unitH + blockH - 1) / blockH
 	out := storage[:0]
 	for by := 0; by < rows; by++ {
 		for bx := 0; bx < cols; bx++ {
+			if frameWorkCDEFBlockAllSkipped(skipMap, unitRow, unitCol, by, bx) {
+				continue
+			}
 			out = append(out, cdef.BlockPosition{BY: uint8(by), BX: uint8(bx)})
 		}
 	}
 	return out
+}
+
+// frameWorkCDEFBlockAllSkipped reports whether every luma MI cell covered by
+// the 8x8 luma CDEF block at (by, bx) inside the unit at (unitRow, unitCol)
+// has SkipTransform=true. Missing or invalid coverage falls back to false so
+// CDEF still runs on those positions (matches the legacy unfiltered behaviour).
+func frameWorkCDEFBlockAllSkipped(skipMap *FrameWorkLoopFilterMap, unitRow int, unitCol int, by int, bx int) bool {
+	if skipMap == nil {
+		return false
+	}
+	const miPerUnit = 16 // 64-pixel luma unit / 4-pixel MI cell
+	const miPerBlock = 2 // 8-pixel block / 4-pixel MI cell
+	miColStart := unitCol*miPerUnit + bx*miPerBlock
+	miRowStart := unitRow*miPerUnit + by*miPerBlock
+	if miColStart < 0 || miRowStart < 0 {
+		return false
+	}
+	if miColStart+miPerBlock > skipMap.Stride || miRowStart+miPerBlock > skipMap.Rows {
+		return false
+	}
+	for dy := 0; dy < miPerBlock; dy++ {
+		row := (miRowStart + dy) * skipMap.Stride
+		for dx := 0; dx < miPerBlock; dx++ {
+			record := skipMap.Records[row+miColStart+dx]
+			if !record.Valid {
+				return false
+			}
+			if !record.SkipTransform {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func frameWorkCDEFUnitGrid(size parser.FrameSize) (int, int, error) {
