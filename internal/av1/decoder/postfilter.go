@@ -614,8 +614,10 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.LoopFilter = loopFilterResult
 	}
 	// Save the deblock boundary lines (afterCDEF=false) for restoration before
-	// CDEF mutates the inter-stripe rows libaom needs as filter context.
-	if remaining.Has(FrameWorkPostFilterLoopRestoration) && remaining.Has(FrameWorkPostFilterCDEF) {
+	// CDEF mutates the inter-stripe rows libaom needs as filter context. When
+	// CDEF is disabled the deblock-context is the same as the frame data; the
+	// non-optimized restoration path still requires those rows to be saved.
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
 			return ctx, result, err
 		}
@@ -767,7 +769,7 @@ func (ctx FrameWorkPostFilterContext) ApplyPreSuperResPostFilters(req FrameWorkP
 		result.Completed |= FrameWorkPostFilterLoopFilter
 		result.LoopFilter = loopFilterResult
 	}
-	if remaining.Has(FrameWorkPostFilterLoopRestoration) && remaining.Has(FrameWorkPostFilterCDEF) {
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
 			return ctx, result, err
 		}
