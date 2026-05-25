@@ -153,7 +153,7 @@ The initial implementation covers:
   helpers for tile coefficient/reconstruction planning.
 - Public zero-allocation decoder postfilter request binding for loop filter,
   CDEF, superres, loop restoration, film grain, and loop-filter/CDEF side-map
-  storage.
+  storage, plus decoder-level loop-restoration frame buffers.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

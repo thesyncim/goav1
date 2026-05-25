@@ -89,6 +89,68 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderRestorationFrameBuffersBinding(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 280, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
+	restoration := av1.RestorationParams{
+		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	plan, err := av1.DecoderFrameWorkRestorationFramePlan(sequence, size, restoration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Active || plan.Planes != 3 || plan.UnitRecordLen() == 0 || plan.BoundaryBufferLen() == 0 {
+		t.Fatalf("plan=%+v", plan)
+	}
+
+	recordBacking := make([]av1.TileRestorationUnitRecord, plan.UnitRecordLen())
+	above := make([]uint16, plan.BoundaryBufferLen())
+	below := make([]uint16, plan.BoundaryBufferLen())
+	buffers, err := av1.BindDecoderFrameWorkRestorationFrameBuffers(sequence, size, restoration, recordBacking, above, below)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buffers.Plan != plan {
+		t.Fatalf("buffer plan=%+v want %+v", buffers.Plan, plan)
+	}
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		if len(buffers.Records[plane]) != plan.UnitRecords[plane] {
+			t.Fatalf("plane %d records=%d want %d", plane, len(buffers.Records[plane]), plan.UnitRecords[plane])
+		}
+		if len(buffers.Boundaries[plane].Above) != plan.Boundaries[plane].Len ||
+			len(buffers.Boundaries[plane].Below) != plan.Boundaries[plane].Len ||
+			buffers.Boundaries[plane].Stride != plan.Boundaries[plane].Stride {
+			t.Fatalf("plane %d boundaries=%+v plan=%+v", plane, buffers.Boundaries[plane], plan.Boundaries[plane])
+		}
+	}
+	buffers.Records[0][0].Index = 99
+	buffers.Boundaries[0].Above[0] = 77
+	if recordBacking[0].Index != 99 || above[0] != 77 {
+		t.Fatal("restoration frame buffers do not alias caller-owned backing")
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		t.Fatal(err)
+	}
+	first := buffers.Records[0][0]
+	if first.Index != 0 || first.Unit.Type != av1.RestorationNone || first.StripeCount == 0 {
+		t.Fatalf("first reset record=%+v", first)
+	}
+	if _, err := av1.BindDecoderFrameWorkRestorationFrameBuffers(sequence, size, restoration, recordBacking[:len(recordBacking)-1], above, below); !errors.Is(err, av1.ErrTileJobBufferTooSmall) {
+		t.Fatalf("short restoration records err=%v want %v", err, av1.ErrTileJobBufferTooSmall)
+	}
+
+	allNone := av1.RestorationParams{}
+	noneBuffers, err := av1.BindDecoderFrameWorkRestorationFrameBuffers(sequence, size, allNone, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noneBuffers.Plan.Active || noneBuffers.Plan.UnitRecordLen() != 0 || noneBuffers.Plan.BoundaryBufferLen() != 0 {
+		t.Fatalf("none buffers=%+v", noneBuffers.Plan)
+	}
+}
+
 func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
@@ -287,6 +349,18 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	loopFilterRecords := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopFilterLength)
 	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4}
 	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, loopFilterSize.Edges)
+	restorationBuffersParams := av1.RestorationParams{
+		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
+		UnitSizeY:  128,
+		UnitSizeUV: 64,
+	}
+	restorationBuffersPlan, err := av1.DecoderFrameWorkRestorationFramePlan(sequence, size, restorationBuffersParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorationRecordBacking := make([]av1.TileRestorationUnitRecord, restorationBuffersPlan.UnitRecordLen())
+	restorationAbove := make([]uint16, restorationBuffersPlan.BoundaryBufferLen())
+	restorationBelow := make([]uint16, restorationBuffersPlan.BoundaryBufferLen())
 	index := make([]uint8, 1)
 	read := make([]bool, 1)
 	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{Samples: [3]int{64, 16, 16}, Dst: [3]int{64, 16, 16}, DirectionGrid: 1, VarianceGrid: 1, Input: av1.CDEFInputBufferSize, UnitDst: av1.CDEFInputBufferSize}
@@ -338,6 +412,15 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 			return
 		}
 		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopFilterMap, loopFilterEdges)
+		if err != nil {
+			return
+		}
+		restorationBuffers, bindErr := av1.BindDecoderFrameWorkRestorationFrameBuffers(sequence, size, restorationBuffersParams, restorationRecordBacking, restorationAbove, restorationBelow)
+		if bindErr != nil {
+			err = bindErr
+			return
+		}
+		err = restorationBuffers.ResetRecords()
 		if err != nil {
 			return
 		}

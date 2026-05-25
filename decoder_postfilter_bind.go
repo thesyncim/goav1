@@ -32,6 +32,16 @@ func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFi
 	}, nil
 }
 
+func DecoderFrameWorkRestorationFramePlan(sequence SequenceHeader, size FrameSize, restoration RestorationParams) (TileRestorationFramePlan, error) {
+	batch := decoderFrameWorkRestorationBatch(sequence, size, restoration)
+	return batch.RestorationFramePlan()
+}
+
+func BindDecoderFrameWorkRestorationFrameBuffers(sequence SequenceHeader, size FrameSize, restoration RestorationParams, records []TileRestorationUnitRecord, above []uint16, below []uint16) (DecoderFrameWorkRestorationFrameBuffers, error) {
+	batch := decoderFrameWorkRestorationBatch(sequence, size, restoration)
+	return batch.BindRestorationFrameBuffers(records, above, below)
+}
+
 func BindDecoderFrameWorkCDEFPostFilterRequest(size DecoderFrameWorkCDEFPostFilterScratchSize, indexMap DecoderFrameWorkCDEFIndexMap, sampleScratch [3][]uint16, dstScratch [3][]uint16, directionGrid []CDEFDirectionGrid, varianceGrid []CDEFVarianceGrid, inputScratch []uint16, unitDstScratch []uint16) (DecoderFrameWorkCDEFPostFilterRequest, error) {
 	if len(directionGrid) < size.DirectionGrid ||
 		len(varianceGrid) < size.VarianceGrid ||
@@ -126,6 +136,12 @@ func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGra
 func decoderFrameWorkCDEFIndexBatch(sequence SequenceHeader, size FrameSize, cdef CDEFParams) internalthreading.FrameWorkBatch {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	batch.CDEF = cdef
+	return batch
+}
+
+func decoderFrameWorkRestorationBatch(sequence SequenceHeader, size FrameSize, restoration RestorationParams) internalthreading.FrameWorkBatch {
+	batch := decoderFrameWorkFrameBatch(sequence, size)
+	batch.Restoration = restoration
 	return batch
 }
 
