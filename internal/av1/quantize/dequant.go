@@ -144,7 +144,7 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 				scale = q.DC
 			}
 			if iqMatrix != nil {
-				scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+				scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 			}
 			level := int32(coeffCol[row])
 			negative := level < 0
