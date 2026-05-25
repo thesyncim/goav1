@@ -1931,6 +1931,100 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloads(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloadsMultipleOutputs(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	payloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var probeStream av1.DecoderStream
+	var probeEvents [4]av1.DecoderEvent
+	var probeRTPBuffer [256]byte
+	var probeRTPSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Events != 3 || size.RTPSpans != 3 || size.Event.Outputs != 2 {
+		t.Fatalf("multi-output RTP batch scratch size=%+v", size)
+	}
+	if probeEvents[0].Kind != av1.DecoderEventFrameHeader || probeEvents[1].Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("last RTP batch events=%+v", probeEvents[:2])
+	}
+	sequence := probeEvents[1].SequenceHeader
+	tile := probeEvents[1]
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(tile.FrameSize.CodedWidth),
+		Height:       int(tile.FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 2)
+	var stream av1.DecoderStream
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var side av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	eventScratch := publicDecoderResidualEventScratch(size.Event)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size.Event, sequence, tile, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &side,
+		Stats:             &stats,
+	}, eventScratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamScratch := publicDecoderResidualStreamScratch(size)
+	runner, err := av1.BindDecoderFrameWorkResidualStreamRunner(size, &stream, eventRunner, streamScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runner.RunRTPPayloads(payloads[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventCount != 5 ||
+		result.RTPUsed != 0 ||
+		runner.RTPUsed != 0 ||
+		result.Run.Count != 5 ||
+		result.Run.ExecutedTileWork != 2 ||
+		result.Run.CompletedFrames != 2 ||
+		result.Run.OutputCount != 2 ||
+		result.Run.Last.Output == nil ||
+		streamScratch.Outputs[0] == nil ||
+		streamScratch.Outputs[1] != result.Run.Last.Output ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("multi-output RTP batch result=%+v retained=%d outputs=%p/%p stats=%+v", result, runner.RTPUsed, streamScratch.Outputs[0], streamScratch.Outputs[1], stats)
+	}
+	if _, ok := refs.ReferenceSlot(0); !ok {
+		t.Fatal("multi-output RTP payload batch runner did not publish decoded frame")
+	}
+}
+
 func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -2189,6 +2283,40 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPPayloads(t *testing.T)
 	}
 	if shortEvents.Events != 1 || shortEvents.RTPBuffer == 0 || shortEvents.RTPSpans != 1 {
 		t.Fatalf("short events payload batch scratch size=%+v", shortEvents)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPPayloadsMultipleOutputs(t *testing.T) {
+	payloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	var rtpBuffer [256]byte
+	var rtpSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, payloads[:], 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Events != 3 ||
+		size.RTPBuffer == 0 ||
+		size.RTPSpans != 3 ||
+		size.Event.Plan != (av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) ||
+		size.Event.Outputs != 2 ||
+		size.Event.Runner.Workers != 1 ||
+		size.Event.SideData.CDEFIndexMap == 0 ||
+		size.Event.SideData.LoopFilterMap == 0 {
+		t.Fatalf("multi-output RTP payload batch scratch size=%+v", size)
+	}
+	if stream.HasSequenceHeader() || stream.InRTPFragment() {
+		t.Fatal("multi-output RTP payload batch scratch sizing mutated caller stream")
+	}
+	if events[0].Kind != av1.DecoderEventFrameHeader || events[1].Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("last multi-output RTP batch events=%+v", events[:2])
 	}
 }
 
@@ -3171,6 +3299,21 @@ func publicDecoderResidualRTPPayload() []byte {
 	n, err := av1.PutRTPPayload(payload, av1.RTPAggregationHeader{
 		ElementCount:                uint8(len(elements)),
 		StartsNewCodedVideoSequence: true,
+	}, elements[:])
+	if err != nil {
+		panic(err)
+	}
+	return payload[:n]
+}
+
+func publicDecoderResidualRTPFramePayload() []byte {
+	elements := [...]av1.RTPElement{
+		{Data: publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())},
+		{Data: publicDecoderResidualRTPElement(av1.OBUTileGroup, []byte{0x80})},
+	}
+	payload := make([]byte, 128)
+	n, err := av1.PutRTPPayload(payload, av1.RTPAggregationHeader{
+		ElementCount: uint8(len(elements)),
 	}, elements[:])
 	if err != nil {
 		panic(err)

@@ -161,6 +161,7 @@ func DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream DecoderStream, us
 // preserved fragment bytes from the live stream runner.
 func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
 	var size DecoderFrameWorkResidualStreamScratchSize
+	outputs := 0
 	for i := range payloads {
 		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payloads[i])
 		nextSize := DecoderFrameWorkResidualStreamScratchSize{
@@ -192,7 +193,9 @@ func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, u
 			return size, err
 		}
 		nextSize.Event = eventSize
+		outputs += eventSize.Outputs
 		size = size.Max(nextSize)
+		size.Event.Outputs = outputs
 		used = actualUsed
 		if !stream.InRTPFragment() {
 			used = 0
