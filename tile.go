@@ -14,6 +14,11 @@ type TilePartition = internaltile.Partition
 type TileBlockSize = internaltile.BlockSize
 type TileBlockDimensions = internaltile.BlockDimensions
 type TileBlockVisit = internaltile.BlockVisit
+type TileReferenceFrame = internaltile.ReferenceFrame
+type TileReferenceMVFrame = internaltile.ReferenceMVFrame
+type TileReferenceMVEntry = internaltile.ReferenceMVEntry
+type TileTemporalMotionField = internaltile.TemporalMotionField
+type TileTemporalMotionEntry = internaltile.TemporalMotionEntry
 type TileTransformSize = internaltile.TransformSize
 type TileTransformDimensions = internaltile.TransformDimensions
 type TileTransformPartitionRequest = internaltile.TransformPartitionRequest
@@ -59,6 +64,15 @@ const (
 	TileBlockModeContexts    = internaltile.BlockModeContexts
 	TileMaxBlockModeSlots    = internaltile.MaxBlockModeSlots
 	TileFrameLoopFilterCount = internaltile.FrameLoopFilterCount
+
+	TileReferenceFrameNone    TileReferenceFrame = internaltile.ReferenceFrameNone
+	TileReferenceFrameLast    TileReferenceFrame = internaltile.ReferenceFrameLast
+	TileReferenceFrameLast2   TileReferenceFrame = internaltile.ReferenceFrameLast2
+	TileReferenceFrameLast3   TileReferenceFrame = internaltile.ReferenceFrameLast3
+	TileReferenceFrameGolden  TileReferenceFrame = internaltile.ReferenceFrameGolden
+	TileReferenceFrameBWD     TileReferenceFrame = internaltile.ReferenceFrameBWD
+	TileReferenceFrameAltref2 TileReferenceFrame = internaltile.ReferenceFrameAltref2
+	TileReferenceFrameAltref  TileReferenceFrame = internaltile.ReferenceFrameAltref
 
 	TileTransformSizeContexts      = internaltile.TransformSizeContexts
 	TileTransformSizeCategories    = internaltile.TransformSizeCategories

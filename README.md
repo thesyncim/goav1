@@ -154,6 +154,8 @@ The initial implementation covers:
 - Public zero-allocation decoder postfilter request binding for loop filter,
   CDEF, superres, loop restoration, film grain, and loop-filter/CDEF side-map
   storage, plus decoder-level loop-restoration frame buffers.
+- Public decoder reference-MV and temporal motion-field storage binding for
+  caller-owned inter-prediction side data.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
