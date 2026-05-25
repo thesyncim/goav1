@@ -14,6 +14,8 @@ bench-public:
 	go test -run '^$$' -bench='BenchmarkPublic' -benchmem .
 
 fuzz-smoke:
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzParseHeader
@@ -70,7 +72,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitRecordWithBoundaries
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationPlaneRecords
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationFramePlane
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationFrame
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz='^FuzzApplyRestorationFrame$$'
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationFrameToFrame
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzRestorationUnitSchedule
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildRestorationFramePlan
@@ -97,7 +99,7 @@ fuzz-smoke:
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzUpsampleIntraEdge
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzIntraEdgeDecisions
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzCFLSubsampleAndPredict
-	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlock
+	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz='^FuzzPredictInterPlaneBlock$$'
 	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlockFromOriginFullpel
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobPayload
