@@ -1865,6 +1865,12 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 			visit.Prediction.MotionMode = tile.MotionModeWarp
 			return visit
 		}()},
+		{name: "inter intra", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.InterIntraValid = true
+			visit.Prediction.InterIntra.Enabled = true
+			return visit
+		}()},
 		{name: "missing reference frame", ctx: func() FrameWorkBatch {
 			next := ctx
 			next.References = nil
@@ -1891,6 +1897,25 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 	}
 	if err := ctx.PredictBlockLumaInterWithFilters(0, valid, motion.InterpFilters{X: motion.InterpFilter(99)}); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad filters err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterRejectsInterIntraBeforeMutation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	output.Y.Pix[0] = 0x44
+	output.U.Pix[0] = 0x55
+	output.V.Pix[0] = 0x66
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.InterIntraValid = true
+	visit.Prediction.InterIntra.Enabled = true
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
+	}
+	if output.Y.Pix[0] != 0x44 || output.U.Pix[0] != 0x55 || output.V.Pix[0] != 0x66 {
+		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[0], output.U.Pix[0], output.V.Pix[0])
 	}
 }
 
