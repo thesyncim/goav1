@@ -241,6 +241,21 @@ func TestReadIntraFlagSegmentAndIntrabcConditions(t *testing.T) {
 	if got := cdfs.Intrabc.Values()[2]; got != 1 {
 		t.Fatalf("intrabc cdf count=%d want 1", got)
 	}
+
+	var intrabcState DecodeState
+	if err := intrabcState.Reset([]byte{0xff}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := intrabcState.ReadIntraFlagResult(&cdfs, &ctx, IntraFlagRequest{
+		FrameType:    parser.FrameTypeKey,
+		AllowIntrabc: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Intra || !result.Intrabc || !result.IntrabcValid {
+		t.Fatalf("intrabc flag result=%+v want explicit intrabc", result)
+	}
 }
 
 func TestReadLumaIntraMode(t *testing.T) {

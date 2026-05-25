@@ -108,6 +108,14 @@ type IntraFlagRequest struct {
 	HaveLeft bool
 }
 
+// IntraFlagResult preserves the distinction between coded inter blocks and
+// intra-block-copy blocks in key/intra-only frames.
+type IntraFlagResult struct {
+	Intra        bool
+	Intrabc      bool
+	IntrabcValid bool
+}
+
 // LumaIntraModeRequest describes one luma intra mode symbol.
 type LumaIntraModeRequest struct {
 	FrameType parser.FrameType
@@ -143,6 +151,11 @@ type FilterIntraRequest struct {
 type BlockPredictionModeResult struct {
 	Valid bool
 	Intra bool
+	// Intrabc marks an intra-block-copy prediction selected by the intrabc flag.
+	// The full intrabc predictor is not wired yet, so decode paths reject it
+	// explicitly instead of treating it as regular inter prediction.
+	Intrabc      bool
+	IntrabcValid bool
 
 	LumaMode       IntraMode
 	LumaAngleDelta int8
@@ -793,42 +806,53 @@ func (c *BlockModeContext) MarkChromaIntra(size BlockSize, x4 int, y4 int, intra
 
 // ReadIntraFlag decodes whether one block is intra-coded.
 func (s *DecodeState) ReadIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, req IntraFlagRequest) (bool, error) {
+	result, err := s.ReadIntraFlagResult(cdfs, ctx, req)
+	return result.Intra, err
+}
+
+// ReadIntraFlagResult decodes the block intra/inter entry flag and preserves
+// the intrabc branch used by key/intra-only frames.
+func (s *DecodeState) ReadIntraFlagResult(cdfs *IntraModeCDFs, ctx *BlockModeContext, req IntraFlagRequest) (IntraFlagResult, error) {
 	if s == nil {
-		return false, ErrInvalidDecodeState
+		return IntraFlagResult{}, ErrInvalidDecodeState
 	}
 	if req.SkipMode {
-		return false, nil
+		return IntraFlagResult{Intra: false}, nil
 	}
 	if frameTypeIsInterOrSwitch(req.FrameType) {
 		if req.SegmentationEnabled && (req.Segment.RefFrame >= 0 || req.Segment.GlobalMV) {
-			return req.Segment.RefFrame == 0 && !req.Segment.GlobalMV, nil
+			return IntraFlagResult{Intra: req.Segment.RefFrame == 0 && !req.Segment.GlobalMV}, nil
 		}
 		context, err := ctx.IntraContext(req.X4, req.Y4, req.HaveTop, req.HaveLeft)
 		if err != nil {
-			return false, err
+			return IntraFlagResult{}, err
 		}
 		cdf, err := cdfs.IntraCDF(context)
 		if err != nil {
-			return false, err
+			return IntraFlagResult{}, err
 		}
 		isInter, err := s.Reader.ReadCDF(cdf)
 		if err != nil {
-			return false, err
+			return IntraFlagResult{}, err
 		}
-		return isInter == 0, nil
+		return IntraFlagResult{Intra: isInter == 0}, nil
 	}
 	if req.AllowIntrabc {
 		cdf, err := cdfs.IntrabcCDF()
 		if err != nil {
-			return false, err
+			return IntraFlagResult{}, err
 		}
 		intrabc, err := s.Reader.ReadCDF(cdf)
 		if err != nil {
-			return false, err
+			return IntraFlagResult{}, err
 		}
-		return intrabc == 0, nil
+		return IntraFlagResult{
+			Intra:        intrabc == 0,
+			Intrabc:      intrabc != 0,
+			IntrabcValid: true,
+		}, nil
 	}
-	return true, nil
+	return IntraFlagResult{Intra: true}, nil
 }
 
 // ReadLumaIntraMode decodes one luma intra prediction mode.

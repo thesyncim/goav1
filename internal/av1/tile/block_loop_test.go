@@ -890,6 +890,35 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockPredictionModeRejectsIntrabcBeforeInterSyntax(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0xff}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var intraCDFs IntraModeCDFs
+	if err := intraCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeKey,
+		AllowIntrabc:          true,
+		DecodePredictionModes: true,
+	}, BlockVisit{
+		Size: BlockSize16x16,
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: -1})
+	if !errors.Is(err, ErrUnsupportedSyntax) {
+		t.Fatalf("err=%v want %v", err, ErrUnsupportedSyntax)
+	}
+	if !result.Valid || result.Intra || !result.Intrabc || !result.IntrabcValid {
+		t.Fatalf("intrabc prediction result=%+v", result)
+	}
+	if result.InterReferencesValid || result.InterModeValid || result.InterMotionValid {
+		t.Fatalf("intrabc should not read inter syntax: %+v", result)
+	}
+}
+
 func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 4}, DecodeOptions{}); err != nil {

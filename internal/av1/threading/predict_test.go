@@ -1709,6 +1709,12 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(
 			visit.Prediction.InterIntra.Enabled = true
 			return visit
 		}(), scratch: &scratch},
+		{name: "intrabc", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.Intrabc = true
+			visit.Prediction.IntrabcValid = true
+			return visit
+		}(), scratch: &scratch},
 		{name: "non translation motion mode", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := valid
 			visit.Prediction.MotionModeValid = true
@@ -1871,6 +1877,12 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 			visit.Prediction.InterIntra.Enabled = true
 			return visit
 		}()},
+		{name: "intrabc", ctx: ctx, visit: func() tile.BlockLoopVisit {
+			visit := valid
+			visit.Prediction.Intrabc = true
+			visit.Prediction.IntrabcValid = true
+			return visit
+		}()},
 		{name: "missing reference frame", ctx: func() FrameWorkBatch {
 			next := ctx
 			next.References = nil
@@ -1915,6 +1927,25 @@ func TestFrameWorkBatchPredictBlockInterRejectsInterIntraBeforeMutation(t *testi
 		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
 	}
 	if output.Y.Pix[0] != 0x44 || output.U.Pix[0] != 0x55 || output.V.Pix[0] != 0x66 {
+		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[0], output.U.Pix[0], output.V.Pix[0])
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterRejectsIntrabcBeforeMutation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	output.Y.Pix[0] = 0x11
+	output.U.Pix[0] = 0x22
+	output.V.Pix[0] = 0x33
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.Intrabc = true
+	visit.Prediction.IntrabcValid = true
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
+	}
+	if output.Y.Pix[0] != 0x11 || output.U.Pix[0] != 0x22 || output.V.Pix[0] != 0x33 {
 		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[0], output.U.Pix[0], output.V.Pix[0])
 	}
 }

@@ -626,7 +626,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 }
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData) (BlockPredictionModeResult, error) {
-	intra, err := s.ReadIntraFlag(cdfs.Intra, ctx, IntraFlagRequest{
+	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
 		SkipMode:            prefix.SkipMode,
@@ -641,8 +641,17 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		return BlockPredictionModeResult{}, err
 	}
 
-	result := BlockPredictionModeResult{Valid: true, Intra: intra, LumaMode: IntraModeDC}
-	if !intra {
+	result := BlockPredictionModeResult{
+		Valid:        true,
+		Intra:        intraFlag.Intra,
+		Intrabc:      intraFlag.Intrabc,
+		IntrabcValid: intraFlag.IntrabcValid,
+		LumaMode:     IntraModeDC,
+	}
+	if intraFlag.Intrabc {
+		return result, ErrUnsupportedSyntax
+	}
+	if !intraFlag.Intra {
 		refs, err := s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
 			Size:                block.Size,
 			ReferenceMode:       req.ReferenceMode,
