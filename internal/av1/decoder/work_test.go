@@ -1957,6 +1957,66 @@ func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkSideDataScratchSizeMaxAndBindRunnerErrors(t *testing.T) {
+	size := FrameWorkSideDataScratchSize{
+		CDEF:                2,
+		LoopFilterRecords:   4,
+		RestorationRecords:  6,
+		RestorationBoundary: 8,
+	}
+	other := FrameWorkSideDataScratchSize{
+		CDEF:                3,
+		LoopFilterRecords:   1,
+		RestorationRecords:  7,
+		RestorationBoundary: 5,
+	}
+	if got := size.Max(other); got != (FrameWorkSideDataScratchSize{
+		CDEF:                3,
+		LoopFilterRecords:   4,
+		RestorationRecords:  7,
+		RestorationBoundary: 8,
+	}) {
+		t.Fatalf("Max=%+v", got)
+	}
+
+	scratch := FrameWorkSideDataScratch{
+		CDEFIndex:          make([]uint8, size.CDEF),
+		CDEFRead:           make([]bool, size.CDEF),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
+		RestorationAbove:   make([]uint16, size.RestorationBoundary),
+		RestorationBelow:   make([]uint16, size.RestorationBoundary),
+	}
+	tests := []struct {
+		name   string
+		size   FrameWorkSideDataScratchSize
+		mutate func(*FrameWorkSideDataScratch)
+	}{
+		{name: "negative cdef", size: FrameWorkSideDataScratchSize{CDEF: -1}},
+		{name: "short cdef index", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.CDEFIndex = s.CDEFIndex[:len(s.CDEFIndex)-1] }},
+		{name: "short cdef read", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.CDEFRead = s.CDEFRead[:len(s.CDEFRead)-1] }},
+		{name: "short loop map", size: size, mutate: func(s *FrameWorkSideDataScratch) {
+			s.LoopFilterRecords = s.LoopFilterRecords[:len(s.LoopFilterRecords)-1]
+		}},
+		{name: "short restoration records", size: size, mutate: func(s *FrameWorkSideDataScratch) {
+			s.RestorationRecords = s.RestorationRecords[:len(s.RestorationRecords)-1]
+		}},
+		{name: "short restoration above", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.RestorationAbove = s.RestorationAbove[:len(s.RestorationAbove)-1] }},
+		{name: "short restoration below", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.RestorationBelow = s.RestorationBelow[:len(s.RestorationBelow)-1] }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			short := scratch
+			if tt.mutate != nil {
+				tt.mutate(&short)
+			}
+			if _, err := tt.size.BindRunner(short); !errors.Is(err, frame.ErrShortBuffer) {
+				t.Fatalf("BindRunner err=%v want %v", err, frame.ErrShortBuffer)
+			}
+		})
+	}
+}
+
 func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T) {
 	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
 	framePayload = append(framePayload, make([]byte, 256)...)

@@ -135,6 +135,17 @@ type FrameWorkSideDataScratch struct {
 	RestorationBelow   []uint16
 }
 
+// Max returns the per-field maximum scratch size needed to satisfy either
+// side-data plan. Callers can accumulate this across frames and reuse one arena.
+func (s FrameWorkSideDataScratchSize) Max(other FrameWorkSideDataScratchSize) FrameWorkSideDataScratchSize {
+	return FrameWorkSideDataScratchSize{
+		CDEF:                maxInt(s.CDEF, other.CDEF),
+		LoopFilterRecords:   maxInt(s.LoopFilterRecords, other.LoopFilterRecords),
+		RestorationRecords:  maxInt(s.RestorationRecords, other.RestorationRecords),
+		RestorationBoundary: maxInt(s.RestorationBoundary, other.RestorationBoundary),
+	}
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
