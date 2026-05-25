@@ -7,6 +7,88 @@ import (
 	av1 "github.com/thesyncim/goav1"
 )
 
+func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 16, UpscaledWidth: 16, Height: 16, SuperResDenominator: 8}
+	cols, rows, length, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols != 4 || rows != 4 || length != 16 {
+		t.Fatalf("shape=%d,%d,%d want 4,4,16", cols, rows, length)
+	}
+
+	records := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, length+1)
+	records[0].Valid = true
+	filterMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filterMap.Stride != cols || filterMap.Rows != rows || len(filterMap.Records) != length {
+		t.Fatalf("map=%+v", filterMap)
+	}
+	if filterMap.Records[0].Valid {
+		t.Fatal("loop-filter map bind did not reset caller-owned records")
+	}
+	if _, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, records[:length-1]); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("short loop-filter map err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+
+	record := publicDecoderLoopFilterRecordAt(0, 0, cols, rows)
+	record.DeltaLF = [av1.TileFrameLoopFilterCount]int8{-2, 3, 4, -1}
+	publicFillDecoderLoopFilterMap(filterMap, record)
+	ctx := av1.DecoderFrameWorkPostFilterContext{
+		Event: av1.DecoderEvent{
+			SequenceHeader: sequence,
+			FrameSize:      size,
+			Delta: av1.DeltaParams{
+				DeltaLFPresent: true,
+				DeltaLFMulti:   true,
+			},
+			LoopFilter: av1.LoopFilterParams{
+				LevelY: [2]uint8{16, 20},
+				LevelU: 8,
+				LevelV: 4,
+			},
+		},
+		LoopFilterMap: &filterMap,
+	}
+
+	scratch, err := ctx.LoopFilterPostFilterScratchLen(av1.DecoderFrameWorkLoopFilterPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(scratch, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, scratch.Edges))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := ctx.LoopFilterPostFilterPlan(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Active || plan.MICols != cols || plan.MIRows != rows || plan.Cells != length || plan.Blocks != 1 || plan.LumaTXBs != 1 {
+		t.Fatalf("plan=%+v", plan)
+	}
+	if got := plan.Levels[av1.LoopFilterPlaneY][av1.LoopFilterEdgeVertical]; got != (av1.DecoderFrameWorkLoopFilterPostFilterLevelStats{Blocks: 1, NonZero: 1, MaxLevel: 14}) {
+		t.Fatalf("Y vertical=%+v", got)
+	}
+	if got := plan.Levels[av1.LoopFilterPlaneU][av1.LoopFilterEdgeHorizontal]; got.MaxLevel != 12 {
+		t.Fatalf("U horizontal=%+v", got)
+	}
+
+	manualSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 3}
+	manualReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manualReq.Edges) != 3 {
+		t.Fatalf("manual edges=%d want 3", len(manualReq.Edges))
+	}
+	if _, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 2)); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short loop-filter request err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
 func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
@@ -198,6 +280,13 @@ func TestPublicDecoderRestorationAndFilmGrainRequestBinding(t *testing.T) {
 func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	_, _, loopFilterLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopFilterRecords := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopFilterLength)
+	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4}
+	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, loopFilterSize.Edges)
 	index := make([]uint8, 1)
 	read := make([]bool, 1)
 	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{Samples: [3]int{64, 16, 16}, Dst: [3]int{64, 16, 16}, DirectionGrid: 1, VarianceGrid: 1, Input: av1.CDEFInputBufferSize, UnitDst: av1.CDEFInputBufferSize}
@@ -237,10 +326,25 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	chromaGrain := [2][]int16{make([]int16, 5), make([]int16, 7)}
 	lumaSamples := make([]uint16, 11)
 	chromaSamples := [2][]uint16{make([]uint16, 13), make([]uint16, 17)}
-	var err error
 
 	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _, err = av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+		if err != nil {
+			return
+		}
+		loopFilterMap, bindErr := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, loopFilterRecords)
+		if bindErr != nil {
+			err = bindErr
+			return
+		}
+		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopFilterMap, loopFilterEdges)
+		if err != nil {
+			return
+		}
 		_, _, _, err = av1.DecoderFrameWorkCDEFIndexMapShape(sequence, size)
+		if err != nil {
+			return
+		}
 		cdefMap, bindErr := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, size, av1.CDEFParams{Bits: 1, StrengthCount: 2}, index, read)
 		if bindErr != nil {
 			err = bindErr
@@ -282,6 +386,39 @@ func publicDecoderPostFilterFrame(t *testing.T, format av1.FrameFormat) *av1.Fra
 		t.Fatal(err)
 	}
 	return &frame
+}
+
+func publicDecoderLoopFilterRecordAt(col0 int, row0 int, col1 int, row1 int) av1.DecoderFrameWorkLoopFilterBlockRecord {
+	return av1.DecoderFrameWorkLoopFilterBlockRecord{
+		Valid: true,
+		Block: av1.TileBlockVisit{
+			MICol:     uint32(col0),
+			MIRow:     uint32(row0),
+			MIColEnd:  uint32(col1),
+			MIRowEnd:  uint32(row1),
+			X4:        col0,
+			Y4:        row0,
+			Size:      av1.TileBlockSize16x16,
+			VisibleW4: uint8(col1 - col0),
+			VisibleH4: uint8(row1 - row0),
+		},
+		TransformTree: av1.TileTransformTreeResult{
+			Y:     av1.TileTransformSize16x16,
+			UV:    av1.TileTransformSize8x8,
+			HasUV: true,
+		},
+	}
+}
+
+func publicFillDecoderLoopFilterMap(filterMap av1.DecoderFrameWorkLoopFilterMap, records ...av1.DecoderFrameWorkLoopFilterBlockRecord) {
+	for _, record := range records {
+		for row := record.Block.MIRow; row < record.Block.MIRowEnd; row++ {
+			base := int(row) * filterMap.Stride
+			for col := record.Block.MICol; col < record.Block.MIColEnd; col++ {
+				filterMap.Records[base+int(col)] = record
+			}
+		}
+	}
 }
 
 func publicFillDecoderPostFilterPlane(plane av1.FramePlane) {

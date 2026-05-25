@@ -7,9 +7,29 @@ func DecoderFrameWorkCDEFIndexMapShape(sequence SequenceHeader, size FrameSize) 
 	return batch.CDEFIndexMapShape()
 }
 
+func DecoderFrameWorkLoopFilterMapShape(sequence SequenceHeader, size FrameSize) (cols int, rows int, length int, err error) {
+	batch := decoderFrameWorkFrameBatch(sequence, size)
+	return batch.LoopFilterMapShape()
+}
+
 func BindDecoderFrameWorkCDEFIndexMap(sequence SequenceHeader, size FrameSize, cdef CDEFParams, index []uint8, read []bool) (DecoderFrameWorkCDEFIndexMap, error) {
 	batch := decoderFrameWorkCDEFIndexBatch(sequence, size, cdef)
 	return batch.BindCDEFIndexMap(index, read)
+}
+
+func BindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, records []DecoderFrameWorkLoopFilterBlockRecord) (DecoderFrameWorkLoopFilterMap, error) {
+	batch := decoderFrameWorkFrameBatch(sequence, size)
+	return batch.BindLoopFilterMap(records)
+}
+
+func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFilterPostFilterScratchSize, filterMap DecoderFrameWorkLoopFilterMap, edges []DecoderFrameWorkLoopFilterPostFilterEdge) (DecoderFrameWorkLoopFilterPostFilterRequest, error) {
+	if len(edges) < size.Edges {
+		return DecoderFrameWorkLoopFilterPostFilterRequest{}, ErrFrameShortBuffer
+	}
+	return DecoderFrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges[:size.Edges],
+	}, nil
 }
 
 func BindDecoderFrameWorkCDEFPostFilterRequest(size DecoderFrameWorkCDEFPostFilterScratchSize, indexMap DecoderFrameWorkCDEFIndexMap, sampleScratch [3][]uint16, dstScratch [3][]uint16, directionGrid []CDEFDirectionGrid, varianceGrid []CDEFVarianceGrid, inputScratch []uint16, unitDstScratch []uint16) (DecoderFrameWorkCDEFPostFilterRequest, error) {
@@ -104,11 +124,16 @@ func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGra
 }
 
 func decoderFrameWorkCDEFIndexBatch(sequence SequenceHeader, size FrameSize, cdef CDEFParams) internalthreading.FrameWorkBatch {
+	batch := decoderFrameWorkFrameBatch(sequence, size)
+	batch.CDEF = cdef
+	return batch
+}
+
+func decoderFrameWorkFrameBatch(sequence SequenceHeader, size FrameSize) internalthreading.FrameWorkBatch {
 	return internalthreading.FrameWorkBatch{
 		FrameWorkFrameContext: internalthreading.FrameWorkFrameContext{
 			Sequence:  internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 			FrameSize: size,
-			CDEF:      cdef,
 		},
 	}
 }

@@ -13,6 +13,7 @@ type TileBlockLevel = internaltile.BlockLevel
 type TilePartition = internaltile.Partition
 type TileBlockSize = internaltile.BlockSize
 type TileBlockDimensions = internaltile.BlockDimensions
+type TileBlockVisit = internaltile.BlockVisit
 type TileTransformSize = internaltile.TransformSize
 type TileTransformDimensions = internaltile.TransformDimensions
 type TileTransformPartitionRequest = internaltile.TransformPartitionRequest
@@ -55,8 +56,9 @@ const (
 	TilePartitionContexts = internaltile.PartitionContexts
 	TileMaxPartitionSlots = internaltile.MaxPartitionSlots
 
-	TileBlockModeContexts = internaltile.BlockModeContexts
-	TileMaxBlockModeSlots = internaltile.MaxBlockModeSlots
+	TileBlockModeContexts    = internaltile.BlockModeContexts
+	TileMaxBlockModeSlots    = internaltile.MaxBlockModeSlots
+	TileFrameLoopFilterCount = internaltile.FrameLoopFilterCount
 
 	TileTransformSizeContexts      = internaltile.TransformSizeContexts
 	TileTransformSizeCategories    = internaltile.TransformSizeCategories

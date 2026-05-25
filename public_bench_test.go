@@ -314,6 +314,64 @@ func BenchmarkPublicOutputFilters(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	_, _, loopFilterLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		b.Fatal(err)
+	}
+	loopFilterRecords := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopFilterLength)
+	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4)
+	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: len(loopFilterEdges)}
+	index := make([]uint8, 1)
+	read := make([]bool, 1)
+	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{
+		Samples:       [3]int{64, 16, 16},
+		Dst:           [3]int{64, 16, 16},
+		DirectionGrid: 1,
+		VarianceGrid:  1,
+		Input:         av1.CDEFInputBufferSize,
+		UnitDst:       av1.CDEFInputBufferSize,
+	}
+	var sampleScratch [3][]uint16
+	var dstScratch [3][]uint16
+	for plane := 0; plane < 3; plane++ {
+		sampleScratch[plane] = make([]uint16, cdefSize.Samples[plane])
+		dstScratch[plane] = make([]uint16, cdefSize.Dst[plane])
+	}
+	directionGrid := make([]av1.CDEFDirectionGrid, cdefSize.DirectionGrid)
+	varianceGrid := make([]av1.CDEFVarianceGrid, cdefSize.VarianceGrid)
+	inputScratch := make([]uint16, cdefSize.Input)
+	unitDstScratch := make([]uint16, cdefSize.UnitDst)
+
+	b.SetBytes(int64(loopFilterLength + len(index) + cdefSize.Input + cdefSize.UnitDst))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		loopMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, loopFilterRecords)
+		if err != nil {
+			b.Fatal(err)
+		}
+		loopReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopMap, loopFilterEdges)
+		if err != nil {
+			b.Fatal(err)
+		}
+		cdefMap, err := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, size, av1.CDEFParams{Bits: 1, StrengthCount: 2}, index, read)
+		if err != nil {
+			b.Fatal(err)
+		}
+		cdefReq, err := av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows
+	}
+	publicBenchmarkSink = sum
+}
+
 func publicBenchmarkLowOverheadStream() []byte {
 	stream := make([]byte, 0, 512)
 	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
