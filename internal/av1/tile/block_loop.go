@@ -546,7 +546,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		X4:                  block.X4,
 		Y4:                  block.Y4,
 	}
-	prefix, err := s.readBlockModePrefix(cdfs.Mode, ctx, cdef, prefixReq, segmentPredicted)
+	prefix, err := s.readBlockModePrefixSyntax(cdfs.Mode, ctx, prefixReq, segmentPredicted)
 	if err != nil {
 		return BlockLoopVisit{}, fmt.Errorf("read prefix: %w", err)
 	}
@@ -558,10 +558,15 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		}
 		if segmentPredicted {
 			prefix.SegmentPredicted = true
-			if err := ctx.Mark(block.Size, block.X4, block.Y4, prefix); err != nil {
-				return BlockLoopVisit{}, err
-			}
 		}
+	}
+	cdefIndex, err := s.ReadCDEFIndexForBlock(prefixReq.CDEF, cdef, prefixReq.Size, prefixReq.X4, prefixReq.Y4, prefix.SkipTransform)
+	if err != nil {
+		return BlockLoopVisit{}, err
+	}
+	prefix.CDEFIndex = cdefIndex
+	if err := ctx.Mark(block.Size, block.X4, block.Y4, prefix); err != nil {
+		return BlockLoopVisit{}, err
 	}
 
 	delta := BlockDeltaContext{
@@ -1105,6 +1110,22 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 }
 
 func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, cdef *CDEFIndexContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
+	result, err := s.readBlockModePrefixSyntax(cdfs, ctx, req, segmentPredicted)
+	if err != nil {
+		return BlockModeResult{}, err
+	}
+	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, cdef, req.Size, req.X4, req.Y4, result.SkipTransform)
+	if err != nil {
+		return BlockModeResult{}, err
+	}
+	result.CDEFIndex = cdefIndex
+	if err := ctx.Mark(req.Size, req.X4, req.Y4, result); err != nil {
+		return BlockModeResult{}, err
+	}
+	return result, nil
+}
+
+func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
 	skipMode, err := s.ReadSkipMode(cdfs, ctx, req)
 	if err != nil {
 		return BlockModeResult{}, err
@@ -1113,20 +1134,11 @@ func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeCon
 	if err != nil {
 		return BlockModeResult{}, err
 	}
-	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, cdef, req.Size, req.X4, req.Y4, skip)
-	if err != nil {
-		return BlockModeResult{}, err
-	}
-	result := BlockModeResult{
+	return BlockModeResult{
 		SegmentPredicted: segmentPredicted,
 		SkipMode:         skipMode,
 		SkipTransform:    skip,
-		CDEFIndex:        cdefIndex,
-	}
-	if err := ctx.Mark(req.Size, req.X4, req.Y4, result); err != nil {
-		return BlockModeResult{}, err
-	}
-	return result, nil
+	}, nil
 }
 
 func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) error {
