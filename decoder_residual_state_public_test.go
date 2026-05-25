@@ -482,6 +482,131 @@ func TestPublicDecoderFrameWorkBatchResidualRunnerSideData(t *testing.T) {
 	}
 }
 
+func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	event := publicDecoderResidualRunnerFrameEvent()
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	plan, err := av1.PlanDecoderTileWork(event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratchBatch := av1.DecoderFrameWorkBatch{
+		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+			Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
+			FrameSize:    event.FrameSize,
+			CDEF:         event.CDEF,
+			Quantization: event.Quantization,
+			TransformRef: event.TransformRef,
+		},
+		Jobs: scratchJobs[:plan.JobCount],
+	}
+	runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(scratchBatch, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, publicDecoderBatchResidualRunnerScratch(runnerSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	side, err := av1.BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{}, av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	side.LoopFilterMap.Records[0].Valid = true
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:      int(event.FrameSize.CodedWidth),
+		Height:     int(event.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var spans [2]av1.TileSpan
+	var jobs [2]av1.TileJob
+	var batches [1]av1.TileBatch
+	var releases [av1.RefFrames]int
+	var postSawSideData bool
+
+	result, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Sequence:          sequence,
+		Event:             event,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Workers:           1,
+		Spans:             spans[:],
+		Jobs:              jobs[:],
+		Batches:           batches[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		Runner:            &runner,
+		SideData:          &side,
+		Post: func(ctx av1.DecoderFrameWorkPostFilterContext) error {
+			postSawSideData = ctx.CDEFIndexMap != nil && ctx.LoopFilterMap != nil && ctx.RestorationFrameBuffers != nil
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Step.Kind != av1.DecoderFrameWorkStepBegin ||
+		result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		result.Output == nil ||
+		state.Active() ||
+		!postSawSideData {
+		t.Fatalf("result=%+v output=%p active=%v postSide=%v", result, result.Output, state.Active(), postSawSideData)
+	}
+	seenLoopRecord := false
+	for _, record := range side.LoopFilterMap.Records {
+		if record.Valid {
+			seenLoopRecord = true
+			break
+		}
+	}
+	if !seenLoopRecord {
+		t.Fatal("event runner did not write loop-filter side data")
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot < 0 {
+		t.Fatalf("decoded frame was not published to reference slot 0: slot=%d ok=%v", slot, ok)
+	}
+	if _, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{Runner: nil}); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("nil residual event runner err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
 	predictions := 0
@@ -968,6 +1093,43 @@ func publicDecoderBatchResidualRunnerScratch(size av1.DecoderFrameWorkBatchResid
 		Int32Scratch:            make([]int32, size.Int32Scratch+1),
 		ResidualScratch:         make([]int16, size.ResidualScratch+1),
 		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove+1),
+	}
+}
+
+func publicDecoderResidualRunnerFrameEvent() av1.DecoderEvent {
+	payload := make([]byte, 513)
+	payload[0] = 0xff
+	return av1.DecoderEvent{
+		Kind: av1.DecoderEventFrame,
+		Unit: av1.OBUUnit{Payload: payload},
+		FrameHeader: av1.FrameHeaderPrefix{
+			FrameType: av1.FrameTypeKey,
+		},
+		FrameSize: av1.FrameSize{
+			CodedWidth:          128,
+			UpscaledWidth:       128,
+			Height:              64,
+			SuperResDenominator: 8,
+			RefreshFrameFlags:   0xff,
+		},
+		TileInfo: av1.TileInfo{
+			TileSizeBytes: 1,
+			SBCols:        2,
+			SBRows:        1,
+			Cols:          2,
+			Rows:          1,
+			ColStartSB:    [av1.MaxTileCols + 1]uint16{0, 1, 2},
+			RowStartSB:    [av1.MaxTileRows + 1]uint16{0, 1},
+		},
+		TileGroup: av1.TileGroup{
+			StartTile: 0,
+			EndTile:   1,
+			TileCount: 2,
+			Final:     true,
+		},
+		CDEF:         av1.CDEFParams{Bits: 0, StrengthCount: 1},
+		Quantization: av1.QuantizationParams{BaseQIdx: 64},
+		TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
 	}
 }
 
