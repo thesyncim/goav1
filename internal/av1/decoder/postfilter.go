@@ -189,12 +189,47 @@ func (ctx FrameWorkPostFilterContext) RemainingPostFilters() FrameWorkPostFilter
 	return ctx.ActivePostFilters() &^ ctx.completedPostFilters
 }
 
+// SupportedPostFilters returns the remaining active stages that the supported
+// frame-pool publication pipeline can run.
+func (ctx FrameWorkPostFilterContext) SupportedPostFilters() (FrameWorkPostFilterStage, error) {
+	remaining := ctx.RemainingPostFilters()
+	supported, err := ctx.supportedPostFilterStages(remaining)
+	if err != nil {
+		return 0, err
+	}
+	return remaining & supported, nil
+}
+
+// UnsupportedPostFilters returns the remaining active stages that require the
+// caller-owned full postfilter path or are not currently integrated.
+func (ctx FrameWorkPostFilterContext) UnsupportedPostFilters() (FrameWorkPostFilterStage, error) {
+	remaining := ctx.RemainingPostFilters()
+	supported, err := ctx.supportedPostFilterStages(remaining)
+	if err != nil {
+		return 0, err
+	}
+	return remaining &^ supported, nil
+}
+
 // RequireNoActivePostFilters is a capability gate for callers that consume the
 // current reconstructed frame directly. It accepts frames whose postfilter plan
 // is a no-op and rejects frames that need loop filter, CDEF, superres, loop
 // restoration, or film grain before MD5/reference use.
 func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
 	if !ctx.ActivePostFilters().Empty() {
+		return ErrUnsupportedPostFilter
+	}
+	return nil
+}
+
+// RequireSupportedPostFilters rejects contexts with remaining stages that the
+// frame-pool publication pipeline cannot complete.
+func (ctx FrameWorkPostFilterContext) RequireSupportedPostFilters() error {
+	unsupported, err := ctx.UnsupportedPostFilters()
+	if err != nil {
+		return err
+	}
+	if !unsupported.Empty() {
 		return ErrUnsupportedPostFilter
 	}
 	return nil

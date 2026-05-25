@@ -14,6 +14,20 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 	if ctx.RestorationFrameBuffers != &buffers {
 		t.Fatal("restoration frame buffers did not round-trip through public context")
 	}
+	supportedStages, err := ctx.SupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupportedStages, err := ctx.UnsupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supportedStages.Empty() || !unsupportedStages.Empty() {
+		t.Fatalf("supported=%b unsupported=%b", supportedStages, unsupportedStages)
+	}
+	if err := ctx.RequireSupportedPostFilters(); err != nil {
+		t.Fatalf("RequireSupportedPostFilters err=%v", err)
+	}
 
 	edge := av1.DecoderFrameWorkLoopFilterPostFilterEdge{
 		Plane:     av1.LoopFilterPlaneY,

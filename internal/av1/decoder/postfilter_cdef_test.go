@@ -259,6 +259,65 @@ func TestFrameWorkPostFilterRunnerScratchLenRejectsNilRunner(t *testing.T) {
 	}
 }
 
+func TestFrameWorkPostFilterContextSupportedPostFilterCapabilities(t *testing.T) {
+	cdefEvent := Event{
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{8},
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: cdefEvent}
+	supported, err := ctx.SupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported, err := ctx.UnsupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supported != FrameWorkPostFilterCDEF || !unsupported.Empty() {
+		t.Fatalf("supported=%b unsupported=%b", supported, unsupported)
+	}
+	if err := ctx.RequireSupportedPostFilters(); err != nil {
+		t.Fatalf("RequireSupportedPostFilters err=%v", err)
+	}
+
+	superResCtx := FrameWorkPostFilterContext{
+		Event: Event{
+			CDEF:      cdefEvent.CDEF,
+			FrameSize: parser.FrameSize{SuperResEnabled: true},
+		},
+	}
+	supported, err = superResCtx.SupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported, err = superResCtx.UnsupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if supported != FrameWorkPostFilterCDEF || unsupported != FrameWorkPostFilterSuperRes {
+		t.Fatalf("superres supported=%b unsupported=%b", supported, unsupported)
+	}
+	if err := superResCtx.RequireSupportedPostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
+		t.Fatalf("RequireSupportedPostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+
+	tailCtx := superResCtx.WithCompletedPostFilters(FrameWorkPostFilterCDEF)
+	supported, err = tailCtx.SupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsupported, err = tailCtx.UnsupportedPostFilters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supported.Empty() || unsupported != FrameWorkPostFilterSuperRes {
+		t.Fatalf("tail supported=%b unsupported=%b", supported, unsupported)
+	}
+}
+
 func TestFrameWorkCallerPostFilterRunnerAllocs(t *testing.T) {
 	runner := FrameWorkCallerPostFilterRunner{}
 	allocs := testing.AllocsPerRun(1000, func() {
