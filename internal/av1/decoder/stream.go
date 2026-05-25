@@ -92,6 +92,10 @@ func (s *Stream) Reset() {
 	*s = Stream{}
 }
 
+func (s *Stream) ResetRTP() {
+	s.rtp.Reset()
+}
+
 func (s *Stream) HasSequenceHeader() bool {
 	return s.haveSequence
 }

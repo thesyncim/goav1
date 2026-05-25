@@ -1136,7 +1136,9 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			pool.Reset()
 			refs.Reset()
 			state.Reset()
-			stream.Reset()
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
 			result, err := runner.RunLowOverhead(lowOverhead, nil)
 			if err != nil {
 				b.Fatal(err)
@@ -1156,8 +1158,9 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			pool.Reset()
 			refs.Reset()
 			state.Reset()
-			stream.Reset()
-			runner.RTPUsed = 0
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
 			result, err := runner.RunRTPPayload(rtpPayload, nil)
 			if err != nil {
 				b.Fatal(err)
@@ -1177,8 +1180,9 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			pool.Reset()
 			refs.Reset()
 			state.Reset()
-			stream.Reset()
-			runner.RTPUsed = 0
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
 			result, err := runner.RunRTPPayloads(rtpPayloads, nil)
 			if err != nil {
 				b.Fatal(err)

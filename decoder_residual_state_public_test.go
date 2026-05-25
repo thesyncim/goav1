@@ -2034,6 +2034,63 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamRunnerReset(t *testing.T) {
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	if count, err := stream.PushLowOverhead(publicDecoderResidualLowOverheadStream(), events[:]); err != nil {
+		t.Fatal(err)
+	} else if count != 3 {
+		t.Fatalf("count=%d events=%+v", count, events[:count])
+	}
+	runner := av1.DecoderFrameWorkResidualStreamRunner{
+		Stream:  &stream,
+		RTPUsed: 7,
+	}
+	if !stream.HasSequenceHeader() {
+		t.Fatal("stream missing sequence before reset")
+	}
+	frameHeader := publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	var packet [8]byte
+	n, _, more, err := av1.PutRTPFragment(packet[:], frameHeader, 0, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !more {
+		t.Fatal("expected frame header to need a second fragment")
+	}
+	var rtpBuffer [128]byte
+	var rtpSpans [1]av1.RTPObuSpan
+	used, count, err := stream.PushRTPPayload(rtpBuffer[:], 0, rtpSpans[:], events[:1], packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || !stream.InRTPFragment() || used == 0 {
+		t.Fatalf("fragment push used=%d count=%d inFragment=%v", used, count, stream.InRTPFragment())
+	}
+	runner.RTPUsed = used
+	if err := runner.ResetRTP(); err != nil {
+		t.Fatal(err)
+	}
+	if runner.RTPUsed != 0 || !stream.HasSequenceHeader() || stream.InRTPFragment() {
+		t.Fatalf("ResetRTP runner=%+v hasSequence=%v inFragment=%v", runner, stream.HasSequenceHeader(), stream.InRTPFragment())
+	}
+	runner.RTPUsed = 9
+	if err := runner.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if runner.RTPUsed != 0 || stream.HasSequenceHeader() || stream.InRTPFragment() {
+		t.Fatalf("Reset runner=%+v hasSequence=%v inFragment=%v", runner, stream.HasSequenceHeader(), stream.InRTPFragment())
+	}
+
+	var nilRunner *av1.DecoderFrameWorkResidualStreamRunner
+	if err := nilRunner.Reset(); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil reset err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	if err := nilRunner.ResetRTP(); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil rtp reset err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventsBindPlan(t *testing.T) {
 	payload := publicDecoderResidualLowOverheadStream()
 	var stream av1.DecoderStream
@@ -2581,8 +2638,9 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	pool.Reset()
 	refs.Reset()
 	state.Reset()
-	stream.Reset()
-	runner.RTPUsed = 0
+	if err := runner.Reset(); err != nil {
+		t.Fatal(err)
+	}
 	result, err = runner.RunRTPPayload(rtpPayload, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -3246,7 +3304,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		stream.Reset()
+		if resetErr := runner.Reset(); resetErr != nil {
+			err = resetErr
+			return
+		}
 		result, runErr := runner.RunLowOverhead(lowOverhead, nil)
 		if runErr != nil {
 			err = runErr
@@ -3260,8 +3321,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		stream.Reset()
-		runner.RTPUsed = 0
+		if resetErr := runner.Reset(); resetErr != nil {
+			err = resetErr
+			return
+		}
 		result, runErr = runner.RunRTPPayload(rtpPayload, nil)
 		if runErr != nil {
 			err = runErr
@@ -3274,8 +3337,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		stream.Reset()
-		runner.RTPUsed = 0
+		if resetErr := runner.Reset(); resetErr != nil {
+			err = resetErr
+			return
+		}
 		result, runErr = runner.RunRTPPayloads(rtpPayloads, nil)
 		if runErr != nil {
 			err = runErr
@@ -3365,8 +3430,10 @@ func TestPublicDecoderFrameWorkResidualStreamPostFilterRunnerAllocs(t *testing.T
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		stream.Reset()
-		runner.RTPUsed = 0
+		if resetErr := runner.Reset(); resetErr != nil {
+			err = resetErr
+			return
+		}
 		postRunner = av1.DecoderFrameWorkSupportedPostFilterScratchRunner{Scratch: postScratch}
 		result, runErr := runner.RunRTPPayloadWithPostFilterRunner(payload, &postRunner)
 		if runErr != nil {

@@ -81,6 +81,29 @@ func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkRes
 	}
 }
 
+// Reset clears the bound parser stream and any retained RTP fragment bytes so
+// the runner can be reused for an independent decode stream.
+func (r *DecoderFrameWorkResidualStreamRunner) Reset() error {
+	if r == nil || r.Stream == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	r.Stream.Reset()
+	r.RTPUsed = 0
+	return nil
+}
+
+// ResetRTP clears only retained RTP fragment bytes while preserving parser
+// sequence/reference state. Callers can use this after packet loss or jitter
+// buffer resynchronization.
+func (r *DecoderFrameWorkResidualStreamRunner) ResetRTP() error {
+	if r == nil || r.Stream == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	r.Stream.ResetRTP()
+	r.RTPUsed = 0
+	return nil
+}
+
 // BindDecoderFrameWorkResidualStreamEventRunner binds a complete residual
 // stream runner from caller-owned stream and event scratch. It first binds the
 // nested residual event runner, then binds parser/RTP scratch and stream output
