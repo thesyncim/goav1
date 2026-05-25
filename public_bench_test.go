@@ -522,6 +522,121 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderPostFilterScratchContext(b *testing.B) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{
+		CodedWidth:          8,
+		UpscaledWidth:       13,
+		Height:              32,
+		SuperResEnabled:     true,
+		SuperResDenominator: 13,
+	}
+	event := av1.DecoderEvent{
+		Kind:           av1.DecoderEventTileGroup,
+		SequenceHeader: sequence,
+		FrameSize:      size,
+		TileGroup:      av1.TileGroup{Final: true},
+		FilmGrain: av1.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	var output av1.Frame
+
+	b.SetBytes(int64(size.CodedWidth * size.Height))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &output)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += ctx.Output.Format.Width + output.Layout.Size
+	}
+	publicBenchmarkSink = sum
+}
+
+func BenchmarkPublicDecoderCallerPostFilterScratchRunner(b *testing.B) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{
+		CodedWidth:          8,
+		UpscaledWidth:       13,
+		Height:              32,
+		SuperResEnabled:     true,
+		SuperResDenominator: 13,
+	}
+	event := av1.DecoderEvent{
+		Kind:           av1.DecoderEventTileGroup,
+		SequenceHeader: sequence,
+		FrameSize:      size,
+		TileGroup:      av1.TileGroup{Final: true},
+		FilmGrain: av1.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	var scratchOutput av1.Frame
+	scratchCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
+	first, err := runner.ScratchLen(scratchCtx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
+	full, err := runner.ScratchLen(scratchCtx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(full))
+
+	output := publicBenchmarkDecoderFrame(b, scratchOutput.Format)
+	for i := range output.Y.Pix {
+		output.Y.Pix[i] = 100
+	}
+	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
+
+	b.SetBytes(int64(size.CodedWidth*size.Height + size.UpscaledWidth*size.Height))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := runner.Apply(ctx); err != nil {
+			b.Fatal(err)
+		}
+		if runner.Result.Completed != av1.DecoderFrameWorkPostFilterSuperRes|av1.DecoderFrameWorkPostFilterFilmGrain ||
+			!runner.Context.DetachedPostFilterOutput() ||
+			runner.Context.Output.Format.Width != int(size.UpscaledWidth) {
+			b.Fatalf("result=%+v context=%+v", runner.Result, runner.Context)
+		}
+		sum += int(runner.Context.Output.Y.Pix[i%len(runner.Context.Output.Y.Pix)])
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicDecoderResidualState(b *testing.B) {
 	var initial av1.DecoderFrameWorkTileResidualCDFStorage
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {

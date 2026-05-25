@@ -84,6 +84,97 @@ func FuzzPublicDecoderFrameWorkSideDataBinding(f *testing.F) {
 	})
 }
 
+func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
+	f.Add(uint16(8), uint16(32), uint16(13), uint8(0), uint8(0))
+	f.Add(uint16(64), uint16(64), uint16(64), uint8(1), uint8(1))
+	f.Add(uint16(128), uint16(72), uint16(160), uint8(2), uint8(7))
+
+	f.Fuzz(func(t *testing.T, rawCodedWidth uint16, rawHeight uint16, rawUpscaledWidth uint16, rawAlign uint8, flags uint8) {
+		codedWidth := uint32(rawCodedWidth%256) + 1
+		height := uint32(rawHeight%256) + 1
+		upscaledWidth := uint32(rawUpscaledWidth%320) + 1
+		if upscaledWidth < codedWidth {
+			upscaledWidth = codedWidth
+		}
+		align := 1 << (rawAlign % 7)
+		mono := flags&1 != 0
+		superRes := flags&2 != 0
+		filmGrain := flags&4 != 0
+		bitDepth := uint8(8)
+		switch (flags >> 3) & 3 {
+		case 1:
+			bitDepth = 10
+		case 2:
+			bitDepth = 12
+		}
+
+		sequence := av1.SequenceHeader{
+			EnableSuperRes: superRes,
+			ColorConfig: av1.ColorConfig{
+				BitDepth:     bitDepth,
+				MonoChrome:   mono,
+				SubsamplingX: !mono,
+				SubsamplingY: !mono,
+			},
+		}
+		size := av1.FrameSize{
+			CodedWidth:          codedWidth,
+			UpscaledWidth:       codedWidth,
+			Height:              height,
+			SuperResDenominator: 8,
+		}
+		if superRes {
+			size.SuperResEnabled = true
+			size.UpscaledWidth = upscaledWidth
+			size.SuperResDenominator = 9 + uint8(flags&7)
+		}
+		event := av1.DecoderEvent{
+			Kind:           av1.DecoderEventTileGroup,
+			SequenceHeader: sequence,
+			FrameSize:      size,
+			TileGroup:      av1.TileGroup{Final: true},
+		}
+		if filmGrain {
+			event.FilmGrain = av1.FilmGrainParams{
+				ParamsPresent: true,
+				Apply:         true,
+				Seed:          uint16(0x1000) | uint16(flags),
+				BitDepth:      bitDepth,
+				NumYPoints:    1,
+				YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+				ScalingShift:  8,
+				Overlap:       true,
+			}
+		}
+
+		var scratchOutput av1.Frame
+		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &scratchOutput)
+		if err != nil {
+			return
+		}
+		if ctx.Output != &scratchOutput || len(scratchOutput.Y.Pix) != 0 || scratchOutput.Format.Width != int(codedWidth) {
+			t.Fatalf("ctx=%+v output=%+v codedWidth=%d", ctx, scratchOutput, codedWidth)
+		}
+
+		var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
+		first, err := runner.ScratchLen(ctx)
+		if err != nil {
+			return
+		}
+		runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
+		full, err := runner.ScratchLen(ctx)
+		if err != nil {
+			return
+		}
+		if superRes && full.SuperRes.OutputFrame == 0 {
+			t.Fatalf("superres scratch missing: first=%+v full=%+v", first, full)
+		}
+		if filmGrain && full.FilmGrain.LumaSamples == 0 {
+			t.Fatalf("film grain scratch missing: first=%+v full=%+v", first, full)
+		}
+	})
+}
+
 func publicFuzzRestorationType(raw uint8) av1.RestorationType {
 	switch raw % 3 {
 	case 1:
