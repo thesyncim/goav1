@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -607,7 +609,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		var err error
 		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
 		if err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("read txb skip size=%v ctx=%d: %w", req.Size, req.TXBSkipContext, err)
 		}
 	}
 	if allZero {
@@ -620,40 +622,40 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		EOBMultiContext: req.EOBMultiContext,
 	})
 	if err != nil {
-		return TXBDecodeResult{}, err
+		return TXBDecodeResult{}, fmt.Errorf("read eob size=%v plane=%v eobCtx=%d: %w", req.Size, req.Plane, req.EOBMultiContext, err)
 	}
 	if eob.Position <= 0 || eob.Position > maxEOB {
-		return TXBDecodeResult{}, ErrInvalidDecodeState
+		return TXBDecodeResult{}, fmt.Errorf("eob position=%d max=%d token=%d extra=%d: %w", eob.Position, maxEOB, eob.Token, eob.Extra, ErrInvalidDecodeState)
 	}
 
 	culLevel := 0
 	dcValue := 0
 	if err := s.readLastCoeffLevel(cdfs, req, eob.Position, scan, levelsScratch, scanSize); err != nil {
-		return TXBDecodeResult{}, err
+		return TXBDecodeResult{}, fmt.Errorf("read last coeff eob=%d: %w", eob.Position, err)
 	}
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
 		ctx, err := CoeffLowerLevelsContext(levelsScratch, req.Size, req.Class, pos)
 		if err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("lower levels ctx c=%d pos=%d: %w", c, pos, err)
 		}
 		level, err := s.ReadCoeffBase(cdfs, CoeffTokenRequest{Size: req.Size, Plane: req.Plane, Context: ctx})
 		if err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("read coeff base c=%d pos=%d ctx=%d: %w", c, pos, ctx, err)
 		}
 		if level > NumBaseLevels {
 			brCtx, err := CoeffBRContext(levelsScratch, req.Size, req.Class, pos)
 			if err != nil {
-				return TXBDecodeResult{}, err
+				return TXBDecodeResult{}, fmt.Errorf("br ctx c=%d pos=%d level=%d: %w", c, pos, level, err)
 			}
 			extra, err := s.readBaseRange(cdfs, req.Size, req.Plane, brCtx)
 			if err != nil {
-				return TXBDecodeResult{}, err
+				return TXBDecodeResult{}, fmt.Errorf("read base range c=%d pos=%d level=%d brCtx=%d: %w", c, pos, level, brCtx, err)
 			}
 			level += extra
 		}
 		if err := setCoeffLevel(levelsScratch, req.Size, pos, level); err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("set coeff level c=%d pos=%d level=%d: %w", c, pos, level, err)
 		}
 	}
 
@@ -662,7 +664,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		pos := int(scan[c])
 		level, err := coeffLevel(levelsScratch, req.Size, pos)
 		if err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("read stored coeff c=%d pos=%d: %w", c, pos, err)
 		}
 		if level == 0 {
 			continue
@@ -679,18 +681,18 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			negative = bit != 0
 		}
 		if err != nil {
-			return TXBDecodeResult{}, err
+			return TXBDecodeResult{}, fmt.Errorf("read coeff sign c=%d pos=%d level=%d: %w", c, pos, level, err)
 		}
 		if level >= MaxBaseBRRange {
 			tail, err := s.readCoeffGolomb()
 			if err != nil {
-				return TXBDecodeResult{}, err
+				return TXBDecodeResult{}, fmt.Errorf("read coeff golomb c=%d pos=%d level=%d: %w", c, pos, level, err)
 			}
 			level += tail
 		}
 		culLevel += level
 		if level > int(^uint16(0)>>1) {
-			return TXBDecodeResult{}, ErrInvalidDecodeState
+			return TXBDecodeResult{}, fmt.Errorf("coeff level overflow c=%d pos=%d level=%d: %w", c, pos, level, ErrInvalidDecodeState)
 		}
 		signed := int16(level)
 		if negative {

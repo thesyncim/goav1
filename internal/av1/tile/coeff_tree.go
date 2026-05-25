@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -122,7 +124,7 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 			Block: block,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
 		}
 
 		stats.TXBs++
@@ -210,7 +212,7 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 				Block: block,
 			})
 			if err != nil {
-				return stats, err
+				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
 			}
 			stats.TXBs++
 			stats.EOBTotal += result.EOB
@@ -241,7 +243,7 @@ type coeffTransformRecorder interface {
 func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
 	req, allZero, err := s.ReadTXBSkipWithContext(cdfs, ctx, ctxReq, req)
 	if err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, err
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read txb skip: %w", err)
 	}
 
 	selected := transform.TypeDCTDCT
@@ -249,13 +251,13 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if !allZero {
 		selected, selectedClass, err = resolveCoeffTransform(selector, typ, useType, class, transformReq.Plane, transformReq.Block)
 		if err != nil {
-			return 0, TXBDecodeResult{}, nil, nil, err
+			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("resolve coeff transform: %w", err)
 		}
 	}
 
 	coeffs, scan, levels, err := scratch.coeffBuffers(ctxReq.Size, selectedClass)
 	if err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, err
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("prepare coeff buffers size=%v class=%v: %w", ctxReq.Size, selectedClass, err)
 	}
 	req.Class = selectedClass
 	req.EOBMultiContext = eobMultiContextForClass(selectedClass)
@@ -263,14 +265,14 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	req.TXBSkip = allZero
 	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
 	if err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, err
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}
 	if err := ctx.MarkTXB(ctxReq, result); err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, err
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
 	}
 	if recorder, ok := selector.(coeffTransformRecorder); ok {
 		if err := recorder.RecordCoeffTransform(transformReq, selected); err != nil {
-			return 0, TXBDecodeResult{}, nil, nil, err
+			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
 		}
 	}
 	return selected, result, coeffs, scan, nil
