@@ -53,12 +53,39 @@ type DecoderFrameWorkResidualEventRunner struct {
 	Stats       *DecoderFrameWorkTileResidualStats
 }
 
+// DecoderFrameWorkResidualEventRuntime groups stable decoder state that is not
+// carved out of residual-event scratch.
+type DecoderFrameWorkResidualEventRuntime struct {
+	State     *DecoderFrameWorkState
+	Refs      *DecoderSurfaceReferences
+	FramePool *FramePool
+	Align     int
+
+	ReferenceSurfaces []int
+	ReferenceFrames   []*Frame
+	Releases          []int
+
+	WorkerPool *TileWorkerPool
+	Stats      *DecoderFrameWorkTileResidualStats
+}
+
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
 // needed to run one residual event and capture its postfilter side data.
 type DecoderFrameWorkResidualEventScratchSize struct {
 	Runner   DecoderFrameWorkBatchResidualRunnerScratchSize
 	SideData DecoderFrameWorkSideDataScratchSize
 	Plan     DecoderTileWorkPlan
+}
+
+// DecoderFrameWorkResidualEventScratch carries typed caller-owned arenas for
+// BindDecoderFrameWorkResidualEventRunner.
+type DecoderFrameWorkResidualEventScratch struct {
+	Runner   DecoderFrameWorkBatchResidualRunnerScratch
+	SideData DecoderFrameWorkSideDataScratch
+
+	Spans   []TileSpan
+	Jobs    []TileJob
+	Batches []TileBatch
 }
 
 // Max returns per-arena maximum lengths and plan counts for reusable residual
@@ -73,6 +100,47 @@ func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResi
 			BatchCount: max(s.Plan.BatchCount, other.Plan.BatchCount),
 		},
 	}
+}
+
+// BindDecoderFrameWorkResidualEventRunner binds a reusable event runner and
+// frame-level side data from caller-owned scratch. batchRunner is caller-owned
+// storage for the nested residual batch runner; the returned event runner keeps
+// a pointer to it.
+func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualEventScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualEventRunner, DecoderFrameWorkSideData, error) {
+	if batchRunner == nil {
+		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrThreadingInvalidBatch
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.Spans, size.Plan.SpanCount) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Jobs, size.Plan.JobCount) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Batches, size.Plan.BatchCount) {
+		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrFrameShortBuffer
+	}
+
+	boundRunner, err := BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
+	if err != nil {
+		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+	}
+	side, err := BindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
+	if err != nil {
+		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+	}
+	*batchRunner = boundRunner
+	return DecoderFrameWorkResidualEventRunner{
+		State:             runtime.State,
+		Refs:              runtime.Refs,
+		FramePool:         runtime.FramePool,
+		Align:             runtime.Align,
+		ReferenceSurfaces: runtime.ReferenceSurfaces,
+		ReferenceFrames:   runtime.ReferenceFrames,
+		Workers:           size.Runner.Workers,
+		Spans:             scratch.Spans[:size.Plan.SpanCount],
+		Jobs:              scratch.Jobs[:size.Plan.JobCount],
+		Batches:           scratch.Batches[:size.Plan.BatchCount],
+		Releases:          runtime.Releases,
+		WorkerPool:        runtime.WorkerPool,
+		BatchRunner:       batchRunner,
+		Stats:             runtime.Stats,
+	}, side, nil
 }
 
 // Run plans and executes one decoder frame-work event using the runner's

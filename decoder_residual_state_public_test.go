@@ -1248,6 +1248,138 @@ func TestPublicDecoderFrameWorkResidualEventRunnerScratchLen(t *testing.T) {
 	}
 }
 
+func TestPublicBindDecoderFrameWorkResidualEventRunner(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	event := publicDecoderResidualRunnerFrameEvent()
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:      int(event.FrameSize.CodedWidth),
+		Height:     int(event.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	runtime := av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		Stats:             &stats,
+	}
+	scratch := publicDecoderResidualEventScratch(size)
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	eventRunner, side, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, scratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventRunner.BatchRunner != &batchRunner ||
+		eventRunner.Workers != size.Runner.Workers ||
+		len(eventRunner.Spans) != size.Plan.SpanCount ||
+		len(eventRunner.Jobs) != size.Plan.JobCount ||
+		len(eventRunner.Batches) != size.Plan.BatchCount {
+		t.Fatalf("event runner=%+v size=%+v", eventRunner, size)
+	}
+
+	result, err := eventRunner.Run(sequence, event, &side, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		result.Output == nil ||
+		state.Active() ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("result=%+v active=%v stats=%+v", result, state.Active(), stats)
+	}
+	if _, ok := refs.ReferenceSlot(0); !ok {
+		t.Fatal("bound event runner did not publish decoded frame")
+	}
+
+	allocScratch := publicDecoderResidualEventScratch(size)
+	var allocBatchRunner av1.DecoderFrameWorkBatchResidualRunner
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, err = av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, allocScratch, &allocBatchRunner)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("BindDecoderFrameWorkResidualEventRunner allocated: %f", allocs)
+	}
+}
+
+func TestPublicBindDecoderFrameWorkResidualEventRunnerRejectsInvalidScratch(t *testing.T) {
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	event := publicDecoderResidualRunnerFrameEvent()
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := av1.DecoderFrameWorkResidualEventRuntime{Align: 64}
+	scratch := publicDecoderResidualEventScratch(size)
+
+	if _, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, scratch, nil); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("nil batch runner err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	shortPlanScratch := scratch
+	shortPlanScratch.Jobs = shortPlanScratch.Jobs[:size.Plan.JobCount-1]
+	if _, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, shortPlanScratch, &batchRunner); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short plan scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
+	shortRunnerScratch := scratch
+	shortRunnerScratch.Runner.Stats = shortRunnerScratch.Runner.Stats[:size.Runner.Workers-1]
+	if _, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, shortRunnerScratch, &batchRunner); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short runner scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
+	shortSideScratch := scratch
+	shortSideScratch.SideData.LoopFilterMap = shortSideScratch.SideData.LoopFilterMap[:size.SideData.LoopFilterMap-1]
+	if _, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, runtime, shortSideScratch, &batchRunner); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short side-data scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerAllocs(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -1861,6 +1993,16 @@ func publicDecoderFrameWorkSideDataScratch(size av1.DecoderFrameWorkSideDataScra
 		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords+1),
 		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove+1),
 		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow+1),
+	}
+}
+
+func publicDecoderResidualEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
+	return av1.DecoderFrameWorkResidualEventScratch{
+		Runner:   publicDecoderBatchResidualRunnerScratch(size.Runner),
+		SideData: publicDecoderFrameWorkSideDataScratch(size.SideData),
+		Spans:    make([]av1.TileSpan, size.Plan.SpanCount+1),
+		Jobs:     make([]av1.TileJob, size.Plan.JobCount+1),
+		Batches:  make([]av1.TileBatch, size.Plan.BatchCount+1),
 	}
 }
 

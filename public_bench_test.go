@@ -906,14 +906,6 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(eventScratch.Runner, publicDecoderBatchResidualRunnerScratch(eventScratch.Runner))
-	if err != nil {
-		b.Fatal(err)
-	}
-	side, err := av1.BindDecoderFrameWorkResidualEventSideData(sequence, event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
-	if err != nil {
-		b.Fatal(err)
-	}
 
 	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
 		Width:      int(event.FrameSize.CodedWidth),
@@ -926,10 +918,23 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var state av1.DecoderFrameWorkState
 	var referenceSurfaces [av1.InterRefsPerFrame]int
 	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
-	var spans [2]av1.TileSpan
-	var jobs [2]av1.TileJob
-	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	eventRunner, side, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, event, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		Stats:             &stats,
+	}, publicDecoderResidualEventScratch(eventScratch), &batchRunner)
+	if err != nil {
+		b.Fatal(err)
+	}
 	var probeOutput av1.Frame
 	probeCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 64, &side, &probeOutput)
 	if err != nil {
@@ -942,21 +947,6 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	}
 	postRunner := av1.DecoderFrameWorkSupportedPostFilterScratchRunner{
 		Scratch: publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(postScratchSize)),
-	}
-	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
-		State:             &state,
-		Refs:              &refs,
-		FramePool:         &pool,
-		Align:             64,
-		ReferenceSurfaces: referenceSurfaces[:],
-		ReferenceFrames:   referenceFrames[:],
-		Workers:           1,
-		Spans:             spans[:],
-		Jobs:              jobs[:],
-		Batches:           batches[:],
-		Releases:          releases[:],
-		WorkerPool:        workerPool,
-		BatchRunner:       &runner,
 	}
 
 	b.SetBytes(int64(len(event.Unit.Payload)))
@@ -978,7 +968,7 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		if !postRunner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) || postRunner.Context.RemainingPostFilters() != 0 {
 			b.Fatalf("postfilter result=%+v remaining=%b", postRunner.Result, postRunner.Context.RemainingPostFilters())
 		}
-		sum += runner.Stats[0].Residuals + runner.Stats[0].TXBs
+		sum += stats.Residuals + stats.TXBs
 	}
 	publicBenchmarkSink = sum
 }
