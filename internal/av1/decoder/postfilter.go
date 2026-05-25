@@ -225,6 +225,19 @@ type FrameWorkSupportedPostFilterRunner struct {
 	Result  FrameWorkPostFilterResult
 }
 
+// FrameWorkBoundSupportedPostFilterRunner adapts ApplySupportedPostFilters for
+// event runners that only know exact scratch sizing after tile residuals have
+// filled frame-level side data.
+type FrameWorkBoundSupportedPostFilterRunner struct {
+	Options FrameWorkPostFilterBindOptions
+	Scratch FrameWorkPostFilterScratch
+
+	Size    FrameWorkPostFilterScratchSize
+	Request FrameWorkPostFilterRequest
+	Context FrameWorkPostFilterContext
+	Result  FrameWorkPostFilterResult
+}
+
 // FrameWorkCallerPostFilterRunner adapts ApplyCallerPostFilters to the
 // FrameWorkPostFilterFunc callback shape for display/output consumers that can
 // retain caller-owned detached output.
@@ -255,6 +268,54 @@ func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContex
 	if err := next.RequirePublishablePostFilterOutput(); err != nil {
 		return err
 	}
+	r.Context = next
+	r.Result = result
+	return nil
+}
+
+// Apply binds the runner's caller-owned scratch against the completed side-data
+// context, runs supported postfilters, and rejects detached output.
+func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrInvalidFrameWorkState
+	}
+	options := r.Options
+	if frameWorkLoopFilterMapEmpty(options.LoopFilterMap) && ctx.LoopFilterMap != nil {
+		options.LoopFilterMap = *ctx.LoopFilterMap
+	}
+	if frameWorkCDEFIndexMapEmpty(options.CDEFIndexMap) && ctx.CDEFIndexMap != nil {
+		options.CDEFIndexMap = *ctx.CDEFIndexMap
+	}
+	if frameWorkRestorationRecordsEmpty(options.RestorationRecords) && ctx.RestorationFrameBuffers != nil {
+		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+	}
+	probe := FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{Map: options.LoopFilterMap},
+		CDEF:       FrameWorkCDEFPostFilterRequest{IndexMap: options.CDEFIndexMap},
+		Restoration: FrameWorkRestorationPostFilterRequest{
+			Records:   options.RestorationRecords,
+			Optimized: options.RestorationOptimized,
+		},
+	}
+	size, err := ctx.SupportedPostFilterScratchLen(probe)
+	if err != nil {
+		return err
+	}
+	req, err := size.BindRequest(options, r.Scratch)
+	if err != nil {
+		return err
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(req)
+	if err != nil {
+		return err
+	}
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return err
+	}
+	r.Options = options
+	r.Size = size
+	r.Request = req
 	r.Context = next
 	r.Result = result
 	return nil

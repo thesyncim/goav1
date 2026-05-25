@@ -86,6 +86,16 @@ type FrameWorkPostFilterRunner interface {
 	Apply(FrameWorkPostFilterContext) error
 }
 
+// FrameWorkSideDataFunc binds caller-owned frame-level side data after event
+// planning and before tile work executes.
+type FrameWorkSideDataFunc func(*FrameWorkState, FrameWorkBatch) error
+
+// FrameWorkSideDataRunner binds caller-owned frame-level side data after event
+// planning and before tile work executes.
+type FrameWorkSideDataRunner interface {
+	BindFrameWorkSideData(*FrameWorkState, FrameWorkBatch) error
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -732,6 +742,12 @@ func (s *FrameWorkState) RunEventWithContextRunner(refs *SurfaceReferences, fram
 	return s.RunEventWithContextAndPostFilterRunner(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, runner, nil)
 }
 
+// RunEventWithContextAndSideDataRunner is RunEventWithContextRunner with a
+// side-data hook that runs after planning and before tile work executes.
+func (s *FrameWorkState) RunEventWithContextAndSideDataRunner(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner) (FrameWorkEventResult, error) {
+	return s.RunEventWithContextAndSideDataAndPostFilterRunners(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, side, runner, nil)
+}
+
 // RunEventWithContextAndPostFilter is RunEventWithContext with a final-frame
 // postfilter hook that runs after tile work and before reference publication.
 func (s *FrameWorkState) RunEventWithContextAndPostFilter(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, fn FrameWorkBatchFunc, post FrameWorkPostFilterFunc) (FrameWorkEventResult, error) {
@@ -778,6 +794,30 @@ func (s *FrameWorkState) RunEventWithContextAndPostFilterRunner(refs *SurfaceRef
 func (s *FrameWorkState) RunEventWithContextAndPostFilterRunners(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
 	step, output, referenceCount, references, err := s.planEventWithResolvedContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases)
 	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+
+	run, err := s.RunStepWithPayloadContextAndPostFilterRunners(refs, framePool, event, step, workerPool, output, references, event.Unit.Payload, jobs, batches, releases, runner, post)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	return FrameWorkEventResult{
+		Step:           step,
+		Output:         output,
+		ReferenceCount: referenceCount,
+		Run:            run,
+	}, nil
+}
+
+// RunEventWithContextAndSideDataAndPostFilterRunners is
+// RunEventWithContextAndPostFilterRunners with a side-data hook that runs after
+// planning and before tile work executes.
+func (s *FrameWorkState) RunEventWithContextAndSideDataAndPostFilterRunners(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
+	step, output, referenceCount, references, err := s.planEventWithResolvedContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	if err := s.bindFrameWorkEventSideData(event, step, output, references, event.Unit.Payload, side); err != nil {
 		return FrameWorkEventResult{}, err
 	}
 
@@ -843,6 +883,42 @@ func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, f
 		}
 	}
 	return step, output, referenceCount, references, nil
+}
+
+// BindFrameWorkSideData implements FrameWorkSideDataRunner for function hooks.
+func (fn FrameWorkSideDataFunc) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
+	if fn == nil {
+		return nil
+	}
+	return fn(s, b)
+}
+
+func (s *FrameWorkState) bindFrameWorkEventSideData(event Event, step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, side FrameWorkSideDataRunner) error {
+	if side == nil {
+		return nil
+	}
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return err
+	}
+	if !hasTile || plan.JobCount == 0 {
+		return nil
+	}
+	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+		return ErrInvalidTileWork
+	}
+	if len(references) < referenceCount {
+		return ErrSurfaceReferenceBufferTooSmall
+	}
+	ctx := FrameWorkBatch{
+		Step:                  step,
+		Output:                output,
+		Payload:               payload,
+		References:            references[:referenceCount],
+		FrameWorkFrameContext: frameWorkFrameContext(event, s.sequenceContext()),
+		DisableCDFUpdate:      event.FrameHeader.DisableCDFUpdate,
+	}
+	return side.BindFrameWorkSideData(s, ctx)
 }
 
 func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep, post FrameWorkPostFilterFunc) (*frame.Frame, error) {
