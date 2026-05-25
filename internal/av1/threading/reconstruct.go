@@ -78,6 +78,9 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 	if err != nil {
 		return err
 	}
+	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
+		return nil
+	}
 	q, lossless, err := b.BlockQuantizer(req.CurrentQIndex, req.SegmentID, geom.plane)
 	if err != nil {
 		return err
@@ -143,7 +146,22 @@ func (b FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, blo
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	if !frameWorkPlaneBlockFits(window, x, y, visibleWidth, visibleHeight) {
+	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, visibleWidth, visibleHeight)
+	if !ok {
+		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
+			if plane == FrameWorkPlaneY {
+				if _, _, err := frameWorkBlockLumaTransformPosition(visit, block.Block); err != nil {
+					return frameWorkBlockCoeffGeometry{}, err
+				}
+			}
+			return frameWorkBlockCoeffGeometry{
+				plane:  plane,
+				window: window,
+				x:      x,
+				y:      y,
+				size:   size,
+			}, nil
+		}
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
 	return frameWorkBlockCoeffGeometry{

@@ -1042,6 +1042,45 @@ func TestFrameWorkBatchReconstructBlockCoeffChromaEdgeVisible(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchReconstructBlockCoeffPaddingNoOp(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 320, Height: 180, BitDepth: 8, MonoChrome: true, Align: 64})
+	testFillFrame(output, 42)
+	before := append([]byte(nil), output.Y.Pix...)
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 320, Height: 180},
+			Quantization: parser.QuantizationParams{BaseQIdx: 64},
+		},
+		Jobs: []tile.Job{{SBCols: 5, SBRows: 3}},
+	}
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 4, MIRow: 44, MIColEnd: 5, MIRowEnd: 46,
+			X4: 4, Y4: 12, Size: tile.BlockSize4x8, VisibleW4: 1, VisibleH4: 2,
+			HaveTop: true, HaveLeft: true,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane:  0,
+			Block:  tile.TransformBlock{X4: 4, Y4: 13, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{EOB: 1},
+			Coeffs: make([]int16, 16),
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 64,
+	}
+	req.Int32Scratch, req.ResidualScratch = testBlockCoeffScratch(t, ctx, req, FrameWorkPlaneY)
+	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(output.Y.Pix, before) {
+		t.Fatalf("padding-only luma TXB reconstruction modified output")
+	}
+}
+
 func TestFrameWorkBatchReconstructBlockCoeffRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := FrameWorkBatch{

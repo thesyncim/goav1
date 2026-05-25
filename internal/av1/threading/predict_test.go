@@ -145,6 +145,35 @@ func TestFrameWorkBatchPredictBlockLumaIntraStaticModes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockLumaIntraClipsFrameEdge(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 320, Height: 180, BitDepth: 8, MonoChrome: true, Align: 64})
+	testFillFrame(output, 7)
+	ctx := testIntraPredictionBatch(output)
+	ctx.Jobs = []tile.Job{{SBCols: 5, SBRows: 3}}
+	for x := 112; x < 128; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 175, uint16(30+x-112))
+	}
+
+	visit := testIntraPredictionVisit(tile.IntraModeVertical)
+	visit.Block = tile.BlockVisit{
+		MICol: 28, MIRow: 44, MIColEnd: 32, MIRowEnd: 46,
+		X4: 12, Y4: 12, Size: tile.BlockSize16x8, VisibleW4: 4, VisibleH4: 2,
+		HaveTop: true, HaveLeft: true,
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
+		t.Fatal(err)
+	}
+	for y := 176; y < 180; y++ {
+		for x := 112; x < 128; x++ {
+			want := uint16(30 + x - 112)
+			if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaDirectionalKnownVectors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1543,6 +1572,32 @@ func TestFrameWorkBatchPredictBlockIntraCoeffClippedChromaSmooth(t *testing.T) {
 				t.Fatalf("v sample(%d,%d)=%d want 91", x, y, got)
 			}
 		}
+	}
+}
+
+func TestFrameWorkBatchPredictBlockIntraCoeffLumaPaddingNoOp(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 320, Height: 180, BitDepth: 8, MonoChrome: true, Align: 64})
+	testFillFrame(output, 19)
+	before := slices.Clone(output.Y.Pix)
+	ctx := testIntraPredictionBatch(output)
+	ctx.Jobs = []tile.Job{{SBCols: 5, SBRows: 3}}
+
+	visit := testIntraPredictionVisit(tile.IntraModeSmooth)
+	visit.Block = tile.BlockVisit{
+		MICol: 4, MIRow: 44, MIColEnd: 5, MIRowEnd: 46,
+		X4: 4, Y4: 12, Size: tile.BlockSize4x8, VisibleW4: 1, VisibleH4: 2,
+		HaveTop: true, HaveLeft: true,
+	}
+	block := tile.BlockCoeffBlock{
+		Plane: 0,
+		Block: tile.TransformBlock{X4: 4, Y4: 13, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	if err := ctx.PredictBlockIntraCoeff(0, visit, block, &scratch); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(output.Y.Pix, before) {
+		t.Fatalf("padding-only luma TXB prediction modified output")
 	}
 }
 
