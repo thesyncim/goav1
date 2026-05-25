@@ -58,13 +58,15 @@ type DecoderFrameWorkResidualEventRunner struct {
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
 // events run through a residual event runner. CompletedFrames counts decoded
 // final tile frames; OutputCount counts display outputs, including
-// show-existing-frame events that reuse a retained reference.
+// show-existing-frame events that reuse a retained reference. Outputs aliases
+// the runner's caller-owned output slots when they are provided.
 type DecoderFrameWorkResidualEventsResult struct {
 	Count            int
 	Last             DecoderFrameWorkEventResult
 	ExecutedTileWork int
 	CompletedFrames  int
 	OutputCount      int
+	Outputs          []*Frame
 	ReleaseCount     int
 	Stats            DecoderFrameWorkTileResidualStats
 }
@@ -329,6 +331,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
 	}
 	var result DecoderFrameWorkResidualEventsResult
+	if r.Outputs != nil {
+		result.Outputs = r.Outputs[:0]
+	}
 	single := r
 	single.Stats = nil
 	for i := range events {
@@ -375,6 +380,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 				r.Outputs[result.OutputCount] = step.Output
 			}
 			result.OutputCount++
+			if r.Outputs != nil {
+				result.Outputs = r.Outputs[:result.OutputCount]
+			}
 		}
 		if step.Run.CompletedFrame {
 			result.CompletedFrames++

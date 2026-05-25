@@ -1529,9 +1529,11 @@ func TestPublicDecoderFrameWorkResidualEventRunnerRunEvents(t *testing.T) {
 		result.ExecutedTileWork != 1 ||
 		result.CompletedFrames != 1 ||
 		result.OutputCount != 1 ||
+		len(result.Outputs) != 1 ||
 		result.Last.Step.Kind != av1.DecoderFrameWorkStepTile ||
 		result.Last.Output == nil ||
 		outputs[0] != result.Last.Output ||
+		result.Outputs[0] != result.Last.Output ||
 		state.Active() ||
 		postCalls != 1 ||
 		stats != result.Stats ||
@@ -1639,9 +1641,11 @@ func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.
 		result.ExecutedTileWork != 0 ||
 		result.CompletedFrames != 0 ||
 		result.OutputCount != 1 ||
+		len(result.Outputs) != 1 ||
 		result.Last.Step.Kind != av1.DecoderFrameWorkStepShowExisting ||
 		result.Last.Output != referenceFrame ||
 		outputs[0] != referenceFrame ||
+		result.Outputs[0] != referenceFrame ||
 		state.Active() {
 		t.Fatalf("show-existing result=%+v output=%p/%p active=%v", result, result.Last.Output, referenceFrame, state.Active())
 	}
@@ -1716,6 +1720,7 @@ func TestPublicDecoderFrameWorkResidualEventRunnerFrameHeaderWithoutBatchRunner(
 		result.ExecutedTileWork != 0 ||
 		result.CompletedFrames != 0 ||
 		result.OutputCount != 0 ||
+		len(result.Outputs) != 0 ||
 		result.Last.Step.Kind != av1.DecoderFrameWorkStepBegin ||
 		!state.Active() ||
 		stats != (av1.DecoderFrameWorkTileResidualStats{}) {
@@ -1891,7 +1896,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverhead(t *testing.T) {
 		result.Run.Count != count ||
 		result.Run.ExecutedTileWork != 1 ||
 		result.Run.CompletedFrames != 1 ||
+		result.Run.OutputCount != 1 ||
+		len(result.Run.Outputs) != 1 ||
 		result.Run.Last.Output == nil ||
+		result.Run.Outputs[0] != result.Run.Last.Output ||
 		state.Active() ||
 		stats.TXBs == 0 ||
 		stats.Residuals == 0 {
@@ -1988,8 +1996,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput
 		result.Run.ExecutedTileWork != 0 ||
 		result.Run.CompletedFrames != 0 ||
 		result.Run.OutputCount != 1 ||
+		len(result.Run.Outputs) != 1 ||
 		result.Run.Last.Step.Kind != av1.DecoderFrameWorkStepShowExisting ||
 		result.Run.Last.Output != referenceFrame ||
+		result.Run.Outputs[0] != referenceFrame ||
 		streamScratch.Outputs[0] != referenceFrame ||
 		state.Active() ||
 		stats != (av1.DecoderFrameWorkTileResidualStats{}) {
@@ -2178,8 +2188,10 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloads(t *testing.T) {
 		result.Run.ExecutedTileWork != 1 ||
 		result.Run.CompletedFrames != 1 ||
 		result.Run.OutputCount != 1 ||
+		len(result.Run.Outputs) != 1 ||
 		result.Run.Last.Output == nil ||
 		outputs[0] != result.Run.Last.Output ||
+		result.Run.Outputs[0] != result.Run.Last.Output ||
 		postCalls != 1 ||
 		stats.TXBs == 0 ||
 		stats.Residuals == 0 {
@@ -2272,9 +2284,12 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloadsMultipleOutputs(t 
 		result.Run.ExecutedTileWork != 2 ||
 		result.Run.CompletedFrames != 2 ||
 		result.Run.OutputCount != 2 ||
+		len(result.Run.Outputs) != 2 ||
 		result.Run.Last.Output == nil ||
 		streamScratch.Outputs[0] == nil ||
 		streamScratch.Outputs[1] != result.Run.Last.Output ||
+		result.Run.Outputs[0] != streamScratch.Outputs[0] ||
+		result.Run.Outputs[1] != result.Run.Last.Output ||
 		stats.TXBs == 0 ||
 		stats.Residuals == 0 {
 		t.Fatalf("multi-output RTP batch result=%+v retained=%d outputs=%p/%p stats=%+v", result, runner.RTPUsed, streamScratch.Outputs[0], streamScratch.Outputs[1], stats)

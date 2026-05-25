@@ -291,6 +291,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte,
 	for i := range payloads {
 		next, err := r.runRTPPayloadWithOutputOffset(payloads[i], result.Run.OutputCount, post, postRunner)
 		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
+		decoderFrameWorkResidualStreamBindResultOutputs(&result, r.EventRunner.Outputs)
 		if err != nil {
 			return result, err
 		}
@@ -332,6 +333,13 @@ func decoderFrameWorkAccumulateResidualEventsResult(total *DecoderFrameWorkResid
 	total.OutputCount += next.OutputCount
 	total.ReleaseCount += next.ReleaseCount
 	decoderFrameWorkAccumulateResidualStats(&total.Stats, next.Stats)
+}
+
+func decoderFrameWorkResidualStreamBindResultOutputs(result *DecoderFrameWorkResidualStreamResult, outputs []*Frame) {
+	if outputs == nil {
+		return
+	}
+	result.Run.Outputs = outputs[:result.Run.OutputCount]
 }
 
 func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
