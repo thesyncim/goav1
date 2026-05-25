@@ -143,6 +143,56 @@ type DecoderFrameWorkSideData struct {
 	RestorationFrameBuffers DecoderFrameWorkRestorationFrameBuffers
 }
 
+// DecoderFrameWorkSupportedPostFilterScratchRunner binds exact postfilter
+// request views from caller-owned scratch at final-frame callback time, after
+// tile residual decode has filled frame side data.
+type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
+	Scratch DecoderFrameWorkPostFilterRequestScratch
+
+	Size    DecoderFrameWorkPostFilterScratchSize
+	Request DecoderFrameWorkPostFilterRequest
+	Context DecoderFrameWorkPostFilterContext
+	Result  DecoderFrameWorkPostFilterResult
+}
+
+// ScratchLen reports the exact scratch size required for ctx using side data
+// carried by the context.
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
+	if r == nil {
+		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderInvalidFrameWorkState
+	}
+	return ctx.SupportedPostFilterScratchLen(DecoderFrameWorkPostFilterRequest{})
+}
+
+// Apply binds exact request views from Scratch, applies supported postfilters,
+// and requires the resulting output to remain publishable by the frame pool.
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	size, err := r.ScratchLen(ctx)
+	if err != nil {
+		return err
+	}
+	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
+	if err != nil {
+		return err
+	}
+	next, result, err := ctx.ApplySupportedPostFilters(req)
+	if err != nil {
+		return err
+	}
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return err
+	}
+	r.Size = size
+	r.Request = req
+	r.Context = next
+	r.Result = result
+	return nil
+}
+
 // DecoderFrameWorkPostFilterRequestScratchLen reports the flat typed arena
 // lengths needed for size.
 func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {
@@ -258,6 +308,23 @@ func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFr
 		RestorationRecords:    side.RestorationFrameBuffers.Records,
 		RestorationBoundaries: side.RestorationFrameBuffers.Boundaries,
 	}
+}
+
+// DecoderFrameWorkPostFilterRequestSideDataFromContext extracts postfilter
+// request side-data views attached to a final-frame postfilter callback.
+func DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
+	var side DecoderFrameWorkPostFilterRequestSideData
+	if ctx.LoopFilterMap != nil {
+		side.LoopFilterMap = *ctx.LoopFilterMap
+	}
+	if ctx.CDEFIndexMap != nil {
+		side.CDEFIndexMap = *ctx.CDEFIndexMap
+	}
+	if ctx.RestorationFrameBuffers != nil {
+		side.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		side.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+	}
+	return side
 }
 
 // SetDecoderFrameWorkSideData attaches all bound frame-level side data to an

@@ -317,6 +317,109 @@ func TestPublicDecoderFrameWorkSideDataBinding(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	cdef := av1.CDEFParams{
+		Damping:       5,
+		StrengthCount: 1,
+		YStrength:     [av1.MaxCDEFStrengths]uint8{63},
+	}
+	sideScratchSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, av1.RestorationParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideScratch := av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, sideScratchSize.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, sideScratchSize.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideScratchSize.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideScratchSize.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, sideScratchSize.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, sideScratchSize.RestorationBoundaryBelow),
+	}
+	side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, av1.RestorationParams{}, sideScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	side.CDEFIndexMap.Read[0] = true
+
+	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{
+		Width:      int(size.CodedWidth),
+		Height:     int(size.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      32,
+	})
+	publicFillDecoderPostFilterPlane(output.Y)
+	before := append([]byte(nil), output.Y.Pix[:output.Y.Width]...)
+	ctx := av1.DecoderFrameWorkPostFilterContext{
+		Event: av1.DecoderEvent{
+			Kind:           av1.DecoderEventTileGroup,
+			SequenceHeader: sequence,
+			FrameSize:      size,
+			CDEF:           cdef,
+			TileGroup:      av1.TileGroup{Final: true},
+		},
+		Output:                  output,
+		CDEFIndexMap:            &side.CDEFIndexMap,
+		LoopFilterMap:           &side.LoopFilterMap,
+		RestorationFrameBuffers: &side.RestorationFrameBuffers,
+	}
+	var probe av1.DecoderFrameWorkSupportedPostFilterScratchRunner
+	exact, err := probe.ScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(exact)
+	if exact.CDEF.Input == 0 || arenaSize.Uint16Scratch == 0 {
+		t.Fatalf("exact scratch=%+v arena=%+v", exact, arenaSize)
+	}
+	runner := av1.DecoderFrameWorkSupportedPostFilterScratchRunner{
+		Scratch: publicDecoderPostFilterRequestScratch(arenaSize),
+	}
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) ||
+		runner.Context.RemainingPostFilters() != 0 ||
+		runner.Size.CDEF.Input != exact.CDEF.Input ||
+		runner.Request.CDEF.IndexMap.Rows != side.CDEFIndexMap.Rows {
+		t.Fatalf("runner size=%+v request=%+v result=%+v remaining=%b", runner.Size, runner.Request, runner.Result, runner.Context.RemainingPostFilters())
+	}
+	if string(output.Y.Pix[:output.Y.Width]) == string(before) {
+		t.Fatal("runner did not apply CDEF")
+	}
+
+	fromCtx := av1.DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	if fromCtx.CDEFIndexMap.Rows != side.CDEFIndexMap.Rows ||
+		fromCtx.LoopFilterMap.Rows != side.LoopFilterMap.Rows ||
+		len(fromCtx.RestorationRecords[0]) != len(side.RestorationFrameBuffers.Records[0]) {
+		t.Fatalf("side from context=%+v side=%+v", fromCtx, side)
+	}
+	var nilRunner *av1.DecoderFrameWorkSupportedPostFilterScratchRunner
+	if err := nilRunner.Apply(ctx); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil runner err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	shortRunner := runner
+	shortRunner.Scratch.Uint16Scratch = shortRunner.Scratch.Uint16Scratch[:arenaSize.Uint16Scratch-1]
+	if err := shortRunner.Apply(ctx); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		err = runner.Apply(ctx)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("runner allocated: %f", allocs)
+	}
+}
+
 func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
@@ -993,6 +1096,18 @@ func publicDecoderPostFilterFrame(t *testing.T, format av1.FrameFormat) *av1.Fra
 		t.Fatal(err)
 	}
 	return &frame
+}
+
+func publicDecoderPostFilterRequestScratch(size av1.DecoderFrameWorkPostFilterRequestScratchSize) av1.DecoderFrameWorkPostFilterRequestScratch {
+	return av1.DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:       make([]byte, size.ByteScratch),
+		Uint16Scratch:     make([]uint16, size.Uint16Scratch),
+		Int16Scratch:      make([]int16, size.Int16Scratch),
+		Int32Scratch:      make([]int32, size.Int32Scratch),
+	}
 }
 
 func publicDecoderLoopFilterRecordAt(col0 int, row0 int, col1 int, row1 int) av1.DecoderFrameWorkLoopFilterBlockRecord {
