@@ -4737,6 +4737,115 @@ func BenchmarkFrameWorkStateRunEventWithContextRunner(b *testing.B) {
 	}
 }
 
+func BenchmarkFrameWorkSideDataScratchSizeBindRunner(b *testing.B) {
+	size := FrameWorkSideDataScratchSize{
+		CDEF:                4,
+		LoopFilterRecords:   256,
+		RestorationRecords:  16,
+		RestorationBoundary: 512,
+	}
+	scratch := FrameWorkSideDataScratch{
+		CDEFIndex:          make([]uint8, size.CDEF),
+		CDEFRead:           make([]bool, size.CDEF),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
+		RestorationAbove:   make([]uint16, size.RestorationBoundary),
+		RestorationBelow:   make([]uint16, size.RestorationBoundary),
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		runner, err := size.BindRunner(scratch)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(runner.LoopFilterRecords) != size.LoopFilterRecords {
+			b.Fatalf("runner=%+v size=%+v", runner, size)
+		}
+	}
+}
+
+func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
+	framePayload = append(framePayload, make([]byte, 256)...)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testStillSequenceHeaderPayload(64, 64))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	if count != 2 {
+		b.Fatalf("count=%d", count)
+	}
+	events[1].LoopFilter = parser.LoopFilterParams{LevelY: [2]uint8{4}}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := benchmarkFramePoolForSize(b, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+	var runner threading.FrameWorkTileResidualRunner
+	runner.Workers = []threading.FrameWorkTileResidualRunnerWorker{
+		{
+			Int32Scratch:    make([]int32, 32768),
+			ResidualScratch: make([]int16, 4096),
+		},
+	}
+	side := FrameWorkBoundSideDataRunner{
+		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+	}
+	post := FrameWorkBoundSupportedPostFilterRunner{
+		Scratch: FrameWorkPostFilterScratch{
+			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 256),
+		},
+	}
+	pool.Reset()
+	refs.Reset()
+	state.Reset()
+	result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		post.Result.Completed != FrameWorkPostFilterLoopFilter ||
+		post.Context.RemainingPostFilters() != 0 {
+		b.Fatalf("result=%+v post=%+v remaining=%v", result, post.Result, post.Context.RemainingPostFilters())
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+			post.Result.Completed != FrameWorkPostFilterLoopFilter ||
+			post.Context.RemainingPostFilters() != 0 {
+			b.Fatalf("result=%+v post=%+v remaining=%v", result, post.Result, post.Context.RemainingPostFilters())
+		}
+	}
+}
+
 func BenchmarkBeginFrameWork(b *testing.B) {
 	pool := benchmarkFramePool(b, 1)
 	var refs SurfaceReferences

@@ -925,6 +925,81 @@ func TestFrameWorkBatchPredictBlockInterChromaSubsampledMatchesMotion(t *testing
 	assertFrameWorkPlaneBlockEqualAt(t, output.V, 8, 8, wantV, 0, 0, output.Layout.BytesPerSample, 8, 8)
 }
 
+func TestFrameWorkBatchPredictBlockInterIntraDCBlendsPredictors(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	testFillFrame(reference, 16)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 80)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 80)
+	}
+	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, 80)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterIntraPredictionVisit(tile.InterIntraModeDC, false)
+	var scratch FrameWorkInterPredictionScratch
+
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got != 48 {
+				t.Fatalf("sample(%d,%d)=%d want 48", x, y, got)
+			}
+		}
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterIntraWedgeBlendsPredictors(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	testFillFrame(reference, 20)
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 84)
+	}
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterIntraPredictionVisit(tile.InterIntraModeVertical, true)
+	visit.Prediction.InterIntra.WedgeIndex = 0
+	var scratch FrameWorkInterPredictionScratch
+
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	var mask [16 * 16]byte
+	if err := frameWorkBuildWedgeMask(mask[:], 16, tile.BlockSize16x16, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, sample := range [][2]int{{0, 0}, {7, 8}, {15, 15}} {
+		x := 16 + sample[0]
+		y := 16 + sample[1]
+		m := uint16(mask[sample[1]*16+sample[0]])
+		want := frameWorkBlendA64(m, 84, 20)
+		if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got != want {
+			t.Fatalf("sample(%d,%d)=%d want %d mask=%d", x, y, got, want, m)
+		}
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterIntraAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	testFillFrame(reference, 16)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterIntraPredictionVisit(tile.InterIntraModeSmooth, false)
+	var scratch FrameWorkInterPredictionScratch
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockInter inter-intra allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2361,6 +2436,20 @@ func testInterPredictionVisit(mv motion.Vector) tile.BlockLoopVisit {
 			InterMotionValid: true,
 		},
 	}
+}
+
+func testInterIntraPredictionVisit(mode tile.InterIntraMode, wedge bool) tile.BlockLoopVisit {
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.InterIntra = tile.InterIntraResult{
+		Enabled:  true,
+		Mode:     mode,
+		UseWedge: wedge,
+	}
+	visit.Prediction.InterIntraValid = true
+	visit.Prediction.InterMotion.InterIntra = true
+	visit.Prediction.MotionMode = tile.MotionModeTranslation
+	visit.Prediction.MotionModeValid = true
+	return visit
 }
 
 func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, leftMV motion.Vector) tile.BlockLoopVisit {

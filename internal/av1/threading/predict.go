@@ -49,6 +49,16 @@ var frameWorkOBMCMask64 = [64]uint8{
 	56, 56, 57, 57, 58, 58, 59, 60, 60, 60, 60, 60, 61, 62, 62, 62,
 	62, 62, 63, 63, 63, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
 }
+var frameWorkInterIntraWeights = [128]uint8{
+	60, 58, 56, 54, 52, 50, 48, 47, 45, 44, 42, 41, 39, 38, 37, 35,
+	34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 22, 21, 20,
+	19, 19, 18, 18, 17, 16, 16, 15, 15, 14, 14, 13, 13, 12, 12, 12,
+	11, 11, 10, 10, 10, 9, 9, 9, 8, 8, 8, 8, 7, 7, 7, 7,
+	6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4,
+	4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2,
+	2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+}
 
 // FrameWorkIntraPredictionScratch carries caller-owned edge buffers for luma
 // and chroma intra prediction. Keep it outside FrameWorkTileResidualScratch so
@@ -75,6 +85,7 @@ type FrameWorkInterPredictionScratch struct {
 	First  [frameWorkInterPredictionMaxBlockBytes]byte
 	Second [frameWorkInterPredictionMaxBlockBytes]byte
 	Mask   [frameWorkInterPredictionMaxMaskSamples]byte
+	Intra  FrameWorkIntraPredictionScratch
 }
 
 // FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
@@ -142,9 +153,9 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 
 // PredictBlockInter writes inter prediction pixels for every present plane of
 // one decoded inter block. Single-reference translation/OBMC/warp and
-// average/dist-wtd/wedge/diff-wtd compound translation are supported;
-// inter-intra, scaled references, and intrabc are rejected until their
-// prediction paths are integrated.
+// average/dist-wtd/wedge/diff-wtd compound translation, and non-wedge
+// inter-intra prediction are supported; scaled references and intrabc are
+// rejected until their prediction paths are integrated.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -175,6 +186,17 @@ func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.Block
 	}
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeOBMC {
 		return b.PredictBlockInterOBMCWithFilters(index, visit, scratch, filters)
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		if scratch == nil {
+			return ErrInvalidBatch
+		}
+		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+			if err := b.predictBlockInterIntraPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
 		if err := b.predictBlockInterPlaneWithFilters(index, visit, plane, filters); err != nil {
@@ -730,6 +752,71 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if scratch == nil ||
+		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		!visit.Prediction.InterIntraValid ||
+		!visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslation(visit.Prediction) {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !ok {
+		return err
+	}
+	inter, err := frameWorkInterScratchPlane(scratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		return err
+	}
+	intra, err := frameWorkInterScratchPlane(scratch.Second[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		return err
+	}
+	if err := b.predictBlockInterReferencePlaneToScratch(inter, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
+		return err
+	}
+	mode, ok := frameWorkInterIntraPredictionMode(visit.Prediction.InterIntra.Mode)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	if err != nil {
+		return err
+	}
+	if err := prediction.PredictIntraPlaneBlock(intra, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, geom.Width, geom.Height, mode, edges); err != nil {
+		return ErrInvalidBatch
+	}
+	mask := scratch.Mask[:]
+	maskStride := geom.Width
+	maskSubX := false
+	maskSubY := false
+	if visit.Prediction.InterIntra.UseWedge {
+		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		maskStride = lumaWidth
+		maskSubX = geom.SubsamplingX
+		maskSubY = geom.SubsamplingY
+		if err := frameWorkBuildWedgeMask(mask, maskStride, visit.Block.Size, visit.Prediction.InterIntra.WedgeIndex, false); err != nil {
+			return err
+		}
+		mask = mask[:lumaWidth*lumaHeight]
+	} else if err := frameWorkBuildInterIntraMask(mask, maskStride, geom.Width, geom.Height, visit.Prediction.InterIntra.Mode); err != nil {
+		return err
+	}
+	return frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask, maskStride, maskSubX, maskSubY)
 }
 
 func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) bool {
@@ -2040,6 +2127,51 @@ func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, s
 	return nil
 }
 
+func frameWorkBuildInterIntraMask(mask []byte, maskStride int, width int, height int, mode tile.InterIntraMode) error {
+	if !mode.Valid() ||
+		!frameWorkMaskBlockFits(len(mask), maskStride, width, height) {
+		return ErrInvalidBatch
+	}
+	scaleBase := width
+	if height > scaleBase {
+		scaleBase = height
+	}
+	if scaleBase <= 0 || scaleBase > len(frameWorkInterIntraWeights) {
+		return ErrInvalidBatch
+	}
+	sizeScale := len(frameWorkInterIntraWeights) / scaleBase
+	if sizeScale <= 0 {
+		return ErrInvalidBatch
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			index := 0
+			switch mode {
+			case tile.InterIntraModeVertical:
+				index = row * sizeScale
+			case tile.InterIntraModeHorizontal:
+				index = col * sizeScale
+			case tile.InterIntraModeSmooth:
+				index = row
+				if col < index {
+					index = col
+				}
+				index *= sizeScale
+			case tile.InterIntraModeDC:
+				mask[row*maskStride+col] = frameWorkBlendA64MaxAlpha / 2
+				continue
+			default:
+				return ErrInvalidBatch
+			}
+			if index < 0 || index >= len(frameWorkInterIntraWeights) {
+				return ErrInvalidBatch
+			}
+			mask[row*maskStride+col] = frameWorkInterIntraWeights[index]
+		}
+	}
+	return nil
+}
+
 func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mask []byte, maskStride int, subX bool, subY bool) error {
 	max, ok := frameWorkSampleMax(bitDepth)
 	if !ok ||
@@ -2093,6 +2225,10 @@ func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, secon
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+func frameWorkBlendInterIntraBlock(dst frame.Plane, inter frame.Plane, intra frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mask []byte, maskStride int, subX bool, subY bool) error {
+	return frameWorkBlendMaskedCompoundBlock(dst, intra, inter, bytesPerSample, bitDepth, dstX, dstY, width, height, mask, maskStride, subX, subY)
 }
 
 func frameWorkBlendA64(mask uint16, first uint16, second uint16) uint16 {
@@ -2315,6 +2451,21 @@ func frameWorkChromaIntraPredictionMode(mode tile.ChromaIntraMode) (prediction.I
 		return 0, false
 	}
 	return frameWorkLumaIntraPredictionMode(lumaMode)
+}
+
+func frameWorkInterIntraPredictionMode(mode tile.InterIntraMode) (prediction.IntraMode, bool) {
+	switch mode {
+	case tile.InterIntraModeDC:
+		return prediction.IntraModeDC, true
+	case tile.InterIntraModeVertical:
+		return prediction.IntraModeVertical, true
+	case tile.InterIntraModeHorizontal:
+		return prediction.IntraModeHorizontal, true
+	case tile.InterIntraModeSmooth:
+		return prediction.IntraModeSmooth, true
+	default:
+		return 0, false
+	}
 }
 
 func frameWorkChromaIntraDirectionalAngle(mode tile.ChromaIntraMode, delta int8) (int, bool) {
