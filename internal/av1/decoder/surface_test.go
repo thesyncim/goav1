@@ -61,6 +61,47 @@ func TestSurfaceReferencesReleaseUniqueOnce(t *testing.T) {
 	}
 }
 
+func TestSurfaceReferencesReleaseAll(t *testing.T) {
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0x05, 5, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(0x02, 6, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := refs.ReleaseAll(releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || releases[0] != 5 || releases[1] != 6 || refs.Holds(5) || refs.Holds(6) {
+		t.Fatalf("count=%d releases=%v holds5=%v holds6=%v", count, releases[:count], refs.Holds(5), refs.Holds(6))
+	}
+	if _, ok := refs.ReferenceSlot(0); ok {
+		t.Fatal("reference slots were not reset")
+	}
+}
+
+func TestSurfaceReferencesReleaseAllRejectsShortReleaseBuffer(t *testing.T) {
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0x05, 5, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(0x02, 6, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := refs.ReleaseAll(releases[:1])
+	if !errors.Is(err, ErrSurfaceReleaseBufferTooSmall) {
+		t.Fatalf("ReleaseAll err=%v want %v", err, ErrSurfaceReleaseBufferTooSmall)
+	}
+	if !refs.Holds(5) || !refs.Holds(6) {
+		t.Fatalf("references changed on error: holds5=%v holds6=%v", refs.Holds(5), refs.Holds(6))
+	}
+}
+
 func TestSurfaceReferencesFrameReferences(t *testing.T) {
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
@@ -335,6 +376,10 @@ func TestSurfaceReferencesAllocs(t *testing.T) {
 				RefFrameIdx: [parser.InterRefsPerFrame]uint8{0, 1, 2, 3, 4, 5, 6},
 			},
 		}, surfaces[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = refs.ReleaseAll(releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}

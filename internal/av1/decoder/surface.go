@@ -15,9 +15,7 @@ func (r *SurfaceReferences) Reset() {
 	if r == nil {
 		return
 	}
-	for i := 0; i < parser.RefFrames; i++ {
-		r.slots[i] = -1
-	}
+	r.slots = emptySurfaceReferenceSlots()
 	r.initialized = true
 }
 
@@ -36,6 +34,31 @@ func (r *SurfaceReferences) Holds(surface int) bool {
 	}
 	r.ensureInitialized()
 	return slotsHold(r.slots, surface)
+}
+
+// ReleaseAll clears all reference slots and reports the unique surfaces that
+// stopped being referenced.
+func (r *SurfaceReferences) ReleaseAll(releases []int) (int, error) {
+	if r == nil {
+		return 0, ErrInvalidSurfaceReference
+	}
+	r.ensureInitialized()
+
+	releaseCount := 0
+	for i := 0; i < parser.RefFrames; i++ {
+		surface := r.slots[i]
+		if surface < 0 || containsSurface(releases[:releaseCount], surface) {
+			continue
+		}
+		if releaseCount >= len(releases) {
+			return 0, ErrSurfaceReleaseBufferTooSmall
+		}
+		releases[releaseCount] = surface
+		releaseCount++
+	}
+	r.slots = emptySurfaceReferenceSlots()
+	r.initialized = true
+	return releaseCount, nil
 }
 
 // FrameReferences resolves the AV1 inter-reference indices selected by a frame
@@ -194,4 +217,12 @@ func containsSurface(slots []int, surface int) bool {
 		}
 	}
 	return false
+}
+
+func emptySurfaceReferenceSlots() [parser.RefFrames]int {
+	var slots [parser.RefFrames]int
+	for i := 0; i < parser.RefFrames; i++ {
+		slots[i] = -1
+	}
+	return slots
 }

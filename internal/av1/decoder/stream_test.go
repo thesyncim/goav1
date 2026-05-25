@@ -508,6 +508,28 @@ func TestStreamSequenceChange(t *testing.T) {
 	}
 }
 
+func TestStreamNewCodedVideoSequenceFlagResetsSameSequence(t *testing.T) {
+	var dec Stream
+	sequence := appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
+	if _, err := dec.PushOBU(sequence, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+	if !dec.haveFrameHeader || !dec.references.Frames[0].Valid {
+		t.Fatalf("frame header did not populate pending/reference state: pending=%v ref0=%+v", dec.haveFrameHeader, dec.references.Frames[0])
+	}
+
+	event, err := dec.PushOBU(sequence, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !event.NewCodedVideoSequence || dec.haveFrameHeader || dec.references.Frames[0].Valid {
+		t.Fatalf("event=%+v pending=%v ref0=%+v", event, dec.haveFrameHeader, dec.references.Frames[0])
+	}
+}
+
 func TestStreamRTPPayload(t *testing.T) {
 	elements := []rtp.Element{
 		{Data: appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))},

@@ -497,6 +497,73 @@ func TestFrameWorkStatePlanEventDropsBeforeBoundaryBegin(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStatePlanEventNewCodedVideoSequenceReleasesReferencesBeforeBegin(t *testing.T) {
+	pool := testFramePool(t, 1)
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0xff, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	var state FrameWorkState
+
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), Event{
+		Kind:                  EventFrameHeader,
+		NewCodedVideoSequence: true,
+		FrameHeader:           parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:             testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil ||
+		step.Kind != FrameWorkStepBegin ||
+		step.ReleaseCount != 1 ||
+		!state.Active() ||
+		pool.Available() != 0 ||
+		refs.Holds(reference) {
+		t.Fatalf("step=%+v output=%p active=%v available=%d holdsReference=%v", step, output, state.Active(), pool.Available(), refs.Holds(reference))
+	}
+}
+
+func TestFrameWorkStatePlanEventNewCodedVideoSequenceReleasesReferencesOnIgnoredEvent(t *testing.T) {
+	pool := testFramePool(t, 1)
+	reference, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0xff, reference, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	var state FrameWorkState
+	event := Event{Kind: EventSequenceHeader, NewCodedVideoSequence: true}
+
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != nil ||
+		step.Kind != FrameWorkStepIgnored ||
+		step.ReleaseCount != 1 ||
+		state.Active() ||
+		pool.Available() != 1 ||
+		refs.Holds(reference) {
+		t.Fatalf("step=%+v output=%p active=%v available=%d holdsReference=%v", step, output, state.Active(), pool.Available(), refs.Holds(reference))
+	}
+	run, err := state.RunStep(&refs, &pool, event, step, nil, nil, nil, releases[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run != (FrameWorkStepResult{ReleaseCount: 1}) {
+		t.Fatalf("run=%+v", run)
+	}
+}
+
 func TestFrameWorkStatePlanEventShowExisting(t *testing.T) {
 	pool := testFramePool(t, 2)
 	reference, _, err := pool.Acquire()

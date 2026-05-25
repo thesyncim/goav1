@@ -187,7 +187,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 
 		event.Kind = EventSequenceHeader
 		event.SequenceHeader = seq
-		if !s.haveSequence || !sameSequenceExceptOperatingParameters(s.sequence, seq) {
+		if event.NewCodedVideoSequence || !s.haveSequence || !sameSequenceExceptOperatingParameters(s.sequence, seq) {
 			event.NewCodedVideoSequence = true
 			s.clearPendingFrame()
 			s.references.Reset()

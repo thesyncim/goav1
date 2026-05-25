@@ -160,6 +160,14 @@ func (s *FrameWorkState) resetActive() {
 	s.active = false
 }
 
+func (s *FrameWorkState) resetReferenceState() {
+	if s == nil {
+		return
+	}
+	s.tileResidualFrameContexts = [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage{}
+	s.tileResidualFrameContextValid = [parser.RefFrames]bool{}
+}
+
 // SetCDEFIndexMap attaches frame-level CDEF side data to active frame work.
 // The caller owns the backing slices; the state passes this view into tile
 // batches and drops it when the frame finishes or aborts.
@@ -441,22 +449,31 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 		return FrameWorkStep{
 			Kind:             FrameWorkStepShowExisting,
 			DroppedFrameWork: plan.DroppedFrameWork,
+			ReleaseCount:     plan.ReleaseCount,
 			ShowExisting:     plan,
 		}, nil, nil
 	}
 
 	dropped := false
+	releaseCount := 0
 	if EventDropsFrameWork(event) {
 		var err error
 		dropped, err = s.AbortIfEventDropsFrameWork(pool, event)
 		if err != nil {
 			return FrameWorkStep{}, nil, err
 		}
+		if event.NewCodedVideoSequence {
+			releaseCount, err = ResetFrameSurfaceReferences(refs, pool, releases)
+			if err != nil {
+				return FrameWorkStep{}, nil, err
+			}
+			s.resetReferenceState()
+		}
 		if event.Kind != EventFrameHeader && event.Kind != EventFrame {
 			if dropped {
-				return FrameWorkStep{Kind: FrameWorkStepDropped, DroppedFrameWork: true}, nil, nil
+				return FrameWorkStep{Kind: FrameWorkStepDropped, DroppedFrameWork: true, ReleaseCount: releaseCount}, nil, nil
 			}
-			return FrameWorkStep{}, nil, nil
+			return FrameWorkStep{ReleaseCount: releaseCount}, nil, nil
 		}
 	}
 
@@ -469,6 +486,7 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 		return FrameWorkStep{
 			Kind:             FrameWorkStepBegin,
 			DroppedFrameWork: dropped,
+			ReleaseCount:     releaseCount,
 			Begin:            plan,
 		}, output, nil
 
@@ -526,7 +544,7 @@ func (s *FrameWorkState) RunStepWithPostFilter(refs *SurfaceReferences, framePoo
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     releaseCount,
+		ReleaseCount:     step.ReleaseCount + releaseCount,
 	}, nil
 }
 
@@ -606,7 +624,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     releaseCount,
+		ReleaseCount:     step.ReleaseCount + releaseCount,
 	}, nil
 }
 
@@ -648,7 +666,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     releaseCount,
+		ReleaseCount:     step.ReleaseCount + releaseCount,
 	}, nil
 }
 
@@ -690,7 +708,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     releaseCount,
+		ReleaseCount:     step.ReleaseCount + releaseCount,
 	}, nil
 }
 

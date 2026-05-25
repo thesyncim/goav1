@@ -44,6 +44,55 @@ func TestFinishFrameSurfaceReleasesPool(t *testing.T) {
 	}
 }
 
+func TestResetFrameSurfaceReferencesReleasesPool(t *testing.T) {
+	pool := testFramePool(t, 2)
+	index0, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index1, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0x03, index0, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(0x04, index1, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := ResetFrameSurfaceReferences(&refs, &pool, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || pool.Available() != 2 || refs.Holds(index0) || refs.Holds(index1) {
+		t.Fatalf("count=%d available=%d holds0=%v holds1=%v releases=%v", count, pool.Available(), refs.Holds(index0), refs.Holds(index1), releases[:count])
+	}
+}
+
+func TestResetFrameSurfaceReferencesKeepsRefsOnPoolError(t *testing.T) {
+	pool := testFramePool(t, 1)
+	index, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0x01, index, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ResetFrameSurfaceReferences(&refs, nil, releases[:])
+	if !errors.Is(err, frame.ErrInvalidPool) {
+		t.Fatalf("ResetFrameSurfaceReferences err=%v want %v", err, frame.ErrInvalidPool)
+	}
+	if !refs.Holds(index) || pool.Available() != 0 {
+		t.Fatalf("refs/pool changed on error: holds=%v available=%d", refs.Holds(index), pool.Available())
+	}
+}
+
 func TestAcquireFrameSurface(t *testing.T) {
 	pool := testFramePool(t, 1)
 	index, acquired, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(16, 16), 32)

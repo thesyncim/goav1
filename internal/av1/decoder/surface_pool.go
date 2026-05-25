@@ -120,6 +120,32 @@ func FinishFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event Event, 
 	return count, nil
 }
 
+// ResetFrameSurfaceReferences clears all decoded reference slots and releases
+// the frame-pool surfaces they held. Reference state is published only after
+// the pool accepts the release batch.
+func ResetFrameSurfaceReferences(refs *SurfaceReferences, pool *frame.Pool, releases []int) (int, error) {
+	if refs == nil {
+		return 0, ErrInvalidSurfaceReference
+	}
+
+	next := *refs
+	count, err := next.ReleaseAll(releases)
+	if err != nil {
+		return 0, err
+	}
+	if count != 0 {
+		if pool == nil {
+			return 0, frame.ErrInvalidPool
+		}
+		if err := pool.ReleaseMany(releases[:count]); err != nil {
+			return 0, err
+		}
+	}
+
+	*refs = next
+	return count, nil
+}
+
 // ShowExistingFrameSurface resolves a show-existing-frame event, applies any
 // key-frame reference reset, and releases overwritten frame-pool slots.
 // Reference state is published only after the pool accepts the release batch.

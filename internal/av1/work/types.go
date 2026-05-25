@@ -55,6 +55,7 @@ const (
 type FrameStep struct {
 	Kind             FrameStepKind
 	DroppedFrameWork bool
+	ReleaseCount     int
 
 	Begin        FramePlan
 	Tile         FrameTilePlan
