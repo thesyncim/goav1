@@ -21,6 +21,31 @@ type FrameWorkCDEFPostFilterScratchSize struct {
 	UnitDst       int
 }
 
+// BindRequest validates and slices caller-owned scratch for CDEF postfiltering.
+func (s FrameWorkCDEFPostFilterScratchSize) BindRequest(indexMap FrameWorkCDEFIndexMap, samples [3][]uint16, dst [3][]uint16, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, input []uint16, unitDst []uint16) (FrameWorkCDEFPostFilterRequest, error) {
+	if len(directionGrid) < s.DirectionGrid || len(varianceGrid) < s.VarianceGrid ||
+		len(input) < s.Input || len(unitDst) < s.UnitDst ||
+		s.DirectionGrid < 0 || s.VarianceGrid < 0 || s.Input < 0 || s.UnitDst < 0 {
+		return FrameWorkCDEFPostFilterRequest{}, frame.ErrShortBuffer
+	}
+	req := FrameWorkCDEFPostFilterRequest{
+		IndexMap:       indexMap,
+		DirectionGrid:  directionGrid[:s.DirectionGrid],
+		VarianceGrid:   varianceGrid[:s.VarianceGrid],
+		InputScratch:   input[:s.Input],
+		UnitDstScratch: unitDst[:s.UnitDst],
+	}
+	for plane := 0; plane < len(req.SampleScratch); plane++ {
+		if s.Samples[plane] < 0 || s.Dst[plane] < 0 ||
+			len(samples[plane]) < s.Samples[plane] || len(dst[plane]) < s.Dst[plane] {
+			return FrameWorkCDEFPostFilterRequest{}, frame.ErrShortBuffer
+		}
+		req.SampleScratch[plane] = samples[plane][:s.Samples[plane]]
+		req.DstScratch[plane] = dst[plane][:s.Dst[plane]]
+	}
+	return req, nil
+}
+
 // Max returns the per-field maximum CDEF scratch size.
 func (s FrameWorkCDEFPostFilterScratchSize) Max(other FrameWorkCDEFPostFilterScratchSize) FrameWorkCDEFPostFilterScratchSize {
 	result := FrameWorkCDEFPostFilterScratchSize{

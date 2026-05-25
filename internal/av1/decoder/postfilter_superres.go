@@ -43,6 +43,27 @@ type FrameWorkSuperResPostFilterScratchSize struct {
 	OutputSamples [3]int
 }
 
+// BindRequest validates and slices caller-owned scratch for superres
+// postfiltering.
+func (s FrameWorkSuperResPostFilterScratchSize) BindRequest(outputFrame []byte, coded [3][]uint16, output [3][]uint16, outputView *frame.Frame) (FrameWorkSuperResPostFilterRequest, error) {
+	if s.OutputFrame < 0 || len(outputFrame) < s.OutputFrame {
+		return FrameWorkSuperResPostFilterRequest{}, frame.ErrShortBuffer
+	}
+	req := FrameWorkSuperResPostFilterRequest{
+		OutputFrame: outputFrame[:s.OutputFrame],
+		OutputView:  outputView,
+	}
+	for plane := 0; plane < len(req.CodedScratch); plane++ {
+		if s.CodedSamples[plane] < 0 || s.OutputSamples[plane] < 0 ||
+			len(coded[plane]) < s.CodedSamples[plane] || len(output[plane]) < s.OutputSamples[plane] {
+			return FrameWorkSuperResPostFilterRequest{}, frame.ErrShortBuffer
+		}
+		req.CodedScratch[plane] = coded[plane][:s.CodedSamples[plane]]
+		req.OutputScratch[plane] = output[plane][:s.OutputSamples[plane]]
+	}
+	return req, nil
+}
+
 // Max returns the per-field maximum superres scratch size.
 func (s FrameWorkSuperResPostFilterScratchSize) Max(other FrameWorkSuperResPostFilterScratchSize) FrameWorkSuperResPostFilterScratchSize {
 	result := FrameWorkSuperResPostFilterScratchSize{

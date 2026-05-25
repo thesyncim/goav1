@@ -523,18 +523,113 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterRejectsEarlierStages(t
 	}
 }
 
+func TestFrameWorkSuperResPostFilterScratchSizeBindRequest(t *testing.T) {
+	size := FrameWorkSuperResPostFilterScratchSize{
+		OutputFrame:   16,
+		CodedSamples:  [3]int{8, 4, 2},
+		OutputSamples: [3]int{9, 5, 3},
+	}
+	outputFrame, coded, output := testFrameWorkSuperResScratchStorage(size)
+	var outputView frame.Frame
+	req, err := size.BindRequest(outputFrame, coded, output, &outputView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.OutputFrame) != size.OutputFrame || req.OutputView != &outputView ||
+		len(req.CodedScratch[0]) != size.CodedSamples[0] || len(req.CodedScratch[1]) != size.CodedSamples[1] ||
+		len(req.OutputScratch[1]) != size.OutputSamples[1] || len(req.OutputScratch[2]) != size.OutputSamples[2] {
+		t.Fatalf("request outputFrame=%d outputView=%p coded=%v output=%v",
+			len(req.OutputFrame), req.OutputView,
+			[3]int{len(req.CodedScratch[0]), len(req.CodedScratch[1]), len(req.CodedScratch[2])},
+			[3]int{len(req.OutputScratch[0]), len(req.OutputScratch[1]), len(req.OutputScratch[2])})
+	}
+}
+
+func TestFrameWorkSuperResPostFilterScratchSizeBindRequestRejectsShortBuffers(t *testing.T) {
+	size := FrameWorkSuperResPostFilterScratchSize{
+		OutputFrame:   16,
+		CodedSamples:  [3]int{8, 4, 2},
+		OutputSamples: [3]int{9, 5, 3},
+	}
+	outputFrame, coded, output := testFrameWorkSuperResScratchStorage(size)
+	tests := []struct {
+		name        string
+		size        FrameWorkSuperResPostFilterScratchSize
+		outputFrame []byte
+		coded       [3][]uint16
+		output      [3][]uint16
+	}{
+		{name: "output-frame", size: size, outputFrame: outputFrame[:15], coded: coded, output: output},
+		{name: "coded", size: size, outputFrame: outputFrame, coded: [3][]uint16{coded[0][:7], coded[1], coded[2]}, output: output},
+		{name: "output", size: size, outputFrame: outputFrame, coded: coded, output: [3][]uint16{output[0], output[1][:4], output[2]}},
+		{name: "negative", size: FrameWorkSuperResPostFilterScratchSize{OutputFrame: -1}, outputFrame: outputFrame, coded: coded, output: output},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.size.BindRequest(tt.outputFrame, tt.coded, tt.output, nil); !errors.Is(err, frame.ErrShortBuffer) {
+				t.Fatalf("BindRequest err=%v want %v", err, frame.ErrShortBuffer)
+			}
+		})
+	}
+}
+
+func TestFrameWorkSuperResPostFilterScratchSizeBindRequestAllocs(t *testing.T) {
+	size := FrameWorkSuperResPostFilterScratchSize{
+		OutputFrame:   1920 * 1080 * 3 / 2,
+		CodedSamples:  [3]int{1280 * 720, 640 * 360, 640 * 360},
+		OutputSamples: [3]int{1920 * 1080, 960 * 540, 960 * 540},
+	}
+	outputFrame, coded, output := testFrameWorkSuperResScratchStorage(size)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := size.BindRequest(outputFrame, coded, output, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindRequest allocated: %f", allocs)
+	}
+}
+
+func BenchmarkFrameWorkSuperResPostFilterScratchSizeBindRequest(b *testing.B) {
+	size := FrameWorkSuperResPostFilterScratchSize{
+		OutputFrame:   1920 * 1080 * 3 / 2,
+		CodedSamples:  [3]int{1280 * 720, 640 * 360, 640 * 360},
+		OutputSamples: [3]int{1920 * 1080, 960 * 540, 960 * 540},
+	}
+	outputFrame, coded, output := testFrameWorkSuperResScratchStorage(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := size.BindRequest(outputFrame, coded, output, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func testFrameWorkSuperResPostFilterRequest(t *testing.T, ctx FrameWorkPostFilterContext) FrameWorkSuperResPostFilterRequest {
 	t.Helper()
 	size, err := ctx.SuperResPostFilterScratchLen()
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := FrameWorkSuperResPostFilterRequest{
-		OutputFrame: make([]byte, size.OutputFrame),
-	}
-	for plane := 0; plane < 3; plane++ {
-		req.CodedScratch[plane] = make([]uint16, size.CodedSamples[plane])
-		req.OutputScratch[plane] = make([]uint16, size.OutputSamples[plane])
+	outputFrame, coded, output := testFrameWorkSuperResScratchStorage(size)
+	req, err := size.BindRequest(outputFrame, coded, output, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return req
+}
+
+func testFrameWorkSuperResScratchStorage(size FrameWorkSuperResPostFilterScratchSize) ([]byte, [3][]uint16, [3][]uint16) {
+	var coded [3][]uint16
+	var output [3][]uint16
+	for plane := 0; plane < 3; plane++ {
+		if size.CodedSamples[plane] > 0 {
+			coded[plane] = make([]uint16, size.CodedSamples[plane])
+		}
+		if size.OutputSamples[plane] > 0 {
+			output[plane] = make([]uint16, size.OutputSamples[plane])
+		}
+	}
+	return make([]byte, maxInt(size.OutputFrame, 0)), coded, output
 }

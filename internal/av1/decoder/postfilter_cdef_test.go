@@ -336,6 +336,97 @@ func TestFrameWorkCallerPostFilterRunnerAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkCDEFPostFilterScratchSizeBindRequest(t *testing.T) {
+	size := FrameWorkCDEFPostFilterScratchSize{
+		Samples:       [3]int{8, 4, 2},
+		Dst:           [3]int{7, 3, 1},
+		DirectionGrid: 5,
+		VarianceGrid:  5,
+		Input:         cdef.InputBufferSize,
+		UnitDst:       cdef.InputBufferSize,
+	}
+	indexMap := FrameWorkCDEFIndexMap{
+		Index:  make([]uint8, 6),
+		Read:   make([]bool, 6),
+		Stride: 3,
+		Rows:   2,
+	}
+	samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size)
+	req, err := size.BindRequest(indexMap, samples, dst, directionGrid, varianceGrid, input, unitDst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.SampleScratch[0]) != size.Samples[0] || len(req.DstScratch[1]) != size.Dst[1] ||
+		len(req.DirectionGrid) != size.DirectionGrid || len(req.VarianceGrid) != size.VarianceGrid ||
+		len(req.InputScratch) != size.Input || len(req.UnitDstScratch) != size.UnitDst {
+		t.Fatalf("request lengths samples=%v dst=%v direction=%d variance=%d input=%d unitDst=%d",
+			[3]int{len(req.SampleScratch[0]), len(req.SampleScratch[1]), len(req.SampleScratch[2])},
+			[3]int{len(req.DstScratch[0]), len(req.DstScratch[1]), len(req.DstScratch[2])},
+			len(req.DirectionGrid), len(req.VarianceGrid), len(req.InputScratch), len(req.UnitDstScratch))
+	}
+	if req.IndexMap.Stride != indexMap.Stride || req.IndexMap.Rows != indexMap.Rows ||
+		len(req.IndexMap.Index) != len(indexMap.Index) || len(req.IndexMap.Read) != len(indexMap.Read) {
+		t.Fatalf("index map=%+v want %+v", req.IndexMap, indexMap)
+	}
+}
+
+func TestFrameWorkCDEFPostFilterScratchSizeBindRequestRejectsShortBuffers(t *testing.T) {
+	size := FrameWorkCDEFPostFilterScratchSize{
+		Samples:       [3]int{4, 3, 2},
+		Dst:           [3]int{4, 3, 2},
+		DirectionGrid: 2,
+		VarianceGrid:  2,
+		Input:         cdef.InputBufferSize,
+		UnitDst:       cdef.InputBufferSize,
+	}
+	samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size)
+	tests := []struct {
+		name     string
+		size     FrameWorkCDEFPostFilterScratchSize
+		samples  [3][]uint16
+		dst      [3][]uint16
+		dir      []cdef.DirectionGrid
+		variance []cdef.VarianceGrid
+		input    []uint16
+		unitDst  []uint16
+	}{
+		{name: "sample", size: size, samples: [3][]uint16{samples[0][:3], samples[1], samples[2]}, dst: dst, dir: directionGrid, variance: varianceGrid, input: input, unitDst: unitDst},
+		{name: "dst", size: size, samples: samples, dst: [3][]uint16{dst[0], dst[1][:2], dst[2]}, dir: directionGrid, variance: varianceGrid, input: input, unitDst: unitDst},
+		{name: "direction", size: size, samples: samples, dst: dst, dir: directionGrid[:1], variance: varianceGrid, input: input, unitDst: unitDst},
+		{name: "variance", size: size, samples: samples, dst: dst, dir: directionGrid, variance: varianceGrid[:1], input: input, unitDst: unitDst},
+		{name: "input", size: size, samples: samples, dst: dst, dir: directionGrid, variance: varianceGrid, input: input[:cdef.InputBufferSize-1], unitDst: unitDst},
+		{name: "unit-dst", size: size, samples: samples, dst: dst, dir: directionGrid, variance: varianceGrid, input: input, unitDst: unitDst[:cdef.InputBufferSize-1]},
+		{name: "negative", size: FrameWorkCDEFPostFilterScratchSize{Samples: [3]int{-1}}, samples: samples, dst: dst, dir: directionGrid, variance: varianceGrid, input: input, unitDst: unitDst},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.size.BindRequest(FrameWorkCDEFIndexMap{}, tt.samples, tt.dst, tt.dir, tt.variance, tt.input, tt.unitDst); !errors.Is(err, frame.ErrShortBuffer) {
+				t.Fatalf("BindRequest err=%v want %v", err, frame.ErrShortBuffer)
+			}
+		})
+	}
+}
+
+func TestFrameWorkCDEFPostFilterScratchSizeBindRequestAllocs(t *testing.T) {
+	size := FrameWorkCDEFPostFilterScratchSize{
+		Samples:       [3]int{4096, 1024, 1024},
+		Dst:           [3]int{4096, 1024, 1024},
+		DirectionGrid: 16,
+		VarianceGrid:  16,
+		Input:         cdef.InputBufferSize,
+		UnitDst:       cdef.InputBufferSize,
+	}
+	samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := size.BindRequest(FrameWorkCDEFIndexMap{}, samples, dst, directionGrid, varianceGrid, input, unitDst); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindRequest allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBeforeMutation(t *testing.T) {
 	output := testFrameWorkCDEFFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 32})
 	output.Y.Pix[0] = 0x44
@@ -419,6 +510,31 @@ func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersChromaWithLumaDirec
 	}
 }
 
+func BenchmarkFrameWorkCDEFPostFilterScratchSizeBindRequest(b *testing.B) {
+	size := FrameWorkCDEFPostFilterScratchSize{
+		Samples:       [3]int{1920 * 1080, 960 * 540, 960 * 540},
+		Dst:           [3]int{1920 * 1080, 960 * 540, 960 * 540},
+		DirectionGrid: 120 * 68,
+		VarianceGrid:  120 * 68,
+		Input:         cdef.InputBufferSize,
+		UnitDst:       cdef.InputBufferSize,
+	}
+	indexMap := FrameWorkCDEFIndexMap{
+		Index:  make([]uint8, size.DirectionGrid),
+		Read:   make([]bool, size.DirectionGrid),
+		Stride: 120,
+		Rows:   68,
+	}
+	samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := size.BindRequest(indexMap, samples, dst, directionGrid, varianceGrid, input, unitDst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func testFrameWorkCDEFFrame(t testing.TB, format frame.Format) *frame.Frame {
 	t.Helper()
 	layout, err := frame.RequiredSize(format)
@@ -456,18 +572,30 @@ func testFrameWorkCDEFPostFilterRequest(t testing.TB, ctx FrameWorkPostFilterCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := FrameWorkCDEFPostFilterRequest{
-		IndexMap:       cdefMap,
-		DirectionGrid:  make([]cdef.DirectionGrid, size.DirectionGrid),
-		VarianceGrid:   make([]cdef.VarianceGrid, size.VarianceGrid),
-		InputScratch:   make([]uint16, size.Input),
-		UnitDstScratch: make([]uint16, size.UnitDst),
-	}
-	for plane := 0; plane < 3; plane++ {
-		req.SampleScratch[plane] = make([]uint16, size.Samples[plane])
-		req.DstScratch[plane] = make([]uint16, size.Dst[plane])
+	samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size)
+	req, err := size.BindRequest(cdefMap, samples, dst, directionGrid, varianceGrid, input, unitDst)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return req
+}
+
+func testFrameWorkCDEFScratchStorage(size FrameWorkCDEFPostFilterScratchSize) ([3][]uint16, [3][]uint16, []cdef.DirectionGrid, []cdef.VarianceGrid, []uint16, []uint16) {
+	var samples [3][]uint16
+	var dst [3][]uint16
+	for plane := 0; plane < 3; plane++ {
+		if size.Samples[plane] > 0 {
+			samples[plane] = make([]uint16, size.Samples[plane])
+		}
+		if size.Dst[plane] > 0 {
+			dst[plane] = make([]uint16, size.Dst[plane])
+		}
+	}
+	return samples, dst,
+		make([]cdef.DirectionGrid, maxInt(size.DirectionGrid, 0)),
+		make([]cdef.VarianceGrid, maxInt(size.VarianceGrid, 0)),
+		make([]uint16, maxInt(size.Input, 0)),
+		make([]uint16, maxInt(size.UnitDst, 0))
 }
 
 func testFillFrameWorkCDEFPlane(plane frame.Plane) {
