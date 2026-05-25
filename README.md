@@ -119,6 +119,8 @@ The initial implementation covers:
   prediction helpers for caller-owned reconstruction paths.
 - Pure-Go full-pixel motion-vector helpers and inter plane prediction for
   nearest/reference-copy reconstruction paths.
+- Public zero-allocation motion-vector, reference-origin, and inter-prediction
+  helpers for full-pixel and fractional translational prediction.
 - Public AV1 transform scan/scratch helpers and dequantization lookup tables
   with caller-buffer coefficient dequantization for residual reconstruction.
 - Pure-Go inverse identity transform foundation with AV1 transform-size shifts
