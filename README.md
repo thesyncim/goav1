@@ -190,11 +190,12 @@ The initial implementation covers:
   batch residual scratch sizing/binding, per-worker residual runner binding,
   default event-runner prediction scratch, residual-runner side-data attachment,
   event-level residual-runner scratch sizing, aggregate event scratch sizing,
-  reusable max scratch sizing, event side-data and composite event runner
-  binding, reusable event runner state, direct postfilter runner dispatch,
-  caller-owned aggregate residual stats, caller-owned superres display output,
-  and execution, batch loop-context sizing, plus job and batch helpers that
-  compose decode-state setup, residual decode/reconstruct, and CDF retention.
+  reusable max scratch sizing, event-list scratch sizing and execution,
+  event side-data and composite event runner binding, reusable event runner
+  state, direct postfilter runner dispatch, caller-owned aggregate residual
+  stats, caller-owned superres display output, and execution, batch
+  loop-context sizing, plus job and batch helpers that compose decode-state
+  setup, residual decode/reconstruct, and CDF retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

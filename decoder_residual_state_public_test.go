@@ -1380,6 +1380,215 @@ func TestPublicBindDecoderFrameWorkResidualEventRunnerRejectsInvalidScratch(t *t
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventRunnerRunEvents(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	frame := publicDecoderResidualRunnerFrameEvent()
+	header := frame
+	header.Kind = av1.DecoderEventFrameHeader
+	header.Unit.Payload = nil
+	tile := frame
+	tile.Kind = av1.DecoderEventTileGroup
+	events := [...]av1.DecoderEvent{
+		{
+			Kind:                  av1.DecoderEventSequenceHeader,
+			SequenceHeader:        sequence,
+			NewCodedVideoSequence: true,
+		},
+		header,
+		tile,
+	}
+
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, events[:], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1}) ||
+		size.Runner.Workers != 1 ||
+		size.SideData.CDEFIndexMap == 0 ||
+		size.SideData.LoopFilterMap == 0 {
+		t.Fatalf("events scratch size=%+v", size)
+	}
+	singleSize, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, tile, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != singleSize {
+		t.Fatalf("events scratch=%+v single=%+v", size, singleSize)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:      int(frame.FrameSize.CodedWidth),
+		Height:     int(frame.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var eventSideData av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualEventScratch(size)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, tile, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &eventSideData,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postCalls := 0
+	result, err := eventRunner.RunEvents(av1.SequenceHeader{}, events[:], scratch.SideData, func(ctx av1.DecoderFrameWorkPostFilterContext) error {
+		postCalls++
+		if ctx.Step.Kind != av1.DecoderFrameWorkStepTile || !ctx.ExecutedTileWork {
+			t.Fatalf("postfilter ctx=%+v", ctx)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != len(events) ||
+		result.ExecutedTileWork != 1 ||
+		result.CompletedFrames != 1 ||
+		result.Last.Step.Kind != av1.DecoderFrameWorkStepTile ||
+		result.Last.Output == nil ||
+		state.Active() ||
+		postCalls != 1 ||
+		stats != result.Stats ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("result=%+v active=%v postCalls=%d stats=%+v", result, state.Active(), postCalls, stats)
+	}
+	if _, ok := refs.ReferenceSlot(0); !ok {
+		t.Fatal("event list run did not publish decoded frame")
+	}
+
+	noSideRunner := eventRunner
+	noSideRunner.SideData = nil
+	if _, err := noSideRunner.RunEvents(sequence, events[:], scratch.SideData, nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("missing event-list side data err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+
+	shortSideScratch := scratch.SideData
+	shortSideScratch.CDEFIndexMap = shortSideScratch.CDEFIndexMap[:size.SideData.CDEFIndexMap-1]
+	if _, err := eventRunner.RunEvents(sequence, events[:], shortSideScratch, nil); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short event-list side scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualEventRunnerRunEventsAllocs(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	frame := publicDecoderResidualRunnerFrameEvent()
+	events := [...]av1.DecoderEvent{
+		{
+			Kind:                  av1.DecoderEventSequenceHeader,
+			SequenceHeader:        sequence,
+			NewCodedVideoSequence: true,
+		},
+		frame,
+	}
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, events[:], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:      int(frame.FrameSize.CodedWidth),
+		Height:     int(frame.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var eventSideData av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualEventScratch(size)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, frame, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &eventSideData,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		result, runErr := eventRunner.RunEvents(sequence, events[:], scratch.SideData, nil)
+		if runErr != nil {
+			err = runErr
+			return
+		}
+		if result.Count != len(events) ||
+			result.ExecutedTileWork != 1 ||
+			result.CompletedFrames != 1 ||
+			stats.TXBs == 0 ||
+			stats.Residuals == 0 {
+			err = av1.ErrThreadingInvalidBatch
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualEventRunner.RunEvents allocated: %f", allocs)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerAllocs(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {

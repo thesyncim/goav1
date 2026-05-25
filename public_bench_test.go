@@ -973,6 +973,89 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderResidualEventListRunner(b *testing.B) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	frame := publicDecoderResidualRunnerFrameEvent()
+	events := [...]av1.DecoderEvent{
+		{
+			Kind:                  av1.DecoderEventSequenceHeader,
+			SequenceHeader:        sequence,
+			NewCodedVideoSequence: true,
+		},
+		frame,
+	}
+	var scratchSpans [2]av1.TileSpan
+	var scratchJobs [2]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	eventScratch, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, events[:], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
+		Width:      int(frame.FrameSize.CodedWidth),
+		Height:     int(frame.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var eventSideData av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualEventScratch(eventScratch)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, frame, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &eventSideData,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(int64(len(frame.Unit.Payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		result, err := eventRunner.RunEvents(sequence, events[:], scratch.SideData, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Count != len(events) || result.ExecutedTileWork != 1 || result.CompletedFrames != 1 {
+			b.Fatalf("result=%+v", result)
+		}
+		sum += stats.Residuals + stats.TXBs
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
 	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderBlockCoeffSimpleBatch(output)
