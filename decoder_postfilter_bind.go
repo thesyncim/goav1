@@ -260,6 +260,12 @@ func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFr
 	}
 }
 
+// SetDecoderFrameWorkSideData attaches all bound frame-level side data to an
+// active frame-work state as a single validated update.
+func SetDecoderFrameWorkSideData(state *DecoderFrameWorkState, side DecoderFrameWorkSideData) error {
+	return state.SetSideData(side.CDEFIndexMap, side.LoopFilterMap, side.RestorationFrameBuffers)
+}
+
 // BindDecoderFrameWorkPostFilterRequestBuffersFromScratch slices flat typed
 // arenas into the component buffers used by BindDecoderFrameWorkPostFilterRequest.
 func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWorkPostFilterScratchSize, side DecoderFrameWorkPostFilterRequestSideData, scratch DecoderFrameWorkPostFilterRequestScratch) (DecoderFrameWorkPostFilterRequestBuffers, error) {
@@ -375,10 +381,26 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 	return buffers, nil
 }
 
+// BindDecoderFrameWorkPostFilterRequestBuffersFromSideData slices flat typed
+// arenas into postfilter buffers using frame-work side data directly.
+func BindDecoderFrameWorkPostFilterRequestBuffersFromSideData(size DecoderFrameWorkPostFilterScratchSize, side DecoderFrameWorkSideData, scratch DecoderFrameWorkPostFilterRequestScratch) (DecoderFrameWorkPostFilterRequestBuffers, error) {
+	return BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size, DecoderFrameWorkPostFilterSideData(side), scratch)
+}
+
 // BindDecoderFrameWorkPostFilterRequestFromScratch binds flat typed arenas
 // directly into a full postfilter request.
 func BindDecoderFrameWorkPostFilterRequestFromScratch(size DecoderFrameWorkPostFilterScratchSize, side DecoderFrameWorkPostFilterRequestSideData, scratch DecoderFrameWorkPostFilterRequestScratch) (DecoderFrameWorkPostFilterRequest, error) {
 	buffers, err := BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size, side, scratch)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	return BindDecoderFrameWorkPostFilterRequest(size, buffers)
+}
+
+// BindDecoderFrameWorkPostFilterRequestFromSideData binds flat typed arenas
+// and frame-work side data directly into a full postfilter request.
+func BindDecoderFrameWorkPostFilterRequestFromSideData(size DecoderFrameWorkPostFilterScratchSize, side DecoderFrameWorkSideData, scratch DecoderFrameWorkPostFilterRequestScratch) (DecoderFrameWorkPostFilterRequest, error) {
+	buffers, err := BindDecoderFrameWorkPostFilterRequestBuffersFromSideData(size, side, scratch)
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequest{}, err
 	}

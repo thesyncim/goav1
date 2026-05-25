@@ -199,6 +199,31 @@ func (s *FrameWorkState) SetRestorationFrameBuffers(buffers threading.FrameWorkR
 	return nil
 }
 
+// SetSideData attaches all caller-owned frame-level side data to active frame
+// work after validating and resetting every view. The state is left unchanged
+// if any side-data view is invalid.
+func (s *FrameWorkState) SetSideData(cdefMap threading.FrameWorkCDEFIndexMap, lfMap threading.FrameWorkLoopFilterMap, buffers threading.FrameWorkRestorationFrameBuffers) error {
+	if s == nil || !s.active {
+		return ErrInvalidFrameWorkState
+	}
+	if err := cdefMap.Reset(); err != nil {
+		return err
+	}
+	if err := lfMap.Reset(); err != nil {
+		return err
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		return err
+	}
+	s.cdefIndexMap = cdefMap
+	s.cdefIndexMapValid = true
+	s.loopFilterMap = lfMap
+	s.loopFilterMapValid = true
+	s.restorationFrameBuffers = buffers
+	s.restorationFrameBuffersValid = true
+	return nil
+}
+
 // Begin acquires the output surface and records the active frame work state.
 func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, references []int, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (FrameWorkPlan, *frame.Frame, error) {
 	if s == nil || s.active {

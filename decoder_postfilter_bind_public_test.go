@@ -291,11 +291,147 @@ func TestPublicDecoderFrameWorkSideDataBinding(t *testing.T) {
 		len(postSide.RestorationBoundaries[0].Above) != len(side.RestorationFrameBuffers.Boundaries[0].Above) {
 		t.Fatalf("postfilter side data=%+v", postSide)
 	}
+	postBuffers, err := av1.BindDecoderFrameWorkPostFilterRequestBuffersFromSideData(av1.DecoderFrameWorkPostFilterScratchSize{}, side, av1.DecoderFrameWorkPostFilterRequestScratch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if postBuffers.CDEFIndexMap.Stride != side.CDEFIndexMap.Stride ||
+		postBuffers.LoopFilterMap.Stride != side.LoopFilterMap.Stride ||
+		len(postBuffers.RestorationRecords[0]) != len(side.RestorationFrameBuffers.Records[0]) {
+		t.Fatalf("side-data postfilter buffers=%+v side=%+v", postBuffers, side)
+	}
+	postReq, err := av1.BindDecoderFrameWorkPostFilterRequestFromSideData(av1.DecoderFrameWorkPostFilterScratchSize{}, side, av1.DecoderFrameWorkPostFilterRequestScratch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if postReq.CDEF.IndexMap.Rows != side.CDEFIndexMap.Rows ||
+		postReq.LoopFilter.Map.Rows != side.LoopFilterMap.Rows ||
+		len(postReq.Restoration.Records[0]) != len(side.RestorationFrameBuffers.Records[0]) {
+		t.Fatalf("side-data postfilter request=%+v side=%+v", postReq, side)
+	}
 
 	shortScratch := scratch
 	shortScratch.RestorationBoundaryBelow = shortScratch.RestorationBoundaryBelow[:scratchSize.RestorationBoundaryBelow-1]
 	if _, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, shortScratch); !errors.Is(err, av1.ErrFrameShortBuffer) {
 		t.Fatalf("short side-data scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
+func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	cdef := av1.CDEFParams{Bits: 1, StrengthCount: 2}
+	restoration := av1.RestorationParams{
+		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
+		UnitSizeY:  64,
+		UnitSizeUV: 64,
+	}
+	scratchSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sideScratch := av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, scratchSize.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, scratchSize.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, scratchSize.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, scratchSize.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, scratchSize.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, scratchSize.RestorationBoundaryBelow),
+	}
+	side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, sideScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var nilState *av1.DecoderFrameWorkState
+	if err := av1.SetDecoderFrameWorkSideData(nilState, side); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil state err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	var inactive av1.DecoderFrameWorkState
+	if err := av1.SetDecoderFrameWorkSideData(&inactive, side); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("inactive state err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(size.CodedWidth),
+		Height:       int(size.Height),
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	}, 1)
+	begin := av1.DecoderEvent{
+		Kind:        av1.DecoderEventFrameHeader,
+		FrameHeader: av1.FrameHeaderPrefix{FrameType: av1.FrameTypeKey},
+		FrameSize:   size,
+	}
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	plan, output, err := state.Begin(&refs, &pool, sequence, begin, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := begin
+	final.Kind = av1.DecoderEventTileGroup
+	final.TileGroup.Final = true
+	final.FrameSize.RefreshFrameFlags = 0xff
+	step := av1.DecoderFrameWorkStep{
+		Kind: av1.DecoderFrameWorkStepTile,
+		Tile: av1.DecoderFrameTileWorkPlan{Surface: plan.Surface},
+	}
+
+	badSide := side
+	badSide.LoopFilterMap = av1.DecoderFrameWorkLoopFilterMap{Stride: 1, Rows: 1}
+	if err := av1.SetDecoderFrameWorkSideData(&state, badSide); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("invalid loop-filter map err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+	ctx, err := state.PostFilterContext(&pool, final, step, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.CDEFIndexMap != nil || ctx.LoopFilterMap != nil || ctx.RestorationFrameBuffers != nil {
+		t.Fatalf("failed side-data attach partially mutated state: ctx=%+v", ctx)
+	}
+
+	side.CDEFIndexMap.Index[0] = 1
+	side.CDEFIndexMap.Read[0] = true
+	side.LoopFilterMap.Records[0].Valid = true
+	side.RestorationFrameBuffers.Records[0][0].Index = 99
+	var attachErr error
+	allocs := testing.AllocsPerRun(1000, func() {
+		attachErr = av1.SetDecoderFrameWorkSideData(&state, side)
+	})
+	if attachErr != nil {
+		t.Fatal(attachErr)
+	}
+	if allocs != 0 {
+		t.Fatalf("SetDecoderFrameWorkSideData allocated: %f", allocs)
+	}
+	ctx, err = state.PostFilterContext(&pool, final, step, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Output != output || ctx.CDEFIndexMap == nil || ctx.LoopFilterMap == nil || ctx.RestorationFrameBuffers == nil ||
+		ctx.CDEFIndexMap.Stride != side.CDEFIndexMap.Stride ||
+		ctx.LoopFilterMap.Stride != side.LoopFilterMap.Stride ||
+		len(ctx.RestorationFrameBuffers.Records[0]) != len(side.RestorationFrameBuffers.Records[0]) ||
+		!ctx.ExecutedTileWork {
+		t.Fatalf("ctx=%+v output=%p side=%+v", ctx, output, side)
+	}
+	if ctx.CDEFIndexMap.Index[0] != 0 || ctx.CDEFIndexMap.Read[0] ||
+		ctx.LoopFilterMap.Records[0].Valid ||
+		ctx.RestorationFrameBuffers.Records[0][0].Index != 0 ||
+		ctx.RestorationFrameBuffers.Records[0][0].Unit.Type != av1.RestorationNone {
+		t.Fatalf("attached side data was not reset: cdef=%d/%v loop=%+v restoration=%+v",
+			ctx.CDEFIndexMap.Index[0], ctx.CDEFIndexMap.Read[0], ctx.LoopFilterMap.Records[0], ctx.RestorationFrameBuffers.Records[0][0])
+	}
+	ctx.CDEFIndexMap.Read[0] = true
+	ctx.LoopFilterMap.Records[0].Valid = true
+	ctx.RestorationFrameBuffers.Records[0][0].Unit.Type = av1.RestorationWiener
+	if !side.CDEFIndexMap.Read[0] ||
+		!side.LoopFilterMap.Records[0].Valid ||
+		side.RestorationFrameBuffers.Records[0][0].Unit.Type != av1.RestorationWiener {
+		t.Fatal("attached side data did not preserve caller-owned backing")
 	}
 }
 
@@ -828,6 +964,22 @@ func publicDecoderPostFilterSequence() av1.SequenceHeader {
 			SubsamplingY: true,
 		},
 	}
+}
+
+func publicDecoderPostFilterFramePool(t testing.TB, format av1.FrameFormat, count int) av1.FramePool {
+	t.Helper()
+	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := make([]av1.Frame, count)
+	free := make([]int, count)
+	used := make([]bool, count)
+	pool, err := av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool
 }
 
 func publicDecoderPostFilterFrame(t *testing.T, format av1.FrameFormat) *av1.Frame {
