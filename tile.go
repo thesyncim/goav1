@@ -15,6 +15,11 @@ type TileBlockSize = internaltile.BlockSize
 type TileBlockDimensions = internaltile.BlockDimensions
 type TileTransformSize = internaltile.TransformSize
 type TileTransformDimensions = internaltile.TransformDimensions
+type TileTransformPartitionRequest = internaltile.TransformPartitionRequest
+type TileTransformTreeRequest = internaltile.TransformTreeRequest
+type TileTransformTreeResult = internaltile.TransformTreeResult
+type TileTransformBlock = internaltile.TransformBlock
+type TileTransformBlockVisitor = internaltile.TransformBlockVisitor
 type TileExtTXSetType = internaltile.ExtTXSetType
 
 type TileRestorationSGRProjInfo = internaltile.SGRProjInfo

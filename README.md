@@ -149,6 +149,8 @@ The initial implementation covers:
   caller-owned scratch for post-reconstruction filtering paths.
 - Public zero-allocation tile block, partition, transform-size, and extended
   transform-set geometry helpers for caller-owned tile decode planning.
+- Public caller-owned transform context marking and luma transform-block replay
+  helpers for tile coefficient/reconstruction planning.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
