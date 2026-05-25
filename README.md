@@ -155,6 +155,8 @@ The initial implementation covers:
   helpers for tile coefficient/reconstruction planning.
 - Public caller-owned coefficient entropy context helpers for TXB skip and
   DC-sign context replay during tile coefficient decode.
+- Public zero-allocation tile block coefficient decode helper that combines
+  transform-tree decode, luma/chroma TXB decode, and visitor replay.
 - Public zero-allocation luma/chroma tile coefficient-tree decode helpers with
   caller-owned CDF, entropy-context, and TXB scratch storage.
 - Public zero-allocation decoder postfilter request binding for loop filter,
@@ -185,9 +187,10 @@ The initial implementation covers:
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 - Public hot-path benchmarks for OBU iteration, RTP packetization/assembly,
-  frame sample round-trips, tile coefficient replay, decoder prediction,
-  decoder block coefficient reconstruction, coefficient replay reconstruction,
-  reconstruction/deblocking primitives, and output filters.
+  frame sample round-trips, tile coefficient replay, tile block coefficient
+  decode, decoder prediction, decoder block coefficient reconstruction,
+  coefficient replay reconstruction, reconstruction/deblocking primitives, and
+  output filters.
 
 Public APIs live at the module root:
 

@@ -11,6 +11,20 @@ func InitTileCoeffCDFsDefault(cdfs *TileCoeffCDFs, baseQIndex uint8) error {
 	return cdfs.InitDefault(baseQIndex)
 }
 
+func InitTileTransformCDFsDefault(cdfs *TileTransformCDFs) error {
+	if cdfs == nil {
+		return ErrTileInvalidDecodeState
+	}
+	return cdfs.InitDefault()
+}
+
+func DecodeTileBlockCoefficients(state *TileDecodeState, cdfs TileBlockCoeffCDFs, transformCtx *TileTransformContext, coeffCtx *TileCoeffEntropyContext, scratch *TileBlockCoeffScratch, req TileBlockCoeffRequest, visit TileBlockCoeffVisitor) (TileBlockCoeffResult, error) {
+	if transformCtx == nil || coeffCtx == nil {
+		return TileBlockCoeffResult{}, ErrTileInvalidDecodeState
+	}
+	return state.DecodeBlockCoefficients(cdfs, &transformCtx.context, &coeffCtx.context, scratch, req, visit)
+}
+
 func DecodeTileLumaCoefficients(state *TileDecodeState, cdfs *TileCoeffCDFs, ctx *TileCoeffEntropyContext, scratch *TileCoeffTreeScratch, req TileLumaCoeffTreeRequest, visit TileLumaCoeffVisitor) (TileLumaCoeffStats, error) {
 	if ctx == nil {
 		return TileLumaCoeffStats{}, ErrTileInvalidDecodeState

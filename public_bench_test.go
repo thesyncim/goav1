@@ -337,6 +337,56 @@ func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicTileBlockCoefficientDecode(b *testing.B) {
+	payload := make([]byte, 32)
+	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	req := av1.TileBlockCoeffRequest{
+		Transform: av1.TileTransformTreeRequest{
+			Size:          av1.TileBlockSize8x8,
+			VisibleW4:     2,
+			VisibleH4:     2,
+			Color:         av1.ColorConfig{MonoChrome: true},
+			Inter:         true,
+			TransformMode: av1.TransformModeLargest,
+		},
+		LumaType: av1.TransformTypeDCTDCT,
+	}
+	var transformCDFs av1.TileTransformCDFs
+	var coeffCDFs av1.TileCoeffCDFs
+	var state av1.TileDecodeState
+	var transformCtx av1.TileTransformContext
+	var coeffCtx av1.TileCoeffEntropyContext
+	var scratch av1.TileBlockCoeffScratch
+
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := av1.InitTileTransformCDFsDefault(&transformCDFs); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		transformCtx.Reset()
+		coeffCtx.Reset()
+		result, err := av1.DecodeTileBlockCoefficients(&state, av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
+			sum += block.Result.EOB + block.Plane
+			return nil
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += result.TotalStats().TXBs
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicOutputFilters(b *testing.B) {
 	superSrc := av1.FrameSamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
 	superDst := av1.FrameSamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}
