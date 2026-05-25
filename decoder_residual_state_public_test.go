@@ -14,6 +14,7 @@ type publicDecoderResidualEventPostRunner struct {
 	err    error
 	sample byte
 	active bool
+	seq    av1.SequenceHeader
 }
 
 func (r *publicDecoderResidualEventPostRunner) Apply(ctx av1.DecoderFrameWorkPostFilterContext) error {
@@ -21,6 +22,7 @@ func (r *publicDecoderResidualEventPostRunner) Apply(ctx av1.DecoderFrameWorkPos
 	r.side = ctx.CDEFIndexMap != nil && ctx.LoopFilterMap != nil && ctx.RestorationFrameBuffers != nil
 	r.output = ctx.Output
 	r.active = ctx.ExecutedTileWork && ctx.Step.Kind == av1.DecoderFrameWorkStepBegin
+	r.seq = ctx.Event.SequenceHeader
 	if ctx.Output != nil {
 		ctx.Output.Y.Pix[0] = r.sample
 	}
@@ -677,6 +679,8 @@ func TestPublicDecoderFrameWorkResidualEventPostFilterRunner(t *testing.T) {
 		postRunner.calls != 1 ||
 		!postRunner.side ||
 		!postRunner.active ||
+		postRunner.seq.ColorConfig.BitDepth != sequence.ColorConfig.BitDepth ||
+		!postRunner.seq.EnableCDEF ||
 		postRunner.output != result.Output {
 		t.Fatalf("result=%+v active=%v post=%+v", result, state.Active(), postRunner)
 	}

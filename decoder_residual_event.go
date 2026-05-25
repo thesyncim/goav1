@@ -170,7 +170,10 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	if req.Post != nil && req.PostRunner != nil {
 		return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkState
 	}
-	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, req.Event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
+	event := req.Event
+	event.SequenceHeader = req.Sequence
+
+	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}
@@ -212,7 +215,7 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 				return DecoderFrameWorkEventResult{}, ErrDecoderSurfaceReferenceBufferTooSmall
 			}
 			if step.Kind == DecoderFrameWorkStepTile {
-				count, err := req.Refs.FrameReferences(req.Event, req.ReferenceSurfaces)
+				count, err := req.Refs.FrameReferences(event, req.ReferenceSurfaces)
 				if err != nil {
 					return DecoderFrameWorkEventResult{}, err
 				}
@@ -233,9 +236,9 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 
 	var run DecoderFrameWorkStepResult
 	if req.PostRunner != nil {
-		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
 	} else {
-		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
