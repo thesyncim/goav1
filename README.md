@@ -153,6 +153,8 @@ The initial implementation covers:
   transform-set geometry helpers for caller-owned tile decode planning.
 - Public caller-owned transform context marking and luma transform-block replay
   helpers for tile coefficient/reconstruction planning.
+- Public caller-owned coefficient entropy context helpers for TXB skip and
+  DC-sign context replay during tile coefficient decode.
 - Public zero-allocation decoder postfilter request binding for loop filter,
   CDEF, superres, loop restoration, film grain, and loop-filter/CDEF side-map
   storage, plus decoder-level loop-restoration frame buffers.

@@ -30,6 +30,11 @@ type TileBlockLoopVisitor = internaltile.BlockLoopVisitor
 type TileBlockLoopCoeffVisitor = internaltile.BlockLoopCoeffVisitor
 type TileBlockCoeffBlock = internaltile.BlockCoeffBlock
 type TileBlockCoeffResult = internaltile.BlockCoeffResult
+type TileCoeffPlaneType = internaltile.CoeffPlaneType
+type TileTXBContext = internaltile.TXBContext
+type TileCoeffContextRequest = internaltile.CoeffContextRequest
+type TileTXBDecodeRequest = internaltile.TXBDecodeRequest
+type TileTXBDecodeResult = internaltile.TXBDecodeResult
 type TileBlockModeResult = internaltile.BlockModeResult
 type TileBlockPredictionModeResult = internaltile.BlockPredictionModeResult
 type TileIntraMode = internaltile.IntraMode
@@ -245,6 +250,9 @@ const (
 
 	TileDiffWtdMaskType38    TileDiffWtdMaskType = internaltile.DiffWtdMaskType38
 	TileDiffWtdMaskType38Inv TileDiffWtdMaskType = internaltile.DiffWtdMaskType38Inv
+
+	TileCoeffPlaneY  TileCoeffPlaneType = internaltile.CoeffPlaneY
+	TileCoeffPlaneUV TileCoeffPlaneType = internaltile.CoeffPlaneUV
 
 	TileTransformSize4x4   TileTransformSize = internaltile.TransformSize4x4
 	TileTransformSize8x8   TileTransformSize = internaltile.TransformSize8x8
