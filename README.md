@@ -176,7 +176,8 @@ The initial implementation covers:
 - Public zero-allocation one-block coefficient decode/reconstruct helper for
   custom block-loop callers that want an entropy-to-output-surface step.
 - Public fuzz-smoke coverage for exported coefficient decode, one-block
-  decode/reconstruct, and job residual decode/reconstruct entry points.
+  decode/reconstruct, job residual decode/reconstruct, and batch residual
+  decode/retain entry points.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
   caller-owned prediction and residual scratch, plus a job helper that composes
   decode-state setup, residual decode/reconstruct, and CDF retention and a
