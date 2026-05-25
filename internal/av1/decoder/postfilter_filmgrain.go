@@ -53,6 +53,33 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	LumaColumn    int
 }
 
+// BindRequest validates and slices caller-owned grain/sample scratch for film
+// grain postfiltering.
+func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (FrameWorkFilmGrainPostFilterRequest, error) {
+	if s.LumaGrain < 0 || s.LumaSamples < 0 || s.LumaLine < 0 || s.LumaColumn < 0 ||
+		len(lumaGrain) < s.LumaGrain || len(lumaSamples) < s.LumaSamples {
+		return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
+	}
+	for plane := 0; plane < len(s.ScalingPoints); plane++ {
+		if s.ScalingPoints[plane] < 0 || s.ARCoeffs[plane] < 0 {
+			return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
+		}
+	}
+	req := FrameWorkFilmGrainPostFilterRequest{
+		LumaGrain:   lumaGrain[:s.LumaGrain],
+		LumaSamples: lumaSamples[:s.LumaSamples],
+	}
+	for plane := 0; plane < len(req.ChromaGrain); plane++ {
+		if s.ChromaGrain[plane] < 0 || s.ChromaSamples[plane] < 0 ||
+			len(chromaGrain[plane]) < s.ChromaGrain[plane] || len(chromaSamples[plane]) < s.ChromaSamples[plane] {
+			return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
+		}
+		req.ChromaGrain[plane] = chromaGrain[plane][:s.ChromaGrain[plane]]
+		req.ChromaSamples[plane] = chromaSamples[plane][:s.ChromaSamples[plane]]
+	}
+	return req, nil
+}
+
 // Max returns the per-field maximum film-grain scratch size.
 func (s FrameWorkFilmGrainPostFilterScratchSize) Max(other FrameWorkFilmGrainPostFilterScratchSize) FrameWorkFilmGrainPostFilterScratchSize {
 	result := FrameWorkFilmGrainPostFilterScratchSize{

@@ -784,16 +784,129 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersLumaFilmGrainAllocs(
 	}
 }
 
-func testFrameWorkFilmGrainPostFilterRequest(size FrameWorkFilmGrainPostFilterScratchSize) FrameWorkFilmGrainPostFilterRequest {
-	req := FrameWorkFilmGrainPostFilterRequest{
-		LumaGrain:   make([]int16, size.LumaGrain),
-		LumaSamples: make([]uint16, size.LumaSamples),
+func TestFrameWorkFilmGrainPostFilterScratchSizeBindRequest(t *testing.T) {
+	size := FrameWorkFilmGrainPostFilterScratchSize{
+		ScalingPoints: [3]int{1, 2, 3},
+		ARCoeffs:      [3]int{4, 5, 6},
+		LumaGrain:     8,
+		ChromaGrain:   [2]int{4, 2},
+		LumaSamples:   16,
+		ChromaSamples: [2]int{9, 7},
+		LumaLine:      3,
+		LumaColumn:    2,
 	}
-	for plane := 0; plane < len(req.ChromaGrain); plane++ {
-		req.ChromaGrain[plane] = make([]int16, size.ChromaGrain[plane])
-		req.ChromaSamples[plane] = make([]uint16, size.ChromaSamples[plane])
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size)
+	req, err := size.BindRequest(lumaGrain, chromaGrain, lumaSamples, chromaSamples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.LumaGrain) != size.LumaGrain || len(req.LumaSamples) != size.LumaSamples ||
+		len(req.ChromaGrain[0]) != size.ChromaGrain[0] || len(req.ChromaGrain[1]) != size.ChromaGrain[1] ||
+		len(req.ChromaSamples[0]) != size.ChromaSamples[0] || len(req.ChromaSamples[1]) != size.ChromaSamples[1] {
+		t.Fatalf("request lumaGrain=%d lumaSamples=%d chromaGrain=%v chromaSamples=%v",
+			len(req.LumaGrain), len(req.LumaSamples),
+			[2]int{len(req.ChromaGrain[0]), len(req.ChromaGrain[1])},
+			[2]int{len(req.ChromaSamples[0]), len(req.ChromaSamples[1])})
+	}
+}
+
+func TestFrameWorkFilmGrainPostFilterScratchSizeBindRequestRejectsShortBuffers(t *testing.T) {
+	size := FrameWorkFilmGrainPostFilterScratchSize{
+		ScalingPoints: [3]int{1},
+		ARCoeffs:      [3]int{4},
+		LumaGrain:     8,
+		ChromaGrain:   [2]int{4, 2},
+		LumaSamples:   16,
+		ChromaSamples: [2]int{9, 7},
+		LumaLine:      3,
+		LumaColumn:    2,
+	}
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size)
+	tests := []struct {
+		name          string
+		size          FrameWorkFilmGrainPostFilterScratchSize
+		lumaGrain     []int16
+		chromaGrain   [2][]int16
+		lumaSamples   []uint16
+		chromaSamples [2][]uint16
+	}{
+		{name: "luma-grain", size: size, lumaGrain: lumaGrain[:7], chromaGrain: chromaGrain, lumaSamples: lumaSamples, chromaSamples: chromaSamples},
+		{name: "luma-samples", size: size, lumaGrain: lumaGrain, chromaGrain: chromaGrain, lumaSamples: lumaSamples[:15], chromaSamples: chromaSamples},
+		{name: "chroma-grain", size: size, lumaGrain: lumaGrain, chromaGrain: [2][]int16{chromaGrain[0][:3], chromaGrain[1]}, lumaSamples: lumaSamples, chromaSamples: chromaSamples},
+		{name: "chroma-samples", size: size, lumaGrain: lumaGrain, chromaGrain: chromaGrain, lumaSamples: lumaSamples, chromaSamples: [2][]uint16{chromaSamples[0], chromaSamples[1][:6]}},
+		{name: "negative-requested", size: FrameWorkFilmGrainPostFilterScratchSize{LumaGrain: -1}, lumaGrain: lumaGrain, chromaGrain: chromaGrain, lumaSamples: lumaSamples, chromaSamples: chromaSamples},
+		{name: "negative-plan", size: FrameWorkFilmGrainPostFilterScratchSize{ScalingPoints: [3]int{-1}}, lumaGrain: lumaGrain, chromaGrain: chromaGrain, lumaSamples: lumaSamples, chromaSamples: chromaSamples},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.size.BindRequest(tt.lumaGrain, tt.chromaGrain, tt.lumaSamples, tt.chromaSamples); !errors.Is(err, frame.ErrShortBuffer) {
+				t.Fatalf("BindRequest err=%v want %v", err, frame.ErrShortBuffer)
+			}
+		})
+	}
+}
+
+func TestFrameWorkFilmGrainPostFilterScratchSizeBindRequestAllocs(t *testing.T) {
+	size := FrameWorkFilmGrainPostFilterScratchSize{
+		LumaGrain:     filmgrain.LumaGrainSamples,
+		ChromaGrain:   [2]int{filmgrain.ChromaGrainSamples, filmgrain.ChromaGrainSamples},
+		LumaSamples:   1920 * 1080,
+		ChromaSamples: [2]int{960 * 540, 960 * 540},
+		LumaLine:      filmgrain.LumaOverlapSamples * 1920,
+		LumaColumn:    filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples,
+	}
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := size.BindRequest(lumaGrain, chromaGrain, lumaSamples, chromaSamples); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindRequest allocated: %f", allocs)
+	}
+}
+
+func BenchmarkFrameWorkFilmGrainPostFilterScratchSizeBindRequest(b *testing.B) {
+	size := FrameWorkFilmGrainPostFilterScratchSize{
+		LumaGrain:     filmgrain.LumaGrainSamples,
+		ChromaGrain:   [2]int{filmgrain.ChromaGrainSamples, filmgrain.ChromaGrainSamples},
+		LumaSamples:   1920 * 1080,
+		ChromaSamples: [2]int{960 * 540, 960 * 540},
+		LumaLine:      filmgrain.LumaOverlapSamples * 1920,
+		LumaColumn:    filmgrain.LumaColumnScratchRows * filmgrain.LumaOverlapSamples,
+	}
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := size.BindRequest(lumaGrain, chromaGrain, lumaSamples, chromaSamples); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func testFrameWorkFilmGrainPostFilterRequest(size FrameWorkFilmGrainPostFilterScratchSize) FrameWorkFilmGrainPostFilterRequest {
+	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size)
+	req, err := size.BindRequest(lumaGrain, chromaGrain, lumaSamples, chromaSamples)
+	if err != nil {
+		panic(err)
 	}
 	return req
+}
+
+func testFrameWorkFilmGrainScratchStorage(size FrameWorkFilmGrainPostFilterScratchSize) ([]int16, [2][]int16, []uint16, [2][]uint16) {
+	var chromaGrain [2][]int16
+	var chromaSamples [2][]uint16
+	for plane := 0; plane < len(chromaGrain); plane++ {
+		if size.ChromaGrain[plane] > 0 {
+			chromaGrain[plane] = make([]int16, size.ChromaGrain[plane])
+		}
+		if size.ChromaSamples[plane] > 0 {
+			chromaSamples[plane] = make([]uint16, size.ChromaSamples[plane])
+		}
+	}
+	return make([]int16, maxInt(size.LumaGrain, 0)), chromaGrain,
+		make([]uint16, maxInt(size.LumaSamples, 0)), chromaSamples
 }
 
 func getTestFrameWorkFilmGrainPlaneSample(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
