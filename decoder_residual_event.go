@@ -89,6 +89,22 @@ type DecoderFrameWorkResidualEventRuntime struct {
 	Outputs    []*Frame
 }
 
+// DecoderFrameWorkResidualEventBindPlan reports the sequence/event context
+// callers should use when binding a reusable residual event runner for a parsed
+// event list. EventIndex is -1 when the list has no event that needs residual
+// event binding; Sequence still reflects sequence headers seen in the list.
+type DecoderFrameWorkResidualEventBindPlan struct {
+	Sequence   SequenceHeader
+	Event      DecoderEvent
+	EventIndex int
+}
+
+// HasEvent reports whether Event/EventIndex refer to a bind-relevant parsed
+// event.
+func (p DecoderFrameWorkResidualEventBindPlan) HasEvent() bool {
+	return p.EventIndex >= 0
+}
+
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
 // needed to run one residual event and capture its postfilter side data.
 type DecoderFrameWorkResidualEventScratchSize struct {
@@ -122,6 +138,31 @@ func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResi
 		},
 		Outputs: max(s.Outputs, other.Outputs),
 	}
+}
+
+// DecoderFrameWorkResidualEventsBindPlan scans a parsed event list and returns
+// the sequence/event pair appropriate for BindDecoderFrameWorkResidualEventRunner
+// or BindDecoderFrameWorkResidualStreamEventRunner. The returned event is the
+// last event that can require residual side data, tile payload runner state, or
+// output collection; this matches the max-scratch event-list sizing contract.
+func DecoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []DecoderEvent) DecoderFrameWorkResidualEventBindPlan {
+	plan := DecoderFrameWorkResidualEventBindPlan{
+		Sequence:   sequence,
+		EventIndex: -1,
+	}
+	for i := range events {
+		event := events[i]
+		sequence = decoderFrameWorkResidualEventSequence(sequence, event)
+		if decoderFrameWorkResidualEventBindCandidate(event) {
+			plan.Sequence = sequence
+			plan.Event = event
+			plan.EventIndex = i
+		}
+	}
+	if plan.EventIndex < 0 {
+		plan.Sequence = sequence
+	}
+	return plan
 }
 
 // BindDecoderFrameWorkResidualEventRunner binds a reusable event runner and
@@ -589,6 +630,12 @@ func decoderFrameWorkResidualEventHasTilePayload(event DecoderEvent) bool {
 	default:
 		return false
 	}
+}
+
+func decoderFrameWorkResidualEventBindCandidate(event DecoderEvent) bool {
+	return decoderFrameWorkResidualEventNeedsSideData(event) ||
+		decoderFrameWorkResidualEventHasTilePayload(event) ||
+		DecoderEventOutputsFrame(event)
 }
 
 func decoderFrameWorkResidualEventPlanMax(a DecoderTileWorkPlan, b DecoderTileWorkPlan) DecoderTileWorkPlan {

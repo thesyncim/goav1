@@ -2007,6 +2007,73 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventsBindPlan(t *testing.T) {
+	payload := publicDecoderResidualLowOverheadStream()
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	count, err := stream.PushLowOverhead(payload, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, events[:count])
+	if !plan.HasEvent() ||
+		plan.EventIndex != count-1 ||
+		plan.Event.Kind != av1.DecoderEventTileGroup ||
+		plan.Sequence.ColorConfig.BitDepth != 8 ||
+		!plan.Sequence.ColorConfig.MonoChrome {
+		t.Fatalf("low-overhead bind plan=%+v count=%d", plan, count)
+	}
+
+	var realtime av1.DecoderStream
+	var prime []byte
+	keyFrame := append([]byte{}, publicDecoderResidualShownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	interFrame := append([]byte{}, publicDecoderResidualInterFrameHeaderPayload()...)
+	interFrame = append(interFrame, 0xbb)
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, keyFrame)
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, interFrame)
+	var primeEvents [3]av1.DecoderEvent
+	if count, err := realtime.PushLowOverhead(prime, primeEvents[:]); err != nil {
+		t.Fatal(err)
+	} else if count != len(primeEvents) {
+		t.Fatalf("prime count=%d events=%+v", count, primeEvents)
+	}
+	sequence, ok := realtime.SequenceHeader()
+	if !ok {
+		t.Fatal("realtime stream missing sequence")
+	}
+	var showExisting []byte
+	showExisting = appendPublicLowOverheadOBU(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
+	var outputEvents [1]av1.DecoderEvent
+	outputCount, err := realtime.PushLowOverhead(showExisting, outputEvents[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputPlan := av1.DecoderFrameWorkResidualEventsBindPlan(sequence, outputEvents[:outputCount])
+	if !outputPlan.HasEvent() ||
+		outputPlan.EventIndex != 0 ||
+		outputPlan.Event.Kind != av1.DecoderEventExistingFrame ||
+		outputPlan.Event.ExistingFrame.FrameType != av1.FrameTypeInter ||
+		outputPlan.Sequence.ColorConfig.BitDepth != 8 {
+		t.Fatalf("show-existing bind plan=%+v count=%d", outputPlan, outputCount)
+	}
+
+	sequenceOnly := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
+		BitDepth:   10,
+		MonoChrome: true,
+	}}
+	noEventPlan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventSequenceHeader, SequenceHeader: sequenceOnly},
+	})
+	if noEventPlan.HasEvent() ||
+		noEventPlan.EventIndex != -1 ||
+		noEventPlan.Sequence.ColorConfig.BitDepth != 10 ||
+		!noEventPlan.Sequence.ColorConfig.MonoChrome {
+		t.Fatalf("sequence-only bind plan=%+v", noEventPlan)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayload(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -2336,8 +2403,12 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	streamSize := lowSize.Max(rtpSize)
-	sequence := probeEvents[0].SequenceHeader
-	tile := probeEvents[streamSize.Events-1]
+	plan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, probeEvents[:streamSize.Events])
+	if !plan.HasEvent() || plan.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream bind plan=%+v events=%+v", plan, probeEvents[:streamSize.Events])
+	}
+	sequence := plan.Sequence
+	tile := plan.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(tile.FrameSize.CodedWidth),
@@ -2456,8 +2527,14 @@ func TestPublicBindDecoderFrameWorkResidualStreamEventRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequence := probeEvents[1].SequenceHeader
-	event := probeEvents[1]
+	plan := av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, probeEvents[:2])
+	if !plan.HasEvent() ||
+		plan.EventIndex != 1 ||
+		plan.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream event bind plan=%+v events=%+v", plan, probeEvents[:2])
+	}
+	sequence := plan.Sequence
+	event := plan.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(event.FrameSize.CodedWidth),
@@ -2962,6 +3039,28 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenAllocs(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("DecoderFrameWorkResidualStreamScratchLen allocated: %f", allocs)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualEventsBindPlanAllocs(t *testing.T) {
+	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}}
+	events := [...]av1.DecoderEvent{
+		{Kind: av1.DecoderEventSequenceHeader, SequenceHeader: sequence},
+		{Kind: av1.DecoderEventFrameHeader, SequenceHeader: sequence},
+		{Kind: av1.DecoderEventTileGroup, SequenceHeader: sequence},
+	}
+	var plan av1.DecoderFrameWorkResidualEventBindPlan
+	allocs := testing.AllocsPerRun(1000, func() {
+		plan = av1.DecoderFrameWorkResidualEventsBindPlan(av1.SequenceHeader{}, events[:])
+	})
+	if !plan.HasEvent() || plan.EventIndex != 2 || plan.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("bind plan=%+v", plan)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualEventsBindPlan allocated: %f", allocs)
 	}
 }
 
