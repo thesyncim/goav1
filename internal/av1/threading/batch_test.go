@@ -985,6 +985,63 @@ func TestFrameWorkBatchReconstructBlockCoeffChroma420(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchReconstructBlockCoeffChromaEdgeVisible(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        64,
+		Height:       64,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	testFillFrame(output, 96)
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 64, Height: 64},
+			Quantization: parser.QuantizationParams{BaseQIdx: 64, VDCDelta: -1, VACDelta: 2},
+		},
+		Jobs: []tile.Job{{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1}},
+	}
+	coeffs := make([]int16, 16*16)
+	coeffs[0] = -2
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 0, MIRow: 0, MIColEnd: 16, MIRowEnd: 16,
+			X4: 0, Y4: 0, Size: tile.BlockSize64x64, VisibleW4: 16, VisibleH4: 16,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane: 1,
+			Block: tile.TransformBlock{X4: 6, Y4: 0, Size: tile.TransformSize16x16, VisibleW4: 2, VisibleH4: 4},
+			Result: tile.TXBDecodeResult{
+				EOB: 1,
+			},
+			Coeffs: coeffs,
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 64,
+	}
+	plane, x, y, err := ctx.BlockCoeffPlanePosition(0, req.Visit, req.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plane != FrameWorkPlaneU || x != 24 || y != 0 {
+		t.Fatalf("position plane=%d x=%d y=%d", plane, x, y)
+	}
+	req.Int32Scratch, req.ResidualScratch = testBlockCoeffScratch(t, ctx, req, plane)
+	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+		t.Fatal(err)
+	}
+	for row := 0; row < 16; row++ {
+		if got := output.U.Pix[row*output.U.Stride+23]; got != 96 {
+			t.Fatalf("left guard row=%d got=%d want 96", row, got)
+		}
+	}
+}
+
 func TestFrameWorkBatchReconstructBlockCoeffRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	ctx := FrameWorkBatch{

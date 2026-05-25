@@ -206,6 +206,10 @@ type FrameWorkBatch struct {
 	// LoopFilterMap receives block-local loop-filter metadata while tile
 	// residuals run. It is optional; callers can still pass a per-request map.
 	LoopFilterMap *FrameWorkLoopFilterMap
+	// RestorationFrameBuffers receives decoded loop-restoration unit records
+	// while tile residuals run. It is optional; callers can still pass a
+	// per-request restoration request.
+	RestorationFrameBuffers *FrameWorkRestorationFrameBuffers
 	FrameWorkFrameContext
 	DisableCDFUpdate bool
 	// InitialTileResidualCDFs is the frame context selected by

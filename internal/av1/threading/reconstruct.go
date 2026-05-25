@@ -100,8 +100,8 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 		Lossless:  lossless,
 		EOB:       req.Block.Result.EOB,
 	}
-	if err := reconstruct.ReconstructPlaneBlock(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-		geom.x-geom.window.X, geom.y-geom.window.Y,
+	if err := reconstruct.ReconstructPlaneBlockVisible(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
 		req.Block.Coeffs, scanSize.Height, req.Int32Scratch, req.ResidualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
@@ -109,11 +109,13 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 }
 
 type frameWorkBlockCoeffGeometry struct {
-	plane  FrameWorkPlane
-	window FrameWorkPlaneRegion
-	x      int
-	y      int
-	size   transform.Size
+	plane         FrameWorkPlane
+	window        FrameWorkPlaneRegion
+	x             int
+	y             int
+	size          transform.Size
+	visibleWidth  int
+	visibleHeight int
 }
 
 func (b FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, block tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
@@ -137,16 +139,40 @@ func (b FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, blo
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	if !frameWorkPlaneBlockFits(window, x, y, size.Width, size.Height) {
+	visibleWidth, visibleHeight, err := frameWorkBlockCoeffVisibleSize(block.Block, size)
+	if err != nil {
+		return frameWorkBlockCoeffGeometry{}, err
+	}
+	if !frameWorkPlaneBlockFits(window, x, y, visibleWidth, visibleHeight) {
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
 	return frameWorkBlockCoeffGeometry{
-		plane:  plane,
-		window: window,
-		x:      x,
-		y:      y,
-		size:   size,
+		plane:         plane,
+		window:        window,
+		x:             x,
+		y:             y,
+		size:          size,
+		visibleWidth:  visibleWidth,
+		visibleHeight: visibleHeight,
 	}, nil
+}
+
+func frameWorkBlockCoeffVisibleSize(block tile.TransformBlock, size transform.Size) (int, int, error) {
+	if block.VisibleW4 == 0 || block.VisibleH4 == 0 {
+		return 0, 0, ErrInvalidBatch
+	}
+	visibleWidth, ok := frameWorkInt64Mul4(int64(block.VisibleW4))
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	visibleHeight, ok := frameWorkInt64Mul4(int64(block.VisibleH4))
+	if !ok {
+		return 0, 0, ErrInvalidBatch
+	}
+	if visibleWidth > size.Width || visibleHeight > size.Height {
+		return 0, 0, ErrInvalidBatch
+	}
+	return visibleWidth, visibleHeight, nil
 }
 
 func (b FrameWorkBatch) blockCoeffPlane(tilePlane int) (FrameWorkPlane, uint, uint, error) {

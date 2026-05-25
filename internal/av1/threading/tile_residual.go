@@ -807,7 +807,7 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 			}
 		} else {
 			if err := c.batch.PredictBlockIntraCoeff(c.index, visit, block, &c.req.PredictionScratch.Intra); err != nil {
-				return fmt.Errorf("predict intra txb plane=%d block=%+v: %w", block.Plane, block.Block, err)
+				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
 			}
 			c.stats.Predictions++
 		}

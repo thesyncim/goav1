@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
@@ -149,6 +150,22 @@ func TestLibaomQuantizer00StreamEvents(t *testing.T) {
 
 func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 	vector := mustLibaomRemoteVector(t, TagDecoderLibaomQuantizer00)
+	runLibaomFrameWorkDryRun(t, vector)
+}
+
+func TestLibaomFastFrameWorkDryRun(t *testing.T) {
+	if os.Getenv("GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN") != "1" {
+		t.Skip("set GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 to run the in-progress fast-vector framework dry-run")
+	}
+	for _, vector := range LibaomRemoteManifest().SelectRemote(SuiteLevelFast, 0, nil) {
+		t.Run(vector.Name, func(t *testing.T) {
+			runLibaomFrameWorkDryRun(t, vector)
+		})
+	}
+}
+
+func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
+	t.Helper()
 	ivfData := readLibaomRemoteFile(t, vector.Stream)
 	md5Data := readLibaomRemoteFile(t, vector.MD5)
 	digests := parseLibaomMD5Digests(t, vector.Tag, md5Data)
@@ -233,7 +250,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 			var postMD5 MD5
 			postRan := false
 			currentMVSurface := -1
-			result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
+			result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -271,15 +288,13 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					temporalReferenceResolves += resolved
 					temporalMotionProjections += setupStats.Projections
 				}
-				_, _, cdefLen, err := ctx.CDEFIndexMapShape()
-				if err != nil {
-					return err
-				}
-				cdefIndex := make([]uint8, cdefLen)
-				cdefRead := make([]bool, cdefLen)
-				cdefMap, err := ctx.BindCDEFIndexMap(cdefIndex, cdefRead)
-				if err != nil {
-					return err
+				var restorationReq *threading.FrameWorkTileRestorationRequest
+				if ctx.RestorationFrameBuffers != nil {
+					restoration := threading.FrameWorkTileRestorationRequest{Buffers: *ctx.RestorationFrameBuffers}
+					if err := restoration.InitReferences(); err != nil {
+						return err
+					}
+					restorationReq = &restoration
 				}
 				for j := 0; j < len(ctx.Jobs); j++ {
 					var decodeState tile.DecodeState
@@ -315,7 +330,9 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 					stats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
 						Loop:          loopReq,
 						TransformMode: ctx.TransformRef.TransformMode,
-						CDEFIndexMap:  &cdefMap,
+						CDEFIndexMap:  ctx.CDEFIndexMap,
+						LoopFilterMap: ctx.LoopFilterMap,
+						Restoration:   restorationReq,
 						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
 							if visit.Prediction.Valid && !visit.Prediction.Intra {
 								return ctx.ReadInterBlockTransforms(&decodeState, visit)
@@ -351,18 +368,28 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 						retainedContexts++
 					}
 				}
-				for _, read := range cdefMap.Read {
-					if read {
-						cdefUnitsRead++
+				if ctx.CDEFIndexMap != nil {
+					for _, read := range ctx.CDEFIndexMap.Read {
+						if read {
+							cdefUnitsRead++
+						}
 					}
 				}
 				return nil
-			}, func(ctx decoder.FrameWorkPostFilterContext) error {
-				if err := ctx.RequireNoActivePostFilters(); err != nil {
-					return err
+			}), libaomFrameWorkPostFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
+				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
+				size, err := libaomSupportedPostFilterScratchLen(ctx)
+				if err != nil {
+					return fmt.Errorf("supported postfilter scratch: %w", err)
+				}
+				post.Scratch = libaomPostFilterScratchStorage(size)
+				if err := post.Apply(ctx); err != nil {
+					t.Logf("postfilter event=%s active=%v supported_size=%+v has_cdef=%v has_lf=%v has_restoration=%v",
+						vector.Name, ctx.ActivePostFilters(), size, ctx.CDEFIndexMap != nil, ctx.LoopFilterMap != nil, ctx.RestorationFrameBuffers != nil)
+					return fmt.Errorf("apply supported postfilters: %w", err)
 				}
 				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(ctx.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
+					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
 						return err
 					}
 				}
@@ -370,7 +397,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				if digestIndex >= len(digests) || digests[digestIndex].FrameIndex != ivfFrame.Index {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
 				}
-				got, err := FrameMD5(*ctx.Output)
+				got, err := FrameMD5(*post.Context.Output)
 				if err != nil {
 					return err
 				}
@@ -380,7 +407,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 				postMD5 = got
 				postRan = true
 				return nil
-			})
+			}))
 			if err != nil {
 				t.Fatalf("frame %d RunEventWithContextAndPostFilter: %v", ivfFrame.Index, err)
 			}
@@ -472,6 +499,98 @@ func libaomResidualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error)
 		return nil, nil, err
 	}
 	return make([]int32, int32Len), make([]int16, int16Len), nil
+}
+
+type libaomFrameWorkBatchRunner func(decoder.FrameWorkBatch) error
+
+func (fn libaomFrameWorkBatchRunner) Run(ctx decoder.FrameWorkBatch) error {
+	return fn(ctx)
+}
+
+type libaomFrameWorkPostFilterRunner func(decoder.FrameWorkPostFilterContext) error
+
+func (fn libaomFrameWorkPostFilterRunner) Apply(ctx decoder.FrameWorkPostFilterContext) error {
+	return fn(ctx)
+}
+
+type libaomFrameWorkSideDataRunner struct{}
+
+func (libaomFrameWorkSideDataRunner) BindFrameWorkSideData(state *decoder.FrameWorkState, ctx decoder.FrameWorkBatch) error {
+	size, err := decoder.FrameWorkSideDataScratchLen(ctx)
+	if err != nil {
+		return err
+	}
+	side, err := size.BindRunner(libaomFrameWorkSideDataScratch(size))
+	if err != nil {
+		return err
+	}
+	return side.BindFrameWorkSideData(state, ctx)
+}
+
+func libaomFrameWorkSideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWorkSideDataScratch {
+	return decoder.FrameWorkSideDataScratch{
+		CDEFIndex:          make([]uint8, libaomMaxInt(size.CDEF, 0)),
+		CDEFRead:           make([]bool, libaomMaxInt(size.CDEF, 0)),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, libaomMaxInt(size.LoopFilterRecords, 0)),
+		RestorationRecords: make([]tile.RestorationUnitRecord, libaomMaxInt(size.RestorationRecords, 0)),
+		RestorationAbove:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),
+		RestorationBelow:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),
+	}
+}
+
+func libaomSupportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext) (decoder.FrameWorkPostFilterScratchSize, error) {
+	var probe decoder.FrameWorkPostFilterRequest
+	if ctx.LoopFilterMap != nil {
+		probe.LoopFilter.Map = *ctx.LoopFilterMap
+	}
+	if ctx.CDEFIndexMap != nil {
+		probe.CDEF.IndexMap = *ctx.CDEFIndexMap
+	}
+	if ctx.RestorationFrameBuffers != nil {
+		probe.Restoration.Records = ctx.RestorationFrameBuffers.Records
+	}
+	return ctx.SupportedPostFilterScratchLen(probe)
+}
+
+func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
+	scratch := decoder.FrameWorkPostFilterScratch{
+		LoopFilterEdges: make([]decoder.FrameWorkLoopFilterPostFilterEdge, libaomMaxInt(size.LoopFilter.Edges, 0)),
+
+		CDEFDirectionGrid: make([]cdef.DirectionGrid, libaomMaxInt(size.CDEF.DirectionGrid, 0)),
+		CDEFVarianceGrid:  make([]cdef.VarianceGrid, libaomMaxInt(size.CDEF.VarianceGrid, 0)),
+		CDEFInput:         make([]uint16, libaomMaxInt(size.CDEF.Input, 0)),
+		CDEFUnitDst:       make([]uint16, libaomMaxInt(size.CDEF.UnitDst, 0)),
+
+		SuperResOutputFrame: make([]byte, libaomMaxInt(size.SuperRes.OutputFrame, 0)),
+
+		RestorationData:   make([]uint16, libaomMaxInt(size.Restoration.Samples.DataLen, 0)),
+		RestorationDst:    make([]uint16, libaomMaxInt(size.Restoration.Samples.DstLen, 0)),
+		RestorationWiener: make([]uint16, libaomMaxInt(size.Restoration.Apply.Unit.Wiener, 0)),
+		RestorationSGR:    make([]int32, libaomMaxInt(size.Restoration.Apply.Unit.SGRProj, 0)),
+		RestorationAbove:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)),
+		RestorationBelow:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)),
+
+		FilmGrainLumaGrain:   make([]int16, libaomMaxInt(size.FilmGrain.LumaGrain, 0)),
+		FilmGrainLumaSamples: make([]uint16, libaomMaxInt(size.FilmGrain.LumaSamples, 0)),
+	}
+	for plane := 0; plane < 3; plane++ {
+		scratch.CDEFSamples[plane] = make([]uint16, libaomMaxInt(size.CDEF.Samples[plane], 0))
+		scratch.CDEFDst[plane] = make([]uint16, libaomMaxInt(size.CDEF.Dst[plane], 0))
+		scratch.SuperResCoded[plane] = make([]uint16, libaomMaxInt(size.SuperRes.CodedSamples[plane], 0))
+		scratch.SuperResOutput[plane] = make([]uint16, libaomMaxInt(size.SuperRes.OutputSamples[plane], 0))
+	}
+	for plane := 0; plane < 2; plane++ {
+		scratch.FilmGrainChromaGrain[plane] = make([]int16, libaomMaxInt(size.FilmGrain.ChromaGrain[plane], 0))
+		scratch.FilmGrainChromaSamples[plane] = make([]uint16, libaomMaxInt(size.FilmGrain.ChromaSamples[plane], 0))
+	}
+	return scratch
+}
+
+func libaomMaxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, frame.Format, []byte, []frame.Frame, []int, []bool) {

@@ -42,6 +42,17 @@ func ScratchLen(cfg Block) (int32Len int, int16Len int, err error) {
 // ReconstructPlaneBlock dequantizes quantized coefficients, applies the inverse
 // transform, and adds the resulting residual to a predicted plane block.
 func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	return reconstructPlaneBlock(dst, bytesPerSample, bitDepth, x, y, cfg.Size.Width, cfg.Size.Height, quantized, quantizedStride, int32Scratch, residualScratch, cfg)
+}
+
+// ReconstructPlaneBlockVisible dequantizes a full transform block and writes
+// only the visible rectangle. This handles frame-edge transform blocks whose
+// coded transform extends beyond the clipped output plane.
+func ReconstructPlaneBlockVisible(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	return reconstructPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, quantized, quantizedStride, int32Scratch, residualScratch, cfg)
+}
+
+func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	int32Len, residualLen, err := ScratchLen(cfg)
 	if err != nil ||
 		len(int32Scratch) < int32Len ||
@@ -51,6 +62,9 @@ func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 
 	width := cfg.Size.Width
 	height := cfg.Size.Height
+	if visibleWidth <= 0 || visibleHeight <= 0 || visibleWidth > width || visibleHeight > height {
+		return ErrInvalidBlock
+	}
 	coeffSize, err := transform.ScanSize(cfg.Size)
 	if err != nil {
 		return ErrInvalidBlock
@@ -77,7 +91,7 @@ func ReconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	} else if err := transform.InverseBlock(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform); err != nil {
 		return ErrInvalidBlock
 	}
-	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, width, height, residual, width); err != nil {
+	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, residual, width); err != nil {
 		return ErrInvalidBlock
 	}
 	return nil

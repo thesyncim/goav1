@@ -108,6 +108,38 @@ func TestReconstructPlaneBlockDCT4x4(t *testing.T) {
 	}
 }
 
+func TestReconstructPlaneBlockVisibleClipsFrameEdge(t *testing.T) {
+	plane, _ := testPlane(6, 6, 1, 8)
+	fillPlane(plane, 1, 100)
+	quantized := make([]int16, 4*4)
+	quantized[0] = 4
+	cfg := Block{
+		Size:      transform.Size{Width: 4, Height: 4},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	int32Scratch := make([]int32, int32Len)
+	residualScratch := make([]int16, int16Len)
+	if err := ReconstructPlaneBlockVisible(plane, 1, 8, 4, 3, 2, 3, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			want := uint16(100)
+			if x >= 4 && y >= 3 {
+				want = 101
+			}
+			if got := getSample(plane, 1, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 	plane, _ := testPlane(4, 8, 1, 4)
 	fillPlane(plane, 1, 100)
