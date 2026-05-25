@@ -141,41 +141,32 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
 		return plan, err
 	}
-
-	for row := 0; row < rows; row++ {
-		for col := 0; col < cols; col++ {
-			record, ok, err := filterMap.RecordAt(uint32(col), uint32(row))
-			if err != nil {
-				return plan, err
-			}
-			if !ok {
-				plan.Missing++
-				continue
-			}
-			if err := frameWorkValidateLoopFilterRecord(record, col, row, cols, rows); err != nil {
-				return plan, err
-			}
-			plan.Cells++
-			if record.Block.MIRow != uint32(row) || record.Block.MICol != uint32(col) {
-				continue
-			}
-			plan.Blocks++
-			if err := frameWorkResolveLoopFilterLevels(ctx, record, &plan); err != nil {
-				return plan, err
-			}
-			if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
-				return plan, err
-			}
-			if err := frameWorkAppendLoopFilterLumaEdges(ctx, filterMap, record, &plan, req.Edges); err != nil {
-				return plan, err
-			}
-			if err := frameWorkAppendLoopFilterChromaEdges(ctx, filterMap, record, &plan, req.Edges); err != nil {
-				return plan, err
-			}
-		}
+	stats, err := filterMap.CoverageStats(cols, rows)
+	if err != nil {
+		return plan, err
 	}
+	plan.Cells = stats.Cells
+	plan.Blocks = stats.Blocks
+	plan.Missing = stats.Missing
 	if plan.Missing != 0 {
 		return plan, threading.ErrInvalidBatch
+	}
+	if err := filterMap.ForEachBlockInGrid(cols, rows, func(record threading.FrameWorkLoopFilterBlockRecord) error {
+		if err := frameWorkValidateLoopFilterRecord(record, int(record.Block.MICol), int(record.Block.MIRow), cols, rows); err != nil {
+			return err
+		}
+		if err := frameWorkResolveLoopFilterLevels(ctx, record, &plan); err != nil {
+			return err
+		}
+		if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
+			return err
+		}
+		if err := frameWorkAppendLoopFilterLumaEdges(ctx, filterMap, record, &plan, req.Edges); err != nil {
+			return err
+		}
+		return frameWorkAppendLoopFilterChromaEdges(ctx, filterMap, record, &plan, req.Edges)
+	}); err != nil {
+		return plan, err
 	}
 	return plan, nil
 }

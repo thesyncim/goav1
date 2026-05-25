@@ -247,12 +247,58 @@ func TestFrameWorkLoopFilterMapRecordAtAndForEachBlock(t *testing.T) {
 	if _, _, err = filterMap.RecordAt(8, 0); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("out-of-range record err=%v want %v", err, ErrInvalidBatch)
 	}
+	stats, err := filterMap.CoverageStats(8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (FrameWorkLoopFilterMapStats{Cells: 8, Blocks: 1, Missing: 24}) {
+		t.Fatalf("coverage stats=%+v", stats)
+	}
 
 	var blocks int
 	if err := filterMap.ForEachBlock(func(got FrameWorkLoopFilterBlockRecord) error {
 		blocks++
 		if got.Block != visit.Block {
 			t.Fatalf("visited block=%+v want %+v", got.Block, visit.Block)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if blocks != 1 {
+		t.Fatalf("visited blocks=%d want 1", blocks)
+	}
+}
+
+func TestFrameWorkLoopFilterMapGridHelpersIgnorePadding(t *testing.T) {
+	filterMap := FrameWorkLoopFilterMap{
+		Records: make([]FrameWorkLoopFilterBlockRecord, 8),
+		Stride:  4,
+		Rows:    2,
+	}
+	block := tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 2, MIRowEnd: 2}
+	record := FrameWorkLoopFilterBlockRecord{Valid: true, Block: block}
+	filterMap.Records[0] = record
+	filterMap.Records[1] = record
+	filterMap.Records[4] = record
+	filterMap.Records[5] = record
+	filterMap.Records[2] = FrameWorkLoopFilterBlockRecord{
+		Valid: true,
+		Block: tile.BlockVisit{MICol: 2, MIRow: 0, MIColEnd: 4, MIRowEnd: 2},
+	}
+
+	stats, err := filterMap.CoverageStats(2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (FrameWorkLoopFilterMapStats{Cells: 4, Blocks: 1}) {
+		t.Fatalf("coverage stats=%+v", stats)
+	}
+	var blocks int
+	if err := filterMap.ForEachBlockInGrid(2, 2, func(got FrameWorkLoopFilterBlockRecord) error {
+		blocks++
+		if got.Block != block {
+			t.Fatalf("visited padding block=%+v", got.Block)
 		}
 		return nil
 	}); err != nil {
@@ -310,6 +356,9 @@ func TestFrameWorkLoopFilterMapAllocs(t *testing.T) {
 		}
 		if _, ok, err := filterMap.RecordAt(0, 0); err != nil || !ok {
 			t.Fatalf("RecordAt ok=%v err=%v", ok, err)
+		}
+		if _, err := filterMap.CoverageStats(4, 4); err != nil {
+			t.Fatal(err)
 		}
 		if err := filterMap.ForEachBlock(func(FrameWorkLoopFilterBlockRecord) error {
 			return nil

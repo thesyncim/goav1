@@ -91,6 +91,51 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolve
 	}
 }
 
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
+	filterMap := FrameWorkLoopFilterMap{
+		Records: make([]threading.FrameWorkLoopFilterBlockRecord, (cols+2)*(rows+1)),
+		Stride:  cols + 2,
+		Rows:    rows + 1,
+	}
+	for miRow := record.Block.MIRow; miRow < record.Block.MIRowEnd; miRow++ {
+		row := int(miRow) * filterMap.Stride
+		for miCol := record.Block.MICol; miCol < record.Block.MIColEnd; miCol++ {
+			filterMap.Records[row+int(miCol)] = record
+		}
+	}
+	filterMap.Records[cols] = threading.FrameWorkLoopFilterBlockRecord{
+		Valid: true,
+		Block: tile.BlockVisit{MICol: uint32(cols), MIRow: 0, MIColEnd: uint32(cols + 1), MIRowEnd: 1},
+	}
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+		LoopFilterMap: &filterMap,
+	}
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Cells != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
+		t.Fatalf("plan=%+v want cells=%d blocks=1 missing=0", plan, cols*rows)
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanCountsTransformReplay(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
