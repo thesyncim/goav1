@@ -443,6 +443,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		InterpolationFilter:         b.TileInfo.InterpolationFilter,
 		EnableDualFilter:            b.Sequence.EnableDualFilter,
 		EnableFilterIntra:           b.Sequence.EnableFilterIntra,
+		AllowScreenContentTools:     b.FrameHeader.AllowScreenContentTools,
 		AllowHighPrecisionMV:        b.TileInfo.AllowHighPrecisionMV,
 		ForceIntegerMV:              b.FrameHeader.ForceIntegerMV,
 		EnableInterIntraCompound:    b.Sequence.EnableInterIntraCompound,

@@ -80,16 +80,19 @@ type CFLAlphaResult struct {
 // IntraModeCDFs contains caller-owned CDFs for AV1 intra/inter entry, luma/UV
 // intra mode, directional angle delta, and CfL alpha syntax.
 type IntraModeCDFs struct {
-	Intra           [LumaIntraModeContexts]entropy.CDF
-	Intrabc         entropy.CDF
-	YMode           [LumaIntraModeContexts]entropy.CDF
-	KeyframeYMode   [KeyframeIntraModeContexts][KeyframeIntraModeContexts]entropy.CDF
-	UVMode          [CFLAllowedTypes][intraModeCount]entropy.CDF
-	AngleDelta      [DirectionalIntraModes]entropy.CDF
-	CFLSign         entropy.CDF
-	CFLAlpha        [CFLAlphaContexts]entropy.CDF
-	FilterIntra     [blockSizeCount]entropy.CDF
-	FilterIntraMode entropy.CDF
+	Intra              [LumaIntraModeContexts]entropy.CDF
+	Intrabc            entropy.CDF
+	YMode              [LumaIntraModeContexts]entropy.CDF
+	KeyframeYMode      [KeyframeIntraModeContexts][KeyframeIntraModeContexts]entropy.CDF
+	UVMode             [CFLAllowedTypes][intraModeCount]entropy.CDF
+	AngleDelta         [DirectionalIntraModes]entropy.CDF
+	CFLSign            entropy.CDF
+	CFLAlpha           [CFLAlphaContexts]entropy.CDF
+	FilterIntra        [blockSizeCount]entropy.CDF
+	FilterIntraMode    entropy.CDF
+	PaletteYMode       [PaletteBSizeContexts][PaletteYModeContexts]entropy.CDF
+	PaletteYSize       [PaletteBSizeContexts]entropy.CDF
+	PaletteYColorIndex [PaletteSizes][PaletteColorContexts]entropy.CDF
 }
 
 // IntraFlagRequest describes the frame/block conditions used to decide whether
@@ -165,6 +168,7 @@ type BlockPredictionModeResult struct {
 
 	FilterIntraMode  FilterIntraMode
 	FilterIntraValid bool
+	Palette          PaletteModeResult
 
 	ChromaMode       ChromaIntraMode
 	ChromaModeValid  bool
@@ -451,6 +455,9 @@ func (c *IntraModeCDFs) InitDefault() error {
 		}
 	}
 	if err := next.FilterIntraMode.Init([]uint16{8949, 12776, 17211, 29558}); err != nil {
+		return err
+	}
+	if err := next.initPaletteDefaults(); err != nil {
 		return err
 	}
 	*c = next

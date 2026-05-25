@@ -33,6 +33,7 @@ type BlockLoopScratch struct {
 	CDEF      CDEFIndexContext
 	Coeff     BlockCoeffScratch
 	CoeffCtx  CoeffEntropyContext
+	PaletteY  [MaxPalettePixels]uint8
 }
 
 // BlockLoopContextCarrier holds caller-owned edge contexts when a block-loop
@@ -75,6 +76,7 @@ type blockModeAboveContext struct {
 	Interp      [MaxBlockModeSlots]motion.InterpFilters
 	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
+	PaletteY    [MaxBlockModeSlots]paletteContext
 }
 
 type blockModeLeftContext struct {
@@ -96,6 +98,7 @@ type blockModeLeftContext struct {
 	Interp      [MaxBlockModeSlots]motion.InterpFilters
 	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
+	PaletteY    [MaxBlockModeSlots]paletteContext
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -116,18 +119,19 @@ type BlockLoopRequest struct {
 	PreviousSegmentMap []uint8
 	SegmentMapStride   int
 
-	FrameType             parser.FrameType
-	AllowIntrabc          bool
-	ReferenceMode         parser.ReferenceMode
-	SkipModeRefs          [2]ReferenceFrame
-	DecodePredictionModes bool
-	DecodeInterModes      bool
-	DecodeMotionVectors   bool
-	DecodeInterIntra      bool
-	DecodeMotionModes     bool
-	DecodeCompoundBlend   bool
-	DecodeCoefficients    bool
-	EnableFilterIntra     bool
+	FrameType               parser.FrameType
+	AllowIntrabc            bool
+	ReferenceMode           parser.ReferenceMode
+	SkipModeRefs            [2]ReferenceFrame
+	DecodePredictionModes   bool
+	DecodeInterModes        bool
+	DecodeMotionVectors     bool
+	DecodeInterIntra        bool
+	DecodeMotionModes       bool
+	DecodeCompoundBlend     bool
+	DecodeCoefficients      bool
+	EnableFilterIntra       bool
+	AllowScreenContentTools bool
 
 	GlobalMVs            [referenceFrameCount]motion.Vector
 	GlobalMotion         [referenceFrameCount]parser.WarpedMotionParams
@@ -420,6 +424,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveInterp = above.mode.Interp
 		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
+		scratch.Mode.AbovePaletteY = above.mode.PaletteY
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
 		}
@@ -445,6 +450,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftInterp = left.mode.Interp
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
+		scratch.Mode.LeftPaletteY = left.mode.PaletteY
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
@@ -479,6 +485,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.Interp = scratch.Mode.AboveInterp
 	above.mode.InterpValid = scratch.Mode.AboveInterpValid
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
+	above.mode.PaletteY = scratch.Mode.AbovePaletteY
 	for plane := 0; plane < 3; plane++ {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
 	}
@@ -503,6 +510,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.Interp = scratch.Mode.LeftInterp
 	left.mode.InterpValid = scratch.Mode.LeftInterpValid
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
+	left.mode.PaletteY = scratch.Mode.LeftPaletteY
 	for plane := 0; plane < 3; plane++ {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
@@ -564,7 +572,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 
 	var prediction BlockPredictionModeResult
 	if req.DecodePredictionModes {
-		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment)
+		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.PaletteY)
 		if err != nil {
 			return BlockLoopVisit{}, fmt.Errorf("decode prediction: %w", err)
 		}
@@ -627,7 +635,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	return visit, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData) (BlockPredictionModeResult, error) {
+func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *[MaxPalettePixels]uint8) (BlockPredictionModeResult, error) {
 	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
@@ -977,11 +985,26 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.ChromaAngleDelta = chromaAngleDelta
 		}
 	}
+	if err := s.ReadPaletteMode(cdfs.Intra, ctx, PaletteModeRequest{
+		AllowScreenContentTools: req.AllowScreenContentTools,
+		Size:                    block.Size,
+		LumaMode:                mode,
+		X4:                      block.X4,
+		Y4:                      block.Y4,
+		HaveTop:                 block.HaveTop,
+		HaveLeft:                block.HaveLeft,
+		BitDepth:                req.Color.BitDepth,
+	}, &result.Palette, paletteMap); err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	if err := ctx.MarkPaletteY(block.Size, block.X4, block.Y4, result.Palette); err != nil {
+		return BlockPredictionModeResult{}, err
+	}
 	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{
 		EnableFilterIntra: req.EnableFilterIntra,
 		Size:              block.Size,
 		LumaMode:          mode,
-		PaletteYSize:      0,
+		PaletteYSize:      result.Palette.YSize,
 	})
 	if err != nil {
 		return BlockPredictionModeResult{}, err

@@ -366,6 +366,13 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	x -= window.X
 	y -= window.Y
 
+	if visit.Prediction.Palette.YSize > 0 {
+		if err := frameWorkPredictLumaPalette(dst, window.BytesPerSample, x, y, width, height, visit.Block, visit.Prediction.Palette, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	if visit.Prediction.FilterIntraValid {
 		mode, ok := frameWorkFilterIntraPredictionMode(visit.Prediction.FilterIntraMode)
 		if !ok {
@@ -441,6 +448,16 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	y := absY - window.Y
 	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, tx.X4, tx.Y4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
+	if visit.Prediction.Palette.YSize > 0 {
+		baseX, baseY, err := frameWorkBlockLumaPosition(visit.Block)
+		if err != nil {
+			return err
+		}
+		if err := frameWorkPredictLumaPalette(dst, window.BytesPerSample, x, y, width, height, visit.Block, visit.Prediction.Palette, absX-baseX, absY-baseY); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	if visit.Prediction.FilterIntraValid {
 		mode, ok := frameWorkFilterIntraPredictionMode(visit.Prediction.FilterIntraMode)
@@ -3362,4 +3379,31 @@ func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, v
 		return false
 	}
 	return true
+}
+
+func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, palette tile.PaletteModeResult, mapX int, mapY int) error {
+	if palette.YSize == 0 || palette.YSize > tile.PaletteMaxSize || palette.YMap == nil {
+		return ErrInvalidBatch
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return ErrInvalidBatch
+	}
+	mapStride := int(dims.W4) * 4
+	mapHeight := int(dims.H4) * 4
+	if mapX < 0 || mapY < 0 || mapX+width > mapStride || mapY+height > mapHeight {
+		return ErrInvalidBatch
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			index := palette.YMap[(mapY+row)*mapStride+mapX+col]
+			if index >= palette.YSize {
+				return ErrInvalidBatch
+			}
+			if !frameWorkStoreSample(dst, bytesPerSample, x+col, y+row, palette.YColors[index]) {
+				return ErrInvalidBatch
+			}
+		}
+	}
+	return nil
 }
