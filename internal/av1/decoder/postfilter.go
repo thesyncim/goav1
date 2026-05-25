@@ -313,7 +313,6 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	if err := next.RequirePublishablePostFilterOutput(); err != nil {
 		return err
 	}
-	r.Options = options
 	r.Size = size
 	r.Request = req
 	r.Context = next

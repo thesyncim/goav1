@@ -1210,6 +1210,50 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsLoopFilterThenCD
 	}
 }
 
+func TestFrameWorkBoundSupportedPostFilterRunnerDoesNotRetainDefaultSideMaps(t *testing.T) {
+	const width = 16
+	const height = 16
+
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, testFrameWorkLoopFilterPostFilterRecord(cols, rows))
+	event := Event{
+		SequenceHeader: testSequence(),
+		FrameSize:      size,
+		LoopFilter: parser.LoopFilterParams{
+			LevelY: [2]uint8{4},
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	runner := FrameWorkBoundSupportedPostFilterRunner{
+		Scratch: FrameWorkPostFilterScratch{
+			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 1),
+		},
+	}
+	if err := runner.Apply(FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Result.Completed != FrameWorkPostFilterLoopFilter || runner.Context.RemainingPostFilters() != 0 {
+		t.Fatalf("result=%+v remaining=%b", runner.Result, runner.Context.RemainingPostFilters())
+	}
+	if !frameWorkLoopFilterMapEmpty(runner.Options.LoopFilterMap) {
+		t.Fatalf("runner retained defaulted loop-filter map: %+v", runner.Options.LoopFilterMap)
+	}
+
+	err = runner.Apply(FrameWorkPostFilterContext{Event: event, Output: output})
+	if !errors.Is(err, threading.ErrInvalidBatch) {
+		t.Fatalf("reused runner Apply err=%v want %v", err, threading.ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyPreSuperResPostFiltersRunsLoopFilterThenCDEF(t *testing.T) {
 	const width = 32
 	const height = 16
