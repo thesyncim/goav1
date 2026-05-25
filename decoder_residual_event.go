@@ -96,7 +96,7 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		}
 	}
 
-	run, err := req.State.RunStepWithPayloadContextAndPostFilter(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner.Run, req.Post)
+	run, err := req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}

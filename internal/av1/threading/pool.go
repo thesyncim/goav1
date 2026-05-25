@@ -676,6 +676,12 @@ func frameWorkCheckedMul(a int, b int) (int, bool) {
 // FrameWorkBatchFunc processes one deterministic frame-work tile batch.
 type FrameWorkBatchFunc func(FrameWorkBatch) error
 
+// FrameWorkBatchRunner processes one deterministic frame-work tile batch
+// without requiring callers to construct a callback adapter.
+type FrameWorkBatchRunner interface {
+	Run(FrameWorkBatch) error
+}
+
 // Pool is a reusable bounded worker pool for frame/tile work.
 type Pool struct {
 	mu      sync.Mutex
@@ -689,11 +695,12 @@ type poolWorker struct {
 }
 
 type poolTask struct {
-	fn         BatchFunc
-	frameFn    FrameWorkBatchFunc
-	frameBatch FrameWorkBatch
-	batch      Batch
-	jobs       []tile.Job
+	fn          BatchFunc
+	frameFn     FrameWorkBatchFunc
+	frameRunner FrameWorkBatchRunner
+	frameBatch  FrameWorkBatch
+	batch       Batch
+	jobs        []tile.Job
 }
 
 type workerResult struct {
@@ -817,6 +824,53 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 	return firstErr
 }
 
+// ExecuteFrameWorkRunner dispatches frame-work batches with decoder context
+// through runner. It follows ExecuteFrameWork's validation and synchronization
+// rules without constructing a callback adapter.
+func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRunner) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if runner == nil {
+		return ErrInvalidCallback
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) > len(p.workers) {
+		return ErrInvalidBatch
+	}
+	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+
+	for i := 0; i < len(batches); i++ {
+		batch := batches[i]
+		p.workers[batch.Worker].tasks <- poolTask{
+			frameRunner: runner,
+			frameBatch:  base,
+			batch:       batch,
+			jobs:        jobs[batch.FirstJob : batch.FirstJob+batch.Count],
+		}
+	}
+
+	var firstErr error
+	for i := 0; i < len(batches); i++ {
+		result := <-p.done
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+	}
+	p.mu.Unlock()
+	return firstErr
+}
+
 func (p *Pool) Close() {
 	if p == nil {
 		return
@@ -857,6 +911,13 @@ func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 			ctx.Batch = task.batch
 			ctx.Jobs = task.jobs
 			done <- workerResult{err: task.frameFn(ctx)}
+			continue
+		}
+		if task.frameRunner != nil {
+			ctx := task.frameBatch
+			ctx.Batch = task.batch
+			ctx.Jobs = task.jobs
+			done <- workerResult{err: task.frameRunner.Run(ctx)}
 			continue
 		}
 		done <- workerResult{err: task.fn(task.batch, task.jobs)}

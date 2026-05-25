@@ -548,6 +548,13 @@ func (s *FrameWorkState) RunStepWithPayloadContextAndPostFilter(refs *SurfaceRef
 	return s.runStepWithPayloadContext(refs, framePool, event, step, workerPool, output, references, payload, true, jobs, batches, releases, fn, post)
 }
 
+// RunStepWithPayloadContextAndPostFilterRunner is
+// RunStepWithPayloadContextAndPostFilter using a frame-work batch runner
+// directly instead of a callback adapter.
+func (s *FrameWorkState) RunStepWithPayloadContextAndPostFilterRunner(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
+	return s.runStepWithPayloadContextRunner(refs, framePool, event, step, workerPool, output, references, payload, true, jobs, batches, releases, runner, post)
+}
+
 func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, fn FrameWorkBatchFunc, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
@@ -567,6 +574,48 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, jobs, batches, fn)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	if output == nil {
+		output, err = frameWorkPostFilterOutput(event, framePool, step, post)
+		if err != nil {
+			return FrameWorkStepResult{ExecutedTileWork: executed}, err
+		}
+	}
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     releaseCount,
+	}, nil
+}
+
+func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
+	}
+	_, referenceCount, _, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	frameContext := frameWorkFrameContext(event, s.sequenceContext())
+	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFsValid *bool
+	if s != nil && s.tileResidualCurrentCDFsValid {
+		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
+		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
+		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
+	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, jobs, batches, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -800,6 +849,52 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		LoopFilterMap:                 loopFilterMap,
 	}
 	err = pool.ExecuteFrameWork(batches[:plan.BatchCount], jobs[:plan.JobCount], base, fn)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return false, err
+	}
+	if !hasTile {
+		return false, nil
+	}
+	if err := validateTileWorkPlan(plan, jobs, batches); err != nil {
+		return false, err
+	}
+	if plan.JobCount == 0 {
+		return false, nil
+	}
+	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+		return false, ErrInvalidTileWork
+	}
+	if len(references) < referenceCount {
+		return false, ErrSurfaceReferenceBufferTooSmall
+	}
+	if validatePayload {
+		if err := tile.ValidatePayloads(payload, jobs[:plan.JobCount]); err != nil {
+			return false, err
+		}
+	}
+
+	base := FrameWorkBatch{
+		Step:                          step,
+		Output:                        output,
+		Payload:                       payload,
+		References:                    references[:referenceCount],
+		FrameWorkFrameContext:         frameContext,
+		DisableCDFUpdate:              disableCDFUpdate,
+		InitialTileResidualCDFs:       initialTileResidualCDFs,
+		RetainedTileResidualCDFs:      retainedTileResidualCDFs,
+		RetainedTileResidualCDFsValid: retainedTileResidualCDFsValid,
+		CDEFIndexMap:                  cdefIndexMap,
+		LoopFilterMap:                 loopFilterMap,
+	}
+	err = pool.ExecuteFrameWorkRunner(batches[:plan.BatchCount], jobs[:plan.JobCount], base, runner)
 	if err != nil {
 		return false, err
 	}
