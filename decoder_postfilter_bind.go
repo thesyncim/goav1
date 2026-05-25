@@ -22,6 +22,22 @@ func BindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, 
 	return batch.BindLoopFilterMap(records)
 }
 
+func ResetDecoderFrameWorkCDEFIndexMap(indexMap DecoderFrameWorkCDEFIndexMap) error {
+	return indexMap.Reset()
+}
+
+func MarkDecoderFrameWorkCDEFIndexMapBlock(indexMap DecoderFrameWorkCDEFIndexMap, cdef CDEFParams, visit TileBlockLoopVisit) error {
+	return indexMap.MarkBlock(cdef, visit)
+}
+
+func ResetDecoderFrameWorkLoopFilterMap(filterMap DecoderFrameWorkLoopFilterMap) error {
+	return filterMap.Reset()
+}
+
+func MarkDecoderFrameWorkLoopFilterMapBlock(filterMap DecoderFrameWorkLoopFilterMap, visit TileBlockLoopVisit, state *TileDecodeState) error {
+	return filterMap.MarkBlock(visit, state)
+}
+
 func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFilterPostFilterScratchSize, filterMap DecoderFrameWorkLoopFilterMap, edges []DecoderFrameWorkLoopFilterPostFilterEdge) (DecoderFrameWorkLoopFilterPostFilterRequest, error) {
 	if len(edges) < size.Edges {
 		return DecoderFrameWorkLoopFilterPostFilterRequest{}, ErrFrameShortBuffer

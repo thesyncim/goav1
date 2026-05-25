@@ -215,6 +215,51 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	}
 }
 
+func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsMarksSideMaps(t *testing.T) {
+	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
+	batch.CDEF = av1.CDEFParams{Bits: 0, StrengthCount: 1}
+	sequence := av1.SequenceHeader{
+		Use128x128Superblock: batch.Sequence.SBSizeMIB == 32,
+		ColorConfig:          batch.Sequence.ColorConfig,
+	}
+	_, _, cdefLength, err := av1.DecoderFrameWorkCDEFIndexMapShape(sequence, batch.FrameSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, err := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, batch.FrameSize, batch.CDEF, make([]uint8, cdefLength), make([]bool, cdefLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, loopLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, batch.FrameSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, batch.FrameSize, make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch.CDEFIndexMap = &cdefMap
+	batch.LoopFilterMap = &loopMap
+	state.DeltaLFFromBase = -3
+	state.DeltaLF = [av1.TileFrameLoopFilterCount]int8{4, 3, 2, 1}
+
+	stats, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CoefficientBlocks != 1 || stats.Loop.CoefficientBlocks != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !cdefMap.Read[0] || cdefMap.Index[0] != 0 {
+		t.Fatalf("cdef map read=%v index=%d want true,0", cdefMap.Read[0], cdefMap.Index[0])
+	}
+	record := loopMap.Records[0]
+	if !record.Valid || record.Block.MICol != 0 || record.Block.MIRow != 0 ||
+		record.DeltaLFFromBase != -3 || record.DeltaLF != state.DeltaLF {
+		t.Fatalf("loop-filter record=%+v state delta=%v", record, state.DeltaLF)
+	}
+}
+
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsRejectsInvalidInputs(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
 	if _, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, nil, cdfs, &scratch, req); !errors.Is(err, av1.ErrThreadingInvalidBatch) {

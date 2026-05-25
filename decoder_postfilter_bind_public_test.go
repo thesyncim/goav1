@@ -89,6 +89,63 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderSideMapsMarkAndReset(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	cdef := av1.CDEFParams{Bits: 2, StrengthCount: 4}
+	_, _, cdefLength, err := av1.DecoderFrameWorkCDEFIndexMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, err := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, size, cdef, make([]uint8, cdefLength), make([]bool, cdefLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap.Index[0], cdefMap.Read[0] = 3, true
+	if err := av1.ResetDecoderFrameWorkCDEFIndexMap(cdefMap); err != nil {
+		t.Fatal(err)
+	}
+	if cdefMap.Index[0] != 0 || cdefMap.Read[0] {
+		t.Fatalf("cdef map reset index=%d read=%v", cdefMap.Index[0], cdefMap.Read[0])
+	}
+	visit := publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)
+	visit.Prefix.CDEFIndex = 2
+	if err := av1.MarkDecoderFrameWorkCDEFIndexMapBlock(cdefMap, cdef, visit); err != nil {
+		t.Fatal(err)
+	}
+	if cdefMap.Index[0] != 2 || !cdefMap.Read[0] {
+		t.Fatalf("cdef map mark index=%d read=%v want 2,true", cdefMap.Index[0], cdefMap.Read[0])
+	}
+
+	_, _, loopLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopLength))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopMap.Records[0].Valid = true
+	if err := av1.ResetDecoderFrameWorkLoopFilterMap(loopMap); err != nil {
+		t.Fatal(err)
+	}
+	if loopMap.Records[0].Valid {
+		t.Fatal("loop-filter map reset left record valid")
+	}
+	state := &av1.TileDecodeState{
+		DeltaLFFromBase: -2,
+		DeltaLF:         [av1.TileFrameLoopFilterCount]int8{1, 2, 3, 4},
+	}
+	if err := av1.MarkDecoderFrameWorkLoopFilterMapBlock(loopMap, visit, state); err != nil {
+		t.Fatal(err)
+	}
+	record := loopMap.Records[4*loopMap.Stride+4]
+	if !record.Valid || record.Block.MICol != 4 || record.Block.MIRow != 4 ||
+		record.DeltaLFFromBase != -2 || record.DeltaLF != state.DeltaLF {
+		t.Fatalf("loop-filter record=%+v state=%+v", record, state)
+	}
+}
+
 func TestPublicDecoderRestorationFrameBuffersBinding(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 280, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
