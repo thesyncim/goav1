@@ -44,6 +44,8 @@ type InterTransformTypeRequest struct {
 	ReducedTXSet  bool
 	SkipTransform bool
 	Lossless      bool
+	QIndexKnown   bool
+	QIndex        uint8
 }
 
 // IntraCoeffTransformSelector reads luma intra tx_type syntax for each luma
@@ -72,6 +74,8 @@ type InterCoeffTransformSelector struct {
 	ReducedTXSet  bool
 	SkipTransform bool
 	Lossless      bool
+	QIndexKnown   bool
+	QIndex        uint8
 	Color         parser.ColorConfig
 	Map           InterTransformTypeMap
 }
@@ -117,16 +121,24 @@ func (s *IntraCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 }
 
 func (s *InterCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool) {
-	s.ResetForColor(state, cdfs, reducedTXSet, skipTransform, lossless, parser.ColorConfig{})
-}
-
-func (s *InterCoeffTransformSelector) ResetForColor(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, color parser.ColorConfig) {
 	*s = InterCoeffTransformSelector{
 		State:         state,
 		CDFs:          cdfs,
 		ReducedTXSet:  reducedTXSet,
 		SkipTransform: skipTransform,
 		Lossless:      lossless,
+	}
+}
+
+func (s *InterCoeffTransformSelector) ResetForColor(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, qIndex uint8, color parser.ColorConfig) {
+	*s = InterCoeffTransformSelector{
+		State:         state,
+		CDFs:          cdfs,
+		ReducedTXSet:  reducedTXSet,
+		SkipTransform: skipTransform,
+		Lossless:      lossless,
+		QIndexKnown:   true,
+		QIndex:        qIndex,
 		Color:         color,
 	}
 }
@@ -135,7 +147,7 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 	if s == nil || s.State == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	if s.SkipTransform || s.Lossless {
+	if s.SkipTransform || s.Lossless || (s.QIndexKnown && s.QIndex == 0) {
 		return transform.TypeDCTDCT, nil
 	}
 	if req.Plane != 0 {
@@ -157,6 +169,8 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 		ReducedTXSet:  s.ReducedTXSet,
 		SkipTransform: s.SkipTransform,
 		Lossless:      s.Lossless,
+		QIndexKnown:   s.QIndexKnown,
+		QIndex:        s.QIndex,
 	})
 	if err != nil {
 		return 0, err
@@ -548,7 +562,7 @@ func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterT
 	if !req.Size.Valid() {
 		return 0, ErrInvalidDecodeState
 	}
-	if req.SkipTransform || req.Lossless {
+	if req.SkipTransform || req.Lossless || (req.QIndexKnown && req.QIndex == 0) {
 		return transform.TypeDCTDCT, nil
 	}
 	set, err := ExtTXSetTypeFor(req.Size, true, req.ReducedTXSet)

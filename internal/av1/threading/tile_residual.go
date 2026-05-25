@@ -768,7 +768,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, lumaMode, chromaMode)
 		transformSelect = &c.scratch.IntraTX
 	} else if transforms.ReadInterTX {
-		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, c.batch.Sequence.ColorConfig)
+		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
 	return tile.BlockCoeffRequest{

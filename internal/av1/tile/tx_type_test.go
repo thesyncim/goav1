@@ -479,6 +479,21 @@ func TestReadInterTransformTypeMatchesLibaomBranches(t *testing.T) {
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	before := state.Reader.BitsRead()
+	got, err = state.ReadInterTransformType(nil, InterTransformTypeRequest{Size: TransformSize16x16, QIndexKnown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("qindex-zero tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+	if after := state.Reader.BitsRead(); after != before {
+		t.Fatalf("qindex-zero tx type read bits=%d want %d", after, before)
+	}
+
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	got, err = state.ReadInterTransformType(nil, InterTransformTypeRequest{Size: TransformSize64x64})
 	if err != nil {
 		t.Fatal(err)
@@ -516,7 +531,7 @@ func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
 	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
 		Plane: 0,
 		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
@@ -552,7 +567,7 @@ func TestInterCoeffTransformSelectorChromaReusesOddSubsampledLumaMap(t *testing.
 		t.Fatal(err)
 	}
 	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
 	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
 		Plane: 0,
 		Block: TransformBlock{X4: 8, Y4: 13, Size: TransformSize8x4},
@@ -578,7 +593,7 @@ func TestInterCoeffTransformSelectorChromaFallsBackWhenMappedTypeUnsupported(t *
 		t.Fatal(err)
 	}
 	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
 	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
 		Plane: 0,
 		Block: TransformBlock{X4: 0, Y4: 0, Size: TransformSize4x4},
@@ -603,7 +618,7 @@ func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.
 		t.Fatal(err)
 	}
 	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, true, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	selector.ResetForColor(&state, nil, false, false, true, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
 	before := state.Reader.BitsRead()
 	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
 		Plane: 1,
