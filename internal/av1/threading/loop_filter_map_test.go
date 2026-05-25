@@ -151,6 +151,14 @@ func TestFrameWorkLoopFilterMapMarkBlockHandlesIntraAndCompound(t *testing.T) {
 	if got := filterMap.Records[2]; !got.Valid || got.Intra || got.RefFrame != int(tile.ReferenceFrameLast)+1 || got.Mode != loopfilter.ModeDeltaClassMotion {
 		t.Fatalf("compound record=%+v", got)
 	}
+
+	intrabc := intra
+	intrabc.Prediction.Intra = false
+	intrabc.Prediction.Intrabc = true
+	intrabc.Prediction.IntrabcValid = true
+	if err := filterMap.MarkBlock(intrabc, state); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("intrabc mark err=%v want %v", err, ErrInvalidBatch)
+	}
 }
 
 func TestFrameWorkLoopFilterMapMarkBlockRejectsInvalidInputs(t *testing.T) {

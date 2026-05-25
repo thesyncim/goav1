@@ -404,6 +404,20 @@ func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
 	if got != transform.TypeDCTDCT {
 		t.Fatalf("reduced tx type=%d want %d", got, transform.TypeDCTDCT)
 	}
+
+	intrabc := tile.BlockLoopVisit{
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:        true,
+			Intrabc:      true,
+			IntrabcValid: true,
+		},
+	}
+	if _, err := ctx.ReadInterBlockTransforms(&state, intrabc); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("intrabc inter transforms err=%v want %v", err, ErrInvalidBatch)
+	}
+	if _, err := ctx.ReadBlockTransforms(&state, intrabc); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("intrabc default transforms err=%v want %v", err, ErrInvalidBatch)
+	}
 }
 
 func TestFrameWorkBatchReadIntraBlockTransforms(t *testing.T) {

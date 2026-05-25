@@ -107,6 +107,9 @@ func (m FrameWorkLoopFilterMap) MarkBlock(visit tile.BlockLoopVisit, state *tile
 	if block.MIColEnd > uint32(m.Stride) || block.MIRowEnd > uint32(m.Rows) {
 		return ErrInvalidBatch
 	}
+	if frameWorkPredictionIsIntrabc(visit.Prediction) {
+		return ErrInvalidBatch
+	}
 	refFrame, mode, err := frameWorkLoopFilterRefMode(visit)
 	if err != nil {
 		return err
