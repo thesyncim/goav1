@@ -107,7 +107,8 @@ The initial implementation covers:
   show-existing-frame updates, including event-aware frame completion and
   inter-reference lookup and reference-frame pointer resolution helpers with
   checked frame begin and atomic frame-pool release.
-- Caller-buffer frame plane layout and binding primitives.
+- Public caller-buffer frame plane layout, pool backing sizing, binding
+  primitives, and sample-plane load/store helpers for postfilter scratch.
 - Caller-owned deterministic frame pools for reusable and retained decode
   surfaces, including format-checked acquire and atomic batch release.
 - Pure-Go DSP plane-block fill, copy, and clipped residual-add primitives for
