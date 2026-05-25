@@ -258,6 +258,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 		return 0, TXBDecodeResult{}, nil, nil, err
 	}
 	req.Class = selectedClass
+	req.EOBMultiContext = eobMultiContextForClass(selectedClass)
 	req.TXBSkipKnown = true
 	req.TXBSkip = allZero
 	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
@@ -273,6 +274,13 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 		}
 	}
 	return selected, result, coeffs, scan, nil
+}
+
+func eobMultiContextForClass(class transform.Class) int {
+	if class == transform.Class2D {
+		return 0
+	}
+	return 1
 }
 
 func resolveCoeffTransform(selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, plane int, block TransformBlock) (transform.Type, transform.Class, error) {

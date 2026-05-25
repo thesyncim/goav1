@@ -170,6 +170,23 @@ func TestDecodeLumaCoefficientsSkipsTransformSelectForTXBSkip(t *testing.T) {
 	}
 }
 
+func TestEOBMultiContextForClassMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		name  string
+		class transform.Class
+		want  int
+	}{
+		{name: "2d", class: transform.Class2D, want: 0},
+		{name: "horizontal", class: transform.ClassHoriz, want: 1},
+		{name: "vertical", class: transform.ClassVert, want: 1},
+	}
+	for _, tt := range tests {
+		if got := eobMultiContextForClass(tt.class); got != tt.want {
+			t.Fatalf("%s context=%d want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestDecodeLumaCoefficientsSkipTransformResetsContext(t *testing.T) {
 	var state DecodeState
 	var cdfs CoeffCDFs
