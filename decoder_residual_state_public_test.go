@@ -215,6 +215,45 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	}
 }
 
+func TestPublicDecodeAndRetainDecoderFrameWorkJobResiduals(t *testing.T) {
+	batch, state, _, scratch, req := publicDecoderResidualDriver(t)
+	var storage av1.DecoderFrameWorkTileResidualCDFStorage
+	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+		t.Fatal(err)
+	}
+	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	retainedValid := false
+	batch.RetainedTileResidualCDFs = &retained
+	batch.RetainedTileResidualCDFsValid = &retainedValid
+	batch.Jobs[0].UpdatesFrameContext = true
+
+	stats, err := av1.DecodeAndRetainDecoderFrameWorkJobResiduals(batch, 0, state, &storage, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.TXBs != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !retainedValid {
+		t.Fatal("update job did not retain residual CDF storage")
+	}
+	if !publicCDFValuesEqual(retained.DeltaQ.Values(), storage.DeltaQ.Values()) {
+		t.Fatalf("retained delta q=%v want %v", retained.DeltaQ.Values(), storage.DeltaQ.Values())
+	}
+
+	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+		t.Fatal(err)
+	}
+	retainedValid = false
+	batch.Jobs[0].UpdatesFrameContext = false
+	if _, err := av1.DecodeAndRetainDecoderFrameWorkJobResiduals(batch, 0, state, &storage, &scratch, req); err != nil {
+		t.Fatal(err)
+	}
+	if retainedValid {
+		t.Fatal("non-update job retained residual CDF storage")
+	}
+}
+
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsMarksSideMaps(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
 	batch.CDEF = av1.CDEFParams{Bits: 0, StrengthCount: 1}
@@ -277,6 +316,9 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsRejectsInvalidInp
 	scratch.LoopContext.Above = []av1.TileBlockLoopRootAboveContext{}
 	if _, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, &scratch, shortCarrier); !errors.Is(err, av1.ErrTileInvalidDecodeState) {
 		t.Fatalf("short scratch carrier err=%v want %v", err, av1.ErrTileInvalidDecodeState)
+	}
+	if _, err := av1.DecodeAndRetainDecoderFrameWorkJobResiduals(batch, 0, state, nil, &scratch, req); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("nil retain storage err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
 	if _, _, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlane(99), av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("bad scratch plane err=%v want %v", err, av1.ErrThreadingInvalidBatch)
@@ -352,6 +394,22 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsAllocs(t *testing
 			t.Fatal(err)
 		}
 		if _, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, &scratch, req); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("allocs=%v want 0", allocs)
+	}
+}
+
+func TestPublicDecodeAndRetainDecoderFrameWorkJobResidualsAllocs(t *testing.T) {
+	batch, state, _, scratch, req := publicDecoderResidualDriver(t)
+	var storage av1.DecoderFrameWorkTileResidualCDFStorage
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := av1.DecodeAndRetainDecoderFrameWorkJobResiduals(batch, 0, state, &storage, &scratch, req); err != nil {
 			t.Fatal(err)
 		}
 	})

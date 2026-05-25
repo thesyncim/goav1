@@ -90,3 +90,20 @@ func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state
 func DecodeAndReconstructDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs DecoderFrameWorkTileResidualCDFs, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	return batch.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, req)
 }
+
+func DecodeAndRetainDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+	if storage == nil {
+		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
+	}
+	if err := InitDecoderFrameWorkJobDecodeState(batch, index, state); err != nil {
+		return DecoderFrameWorkTileResidualStats{}, err
+	}
+	stats, err := DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+	if err != nil {
+		return stats, err
+	}
+	if err := RetainDecoderFrameWorkTileResidualCDFStorage(batch, index, state, storage); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
