@@ -457,6 +457,20 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 	varianceGrid := make([]av1.CDEFVarianceGrid, cdefSize.VarianceGrid)
 	inputScratch := make([]uint16, cdefSize.Input)
 	unitDstScratch := make([]uint16, cdefSize.UnitDst)
+	postFilterSize := av1.DecoderFrameWorkPostFilterScratchSize{
+		LoopFilter: loopFilterSize,
+		CDEF:       cdefSize,
+	}
+	postFilterBuffers := av1.DecoderFrameWorkPostFilterRequestBuffers{
+		LoopFilterEdges: loopFilterEdges,
+
+		CDEFSampleScratch:  sampleScratch,
+		CDEFDstScratch:     dstScratch,
+		CDEFDirectionGrid:  directionGrid,
+		CDEFVarianceGrid:   varianceGrid,
+		CDEFInputScratch:   inputScratch,
+		CDEFUnitDstScratch: unitDstScratch,
+	}
 
 	b.SetBytes(int64(loopFilterLength + len(index) + cdefSize.Input + cdefSize.UnitDst))
 	b.ReportAllocs()
@@ -468,6 +482,7 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		postFilterBuffers.LoopFilterMap = loopMap
 		loopReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopMap, loopFilterEdges)
 		if err != nil {
 			b.Fatal(err)
@@ -476,11 +491,16 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		postFilterBuffers.CDEFIndexMap = cdefMap
 		cdefReq, err := av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows
+		postReq, err := av1.BindDecoderFrameWorkPostFilterRequest(postFilterSize, postFilterBuffers)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows + len(postReq.CDEF.InputScratch)
 	}
 	publicBenchmarkSink = sum
 }

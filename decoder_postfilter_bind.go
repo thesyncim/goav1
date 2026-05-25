@@ -38,6 +38,72 @@ func MarkDecoderFrameWorkLoopFilterMapBlock(filterMap DecoderFrameWorkLoopFilter
 	return filterMap.MarkBlock(visit, state)
 }
 
+// DecoderFrameWorkPostFilterRequestBuffers groups caller-owned side data and
+// scratch slices used to bind a full postfilter request.
+type DecoderFrameWorkPostFilterRequestBuffers struct {
+	LoopFilterMap   DecoderFrameWorkLoopFilterMap
+	LoopFilterEdges []DecoderFrameWorkLoopFilterPostFilterEdge
+
+	CDEFIndexMap       DecoderFrameWorkCDEFIndexMap
+	CDEFSampleScratch  [3][]uint16
+	CDEFDstScratch     [3][]uint16
+	CDEFDirectionGrid  []CDEFDirectionGrid
+	CDEFVarianceGrid   []CDEFVarianceGrid
+	CDEFInputScratch   []uint16
+	CDEFUnitDstScratch []uint16
+
+	SuperResOutputFrame   []byte
+	SuperResCodedScratch  [3][]uint16
+	SuperResOutputScratch [3][]uint16
+
+	RestorationRecords              [3][]TileRestorationUnitRecord
+	RestorationBoundaries           [3]TileRestorationStripeBoundaries
+	RestorationDataScratch          []uint16
+	RestorationDstScratch           []uint16
+	RestorationWienerScratch        []uint16
+	RestorationSGRProjScratch       []int32
+	RestorationBoundaryAboveScratch []uint16
+	RestorationBoundaryBelowScratch []uint16
+	RestorationOptimized            bool
+
+	FilmGrainLumaGrain     []int16
+	FilmGrainChromaGrain   [2][]int16
+	FilmGrainLumaSamples   []uint16
+	FilmGrainChromaSamples [2][]uint16
+}
+
+// BindDecoderFrameWorkPostFilterRequest binds all caller-owned postfilter
+// scratch into one request. Zero-sized stages accept nil backing slices.
+func BindDecoderFrameWorkPostFilterRequest(size DecoderFrameWorkPostFilterScratchSize, buffers DecoderFrameWorkPostFilterRequestBuffers) (DecoderFrameWorkPostFilterRequest, error) {
+	loopFilterReq, err := BindDecoderFrameWorkLoopFilterPostFilterRequest(size.LoopFilter, buffers.LoopFilterMap, buffers.LoopFilterEdges)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	cdefReq, err := BindDecoderFrameWorkCDEFPostFilterRequest(size.CDEF, buffers.CDEFIndexMap, buffers.CDEFSampleScratch, buffers.CDEFDstScratch, buffers.CDEFDirectionGrid, buffers.CDEFVarianceGrid, buffers.CDEFInputScratch, buffers.CDEFUnitDstScratch)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	superResReq, err := BindDecoderFrameWorkSuperResPostFilterRequest(size.SuperRes, buffers.SuperResOutputFrame, buffers.SuperResCodedScratch, buffers.SuperResOutputScratch)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	restorationReq, err := BindDecoderFrameWorkRestorationPostFilterRequest(size.Restoration, buffers.RestorationRecords, buffers.RestorationBoundaries, buffers.RestorationDataScratch, buffers.RestorationDstScratch, buffers.RestorationWienerScratch, buffers.RestorationSGRProjScratch, buffers.RestorationBoundaryAboveScratch, buffers.RestorationBoundaryBelowScratch, buffers.RestorationOptimized)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	filmGrainReq, err := BindDecoderFrameWorkFilmGrainPostFilterRequest(size.FilmGrain, buffers.FilmGrainLumaGrain, buffers.FilmGrainChromaGrain, buffers.FilmGrainLumaSamples, buffers.FilmGrainChromaSamples)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequest{}, err
+	}
+	return DecoderFrameWorkPostFilterRequest{
+		LoopFilter:  loopFilterReq,
+		CDEF:        cdefReq,
+		SuperRes:    superResReq,
+		Restoration: restorationReq,
+		FilmGrain:   filmGrainReq,
+	}, nil
+}
+
 func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFilterPostFilterScratchSize, filterMap DecoderFrameWorkLoopFilterMap, edges []DecoderFrameWorkLoopFilterPostFilterEdge) (DecoderFrameWorkLoopFilterPostFilterRequest, error) {
 	if len(edges) < size.Edges {
 		return DecoderFrameWorkLoopFilterPostFilterRequest{}, ErrFrameShortBuffer

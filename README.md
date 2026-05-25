@@ -161,8 +161,9 @@ The initial implementation covers:
   caller-owned CDF, entropy-context, and TXB scratch storage.
 - Public zero-allocation decoder postfilter request binding for loop filter,
   CDEF, superres, loop restoration, film grain, and loop-filter/CDEF side-map
-  storage, decoder-level loop-restoration frame buffers, postfilter capability
-  gates, runner scratch sizing, and reusable max scratch sizing.
+  storage, aggregate request binding, decoder-level loop-restoration frame
+  buffers, postfilter capability gates, runner scratch sizing, and reusable max
+  scratch sizing.
 - Public decoder side-map reset/mark helpers for passing tile residual CDEF
   indices and loop-filter metadata into postfilter planning.
 - Public decoder reference-MV and temporal motion-field storage binding for
