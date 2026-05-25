@@ -290,8 +290,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *
 	}
 	want := []FrameWorkLoopFilterPostFilterEdge{
 		{Plane: loopfilter.PlaneY, Edge: loopfilter.EdgeVertical, X4: 4, Y4: 0, Length4: 4, Level: 8, Transform: tile.TransformSize16x16, Width: 14, BlockMICol: 4, BlockMIRow: 0},
-		{Plane: loopfilter.PlaneU, Edge: loopfilter.EdgeVertical, X4: 2, Y4: 0, Length4: 2, Level: 7, Transform: tile.TransformSize8x8, Width: 8, BlockMICol: 4, BlockMIRow: 0},
-		{Plane: loopfilter.PlaneV, Edge: loopfilter.EdgeVertical, X4: 2, Y4: 0, Length4: 2, Level: 9, Transform: tile.TransformSize8x8, Width: 8, BlockMICol: 4, BlockMIRow: 0},
+		{Plane: loopfilter.PlaneU, Edge: loopfilter.EdgeVertical, X4: 2, Y4: 0, Length4: 2, Level: 7, Transform: tile.TransformSize8x8, Width: 6, BlockMICol: 4, BlockMIRow: 0},
+		{Plane: loopfilter.PlaneV, Edge: loopfilter.EdgeVertical, X4: 2, Y4: 0, Length4: 2, Level: 9, Transform: tile.TransformSize8x8, Width: 6, BlockMICol: 4, BlockMIRow: 0},
 	}
 	for i := range want {
 		if edges[i] != want[i] {
@@ -359,7 +359,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaSubsamplingGeom
 				Length4:    tt.wantLen,
 				Level:      7,
 				Transform:  tile.TransformSize8x8,
-				Width:      8,
+				Width:      6,
 				BlockMICol: 4,
 				BlockMIRow: 0,
 			}
@@ -769,7 +769,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousChromaLev
 		Length4:           2,
 		Level:             7,
 		Transform:         tile.TransformSize8x8,
-		Width:             8,
+		Width:             6,
 		LevelFromPrevious: true,
 		BlockMICol:        4,
 		BlockMIRow:        0,
@@ -831,7 +831,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousChromaLev
 		Length4:           2,
 		Level:             9,
 		Transform:         tile.TransformSize8x8,
-		Width:             8,
+		Width:             6,
 		LevelFromPrevious: true,
 		BlockMICol:        0,
 		BlockMIRow:        4,

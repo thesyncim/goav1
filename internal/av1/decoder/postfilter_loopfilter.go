@@ -921,10 +921,12 @@ func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx t
 		span4 = dims.H4
 	}
 	if plane == loopfilter.PlaneU || plane == loopfilter.PlaneV {
+		// libaom av1_loopfilter.c: chroma uses 4-tap when dim==0 (span4<=1)
+		// and 6-tap otherwise. The 8-tap and 14-tap filters are luma-only.
 		if span4 <= 1 {
 			return 4, nil
 		}
-		return 8, nil
+		return 6, nil
 	}
 	if plane != loopfilter.PlaneY {
 		return 0, threading.ErrInvalidBatch
@@ -972,6 +974,8 @@ func frameWorkLoopFilterDowngradeWidth(width int) int {
 	case 14:
 		return 8
 	case 8:
+		return 4
+	case 6:
 		return 4
 	default:
 		return 0
