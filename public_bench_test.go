@@ -821,6 +821,21 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var jobs [2]av1.TileJob
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
+	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Workers:           1,
+		Spans:             spans[:],
+		Jobs:              jobs[:],
+		Batches:           batches[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		BatchRunner:       &runner,
+	}
 
 	b.SetBytes(int64(len(event.Unit.Payload)))
 	b.ReportAllocs()
@@ -831,24 +846,7 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
-			State:             &state,
-			Refs:              &refs,
-			FramePool:         &pool,
-			Sequence:          sequence,
-			Event:             event,
-			Align:             64,
-			ReferenceSurfaces: referenceSurfaces[:],
-			ReferenceFrames:   referenceFrames[:],
-			Workers:           1,
-			Spans:             spans[:],
-			Jobs:              jobs[:],
-			Batches:           batches[:],
-			Releases:          releases[:],
-			WorkerPool:        workerPool,
-			Runner:            &runner,
-			SideData:          &side,
-		})
+		result, err := eventRunner.Run(sequence, event, &side, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

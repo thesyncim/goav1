@@ -27,6 +27,53 @@ type DecoderFrameWorkResidualEventRequest struct {
 	Post     DecoderFrameWorkPostFilterFunc
 }
 
+// DecoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
+// and pools used to run decoder frame-work events with a residual batch runner.
+type DecoderFrameWorkResidualEventRunner struct {
+	State     *DecoderFrameWorkState
+	Refs      *DecoderSurfaceReferences
+	FramePool *FramePool
+	Align     int
+
+	ReferenceSurfaces []int
+	ReferenceFrames   []*Frame
+
+	Workers int
+	Spans   []TileSpan
+	Jobs    []TileJob
+	Batches []TileBatch
+
+	Releases   []int
+	WorkerPool *TileWorkerPool
+
+	BatchRunner *DecoderFrameWorkBatchResidualRunner
+}
+
+// Run plans and executes one decoder frame-work event using the runner's
+// stable caller-owned state. The sequence, event, side-data, and postfilter
+// callback remain per-event inputs.
+func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
+	return RunDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+		State:             r.State,
+		Refs:              r.Refs,
+		FramePool:         r.FramePool,
+		Sequence:          sequence,
+		Event:             event,
+		Align:             r.Align,
+		ReferenceSurfaces: r.ReferenceSurfaces,
+		ReferenceFrames:   r.ReferenceFrames,
+		Workers:           r.Workers,
+		Spans:             r.Spans,
+		Jobs:              r.Jobs,
+		Batches:           r.Batches,
+		Releases:          r.Releases,
+		WorkerPool:        r.WorkerPool,
+		Runner:            r.BatchRunner,
+		SideData:          side,
+		Post:              post,
+	})
+}
+
 // DecoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports the residual runner scratch
 // required to execute the planned event.

@@ -482,7 +482,7 @@ func TestPublicDecoderFrameWorkBatchResidualRunnerSideData(t *testing.T) {
 	}
 }
 
-func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
+func TestPublicDecoderFrameWorkResidualEventRunner(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
 		t.Fatal(err)
@@ -544,13 +544,10 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
 	var postSawSideData bool
-
-	result, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
+	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
 		State:             &state,
 		Refs:              &refs,
 		FramePool:         &pool,
-		Sequence:          sequence,
-		Event:             event,
 		Align:             64,
 		ReferenceSurfaces: referenceSurfaces[:],
 		ReferenceFrames:   referenceFrames[:],
@@ -560,12 +557,12 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
 		Batches:           batches[:],
 		Releases:          releases[:],
 		WorkerPool:        workerPool,
-		Runner:            &runner,
-		SideData:          &side,
-		Post: func(ctx av1.DecoderFrameWorkPostFilterContext) error {
-			postSawSideData = ctx.CDEFIndexMap != nil && ctx.LoopFilterMap != nil && ctx.RestorationFrameBuffers != nil
-			return nil
-		},
+		BatchRunner:       &runner,
+	}
+
+	result, err := eventRunner.Run(sequence, event, &side, func(ctx av1.DecoderFrameWorkPostFilterContext) error {
+		postSawSideData = ctx.CDEFIndexMap != nil && ctx.LoopFilterMap != nil && ctx.RestorationFrameBuffers != nil
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -644,7 +641,7 @@ func TestPublicDecoderFrameWorkResidualEventRunnerScratchLen(t *testing.T) {
 	}
 }
 
-func TestPublicRunDecoderFrameWorkEventWithResidualRunnerAllocs(t *testing.T) {
+func TestPublicDecoderFrameWorkResidualEventRunnerAllocs(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
 		t.Fatal(err)
@@ -702,30 +699,27 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunnerAllocs(t *testing.T) {
 	var releases [av1.RefFrames]int
 	var state av1.DecoderFrameWorkState
 	post := func(av1.DecoderFrameWorkPostFilterContext) error { return nil }
+	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Workers:           1,
+		Spans:             spans[:],
+		Jobs:              jobs[:],
+		Batches:           batches[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		BatchRunner:       &runner,
+	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, runErr := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
-			State:             &state,
-			Refs:              &refs,
-			FramePool:         &pool,
-			Sequence:          sequence,
-			Event:             event,
-			Align:             64,
-			ReferenceSurfaces: referenceSurfaces[:],
-			ReferenceFrames:   referenceFrames[:],
-			Workers:           1,
-			Spans:             spans[:],
-			Jobs:              jobs[:],
-			Batches:           batches[:],
-			Releases:          releases[:],
-			WorkerPool:        workerPool,
-			Runner:            &runner,
-			SideData:          &side,
-			Post:              post,
-		})
+		result, runErr := eventRunner.Run(sequence, event, &side, post)
 		if runErr != nil {
 			err = runErr
 			return
@@ -742,7 +736,7 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunnerAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if allocs != 0 {
-		t.Fatalf("RunDecoderFrameWorkEventWithResidualRunner allocated: %f", allocs)
+		t.Fatalf("DecoderFrameWorkResidualEventRunner.Run allocated: %f", allocs)
 	}
 }
 
