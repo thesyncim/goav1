@@ -27,6 +27,7 @@ type DecoderFrameWorkResidualEventRequest struct {
 	Post     DecoderFrameWorkPostFilterFunc
 
 	PostRunner DecoderFrameWorkPostFilterRunner
+	Stats      *DecoderFrameWorkTileResidualStats
 }
 
 // DecoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
@@ -49,6 +50,7 @@ type DecoderFrameWorkResidualEventRunner struct {
 	WorkerPool *TileWorkerPool
 
 	BatchRunner *DecoderFrameWorkBatchResidualRunner
+	Stats       *DecoderFrameWorkTileResidualStats
 }
 
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
@@ -95,6 +97,7 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 		Runner:            r.BatchRunner,
 		SideData:          side,
 		Post:              post,
+		Stats:             r.Stats,
 	})
 }
 
@@ -120,6 +123,7 @@ func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence Se
 		Runner:            r.BatchRunner,
 		SideData:          side,
 		PostRunner:        post,
+		Stats:             r.Stats,
 	})
 }
 
@@ -187,12 +191,15 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	event := req.Event
 	event.SequenceHeader = req.Sequence
 
-	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
-	if err != nil {
+	if err := req.Runner.ResetStats(); err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}
+	if req.Stats != nil {
+		*req.Stats = DecoderFrameWorkTileResidualStats{}
+	}
 
-	if err := req.Runner.ResetStats(); err != nil {
+	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
+	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}
 
@@ -258,8 +265,15 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	} else {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
+	stats, statsErr := req.Runner.TotalStats()
+	if req.Stats != nil {
+		*req.Stats = stats
+	}
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
+	}
+	if statsErr != nil {
+		return DecoderFrameWorkEventResult{}, statsErr
 	}
 	return DecoderFrameWorkEventResult{
 		Step:           step,
