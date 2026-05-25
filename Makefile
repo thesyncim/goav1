@@ -71,6 +71,9 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeLumaCoefficients
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeChromaCoefficients
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeBlockCoefficients
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPaletteMode
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteColorIndexContext
+	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteCache
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeStateRestorationUnit
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitNone
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzApplyRestorationUnitRecordNone
