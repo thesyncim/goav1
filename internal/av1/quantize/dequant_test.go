@@ -176,8 +176,8 @@ func TestDequantizeBlockScaledQMatrixMatchesLibaomFormula(t *testing.T) {
 	dst := make([]int32, 4)
 	q := Quantizer{DC: 64, AC: 96}
 	iqMatrix := []uint16{
-		32, 43,
-		73, 97,
+		32, 73,
+		43, 97,
 	}
 	if err := DequantizeBlockScaledQMatrix(dst, 2, coeff, 2, 2, 2, q, 0, iqMatrix); err != nil {
 		t.Fatal(err)
