@@ -831,7 +831,7 @@ func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &PaletteModeScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -884,7 +884,7 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 		X4:      0,
 		Y4:      0,
 		HaveTop: true,
-	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &PaletteModeScratch{})
 	if !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
@@ -907,7 +907,7 @@ func TestDecodeBlockPredictionModeReadsIntrabcWithoutInterSyntax(t *testing.T) {
 		DecodePredictionModes: true,
 	}, BlockVisit{
 		Size: BlockSize16x16,
-	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: -1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: -1}, &PaletteModeScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1035,7 +1035,7 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &PaletteModeScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1122,7 +1122,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		Y4:       0,
 		HaveTop:  true,
 		HaveLeft: true,
-	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1}, &PaletteModeScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1175,7 +1175,7 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 		Size: BlockSize16x16,
 		X4:   0,
 		Y4:   0,
-	}, BlockModeResult{SkipMode: true}, 0, parser.SegmentData{RefFrame: -1}, &[MaxPalettePixels]uint8{})
+	}, BlockModeResult{SkipMode: true}, 0, parser.SegmentData{RefFrame: -1}, &PaletteModeScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}

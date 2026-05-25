@@ -514,6 +514,12 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 		return err
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	if visit.Prediction.Palette.UVSize > 0 {
+		if err := frameWorkPredictChromaPalette(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, 0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, geom.SubsamplingX, geom.SubsamplingY)
 		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
@@ -576,6 +582,13 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	edgeBlock = frameWorkPredictionTransformEdgeBlock(edgeBlock, baseX4, baseY4, tx.X4, tx.Y4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, geom.Window)
+
+	if visit.Prediction.Palette.UVSize > 0 {
+		if err := frameWorkPredictChromaPalette(geom.Output, geom.BytesPerSample, x, y, width, height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, absX-geom.X, absY-geom.Y); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, absX, absY, predWidth, predHeight, geom.SubsamplingX, geom.SubsamplingY)
@@ -3379,6 +3392,41 @@ func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, v
 		return false
 	}
 	return true
+}
+
+func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane, palette tile.PaletteModeResult, mapX int, mapY int) error {
+	if palette.UVSize == 0 || palette.UVSize > tile.PaletteMaxSize || palette.UVMap == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
+		return ErrInvalidBatch
+	}
+	planeSize, err := tile.PlaneBlockSize(block.Size, color, int(plane))
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	dims, ok := planeSize.Dimensions()
+	if !ok {
+		return ErrInvalidBatch
+	}
+	mapStride := int(dims.W4) * 4
+	mapHeight := int(dims.H4) * 4
+	if mapX < 0 || mapY < 0 || mapX+width > mapStride || mapY+height > mapHeight {
+		return ErrInvalidBatch
+	}
+	colors := palette.UColors
+	if plane == FrameWorkPlaneV {
+		colors = palette.VColors
+	}
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			index := palette.UVMap[(mapY+row)*mapStride+mapX+col]
+			if index >= palette.UVSize {
+				return ErrInvalidBatch
+			}
+			if !frameWorkStoreSample(dst, bytesPerSample, x+col, y+row, colors[index]) {
+				return ErrInvalidBatch
+			}
+		}
+	}
+	return nil
 }
 
 func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, palette tile.PaletteModeResult, mapX int, mapY int) error {

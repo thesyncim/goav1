@@ -33,7 +33,7 @@ type BlockLoopScratch struct {
 	CDEF      CDEFIndexContext
 	Coeff     BlockCoeffScratch
 	CoeffCtx  CoeffEntropyContext
-	PaletteY  [MaxPalettePixels]uint8
+	Palette   PaletteModeScratch
 }
 
 // BlockLoopContextCarrier holds caller-owned edge contexts when a block-loop
@@ -77,6 +77,7 @@ type blockModeAboveContext struct {
 	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
 	PaletteY    [MaxBlockModeSlots]paletteContext
+	PaletteUV   [MaxBlockModeSlots]paletteContext
 }
 
 type blockModeLeftContext struct {
@@ -99,6 +100,7 @@ type blockModeLeftContext struct {
 	InterpValid [MaxBlockModeSlots]uint8
 	BlockSize   [MaxBlockModeSlots]BlockSize
 	PaletteY    [MaxBlockModeSlots]paletteContext
+	PaletteUV   [MaxBlockModeSlots]paletteContext
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -425,6 +427,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
 		scratch.Mode.AbovePaletteY = above.mode.PaletteY
+		scratch.Mode.AbovePaletteUV = above.mode.PaletteUV
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
 		}
@@ -451,6 +454,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
 		scratch.Mode.LeftPaletteY = left.mode.PaletteY
+		scratch.Mode.LeftPaletteUV = left.mode.PaletteUV
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
@@ -486,6 +490,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.InterpValid = scratch.Mode.AboveInterpValid
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
 	above.mode.PaletteY = scratch.Mode.AbovePaletteY
+	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
 	for plane := 0; plane < 3; plane++ {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
 	}
@@ -511,6 +516,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.InterpValid = scratch.Mode.LeftInterpValid
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
 	left.mode.PaletteY = scratch.Mode.LeftPaletteY
+	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
 	for plane := 0; plane < 3; plane++ {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
@@ -572,7 +578,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 
 	var prediction BlockPredictionModeResult
 	if req.DecodePredictionModes {
-		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.PaletteY)
+		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette)
 		if err != nil {
 			return BlockLoopVisit{}, fmt.Errorf("decode prediction: %w", err)
 		}
@@ -635,7 +641,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	return visit, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *[MaxPalettePixels]uint8) (BlockPredictionModeResult, error) {
+func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
 	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
@@ -939,7 +945,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		return BlockPredictionModeResult{}, err
 	}
 	result.LumaAngleDelta = lumaAngleDelta
-	if HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color) {
+	hasChroma := HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)
+	if hasChroma {
 		lossless := req.Lossless || req.Segmentation.Lossless[segmentID]
 		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, lossless)
 		if err != nil {
@@ -994,10 +1001,17 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		HaveTop:                 block.HaveTop,
 		HaveLeft:                block.HaveLeft,
 		BitDepth:                req.Color.BitDepth,
+		Color:                   req.Color,
+		ChromaMode:              result.ChromaMode,
+		ChromaModeValid:         result.ChromaModeValid,
+		HasChroma:               hasChroma,
 	}, &result.Palette, paletteMap); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	if err := ctx.MarkPaletteY(block.Size, block.X4, block.Y4, result.Palette); err != nil {
+		return BlockPredictionModeResult{}, err
+	}
+	if err := ctx.MarkPaletteUV(block.Size, block.X4, block.Y4, result.Palette); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{

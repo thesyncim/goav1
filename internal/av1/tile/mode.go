@@ -64,6 +64,8 @@ type BlockModeContext struct {
 	LeftBlockSize    [MaxBlockModeSlots]BlockSize
 	AbovePaletteY    [MaxBlockModeSlots]paletteContext
 	LeftPaletteY     [MaxBlockModeSlots]paletteContext
+	AbovePaletteUV   [MaxBlockModeSlots]paletteContext
+	LeftPaletteUV    [MaxBlockModeSlots]paletteContext
 
 	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
