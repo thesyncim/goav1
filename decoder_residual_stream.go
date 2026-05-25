@@ -241,6 +241,56 @@ func DecoderFrameWorkResidualLowOverheadStreamPlan(stream DecoderStream, src []b
 	return plan, nil
 }
 
+// DecoderFrameWorkResidualLowOverheadStreamsScratchLen validates an ordered
+// set of low-overhead OBU buffers against a copy of stream and reports reusable
+// max scratch needed by RunLowOverheads.
+func DecoderFrameWorkResidualLowOverheadStreamsScratchLen(stream DecoderStream, srcs [][]byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
+	plan, err := DecoderFrameWorkResidualLowOverheadStreamsPlan(stream, srcs, workers, events, spans, jobs, batches)
+	return plan.Size, err
+}
+
+// DecoderFrameWorkResidualLowOverheadStreamsPlan validates an ordered set of
+// low-overhead OBU buffers against a copy of stream and reports reusable max
+// scratch plus the last bind-relevant event across the chunk batch. Output
+// scratch is accumulated across chunks so callers can bind one runner for
+// incremental low-overhead decode loops.
+func DecoderFrameWorkResidualLowOverheadStreamsPlan(stream DecoderStream, srcs [][]byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
+	var plan DecoderFrameWorkResidualStreamPlan
+	outputs := 0
+	for i := range srcs {
+		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(srcs[i])
+		nextSize := DecoderFrameWorkResidualStreamScratchSize{Events: eventCount}
+		plan.Size = plan.Size.Max(nextSize)
+		if err != nil {
+			return plan, err
+		}
+		if len(events) < eventCount {
+			return plan, ErrDecoderEventBufferTooSmall
+		}
+
+		sequence, _ := stream.SequenceHeader()
+		count, err := stream.PushLowOverhead(srcs[i], events[:eventCount])
+		if err != nil {
+			return plan, err
+		}
+		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
+		if err != nil {
+			return plan, err
+		}
+		nextBind := DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+		if nextBind.HasEvent() {
+			plan.Bind = nextBind
+		} else if !plan.Bind.HasEvent() {
+			plan.Bind.Sequence = nextBind.Sequence
+		}
+		nextSize.Event = eventSize
+		outputs += eventSize.Outputs
+		plan.Size = plan.Size.Max(nextSize)
+		plan.Size.Event.Outputs = outputs
+	}
+	return plan, nil
+}
+
 // DecoderFrameWorkResidualRTPPayloadStreamScratchLen validates one AV1 RTP
 // payload against a copy of stream and reports caller-owned RTP/event/residual
 // scratch needed to run completed residual events. If used is non-zero, rtpBuffer
@@ -368,6 +418,30 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadWithPostFilterRunne
 	return r.runLowOverhead(src, nil, post)
 }
 
+// RunLowOverheadInto parses and runs one low-overhead OBU buffer, then appends
+// its counters and outputs into result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadInto(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterFunc) error {
+	return r.runLowOverheadInto(result, src, post, nil)
+}
+
+// RunLowOverheadIntoWithPostFilterRunner is RunLowOverheadInto using a direct
+// postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterRunner) error {
+	return r.runLowOverheadInto(result, src, nil, post)
+}
+
+// RunLowOverheads parses and runs an ordered batch of low-overhead OBU buffers
+// and aggregates completed event work into one result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheads(srcs [][]byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runLowOverheads(srcs, post, nil)
+}
+
+// RunLowOverheadsWithPostFilterRunner is RunLowOverheads using a direct
+// postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsWithPostFilterRunner(srcs [][]byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runLowOverheads(srcs, nil, post)
+}
+
 // RunRTPPayload depacketizes one AV1 RTP payload into caller-owned OBU/event
 // scratch and immediately runs any completed parsed events. RTPUsed is retained
 // only while the underlying stream is inside an OBU fragment.
@@ -408,6 +482,41 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsWithPostFilterRunne
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runLowOverheadWithOutputOffset(src, 0, post, postRunner)
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadInto(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+	if result == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	next, err := r.runLowOverheadWithOutputOffset(src, result.Run.OutputCount, post, postRunner)
+	if accErr := result.Accumulate(next); accErr != nil {
+		return accErr
+	}
+	decoderFrameWorkResidualStreamBindResultOutputs(result, r.EventRunner.Outputs)
+	return err
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheads(srcs [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	if r == nil || r.Stream == nil {
+		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+	}
+	if post != nil && postRunner != nil {
+		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+	}
+	var result DecoderFrameWorkResidualStreamResult
+	for i := range srcs {
+		next, err := r.runLowOverheadWithOutputOffset(srcs[i], result.Run.OutputCount, post, postRunner)
+		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
+		decoderFrameWorkResidualStreamBindResultOutputs(&result, r.EventRunner.Outputs)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadWithOutputOffset(src []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
 		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
 	}
@@ -418,7 +527,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post D
 	if err != nil {
 		return DecoderFrameWorkResidualStreamResult{EventCount: count}, err
 	}
-	run, err := r.runParsedEvents(count, 0, post, postRunner)
+	run, err := r.runParsedEvents(count, outputOffset, post, postRunner)
 	if err != nil {
 		return DecoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, err
 	}

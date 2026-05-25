@@ -1064,6 +1064,14 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	defer workerPool.Close()
 
 	lowOverhead := publicDecoderResidualLowOverheadStream()
+	lowOverheads := [...][]byte{
+		publicDecoderResidualLowOverheadStream(),
+		publicDecoderResidualLowOverheadFrameStream(),
+	}
+	lowOverheadsBytes := 0
+	for i := range lowOverheads {
+		lowOverheadsBytes += len(lowOverheads[i])
+	}
 	rtpPayload := publicDecoderResidualRTPPayload()
 	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
 	rtpPayloadsBytes := 0
@@ -1081,6 +1089,10 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	lowOverheadsPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, lowOverheads[:], 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		b.Fatal(err)
+	}
 	rtpPlan, err := av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
@@ -1089,7 +1101,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	streamPlan := lowPlan.Max(rtpPlan).Max(rtpPayloadsPlan)
+	streamPlan := lowPlan.Max(lowOverheadsPlan).Max(rtpPlan).Max(rtpPayloadsPlan)
 	if !streamPlan.HasEvent() {
 		b.Fatal("stream plan missing bind event")
 	}
@@ -1101,7 +1113,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 		SubsamplingX: true,
 		SubsamplingY: true,
 		Align:        64,
-	}, 1)
+	}, 2)
 	var stream av1.DecoderStream
 	var refs av1.DecoderSurfaceReferences
 	var state av1.DecoderFrameWorkState
@@ -1144,6 +1156,52 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 				b.Fatal(err)
 			}
 			if result.Run.CompletedFrames != 1 {
+				b.Fatalf("result=%+v", result)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("low-overheads", func(b *testing.B) {
+		b.SetBytes(int64(lowOverheadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
+			result, err := runner.RunLowOverheads(lowOverheads[:], nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if result.Run.CompletedFrames != 2 {
+				b.Fatalf("result=%+v", result)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("low-overhead-into", func(b *testing.B) {
+		b.SetBytes(int64(lowOverheadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
+			var result av1.DecoderFrameWorkResidualStreamResult
+			for j := range lowOverheads {
+				if err := runner.RunLowOverheadInto(&result, lowOverheads[j], nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if result.Run.CompletedFrames != 2 {
 				b.Fatalf("result=%+v", result)
 			}
 			sum += stats.Residuals + stats.TXBs
@@ -1222,6 +1280,14 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 
 func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 	lowOverhead := publicDecoderResidualLowOverheadStream()
+	lowOverheads := [...][]byte{
+		publicDecoderResidualLowOverheadStream(),
+		publicDecoderResidualLowOverheadFrameStream(),
+	}
+	lowOverheadsBytes := 0
+	for i := range lowOverheads {
+		lowOverheadsBytes += len(lowOverheads[i])
+	}
 	rtpPayload := publicDecoderResidualRTPPayload()
 	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
 	rtpPayloadsBytes := 0
@@ -1242,6 +1308,20 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			var stream av1.DecoderStream
 			size, err := av1.DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			if err != nil {
+				b.Fatal(err)
+			}
+			sum += size.Events + size.Event.Plan.JobCount
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("low-overheads", func(b *testing.B) {
+		b.SetBytes(int64(lowOverheadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			var stream av1.DecoderStream
+			size, err := av1.DecoderFrameWorkResidualLowOverheadStreamsScratchLen(stream, lowOverheads[:], 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}
