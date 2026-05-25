@@ -26,7 +26,8 @@ inward:
 The initial implementation covers:
 
 - AV1 LEB128 read/write helpers.
-- Zero-allocation AV1 IVF test-vector container parsing for DKIF/AV01 streams.
+- Public zero-allocation AV1 IVF test-vector container parsing for DKIF/AV01
+  streams.
 - Strict OBU header parsing and low-overhead OBU iteration.
 - Public zero-allocation Section 5 temporal-unit iteration for `.obu`
   conformance streams.
