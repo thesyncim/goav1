@@ -101,6 +101,9 @@ func TransformScale(width int, height int) (uint8, error) {
 	if pixels > 256 {
 		scale++
 	}
+	if pixels > 1024 {
+		scale++
+	}
 	return scale, nil
 }
 
@@ -123,7 +126,7 @@ func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coe
 
 func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
 	if q.DC <= 0 || q.AC <= 0 ||
-		txScale > 1 ||
+		txScale > 2 ||
 		width <= 0 ||
 		height <= 0 ||
 		dstStride < height ||
