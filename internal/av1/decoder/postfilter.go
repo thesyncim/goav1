@@ -101,6 +101,15 @@ type FrameWorkCallerPostFilterRunner struct {
 	Result  FrameWorkCallerPostFilterResult
 }
 
+// ScratchLen reports caller-owned scratch needed by Apply for the runner's
+// request.
+func (r *FrameWorkSupportedPostFilterRunner) ScratchLen(ctx FrameWorkPostFilterContext) (FrameWorkPostFilterScratchSize, error) {
+	if r == nil {
+		return FrameWorkPostFilterScratchSize{}, ErrInvalidFrameWorkState
+	}
+	return ctx.SupportedPostFilterScratchLen(r.Request)
+}
+
 // Apply runs supported postfilters and rejects any remaining active stage.
 func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
 	if r == nil {
@@ -116,6 +125,15 @@ func (r *FrameWorkSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContex
 	r.Context = next
 	r.Result = result
 	return nil
+}
+
+// ScratchLen reports caller-owned scratch needed by Apply for the runner's
+// request.
+func (r *FrameWorkCallerPostFilterRunner) ScratchLen(ctx FrameWorkPostFilterContext) (FrameWorkPostFilterScratchSize, error) {
+	if r == nil {
+		return FrameWorkPostFilterScratchSize{}, ErrInvalidFrameWorkState
+	}
+	return ctx.CallerPostFilterScratchLen(r.Request)
 }
 
 // Apply runs the full caller-owned postfilter chain and allows detached output.

@@ -222,6 +222,15 @@ func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
 	ctx.CDEFIndexMap = &cdefMap
 	req.IndexMap = FrameWorkCDEFIndexMap{}
 	runner := FrameWorkSupportedPostFilterRunner{Request: FrameWorkPostFilterRequest{CDEF: req}}
+	size, err := runner.ScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.CDEF.Input != cdef.InputBufferSize || size.LoopFilter != (FrameWorkLoopFilterPostFilterScratchSize{}) ||
+		size.Restoration != (FrameWorkRestorationPostFilterScratchSize{}) ||
+		size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("runner scratch=%+v", size)
+	}
 	if err := runner.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -239,9 +248,23 @@ func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
 	}
 }
 
+func TestFrameWorkPostFilterRunnerScratchLenRejectsNilRunner(t *testing.T) {
+	var supported *FrameWorkSupportedPostFilterRunner
+	if _, err := supported.ScratchLen(FrameWorkPostFilterContext{}); !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("supported runner ScratchLen err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
+	var caller *FrameWorkCallerPostFilterRunner
+	if _, err := caller.ScratchLen(FrameWorkPostFilterContext{}); !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("caller runner ScratchLen err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
+}
+
 func TestFrameWorkCallerPostFilterRunnerAllocs(t *testing.T) {
 	runner := FrameWorkCallerPostFilterRunner{}
 	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := runner.ScratchLen(FrameWorkPostFilterContext{}); err != nil {
+			t.Fatal(err)
+		}
 		if err := runner.Apply(FrameWorkPostFilterContext{}); err != nil {
 			t.Fatal(err)
 		}

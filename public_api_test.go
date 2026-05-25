@@ -69,6 +69,13 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 	if callerRunner.Result.Completed != result.Completed {
 		t.Fatalf("caller runner=%+v result=%+v", callerRunner, result)
 	}
+	if callerScratch, err := callerRunner.ScratchLen(ctx); err != nil || callerScratch.SuperRes.OutputFrame != 0 {
+		t.Fatalf("caller runner scratch=%+v err=%v", callerScratch, err)
+	}
+	var supportedRunner av1.DecoderFrameWorkSupportedPostFilterRunner
+	if supportedScratch, err := supportedRunner.ScratchLen(ctx); err != nil || supportedScratch.LoopFilter.Edges != 0 {
+		t.Fatalf("supported runner scratch=%+v err=%v", supportedScratch, err)
+	}
 
 	var postScratch av1.DecoderFrameWorkPostFilterScratchSize
 	postScratch.Restoration = av1.DecoderFrameWorkRestorationPostFilterScratchSize{

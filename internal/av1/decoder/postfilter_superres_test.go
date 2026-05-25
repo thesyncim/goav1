@@ -378,6 +378,15 @@ func TestFrameWorkCallerPostFilterRunnerApplyRunsSuperRes(t *testing.T) {
 		SuperRes: testFrameWorkSuperResPostFilterRequest(t, ctx),
 	}
 	runner := FrameWorkCallerPostFilterRunner{Request: req}
+	size, err := runner.ScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.SuperRes.OutputFrame == 0 || size.CDEF != (FrameWorkCDEFPostFilterScratchSize{}) ||
+		size.Restoration != (FrameWorkRestorationPostFilterScratchSize{}) ||
+		size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("runner scratch=%+v", size)
+	}
 	if err := runner.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
