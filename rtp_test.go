@@ -46,6 +46,20 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if packetizerOBUs[0].Header.Type != OBUSequenceHeader ||
+		packetizerOBUs[0].Header.HasSizeField ||
+		packetizerOBUs[0].HeaderSize != 1 ||
+		packetizerOBUs[0].PayloadSize != 1 ||
+		packetizerOBUs[0].Size != 2 {
+		t.Fatalf("packetizer OBU0=%+v", packetizerOBUs[0])
+	}
+	if packetizerOBUs[1].Header.Type != OBUFrame ||
+		packetizerOBUs[1].Header.HasSizeField ||
+		packetizerOBUs[1].HeaderSize != 1 ||
+		packetizerOBUs[1].PayloadSize != 10 ||
+		packetizerOBUs[1].Size != 11 {
+		t.Fatalf("packetizer OBU1=%+v", packetizerOBUs[1])
+	}
 
 	var packetBytes [8][32]byte
 	var payloads [8][]byte
@@ -57,6 +71,10 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		size, ok := packetizer.NextPacketSize()
 		if !ok {
 			break
+		}
+		plan, ok := packetizer.NextPacketPlan()
+		if !ok || plan.PacketSize+1 != size {
+			t.Fatalf("packet %d plan=%+v ok=%v size=%d", payloadCount, plan, ok, size)
 		}
 		n, marker, ok, err := packetizer.NextPacket(packetBytes[payloadCount][:size])
 		if err != nil {

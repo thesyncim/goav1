@@ -86,6 +86,14 @@ func FuzzPacketizer(f *testing.F) {
 		if parsed != obuCount {
 			t.Fatalf("parsed=%d count=%d", parsed, obuCount)
 		}
+		for i, info := range obus[:parsed] {
+			if info.Header.Type != info.Type ||
+				info.Header.HasSizeField ||
+				info.HeaderSize != info.Header.HeaderLen() ||
+				info.Size != info.HeaderSize+info.PayloadSize {
+				t.Fatalf("obu[%d]=%+v", i, info)
+			}
+		}
 		packetCount, err := PacketizeOBUCount(obus[:parsed], PayloadSizeLimits{MaxPayloadLen: limit})
 		if err != nil {
 			t.Fatalf("PacketizeOBUCount: %v", err)
@@ -118,12 +126,26 @@ func FuzzPacketizer(f *testing.F) {
 
 		var out [128]byte
 		for {
+			nextSize, sizeOK := packetizer.NextPacketSize()
+			nextPlan, planOK := packetizer.NextPacketPlan()
+			if sizeOK != planOK {
+				t.Fatalf("NextPacketSize ok=%v NextPacketPlan ok=%v", sizeOK, planOK)
+			}
+			if sizeOK && nextSize != nextPlan.PacketSize+1 {
+				t.Fatalf("next size=%d plan=%+v", nextSize, nextPlan)
+			}
 			n, _, ok, err := packetizer.NextPacket(out[:])
 			if err != nil {
 				t.Fatalf("NextPacket: %v", err)
 			}
 			if !ok {
+				if sizeOK {
+					t.Fatalf("NextPacket done after size=%d plan=%+v", nextSize, nextPlan)
+				}
 				return
+			}
+			if !sizeOK || n != nextSize {
+				t.Fatalf("packet n=%d size=%d ok=%v", n, nextSize, sizeOK)
 			}
 			if n > limit {
 				t.Fatalf("packet size=%d limit=%d", n, limit)

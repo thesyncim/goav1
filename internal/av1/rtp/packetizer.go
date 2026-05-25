@@ -17,6 +17,10 @@ type PayloadSizeLimits struct {
 type PacketizerOBU struct {
 	Type obu.Type
 
+	Header      obu.Header
+	HeaderSize  int
+	PayloadSize int
+
 	headerByte    byte
 	extensionByte byte
 	hasExtension  bool
@@ -116,6 +120,15 @@ func (p *Packetizer) NextPacketSize() (int, bool) {
 	return 1 + p.packets[p.packetIndex].PacketSize, true
 }
 
+// NextPacketPlan reports the packet plan that will be used by the next
+// NextPacket call without advancing the packetizer.
+func (p *Packetizer) NextPacketPlan() (PacketPlan, bool) {
+	if p.packetIndex >= len(p.packets) {
+		return PacketPlan{}, false
+	}
+	return p.packets[p.packetIndex], true
+}
+
 func (p *Packetizer) NextPacket(dst []byte) (n int, marker bool, ok bool, err error) {
 	if p.packetIndex >= len(p.packets) {
 		return 0, false, false, nil
@@ -212,6 +225,9 @@ func scanPacketizerOBUs(payload []byte, out []PacketizerOBU, countOnly bool) (in
 		if !countOnly {
 			out[count] = PacketizerOBU{
 				Type:          typ,
+				Header:        header,
+				HeaderSize:    header.HeaderLen(),
+				PayloadSize:   len(unit.Payload),
 				headerByte:    headerByte,
 				extensionByte: extensionByte,
 				hasExtension:  header.Extension,

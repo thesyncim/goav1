@@ -108,7 +108,24 @@ func TestCountPacketizerOBUsMatchesParse(t *testing.T) {
 	if parsed != count {
 		t.Fatalf("parsed=%d count=%d", parsed, count)
 	}
-	if obus[0].Type != obu.TypeSequenceHeader || obus[1].Type != obu.TypeFrameHeader || !obus[1].hasExtension {
+	if obus[0].Type != obu.TypeSequenceHeader ||
+		obus[0].Header.Type != obu.TypeSequenceHeader ||
+		obus[0].Header.HasSizeField ||
+		obus[0].HeaderSize != 1 ||
+		obus[0].PayloadSize != 1 ||
+		obus[0].Size != 2 {
+		t.Fatalf("obu0=%+v", obus[0])
+	}
+	if obus[1].Type != obu.TypeFrameHeader ||
+		obus[1].Header.Type != obu.TypeFrameHeader ||
+		!obus[1].Header.Extension ||
+		obus[1].Header.HasSizeField ||
+		obus[1].Header.TemporalID != 1 ||
+		obus[1].Header.SpatialID != 2 ||
+		obus[1].HeaderSize != 2 ||
+		obus[1].PayloadSize != 1 ||
+		obus[1].Size != 3 ||
+		!obus[1].hasExtension {
 		t.Fatalf("obus=%+v", obus)
 	}
 }
@@ -171,9 +188,16 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	if !ok || size != 6 {
 		t.Fatalf("first size=%d ok=%v want 6,true", size, ok)
 	}
+	plan, ok := packetizer.NextPacketPlan()
+	if !ok || plan.PacketSize+1 != size || plan.FirstOBU != 0 || plan.NumOBUElements != 1 || plan.FirstOBUOffset != 0 || plan.LastOBUSize != 5 {
+		t.Fatalf("first plan=%+v ok=%v size=%d", plan, ok, size)
+	}
 	var short [5]byte
 	if _, _, _, err := packetizer.NextPacket(short[:]); !errors.Is(err, ErrShortBuffer) {
 		t.Fatalf("short NextPacket err=%v want %v", err, ErrShortBuffer)
+	}
+	if retryPlan, ok := packetizer.NextPacketPlan(); !ok || retryPlan != plan {
+		t.Fatalf("retry plan=%+v ok=%v want %+v,true", retryPlan, ok, plan)
 	}
 	if retrySize, ok := packetizer.NextPacketSize(); !ok || retrySize != size || packetizer.NumPackets() != 3 {
 		t.Fatalf("retry size=%d ok=%v remaining=%d want %d,true,3", retrySize, ok, packetizer.NumPackets(), size)
@@ -195,6 +219,9 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	}
 	if size, ok := packetizer.NextPacketSize(); ok || size != 0 {
 		t.Fatalf("done size=%d ok=%v want 0,false", size, ok)
+	}
+	if plan, ok := packetizer.NextPacketPlan(); ok || plan != (PacketPlan{}) {
+		t.Fatalf("done plan=%+v ok=%v want zero,false", plan, ok)
 	}
 }
 
