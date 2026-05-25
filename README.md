@@ -158,6 +158,9 @@ The initial implementation covers:
   that combine tile delta-lf state, segmentation, thresholds, and deblocking.
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
+- Public hot-path benchmarks for OBU iteration, RTP packetization/assembly,
+  frame sample round-trips, reconstruction/deblocking primitives, and output
+  filters.
 
 Public APIs live at the module root:
 
@@ -179,6 +182,8 @@ import "github.com/thesyncim/goav1"
 make test
 make testvectors
 make bench
+make bench-public
+make alloc
 make fuzz-smoke
 ```
 

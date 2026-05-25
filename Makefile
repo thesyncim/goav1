@@ -1,4 +1,4 @@
-.PHONY: test bench fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc
+.PHONY: test bench bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -9,6 +9,9 @@ test:
 
 bench:
 	go test -run '^$$' -bench=. -benchmem ./...
+
+bench-public:
+	go test -run '^$$' -bench='BenchmarkPublic' -benchmem .
 
 fuzz-smoke:
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
