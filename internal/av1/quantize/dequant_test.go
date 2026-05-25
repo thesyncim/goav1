@@ -268,6 +268,24 @@ func TestDequantizeBlockAllocs(t *testing.T) {
 	}
 }
 
+func TestDequantizeBlockScaledQMatrixAllocs(t *testing.T) {
+	coeff := make([]int16, 16*16)
+	dst := make([]int32, 16*16)
+	iqMatrix := make([]uint16, 16*16)
+	for i := range iqMatrix {
+		iqMatrix[i] = uint16(32 + (i % 64))
+	}
+	q := Quantizer{DC: 80, AC: 97}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := DequantizeBlockScaledQMatrix(dst, 16, coeff, 16, 16, 16, q, 1, iqMatrix); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("DequantizeBlockScaledQMatrix allocated: %f", allocs)
+	}
+}
+
 func TestQuantizeFPNoQMatrixMatchesLibaomVector(t *testing.T) {
 	q := FPQuantizer{
 		Dequant: [2]int16{78, 93},
