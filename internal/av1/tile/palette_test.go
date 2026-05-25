@@ -62,6 +62,46 @@ func TestPaletteContextAndCacheUseMarkedNeighbors(t *testing.T) {
 	}
 }
 
+func TestPaletteCacheSkipsAboveOnMinSBBoundary(t *testing.T) {
+	var ctx BlockModeContext
+	above := PaletteModeResult{YSize: 3, UVSize: 2, YColors: [PaletteMaxSize]uint16{11, 23, 47}, UColors: [PaletteMaxSize]uint16{19, 29}}
+	left := PaletteModeResult{}
+	if err := ctx.MarkPaletteY(BlockSize16x16, 4, 12, above); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.MarkPaletteUV(BlockSize16x16, 4, 12, above); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.MarkPaletteY(BlockSize16x16, 0, 16, left); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.MarkPaletteUV(BlockSize16x16, 0, 16, left); err != nil {
+		t.Fatal(err)
+	}
+	modeCtx, err := ctx.PaletteYModeContext(4, 16, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modeCtx != 1 {
+		t.Fatalf("mode ctx=%d want 1", modeCtx)
+	}
+	var cache [2 * PaletteMaxSize]uint16
+	n, err := ctx.PaletteYCache(4, 16, true, true, &cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("y cache[:%d]=%v want empty", n, cache[:n])
+	}
+	n, err = ctx.PaletteUVCache(4, 16, true, true, &cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("uv cache[:%d]=%v want empty", n, cache[:n])
+	}
+}
+
 func TestPaletteColorIndexContextMatchesLibaomLookup(t *testing.T) {
 	colorMap := []uint8{
 		0, 1, 0, 0,

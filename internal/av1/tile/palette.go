@@ -17,6 +17,7 @@ const (
 	PaletteUVModeContexts = 2
 	PaletteColorContexts  = 5
 	MaxPalettePixels      = 64 * 64
+	minSBSize4            = 16
 )
 
 type PaletteModeResult struct {
@@ -689,7 +690,7 @@ func (c *BlockModeContext) PaletteYCache(x4 int, y4 int, haveTop bool, haveLeft 
 		return 0, err
 	}
 	var above, left paletteContext
-	if haveTop {
+	if haveTop && paletteCacheCanUseAbove(y4) {
 		above = c.AbovePaletteY[x4]
 	}
 	if haveLeft {
@@ -728,7 +729,7 @@ func (c *BlockModeContext) PaletteUVCache(x4 int, y4 int, haveTop bool, haveLeft
 		return 0, err
 	}
 	var above, left paletteContext
-	if haveTop {
+	if haveTop && paletteCacheCanUseAbove(y4) {
 		above = c.AbovePaletteUV[x4]
 	}
 	if haveLeft {
@@ -765,6 +766,10 @@ func paletteAddToCache(cache *[2 * PaletteMaxSize]uint16, n *int, value uint16) 
 	}
 	cache[*n] = value
 	*n++
+}
+
+func paletteCacheCanUseAbove(y4 int) bool {
+	return y4%minSBSize4 != 0
 }
 
 func (c *BlockModeContext) MarkPaletteY(size BlockSize, x4 int, y4 int, palette PaletteModeResult) error {
