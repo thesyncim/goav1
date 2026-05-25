@@ -9,11 +9,12 @@ import (
 
 // Block describes the residual transform block to reconstruct.
 type Block struct {
-	Size      transform.Size
-	Transform transform.Type
-	Quantizer quantize.Quantizer
-	Lossless  bool
-	EOB       int
+	Size           transform.Size
+	Transform      transform.Type
+	Quantizer      quantize.Quantizer
+	InverseQMatrix []uint16
+	Lossless       bool
+	EOB            int
 }
 
 // ScratchLen returns the int32 and int16 scratch lengths needed by cfg.
@@ -81,8 +82,14 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	if err != nil {
 		return ErrInvalidBlock
 	}
-	if err := quantize.DequantizeBlockScaled(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale); err != nil {
-		return ErrInvalidBlock
+	if cfg.InverseQMatrix != nil {
+		if err := quantize.DequantizeBlockScaledQMatrix(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix); err != nil {
+			return ErrInvalidBlock
+		}
+	} else {
+		if err := quantize.DequantizeBlockScaled(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale); err != nil {
+			return ErrInvalidBlock
+		}
 	}
 	if cfg.Lossless {
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, coeffSize.Height, cfg.EOB); err != nil {

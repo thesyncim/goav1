@@ -108,6 +108,20 @@ func TransformScale(width int, height int) (uint8, error) {
 // applied after the DC/AC dequant multiply. The scale is the value returned by
 // TransformScale for the coded transform size.
 func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil)
+}
+
+// DequantizeBlockScaledQMatrix applies libaom's inverse quantization matrix
+// weighting before the transform-size dequant shift. iqMatrix is indexed by
+// coefficient raster index and must cover width*height entries.
+func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
+	if len(iqMatrix) < width*height {
+		return ErrInvalidQuantizer
+	}
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix)
+}
+
+func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
 	if q.DC <= 0 || q.AC <= 0 ||
 		txScale > 1 ||
 		width <= 0 ||
@@ -128,6 +142,10 @@ func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			scale := q.AC
 			if row == 0 && col == 0 {
 				scale = q.DC
+			}
+			coeffIndex := col*height + row
+			if iqMatrix != nil {
+				scale = (int32(iqMatrix[coeffIndex])*scale + (1 << (qmBits - 1))) >> qmBits
 			}
 			level := int32(coeffCol[row])
 			negative := level < 0

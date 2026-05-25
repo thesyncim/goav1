@@ -2439,12 +2439,21 @@ func testBlockCoeffScratch(t *testing.T, ctx FrameWorkBatch, req FrameWorkBlockC
 	if err != nil {
 		t.Fatal(err)
 	}
+	qPlane, ok := frameWorkQuantizePlane(plane)
+	if !ok {
+		t.Fatal("invalid quant plane")
+	}
+	iqMatrix, err := quantize.InverseQMatrix(ctx.Quantization, qPlane, size, req.Transform, lossless)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := reconstruct.Block{
-		Size:      size,
-		Transform: req.Transform,
-		Quantizer: q,
-		Lossless:  lossless,
-		EOB:       req.Block.Result.EOB,
+		Size:           size,
+		Transform:      req.Transform,
+		Quantizer:      q,
+		InverseQMatrix: iqMatrix,
+		Lossless:       lossless,
+		EOB:            req.Block.Result.EOB,
 	}
 	int32Len, int16Len, err := reconstruct.ScratchLen(cfg)
 	if err != nil {

@@ -1,5 +1,10 @@
 package quantize
 
+import (
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/transform"
+)
+
 const (
 	QMLevelBits = 4
 	QMLevels    = 1 << QMLevelBits
@@ -8,6 +13,8 @@ const (
 	DefaultQMLast          = 9
 	DefaultQMFirstAllIntra = 4
 	DefaultQMLastAllIntra  = 10
+
+	qmBits = 5
 )
 
 // QMLevel maps qindex to the inter quantization-matrix level range. This is
@@ -44,4 +51,87 @@ func clampInt(v int, lo int, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// InverseQMatrix returns libaom's inverse quantization matrix for a decoded
+// transform block, or nil when AV1 uses the flat matrix path.
+func InverseQMatrix(params parser.QuantizationParams, plane Plane, size transform.Size, typ transform.Type, lossless bool) ([]uint16, error) {
+	if !params.UsingQMatrix || lossless || !usesInverseQMatrixTransform(typ) {
+		return nil, nil
+	}
+	level, ok := qmatrixLevelForPlane(params, plane)
+	if !ok {
+		return nil, ErrInvalidQuantizer
+	}
+	if level >= QMLevels {
+		return nil, ErrInvalidQuantizer
+	}
+	if level == QMLevels-1 {
+		return nil, nil
+	}
+	offset, length, err := inverseQMatrixOffset(size)
+	if err != nil {
+		return nil, err
+	}
+	class := 0
+	if plane != PlaneY {
+		class = 1
+	}
+	return inverseQMatrixRef[level][class][offset : offset+length], nil
+}
+
+func usesInverseQMatrixTransform(typ transform.Type) bool {
+	return typ < transform.TypeIDTX
+}
+
+func qmatrixLevelForPlane(params parser.QuantizationParams, plane Plane) (uint8, bool) {
+	switch plane {
+	case PlaneY:
+		return params.QMatrixLevelY, true
+	case PlaneU:
+		return params.QMatrixLevelU, true
+	case PlaneV:
+		return params.QMatrixLevelV, true
+	default:
+		return 0, false
+	}
+}
+
+func inverseQMatrixOffset(size transform.Size) (int, int, error) {
+	scanSize, err := transform.ScanSize(size)
+	if err != nil {
+		return 0, 0, ErrInvalidQuantizer
+	}
+	switch scanSize {
+	case transform.Size{Width: 4, Height: 4}:
+		return 0, 16, nil
+	case transform.Size{Width: 8, Height: 8}:
+		return 16, 64, nil
+	case transform.Size{Width: 16, Height: 16}:
+		return 80, 256, nil
+	case transform.Size{Width: 32, Height: 32}:
+		return 336, 1024, nil
+	case transform.Size{Width: 4, Height: 8}:
+		return 1360, 32, nil
+	case transform.Size{Width: 8, Height: 4}:
+		return 1392, 32, nil
+	case transform.Size{Width: 8, Height: 16}:
+		return 1424, 128, nil
+	case transform.Size{Width: 16, Height: 8}:
+		return 1552, 128, nil
+	case transform.Size{Width: 16, Height: 32}:
+		return 1680, 512, nil
+	case transform.Size{Width: 32, Height: 16}:
+		return 2192, 512, nil
+	case transform.Size{Width: 4, Height: 16}:
+		return 2704, 64, nil
+	case transform.Size{Width: 16, Height: 4}:
+		return 2768, 64, nil
+	case transform.Size{Width: 8, Height: 32}:
+		return 2832, 256, nil
+	case transform.Size{Width: 32, Height: 8}:
+		return 3088, 256, nil
+	default:
+		return 0, 0, ErrInvalidQuantizer
+	}
 }

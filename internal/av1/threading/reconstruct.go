@@ -85,6 +85,14 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 	if err != nil {
 		return err
 	}
+	qPlane, ok := frameWorkQuantizePlane(geom.plane)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	iqMatrix, err := quantize.InverseQMatrix(b.Quantization, qPlane, geom.size, req.Transform, lossless)
+	if err != nil {
+		return ErrInvalidBatch
+	}
 	scanSize, err := transform.ScanSize(geom.size)
 	if err != nil {
 		return ErrInvalidBatch
@@ -97,11 +105,12 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 		Height: geom.window.Height,
 	}
 	cfg := reconstruct.Block{
-		Size:      geom.size,
-		Transform: req.Transform,
-		Quantizer: q,
-		Lossless:  lossless,
-		EOB:       req.Block.Result.EOB,
+		Size:           geom.size,
+		Transform:      req.Transform,
+		Quantizer:      q,
+		InverseQMatrix: iqMatrix,
+		Lossless:       lossless,
+		EOB:            req.Block.Result.EOB,
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisible(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
