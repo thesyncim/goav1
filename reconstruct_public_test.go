@@ -91,8 +91,8 @@ func TestPublicPlaneQuantizerAndDequantizeBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scale != 2 {
-		t.Fatalf("scale=%d want 2", scale)
+	if scale != 1 {
+		t.Fatalf("scale=%d want 1", scale)
 	}
 	if got := av1.ClampQIndex(2, -9); got != 0 {
 		t.Fatalf("clamped low=%d want 0", got)

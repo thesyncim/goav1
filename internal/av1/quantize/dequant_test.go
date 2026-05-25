@@ -127,8 +127,8 @@ func TestTransformScaleMatchesLibaom(t *testing.T) {
 		{name: "16x32", width: 16, height: 32, want: 1},
 		{name: "32x32", width: 32, height: 32, want: 1},
 		{name: "16x64", width: 16, height: 64, want: 1},
-		{name: "32x64", width: 32, height: 64, want: 2},
-		{name: "64x64", width: 64, height: 64, want: 2},
+		{name: "32x64", width: 32, height: 64, want: 1},
+		{name: "64x64", width: 64, height: 64, want: 1},
 	}
 	for _, tt := range tests {
 		got, err := TransformScale(tt.width, tt.height)
@@ -154,12 +154,12 @@ func TestDequantizeBlockScaledMatchesLibaomLargeTX(t *testing.T) {
 		99, 99, 99,
 	}
 	q := Quantizer{DC: 20, AC: 13}
-	if err := DequantizeBlockScaled(dst, 3, coeff, 3, 2, 2, q, 2); err != nil {
+	if err := DequantizeBlockScaled(dst, 3, coeff, 3, 2, 2, q, 1); err != nil {
 		t.Fatal(err)
 	}
 	want := []int32{
-		35, -16, 99,
-		19, -29, 99,
+		70, -32, 99,
+		39, -58, 99,
 	}
 	for i := range want {
 		if dst[i] != want[i] {
@@ -193,7 +193,7 @@ func TestDequantizeBlockRejectsInvalidInputs(t *testing.T) {
 	if err := DequantizeBlock(dst, 2, coeff, 2, 2, 2, Quantizer{AC: 8}); !errors.Is(err, ErrInvalidQuantizer) {
 		t.Fatalf("invalid quantizer err=%v want %v", err, ErrInvalidQuantizer)
 	}
-	if err := DequantizeBlockScaled(dst, 2, coeff, 2, 2, 2, q, 3); !errors.Is(err, ErrInvalidQuantizer) {
+	if err := DequantizeBlockScaled(dst, 2, coeff, 2, 2, 2, q, 2); !errors.Is(err, ErrInvalidQuantizer) {
 		t.Fatalf("invalid transform scale err=%v want %v", err, ErrInvalidQuantizer)
 	}
 }

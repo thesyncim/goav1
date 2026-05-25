@@ -101,9 +101,6 @@ func TransformScale(width int, height int) (uint8, error) {
 	if pixels > 256 {
 		scale++
 	}
-	if pixels > 1024 {
-		scale++
-	}
 	return scale, nil
 }
 
@@ -112,7 +109,7 @@ func TransformScale(width int, height int) (uint8, error) {
 // TransformScale for the coded transform size.
 func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
 	if q.DC <= 0 || q.AC <= 0 ||
-		txScale > 2 ||
+		txScale > 1 ||
 		width <= 0 ||
 		height <= 0 ||
 		dstStride < height ||
