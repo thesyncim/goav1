@@ -49,6 +49,14 @@ type DecoderFrameWorkResidualEventRunner struct {
 	BatchRunner *DecoderFrameWorkBatchResidualRunner
 }
 
+// DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
+// needed to run one residual event and capture its postfilter side data.
+type DecoderFrameWorkResidualEventScratchSize struct {
+	Runner   DecoderFrameWorkBatchResidualRunnerScratchSize
+	SideData DecoderFrameWorkSideDataScratchSize
+	Plan     DecoderTileWorkPlan
+}
+
 // Run plans and executes one decoder frame-work event using the runner's
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.
@@ -74,6 +82,25 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 	})
 }
 
+// DecoderFrameWorkResidualEventScratchLen plans event tile work into
+// caller-owned spans/jobs/batches and reports both residual-runner scratch and
+// frame-level side-data scratch for the event.
+func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
+	runner, plan, err := DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, workers, spans, jobs, batches)
+	if err != nil {
+		return DecoderFrameWorkResidualEventScratchSize{}, err
+	}
+	sideData, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
+	if err != nil {
+		return DecoderFrameWorkResidualEventScratchSize{}, err
+	}
+	return DecoderFrameWorkResidualEventScratchSize{
+		Runner:   runner,
+		SideData: sideData,
+		Plan:     plan,
+	}, nil
+}
+
 // DecoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports the residual runner scratch
 // required to execute the planned event.
@@ -91,6 +118,18 @@ func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, even
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
 	}
 	return size, plan, nil
+}
+
+// DecoderFrameWorkResidualEventSideDataScratchLen reports frame-level side-data
+// scratch for the event's frame size, CDEF, and restoration parameters.
+func DecoderFrameWorkResidualEventSideDataScratchLen(sequence SequenceHeader, event DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
+	return DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, event.Restoration)
+}
+
+// BindDecoderFrameWorkResidualEventSideData binds frame-level side data using
+// the event's frame size, CDEF, and restoration parameters.
+func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+	return BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch)
 }
 
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder

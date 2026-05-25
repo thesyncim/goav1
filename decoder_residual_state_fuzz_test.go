@@ -306,11 +306,11 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		var scratchSpans [2]av1.TileSpan
 		var scratchJobs [2]av1.TileJob
 		var scratchBatches [1]av1.TileBatch
-		runnerSize, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, publicDecoderBatchResidualRunnerScratch(runnerSize))
+		runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(eventScratch.Runner, publicDecoderBatchResidualRunnerScratch(eventScratch.Runner))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,18 +318,7 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		var side *av1.DecoderFrameWorkSideData
 		var boundSide av1.DecoderFrameWorkSideData
 		if sideData {
-			sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			boundSide, err = av1.BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{}, av1.DecoderFrameWorkSideDataScratch{
-				CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
-				CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
-				LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
-				RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
-				RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
-				RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
-			})
+			boundSide, err = av1.BindDecoderFrameWorkResidualEventSideData(sequence, event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
 			if err != nil {
 				t.Fatal(err)
 			}

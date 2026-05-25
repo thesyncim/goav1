@@ -782,26 +782,15 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var scratchSpans [2]av1.TileSpan
 	var scratchJobs [2]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	runnerSize, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
-	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, publicDecoderBatchResidualRunnerScratch(runnerSize))
+	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(eventScratch.Runner, publicDecoderBatchResidualRunnerScratch(eventScratch.Runner))
 	if err != nil {
 		b.Fatal(err)
 	}
-	sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{})
-	if err != nil {
-		b.Fatal(err)
-	}
-	side, err := av1.BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{}, av1.DecoderFrameWorkSideDataScratch{
-		CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
-		CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
-		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
-		RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
-		RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
-		RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
-	})
+	side, err := av1.BindDecoderFrameWorkResidualEventSideData(sequence, event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
 	if err != nil {
 		b.Fatal(err)
 	}
