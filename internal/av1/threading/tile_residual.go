@@ -570,7 +570,10 @@ func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit ti
 	if c.req.PredictionScratch == nil {
 		return nil
 	}
-	if visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+	if !visit.Prediction.Valid {
+		return nil
+	}
+	if visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if frameWorkVisitUsesCFL(visit) {
 			c.pendingCFLPrediction = true
 			c.cflVisit = visit

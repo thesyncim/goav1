@@ -768,6 +768,31 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualControllerSkipsInvalidPredictionScratch(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	ctx := testIntraPredictionBatch(output)
+
+	var predictionScratch FrameWorkPredictionScratch
+	var stats FrameWorkTileResidualStats
+	controller := frameWorkTileResidualLoopController{
+		batch: ctx,
+		index: 0,
+		req: FrameWorkTileResidualRequest{
+			PredictionScratch: &predictionScratch,
+		},
+		stats: &stats,
+	}
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Prediction = tile.BlockPredictionModeResult{}
+	visit.Prefix.SkipTransform = true
+	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Predictions != 0 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
 func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	want := testBatchFrame(t, output.Format)

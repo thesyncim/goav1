@@ -150,6 +150,15 @@ type DecoderFrameWorkBatchResidualScratch struct {
 	LoopContextAbove []TileBlockLoopRootAboveContext
 }
 
+// Max returns per-arena maximum lengths for reusable residual batch scratch.
+func (s DecoderFrameWorkBatchResidualScratchSize) Max(other DecoderFrameWorkBatchResidualScratchSize) DecoderFrameWorkBatchResidualScratchSize {
+	return DecoderFrameWorkBatchResidualScratchSize{
+		Int32Scratch:     max(s.Int32Scratch, other.Int32Scratch),
+		ResidualScratch:  max(s.ResidualScratch, other.ResidualScratch),
+		LoopContextAbove: max(s.LoopContextAbove, other.LoopContextAbove),
+	}
+}
+
 // DecoderFrameWorkBatchResidualRunnerScratchSize reports the caller-owned
 // per-worker state and flat scratch needed by DecoderFrameWorkBatchResidualRunner.
 type DecoderFrameWorkBatchResidualRunnerScratchSize struct {
@@ -177,12 +186,26 @@ type DecoderFrameWorkBatchResidualRunnerScratch struct {
 	LoopContextAboveScratch []TileBlockLoopRootAboveContext
 }
 
+// Max returns per-arena maximum lengths for reusable residual runner scratch.
+func (s DecoderFrameWorkBatchResidualRunnerScratchSize) Max(other DecoderFrameWorkBatchResidualRunnerScratchSize) DecoderFrameWorkBatchResidualRunnerScratchSize {
+	return DecoderFrameWorkBatchResidualRunnerScratchSize{
+		Workers:             max(s.Workers, other.Workers),
+		Batch:               s.Batch.Max(other.Batch),
+		RestorationRequests: max(s.RestorationRequests, other.RestorationRequests),
+		Int32Scratch:        max(s.Int32Scratch, other.Int32Scratch),
+		ResidualScratch:     max(s.ResidualScratch, other.ResidualScratch),
+		LoopContextAbove:    max(s.LoopContextAbove, other.LoopContextAbove),
+	}
+}
+
 // DecoderFrameWorkBatchResidualRunner adapts the public residual batch decoder
 // to DecoderFrameWorkBatchFunc with caller-owned per-worker state.
 type DecoderFrameWorkBatchResidualRunner struct {
 	Request DecoderFrameWorkBatchResidualRequest
 	// UseDefaultPrediction wires each worker's PredictionScratch into Request
-	// when Request.Tile.PredictionScratch is nil.
+	// when Request.Tile.PredictionScratch is nil. Bound runners default this to
+	// true so event-level decode paths perform reconstruction prediction without
+	// a custom per-block callback.
 	UseDefaultPrediction bool
 
 	States                 []TileDecodeState
@@ -325,6 +348,7 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 		predictionScratch[i].Inter = &interScratch[i]
 	}
 	return DecoderFrameWorkBatchResidualRunner{
+		UseDefaultPrediction:   true,
 		States:                 scratch.States[:size.Workers],
 		Storages:               scratch.Storages[:size.Workers],
 		TileScratch:            scratch.TileScratch[:size.Workers],

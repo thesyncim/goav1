@@ -59,6 +59,20 @@ type DecoderFrameWorkResidualEventScratchSize struct {
 	Plan     DecoderTileWorkPlan
 }
 
+// Max returns per-arena maximum lengths and plan counts for reusable residual
+// event scratch.
+func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResidualEventScratchSize) DecoderFrameWorkResidualEventScratchSize {
+	return DecoderFrameWorkResidualEventScratchSize{
+		Runner:   s.Runner.Max(other.Runner),
+		SideData: s.SideData.Max(other.SideData),
+		Plan: DecoderTileWorkPlan{
+			SpanCount:  max(s.Plan.SpanCount, other.Plan.SpanCount),
+			JobCount:   max(s.Plan.JobCount, other.Plan.JobCount),
+			BatchCount: max(s.Plan.BatchCount, other.Plan.BatchCount),
+		},
+	}
+}
+
 // Run plans and executes one decoder frame-work event using the runner's
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.

@@ -109,6 +109,20 @@ type DecoderFrameWorkPostFilterRequestScratch struct {
 	Int32Scratch  []int32
 }
 
+// Max returns per-arena maximum lengths for reusable postfilter request
+// scratch.
+func (s DecoderFrameWorkPostFilterRequestScratchSize) Max(other DecoderFrameWorkPostFilterRequestScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {
+	return DecoderFrameWorkPostFilterRequestScratchSize{
+		LoopFilterEdges:   max(s.LoopFilterEdges, other.LoopFilterEdges),
+		CDEFDirectionGrid: max(s.CDEFDirectionGrid, other.CDEFDirectionGrid),
+		CDEFVarianceGrid:  max(s.CDEFVarianceGrid, other.CDEFVarianceGrid),
+		ByteScratch:       max(s.ByteScratch, other.ByteScratch),
+		Uint16Scratch:     max(s.Uint16Scratch, other.Uint16Scratch),
+		Int16Scratch:      max(s.Int16Scratch, other.Int16Scratch),
+		Int32Scratch:      max(s.Int32Scratch, other.Int32Scratch),
+	}
+}
+
 // DecoderFrameWorkSideDataScratchSize reports caller-owned side-data backing
 // lengths for tile residual decode and final postfilter planning.
 type DecoderFrameWorkSideDataScratchSize struct {
@@ -133,6 +147,18 @@ type DecoderFrameWorkSideDataScratch struct {
 	RestorationRecords       []TileRestorationUnitRecord
 	RestorationBoundaryAbove []uint16
 	RestorationBoundaryBelow []uint16
+}
+
+// Max returns per-arena maximum lengths for reusable frame-work side data.
+func (s DecoderFrameWorkSideDataScratchSize) Max(other DecoderFrameWorkSideDataScratchSize) DecoderFrameWorkSideDataScratchSize {
+	return DecoderFrameWorkSideDataScratchSize{
+		CDEFIndexMap:             max(s.CDEFIndexMap, other.CDEFIndexMap),
+		CDEFReadMap:              max(s.CDEFReadMap, other.CDEFReadMap),
+		LoopFilterMap:            max(s.LoopFilterMap, other.LoopFilterMap),
+		RestorationRecords:       max(s.RestorationRecords, other.RestorationRecords),
+		RestorationBoundaryAbove: max(s.RestorationBoundaryAbove, other.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: max(s.RestorationBoundaryBelow, other.RestorationBoundaryBelow),
+	}
 }
 
 // DecoderFrameWorkSideData groups frame-level side maps shared by tile

@@ -368,6 +368,9 @@ func TestPublicDecoderFrameWorkBatchResidualRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !runner.UseDefaultPrediction {
+		t.Fatal("runner did not enable default prediction scratch")
+	}
 	if scratch.PredictionScratch[1].Inter != &scratch.InterPredictionScratch[1] {
 		t.Fatal("runner did not bind inter prediction scratch")
 	}
@@ -418,6 +421,70 @@ func TestPublicDecoderFrameWorkBatchResidualRunner(t *testing.T) {
 	var nilRunner *av1.DecoderFrameWorkBatchResidualRunner
 	if err := nilRunner.Run(batch); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("nil runner err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualScratchSizeMax(t *testing.T) {
+	batchA := av1.DecoderFrameWorkBatchResidualScratchSize{
+		Int32Scratch:     1,
+		ResidualScratch:  7,
+		LoopContextAbove: 3,
+	}
+	batchB := av1.DecoderFrameWorkBatchResidualScratchSize{
+		Int32Scratch:     5,
+		ResidualScratch:  2,
+		LoopContextAbove: 4,
+	}
+	if got, want := batchA.Max(batchB), (av1.DecoderFrameWorkBatchResidualScratchSize{
+		Int32Scratch:     5,
+		ResidualScratch:  7,
+		LoopContextAbove: 4,
+	}); got != want {
+		t.Fatalf("batch residual scratch max=%+v want %+v", got, want)
+	}
+
+	runnerA := av1.DecoderFrameWorkBatchResidualRunnerScratchSize{
+		Workers:             1,
+		Batch:               batchA,
+		RestorationRequests: 1,
+		Int32Scratch:        1,
+		ResidualScratch:     7,
+		LoopContextAbove:    3,
+	}
+	runnerB := av1.DecoderFrameWorkBatchResidualRunnerScratchSize{
+		Workers:             3,
+		Batch:               batchB,
+		RestorationRequests: 2,
+		Int32Scratch:        15,
+		ResidualScratch:     6,
+		LoopContextAbove:    12,
+	}
+	if got, want := runnerA.Max(runnerB), (av1.DecoderFrameWorkBatchResidualRunnerScratchSize{
+		Workers:             3,
+		Batch:               batchA.Max(batchB),
+		RestorationRequests: 2,
+		Int32Scratch:        15,
+		ResidualScratch:     7,
+		LoopContextAbove:    12,
+	}); got != want {
+		t.Fatalf("runner residual scratch max=%+v want %+v", got, want)
+	}
+
+	eventA := av1.DecoderFrameWorkResidualEventScratchSize{
+		Runner:   runnerA,
+		SideData: av1.DecoderFrameWorkSideDataScratchSize{CDEFIndexMap: 2, LoopFilterMap: 8},
+		Plan:     av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1},
+	}
+	eventB := av1.DecoderFrameWorkResidualEventScratchSize{
+		Runner:   runnerB,
+		SideData: av1.DecoderFrameWorkSideDataScratchSize{CDEFReadMap: 4, LoopFilterMap: 3},
+		Plan:     av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 5, BatchCount: 2},
+	}
+	got := eventA.Max(eventB)
+	if got.Runner != runnerA.Max(runnerB) ||
+		got.SideData != (av1.DecoderFrameWorkSideDataScratchSize{CDEFIndexMap: 2, CDEFReadMap: 4, LoopFilterMap: 8}) ||
+		got.Plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 5, BatchCount: 2}) {
+		t.Fatalf("event residual scratch max=%+v", got)
 	}
 }
 

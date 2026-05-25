@@ -420,6 +420,65 @@ func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkPostFilterScratchSizeMax(t *testing.T) {
+	arenaA := av1.DecoderFrameWorkPostFilterRequestScratchSize{
+		LoopFilterEdges:   1,
+		CDEFDirectionGrid: 7,
+		CDEFVarianceGrid:  3,
+		ByteScratch:       11,
+		Uint16Scratch:     5,
+		Int16Scratch:      13,
+		Int32Scratch:      2,
+	}
+	arenaB := av1.DecoderFrameWorkPostFilterRequestScratchSize{
+		LoopFilterEdges:   4,
+		CDEFDirectionGrid: 2,
+		CDEFVarianceGrid:  8,
+		ByteScratch:       6,
+		Uint16Scratch:     20,
+		Int16Scratch:      1,
+		Int32Scratch:      9,
+	}
+	if got, want := arenaA.Max(arenaB), (av1.DecoderFrameWorkPostFilterRequestScratchSize{
+		LoopFilterEdges:   4,
+		CDEFDirectionGrid: 7,
+		CDEFVarianceGrid:  8,
+		ByteScratch:       11,
+		Uint16Scratch:     20,
+		Int16Scratch:      13,
+		Int32Scratch:      9,
+	}); got != want {
+		t.Fatalf("postfilter scratch max=%+v want %+v", got, want)
+	}
+
+	sideA := av1.DecoderFrameWorkSideDataScratchSize{
+		CDEFIndexMap:             1,
+		CDEFReadMap:              5,
+		LoopFilterMap:            2,
+		RestorationRecords:       9,
+		RestorationBoundaryAbove: 3,
+		RestorationBoundaryBelow: 4,
+	}
+	sideB := av1.DecoderFrameWorkSideDataScratchSize{
+		CDEFIndexMap:             8,
+		CDEFReadMap:              2,
+		LoopFilterMap:            6,
+		RestorationRecords:       1,
+		RestorationBoundaryAbove: 7,
+		RestorationBoundaryBelow: 3,
+	}
+	if got, want := sideA.Max(sideB), (av1.DecoderFrameWorkSideDataScratchSize{
+		CDEFIndexMap:             8,
+		CDEFReadMap:              5,
+		LoopFilterMap:            6,
+		RestorationRecords:       9,
+		RestorationBoundaryAbove: 7,
+		RestorationBoundaryBelow: 4,
+	}); got != want {
+		t.Fatalf("side-data scratch max=%+v want %+v", got, want)
+	}
+}
+
 func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	sequence.ColorConfig.MonoChrome = true
