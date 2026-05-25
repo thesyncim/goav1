@@ -120,6 +120,13 @@ func (s OverlappableNeighborSet) WarpSampleCount(ref ReferenceFrame) int {
 	return count
 }
 
+// WarpSampleCountForBlock returns the projected sample count using the same
+// geometry and corner suppression rules as AV1's warp projection setup.
+func (s OverlappableNeighborSet) WarpSampleCountForBlock(block BlockVisit, ref ReferenceFrame) (int, error) {
+	var samples [maxWarpSamples]warpSample
+	return s.warpSamples(block, ref, &samples)
+}
+
 func (s OverlappableNeighborSet) WarpProjectionInvalid(block BlockVisit, ref ReferenceFrame, mv motion.Vector) (bool, error) {
 	_, invalid, err := s.WarpProjection(block, ref, mv)
 	return invalid, err
@@ -463,10 +470,47 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 	if samples == nil {
 		return 0, ErrInvalidDecodeState
 	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidDecodeState
+	}
+	blockW4 := int(dims.W4)
+	blockH4 := int(dims.H4)
+	doTopLeft := true
+	doTopRight := true
+	if block.HaveTop && s.AboveCount > 0 {
+		aboveDims, ok := s.Above[0].Size.Dimensions()
+		if !ok {
+			return 0, ErrInvalidDecodeState
+		}
+		aboveW4 := int(aboveDims.W4)
+		if blockW4 <= aboveW4 {
+			colOffset := -int(block.MICol % uint32(aboveW4))
+			if colOffset < 0 {
+				doTopLeft = false
+			}
+			if colOffset+aboveW4 > blockW4 {
+				doTopRight = false
+			}
+		}
+	}
+	if block.HaveLeft && s.LeftCount > 0 {
+		leftDims, ok := s.Left[0].Size.Dimensions()
+		if !ok {
+			return 0, ErrInvalidDecodeState
+		}
+		leftH4 := int(leftDims.H4)
+		if blockH4 <= leftH4 {
+			rowOffset := -int(block.MIRow % uint32(leftH4))
+			if rowOffset < 0 {
+				doTopLeft = false
+			}
+		}
+	}
 	count := 0
 	if block.HaveTop {
 		for i := 0; i < s.AboveCount && count < maxWarpSamples; i++ {
-			sample, ok, err := warpSampleAbove(s.Above[i], ref)
+			sample, ok, err := warpSampleAbove(block, s.Above[i], ref)
 			if err != nil {
 				return 0, err
 			}
@@ -478,7 +522,7 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 	}
 	if block.HaveLeft {
 		for i := 0; i < s.LeftCount && count < maxWarpSamples; i++ {
-			sample, ok, err := warpSampleLeft(s.Left[i], ref)
+			sample, ok, err := warpSampleLeft(block, s.Left[i], ref)
 			if err != nil {
 				return 0, err
 			}
@@ -488,7 +532,7 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 			}
 		}
 	}
-	if s.TopLeftValid && count < maxWarpSamples {
+	if doTopLeft && s.TopLeftValid && count < maxWarpSamples {
 		sample, ok, err := warpSampleTopLeft(s.TopLeft, ref)
 		if err != nil {
 			return 0, err
@@ -498,8 +542,8 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 			count++
 		}
 	}
-	if s.TopRightValid && count < maxWarpSamples {
-		sample, ok, err := warpSampleTopRight(s.TopRight, ref)
+	if doTopRight && s.TopRightValid && count < maxWarpSamples {
+		sample, ok, err := warpSampleTopRight(block, s.TopRight, ref)
 		if err != nil {
 			return 0, err
 		}
@@ -511,7 +555,7 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 	return count, nil
 }
 
-func warpSampleAbove(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+func warpSampleAbove(block BlockVisit, n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
 	if !warpSampleNeighborMatches(n, ref) {
 		return warpSample{}, false, nil
 	}
@@ -519,10 +563,18 @@ func warpSampleAbove(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bo
 	if !ok {
 		return warpSample{}, false, ErrInvalidDecodeState
 	}
-	return recordWarpSample(n.Motion.MV[0], int(n.RelX4), 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
+	blockDims, ok := block.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	colOffset4 := int(n.RelX4)
+	if int(blockDims.W4) <= int(dims.W4) {
+		colOffset4 = -int(block.MICol % uint32(dims.W4))
+	}
+	return recordWarpSample(n.Motion.MV[0], colOffset4, 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
 }
 
-func warpSampleLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+func warpSampleLeft(block BlockVisit, n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
 	if !warpSampleNeighborMatches(n, ref) {
 		return warpSample{}, false, nil
 	}
@@ -530,7 +582,15 @@ func warpSampleLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, boo
 	if !ok {
 		return warpSample{}, false, ErrInvalidDecodeState
 	}
-	return recordWarpSample(n.Motion.MV[0], 0, int(n.RelY4), -1, 1, int(dims.W4), int(dims.H4)), true, nil
+	blockDims, ok := block.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	rowOffset4 := int(n.RelY4)
+	if int(blockDims.H4) <= int(dims.H4) {
+		rowOffset4 = -int(block.MIRow % uint32(dims.H4))
+	}
+	return recordWarpSample(n.Motion.MV[0], 0, rowOffset4, -1, 1, int(dims.W4), int(dims.H4)), true, nil
 }
 
 func warpSampleTopLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
@@ -544,7 +604,7 @@ func warpSampleTopLeft(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, 
 	return recordWarpSample(n.Motion.MV[0], 0, 0, -1, -1, int(dims.W4), int(dims.H4)), true, nil
 }
 
-func warpSampleTopRight(n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
+func warpSampleTopRight(block BlockVisit, n OverlappableNeighbor, ref ReferenceFrame) (warpSample, bool, error) {
 	if !warpSampleNeighborMatches(n, ref) {
 		return warpSample{}, false, nil
 	}
@@ -552,7 +612,11 @@ func warpSampleTopRight(n OverlappableNeighbor, ref ReferenceFrame) (warpSample,
 	if !ok {
 		return warpSample{}, false, ErrInvalidDecodeState
 	}
-	return recordWarpSample(n.Motion.MV[0], int(n.RelX4), 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
+	blockDims, ok := block.Size.Dimensions()
+	if !ok {
+		return warpSample{}, false, ErrInvalidDecodeState
+	}
+	return recordWarpSample(n.Motion.MV[0], int(blockDims.W4), 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
 }
 
 func recordWarpSample(mv motion.Vector, colOffset4 int, rowOffset4 int, signC int, signR int, w4 int, h4 int) warpSample {

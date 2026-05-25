@@ -668,7 +668,17 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 
 func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeWarp && !visit.Prediction.WarpedMotionInvalid {
-		return b.predictBlockInterWarpPlane(index, visit, plane)
+		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		if err != nil {
+			return err
+		}
+		if ok && geom.Width >= 8 && geom.Height >= 8 {
+			return b.predictBlockInterWarpPlane(index, visit, plane)
+		}
+		if !ok {
+			return nil
+		}
+		return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters)
 	}
 	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslation(visit.Prediction) {
 		return ErrInvalidBatch

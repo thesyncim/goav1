@@ -768,6 +768,36 @@ func TestFrameWorkBatchPredictBlockLumaInterWarpIdentityConstant(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterWarpSmallChromaFallsBackToRegular(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapRegular}
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Block.MIColEnd = 6
+	visit.Block.MIRowEnd = 6
+	visit.Block.Size = tile.BlockSize8x8
+	visit.Block.VisibleW4 = 2
+	visit.Block.VisibleH4 = 2
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	params.Matrix[0] = 1 << 16
+	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.WarpedMotionValid = true
+
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	wantU := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.U, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 4, 4, motion.Vector{}, true, true, filters)
+	wantV := testFrameWorkMotionPredictionPlaneSubsampled(t, reference.V, output.Layout.BytesPerSample, output.Format.BitDepth, 8, 8, 4, 4, motion.Vector{}, true, true, filters)
+	assertFrameWorkPlaneBlockEqualAt(t, output.U, 8, 8, wantU, 0, 0, output.Layout.BytesPerSample, 4, 4)
+	assertFrameWorkPlaneBlockEqualAt(t, output.V, 8, 8, wantV, 0, 0, output.Layout.BytesPerSample, 4, 4)
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
 	want := testBatchFrame(t, output.Format)

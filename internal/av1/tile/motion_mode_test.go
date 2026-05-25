@@ -206,6 +206,74 @@ func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
 	}
 }
 
+func TestWarpSamplesUseLibaomOffsetForWideAboveNeighbor(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: -5}},
+	}
+
+	var ctx BlockModeContext
+	seedAboveMotion(&ctx, 0, BlockSize16x16, inter)
+	set, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
+		Size:      BlockSize8x8,
+		X4:        2,
+		Y4:        4,
+		VisibleW4: 2,
+		VisibleH4: 2,
+		HaveTop:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := BlockVisit{MICol: 2, MIRow: 4, Size: BlockSize8x8, HaveTop: true}
+	var samples [maxWarpSamples]warpSample
+	count, err := set.warpSamples(block, ReferenceFrameLast, &samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("samples=%d want 1", count)
+	}
+	if want := -motion.SubpelScale; samples[0].X != want {
+		t.Fatalf("sample x=%d want %d", samples[0].X, want)
+	}
+}
+
+func TestWarpSampleCountSuppressesCoveredTopLeftCorner(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: -5}},
+	}
+	neighbor := OverlappableNeighbor{
+		Size:        BlockSize16x16,
+		Motion:      inter,
+		MotionValid: true,
+	}
+	set := OverlappableNeighborSet{
+		AboveCount:   1,
+		Above:        [MaxOverlappableNeighbors]OverlappableNeighbor{neighbor},
+		TopLeft:      neighbor,
+		TopLeftValid: true,
+	}
+	block := BlockVisit{
+		MICol:    2,
+		Size:     BlockSize8x8,
+		HaveTop:  true,
+		HaveLeft: true,
+	}
+	count, err := set.WarpSampleCountForBlock(block, ReferenceFrameLast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("samples=%d want only the covered above sample", count)
+	}
+}
+
 func TestWarpProjectionDerivesAffineModel(t *testing.T) {
 	mv := motion.Vector{Row: 5, Col: 3}
 	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
@@ -280,6 +348,45 @@ func TestWarpProjectionAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("warp projection allocated: %f", allocs)
+	}
+}
+
+func TestWarpSampleCountForBlockAllocs(t *testing.T) {
+	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	inter := InterMotionResult{
+		References: refs,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: 3, Col: -5}},
+	}
+	neighbor := OverlappableNeighbor{
+		Size:        BlockSize16x16,
+		Motion:      inter,
+		MotionValid: true,
+	}
+	set := OverlappableNeighborSet{
+		AboveCount:    1,
+		Above:         [MaxOverlappableNeighbors]OverlappableNeighbor{neighbor},
+		LeftCount:     1,
+		Left:          [MaxOverlappableNeighbors]OverlappableNeighbor{neighbor},
+		TopLeft:       neighbor,
+		TopLeftValid:  true,
+		TopRight:      neighbor,
+		TopRightValid: true,
+	}
+	block := BlockVisit{MICol: 2, MIRow: 4, Size: BlockSize8x8, HaveTop: true, HaveLeft: true}
+	var count int
+	allocs := testing.AllocsPerRun(1000, func() {
+		var err error
+		count, err = set.WarpSampleCountForBlock(block, ReferenceFrameLast)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if count != 3 {
+		t.Fatalf("sample count=%d want 3", count)
+	}
+	if allocs != 0 {
+		t.Fatalf("warp sample count allocated: %f", allocs)
 	}
 }
 
