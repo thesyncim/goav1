@@ -65,6 +65,39 @@ func (s FrameWorkRestorationPostFilterScratchSize) Max(other FrameWorkRestoratio
 	}
 }
 
+// BindRequest validates and slices caller-owned scratch for loop restoration.
+func (s FrameWorkRestorationPostFilterScratchSize) BindRequest(records [3][]tile.RestorationUnitRecord, boundaries [3]tile.RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, wienerScratch []uint16, sgrprojScratch []int32, aboveScratch []uint16, belowScratch []uint16, optimized bool) (FrameWorkRestorationPostFilterRequest, error) {
+	if s.Samples.DataLen < 0 || s.Samples.DstLen < 0 ||
+		s.Apply.Unit.Wiener < 0 || s.Apply.Unit.SGRProj < 0 ||
+		s.Apply.Boundary.Above < 0 || s.Apply.Boundary.Below < 0 {
+		return FrameWorkRestorationPostFilterRequest{}, tile.ErrInvalidPlan
+	}
+	if len(dataScratch) < s.Samples.DataLen || len(dstScratch) < s.Samples.DstLen {
+		return FrameWorkRestorationPostFilterRequest{}, tile.ErrJobBufferTooSmall
+	}
+	if len(wienerScratch) < s.Apply.Unit.Wiener || len(sgrprojScratch) < s.Apply.Unit.SGRProj ||
+		len(aboveScratch) < s.Apply.Boundary.Above || len(belowScratch) < s.Apply.Boundary.Below {
+		return FrameWorkRestorationPostFilterRequest{}, tile.ErrInvalidPlan
+	}
+	return FrameWorkRestorationPostFilterRequest{
+		Records:     records,
+		Boundaries:  boundaries,
+		DataScratch: dataScratch[:s.Samples.DataLen],
+		DstScratch:  dstScratch[:s.Samples.DstLen],
+		Scratch: tile.RestorationUnitRecordBoundaryScratch{
+			Unit: tile.RestorationUnitScratch{
+				Wiener:  wienerScratch[:s.Apply.Unit.Wiener],
+				SGRProj: sgrprojScratch[:s.Apply.Unit.SGRProj],
+			},
+			Boundary: tile.RestorationStripeBoundaryScratch{
+				Above: aboveScratch[:s.Apply.Boundary.Above],
+				Below: belowScratch[:s.Apply.Boundary.Below],
+			},
+		},
+		Optimized: optimized,
+	}, nil
+}
+
 // FrameWorkRestorationPostFilterRequest carries decoded loop-restoration state
 // and caller-owned scratch for ApplyLoopRestorationPostFilter.
 type FrameWorkRestorationPostFilterRequest struct {

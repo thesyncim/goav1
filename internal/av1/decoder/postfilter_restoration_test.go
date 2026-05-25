@@ -247,6 +247,120 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterAllowsCompleted
 	}
 }
 
+func TestFrameWorkRestorationPostFilterScratchSizeBindRequest(t *testing.T) {
+	size := FrameWorkRestorationPostFilterScratchSize{
+		Samples: tile.RestorationFrameSampleScratchSize{
+			DataLen: 16,
+			DstLen:  12,
+		},
+		Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+			Unit:     tile.RestorationUnitScratchSize{Wiener: 8, SGRProj: 6},
+			Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 4, Below: 2},
+		},
+	}
+	records := [3][]tile.RestorationUnitRecord{{{Index: 1}}}
+	boundaries := [3]tile.RestorationStripeBoundaries{{Stride: 16}}
+	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
+	req, err := size.BindRequest(records, boundaries, data, dst, wiener, sgr, above, below, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.DataScratch) != size.Samples.DataLen || len(req.DstScratch) != size.Samples.DstLen ||
+		len(req.Scratch.Unit.Wiener) != size.Apply.Unit.Wiener ||
+		len(req.Scratch.Unit.SGRProj) != size.Apply.Unit.SGRProj ||
+		len(req.Scratch.Boundary.Above) != size.Apply.Boundary.Above ||
+		len(req.Scratch.Boundary.Below) != size.Apply.Boundary.Below ||
+		!req.Optimized || len(req.Records[0]) != 1 || req.Boundaries[0].Stride != boundaries[0].Stride {
+		t.Fatalf("request data=%d dst=%d wiener=%d sgr=%d above=%d below=%d optimized=%v records=%d boundary=%d",
+			len(req.DataScratch), len(req.DstScratch), len(req.Scratch.Unit.Wiener), len(req.Scratch.Unit.SGRProj),
+			len(req.Scratch.Boundary.Above), len(req.Scratch.Boundary.Below), req.Optimized, len(req.Records[0]), req.Boundaries[0].Stride)
+	}
+}
+
+func TestFrameWorkRestorationPostFilterScratchSizeBindRequestRejectsShortBuffers(t *testing.T) {
+	size := FrameWorkRestorationPostFilterScratchSize{
+		Samples: tile.RestorationFrameSampleScratchSize{
+			DataLen: 16,
+			DstLen:  12,
+		},
+		Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+			Unit:     tile.RestorationUnitScratchSize{Wiener: 8, SGRProj: 6},
+			Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 4, Below: 2},
+		},
+	}
+	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
+	tests := []struct {
+		name   string
+		size   FrameWorkRestorationPostFilterScratchSize
+		data   []uint16
+		dst    []uint16
+		wiener []uint16
+		sgr    []int32
+		above  []uint16
+		below  []uint16
+		want   error
+	}{
+		{name: "data", size: size, data: data[:15], dst: dst, wiener: wiener, sgr: sgr, above: above, below: below, want: tile.ErrJobBufferTooSmall},
+		{name: "dst", size: size, data: data, dst: dst[:11], wiener: wiener, sgr: sgr, above: above, below: below, want: tile.ErrJobBufferTooSmall},
+		{name: "wiener", size: size, data: data, dst: dst, wiener: wiener[:7], sgr: sgr, above: above, below: below, want: tile.ErrInvalidPlan},
+		{name: "sgr", size: size, data: data, dst: dst, wiener: wiener, sgr: sgr[:5], above: above, below: below, want: tile.ErrInvalidPlan},
+		{name: "above", size: size, data: data, dst: dst, wiener: wiener, sgr: sgr, above: above[:3], below: below, want: tile.ErrInvalidPlan},
+		{name: "below", size: size, data: data, dst: dst, wiener: wiener, sgr: sgr, above: above, below: below[:1], want: tile.ErrInvalidPlan},
+		{name: "negative", size: FrameWorkRestorationPostFilterScratchSize{Samples: tile.RestorationFrameSampleScratchSize{DataLen: -1}}, data: data, dst: dst, wiener: wiener, sgr: sgr, above: above, below: below, want: tile.ErrInvalidPlan},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, tt.data, tt.dst, tt.wiener, tt.sgr, tt.above, tt.below, false)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("BindRequest err=%v want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFrameWorkRestorationPostFilterScratchSizeBindRequestAllocs(t *testing.T) {
+	size := FrameWorkRestorationPostFilterScratchSize{
+		Samples: tile.RestorationFrameSampleScratchSize{
+			DataLen: 1920 * 1080,
+			DstLen:  1920 * 1080,
+		},
+		Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+			Unit:     tile.RestorationUnitScratchSize{Wiener: 4096, SGRProj: 4096},
+			Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 1920, Below: 1920},
+		},
+	}
+	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindRequest allocated: %f", allocs)
+	}
+}
+
+func BenchmarkFrameWorkRestorationPostFilterScratchSizeBindRequest(b *testing.B) {
+	size := FrameWorkRestorationPostFilterScratchSize{
+		Samples: tile.RestorationFrameSampleScratchSize{
+			DataLen: 1920 * 1080,
+			DstLen:  1920 * 1080,
+		},
+		Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+			Unit:     tile.RestorationUnitScratchSize{Wiener: 4096, SGRProj: 4096},
+			Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 1920, Below: 1920},
+		},
+	}
+	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func testFrameWorkRestorationPostFilterScratch(size tile.RestorationUnitRecordBoundaryScratchSize) tile.RestorationUnitRecordBoundaryScratch {
 	return tile.RestorationUnitRecordBoundaryScratch{
 		Unit: tile.RestorationUnitScratch{
@@ -258,4 +372,13 @@ func testFrameWorkRestorationPostFilterScratch(size tile.RestorationUnitRecordBo
 			Below: make([]uint16, size.Boundary.Below),
 		},
 	}
+}
+
+func testFrameWorkRestorationPostFilterScratchStorage(size FrameWorkRestorationPostFilterScratchSize) ([]uint16, []uint16, []uint16, []int32, []uint16, []uint16) {
+	return make([]uint16, maxInt(size.Samples.DataLen, 0)),
+		make([]uint16, maxInt(size.Samples.DstLen, 0)),
+		make([]uint16, maxInt(size.Apply.Unit.Wiener, 0)),
+		make([]int32, maxInt(size.Apply.Unit.SGRProj, 0)),
+		make([]uint16, maxInt(size.Apply.Boundary.Above, 0)),
+		make([]uint16, maxInt(size.Apply.Boundary.Below, 0))
 }
