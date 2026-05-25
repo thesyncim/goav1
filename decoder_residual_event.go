@@ -71,6 +71,30 @@ type DecoderFrameWorkResidualEventsResult struct {
 	Stats            DecoderFrameWorkTileResidualStats
 }
 
+// Accumulate adds next into r using the same result semantics as
+// DecoderFrameWorkResidualEventRunner.RunEvents. The most recent non-empty
+// event becomes Last, counters and residual stats are summed, and Outputs is
+// left unchanged so callers can bind it to their own output arena.
+func (r *DecoderFrameWorkResidualEventsResult) Accumulate(next DecoderFrameWorkResidualEventsResult) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	decoderFrameWorkAccumulateResidualEventsResult(r, next)
+	return nil
+}
+
+// BindOutputs aliases Outputs to the first OutputCount slots in outputs.
+func (r *DecoderFrameWorkResidualEventsResult) BindOutputs(outputs []*Frame) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	if len(outputs) < r.OutputCount {
+		return ErrFrameShortBuffer
+	}
+	r.Outputs = outputs[:r.OutputCount]
+	return nil
+}
+
 // DecoderFrameWorkResidualEventRuntime groups stable decoder state that is not
 // carved out of residual-event scratch.
 type DecoderFrameWorkResidualEventRuntime struct {

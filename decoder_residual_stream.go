@@ -22,6 +22,27 @@ type DecoderFrameWorkResidualStreamResult struct {
 	Run        DecoderFrameWorkResidualEventsResult
 }
 
+// Accumulate adds next into r using the same result semantics as
+// DecoderFrameWorkResidualStreamRunner.RunRTPPayloads. Event counts are summed,
+// RTPUsed is replaced by the newest retained-fragment length, and Run is
+// accumulated.
+func (r *DecoderFrameWorkResidualStreamResult) Accumulate(next DecoderFrameWorkResidualStreamResult) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	decoderFrameWorkAccumulateResidualStreamResult(r, next)
+	return nil
+}
+
+// BindOutputs aliases Run.Outputs to the first Run.OutputCount slots in
+// outputs.
+func (r *DecoderFrameWorkResidualStreamResult) BindOutputs(outputs []*Frame) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	return r.Run.BindOutputs(outputs)
+}
+
 // DecoderFrameWorkResidualStreamPlan reports both the caller-owned scratch
 // required for a residual stream-runner call and the sequence/event pair callers
 // should use to bind a reusable residual event runner for that stream shape.
@@ -360,6 +381,19 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadWithPostFilterRunner
 	return r.runRTPPayload(payload, nil, post)
 }
 
+// RunRTPPayloadInto depacketizes and runs one AV1 RTP payload, then appends its
+// counters and outputs into result. This is the packet-by-packet equivalent of
+// RunRTPPayloads for callers that drive decoding from a realtime jitter buffer.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc) error {
+	return r.runRTPPayloadInto(result, payload, post, nil)
+}
+
+// RunRTPPayloadIntoWithPostFilterRunner is RunRTPPayloadInto using a direct
+// postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterRunner) error {
+	return r.runRTPPayloadInto(result, payload, nil, post)
+}
+
 // RunRTPPayloads depacketizes and runs an ordered batch of AV1 RTP payloads,
 // preserving RTP fragment state across payloads and aggregating completed event
 // work into one result.
@@ -393,6 +427,18 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post D
 
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloadWithOutputOffset(payload, 0, post, postRunner)
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+	if result == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	next, err := r.runRTPPayloadWithOutputOffset(payload, result.Run.OutputCount, post, postRunner)
+	if accErr := result.Accumulate(next); accErr != nil {
+		return accErr
+	}
+	decoderFrameWorkResidualStreamBindResultOutputs(result, r.EventRunner.Outputs)
+	return err
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(payload []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {

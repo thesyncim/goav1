@@ -1194,6 +1194,30 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 		}
 		publicBenchmarkSink = sum
 	})
+	b.Run("rtp-payload-into", func(b *testing.B) {
+		b.SetBytes(int64(rtpPayloadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			if err := runner.Reset(); err != nil {
+				b.Fatal(err)
+			}
+			var result av1.DecoderFrameWorkResidualStreamResult
+			for j := range rtpPayloads {
+				if err := runner.RunRTPPayloadInto(&result, rtpPayloads[j], nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
+				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
 }
 
 func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
