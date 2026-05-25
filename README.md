@@ -180,8 +180,8 @@ The initial implementation covers:
   custom block-loop callers that want an entropy-to-output-surface step.
 - Public fuzz-smoke coverage for exported coefficient decode, one-block
   decode/reconstruct, job residual decode/reconstruct, batch residual
-  decode/retain, residual-runner side-data attachment, and frame-work side-data
-  binding entry points.
+  decode/retain, residual-runner side-data attachment, residual event-runner
+  execution, and frame-work side-data binding entry points.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
   caller-owned prediction and residual scratch, intra/inter transform dispatch,
   default frame-work transform selection, max residual scratch sizing, aggregate

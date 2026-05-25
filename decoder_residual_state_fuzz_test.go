@@ -268,6 +268,142 @@ func FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData(f *testing.F) {
 	})
 }
 
+func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
+	f.Add([]byte{0x00, 0x00}, uint8(64), uint8(0), true)
+	f.Add([]byte{0xff, 0x80, 0x00, 0x7f}, uint8(3), uint8(1), false)
+	f.Add([]byte{0xaa, 0x55, 0x11, 0xee, 0x00, 0x42}, uint8(127), uint8(2), true)
+
+	f.Fuzz(func(t *testing.T, payload []byte, rawQ uint8, rawCDEFBits uint8, sideData bool) {
+		if len(payload) < 2 || len(payload) > 256 {
+			return
+		}
+		firstSize := len(payload) / 2
+		if firstSize == 0 || firstSize > 256 {
+			return
+		}
+		tilePayload := make([]byte, len(payload)+1)
+		tilePayload[0] = byte(firstSize - 1)
+		copy(tilePayload[1:], payload[:firstSize])
+		copy(tilePayload[1+firstSize:], payload[firstSize:])
+
+		sequence := av1.SequenceHeader{
+			EnableCDEF: true,
+			ColorConfig: av1.ColorConfig{
+				BitDepth:   8,
+				MonoChrome: true,
+			},
+		}
+		cdefBits := rawCDEFBits & 3
+		cdef := av1.CDEFParams{
+			Bits:          cdefBits,
+			StrengthCount: uint8(1) << cdefBits,
+		}
+		event := publicDecoderResidualRunnerFrameEvent()
+		event.Unit.Payload = tilePayload
+		event.CDEF = cdef
+		event.Quantization.BaseQIdx = rawQ | 1
+
+		var scratchSpans [2]av1.TileSpan
+		var scratchJobs [2]av1.TileJob
+		var scratchBatches [1]av1.TileBatch
+		plan, err := av1.PlanDecoderTileWork(event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		scratchBatch := av1.DecoderFrameWorkBatch{
+			FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+				Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
+				FrameSize:    event.FrameSize,
+				CDEF:         event.CDEF,
+				Quantization: event.Quantization,
+				TransformRef: event.TransformRef,
+			},
+			Jobs: scratchJobs[:plan.JobCount],
+		}
+		runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(scratchBatch, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, publicDecoderBatchResidualRunnerScratch(runnerSize))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var side *av1.DecoderFrameWorkSideData
+		var boundSide av1.DecoderFrameWorkSideData
+		if sideData {
+			sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			boundSide, err = av1.BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, av1.RestorationParams{}, av1.DecoderFrameWorkSideDataScratch{
+				CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
+				CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
+				LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
+				RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
+				RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
+				RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			side = &boundSide
+		}
+
+		workerPool, err := av1.NewTileWorkerPool(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer workerPool.Close()
+
+		pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+			Width:      int(event.FrameSize.CodedWidth),
+			Height:     int(event.FrameSize.Height),
+			BitDepth:   8,
+			MonoChrome: true,
+			Align:      64,
+		}, 1)
+		var refs av1.DecoderSurfaceReferences
+		var state av1.DecoderFrameWorkState
+		var referenceSurfaces [av1.InterRefsPerFrame]int
+		var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+		var spans [2]av1.TileSpan
+		var jobs [2]av1.TileJob
+		var batches [1]av1.TileBatch
+		var releases [av1.RefFrames]int
+
+		result, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
+			State:             &state,
+			Refs:              &refs,
+			FramePool:         &pool,
+			Sequence:          sequence,
+			Event:             event,
+			Align:             64,
+			ReferenceSurfaces: referenceSurfaces[:],
+			ReferenceFrames:   referenceFrames[:],
+			Workers:           1,
+			Spans:             spans[:],
+			Jobs:              jobs[:],
+			Batches:           batches[:],
+			Releases:          releases[:],
+			WorkerPool:        workerPool,
+			Runner:            &runner,
+			SideData:          side,
+		})
+		if err != nil {
+			return
+		}
+		if result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+			result.Output == nil ||
+			state.Active() {
+			t.Fatalf("event runner result=%+v output=%p active=%v", result, result.Output, state.Active())
+		}
+		if _, ok := refs.ReferenceSlot(0); !ok {
+			t.Fatal("event runner did not publish decoded key frame")
+		}
+	})
+}
+
 func publicBindResidualFuzzSideMaps(t *testing.T, batch *av1.DecoderFrameWorkBatch) {
 	t.Helper()
 	batch.CDEF = av1.CDEFParams{Bits: 0, StrengthCount: 1}
