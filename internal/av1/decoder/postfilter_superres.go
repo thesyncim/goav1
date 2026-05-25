@@ -43,6 +43,18 @@ type FrameWorkSuperResPostFilterScratchSize struct {
 	OutputSamples [3]int
 }
 
+// Max returns the per-field maximum superres scratch size.
+func (s FrameWorkSuperResPostFilterScratchSize) Max(other FrameWorkSuperResPostFilterScratchSize) FrameWorkSuperResPostFilterScratchSize {
+	result := FrameWorkSuperResPostFilterScratchSize{
+		OutputFrame: maxInt(s.OutputFrame, other.OutputFrame),
+	}
+	for plane := 0; plane < len(result.CodedSamples); plane++ {
+		result.CodedSamples[plane] = maxInt(s.CodedSamples[plane], other.CodedSamples[plane])
+		result.OutputSamples[plane] = maxInt(s.OutputSamples[plane], other.OutputSamples[plane])
+	}
+	return result
+}
+
 // FrameWorkSuperResPostFilterRequest carries caller-owned scratch for
 // ApplySuperResPostFilter.
 type FrameWorkSuperResPostFilterRequest struct {

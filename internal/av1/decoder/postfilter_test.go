@@ -4,7 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestFrameWorkPostFilterContextRequireNoActivePostFiltersAllowsInactiveSyntax(t *testing.T) {
@@ -205,6 +207,129 @@ func TestFrameWorkPostFilterContextRemainingPostFilters(t *testing.T) {
 	}
 	if err := ctx.RequireNoActivePostFilters(); !errors.Is(err, ErrUnsupportedPostFilter) {
 		t.Fatalf("RequireNoActivePostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
+	}
+}
+
+func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
+	a := FrameWorkPostFilterScratchSize{
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 1},
+		CDEF: FrameWorkCDEFPostFilterScratchSize{
+			Samples:       [3]int{1, 8, 3},
+			Dst:           [3]int{4, 2, 6},
+			DirectionGrid: 5,
+			VarianceGrid:  9,
+			Input:         7,
+			UnitDst:       11,
+		},
+		SuperRes: FrameWorkSuperResPostFilterScratchSize{
+			OutputFrame:   32,
+			CodedSamples:  [3]int{6, 2, 8},
+			OutputSamples: [3]int{3, 10, 4},
+		},
+		Restoration: FrameWorkRestorationPostFilterScratchSize{
+			Samples: tile.RestorationFrameSampleScratchSize{
+				Data:    [3]frame.BorderedSamplePlaneLayout{{Stride: 4, Origin: 2, Rows: 3, Len: 12}},
+				Dst:     [3]frame.BorderedSamplePlaneLayout{{Len: 1}, {Stride: 2, Origin: 3, Rows: 4, Len: 5}},
+				DataLen: 20,
+				DstLen:  7,
+			},
+			Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+				Unit:     tile.RestorationUnitScratchSize{Wiener: 14, SGRProj: 2},
+				Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 6, Below: 1},
+			},
+		},
+		FilmGrain: FrameWorkFilmGrainPostFilterScratchSize{
+			ScalingPoints: [3]int{1, 7, 3},
+			ARCoeffs:      [3]int{5, 2, 9},
+			LumaGrain:     12,
+			ChromaGrain:   [2]int{6, 4},
+			LumaSamples:   10,
+			ChromaSamples: [2]int{8, 2},
+			LumaLine:      3,
+			LumaColumn:    11,
+		},
+	}
+	b := FrameWorkPostFilterScratchSize{
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3},
+		CDEF: FrameWorkCDEFPostFilterScratchSize{
+			Samples:       [3]int{2, 4, 9},
+			Dst:           [3]int{5, 7, 1},
+			DirectionGrid: 4,
+			VarianceGrid:  10,
+			Input:         12,
+			UnitDst:       8,
+		},
+		SuperRes: FrameWorkSuperResPostFilterScratchSize{
+			OutputFrame:   64,
+			CodedSamples:  [3]int{7, 1, 9},
+			OutputSamples: [3]int{8, 6, 5},
+		},
+		Restoration: FrameWorkRestorationPostFilterScratchSize{
+			Samples: tile.RestorationFrameSampleScratchSize{
+				Data:    [3]frame.BorderedSamplePlaneLayout{{Stride: 5, Origin: 1, Rows: 6, Len: 9}, {Len: 3}},
+				Dst:     [3]frame.BorderedSamplePlaneLayout{{Len: 2}, {Stride: 1, Origin: 4, Rows: 3, Len: 8}},
+				DataLen: 18,
+				DstLen:  9,
+			},
+			Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+				Unit:     tile.RestorationUnitScratchSize{Wiener: 9, SGRProj: 5},
+				Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 3, Below: 8},
+			},
+		},
+		FilmGrain: FrameWorkFilmGrainPostFilterScratchSize{
+			ScalingPoints: [3]int{2, 5, 4},
+			ARCoeffs:      [3]int{3, 8, 7},
+			LumaGrain:     9,
+			ChromaGrain:   [2]int{7, 3},
+			LumaSamples:   11,
+			ChromaSamples: [2]int{5, 6},
+			LumaLine:      13,
+			LumaColumn:    10,
+		},
+	}
+	want := FrameWorkPostFilterScratchSize{
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3},
+		CDEF: FrameWorkCDEFPostFilterScratchSize{
+			Samples:       [3]int{2, 8, 9},
+			Dst:           [3]int{5, 7, 6},
+			DirectionGrid: 5,
+			VarianceGrid:  10,
+			Input:         12,
+			UnitDst:       11,
+		},
+		SuperRes: FrameWorkSuperResPostFilterScratchSize{
+			OutputFrame:   64,
+			CodedSamples:  [3]int{7, 2, 9},
+			OutputSamples: [3]int{8, 10, 5},
+		},
+		Restoration: FrameWorkRestorationPostFilterScratchSize{
+			Samples: tile.RestorationFrameSampleScratchSize{
+				Data:    [3]frame.BorderedSamplePlaneLayout{{Stride: 5, Origin: 2, Rows: 6, Len: 12}, {Len: 3}},
+				Dst:     [3]frame.BorderedSamplePlaneLayout{{Len: 2}, {Stride: 2, Origin: 4, Rows: 4, Len: 8}},
+				DataLen: 20,
+				DstLen:  9,
+			},
+			Apply: tile.RestorationUnitRecordBoundaryScratchSize{
+				Unit:     tile.RestorationUnitScratchSize{Wiener: 14, SGRProj: 5},
+				Boundary: tile.RestorationStripeBoundaryScratchSize{Above: 6, Below: 8},
+			},
+		},
+		FilmGrain: FrameWorkFilmGrainPostFilterScratchSize{
+			ScalingPoints: [3]int{2, 7, 4},
+			ARCoeffs:      [3]int{5, 8, 9},
+			LumaGrain:     12,
+			ChromaGrain:   [2]int{7, 4},
+			LumaSamples:   11,
+			ChromaSamples: [2]int{8, 6},
+			LumaLine:      13,
+			LumaColumn:    11,
+		},
+	}
+	if got := a.Max(b); got != want {
+		t.Fatalf("a.Max(b)=%+v want %+v", got, want)
+	}
+	if got := b.Max(a); got != want {
+		t.Fatalf("b.Max(a)=%+v want %+v", got, want)
 	}
 }
 

@@ -44,6 +44,27 @@ type FrameWorkPostFilterScratchSize struct {
 	FilmGrain   FrameWorkFilmGrainPostFilterScratchSize
 }
 
+// Max returns the per-field maximum scratch size needed to satisfy either
+// postfilter scratch plan. Callers can accumulate this across frames to keep a
+// reusable realtime scratch arena.
+func (s FrameWorkPostFilterScratchSize) Max(other FrameWorkPostFilterScratchSize) FrameWorkPostFilterScratchSize {
+	return FrameWorkPostFilterScratchSize{
+		LoopFilter:  s.LoopFilter.Max(other.LoopFilter),
+		CDEF:        s.CDEF.Max(other.CDEF),
+		SuperRes:    s.SuperRes.Max(other.SuperRes),
+		Restoration: s.Restoration.Max(other.Restoration),
+		FilmGrain:   s.FilmGrain.Max(other.FilmGrain),
+	}
+}
+
+// Max returns the per-field maximum restoration scratch size.
+func (s FrameWorkRestorationPostFilterScratchSize) Max(other FrameWorkRestorationPostFilterScratchSize) FrameWorkRestorationPostFilterScratchSize {
+	return FrameWorkRestorationPostFilterScratchSize{
+		Samples: frameWorkRestorationFrameSampleScratchSizeMax(s.Samples, other.Samples),
+		Apply:   frameWorkRestorationUnitRecordBoundaryScratchSizeMax(s.Apply, other.Apply),
+	}
+}
+
 // FrameWorkRestorationPostFilterRequest carries decoded loop-restoration state
 // and caller-owned scratch for ApplyLoopRestorationPostFilter.
 type FrameWorkRestorationPostFilterRequest struct {
@@ -560,6 +581,40 @@ func (ctx FrameWorkPostFilterContext) supportedPostFilterStages(remaining FrameW
 		supported |= FrameWorkPostFilterFilmGrain
 	}
 	return supported, nil
+}
+
+func frameWorkRestorationFrameSampleScratchSizeMax(a tile.RestorationFrameSampleScratchSize, b tile.RestorationFrameSampleScratchSize) tile.RestorationFrameSampleScratchSize {
+	result := tile.RestorationFrameSampleScratchSize{
+		DataLen: maxInt(a.DataLen, b.DataLen),
+		DstLen:  maxInt(a.DstLen, b.DstLen),
+	}
+	for plane := 0; plane < len(result.Data); plane++ {
+		result.Data[plane] = frameWorkBorderedSamplePlaneLayoutMax(a.Data[plane], b.Data[plane])
+		result.Dst[plane] = frameWorkBorderedSamplePlaneLayoutMax(a.Dst[plane], b.Dst[plane])
+	}
+	return result
+}
+
+func frameWorkBorderedSamplePlaneLayoutMax(a frame.BorderedSamplePlaneLayout, b frame.BorderedSamplePlaneLayout) frame.BorderedSamplePlaneLayout {
+	return frame.BorderedSamplePlaneLayout{
+		Stride: maxInt(a.Stride, b.Stride),
+		Origin: maxInt(a.Origin, b.Origin),
+		Rows:   maxInt(a.Rows, b.Rows),
+		Len:    maxInt(a.Len, b.Len),
+	}
+}
+
+func frameWorkRestorationUnitRecordBoundaryScratchSizeMax(a tile.RestorationUnitRecordBoundaryScratchSize, b tile.RestorationUnitRecordBoundaryScratchSize) tile.RestorationUnitRecordBoundaryScratchSize {
+	return tile.RestorationUnitRecordBoundaryScratchSize{
+		Unit: tile.RestorationUnitScratchSize{
+			Wiener:  maxInt(a.Unit.Wiener, b.Unit.Wiener),
+			SGRProj: maxInt(a.Unit.SGRProj, b.Unit.SGRProj),
+		},
+		Boundary: tile.RestorationStripeBoundaryScratchSize{
+			Above: maxInt(a.Boundary.Above, b.Boundary.Above),
+			Below: maxInt(a.Boundary.Below, b.Boundary.Below),
+		},
+	}
 }
 
 // LoopRestorationPostFilterPlan returns the frame-level loop-restoration plan

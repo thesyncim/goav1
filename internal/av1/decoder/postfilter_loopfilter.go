@@ -46,6 +46,11 @@ type FrameWorkLoopFilterPostFilterScratchSize struct {
 	Edges int
 }
 
+// Max returns the per-field maximum loop-filter scratch size.
+func (s FrameWorkLoopFilterPostFilterScratchSize) Max(other FrameWorkLoopFilterPostFilterScratchSize) FrameWorkLoopFilterPostFilterScratchSize {
+	return FrameWorkLoopFilterPostFilterScratchSize{Edges: maxInt(s.Edges, other.Edges)}
+}
+
 // FrameWorkLoopFilterPostFilterLevelStats summarizes resolved levels for one
 // plane/edge class.
 type FrameWorkLoopFilterPostFilterLevelStats struct {

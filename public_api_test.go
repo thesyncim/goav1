@@ -96,5 +96,14 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 		Samples: av1.TileRestorationFrameSampleScratchSize{},
 		Apply:   av1.TileRestorationUnitRecordBoundaryScratchSize{},
 	}
+	postScratch.LoopFilter.Edges = 2
+	postScratch.SuperRes.OutputFrame = 16
+	combinedScratch := postScratch.Max(av1.DecoderFrameWorkPostFilterScratchSize{
+		LoopFilter: av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4},
+		SuperRes:   av1.DecoderFrameWorkSuperResPostFilterScratchSize{OutputFrame: 8},
+	})
+	if combinedScratch.LoopFilter.Edges != 4 || combinedScratch.SuperRes.OutputFrame != 16 {
+		t.Fatalf("combined scratch=%+v", combinedScratch)
+	}
 	_ = postScratch
 }

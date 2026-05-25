@@ -53,6 +53,25 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	LumaColumn    int
 }
 
+// Max returns the per-field maximum film-grain scratch size.
+func (s FrameWorkFilmGrainPostFilterScratchSize) Max(other FrameWorkFilmGrainPostFilterScratchSize) FrameWorkFilmGrainPostFilterScratchSize {
+	result := FrameWorkFilmGrainPostFilterScratchSize{
+		LumaGrain:   maxInt(s.LumaGrain, other.LumaGrain),
+		LumaSamples: maxInt(s.LumaSamples, other.LumaSamples),
+		LumaLine:    maxInt(s.LumaLine, other.LumaLine),
+		LumaColumn:  maxInt(s.LumaColumn, other.LumaColumn),
+	}
+	for plane := 0; plane < len(result.ScalingPoints); plane++ {
+		result.ScalingPoints[plane] = maxInt(s.ScalingPoints[plane], other.ScalingPoints[plane])
+		result.ARCoeffs[plane] = maxInt(s.ARCoeffs[plane], other.ARCoeffs[plane])
+	}
+	for plane := 0; plane < len(result.ChromaGrain); plane++ {
+		result.ChromaGrain[plane] = maxInt(s.ChromaGrain[plane], other.ChromaGrain[plane])
+		result.ChromaSamples[plane] = maxInt(s.ChromaSamples[plane], other.ChromaSamples[plane])
+	}
+	return result
+}
+
 // FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
 // ApplyFilmGrainPostFilter.
 type FrameWorkFilmGrainPostFilterRequest struct {

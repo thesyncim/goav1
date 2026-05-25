@@ -21,6 +21,21 @@ type FrameWorkCDEFPostFilterScratchSize struct {
 	UnitDst       int
 }
 
+// Max returns the per-field maximum CDEF scratch size.
+func (s FrameWorkCDEFPostFilterScratchSize) Max(other FrameWorkCDEFPostFilterScratchSize) FrameWorkCDEFPostFilterScratchSize {
+	result := FrameWorkCDEFPostFilterScratchSize{
+		DirectionGrid: maxInt(s.DirectionGrid, other.DirectionGrid),
+		VarianceGrid:  maxInt(s.VarianceGrid, other.VarianceGrid),
+		Input:         maxInt(s.Input, other.Input),
+		UnitDst:       maxInt(s.UnitDst, other.UnitDst),
+	}
+	for plane := 0; plane < len(result.Samples); plane++ {
+		result.Samples[plane] = maxInt(s.Samples[plane], other.Samples[plane])
+		result.Dst[plane] = maxInt(s.Dst[plane], other.Dst[plane])
+	}
+	return result
+}
+
 // FrameWorkCDEFPostFilterRequest carries decoded CDEF state and caller-owned
 // scratch for ApplyCDEFPostFilter.
 type FrameWorkCDEFPostFilterRequest struct {
