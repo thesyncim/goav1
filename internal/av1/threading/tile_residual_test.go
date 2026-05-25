@@ -641,6 +641,35 @@ func TestFrameWorkTileResidualControllerWiresIntraTransformSelector(t *testing.T
 	}
 }
 
+func TestFrameWorkIntraTransformModeUsesFilterIntraDirection(t *testing.T) {
+	tests := []struct {
+		name string
+		mode tile.FilterIntraMode
+		want tile.IntraMode
+	}{
+		{name: "dc", mode: tile.FilterIntraModeDC, want: tile.IntraModeDC},
+		{name: "vertical", mode: tile.FilterIntraModeVertical, want: tile.IntraModeVertical},
+		{name: "horizontal", mode: tile.FilterIntraModeHorizontal, want: tile.IntraModeHorizontal},
+		{name: "d157", mode: tile.FilterIntraModeD157, want: tile.IntraModeD157},
+		{name: "paeth", mode: tile.FilterIntraModePaeth, want: tile.IntraModeDC},
+	}
+	if got := frameWorkIntraTransformMode(tile.BlockPredictionModeResult{LumaMode: tile.IntraModeD45}); got != tile.IntraModeD45 {
+		t.Fatalf("plain intra transform mode=%d want %d", got, tile.IntraModeD45)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := frameWorkIntraTransformMode(tile.BlockPredictionModeResult{
+				LumaMode:         tile.IntraModeD45,
+				FilterIntraValid: true,
+				FilterIntraMode:  tt.mode,
+			})
+			if got != tt.want {
+				t.Fatalf("filter intra transform mode=%d want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 	var storage FrameWorkTileResidualCDFStorage
 	if err := storage.InitDefault(64); err != nil {

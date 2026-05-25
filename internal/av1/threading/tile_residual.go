@@ -764,7 +764,8 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 		if !chromaMode.Valid() {
 			chromaMode = tile.ChromaIntraModeDC
 		}
-		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, visit.Prediction.LumaMode, chromaMode)
+		lumaMode := frameWorkIntraTransformMode(visit.Prediction)
+		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, lumaMode, chromaMode)
 		transformSelect = &c.scratch.IntraTX
 	} else if transforms.ReadInterTX {
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, c.batch.Sequence.ColorConfig)
@@ -833,6 +834,22 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 		return c.userCoeffVisitor(visit, block)
 	}
 	return nil
+}
+
+func frameWorkIntraTransformMode(pred tile.BlockPredictionModeResult) tile.IntraMode {
+	if !pred.FilterIntraValid {
+		return pred.LumaMode
+	}
+	switch pred.FilterIntraMode {
+	case tile.FilterIntraModeVertical:
+		return tile.IntraModeVertical
+	case tile.FilterIntraModeHorizontal:
+		return tile.IntraModeHorizontal
+	case tile.FilterIntraModeD157:
+		return tile.IntraModeD157
+	default:
+		return tile.IntraModeDC
+	}
 }
 
 func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
