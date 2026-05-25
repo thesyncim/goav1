@@ -16,6 +16,7 @@ bench-public:
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzParseHeader

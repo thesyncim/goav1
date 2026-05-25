@@ -175,8 +175,8 @@ The initial implementation covers:
   decoded tile TXB blocks directly into decoder frame-work reconstruction.
 - Public zero-allocation one-block coefficient decode/reconstruct helper for
   custom block-loop callers that want an entropy-to-output-surface step.
-- Public fuzz-smoke coverage for exported coefficient decode and one-block
-  decode/reconstruct entry points.
+- Public fuzz-smoke coverage for exported coefficient decode, one-block
+  decode/reconstruct, and job residual decode/reconstruct entry points.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
   caller-owned prediction and residual scratch.
 - Public tile-level loop-restoration frame planning, caller-owned
