@@ -237,7 +237,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 				continue
 			}
 			if !havePool {
-				pool, poolFormat, backing, frameSlots, free, used = bindLibaomVectorFramePool(t, event, 8)
+				pool, poolFormat, backing, frameSlots, free, used = bindLibaomVectorFramePool(t, event, 16)
 				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindLibaomVectorMotionStore(t, event, len(frameSlots))
 				havePool = true
 			} else {
