@@ -141,6 +141,8 @@ The initial implementation covers:
   and narrow-filter fallback for 8/10/12-bit reconstruction planes.
 - Pure-Go fourteen-sample wide loop-filter edge deblocking with AV1's wide flat
   filter and eight-/four-sample fallback for 8/10/12-bit reconstruction planes.
+- Public zero-allocation CDEF and loop-restoration primitive helpers with
+  caller-owned scratch for post-reconstruction filtering paths.
 - Optional IVF/OBU/RTP/test-vector oracle plumbing behind the `goav1_oracle`
   build tag, with a zero-size disabled oracle for ordinary builds and an
   ignored local cache for official libaom vectors downloaded on demand.
