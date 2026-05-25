@@ -1653,6 +1653,76 @@ func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventRunnerFrameHeaderWithoutBatchRunner(t *testing.T) {
+	payload := publicDecoderResidualLowOverheadStream()
+	var probeStream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	count, err := probeStream.PushLowOverhead(payload, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count < 2 || events[1].Kind != av1.DecoderEventFrameHeader {
+		t.Fatalf("events=%+v", events[:count])
+	}
+	sequence, ok := probeStream.SequenceHeader()
+	if !ok {
+		t.Fatal("probe stream missing sequence")
+	}
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, events[1], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Runner != (av1.DecoderFrameWorkBatchResidualRunnerScratchSize{}) ||
+		size.Plan != (av1.DecoderTileWorkPlan{}) ||
+		size.Outputs != 0 ||
+		size.SideData.CDEFIndexMap == 0 ||
+		size.SideData.LoopFilterMap == 0 {
+		t.Fatalf("frame-header scratch size=%+v", size)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(events[1].FrameSize.CodedWidth),
+		Height:       int(events[1].FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 1)
+	var state av1.DecoderFrameWorkState
+	var refs av1.DecoderSurfaceReferences
+	var side av1.DecoderFrameWorkSideData
+	var stats av1.DecoderFrameWorkTileResidualStats
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, events[1], av1.DecoderFrameWorkResidualEventRuntime{
+		State:     &state,
+		Refs:      &refs,
+		FramePool: &pool,
+		Align:     64,
+		SideData:  &side,
+		Stats:     &stats,
+	}, publicDecoderResidualEventScratch(size), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eventRunner.RunEvents(sequence, events[1:2], publicDecoderFrameWorkSideDataScratch(size.SideData), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 ||
+		result.ExecutedTileWork != 0 ||
+		result.CompletedFrames != 0 ||
+		result.OutputCount != 0 ||
+		result.Last.Step.Kind != av1.DecoderFrameWorkStepBegin ||
+		!state.Active() ||
+		stats != (av1.DecoderFrameWorkTileResidualStats{}) {
+		t.Fatalf("frame-header result=%+v active=%v stats=%+v", result, state.Active(), stats)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerRunEventsAllocs(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -1829,6 +1899,101 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverhead(t *testing.T) {
 	}
 	if _, ok := refs.ReferenceSlot(0); !ok {
 		t.Fatal("low-overhead stream runner did not publish decoded frame")
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput(t *testing.T) {
+	var stream av1.DecoderStream
+	var prime []byte
+	keyFrame := append([]byte{}, publicDecoderResidualShownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	interFrame := append([]byte{}, publicDecoderResidualInterFrameHeaderPayload()...)
+	interFrame = append(interFrame, 0xbb)
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, keyFrame)
+	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, interFrame)
+	var primeEvents [3]av1.DecoderEvent
+	if count, err := stream.PushLowOverhead(prime, primeEvents[:]); err != nil {
+		t.Fatal(err)
+	} else if count != len(primeEvents) || primeEvents[2].FrameHeader.FrameType != av1.FrameTypeInter {
+		t.Fatalf("prime count=%d events=%+v", count, primeEvents)
+	}
+
+	var showExisting []byte
+	showExisting = appendPublicLowOverheadOBU(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
+	var events [1]av1.DecoderEvent
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream, showExisting, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Events != 1 ||
+		size.Event.Outputs != 1 ||
+		size.Event.Runner != (av1.DecoderFrameWorkBatchResidualRunnerScratchSize{}) ||
+		size.Event.SideData != (av1.DecoderFrameWorkSideDataScratchSize{}) ||
+		size.Event.Plan != (av1.DecoderTileWorkPlan{}) ||
+		events[0].Kind != av1.DecoderEventExistingFrame ||
+		events[0].ExistingFrame.FrameType != av1.FrameTypeInter {
+		t.Fatalf("show-existing stream scratch size=%+v event=%+v", size, events[0])
+	}
+	sequence, ok := stream.SequenceHeader()
+	if !ok {
+		t.Fatal("stream missing sequence")
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(events[0].FrameSize.CodedWidth),
+		Height:       int(events[0].FrameSize.Height),
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 1)
+	referenceSlot, referenceFrame, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs av1.DecoderSurfaceReferences
+	var releases [av1.RefFrames]int
+	if _, err := refs.Refresh(1<<0, referenceSlot, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state av1.DecoderFrameWorkState
+	var stats av1.DecoderFrameWorkTileResidualStats
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size.Event, sequence, events[0], av1.DecoderFrameWorkResidualEventRuntime{
+		State:     &state,
+		Refs:      &refs,
+		FramePool: &pool,
+		Releases:  releases[:],
+		Stats:     &stats,
+	}, publicDecoderResidualEventScratch(size.Event), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamScratch := publicDecoderResidualStreamScratch(size)
+	runner, err := av1.BindDecoderFrameWorkResidualStreamRunner(size, &stream, eventRunner, streamScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runner.RunLowOverhead(showExisting, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventCount != 1 ||
+		result.Run.Count != 1 ||
+		result.Run.ExecutedTileWork != 0 ||
+		result.Run.CompletedFrames != 0 ||
+		result.Run.OutputCount != 1 ||
+		result.Run.Last.Step.Kind != av1.DecoderFrameWorkStepShowExisting ||
+		result.Run.Last.Output != referenceFrame ||
+		streamScratch.Outputs[0] != referenceFrame ||
+		state.Active() ||
+		stats != (av1.DecoderFrameWorkTileResidualStats{}) {
+		t.Fatalf("show-existing stream result=%+v output=%p/%p active=%v stats=%+v", result, streamScratch.Outputs[0], referenceFrame, state.Active(), stats)
 	}
 }
 
@@ -3495,6 +3660,110 @@ func publicDecoderResidualSequenceHeaderPayload() []byte {
 	w.writeBool(false) // color_range
 	w.writeBool(false) // film_grain_params_present
 	return w.trailingBits()
+}
+
+func publicDecoderResidualRealtimeSequenceHeaderPayload() []byte {
+	var w publicDecoderResidualBitWriter
+	w.writeBits(0, 3)  // seq_profile
+	w.writeBool(false) // still_picture
+	w.writeBool(false) // reduced_still_picture_header
+	w.writeBool(false) // timing_info_present_flag
+	w.writeBool(false) // initial_display_delay_present_flag
+	w.writeBits(0, 5)  // operating_points_cnt_minus_1
+	w.writeBits(0, 12) // operating_point_idc[0]
+	w.writeBits(5, 5)  // seq_level_idx[0]
+	w.writeBits(3, 4)  // frame_width_bits_minus_1
+	w.writeBits(3, 4)  // frame_height_bits_minus_1
+	w.writeBits(15, 4) // max_frame_width_minus_1
+	w.writeBits(8, 4)  // max_frame_height_minus_1
+	w.writeBool(false) // frame_id_numbers_present_flag
+	w.writeBool(false) // use_128x128_superblock
+	w.writeBool(true)  // enable_filter_intra
+	w.writeBool(true)  // enable_intra_edge_filter
+	w.writeBool(true)  // enable_interintra_compound
+	w.writeBool(true)  // enable_masked_compound
+	w.writeBool(false) // enable_warped_motion
+	w.writeBool(true)  // enable_dual_filter
+	w.writeBool(false) // enable_order_hint
+	w.writeBool(false) // seq_choose_screen_content_tools
+	w.writeBits(0, 1)  // seq_force_screen_content_tools
+	w.writeBool(false) // enable_superres
+	w.writeBool(true)  // enable_cdef
+	w.writeBool(false) // enable_restoration
+	w.writeBool(false) // high_bitdepth
+	w.writeBool(false) // mono_chrome
+	w.writeBool(false) // color_description_present_flag
+	w.writeBool(false) // color_range
+	w.writeBits(0, 2)  // chroma_sample_position
+	w.writeBool(true)  // separate_uv_delta_q
+	w.writeBool(false) // film_grain_params_present
+	return w.trailingBits()
+}
+
+func publicDecoderResidualShownKeyFrameHeaderPayload() []byte {
+	var w publicDecoderResidualBitWriter
+	w.writeBool(false)                       // show_existing_frame
+	w.writeBits(uint64(av1.FrameTypeKey), 2) // frame_type
+	w.writeBool(true)                        // show_frame
+	w.writeBool(false)                       // disable_cdf_update
+	w.writeBool(false)                       // frame_size_override_flag
+	w.writeBool(false)                       // render_and_frame_size_different
+	w.writeBool(false)                       // disable_frame_end_update_cdf
+	w.writeBool(false)                       // uniform_tile_spacing_flag
+	publicDecoderResidualWriteColorQuantParams(&w)
+	publicDecoderResidualWriteZeroSegmentationParams(&w)
+	w.writeBool(false) // reduced_tx_set
+	return w.bytes()
+}
+
+func publicDecoderResidualInterFrameHeaderPayload() []byte {
+	var w publicDecoderResidualBitWriter
+	w.writeBool(false)                         // show_existing_frame
+	w.writeBits(uint64(av1.FrameTypeInter), 2) // frame_type
+	w.writeBool(true)                          // show_frame
+	w.writeBool(false)                         // error_resilient_mode
+	w.writeBool(false)                         // disable_cdf_update
+	w.writeBool(false)                         // frame_size_override_flag
+	w.writeBits(0, 3)                          // primary_ref_frame
+	w.writeBits(0x01, 8)                       // refresh_frame_flags
+	for i := 0; i < av1.InterRefsPerFrame; i++ {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // allow_high_precision_mv
+	w.writeBool(false) // interpolation_filter is fixed
+	w.writeBits(0, 2)  // interpolation_filter = EIGHTTAP
+	w.writeBool(false) // is_motion_mode_switchable
+	w.writeBool(false) // disable_frame_end_update_cdf
+	w.writeBool(false) // uniform_tile_spacing_flag
+	publicDecoderResidualWriteColorQuantParams(&w)
+	publicDecoderResidualWriteZeroSegmentationParams(&w)
+	w.writeBool(false) // reference_select
+	w.writeBool(false) // reduced_tx_set
+	for i := 0; i < av1.InterRefsPerFrame; i++ {
+		w.writeBool(false) // global_motion_is_global
+	}
+	return w.bytes()
+}
+
+func publicDecoderResidualShowExistingFrameHeaderPayload(index uint8) []byte {
+	var w publicDecoderResidualBitWriter
+	w.writeBool(true) // show_existing_frame
+	w.writeBits(uint64(index&7), 3)
+	return w.bytes()
+}
+
+func publicDecoderResidualWriteColorQuantParams(w *publicDecoderResidualBitWriter) {
+	w.writeBits(0, 8)  // base_q_idx
+	w.writeBool(false) // y_dc_delta_q
+	w.writeBool(false) // diff_uv_delta
+	w.writeBool(false) // u_dc_delta_q
+	w.writeBool(false) // u_ac_delta_q
+	w.writeBool(false) // using_qmatrix
+}
+
+func publicDecoderResidualWriteZeroSegmentationParams(w *publicDecoderResidualBitWriter) {
+	w.writeBool(false) // segmentation_enabled
 }
 
 func publicDecoderResidualFrameHeaderPayload() []byte {
