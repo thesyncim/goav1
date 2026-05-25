@@ -156,9 +156,10 @@ type DecoderFrameWorkBatchResidualRunnerScratchSize struct {
 	Workers int
 	Batch   DecoderFrameWorkBatchResidualScratchSize
 
-	Int32Scratch     int
-	ResidualScratch  int
-	LoopContextAbove int
+	RestorationRequests int
+	Int32Scratch        int
+	ResidualScratch     int
+	LoopContextAbove    int
 }
 
 // DecoderFrameWorkBatchResidualRunnerScratch carries caller-owned storage for
@@ -167,6 +168,7 @@ type DecoderFrameWorkBatchResidualRunnerScratch struct {
 	States                  []TileDecodeState
 	Storages                []DecoderFrameWorkTileResidualCDFStorage
 	TileScratch             []DecoderFrameWorkTileResidualScratch
+	RestorationRequests     []DecoderFrameWorkTileRestorationRequest
 	PredictionScratch       []DecoderFrameWorkPredictionScratch
 	InterPredictionScratch  []DecoderFrameWorkInterPredictionScratch
 	Stats                   []DecoderFrameWorkTileResidualStats
@@ -186,6 +188,7 @@ type DecoderFrameWorkBatchResidualRunner struct {
 	States                 []TileDecodeState
 	Storages               []DecoderFrameWorkTileResidualCDFStorage
 	TileScratch            []DecoderFrameWorkTileResidualScratch
+	RestorationRequests    []DecoderFrameWorkTileRestorationRequest
 	PredictionScratch      []DecoderFrameWorkPredictionScratch
 	InterPredictionScratch []DecoderFrameWorkInterPredictionScratch
 	Stats                  []DecoderFrameWorkTileResidualStats
@@ -194,6 +197,11 @@ type DecoderFrameWorkBatchResidualRunner struct {
 	Int32Scratch     []int32
 	ResidualScratch  []int16
 	LoopContextAbove []TileBlockLoopRootAboveContext
+
+	CDEFIndexMap              DecoderFrameWorkCDEFIndexMap
+	LoopFilterMap             DecoderFrameWorkLoopFilterMap
+	sideDataValid             bool
+	sideDataRestorationActive bool
 }
 
 func DecoderFrameWorkResidualMaxFrameScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (int32Len int, int16Len int, err error) {
@@ -262,11 +270,12 @@ func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, 
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrFrameShortBuffer
 	}
 	return DecoderFrameWorkBatchResidualRunnerScratchSize{
-		Workers:          workers,
-		Batch:            batchSize,
-		Int32Scratch:     int32Len,
-		ResidualScratch:  residualLen,
-		LoopContextAbove: loopContextLen,
+		Workers:             workers,
+		Batch:               batchSize,
+		RestorationRequests: workers,
+		Int32Scratch:        int32Len,
+		ResidualScratch:     residualLen,
+		LoopContextAbove:    loopContextLen,
 	}, nil
 }
 
@@ -289,7 +298,7 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 	if size.Workers <= 0 {
 		return DecoderFrameWorkBatchResidualRunner{}, ErrThreadingInvalidWorkerCount
 	}
-	if size.Batch.Int32Scratch < 0 || size.Batch.ResidualScratch < 0 || size.Batch.LoopContextAbove < 0 {
+	if size.RestorationRequests < 0 || size.Batch.Int32Scratch < 0 || size.Batch.ResidualScratch < 0 || size.Batch.LoopContextAbove < 0 {
 		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
 	}
 	if decoderFrameWorkResidualScratchTooShort(scratch.States, size.Workers) ||
@@ -303,6 +312,13 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 		decoderFrameWorkResidualScratchTooShort(scratch.LoopContextAboveScratch, size.LoopContextAbove) {
 		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
 	}
+	var restorationRequests []DecoderFrameWorkTileRestorationRequest
+	if len(scratch.RestorationRequests) != 0 {
+		if decoderFrameWorkResidualScratchTooShort(scratch.RestorationRequests, size.RestorationRequests) {
+			return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
+		}
+		restorationRequests = scratch.RestorationRequests[:size.RestorationRequests]
+	}
 	predictionScratch := scratch.PredictionScratch[:size.Workers]
 	interScratch := scratch.InterPredictionScratch[:size.Workers]
 	for i := range predictionScratch {
@@ -312,6 +328,7 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 		States:                 scratch.States[:size.Workers],
 		Storages:               scratch.Storages[:size.Workers],
 		TileScratch:            scratch.TileScratch[:size.Workers],
+		RestorationRequests:    restorationRequests,
 		PredictionScratch:      predictionScratch,
 		InterPredictionScratch: interScratch,
 		Stats:                  scratch.Stats[:size.Workers],
@@ -341,6 +358,42 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 	stats, err := DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req)
 	r.Stats[worker] = stats
 	return err
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkSideData) error {
+	if r == nil {
+		return ErrThreadingInvalidBatch
+	}
+	if side.RestorationFrameBuffers.Plan.Active && len(r.RestorationRequests) < len(r.States) {
+		return ErrFrameShortBuffer
+	}
+	if err := side.CDEFIndexMap.Reset(); err != nil {
+		return err
+	}
+	if err := side.LoopFilterMap.Reset(); err != nil {
+		return err
+	}
+	if err := side.RestorationFrameBuffers.ResetRecords(); err != nil {
+		return err
+	}
+	if side.RestorationFrameBuffers.Plan.Active {
+		for i := range r.States {
+			req := &r.RestorationRequests[i]
+			req.Buffers = side.RestorationFrameBuffers
+			if err := InitDecoderFrameWorkTileRestorationRequestReferences(req); err != nil {
+				return err
+			}
+		}
+	}
+	r.CDEFIndexMap = side.CDEFIndexMap
+	r.LoopFilterMap = side.LoopFilterMap
+	r.sideDataValid = true
+	r.sideDataRestorationActive = side.RestorationFrameBuffers.Plan.Active
+	return nil
+}
+
+func SetDecoderFrameWorkBatchResidualRunnerSideData(runner *DecoderFrameWorkBatchResidualRunner, side DecoderFrameWorkSideData) error {
+	return runner.SetSideData(side)
 }
 
 func (r *DecoderFrameWorkBatchResidualRunner) ResetStats() error {
@@ -457,6 +510,16 @@ func (r *DecoderFrameWorkBatchResidualRunner) workerRequest(worker int) (Decoder
 	req.Tile.Int32Scratch = bound.Tile.Int32Scratch
 	req.Tile.ResidualScratch = bound.Tile.ResidualScratch
 	req.LoopContextAbove = bound.LoopContextAbove
+	if r.sideDataValid {
+		req.Tile.CDEFIndexMap = &r.CDEFIndexMap
+		req.Tile.LoopFilterMap = &r.LoopFilterMap
+		if r.sideDataRestorationActive {
+			if worker >= len(r.RestorationRequests) {
+				return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+			}
+			req.Tile.Restoration = &r.RestorationRequests[worker]
+		}
+	}
 	if req.Tile.PredictionScratch == nil && r.UseDefaultPrediction {
 		req.Tile.PredictionScratch = &r.PredictionScratch[worker]
 	}

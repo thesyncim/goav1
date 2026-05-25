@@ -737,6 +737,7 @@ func BenchmarkPublicDecoderResidualBatchRunner(b *testing.B) {
 		States:                  make([]av1.TileDecodeState, size.Workers),
 		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
 		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
 		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
 		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
 		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
