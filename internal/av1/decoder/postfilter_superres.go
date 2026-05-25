@@ -60,6 +60,10 @@ func (s FrameWorkSuperResPostFilterScratchSize) Max(other FrameWorkSuperResPostF
 type FrameWorkSuperResPostFilterRequest struct {
 	OutputFrame []byte
 
+	// OutputView receives the bound output frame view when set, allowing caller
+	// runners to keep detached superres output context allocation-free.
+	OutputView *frame.Frame
+
 	CodedScratch  [3][]uint16
 	OutputScratch [3][]uint16
 }
@@ -194,6 +198,10 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 	if err != nil {
 		return FrameWorkSuperResPostFilterResult{}, err
 	}
+	if req.OutputView != nil {
+		*req.OutputView = output
+		output = *req.OutputView
+	}
 	result := FrameWorkSuperResPostFilterResult{
 		Plan:       plan,
 		Output:     output,
@@ -236,6 +244,27 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 // detached output frame. It does not replace the frame-pool surface that the
 // normal framework publication path owns.
 func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilterToContext(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkSuperResPostFilterResult, error) {
+	if req.OutputView != nil {
+		return ctx.applySuperResPostFilterToContextView(req)
+	}
+	return ctx.applySuperResPostFilterToContextDetached(req)
+}
+
+func (ctx FrameWorkPostFilterContext) applySuperResPostFilterToContextView(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkSuperResPostFilterResult, error) {
+	result, err := ctx.ApplySuperResPostFilter(req)
+	if err != nil {
+		return ctx, result, err
+	}
+	if !result.Plan.Active {
+		return ctx, result, nil
+	}
+	ctx.Output = req.OutputView
+	ctx.detachedPostFilterOutput = true
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterSuperRes)
+	return ctx, result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) applySuperResPostFilterToContextDetached(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkSuperResPostFilterResult, error) {
 	result, err := ctx.ApplySuperResPostFilter(req)
 	if err != nil {
 		return ctx, result, err
@@ -250,6 +279,35 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilterToContext(req Frame
 }
 
 func (ctx FrameWorkPostFilterContext) bindSuperResPostFilterOutputContext(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, error) {
+	if req.OutputView != nil {
+		return ctx.bindSuperResPostFilterOutputContextView(req)
+	}
+	return ctx.bindSuperResPostFilterOutputContextDetached(req)
+}
+
+func (ctx FrameWorkPostFilterContext) bindSuperResPostFilterOutputContextView(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, error) {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		return ctx, nil
+	}
+	plan, err := ctx.SuperResPostFilterPlan()
+	if err != nil {
+		return ctx, err
+	}
+	if len(req.OutputFrame) < plan.OutputSize {
+		return ctx, frame.ErrShortBuffer
+	}
+	output, err := frame.Bind(req.OutputFrame[:plan.OutputSize], plan.OutputFormat)
+	if err != nil {
+		return ctx, err
+	}
+	*req.OutputView = output
+	ctx.Output = req.OutputView
+	ctx.detachedPostFilterOutput = true
+	ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterSuperRes)
+	return ctx, nil
+}
+
+func (ctx FrameWorkPostFilterContext) bindSuperResPostFilterOutputContextDetached(req FrameWorkSuperResPostFilterRequest) (FrameWorkPostFilterContext, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
 		return ctx, nil
 	}

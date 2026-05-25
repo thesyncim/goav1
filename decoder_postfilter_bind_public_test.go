@@ -420,6 +420,93 @@ func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{
+		CodedWidth:          8,
+		UpscaledWidth:       13,
+		Height:              32,
+		SuperResEnabled:     true,
+		SuperResDenominator: 13,
+	}
+	event := av1.DecoderEvent{
+		Kind:           av1.DecoderEventTileGroup,
+		SequenceHeader: sequence,
+		FrameSize:      size,
+		TileGroup:      av1.TileGroup{Final: true},
+		FilmGrain: av1.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	format, err := av1.FrameCodedFormatFromHeaders(sequence, size, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := publicDecoderPostFilterFrame(t, format)
+	for i := range output.Y.Pix {
+		output.Y.Pix[i] = 100
+	}
+	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
+
+	var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
+	first, err := runner.ScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SuperRes.OutputFrame == 0 || first.FilmGrain != (av1.DecoderFrameWorkFilmGrainPostFilterScratchSize{}) {
+		t.Fatalf("first scratch=%+v", first)
+	}
+	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
+	full, err := runner.ScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.SuperRes.OutputFrame == 0 || full.FilmGrain.LumaGrain == 0 || full.FilmGrain.LumaSamples == 0 {
+		t.Fatalf("full scratch=%+v", full)
+	}
+	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(full))
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := av1.DecoderFrameWorkPostFilterSuperRes | av1.DecoderFrameWorkPostFilterFilmGrain
+	if runner.Result.Completed != wantCompleted ||
+		runner.Result.SuperRes.Output.Format.Width != int(size.UpscaledWidth) ||
+		runner.Context.RemainingPostFilters() != 0 ||
+		!runner.Context.DetachedPostFilterOutput() ||
+		runner.Size.FilmGrain.LumaGrain != full.FilmGrain.LumaGrain {
+		t.Fatalf("runner size=%+v result=%+v remaining=%b detached=%v", runner.Size, runner.Result, runner.Context.RemainingPostFilters(), runner.Context.DetachedPostFilterOutput())
+	}
+	var nilRunner *av1.DecoderFrameWorkCallerPostFilterScratchRunner
+	if err := nilRunner.Apply(ctx); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil caller runner err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	shortRunner := runner
+	shortRunner.Scratch.ByteScratch = shortRunner.Scratch.ByteScratch[:full.SuperRes.OutputFrame-1]
+	if err := shortRunner.Apply(ctx); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short caller scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		err = runner.Apply(ctx)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("caller scratch runner allocated: %f", allocs)
+	}
+}
+
 func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}

@@ -164,7 +164,8 @@ The initial implementation covers:
   storage, aggregate request binding, flat scratch arena binding, decoder-level
   loop-restoration frame buffers, frame-work side-data arena binding,
   postfilter capability gates, runner scratch sizing, dynamic supported-runner
-  scratch binding, and reusable max scratch sizing.
+  scratch binding, dynamic caller-owned scratch binding, and reusable max
+  scratch sizing.
 - Public decoder side-map reset/mark helpers for passing tile residual CDEF
   indices and loop-filter metadata into postfilter planning.
 - Public decoder reference-MV and temporal motion-field storage binding for

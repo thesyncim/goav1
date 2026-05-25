@@ -156,6 +156,20 @@ type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
 	Result  DecoderFrameWorkPostFilterResult
 }
 
+// DecoderFrameWorkCallerPostFilterScratchRunner binds caller-owned full
+// postfilter request views from typed scratch at final-frame callback time. It
+// allows superres to switch Context.Output to detached caller-owned storage.
+type DecoderFrameWorkCallerPostFilterScratchRunner struct {
+	Scratch              DecoderFrameWorkPostFilterRequestScratch
+	RestorationOptimized bool
+	SuperResOutput       Frame
+
+	Size    DecoderFrameWorkPostFilterScratchSize
+	Request DecoderFrameWorkPostFilterRequest
+	Context DecoderFrameWorkPostFilterContext
+	Result  DecoderFrameWorkCallerPostFilterResult
+}
+
 // ScratchLen reports the exact scratch size required for ctx using side data
 // carried by the context.
 func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
@@ -188,6 +202,63 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 		return err
 	}
 	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return err
+	}
+	r.Size = size
+	r.Request = req
+	r.Context = next
+	r.Result = result
+	return nil
+}
+
+// ScratchLen reports caller-owned scratch for ctx. When superres is active,
+// the first call may only report pre/post-superres bootstrap scratch; after
+// Scratch.ByteScratch is sized for the superres output frame, this reports the
+// full tail scratch for loop restoration and film grain.
+func (r *DecoderFrameWorkCallerPostFilterScratchRunner) ScratchLen(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
+	if r == nil {
+		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderInvalidFrameWorkState
+	}
+	req := DecoderFrameWorkPostFilterRequest{
+		Restoration: DecoderFrameWorkRestorationPostFilterRequest{Optimized: r.RestorationOptimized},
+	}
+	size, err := ctx.CallerPostFilterScratchLen(req)
+	if err != nil {
+		return DecoderFrameWorkPostFilterScratchSize{}, err
+	}
+	if size.SuperRes.OutputFrame != 0 && len(r.Scratch.ByteScratch) >= size.SuperRes.OutputFrame {
+		req.SuperRes.OutputFrame = r.Scratch.ByteScratch[:size.SuperRes.OutputFrame]
+		req.SuperRes.OutputView = &r.SuperResOutput
+		size, err = ctx.CallerPostFilterScratchLen(req)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+	}
+	return size, nil
+}
+
+// Apply binds caller-owned request views from Scratch and runs the full
+// postfilter chain, allowing Context.Output to become detached scratch.
+func (r *DecoderFrameWorkCallerPostFilterScratchRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	size, err := r.ScratchLen(ctx)
+	if err != nil {
+		return err
+	}
+	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	side.RestorationOptimized = r.RestorationOptimized
+	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
+	if err != nil {
+		return err
+	}
+	req.SuperRes.OutputView = &r.SuperResOutput
+	next, result, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		return err
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
 		return err
 	}
 	r.Size = size
