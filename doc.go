@@ -10,9 +10,9 @@
 // and Annex B OBU parsing, AV1 RTP payload iteration, construction,
 // caller-owned RTP sizing, sequence-header parsing, caller-owned frame pools
 // and sample-plane scratch helpers, intra/inter prediction, residual
-// reconstruction primitives, and post-reconstruction filtering helpers. The
-// decoder and encoder APIs will grow at this top level as the internal pipeline
-// stabilizes.
+// reconstruction primitives, post-reconstruction filtering helpers, superres
+// upscaling, and film-grain output helpers. The decoder and encoder APIs will
+// grow at this top level as the internal pipeline stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly
