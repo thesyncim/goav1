@@ -163,9 +163,9 @@ The initial implementation covers:
   CDEF, superres, loop restoration, film grain, and loop-filter/CDEF side-map
   storage, aggregate request binding, flat scratch arena binding, decoder-level
   loop-restoration frame buffers, frame-work side-data arena binding,
-  postfilter capability gates, runner scratch sizing, dynamic supported-runner
-  scratch binding, dynamic caller-owned scratch binding, and reusable max
-  scratch sizing.
+  postfilter capability gates, header-derived scratch contexts, runner scratch
+  sizing, dynamic supported-runner scratch binding, dynamic caller-owned scratch
+  binding, and reusable max scratch sizing.
 - Public decoder side-map reset/mark helpers for passing tile residual CDEF
   indices and loop-filter metadata into postfilter planning.
 - Public decoder reference-MV and temporal motion-field storage binding for
@@ -190,9 +190,10 @@ The initial implementation covers:
   batch residual scratch sizing/binding, per-worker residual runner binding,
   residual-runner side-data attachment, event-level residual-runner scratch
   sizing, aggregate event scratch sizing, event side-data binding, reusable
-  event runner state, direct postfilter runner dispatch, and execution, batch
-  loop-context sizing, plus job and batch helpers that compose decode-state
-  setup, residual decode/reconstruct, and CDF retention.
+  event runner state, direct postfilter runner dispatch, caller-owned superres
+  display output, and execution, batch loop-context sizing, plus job and batch
+  helpers that compose decode-state setup, residual decode/reconstruct, and CDF
+  retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

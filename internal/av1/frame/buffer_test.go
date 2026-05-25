@@ -276,6 +276,9 @@ func TestSamplePlaneRejectsInvalidInputs(t *testing.T) {
 	if _, err := SamplePlaneLen(Plane{Pix: make([]byte, 7), Stride: 7, Width: 3, Height: 1}, 2); !errors.Is(err, ErrInvalidPlane) {
 		t.Fatalf("misaligned stride err=%v want %v", err, ErrInvalidPlane)
 	}
+	if need, err := SamplePlaneLen(Plane{Stride: 4, Width: 4, Height: 4}, 1); err != nil || need != 16 {
+		t.Fatalf("geometry-only len=%d err=%v want 16,nil", need, err)
+	}
 	if _, err := LoadSamplePlane(make([]uint16, 3), plane, 1); !errors.Is(err, ErrShortBuffer) {
 		t.Fatalf("short scratch err=%v want %v", err, ErrShortBuffer)
 	}
@@ -302,6 +305,9 @@ func TestBorderedSamplePlaneRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := BorderedSamplePlaneLen(Plane{}, 1, 1, 0, 1); !errors.Is(err, ErrInvalidPlane) {
 		t.Fatalf("empty bordered plane err=%v want %v", err, ErrInvalidPlane)
+	}
+	if layout, err := BorderedSamplePlaneLen(Plane{Stride: 4, Width: 4, Height: 4}, 1, 1, 1, 1); err != nil || layout.Len == 0 {
+		t.Fatalf("geometry-only bordered layout=%+v err=%v", layout, err)
 	}
 	if _, err := LoadBorderedSamplePlane(make([]uint16, 3), plane, 1, 1, 1, 1); !errors.Is(err, ErrShortBuffer) {
 		t.Fatalf("short scratch err=%v want %v", err, ErrShortBuffer)

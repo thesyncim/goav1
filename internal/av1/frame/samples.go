@@ -34,7 +34,7 @@ type BorderedSamplePlaneLayout struct {
 // SamplePlaneLen reports the caller-owned uint16 scratch length required to
 // hold plane with the same row stride expressed in samples.
 func SamplePlaneLen(plane Plane, bytesPerSample int) (int, error) {
-	_, need, err := samplePlaneLayout(plane, bytesPerSample)
+	_, need, err := samplePlaneLayout(plane, bytesPerSample, false)
 	return need, err
 }
 
@@ -71,7 +71,7 @@ func BindBorderedSamplePlane(dst []uint16, plane Plane, bytesPerSample int, bord
 // LoadSamplePlane expands an 8-bit or little-endian 16-bit byte plane into
 // caller-owned uint16 sample storage.
 func LoadSamplePlane(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, error) {
-	strideSamples, need, err := samplePlaneLayout(src, bytesPerSample)
+	strideSamples, need, err := samplePlaneLayout(src, bytesPerSample, true)
 	if err != nil {
 		return SamplePlane{}, err
 	}
@@ -94,6 +94,9 @@ func LoadSamplePlane(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, 
 func LoadBorderedSamplePlane(dst []uint16, src Plane, bytesPerSample int, borderHorz int, borderVert int, align int) (BorderedSamplePlane, error) {
 	layout, err := borderedSamplePlaneLayout(src, bytesPerSample, borderHorz, borderVert, align)
 	if err != nil {
+		return BorderedSamplePlane{}, err
+	}
+	if _, _, err := samplePlaneLayout(src, bytesPerSample, true); err != nil {
 		return BorderedSamplePlane{}, err
 	}
 	if len(dst) < layout.Len {
@@ -120,7 +123,7 @@ func LoadBorderedSamplePlane(dst []uint16, src Plane, bytesPerSample int, border
 // StoreSamplePlane writes visible samples from src into an 8-bit or
 // little-endian 16-bit byte plane.
 func StoreSamplePlane(dst Plane, bytesPerSample int, src SamplePlane) error {
-	if _, _, err := samplePlaneLayout(dst, bytesPerSample); err != nil {
+	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
 		return err
 	}
 	if !samplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
@@ -139,7 +142,7 @@ func StoreSamplePlane(dst Plane, bytesPerSample int, src SamplePlane) error {
 // StoreBorderedSamplePlane writes the visible region from src into an 8-bit or
 // little-endian 16-bit byte plane.
 func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSamplePlane) error {
-	if _, _, err := samplePlaneLayout(dst, bytesPerSample); err != nil {
+	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
 		return err
 	}
 	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
@@ -156,7 +159,7 @@ func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSampleP
 	return nil
 }
 
-func samplePlaneLayout(plane Plane, bytesPerSample int) (int, int, error) {
+func samplePlaneLayout(plane Plane, bytesPerSample int, requirePix bool) (int, int, error) {
 	if bytesPerSample != 1 && bytesPerSample != 2 {
 		return 0, 0, ErrInvalidPlane
 	}
@@ -178,7 +181,7 @@ func samplePlaneLayout(plane Plane, bytesPerSample int) (int, int, error) {
 		return 0, 0, ErrInvalidPlane
 	}
 	needBytes, ok := checkedAdd(lastRow, rowBytes)
-	if !ok || len(plane.Pix) < needBytes {
+	if !ok || (requirePix && len(plane.Pix) < needBytes) {
 		return 0, 0, ErrInvalidPlane
 	}
 	strideSamples := plane.Stride / bytesPerSample
@@ -199,7 +202,7 @@ func borderedSamplePlaneLayout(plane Plane, bytesPerSample int, borderHorz int, 
 	if align&(align-1) != 0 {
 		return BorderedSamplePlaneLayout{}, ErrInvalidPlane
 	}
-	if _, _, err := samplePlaneLayout(plane, bytesPerSample); err != nil {
+	if _, _, err := samplePlaneLayout(plane, bytesPerSample, false); err != nil {
 		return BorderedSamplePlaneLayout{}, err
 	}
 	if plane.Width == 0 || plane.Height == 0 {

@@ -815,22 +815,10 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var jobs [2]av1.TileJob
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
-	format := av1.FrameFormat{
-		Width:      int(event.FrameSize.CodedWidth),
-		Height:     int(event.FrameSize.Height),
-		BitDepth:   8,
-		MonoChrome: true,
-		Align:      64,
-	}
-	probeEvent := event
-	probeEvent.SequenceHeader = sequence
-	probeOutput := publicDecoderPostFilterFrame(b, format)
-	probeCtx := av1.DecoderFrameWorkPostFilterContext{
-		Event:                   probeEvent,
-		Output:                  probeOutput,
-		CDEFIndexMap:            &side.CDEFIndexMap,
-		LoopFilterMap:           &side.LoopFilterMap,
-		RestorationFrameBuffers: &side.RestorationFrameBuffers,
+	var probeOutput av1.Frame
+	probeCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 64, &side, &probeOutput)
+	if err != nil {
+		b.Fatal(err)
 	}
 	var probe av1.DecoderFrameWorkSupportedPostFilterScratchRunner
 	postScratchSize, err := probe.ScratchLen(probeCtx)

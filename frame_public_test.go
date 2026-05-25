@@ -164,6 +164,9 @@ func TestPublicFrameSamplePlaneRejectsInvalid(t *testing.T) {
 	if _, err := av1.FrameSamplePlaneLen(plane, 3); !errors.Is(err, av1.ErrFrameInvalidPlane) {
 		t.Fatalf("bytesPerSample err=%v want %v", err, av1.ErrFrameInvalidPlane)
 	}
+	if need, err := av1.FrameSamplePlaneLen(av1.FramePlane{Stride: 4, Width: 4, Height: 2}, 1); err != nil || need != 8 {
+		t.Fatalf("geometry-only len=%d err=%v want 8,nil", need, err)
+	}
 	if _, err := av1.LoadFrameSamplePlane(make([]uint16, 3), plane, 1); !errors.Is(err, av1.ErrFrameShortBuffer) {
 		t.Fatalf("short load err=%v want %v", err, av1.ErrFrameShortBuffer)
 	}

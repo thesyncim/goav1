@@ -268,6 +268,58 @@ func (r *DecoderFrameWorkCallerPostFilterScratchRunner) Apply(ctx DecoderFrameWo
 	return nil
 }
 
+// DecoderFrameWorkPostFilterScratchContext builds a header-derived final-frame
+// postfilter context for scratch sizing. output is filled with a geometry-only
+// coded-frame view; its pixel slices are nil and must not be used to apply
+// filters.
+func DecoderFrameWorkPostFilterScratchContext(sequence SequenceHeader, event DecoderEvent, align int, side *DecoderFrameWorkSideData, output *Frame) (DecoderFrameWorkPostFilterContext, error) {
+	if output == nil {
+		return DecoderFrameWorkPostFilterContext{}, ErrFrameInvalidSlot
+	}
+	event.SequenceHeader = sequence
+	format, err := FrameCodedFormatFromHeaders(sequence, event.FrameSize, align)
+	if err != nil {
+		return DecoderFrameWorkPostFilterContext{}, err
+	}
+	layout, err := FrameRequiredSize(format)
+	if err != nil {
+		return DecoderFrameWorkPostFilterContext{}, err
+	}
+	*output = decoderFrameWorkPostFilterScratchFrame(format, layout)
+	ctx := DecoderFrameWorkPostFilterContext{
+		Event:  event,
+		Output: output,
+	}
+	if side != nil {
+		ctx.CDEFIndexMap = &side.CDEFIndexMap
+		ctx.LoopFilterMap = &side.LoopFilterMap
+		ctx.RestorationFrameBuffers = &side.RestorationFrameBuffers
+	}
+	return ctx, nil
+}
+
+func decoderFrameWorkPostFilterScratchFrame(format FrameFormat, layout FrameLayout) Frame {
+	return Frame{
+		Format: format,
+		Layout: layout,
+		Y: FramePlane{
+			Stride: layout.YStride,
+			Width:  format.Width,
+			Height: format.Height,
+		},
+		U: FramePlane{
+			Stride: layout.UStride,
+			Width:  layout.ChromaWidth,
+			Height: layout.ChromaHeight,
+		},
+		V: FramePlane{
+			Stride: layout.VStride,
+			Width:  layout.ChromaWidth,
+			Height: layout.ChromaHeight,
+		},
+	}
+}
+
 // DecoderFrameWorkPostFilterRequestScratchLen reports the flat typed arena
 // lengths needed for size.
 func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {

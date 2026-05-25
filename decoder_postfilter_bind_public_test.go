@@ -448,10 +448,31 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 			Overlap:       true,
 		},
 	}
-	format, err := av1.FrameCodedFormatFromHeaders(sequence, size, 32)
+	var scratchOutput av1.Frame
+	scratchCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if scratchCtx.Output != &scratchOutput ||
+		scratchOutput.Format.Width != int(size.CodedWidth) ||
+		scratchOutput.Layout.Size == 0 ||
+		len(scratchOutput.Y.Pix) != 0 {
+		t.Fatalf("scratch ctx=%+v output=%+v", scratchCtx, scratchOutput)
+	}
+	if _, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, nil); !errors.Is(err, av1.ErrFrameInvalidSlot) {
+		t.Fatalf("nil scratch output err=%v want %v", err, av1.ErrFrameInvalidSlot)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, err = av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("scratch context allocated: %f", allocs)
+	}
+
+	format := scratchOutput.Format
 	output := publicDecoderPostFilterFrame(t, format)
 	for i := range output.Y.Pix {
 		output.Y.Pix[i] = 100
@@ -459,7 +480,7 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
 
 	var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
-	first, err := runner.ScratchLen(ctx)
+	first, err := runner.ScratchLen(scratchCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +488,7 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 		t.Fatalf("first scratch=%+v", first)
 	}
 	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
-	full, err := runner.ScratchLen(ctx)
+	full, err := runner.ScratchLen(scratchCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +517,7 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 		t.Fatalf("short caller scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
 	}
 
-	allocs := testing.AllocsPerRun(1000, func() {
+	allocs = testing.AllocsPerRun(1000, func() {
 		err = runner.Apply(ctx)
 	})
 	if err != nil {
