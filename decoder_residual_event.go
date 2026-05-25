@@ -91,6 +91,7 @@ type DecoderFrameWorkResidualEventScratchSize struct {
 	Runner   DecoderFrameWorkBatchResidualRunnerScratchSize
 	SideData DecoderFrameWorkSideDataScratchSize
 	Plan     DecoderTileWorkPlan
+	Outputs  int
 }
 
 // DecoderFrameWorkResidualEventScratch carries typed caller-owned arenas for
@@ -115,6 +116,7 @@ func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResi
 			JobCount:   max(s.Plan.JobCount, other.Plan.JobCount),
 			BatchCount: max(s.Plan.BatchCount, other.Plan.BatchCount),
 		},
+		Outputs: max(s.Outputs, other.Outputs),
 	}
 }
 
@@ -244,6 +246,7 @@ func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event Deco
 		Runner:   runner,
 		SideData: sideData,
 		Plan:     plan,
+		Outputs:  decoderFrameWorkResidualEventOutputLen(event),
 	}, nil
 }
 
@@ -254,6 +257,7 @@ func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 	for i := range events {
 		event := events[i]
 		sequence = decoderFrameWorkResidualEventSequence(sequence, event)
+		size.Outputs += decoderFrameWorkResidualEventOutputLen(event)
 		if decoderFrameWorkResidualEventNeedsSideData(event) {
 			side, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
 			if err != nil {
@@ -372,11 +376,16 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
 	count := 0
 	for i := range events {
-		if DecoderEventCompletesFrameWork(events[i]) {
-			count++
-		}
+		count += decoderFrameWorkResidualEventOutputLen(events[i])
 	}
 	return count
+}
+
+func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
+	if DecoderEventCompletesFrameWork(event) {
+		return 1
+	}
+	return 0
 }
 
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder

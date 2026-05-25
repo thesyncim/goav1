@@ -36,6 +36,7 @@ type DecoderFrameWorkResidualStreamScratchSize struct {
 type DecoderFrameWorkResidualStreamScratch struct {
 	Events   []DecoderEvent
 	SideData DecoderFrameWorkSideDataScratch
+	Outputs  []*Frame
 
 	RTPBuffer []byte
 	RTPSpans  []RTPObuSpan
@@ -67,6 +68,12 @@ func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStrea
 	}
 	if decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch.SideData, size.Event.SideData) {
 		return DecoderFrameWorkResidualStreamRunner{}, ErrFrameShortBuffer
+	}
+	if scratch.Outputs != nil {
+		if decoderFrameWorkResidualScratchTooShort(scratch.Outputs, size.Event.Outputs) {
+			return DecoderFrameWorkResidualStreamRunner{}, ErrFrameShortBuffer
+		}
+		eventRunner.Outputs = scratch.Outputs[:size.Event.Outputs]
 	}
 	return DecoderFrameWorkResidualStreamRunner{
 		Stream:      stream,

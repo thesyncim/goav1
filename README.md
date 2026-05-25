@@ -194,10 +194,10 @@ The initial implementation covers:
   low-overhead OBU/RTP stream-runner scratch sizing, binding, single-payload
   and multi-payload RTP scratch sizing and execution, event side-data and
   composite event runner binding, reusable event runner state, direct postfilter
-  runner dispatch, caller-owned completed-output collection, caller-owned
-  aggregate residual stats, caller-owned superres display output, and execution,
-  batch loop-context sizing, plus job and batch helpers that compose
-  decode-state setup, residual decode/reconstruct, and CDF retention.
+  runner dispatch, caller-owned completed-output sizing and collection,
+  caller-owned aggregate residual stats, caller-owned superres display output,
+  and execution, batch loop-context sizing, plus job and batch helpers that
+  compose decode-state setup, residual decode/reconstruct, and CDF retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

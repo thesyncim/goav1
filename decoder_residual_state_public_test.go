@@ -485,16 +485,19 @@ func TestPublicDecoderFrameWorkResidualScratchSizeMax(t *testing.T) {
 		Runner:   runnerA,
 		SideData: av1.DecoderFrameWorkSideDataScratchSize{CDEFIndexMap: 2, LoopFilterMap: 8},
 		Plan:     av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1},
+		Outputs:  1,
 	}
 	eventB := av1.DecoderFrameWorkResidualEventScratchSize{
 		Runner:   runnerB,
 		SideData: av1.DecoderFrameWorkSideDataScratchSize{CDEFReadMap: 4, LoopFilterMap: 3},
 		Plan:     av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 5, BatchCount: 2},
+		Outputs:  3,
 	}
 	got := eventA.Max(eventB)
 	if got.Runner != runnerA.Max(runnerB) ||
 		got.SideData != (av1.DecoderFrameWorkSideDataScratchSize{CDEFIndexMap: 2, CDEFReadMap: 4, LoopFilterMap: 8}) ||
-		got.Plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 5, BatchCount: 2}) {
+		got.Plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 5, BatchCount: 2}) ||
+		got.Outputs != 3 {
 		t.Fatalf("event residual scratch max=%+v", got)
 	}
 
@@ -1976,7 +1979,8 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 		len(runner.Events) != streamSize.Events ||
 		len(runner.RTPBuffer) != streamSize.RTPBuffer ||
 		len(runner.RTPSpans) != streamSize.RTPSpans ||
-		len(runner.SideDataScratch.CDEFIndexMap) != streamSize.Event.SideData.CDEFIndexMap {
+		len(runner.SideDataScratch.CDEFIndexMap) != streamSize.Event.SideData.CDEFIndexMap ||
+		len(runner.EventRunner.Outputs) != streamSize.Event.Outputs {
 		t.Fatalf("bound runner=%+v size=%+v", runner, streamSize)
 	}
 
@@ -2019,6 +2023,11 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	if _, err := av1.BindDecoderFrameWorkResidualStreamRunner(streamSize, &stream, eventRunner, shortSide); !errors.Is(err, av1.ErrFrameShortBuffer) {
 		t.Fatalf("short side-data err=%v want %v", err, av1.ErrFrameShortBuffer)
 	}
+	shortOutputs := streamScratch
+	shortOutputs.Outputs = shortOutputs.Outputs[:streamSize.Event.Outputs-1]
+	if _, err := av1.BindDecoderFrameWorkResidualStreamRunner(streamSize, &stream, eventRunner, shortOutputs); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short output err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
 }
 
 func TestPublicDecoderFrameWorkResidualStreamScratchLenLowOverhead(t *testing.T) {
@@ -2036,6 +2045,7 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenLowOverhead(t *testing.T)
 		size.RTPBuffer != 0 ||
 		size.RTPSpans != 0 ||
 		size.Event.Plan != (av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) ||
+		size.Event.Outputs != 1 ||
 		size.Event.Runner.Workers != 1 ||
 		size.Event.SideData.CDEFIndexMap == 0 ||
 		size.Event.SideData.LoopFilterMap == 0 {
@@ -2076,6 +2086,7 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPPayload(t *testing.T) 
 		size.RTPBuffer == 0 ||
 		size.RTPSpans != 3 ||
 		size.Event.Plan != (av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) ||
+		size.Event.Outputs != 1 ||
 		size.Event.Runner.Workers != 1 ||
 		size.Event.SideData.CDEFIndexMap == 0 ||
 		size.Event.SideData.LoopFilterMap == 0 {
@@ -2394,12 +2405,15 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if lowSize.Events != 3 ||
+		lowSize.Event.Outputs != 1 ||
 		rtpSize.Events != 3 ||
 		rtpSize.RTPBuffer == 0 ||
 		rtpSize.RTPSpans != 3 ||
+		rtpSize.Event.Outputs != 1 ||
 		rtpPayloadsSize.Events != 1 ||
 		rtpPayloadsSize.RTPBuffer == 0 ||
-		rtpPayloadsSize.RTPSpans != 1 {
+		rtpPayloadsSize.RTPSpans != 1 ||
+		rtpPayloadsSize.Event.Outputs != 1 {
 		t.Fatalf("scratch sizes low=%+v rtp=%+v payloads=%+v", lowSize, rtpSize, rtpPayloadsSize)
 	}
 	if allocs != 0 {
@@ -3075,6 +3089,7 @@ func publicDecoderResidualStreamScratch(size av1.DecoderFrameWorkResidualStreamS
 	return av1.DecoderFrameWorkResidualStreamScratch{
 		Events:    make([]av1.DecoderEvent, size.Events+1),
 		SideData:  publicDecoderFrameWorkSideDataScratch(size.Event.SideData),
+		Outputs:   make([]*av1.Frame, size.Event.Outputs+1),
 		RTPBuffer: make([]byte, size.RTPBuffer+1),
 		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans+1),
 	}
