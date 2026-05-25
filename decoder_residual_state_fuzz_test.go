@@ -306,21 +306,7 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		var scratchSpans [2]av1.TileSpan
 		var scratchJobs [2]av1.TileJob
 		var scratchBatches [1]av1.TileBatch
-		plan, err := av1.PlanDecoderTileWork(event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
-		if err != nil {
-			t.Fatal(err)
-		}
-		scratchBatch := av1.DecoderFrameWorkBatch{
-			FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-				Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
-				FrameSize:    event.FrameSize,
-				CDEF:         event.CDEF,
-				Quantization: event.Quantization,
-				TransformRef: event.TransformRef,
-			},
-			Jobs: scratchJobs[:plan.JobCount],
-		}
-		runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(scratchBatch, 1)
+		runnerSize, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 		if err != nil {
 			t.Fatal(err)
 		}

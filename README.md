@@ -186,9 +186,10 @@ The initial implementation covers:
   caller-owned prediction and residual scratch, intra/inter transform dispatch,
   default frame-work transform selection, max residual scratch sizing, aggregate
   batch residual scratch sizing/binding, per-worker residual runner binding,
-  residual-runner side-data attachment, event-level residual-runner execution,
-  batch loop-context sizing, plus job and batch helpers that compose decode-state
-  setup, residual decode/reconstruct, and CDF retention.
+  residual-runner side-data attachment, event-level residual-runner scratch
+  sizing and execution, batch loop-context sizing, plus job and batch helpers
+  that compose decode-state setup, residual decode/reconstruct, and CDF
+  retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

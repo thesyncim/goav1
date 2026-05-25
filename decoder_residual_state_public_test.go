@@ -500,23 +500,12 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
 	var scratchSpans [2]av1.TileSpan
 	var scratchJobs [2]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	plan, err := av1.PlanDecoderTileWork(event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	runnerSize, plan, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratchBatch := av1.DecoderFrameWorkBatch{
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
-			FrameSize:    event.FrameSize,
-			CDEF:         event.CDEF,
-			Quantization: event.Quantization,
-			TransformRef: event.TransformRef,
-		},
-		Jobs: scratchJobs[:plan.JobCount],
-	}
-	runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(scratchBatch, 1)
-	if err != nil {
-		t.Fatal(err)
+	if plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1}) {
+		t.Fatalf("event residual runner plan=%+v", plan)
 	}
 	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, publicDecoderBatchResidualRunnerScratch(runnerSize))
 	if err != nil {
@@ -607,6 +596,54 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunner(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventRunnerScratchLen(t *testing.T) {
+	sequence := av1.SequenceHeader{
+		EnableCDEF: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		},
+	}
+	event := publicDecoderResidualRunnerFrameEvent()
+	var spans [2]av1.TileSpan
+	var jobs [2]av1.TileJob
+	var batches [1]av1.TileBatch
+	size, plan, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan != (av1.DecoderTileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: 1}) ||
+		size.Workers != 1 ||
+		size.RestorationRequests != 1 ||
+		size.Batch.LoopContextAbove == 0 {
+		t.Fatalf("size=%+v plan=%+v", size, plan)
+	}
+	if spans[0] != (av1.TileSpan{Tile: 0, Row: 0, Col: 0, Offset: 1, Size: 256}) ||
+		spans[1] != (av1.TileSpan{Tile: 1, Row: 0, Col: 1, Offset: 257, Size: 256}) ||
+		jobs[0].Tile != 0 ||
+		jobs[1].Tile != 1 ||
+		batches[0].Count != 2 {
+		t.Fatalf("spans=%+v jobs=%+v batches=%+v", spans, jobs, batches)
+	}
+	var shortSpans [1]av1.TileSpan
+	if _, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, shortSpans[:], jobs[:], batches[:]); !errors.Is(err, av1.ErrInvalidTileGroup) {
+		t.Fatalf("short spans err=%v want %v", err, av1.ErrInvalidTileGroup)
+	}
+	if _, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, av1.DecoderEvent{Kind: av1.DecoderEventSequenceHeader}, 1, spans[:], jobs[:], batches[:]); !errors.Is(err, av1.ErrDecoderInvalidTileWork) {
+		t.Fatalf("invalid event err=%v want %v", err, av1.ErrDecoderInvalidTileWork)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, err = av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, spans[:], jobs[:], batches[:])
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualEventRunnerScratchLen allocated: %f", allocs)
+	}
+}
+
 func TestPublicRunDecoderFrameWorkEventWithResidualRunnerAllocs(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -625,21 +662,7 @@ func TestPublicRunDecoderFrameWorkEventWithResidualRunnerAllocs(t *testing.T) {
 	var scratchSpans [2]av1.TileSpan
 	var scratchJobs [2]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	plan, err := av1.PlanDecoderTileWork(event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	scratchBatch := av1.DecoderFrameWorkBatch{
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
-			FrameSize:    event.FrameSize,
-			CDEF:         event.CDEF,
-			Quantization: event.Quantization,
-			TransformRef: event.TransformRef,
-		},
-		Jobs: scratchJobs[:plan.JobCount],
-	}
-	runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(scratchBatch, 1)
+	runnerSize, _, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		t.Fatal(err)
 	}

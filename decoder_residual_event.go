@@ -27,6 +27,25 @@ type DecoderFrameWorkResidualEventRequest struct {
 	Post     DecoderFrameWorkPostFilterFunc
 }
 
+// DecoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
+// caller-owned spans/jobs/batches and reports the residual runner scratch
+// required to execute the planned event.
+func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
+	plan, err := PlanDecoderTileWork(event, workers, spans, jobs, batches)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+	}
+	batch := DecoderFrameWorkBatch{
+		FrameWorkFrameContext: decoderFrameWorkResidualEventContext(sequence, event),
+		Jobs:                  jobs[:plan.JobCount],
+	}
+	size, err := DecoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+	}
+	return size, plan, nil
+}
+
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
 // frame-work event using a caller-owned residual runner. If SideData is set, it
 // is attached to both the active frame-work state and the residual runner after
@@ -118,6 +137,27 @@ func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPl
 		return step.Tile.Tile, step.Tile.ReferenceCount, true, nil
 	default:
 		return DecoderTileWorkPlan{}, 0, false, ErrDecoderInvalidTileWork
+	}
+}
+
+func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event DecoderEvent) DecoderFrameWorkFrameContext {
+	return DecoderFrameWorkFrameContext{
+		Sequence:            DecoderFrameWorkSequenceContextFromHeader(sequence),
+		FrameHeader:         event.FrameHeader,
+		FrameSize:           event.FrameSize,
+		TileInfo:            event.TileInfo,
+		Quantization:        event.Quantization,
+		Segmentation:        event.Segmentation,
+		Delta:               event.Delta,
+		LoopFilter:          event.LoopFilter,
+		CDEF:                event.CDEF,
+		Restoration:         event.Restoration,
+		TransformRef:        event.TransformRef,
+		SkipMode:            event.SkipMode,
+		FrameMode:           event.FrameMode,
+		GlobalMotion:        event.GlobalMotion,
+		FilmGrain:           event.FilmGrain,
+		ReferenceOrderHints: event.ReferenceOrderHints,
 	}
 }
 
