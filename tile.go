@@ -19,6 +19,7 @@ type TileReferenceMVFrame = internaltile.ReferenceMVFrame
 type TileReferenceMVEntry = internaltile.ReferenceMVEntry
 type TileTemporalMotionField = internaltile.TemporalMotionField
 type TileTemporalMotionEntry = internaltile.TemporalMotionEntry
+type TileDecodeState = internaltile.DecodeState
 type TileTransformSize = internaltile.TransformSize
 type TileTransformDimensions = internaltile.TransformDimensions
 type TileTransformPartitionRequest = internaltile.TransformPartitionRequest

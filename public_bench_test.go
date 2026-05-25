@@ -372,6 +372,53 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderResidualState(b *testing.B) {
+	var initial av1.DecoderFrameWorkTileResidualCDFStorage
+	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {
+		b.Fatal(err)
+	}
+	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	retainedValid := false
+	batch := av1.DecoderFrameWorkBatch{
+		Payload: []byte{0x00, 0xff},
+		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+			Quantization: av1.QuantizationParams{BaseQIdx: 73},
+		},
+		InitialTileResidualCDFs:       &initial,
+		RetainedTileResidualCDFs:      &retained,
+		RetainedTileResidualCDFsValid: &retainedValid,
+		Jobs: []av1.TileJob{
+			{Tile: 0, Offset: 0, Size: 1},
+			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
+		},
+	}
+	var storage av1.DecoderFrameWorkTileResidualCDFStorage
+	var state av1.TileDecodeState
+
+	b.SetBytes(int64(len(batch.Payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := av1.InitDecoderFrameWorkTileResidualCDFStorage(batch, &storage); err != nil {
+			b.Fatal(err)
+		}
+		cdfs := av1.DecoderFrameWorkTileResidualCDFsFromStorage(&storage)
+		if err := av1.InitDecoderFrameWorkJobDecodeState(batch, 1, &state); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.RetainDecoderFrameWorkTileResidualCDFStorage(batch, 1, &state, &storage); err != nil {
+			b.Fatal(err)
+		}
+		if cdfs.TransformType == nil || !retainedValid {
+			b.Fatal("residual state not initialized")
+		}
+		sum += int(state.CurrentBaseQIdx)
+	}
+	publicBenchmarkSink = sum
+}
+
 func publicBenchmarkLowOverheadStream() []byte {
 	stream := make([]byte, 0, 512)
 	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
