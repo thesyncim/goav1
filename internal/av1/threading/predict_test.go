@@ -863,6 +863,48 @@ func TestFrameWorkBatchPredictBlockLumaInterOBMCLeftMatchesLibaomMask(t *testing
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterOBMCChromaSubsampledMatchesLibaomMasks(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+
+	visit := testOBMCInterPredictionVisit(motion.Vector{}, motion.Vector{Row: 16}, motion.Vector{Col: 16})
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockInterOBMCWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+
+	mask4, ok := frameWorkOBMCMask(4)
+	if !ok {
+		t.Fatal("missing 4-wide obmc mask")
+	}
+	for _, tt := range []struct {
+		plane frame.Plane
+		ref   frame.Plane
+	}{
+		{plane: output.U, ref: reference.U},
+		{plane: output.V, ref: reference.V},
+	} {
+		for y := 8; y < 16; y++ {
+			for x := 8; x < 16; x++ {
+				want := frameWorkTestSample(tt.ref, reference.Layout.BytesPerSample, x, y)
+				if y < 12 {
+					neighbor := frameWorkTestSample(tt.ref, reference.Layout.BytesPerSample, x, y+1)
+					want = frameWorkBlendA64(uint16(mask4[y-8]), want, neighbor)
+				}
+				if x < 12 {
+					neighbor := frameWorkTestSample(tt.ref, reference.Layout.BytesPerSample, x+1, y)
+					want = frameWorkBlendA64(uint16(mask4[x-8]), want, neighbor)
+				}
+				if got := frameWorkTestSample(tt.plane, output.Layout.BytesPerSample, x, y); got != want {
+					t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterChromaSubsampledMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128})
 	reference := testBatchFrame(t, output.Format)
@@ -1768,6 +1810,23 @@ func TestFrameWorkBatchPredictBlockInterCompoundWedgeAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterOBMCAllocs(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	fillFrameWorkInterReferenceAllPlanes(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testOBMCInterPredictionVisit(motion.Vector{}, motion.Vector{Row: 16}, motion.Vector{Col: 16})
+	var scratch FrameWorkInterPredictionScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockInterOBMCWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PredictBlockInter OBMC allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	reference := testBatchFrame(t, output.Format)
@@ -2208,6 +2267,38 @@ func testInterPredictionVisit(mv motion.Vector) tile.BlockLoopVisit {
 			InterMotionValid: true,
 		},
 	}
+}
+
+func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, leftMV motion.Vector) tile.BlockLoopVisit {
+	visit := testInterPredictionVisit(baseMV)
+	visit.Prediction.MotionMode = tile.MotionModeOBMC
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.OverlappableNeighborsValid = true
+	visit.Prediction.OverlappableNeighbors.AboveCount = 1
+	visit.Prediction.OverlappableNeighbors.Above[0] = tile.OverlappableNeighbor{
+		RelX4: 0,
+		Span4: 4,
+		Size:  tile.BlockSize16x16,
+		Motion: tile.InterMotionResult{
+			References: visit.Prediction.InterMotion.References,
+			MV:         [2]motion.Vector{aboveMV},
+		},
+		InterpFilters:      motion.RegularFilters,
+		InterpFiltersValid: true,
+	}
+	visit.Prediction.OverlappableNeighbors.LeftCount = 1
+	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+		RelY4: 0,
+		Span4: 4,
+		Size:  tile.BlockSize16x16,
+		Motion: tile.InterMotionResult{
+			References: visit.Prediction.InterMotion.References,
+			MV:         [2]motion.Vector{leftMV},
+		},
+		InterpFilters:      motion.RegularFilters,
+		InterpFiltersValid: true,
+	}
+	return visit
 }
 
 func testCompoundInterPredictionVisit(mv0 motion.Vector, mv1 motion.Vector, compoundType tile.CompoundType) tile.BlockLoopVisit {

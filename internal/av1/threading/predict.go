@@ -135,9 +135,9 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 }
 
 // PredictBlockInter writes inter prediction pixels for every present plane of
-// one decoded inter block. Single-reference and average/dist-wtd/wedge
-// compound translation are supported; inter-intra, warped/global refinement,
-// scaled references, and intrabc are handled by later stages.
+// one decoded inter block. Single-reference translation/OBMC/warp and
+// average/dist-wtd/wedge/diff-wtd compound translation are supported;
+// inter-intra, scaled references, and intrabc are handled by later stages.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -164,18 +164,35 @@ func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.Block
 		return nil
 	}
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeOBMC {
-		if scratch == nil {
-			return ErrInvalidBatch
-		}
-		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-			if err := b.predictBlockInterOBMCPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
-				return err
-			}
-		}
-		return nil
+		return b.PredictBlockInterOBMCWithFilters(index, visit, scratch, filters)
 	}
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
 		if err := b.predictBlockInterPlaneWithFilters(index, visit, plane, filters); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PredictBlockInterOBMC writes single-reference inter prediction for every
+// present plane and blends the above/left OBMC neighbor predictors selected by
+// motion_mode.
+func (b FrameWorkBatch) PredictBlockInterOBMC(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
+	if err != nil {
+		return err
+	}
+	return b.PredictBlockInterOBMCWithFilters(index, visit, scratch, filters)
+}
+
+// PredictBlockInterOBMCWithFilters is PredictBlockInterOBMC with explicit
+// interpolation filters for the current block's base predictor.
+func (b FrameWorkBatch) PredictBlockInterOBMCWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if scratch == nil {
+		return ErrInvalidBatch
+	}
+	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+		if err := b.predictBlockInterOBMCPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
 			return err
 		}
 	}

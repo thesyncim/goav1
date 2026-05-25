@@ -807,7 +807,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 							result.WarpedMotionValid = true
 						}
 					}
-					if motionMode == MotionModeOBMC {
+					if motionMode == MotionModeOBMC || motionMode == MotionModeWarp {
 						result.OverlappableNeighbors = overlappableNeighbors
 						result.OverlappableNeighborsValid = true
 					}
