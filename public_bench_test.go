@@ -1072,24 +1072,30 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	}
 	var probeStream av1.DecoderStream
 	var probeEvents [4]av1.DecoderEvent
-	count, err := probeStream.PushLowOverhead(lowOverhead, probeEvents[:])
-	if err != nil {
-		b.Fatal(err)
-	}
-	sequence, ok := probeStream.SequenceHeader()
-	if !ok {
-		b.Fatal("probe stream missing sequence")
-	}
+	var probeRTPBuffer [256]byte
+	var probeRTPSpans [4]av1.RTPObuSpan
 	var scratchSpans [1]av1.TileSpan
 	var scratchJobs [1]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
-	eventScratch, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, probeEvents[:count], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	lowPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamPlan(probeStream, lowOverhead, 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
+	rtpPlan, err := av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	rtpPayloadsPlan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, rtpPayloads, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		b.Fatal(err)
+	}
+	streamPlan := lowPlan.Max(rtpPlan).Max(rtpPayloadsPlan)
+	if !streamPlan.HasEvent() {
+		b.Fatal("stream plan missing bind event")
+	}
 	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
-		Width:        int(probeEvents[count-1].FrameSize.CodedWidth),
-		Height:       int(probeEvents[count-1].FrameSize.Height),
+		Width:        int(streamPlan.Bind.Event.FrameSize.CodedWidth),
+		Height:       int(streamPlan.Bind.Event.FrameSize.Height),
 		BitDepth:     8,
 		MonoChrome:   true,
 		SubsamplingX: true,
@@ -1105,8 +1111,8 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	var stats av1.DecoderFrameWorkTileResidualStats
 	var side av1.DecoderFrameWorkSideData
 	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
-	scratch := publicDecoderResidualEventScratch(eventScratch)
-	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, probeEvents[count-1], av1.DecoderFrameWorkResidualEventRuntime{
+	scratch := publicDecoderResidualStreamScratch(streamPlan.Size)
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(streamPlan, &stream, av1.DecoderFrameWorkResidualEventRuntime{
 		State:             &state,
 		Refs:              &refs,
 		FramePool:         &pool,
@@ -1120,17 +1126,6 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	}, scratch, &batchRunner)
 	if err != nil {
 		b.Fatal(err)
-	}
-	var events [4]av1.DecoderEvent
-	var rtpBuffer [128]byte
-	var rtpSpans [4]av1.RTPObuSpan
-	runner := av1.DecoderFrameWorkResidualStreamRunner{
-		Stream:          &stream,
-		EventRunner:     eventRunner,
-		Events:          events[:],
-		SideDataScratch: scratch.SideData,
-		RTPBuffer:       rtpBuffer[:],
-		RTPSpans:        rtpSpans[:],
 	}
 
 	b.Run("low-overhead", func(b *testing.B) {
