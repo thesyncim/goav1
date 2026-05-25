@@ -205,6 +205,85 @@ func TestFrameWorkLoopFilterMapMarkBlockRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkLoopFilterMapRecordAtAndForEachBlock(t *testing.T) {
+	ctx := testFrameWorkLoopFilterBatch(32, 16)
+	_, _, length, err := ctx.LoopFilterMapShape()
+	if err != nil {
+		t.Fatal(err)
+	}
+	filterMap, err := ctx.BindLoopFilterMap(make([]FrameWorkLoopFilterBlockRecord, length))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &tile.DecodeState{}
+	visit := tile.BlockLoopVisit{
+		Block: tile.BlockVisit{MICol: 2, MIRow: 1, MIColEnd: 6, MIRowEnd: 3},
+		Prediction: tile.BlockPredictionModeResult{
+			Valid: true,
+			Intra: true,
+		},
+	}
+	if err := filterMap.MarkBlock(visit, state); err != nil {
+		t.Fatal(err)
+	}
+
+	record, ok, err := filterMap.RecordAt(2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !record.Valid || record.Block != visit.Block {
+		t.Fatalf("top-left record=%+v ok=%v", record, ok)
+	}
+	record, ok, err = filterMap.RecordAt(5, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || record.Block != visit.Block {
+		t.Fatalf("covered record=%+v ok=%v", record, ok)
+	}
+	if _, ok, err = filterMap.RecordAt(0, 0); err != nil || ok {
+		t.Fatalf("missing record ok=%v err=%v", ok, err)
+	}
+	if _, _, err = filterMap.RecordAt(8, 0); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("out-of-range record err=%v want %v", err, ErrInvalidBatch)
+	}
+
+	var blocks int
+	if err := filterMap.ForEachBlock(func(got FrameWorkLoopFilterBlockRecord) error {
+		blocks++
+		if got.Block != visit.Block {
+			t.Fatalf("visited block=%+v want %+v", got.Block, visit.Block)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if blocks != 1 {
+		t.Fatalf("visited blocks=%d want 1", blocks)
+	}
+}
+
+func TestFrameWorkLoopFilterMapForEachBlockRejectsInvalidInputs(t *testing.T) {
+	if err := (FrameWorkLoopFilterMap{}).ForEachBlock(func(FrameWorkLoopFilterBlockRecord) error { return nil }); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("empty map err=%v want %v", err, ErrInvalidBatch)
+	}
+	ctx := testFrameWorkLoopFilterBatch(16, 16)
+	filterMap, err := ctx.BindLoopFilterMap(make([]FrameWorkLoopFilterBlockRecord, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := filterMap.ForEachBlock(nil); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("nil visitor err=%v want %v", err, ErrInvalidBatch)
+	}
+	filterMap.Records[0] = FrameWorkLoopFilterBlockRecord{
+		Valid: true,
+		Block: tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 5, MIRowEnd: 1},
+	}
+	if err := filterMap.ForEachBlock(func(FrameWorkLoopFilterBlockRecord) error { return nil }); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("bad record err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
 func TestFrameWorkLoopFilterMapAllocs(t *testing.T) {
 	ctx := testFrameWorkLoopFilterBatch(16, 16)
 	records := make([]FrameWorkLoopFilterBlockRecord, 16)
@@ -227,6 +306,14 @@ func TestFrameWorkLoopFilterMapAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := filterMap.MarkBlock(visit, state); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := filterMap.RecordAt(0, 0); err != nil || !ok {
+			t.Fatalf("RecordAt ok=%v err=%v", ok, err)
+		}
+		if err := filterMap.ForEachBlock(func(FrameWorkLoopFilterBlockRecord) error {
+			return nil
+		}); err != nil {
 			t.Fatal(err)
 		}
 		if err := filterMap.Reset(); err != nil {

@@ -124,6 +124,54 @@ func (m FrameWorkLoopFilterMap) MarkBlock(visit tile.BlockLoopVisit, state *tile
 	return nil
 }
 
+// RecordAt returns the decoded loop-filter metadata for one frame-level MI
+// cell. Missing cells return ok=false; out-of-map coordinates are invalid.
+func (m FrameWorkLoopFilterMap) RecordAt(miCol uint32, miRow uint32) (FrameWorkLoopFilterBlockRecord, bool, error) {
+	if err := m.validate(); err != nil {
+		return FrameWorkLoopFilterBlockRecord{}, false, err
+	}
+	if miCol >= uint32(m.Stride) || miRow >= uint32(m.Rows) {
+		return FrameWorkLoopFilterBlockRecord{}, false, ErrInvalidBatch
+	}
+	record := m.Records[int(miRow)*m.Stride+int(miCol)]
+	if !record.Valid {
+		return FrameWorkLoopFilterBlockRecord{}, false, nil
+	}
+	return record, true, nil
+}
+
+// ForEachBlock visits each unique block record once in raster MI order. Cells
+// covered by the same block are skipped after the block's top-left cell.
+func (m FrameWorkLoopFilterMap) ForEachBlock(visit func(FrameWorkLoopFilterBlockRecord) error) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
+	if err := m.validate(); err != nil {
+		return err
+	}
+	for row := 0; row < m.Rows; row++ {
+		base := row * m.Stride
+		for col := 0; col < m.Stride; col++ {
+			record := m.Records[base+col]
+			if !record.Valid {
+				continue
+			}
+			block := record.Block
+			if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow ||
+				block.MIColEnd > uint32(m.Stride) || block.MIRowEnd > uint32(m.Rows) {
+				return ErrInvalidBatch
+			}
+			if block.MICol != uint32(col) || block.MIRow != uint32(row) {
+				continue
+			}
+			if err := visit(record); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (m FrameWorkLoopFilterMap) validate() error {
 	if m.Stride <= 0 || m.Rows <= 0 {
 		return ErrInvalidBatch

@@ -143,10 +143,12 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 	}
 
 	for row := 0; row < rows; row++ {
-		base := row * filterMap.Stride
 		for col := 0; col < cols; col++ {
-			record := filterMap.Records[base+col]
-			if !record.Valid {
+			record, ok, err := filterMap.RecordAt(uint32(col), uint32(row))
+			if err != nil {
+				return plan, err
+			}
+			if !ok {
 				plan.Missing++
 				continue
 			}
@@ -555,8 +557,11 @@ func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge lo
 	if prevCol >= cols || prevRow >= rows || prevRow >= filterMap.Rows || prevCol >= filterMap.Stride {
 		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
 	}
-	record := filterMap.Records[prevRow*filterMap.Stride+prevCol]
-	if !record.Valid {
+	record, ok, err := filterMap.RecordAt(uint32(prevCol), uint32(prevRow))
+	if err != nil {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, err
+	}
+	if !ok {
 		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
 	}
 	if err := frameWorkValidateLoopFilterRecord(record, prevCol, prevRow, cols, rows); err != nil {
