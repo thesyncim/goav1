@@ -12,9 +12,9 @@
 // and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, residual reconstruction primitives, post-reconstruction filtering
 // helpers, tile block/transform geometry, transform-context replay helpers,
-// tile-level restoration orchestration, superres upscaling, and film-grain
-// output helpers. The decoder and encoder APIs will grow at this top level as
-// the internal pipeline stabilizes.
+// tile-level restoration orchestration, decoder postfilter scratch binding,
+// superres upscaling, and film-grain output helpers. The decoder and encoder
+// APIs will grow at this top level as the internal pipeline stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly
