@@ -3193,10 +3193,25 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	if y <= 0 {
 		return ErrInvalidBatch
 	}
+	// libaom caps top-right loads to primaryWidth real samples (n_topright_px =
+	// min(txwpx, xr)) and extends the rest from the last real sample. Without the
+	// cap, directional predictors read additional already-decoded above samples
+	// that libaom never sees and the prediction diverges.
+	topRightLimit := dst.Width - x - primaryWidth
+	if topRightLimit < 0 {
+		topRightLimit = 0
+	}
+	if topRightLimit > primaryWidth {
+		topRightLimit = primaryWidth
+	}
+	maxRealOffset := primaryWidth - 1
+	if allowTopRight {
+		maxRealOffset = primaryWidth + topRightLimit - 1
+	}
 	for i := minIndex; i <= maxIndex; i++ {
 		sampleX := x + i
-		if !allowTopRight && i >= primaryWidth {
-			sampleX = x + primaryWidth - 1
+		if i > maxRealOffset {
+			sampleX = x + maxRealOffset
 		}
 		if sampleX < 0 {
 			sampleX = 0
@@ -3229,10 +3244,23 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 	if x <= 0 {
 		return ErrInvalidBatch
 	}
+	// Mirror libaom's n_bottomleft_px = min(txhpx, yd) cap: real samples past
+	// primaryHeight are limited to primaryHeight more rows, then extension.
+	bottomLeftLimit := dst.Height - y - primaryHeight
+	if bottomLeftLimit < 0 {
+		bottomLeftLimit = 0
+	}
+	if bottomLeftLimit > primaryHeight {
+		bottomLeftLimit = primaryHeight
+	}
+	maxRealOffset := primaryHeight - 1
+	if allowBottomLeft {
+		maxRealOffset = primaryHeight + bottomLeftLimit - 1
+	}
 	for i := minIndex; i <= maxIndex; i++ {
 		sampleY := y + i
-		if !allowBottomLeft && i >= primaryHeight {
-			sampleY = y + primaryHeight - 1
+		if i > maxRealOffset {
+			sampleY = y + maxRealOffset
 		}
 		if sampleY < 0 {
 			sampleY = 0

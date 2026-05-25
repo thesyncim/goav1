@@ -478,6 +478,51 @@ func TestFrameWorkDirectionalAvailabilityTablesCoverBlockSizes(t *testing.T) {
 	}
 }
 
+func TestFrameWorkFillDirectionalAboveCapsTopRightToPrimaryWidth(t *testing.T) {
+	// libaom's intra prediction loads at most primaryWidth additional top-right
+	// samples (n_topright_px = min(txwpx, xr)) and extends the rest from the last
+	// real sample. The fill helper must mirror that even when allow_top_right is
+	// true so directional predictors see the same edge buffer libaom does.
+	const W, H = 64, 64
+	format := frame.Format{Width: W, Height: H, BitDepth: 8, Align: 64}
+	output := testBatchFrame(t, format)
+	for x := 0; x < W; x++ {
+		// Distinct per-column markers above the block being predicted.
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, uint16(x+1))
+	}
+	dst := frame.Plane{Pix: output.Y.Pix, Stride: output.Y.Stride, Width: W, Height: H}
+	var scratch FrameWorkIntraPredictionScratch
+	block := tile.BlockVisit{
+		Size:    tile.BlockSize4x8,
+		HaveTop: true,
+	}
+	const primaryWidth = 4
+	if err := frameWorkFillDirectionalAbove(dst, 1, 8, 16, 16, 0, primaryWidth+8-1, primaryWidth, true, block, &scratch); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	// Indices 0..3 read columns 16..19 verbatim.
+	want := []uint16{17, 18, 19, 20}
+	for i, v := range want {
+		if got := scratch.Above[frameWorkDirectionalEdgeOrigin+i]; got != v {
+			t.Fatalf("primary above[%d]=%d want %d", i, got, v)
+		}
+	}
+	// Indices 4..7 are the top-right extension (n_topright_px = primaryWidth).
+	for i := 4; i < 8; i++ {
+		if got := scratch.Above[frameWorkDirectionalEdgeOrigin+i]; got != uint16(16+i+1) {
+			t.Fatalf("topright above[%d]=%d want %d", i, got, 16+i+1)
+		}
+	}
+	// Indices 8..10 must extend from the last real sample at column 16+7=23, not
+	// pull additional decoded samples from columns 24+.
+	last := uint16(16 + 7 + 1)
+	for i := 8; i < primaryWidth+8-1; i++ {
+		if got := scratch.Above[frameWorkDirectionalEdgeOrigin+i]; got != last {
+			t.Fatalf("extension above[%d]=%d want %d", i, got, last)
+		}
+	}
+}
+
 func TestFrameWorkChromaDirectionalExtendedEdgesMatchesLibaomCases(t *testing.T) {
 	tests := []struct {
 		name           string
