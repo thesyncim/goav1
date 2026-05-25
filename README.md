@@ -134,7 +134,7 @@ The initial implementation covers:
 - Zero-allocation inverse transform dispatch for DCT_DCT and IDTX residual
   paths with per-transform scratch sizing.
 - Public zero-allocation residual reconstruction bridge for dequantization,
-  inverse transform, and clipped plane residual application.
+  inverse transform, clipped plane residual application, and max scratch sizing.
 - Zero-allocation AV1 loop-filter level, delta, segmentation, and threshold
   derivation for post-reconstruction deblocking setup.
 - Pure-Go narrow loop-filter edge deblocking for 8/10/12-bit reconstruction
@@ -180,8 +180,9 @@ The initial implementation covers:
   decode/retain entry points.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
   caller-owned prediction and residual scratch, intra/inter transform dispatch,
-  batch loop-context sizing, plus job and batch helpers that compose
-  decode-state setup, residual decode/reconstruct, and CDF retention.
+  max residual scratch sizing, batch loop-context sizing, plus job and batch
+  helpers that compose decode-state setup, residual decode/reconstruct, and CDF
+  retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

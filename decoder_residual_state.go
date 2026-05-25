@@ -13,6 +13,14 @@ func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQInd
 	})
 }
 
+func DecoderFrameWorkResidualMaxScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane) (int32Len int, int16Len int, err error) {
+	_, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ReconstructBlockMaxScratchLen(lossless)
+}
+
 func DecoderFrameWorkBlockQuantizer(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane) (Quantizer, bool, error) {
 	return batch.BlockQuantizer(currentQIndex, segmentID, plane)
 }

@@ -572,7 +572,7 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -632,7 +632,7 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 		b.Fatal(err)
 	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
 	if err != nil {
 		b.Fatal(err)
 	}

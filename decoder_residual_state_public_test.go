@@ -217,6 +217,39 @@ func TestPublicDecoderFrameWorkBlockTransformsDispatch(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualMaxScratchLen(t *testing.T) {
+	batch, _, _, _, _ := publicDecoderResidualDriver(t)
+	got32, got16, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want32, want16, err := av1.ReconstructBlockMaxScratchLen(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got32 != want32 || got16 != want16 {
+		t.Fatalf("decoder max scratch=%d/%d want %d/%d", got32, got16, want32, want16)
+	}
+
+	losslessBatch := batch
+	losslessBatch.Quantization.BaseQIdx = 0
+	lossless32, lossless16, err := av1.DecoderFrameWorkResidualMaxScratchLen(losslessBatch, 0, 0, av1.DecoderFrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLossless32, wantLossless16, err := av1.ReconstructBlockMaxScratchLen(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lossless32 != wantLossless32 || lossless16 != wantLossless16 {
+		t.Fatalf("decoder lossless max scratch=%d/%d want %d/%d", lossless32, lossless16, wantLossless32, wantLossless16)
+	}
+
+	if _, _, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlane(99)); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("invalid plane max scratch err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
 	predictions := 0
@@ -565,7 +598,7 @@ func publicDecoderResidualDriver(t *testing.T) (av1.DecoderFrameWorkBatch, *av1.
 	if err != nil {
 		t.Fatal(err)
 	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +643,7 @@ func publicDecoderResidualBatchDriver(t *testing.T) (av1.DecoderFrameWorkBatch, 
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 		t.Fatal(err)
 	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
 	if err != nil {
 		t.Fatal(err)
 	}

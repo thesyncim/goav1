@@ -172,6 +172,39 @@ func TestPublicReconstructPlaneBlockDCT4x4(t *testing.T) {
 	}
 }
 
+func TestPublicReconstructBlockMaxScratchLen(t *testing.T) {
+	int32Len, int16Len, err := av1.ReconstructBlockMaxScratchLen(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want32, want16, err := av1.ReconstructBlockScratchLen(av1.ReconstructBlock{
+		Size:      av1.TransformSize{Width: 64, Height: 64},
+		Transform: av1.TransformTypeDCTDCT,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int32Len != want32 || int16Len != want16 {
+		t.Fatalf("max scratch=%d/%d want %d/%d", int32Len, int16Len, want32, want16)
+	}
+
+	lossless32, lossless16, err := av1.ReconstructBlockMaxScratchLen(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLossless32, wantLossless16, err := av1.ReconstructBlockScratchLen(av1.ReconstructBlock{
+		Size:      av1.TransformSize{Width: 4, Height: 4},
+		Transform: av1.TransformTypeDCTDCT,
+		Lossless:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lossless32 != wantLossless32 || lossless16 != wantLossless16 {
+		t.Fatalf("lossless max scratch=%d/%d want %d/%d", lossless32, lossless16, wantLossless32, wantLossless16)
+	}
+}
+
 func TestPublicReconstructPlaneBlockRejectsInvalid(t *testing.T) {
 	plane := publicReconstructPlane(4, 4, 1, 4)
 	quantized := make([]int16, 16)

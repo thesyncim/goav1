@@ -466,13 +466,9 @@ func publicDecoderBlockCoeffReplayContext(tb publicDecoderBlockCoeffTB, batch av
 
 func publicDecoderBlockCoeffScratch(tb publicDecoderBlockCoeffTB, batch av1.DecoderFrameWorkBatch, req av1.DecoderFrameWorkBlockCoeffReconstruction, plane av1.DecoderFrameWorkPlane) ([]int32, []int16) {
 	tb.Helper()
-	size, err := av1.TileTransformSizePixels(req.Block.Block.Size)
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, req.CurrentQIndex, req.SegmentID, plane)
 	if err != nil {
-		tb.Fatalf("TileTransformSizePixels err=%v", err)
-	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, req.CurrentQIndex, req.SegmentID, plane, size, req.Transform)
-	if err != nil {
-		tb.Fatalf("DecoderFrameWorkResidualScratchLen err=%v", err)
+		tb.Fatalf("DecoderFrameWorkResidualMaxScratchLen err=%v", err)
 	}
 	return make([]int32, int32Len), make([]int16, int16Len)
 }

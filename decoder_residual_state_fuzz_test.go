@@ -47,7 +47,7 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+		int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, qIndex); err != nil {
 			t.Fatal(err)
 		}
-		int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+		int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY)
 		if err != nil {
 			t.Fatal(err)
 		}
