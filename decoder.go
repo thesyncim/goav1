@@ -27,6 +27,7 @@ type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
 type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
 type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
 type DecoderFrameWorkPostFilterFunc = internaldecoder.FrameWorkPostFilterFunc
+type DecoderFrameWorkPostFilterRunner = internaldecoder.FrameWorkPostFilterRunner
 type DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterStage
 type DecoderFrameWorkPostFilterScratchSize = internaldecoder.FrameWorkPostFilterScratchSize
 type DecoderFrameWorkPostFilterRequest = internaldecoder.FrameWorkPostFilterRequest

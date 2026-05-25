@@ -810,6 +810,7 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var jobs [2]av1.TileJob
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
+	postRunner := av1.DecoderFrameWorkSupportedPostFilterRunner{}
 	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
 		State:             &state,
 		Refs:              &refs,
@@ -835,7 +836,7 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := eventRunner.Run(sequence, event, &side, nil)
+		result, err := eventRunner.RunWithPostFilterRunner(sequence, event, &side, &postRunner)
 		if err != nil {
 			b.Fatal(err)
 		}

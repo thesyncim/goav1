@@ -80,6 +80,12 @@ type FrameWorkPostFilterContext struct {
 // publication. Returning an error keeps frame work active and unpublished.
 type FrameWorkPostFilterFunc func(FrameWorkPostFilterContext) error
 
+// FrameWorkPostFilterRunner applies final frame postfilters before reference
+// publication without requiring callers to allocate a method-value callback.
+type FrameWorkPostFilterRunner interface {
+	Apply(FrameWorkPostFilterContext) error
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -555,6 +561,13 @@ func (s *FrameWorkState) RunStepWithPayloadContextAndPostFilterRunner(refs *Surf
 	return s.runStepWithPayloadContextRunner(refs, framePool, event, step, workerPool, output, references, payload, true, jobs, batches, releases, runner, post)
 }
 
+// RunStepWithPayloadContextAndPostFilterRunners is
+// RunStepWithPayloadContextAndPostFilterRunner using direct runners for both
+// tile batches and final-frame postfilters.
+func (s *FrameWorkState) RunStepWithPayloadContextAndPostFilterRunners(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
+	return s.runStepWithPayloadContextRunners(refs, framePool, event, step, workerPool, output, references, payload, true, jobs, batches, releases, runner, post)
+}
+
 func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, fn FrameWorkBatchFunc, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
@@ -626,6 +639,48 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 		}
 	}
 	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     releaseCount,
+	}, nil
+}
+
+func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
+	}
+	_, referenceCount, _, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	frameContext := frameWorkFrameContext(event, s.sequenceContext())
+	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFsValid *bool
+	if s != nil && s.tileResidualCurrentCDFsValid {
+		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
+		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
+		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
+	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, jobs, batches, runner)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	if output == nil {
+		output, err = frameWorkPostFilterRunnerOutput(event, framePool, step, post)
+		if err != nil {
+			return FrameWorkStepResult{ExecutedTileWork: executed}, err
+		}
+	}
+	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -717,6 +772,13 @@ func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep
 	return frameWorkStepOutput(pool, step)
 }
 
+func frameWorkPostFilterRunnerOutput(event Event, pool *frame.Pool, step FrameWorkStep, post FrameWorkPostFilterRunner) (*frame.Frame, error) {
+	if post == nil || !EventCompletesFrameWork(event) {
+		return nil, nil
+	}
+	return frameWorkStepOutput(pool, step)
+}
+
 func frameWorkStepOutput(pool *frame.Pool, step FrameWorkStep) (*frame.Frame, error) {
 	surface, err := frameWorkStepSurface(step)
 	if err != nil {
@@ -755,6 +817,25 @@ func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame
 		return frame.ErrInvalidSlot
 	}
 	return post(FrameWorkPostFilterContext{
+		Event:                   event,
+		Step:                    step,
+		Output:                  output,
+		ReferenceCount:          referenceCount,
+		ExecutedTileWork:        executed,
+		CDEFIndexMap:            cdefIndexMap,
+		LoopFilterMap:           loopFilterMap,
+		RestorationFrameBuffers: restorationFrameBuffers,
+	})
+}
+
+func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterRunner) error {
+	if post == nil || !EventCompletesFrameWork(event) {
+		return nil
+	}
+	if output == nil {
+		return frame.ErrInvalidSlot
+	}
+	return post.Apply(FrameWorkPostFilterContext{
 		Event:                   event,
 		Step:                    step,
 		Output:                  output,

@@ -25,6 +25,8 @@ type DecoderFrameWorkResidualEventRequest struct {
 	Runner   *DecoderFrameWorkBatchResidualRunner
 	SideData *DecoderFrameWorkSideData
 	Post     DecoderFrameWorkPostFilterFunc
+
+	PostRunner DecoderFrameWorkPostFilterRunner
 }
 
 // DecoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
@@ -79,6 +81,31 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 		Runner:            r.BatchRunner,
 		SideData:          side,
 		Post:              post,
+	})
+}
+
+// RunWithPostFilterRunner plans and executes one decoder frame-work event using
+// direct residual and postfilter runners, avoiding callback method values in the
+// final-frame path.
+func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
+	return RunDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+		State:             r.State,
+		Refs:              r.Refs,
+		FramePool:         r.FramePool,
+		Sequence:          sequence,
+		Event:             event,
+		Align:             r.Align,
+		ReferenceSurfaces: r.ReferenceSurfaces,
+		ReferenceFrames:   r.ReferenceFrames,
+		Workers:           r.Workers,
+		Spans:             r.Spans,
+		Jobs:              r.Jobs,
+		Batches:           r.Batches,
+		Releases:          r.Releases,
+		WorkerPool:        r.WorkerPool,
+		Runner:            r.BatchRunner,
+		SideData:          side,
+		PostRunner:        post,
 	})
 }
 
@@ -139,6 +166,9 @@ func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event De
 func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest) (DecoderFrameWorkEventResult, error) {
 	if req.Runner == nil {
 		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
+	}
+	if req.Post != nil && req.PostRunner != nil {
+		return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkState
 	}
 	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, req.Event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
 	if err != nil {
@@ -201,7 +231,12 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		}
 	}
 
-	run, err := req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
+	var run DecoderFrameWorkStepResult
+	if req.PostRunner != nil {
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
+	} else {
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, req.Event, step, req.WorkerPool, output, references, req.Event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
+	}
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}
