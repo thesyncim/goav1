@@ -726,56 +726,18 @@ func (s *FrameWorkState) RunEventWithContext(refs *SurfaceReferences, framePool 
 	return s.RunEventWithContextAndPostFilter(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn, nil)
 }
 
+// RunEventWithContextRunner is RunEventWithContext using a frame-work batch
+// runner directly instead of a callback adapter.
+func (s *FrameWorkState) RunEventWithContextRunner(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, runner threading.FrameWorkBatchRunner) (FrameWorkEventResult, error) {
+	return s.RunEventWithContextAndPostFilterRunner(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, runner, nil)
+}
+
 // RunEventWithContextAndPostFilter is RunEventWithContext with a final-frame
 // postfilter hook that runs after tile work and before reference publication.
 func (s *FrameWorkState) RunEventWithContextAndPostFilter(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, fn FrameWorkBatchFunc, post FrameWorkPostFilterFunc) (FrameWorkEventResult, error) {
-	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
+	step, output, referenceCount, references, err := s.planEventWithResolvedContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases)
 	if err != nil {
 		return FrameWorkEventResult{}, err
-	}
-
-	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
-	if err != nil {
-		return FrameWorkEventResult{}, err
-	}
-	if step.Kind == FrameWorkStepShowExisting {
-		output, err = framePool.Frame(step.ShowExisting.Surface)
-		if err != nil {
-			return FrameWorkEventResult{}, err
-		}
-	}
-
-	var references []*frame.Frame
-	if hasTile && plan.JobCount != 0 {
-		if output == nil {
-			surface, err := frameWorkStepSurface(step)
-			if err != nil {
-				return FrameWorkEventResult{}, err
-			}
-			output, err = framePool.Frame(surface)
-			if err != nil {
-				return FrameWorkEventResult{}, err
-			}
-		}
-		if referenceCount != 0 {
-			if step.Kind == FrameWorkStepTile {
-				count, err := refs.FrameReferences(event, referenceSurfaces)
-				if err != nil {
-					return FrameWorkEventResult{}, err
-				}
-				if count != referenceCount {
-					return FrameWorkEventResult{}, ErrInvalidFrameWorkStep
-				}
-			}
-			count, err := ResolveFrameReferences(framePool, referenceSurfaces[:referenceCount], referenceFrames)
-			if err != nil {
-				return FrameWorkEventResult{}, err
-			}
-			if count != referenceCount {
-				return FrameWorkEventResult{}, ErrInvalidFrameWorkStep
-			}
-			references = referenceFrames[:referenceCount]
-		}
 	}
 
 	run, err := s.RunStepWithPayloadContextAndPostFilter(refs, framePool, event, step, workerPool, output, references, event.Unit.Payload, jobs, batches, releases, fn, post)
@@ -788,6 +750,99 @@ func (s *FrameWorkState) RunEventWithContextAndPostFilter(refs *SurfaceReference
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+// RunEventWithContextAndPostFilterRunner is RunEventWithContextAndPostFilter
+// using a frame-work batch runner directly instead of a callback adapter.
+func (s *FrameWorkState) RunEventWithContextAndPostFilterRunner(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterFunc) (FrameWorkEventResult, error) {
+	step, output, referenceCount, references, err := s.planEventWithResolvedContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+
+	run, err := s.RunStepWithPayloadContextAndPostFilterRunner(refs, framePool, event, step, workerPool, output, references, event.Unit.Payload, jobs, batches, releases, runner, post)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	return FrameWorkEventResult{
+		Step:           step,
+		Output:         output,
+		ReferenceCount: referenceCount,
+		Run:            run,
+	}, nil
+}
+
+// RunEventWithContextAndPostFilterRunners is
+// RunEventWithContextAndPostFilterRunner using direct runners for both tile
+// batches and final-frame postfilters.
+func (s *FrameWorkState) RunEventWithContextAndPostFilterRunners(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
+	step, output, referenceCount, references, err := s.planEventWithResolvedContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+
+	run, err := s.RunStepWithPayloadContextAndPostFilterRunners(refs, framePool, event, step, workerPool, output, references, event.Unit.Payload, jobs, batches, releases, runner, post)
+	if err != nil {
+		return FrameWorkEventResult{}, err
+	}
+	return FrameWorkEventResult{
+		Step:           step,
+		Output:         output,
+		ReferenceCount: referenceCount,
+		Run:            run,
+	}, nil
+}
+
+func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int) (FrameWorkStep, *frame.Frame, int, []*frame.Frame, error) {
+	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
+	if err != nil {
+		return FrameWorkStep{}, nil, 0, nil, err
+	}
+
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkStep{}, nil, 0, nil, err
+	}
+	if step.Kind == FrameWorkStepShowExisting {
+		output, err = framePool.Frame(step.ShowExisting.Surface)
+		if err != nil {
+			return FrameWorkStep{}, nil, 0, nil, err
+		}
+	}
+
+	var references []*frame.Frame
+	if hasTile && plan.JobCount != 0 {
+		if output == nil {
+			surface, err := frameWorkStepSurface(step)
+			if err != nil {
+				return FrameWorkStep{}, nil, 0, nil, err
+			}
+			output, err = framePool.Frame(surface)
+			if err != nil {
+				return FrameWorkStep{}, nil, 0, nil, err
+			}
+		}
+		if referenceCount != 0 {
+			if step.Kind == FrameWorkStepTile {
+				count, err := refs.FrameReferences(event, referenceSurfaces)
+				if err != nil {
+					return FrameWorkStep{}, nil, 0, nil, err
+				}
+				if count != referenceCount {
+					return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
+				}
+			}
+			count, err := ResolveFrameReferences(framePool, referenceSurfaces[:referenceCount], referenceFrames)
+			if err != nil {
+				return FrameWorkStep{}, nil, 0, nil, err
+			}
+			if count != referenceCount {
+				return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
+			}
+			references = referenceFrames[:referenceCount]
+		}
+	}
+	return step, output, referenceCount, references, nil
 }
 
 func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep, post FrameWorkPostFilterFunc) (*frame.Frame, error) {
