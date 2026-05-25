@@ -180,6 +180,9 @@ func (b FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.Deco
 	if b.RetainedTileResidualCDFs == nil || b.RetainedTileResidualCDFsValid == nil {
 		return ErrInvalidBatch
 	}
+	if err := storage.ResetCDFCounts(); err != nil {
+		return err
+	}
 	*b.RetainedTileResidualCDFs = *storage
 	*b.RetainedTileResidualCDFsValid = true
 	return nil

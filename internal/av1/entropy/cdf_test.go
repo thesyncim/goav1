@@ -89,6 +89,11 @@ func TestCDFStateCopyUpdateReset(t *testing.T) {
 	assertCDFValues(t, src.Values(), []uint16{16384, 0, 0})
 	assertCDFValues(t, dst.Values(), []uint16{17408, 0, 1})
 
+	if err := dst.ResetCount(); err != nil {
+		t.Fatal(err)
+	}
+	assertCDFValues(t, dst.Values(), []uint16{17408, 0, 0})
+
 	dst.Reset()
 	if err := dst.Validate(); !errors.Is(err, ErrInvalidCDF) {
 		t.Fatalf("reset Validate err=%v want %v", err, ErrInvalidCDF)

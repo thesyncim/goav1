@@ -126,6 +126,19 @@ func (c *CDF) Reset() {
 	}
 }
 
+// ResetCount clears c's trailing AV1 adaptation counter while preserving the
+// decoded probability state.
+func (c *CDF) ResetCount() error {
+	if c == nil {
+		return ErrInvalidCDF
+	}
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	c.values[c.symbols] = 0
+	return nil
+}
+
 // Symbols returns the number of symbols represented by c.
 func (c *CDF) Symbols() int {
 	if c == nil {

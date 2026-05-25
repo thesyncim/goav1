@@ -740,6 +740,45 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualCDFStorageResetCDFCounts(t *testing.T) {
+	var storage FrameWorkTileResidualCDFStorage
+	if err := storage.InitDefault(64); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Partition.Partition[tile.BlockLevel32x32][0].Update(3); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Mode.Skip[0].Update(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Intra.YMode[0].Update(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Coeff.TXBSkip[0][0].Update(0); err != nil {
+		t.Fatal(err)
+	}
+
+	partition := append([]uint16(nil), storage.Partition.Partition[tile.BlockLevel32x32][0].Values()...)
+	if partition[len(partition)-1] == 0 {
+		t.Fatal("partition CDF count did not update")
+	}
+	if err := storage.ResetCDFCounts(); err != nil {
+		t.Fatal(err)
+	}
+	got := storage.Partition.Partition[tile.BlockLevel32x32][0].Values()
+	for i := 0; i < len(got)-1; i++ {
+		if got[i] != partition[i] {
+			t.Fatalf("partition probability %d=%d want %d", i, got[i], partition[i])
+		}
+	}
+	if got[len(got)-1] != 0 || storage.Mode.Skip[0].Values()[2] != 0 ||
+		storage.Intra.YMode[0].Values()[13] != 0 || storage.Coeff.TXBSkip[0][0].Values()[2] != 0 {
+		t.Fatalf("counts not reset: partition=%v skip=%v ymode=%v txbskip=%v",
+			got, storage.Mode.Skip[0].Values(), storage.Intra.YMode[0].Values(),
+			storage.Coeff.TXBSkip[0][0].Values())
+	}
+}
+
 func TestFrameWorkTileResidualCDFStorageRejectsNil(t *testing.T) {
 	if err := (*FrameWorkTileResidualCDFStorage)(nil).InitDefault(0); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("nil storage err=%v want %v", err, ErrInvalidBatch)

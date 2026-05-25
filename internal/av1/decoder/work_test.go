@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -1106,6 +1107,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 			return err
 		}
 		retainedDeltaQ = append(retainedDeltaQ[:0], storage.DeltaQ.Values()...)
+		retainedDeltaQ[len(retainedDeltaQ)-1] = 0
 		var decodeState tile.DecodeState
 		if err := ctx.JobDecodeState(0, &decodeState); err != nil {
 			return err
@@ -1157,7 +1159,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 			return err
 		}
 		if !testUint16sEqual(storage.DeltaQ.Values(), retainedDeltaQ) {
-			t.Fatalf("delta q=%v want retained %v", storage.DeltaQ.Values(), retainedDeltaQ)
+			return fmt.Errorf("delta q=%v want retained %v", storage.DeltaQ.Values(), retainedDeltaQ)
 		}
 		return nil
 	})
