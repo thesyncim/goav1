@@ -520,6 +520,33 @@ func TestPublicDecoderFrameWorkResidualScratchSizeMax(t *testing.T) {
 		streamGot.Event != eventA.Max(eventB) {
 		t.Fatalf("stream residual scratch max=%+v", streamGot)
 	}
+
+	sequenceA := av1.SequenceHeader{ColorConfig: av1.ColorConfig{BitDepth: 8}}
+	sequenceB := av1.SequenceHeader{ColorConfig: av1.ColorConfig{BitDepth: 10}}
+	planA := av1.DecoderFrameWorkResidualStreamPlan{
+		Size: streamA,
+		Bind: av1.DecoderFrameWorkResidualEventBindPlan{
+			Sequence:   sequenceA,
+			Event:      av1.DecoderEvent{Kind: av1.DecoderEventExistingFrame},
+			EventIndex: 0,
+		},
+	}
+	planB := av1.DecoderFrameWorkResidualStreamPlan{
+		Size: streamB,
+		Bind: av1.DecoderFrameWorkResidualEventBindPlan{
+			Sequence:   sequenceB,
+			Event:      av1.DecoderEvent{Kind: av1.DecoderEventTileGroup},
+			EventIndex: 1,
+		},
+	}
+	planGot := planA.Max(planB)
+	if !planGot.HasEvent() ||
+		planGot.Size != streamGot ||
+		planGot.Bind.Event.Kind != av1.DecoderEventTileGroup ||
+		planGot.Bind.Sequence.ColorConfig.BitDepth != 10 ||
+		planGot.Bind.EventIndex != 1 {
+		t.Fatalf("stream residual plan max=%+v", planGot)
+	}
 }
 
 func TestPublicDecoderFrameWorkBatchResidualRunnerSideData(t *testing.T) {
@@ -2486,12 +2513,13 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	streamSize := lowPlan.Size.Max(rtpPlan.Size)
-	if !rtpPlan.HasEvent() || rtpPlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
-		t.Fatalf("stream bind plan=%+v", rtpPlan)
+	streamPlan := lowPlan.Max(rtpPlan)
+	streamSize := streamPlan.Size
+	if !streamPlan.HasEvent() || streamPlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("stream bind plan=%+v", streamPlan)
 	}
-	sequence := rtpPlan.Bind.Sequence
-	tile := rtpPlan.Bind.Event
+	sequence := streamPlan.Bind.Sequence
+	tile := streamPlan.Bind.Event
 
 	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
 		Width:        int(tile.FrameSize.CodedWidth),
@@ -3277,6 +3305,19 @@ func TestPublicDecoderFrameWorkResidualStreamPlanAllocs(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("DecoderFrameWorkResidualStreamPlan allocated: %f", allocs)
+	}
+
+	var reusablePlan av1.DecoderFrameWorkResidualStreamPlan
+	allocs = testing.AllocsPerRun(1000, func() {
+		reusablePlan = lowPlan.Max(rtpPlan).Max(batchPlan)
+	})
+	if !reusablePlan.HasEvent() ||
+		reusablePlan.Size.Event.Outputs != 2 ||
+		reusablePlan.Bind.Event.Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("reusable stream plan=%+v", reusablePlan)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualStreamPlan.Max allocated: %f", allocs)
 	}
 }
 

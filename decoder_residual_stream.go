@@ -36,6 +36,20 @@ func (p DecoderFrameWorkResidualStreamPlan) HasEvent() bool {
 	return p.Bind.HasEvent()
 }
 
+// Max returns a reusable plan large enough for either stream plan. If both
+// plans have bind-relevant events, the bind context from other is retained so
+// callers can accumulate plans in decode order and bind against the latest event
+// shape.
+func (p DecoderFrameWorkResidualStreamPlan) Max(other DecoderFrameWorkResidualStreamPlan) DecoderFrameWorkResidualStreamPlan {
+	return DecoderFrameWorkResidualStreamPlan{
+		Size: p.Size.Max(other.Size),
+		Bind: decoderFrameWorkResidualStreamBindPlanMax(
+			p.Bind,
+			other.Bind,
+		),
+	}
+}
+
 // DecoderFrameWorkResidualStreamScratchSize reports caller-owned stream parser
 // and residual-event scratch needed for one stream-runner call.
 type DecoderFrameWorkResidualStreamScratchSize struct {
@@ -440,6 +454,19 @@ func decoderFrameWorkResidualStreamBindResultOutputs(result *DecoderFrameWorkRes
 		return
 	}
 	result.Run.Outputs = outputs[:result.Run.OutputCount]
+}
+
+func decoderFrameWorkResidualStreamBindPlanMax(a DecoderFrameWorkResidualEventBindPlan, b DecoderFrameWorkResidualEventBindPlan) DecoderFrameWorkResidualEventBindPlan {
+	if b.HasEvent() {
+		return b
+	}
+	if a.HasEvent() {
+		return a
+	}
+	if b.EventIndex >= 0 {
+		return b
+	}
+	return a
 }
 
 func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
