@@ -68,6 +68,8 @@ type SelectedTransformRequest struct {
 	Lossless      bool
 	X4            int
 	Y4            int
+	HaveTop       bool
+	HaveLeft      bool
 }
 
 // TransformPartitionRequest describes one inter transform partition split
@@ -277,6 +279,51 @@ func (c *BlockModeContext) SelectedTransformContext(max TransformSize, x4 int, y
 	return left + above, nil
 }
 
+// SelectedTransformContextWithAvailability returns libaom's get_tx_size_context()
+// result for the selected intra transform-size syntax.
+func (c *BlockModeContext) SelectedTransformContextWithAvailability(max TransformSize, x4 int, y4 int, haveTop bool, haveLeft bool) (int, error) {
+	if c == nil {
+		return 0, ErrInvalidDecodeState
+	}
+	dims, ok := max.Dimensions()
+	if !ok {
+		return 0, ErrInvalidDecodeState
+	}
+	if err := validateBlockModeSlot(x4, y4); err != nil {
+		return 0, err
+	}
+	above := 0
+	if c.AboveTx[x4] >= dims.Log2W {
+		above = 1
+	}
+	if haveTop && c.AboveIntra[x4] == 0 {
+		above = 0
+		if aboveDims, ok := c.AboveBlockSize[x4].Dimensions(); ok && aboveDims.W4 >= dims.W4 {
+			above = 1
+		}
+	}
+	left := 0
+	if c.LeftTx[y4] >= dims.Log2H {
+		left = 1
+	}
+	if haveLeft && c.LeftIntra[y4] == 0 {
+		left = 0
+		if leftDims, ok := c.LeftBlockSize[y4].Dimensions(); ok && leftDims.H4 >= dims.H4 {
+			left = 1
+		}
+	}
+	switch {
+	case haveTop && haveLeft:
+		return above + left, nil
+	case haveTop:
+		return above, nil
+	case haveLeft:
+		return left, nil
+	default:
+		return 0, nil
+	}
+}
+
 // TransformPartitionContext returns dav1d/libaom's inter transform partition
 // category/context pair for one split decision.
 func (c *BlockModeContext) TransformPartitionContext(req TransformPartitionRequest) (int, int, error) {
@@ -377,7 +424,7 @@ func (s *DecodeState) ReadSelectedTransformSize(cdfs *TransformCDFs, ctx *BlockM
 	if !ok || dims.Max == 0 {
 		return 0, ErrInvalidDecodeState
 	}
-	context, err := ctx.SelectedTransformContext(max, req.X4, req.Y4)
+	context, err := ctx.SelectedTransformContextWithAvailability(max, req.X4, req.Y4, req.HaveTop, req.HaveLeft)
 	if err != nil {
 		return 0, err
 	}

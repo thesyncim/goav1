@@ -98,7 +98,7 @@ func TestTransformCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 
 func TestTransformContextsAndMarkMatchDav1d(t *testing.T) {
 	var ctx BlockModeContext
-	if got, err := ctx.SelectedTransformContext(TransformSize16x16, 0, 0); err != nil || got != 0 {
+	if got, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, 0, 0, false, false); err != nil || got != 0 {
 		t.Fatalf("empty selected tx ctx=%d err=%v want 0", got, err)
 	}
 
@@ -109,8 +109,14 @@ func TestTransformContextsAndMarkMatchDav1d(t *testing.T) {
 		t.Fatalf("marked tx above_intra=%d left_intra=%d above=%d left=%d",
 			ctx.AboveTxIntra[0], ctx.LeftTxIntra[0], ctx.AboveTx[0], ctx.LeftTx[0])
 	}
-	if got, err := ctx.SelectedTransformContext(TransformSize16x16, 0, 0); err != nil || got != 2 {
+	if got, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, 0, 0, true, true); err != nil || got != 2 {
 		t.Fatalf("marked selected tx ctx=%d err=%v want 2", got, err)
+	}
+	if err := ctx.MarkInter(BlockSize32x16, 4, 0, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, 4, 0, true, false); err != nil || got != 1 {
+		t.Fatalf("inter above selected tx ctx=%d err=%v want 1", got, err)
 	}
 
 	ctx.AboveTx[0] = 0
@@ -257,7 +263,7 @@ func TestTransformSizeRejectsInvalidInputs(t *testing.T) {
 	}
 
 	var ctx BlockModeContext
-	if _, err := ctx.SelectedTransformContext(TransformSize16x16, MaxBlockModeSlots, 0); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, MaxBlockModeSlots, 0, true, true); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad selected tx ctx err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	if _, _, err := ctx.TransformPartitionContext(TransformPartitionRequest{Size: BlockSize16x16, From: TransformSize4x4}); !errors.Is(err, ErrInvalidDecodeState) {

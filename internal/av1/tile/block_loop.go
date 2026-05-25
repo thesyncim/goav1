@@ -1216,6 +1216,8 @@ func blockLoopCoeffRequest[T BlockLoopCoeffController](req BlockLoopRequest, coe
 			Y4:            block.Y4,
 			VisibleW4:     block.VisibleW4,
 			VisibleH4:     block.VisibleH4,
+			HaveTop:       block.HaveTop,
+			HaveLeft:      block.HaveLeft,
 			Color:         req.Color,
 			TransformMode: req.TransformMode,
 			Inter:         !visit.Prediction.Intra,

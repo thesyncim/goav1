@@ -12,6 +12,8 @@ type TransformTreeRequest struct {
 
 	VisibleW4 uint8
 	VisibleH4 uint8
+	HaveTop   bool
+	HaveLeft  bool
 
 	Color         parser.ColorConfig
 	TransformMode parser.TransformMode
@@ -275,6 +277,8 @@ func (s *DecodeState) readFixedTransformSize(cdfs *TransformCDFs, ctx *BlockMode
 		Lossless:      req.Lossless,
 		X4:            req.X4,
 		Y4:            req.Y4,
+		HaveTop:       req.HaveTop,
+		HaveLeft:      req.HaveLeft,
 	})
 }
 

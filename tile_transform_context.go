@@ -21,6 +21,13 @@ func (c *TileTransformContext) SelectedTransformContext(max TileTransformSize, x
 	return c.context.SelectedTransformContext(max, x4, y4)
 }
 
+func (c *TileTransformContext) SelectedTransformContextWithAvailability(max TileTransformSize, x4 int, y4 int, haveTop bool, haveLeft bool) (int, error) {
+	if c == nil {
+		return 0, ErrTileInvalidDecodeState
+	}
+	return c.context.SelectedTransformContextWithAvailability(max, x4, y4, haveTop, haveLeft)
+}
+
 func (c *TileTransformContext) TransformPartitionContext(req TileTransformPartitionRequest) (int, int, error) {
 	if c == nil {
 		return 0, 0, ErrTileInvalidDecodeState

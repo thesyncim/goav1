@@ -778,6 +778,8 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 			Y4:            visit.Block.Y4,
 			VisibleW4:     visit.Block.VisibleW4,
 			VisibleH4:     visit.Block.VisibleH4,
+			HaveTop:       visit.Block.HaveTop,
+			HaveLeft:      visit.Block.HaveLeft,
 			Color:         c.batch.Sequence.ColorConfig,
 			TransformMode: c.req.TransformMode,
 			Inter:         transforms.Inter,
