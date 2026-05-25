@@ -137,7 +137,8 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 // PredictBlockInter writes inter prediction pixels for every present plane of
 // one decoded inter block. Single-reference translation/OBMC/warp and
 // average/dist-wtd/wedge/diff-wtd compound translation are supported;
-// inter-intra, scaled references, and intrabc are handled by later stages.
+// inter-intra, scaled references, and intrabc are rejected until their
+// prediction paths are integrated.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -577,7 +578,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 // PredictBlockLumaInter writes single-reference translational luma inter
 // prediction for one decoded block-loop visit. Switchable filters, compound
 // blending, scaled references, warped/global refinement, and chroma prediction
-// are handled by later inter-prediction stages.
+// are rejected or handled by later inter-prediction stages.
 func (b FrameWorkBatch) PredictBlockLumaInter(index int, visit tile.BlockLoopVisit) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -623,7 +624,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterOBMCWithFilters(index int, visit ti
 
 // PredictBlockLumaInterCompoundAverage writes average compound luma inter
 // prediction for one decoded block-loop visit. Inter-intra, scaled references,
-// and warped/global refinement are handled by later inter-prediction stages.
+// and warped/global refinement are rejected until those paths are integrated.
 func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverage(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -645,7 +646,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundAverageWithFilters(index in
 // PredictBlockLumaInterCompound writes compound luma inter prediction for one
 // decoded block-loop visit. It currently covers average, distance-weighted,
 // wedge, and difference-weighted compound. Inter-intra, scaled references, and
-// warped/global refinement are handled by later stages.
+// warped/global refinement are rejected until those paths are integrated.
 func (b FrameWorkBatch) PredictBlockLumaInterCompound(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -755,6 +756,9 @@ func (b FrameWorkBatch) predictBlockInterWarpPlane(index int, visit tile.BlockLo
 		Stride: refWindow.Stride,
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
+	}
+	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+		return err
 	}
 	model := visit.Prediction.WarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -996,6 +1000,9 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
+	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+		return err
+	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
 		return ErrInvalidBatch
@@ -1021,11 +1028,21 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
+	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+		return err
+	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
 		return ErrInvalidBatch
 	}
 	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkValidateSameSizeReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane) error {
+	if ref.Width != geom.Output.Width || ref.Height != geom.Output.Height {
 		return ErrInvalidBatch
 	}
 	return nil

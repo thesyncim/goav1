@@ -1919,6 +1919,44 @@ func TestFrameWorkBatchPredictBlockInterRejectsInterIntraBeforeMutation(t *testi
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterRejectsScaledReferenceBeforeMutation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	output.Y.Pix[16*output.Y.Stride+16] = 0x44
+	output.U.Pix[8*output.U.Stride+8] = 0x55
+	output.V.Pix[8*output.V.Stride+8] = 0x66
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
+	}
+	if output.Y.Pix[16*output.Y.Stride+16] != 0x44 ||
+		output.U.Pix[8*output.U.Stride+8] != 0x55 ||
+		output.V.Pix[8*output.V.Stride+8] != 0x66 {
+		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[16*output.Y.Stride+16], output.U.Pix[8*output.U.Stride+8], output.V.Pix[8*output.V.Stride+8])
+	}
+}
+
+func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMutation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, Align: 64})
+	output.Y.Pix[16*output.Y.Stride+16] = 0x77
+	fillFrameWorkInterReference(last, 0xff)
+	fillFrameWorkInterReference(bwd, 0xff)
+
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	visit := testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeAverage)
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("PredictBlockLumaInterCompoundWithFilters err=%v want %v", err, ErrInvalidBatch)
+	}
+	if output.Y.Pix[16*output.Y.Stride+16] != 0x77 {
+		t.Fatalf("output mutated y=%#x", output.Y.Pix[16*output.Y.Stride+16])
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterAllocs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
 	reference := testBatchFrame(t, output.Format)
