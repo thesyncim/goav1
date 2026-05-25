@@ -14,12 +14,12 @@
 // primitives, post-reconstruction filtering helpers, tile block/transform
 // geometry, transform/coefficient context replay helpers, tile coefficient
 // replay, tile block coefficient decode, tile-level restoration orchestration,
-// decoder residual-state setup and residual execution/retention bridges,
-// decoder block coefficient reconstruction, coefficient replay reconstruction
-// adapters, one-block coefficient decode/reconstruct helpers, decoder
-// postfilter scratch binding, superres upscaling, and film-grain output
-// helpers. The decoder and encoder APIs will grow at this top level as the
-// internal pipeline
+// decoder residual-state setup and residual execution/retention bridges for
+// jobs and worker batches, decoder block coefficient reconstruction,
+// coefficient replay reconstruction adapters, one-block coefficient
+// decode/reconstruct helpers, decoder postfilter scratch binding, superres
+// upscaling, and film-grain output helpers. The decoder and encoder APIs will
+// grow at this top level as the internal pipeline
 // stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices

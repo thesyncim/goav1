@@ -107,3 +107,97 @@ func DecodeAndRetainDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, in
 	}
 	return stats, nil
 }
+
+// DecoderFrameWorkBatchResidualRequest carries caller-owned state for decoding
+// every job assigned to one frame-work worker batch.
+type DecoderFrameWorkBatchResidualRequest struct {
+	Tile DecoderFrameWorkTileResidualRequest
+
+	CurrentSegmentMap  []uint8
+	PreviousSegmentMap []uint8
+	SegmentMapStride   int
+
+	// LoopContextAbove optionally backs one job's root-column context at a time.
+	// When nil, the helper leaves Tile.Loop.ContextCarrier unchanged.
+	LoopContextAbove []TileBlockLoopRootAboveContext
+}
+
+func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+	if state == nil || storage == nil || scratch == nil {
+		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
+	}
+	var total DecoderFrameWorkTileResidualStats
+	for i := range batch.Jobs {
+		tileReq := req.Tile
+		loopReq, err := DecoderFrameWorkJobBlockLoopRequest(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
+		if err != nil {
+			return total, err
+		}
+		if req.LoopContextAbove != nil {
+			rootColumns, err := DecoderFrameWorkJobBlockLoopContextRootColumns(batch, i)
+			if err != nil {
+				return total, err
+			}
+			carrier, err := BindTileBlockLoopContextCarrier(rootColumns, req.LoopContextAbove)
+			if err != nil {
+				return total, err
+			}
+			scratch.LoopContext = carrier
+			loopReq.ContextCarrier = &scratch.LoopContext
+		}
+		decoderFrameWorkApplyBatchResidualLoopOverrides(&loopReq, req.Tile.Loop)
+		tileReq.Loop = loopReq
+		stats, err := DecodeAndRetainDecoderFrameWorkJobResiduals(batch, i, state, storage, scratch, tileReq)
+		decoderFrameWorkAccumulateResidualStats(&total, stats)
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func decoderFrameWorkApplyBatchResidualLoopOverrides(dst *TileBlockLoopRequest, overrides TileBlockLoopRequest) {
+	if overrides.ContextCarrier != nil {
+		dst.ContextCarrier = overrides.ContextCarrier
+	}
+	dst.BeforeSuperblock = overrides.BeforeSuperblock
+	dst.BeforeCoefficients = overrides.BeforeCoefficients
+	dst.CoeffVisitor = overrides.CoeffVisitor
+}
+
+func decoderFrameWorkAccumulateResidualStats(total *DecoderFrameWorkTileResidualStats, next DecoderFrameWorkTileResidualStats) {
+	total.Loop.PartitionReads += next.Loop.PartitionReads
+	total.Loop.Blocks += next.Loop.Blocks
+	total.Loop.SegmentPredictions += next.Loop.SegmentPredictions
+	total.Loop.SegmentIDs += next.Loop.SegmentIDs
+	total.Loop.Prefixes += next.Loop.Prefixes
+	total.Loop.PredictionModes += next.Loop.PredictionModes
+	total.Loop.IntraModes += next.Loop.IntraModes
+	total.Loop.InterEntries += next.Loop.InterEntries
+	total.Loop.InterReferences += next.Loop.InterReferences
+	total.Loop.InterModes += next.Loop.InterModes
+	total.Loop.RefMVStacks += next.Loop.RefMVStacks
+	total.Loop.DRLIndices += next.Loop.DRLIndices
+	total.Loop.InterMVReferences += next.Loop.InterMVReferences
+	total.Loop.MotionVectors += next.Loop.MotionVectors
+	total.Loop.MVResiduals += next.Loop.MVResiduals
+	total.Loop.InterpFilters += next.Loop.InterpFilters
+	total.Loop.InterIntras += next.Loop.InterIntras
+	total.Loop.MotionModes += next.Loop.MotionModes
+	total.Loop.CompoundBlends += next.Loop.CompoundBlends
+	total.Loop.CoefficientBlocks += next.Loop.CoefficientBlocks
+	total.Loop.CoefficientTXBs += next.Loop.CoefficientTXBs
+	total.Loop.CoefficientNonZero += next.Loop.CoefficientNonZero
+	total.Loop.CoefficientAllZero += next.Loop.CoefficientAllZero
+	total.Loop.CoefficientEOBTotal += next.Loop.CoefficientEOBTotal
+	total.Loop.DeltaReads += next.Loop.DeltaReads
+	total.CoefficientBlocks += next.CoefficientBlocks
+	total.SkippedBlocks += next.SkippedBlocks
+	total.TXBs += next.TXBs
+	total.NonZero += next.NonZero
+	total.AllZero += next.AllZero
+	total.EOBTotal += next.EOBTotal
+	total.Residuals += next.Residuals
+	total.Predictions += next.Predictions
+	total.RestorationUnits += next.RestorationUnits
+}

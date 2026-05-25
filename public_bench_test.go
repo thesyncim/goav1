@@ -601,6 +601,70 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
+	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	publicFillDecoderPostFilterPlane(output.Y)
+	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	retainedValid := false
+	batch := av1.DecoderFrameWorkBatch{
+		Output:  output,
+		Payload: make([]byte, 512),
+		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
+				ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameSize:    av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
+			Quantization: av1.QuantizationParams{BaseQIdx: 64},
+			TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+		},
+		RetainedTileResidualCDFs:      &retained,
+		RetainedTileResidualCDFsValid: &retainedValid,
+		Jobs: []av1.TileJob{
+			{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 256},
+			{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: 256, Size: 256, UpdatesFrameContext: true},
+		},
+	}
+	var storage av1.DecoderFrameWorkTileResidualCDFStorage
+	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+		b.Fatal(err)
+	}
+	int32Len, int16Len, err := av1.DecoderFrameWorkResidualScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY, av1.TransformSize{Width: 64, Height: 64}, av1.TransformTypeDCTDCT)
+	if err != nil {
+		b.Fatal(err)
+	}
+	state := &av1.TileDecodeState{}
+	var scratch av1.DecoderFrameWorkTileResidualScratch
+	req := av1.DecoderFrameWorkBatchResidualRequest{
+		Tile: av1.DecoderFrameWorkTileResidualRequest{
+			TransformMode: batch.TransformRef.TransformMode,
+			Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
+				return av1.ReadDecoderFrameWorkInterBlockTransforms(batch, state, visit)
+			},
+			Int32Scratch:    make([]int32, int32Len),
+			ResidualScratch: make([]int16, int16Len),
+		},
+		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, 1),
+	}
+
+	b.SetBytes(int64(len(batch.Payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		retainedValid = false
+		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+			b.Fatal(err)
+		}
+		stats, err := av1.DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, state, &storage, &scratch, req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += stats.Residuals + stats.TXBs
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
 	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderBlockCoeffSimpleBatch(output)
