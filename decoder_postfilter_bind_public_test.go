@@ -509,6 +509,67 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 		t.Fatalf("zero request=%+v err=%v", zeroReq, err)
 	}
 
+	arenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(scratch)
+	wantUint16Scratch := scratch.CDEF.Input + scratch.CDEF.UnitDst +
+		scratch.Restoration.Samples.DataLen + scratch.Restoration.Samples.DstLen +
+		scratch.Restoration.Apply.Unit.Wiener +
+		scratch.Restoration.Apply.Boundary.Above + scratch.Restoration.Apply.Boundary.Below +
+		scratch.FilmGrain.LumaSamples
+	for plane := 0; plane < 3; plane++ {
+		wantUint16Scratch += scratch.CDEF.Samples[plane] + scratch.CDEF.Dst[plane]
+		wantUint16Scratch += scratch.SuperRes.CodedSamples[plane] + scratch.SuperRes.OutputSamples[plane]
+		if plane < 2 {
+			wantUint16Scratch += scratch.FilmGrain.ChromaSamples[plane]
+		}
+	}
+	wantInt16Scratch := scratch.FilmGrain.LumaGrain + scratch.FilmGrain.ChromaGrain[0] + scratch.FilmGrain.ChromaGrain[1]
+	if arenaSize.LoopFilterEdges != scratch.LoopFilter.Edges ||
+		arenaSize.CDEFDirectionGrid != scratch.CDEF.DirectionGrid ||
+		arenaSize.CDEFVarianceGrid != scratch.CDEF.VarianceGrid ||
+		arenaSize.ByteScratch != scratch.SuperRes.OutputFrame ||
+		arenaSize.Uint16Scratch != wantUint16Scratch ||
+		arenaSize.Int16Scratch != wantInt16Scratch ||
+		arenaSize.Int32Scratch != scratch.Restoration.Apply.Unit.SGRProj {
+		t.Fatalf("arena size=%+v want uint16=%d int16=%d", arenaSize, wantUint16Scratch, wantInt16Scratch)
+	}
+	side := av1.DecoderFrameWorkPostFilterRequestSideData{
+		LoopFilterMap:         loopFilterMap,
+		CDEFIndexMap:          cdefMap,
+		RestorationRecords:    buffers.RestorationRecords,
+		RestorationBoundaries: buffers.RestorationBoundaries,
+		RestorationOptimized:  buffers.RestorationOptimized,
+	}
+	flatScratch := av1.DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, arenaSize.LoopFilterEdges+1),
+		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, arenaSize.CDEFDirectionGrid+1),
+		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, arenaSize.CDEFVarianceGrid+1),
+		ByteScratch:       make([]byte, arenaSize.ByteScratch+1),
+		Uint16Scratch:     make([]uint16, arenaSize.Uint16Scratch+1),
+		Int16Scratch:      make([]int16, arenaSize.Int16Scratch+1),
+		Int32Scratch:      make([]int32, arenaSize.Int32Scratch+1),
+	}
+	arenaReq, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(scratch, side, flatScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arenaReq.LoopFilter.Edges) != scratch.LoopFilter.Edges ||
+		len(arenaReq.CDEF.DstScratch[2]) != scratch.CDEF.Dst[2] ||
+		len(arenaReq.SuperRes.CodedScratch[0]) != scratch.SuperRes.CodedSamples[0] ||
+		len(arenaReq.Restoration.Scratch.Unit.SGRProj) != scratch.Restoration.Apply.Unit.SGRProj ||
+		len(arenaReq.FilmGrain.LumaGrain) != scratch.FilmGrain.LumaGrain {
+		t.Fatalf("arena request=%+v", arenaReq)
+	}
+	shortFlatScratch := flatScratch
+	shortFlatScratch.Uint16Scratch = shortFlatScratch.Uint16Scratch[:arenaSize.Uint16Scratch-1]
+	if _, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(scratch, side, shortFlatScratch); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short arena bind err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	negativeScratch := scratch
+	negativeScratch.LoopFilter.Edges = -1
+	if _, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(negativeScratch, side, flatScratch); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("negative arena bind err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
 	shortBuffers := buffers
 	shortBuffers.SuperResOutputFrame = shortBuffers.SuperResOutputFrame[:scratch.SuperRes.OutputFrame-1]
 	if _, err := av1.BindDecoderFrameWorkPostFilterRequest(scratch, shortBuffers); !errors.Is(err, av1.ErrFrameShortBuffer) {
@@ -610,6 +671,17 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 		FilmGrainLumaSamples:   lumaSamples,
 		FilmGrainChromaSamples: chromaSamples,
 	}
+	postFilterArenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(postFilterSize)
+	postFilterSide := av1.DecoderFrameWorkPostFilterRequestSideData{}
+	postFilterArena := av1.DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
+		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
+		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
+		ByteScratch:       make([]byte, postFilterArenaSize.ByteScratch),
+		Uint16Scratch:     make([]uint16, postFilterArenaSize.Uint16Scratch),
+		Int16Scratch:      make([]int16, postFilterArenaSize.Int16Scratch),
+		Int32Scratch:      make([]int32, postFilterArenaSize.Int32Scratch),
+	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		_, _, _, err = av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
@@ -622,6 +694,7 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 			return
 		}
 		postFilterBuffers.LoopFilterMap = loopFilterMap
+		postFilterSide.LoopFilterMap = loopFilterMap
 		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopFilterMap, loopFilterEdges)
 		if err != nil {
 			return
@@ -637,6 +710,8 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 		}
 		postFilterBuffers.RestorationRecords = restorationBuffers.Records
 		postFilterBuffers.RestorationBoundaries = restorationBuffers.Boundaries
+		postFilterSide.RestorationRecords = restorationBuffers.Records
+		postFilterSide.RestorationBoundaries = restorationBuffers.Boundaries
 		_, _, _, err = av1.DecoderFrameWorkCDEFIndexMapShape(sequence, size)
 		if err != nil {
 			return
@@ -647,11 +722,13 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 			return
 		}
 		postFilterBuffers.CDEFIndexMap = cdefMap
+		postFilterSide.CDEFIndexMap = cdefMap
 		_, err = av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		_, err = av1.BindDecoderFrameWorkSuperResPostFilterRequest(superSize, outputFrame, codedScratch, outputScratch)
 		_, err = av1.BindDecoderFrameWorkRestorationPostFilterRequest(restorationSize, [3][]av1.TileRestorationUnitRecord{}, [3]av1.TileRestorationStripeBoundaries{}, dataScratch, restorationDst, wienerScratch, sgrScratch, aboveScratch, belowScratch, false)
 		_, err = av1.BindDecoderFrameWorkFilmGrainPostFilterRequest(filmSize, lumaGrain, chromaGrain, lumaSamples, chromaSamples)
 		_, err = av1.BindDecoderFrameWorkPostFilterRequest(postFilterSize, postFilterBuffers)
+		_, err = av1.BindDecoderFrameWorkPostFilterRequestFromScratch(postFilterSize, postFilterSide, postFilterArena)
 	})
 	if err != nil {
 		t.Fatal(err)

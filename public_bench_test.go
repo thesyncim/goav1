@@ -471,6 +471,17 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		CDEFInputScratch:   inputScratch,
 		CDEFUnitDstScratch: unitDstScratch,
 	}
+	postFilterArenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(postFilterSize)
+	postFilterSide := av1.DecoderFrameWorkPostFilterRequestSideData{}
+	postFilterArena := av1.DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
+		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
+		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
+		ByteScratch:       make([]byte, postFilterArenaSize.ByteScratch),
+		Uint16Scratch:     make([]uint16, postFilterArenaSize.Uint16Scratch),
+		Int16Scratch:      make([]int16, postFilterArenaSize.Int16Scratch),
+		Int32Scratch:      make([]int32, postFilterArenaSize.Int32Scratch),
+	}
 
 	b.SetBytes(int64(loopFilterLength + len(index) + cdefSize.Input + cdefSize.UnitDst))
 	b.ReportAllocs()
@@ -483,6 +494,7 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 			b.Fatal(err)
 		}
 		postFilterBuffers.LoopFilterMap = loopMap
+		postFilterSide.LoopFilterMap = loopMap
 		loopReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopMap, loopFilterEdges)
 		if err != nil {
 			b.Fatal(err)
@@ -492,6 +504,7 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 			b.Fatal(err)
 		}
 		postFilterBuffers.CDEFIndexMap = cdefMap
+		postFilterSide.CDEFIndexMap = cdefMap
 		cdefReq, err := av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		if err != nil {
 			b.Fatal(err)
@@ -500,7 +513,11 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows + len(postReq.CDEF.InputScratch)
+		arenaReq, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(postFilterSize, postFilterSide, postFilterArena)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows + len(postReq.CDEF.InputScratch) + len(arenaReq.CDEF.InputScratch)
 	}
 	publicBenchmarkSink = sum
 }
