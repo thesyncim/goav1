@@ -572,6 +572,34 @@ func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderCoeffReplayReconstructionAdapter(b *testing.B) {
+	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := publicDecoderBlockCoeffSimpleBatch(output)
+	req := publicDecoderBlockCoeffSimpleRequest()
+	ctx := publicDecoderBlockCoeffReplayContext(b, batch, req, av1.DecoderFrameWorkPlaneY)
+	block := av1.TileLumaCoeffBlock{
+		Block:     req.Block.Block,
+		Transform: req.Transform,
+		Result:    req.Block.Result,
+		Coeffs:    req.Block.Coeffs,
+		Scan:      req.Block.Scan,
+	}
+
+	b.SetBytes(4 * 4 * 2)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
+		if err := av1.ReconstructDecoderFrameWorkLumaCoeffBlock(batch, 0, ctx, block); err != nil {
+			b.Fatal(err)
+		}
+		sum += int(output.Y.Pix[i%len(output.Y.Pix)])
+	}
+	publicBenchmarkSink = sum
+}
+
 func publicBenchmarkDecoderFrame(b *testing.B, format av1.FrameFormat) *av1.Frame {
 	b.Helper()
 	layout, err := av1.FrameRequiredSize(format)

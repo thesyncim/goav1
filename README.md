@@ -169,6 +169,8 @@ The initial implementation covers:
 - Public zero-allocation decoder frame-work block coefficient position,
   segment-aware quantizer, and reconstruction helpers for placing decoded TXBs
   into caller-owned output surfaces.
+- Public zero-allocation luma/chroma coefficient replay adapters that feed
+  decoded tile TXB blocks directly into decoder frame-work reconstruction.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
   caller-owned prediction and residual scratch.
 - Public tile-level loop-restoration frame planning, caller-owned
@@ -184,8 +186,8 @@ The initial implementation covers:
 - Allocation regression tests for the critical byte-level paths.
 - Public hot-path benchmarks for OBU iteration, RTP packetization/assembly,
   frame sample round-trips, tile coefficient replay, decoder prediction,
-  decoder block coefficient reconstruction, reconstruction/deblocking
-  primitives, and output filters.
+  decoder block coefficient reconstruction, coefficient replay reconstruction,
+  reconstruction/deblocking primitives, and output filters.
 
 Public APIs live at the module root:
 

@@ -91,6 +91,59 @@ func TestPublicReconstructDecoderFrameWorkBlockCoeffChroma420(t *testing.T) {
 	}
 }
 
+func TestPublicReconstructDecoderFrameWorkCoeffReplayAdapters(t *testing.T) {
+	gotY, wantY, lumaBatch, lumaReq := publicDecoderBlockCoeffLumaFixture(t)
+	lumaPlane, lumaX, lumaY, err := av1.DecoderFrameWorkBlockCoeffPlanePosition(lumaBatch, 0, lumaReq.Visit, lumaReq.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lumaCtx := publicDecoderBlockCoeffReplayContext(t, lumaBatch, lumaReq, lumaPlane)
+	lumaBlock := av1.TileLumaCoeffBlock{
+		Block:     lumaReq.Block.Block,
+		Transform: lumaReq.Transform,
+		Result:    lumaReq.Block.Result,
+		Coeffs:    lumaReq.Block.Coeffs,
+		Scan:      lumaReq.Block.Scan,
+	}
+	replayReq := av1.DecoderFrameWorkLumaCoeffBlockReconstruction(lumaCtx, lumaBlock)
+	if replayReq.Block.Plane != 0 || replayReq.Transform != lumaReq.Transform || replayReq.Block.Block != lumaReq.Block.Block {
+		t.Fatalf("luma replay reconstruction=%+v", replayReq)
+	}
+	if err := av1.ReconstructDecoderFrameWorkLumaCoeffBlock(lumaBatch, 0, lumaCtx, lumaBlock); err != nil {
+		t.Fatal(err)
+	}
+	publicReconstructDecoderFrameWorkBlockCoeffDirect(t, lumaBatch, wantY, lumaPlane, lumaX, lumaY, lumaReq)
+	if !bytes.Equal(gotY.Y.Pix, wantY.Y.Pix) {
+		t.Fatal("luma replay reconstruction adapter did not match direct public reconstruction")
+	}
+
+	gotV, wantV, chromaBatch, chromaReq := publicDecoderBlockCoeffChromaFixture(t)
+	chromaPlane, chromaX, chromaY, err := av1.DecoderFrameWorkBlockCoeffPlanePosition(chromaBatch, 0, chromaReq.Visit, chromaReq.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chromaCtx := publicDecoderBlockCoeffReplayContext(t, chromaBatch, chromaReq, chromaPlane)
+	chromaBlock := av1.TileChromaCoeffBlock{
+		Plane:     chromaReq.Block.Plane,
+		Block:     chromaReq.Block.Block,
+		Transform: chromaReq.Transform,
+		Result:    chromaReq.Block.Result,
+		Coeffs:    chromaReq.Block.Coeffs,
+		Scan:      chromaReq.Block.Scan,
+	}
+	replayReq = av1.DecoderFrameWorkChromaCoeffBlockReconstruction(chromaCtx, chromaBlock)
+	if replayReq.Block.Plane != 2 || replayReq.Transform != chromaReq.Transform || replayReq.Block.Block != chromaReq.Block.Block {
+		t.Fatalf("chroma replay reconstruction=%+v", replayReq)
+	}
+	if err := av1.ReconstructDecoderFrameWorkChromaCoeffBlock(chromaBatch, 0, chromaCtx, chromaBlock); err != nil {
+		t.Fatal(err)
+	}
+	publicReconstructDecoderFrameWorkBlockCoeffDirect(t, chromaBatch, wantV, chromaPlane, chromaX, chromaY, chromaReq)
+	if !bytes.Equal(gotV.V.Pix, wantV.V.Pix) {
+		t.Fatal("chroma replay reconstruction adapter did not match direct public reconstruction")
+	}
+}
+
 func TestPublicReconstructDecoderFrameWorkBlockCoeffRejectsInvalidInputs(t *testing.T) {
 	output := publicDecoderBlockCoeffFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
@@ -126,6 +179,30 @@ func TestPublicReconstructDecoderFrameWorkBlockCoeffAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
 		if err := av1.ReconstructDecoderFrameWorkBlockCoeff(batch, 0, req); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("allocs=%v want 0", allocs)
+	}
+}
+
+func TestPublicReconstructDecoderFrameWorkCoeffReplayAdaptersAllocs(t *testing.T) {
+	output := publicDecoderBlockCoeffFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := publicDecoderBlockCoeffSimpleBatch(output)
+	req := publicDecoderBlockCoeffSimpleRequest()
+	ctx := publicDecoderBlockCoeffReplayContext(t, batch, req, av1.DecoderFrameWorkPlaneY)
+	block := av1.TileLumaCoeffBlock{
+		Block:     req.Block.Block,
+		Transform: req.Transform,
+		Result:    req.Block.Result,
+		Coeffs:    req.Block.Coeffs,
+		Scan:      req.Block.Scan,
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
+		if err := av1.ReconstructDecoderFrameWorkLumaCoeffBlock(batch, 0, ctx, block); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -250,6 +327,18 @@ func publicDecoderBlockCoeffSimpleRequest() av1.DecoderFrameWorkBlockCoeffRecons
 		},
 		Transform:     av1.TransformTypeDCTDCT,
 		CurrentQIndex: 32,
+	}
+}
+
+func publicDecoderBlockCoeffReplayContext(tb publicDecoderBlockCoeffTB, batch av1.DecoderFrameWorkBatch, req av1.DecoderFrameWorkBlockCoeffReconstruction, plane av1.DecoderFrameWorkPlane) av1.DecoderFrameWorkCoeffReconstructionContext {
+	tb.Helper()
+	int32Scratch, residualScratch := publicDecoderBlockCoeffScratch(tb, batch, req, plane)
+	return av1.DecoderFrameWorkCoeffReconstructionContext{
+		Visit:           req.Visit,
+		CurrentQIndex:   req.CurrentQIndex,
+		SegmentID:       req.SegmentID,
+		Int32Scratch:    int32Scratch,
+		ResidualScratch: residualScratch,
 	}
 }
 

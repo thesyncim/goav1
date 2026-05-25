@@ -15,7 +15,8 @@
 // geometry, transform/coefficient context replay helpers, tile coefficient
 // replay, tile-level restoration orchestration, decoder residual-state setup
 // and residual execution bridges, decoder block coefficient reconstruction,
-// decoder postfilter scratch binding, superres upscaling, and film-grain output
+// coefficient replay reconstruction adapters, decoder postfilter scratch
+// binding, superres upscaling, and film-grain output
 // helpers. The decoder and encoder APIs will grow at this top level as the
 // internal pipeline stabilizes.
 //
