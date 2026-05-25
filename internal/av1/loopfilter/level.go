@@ -152,7 +152,12 @@ func ResolveLevel(params parser.LoopFilterParams, seg parser.SegmentationParams,
 	if err != nil {
 		return 0, err
 	}
-	level := clampLevelInt(int(base) + int(req.DeltaLF) + int(segDelta))
+	// libaom (av1/common/av1_loopfilter.c:get_filter_level) clamps the
+	// intermediate base+delta_lf result before folding in the per-segment
+	// delta; otherwise the saturating clamp before scale = 1 << (lvl >> 5)
+	// disagrees and ref/mode deltas get the wrong scale.
+	level := clampLevelInt(int(base) + int(req.DeltaLF))
+	level = clampLevelInt(level + int(segDelta))
 	if params.ModeRefDeltaEnabled {
 		scale := 1 << (level >> 5)
 		delta := int(params.Deltas.Ref[req.RefFrame])
