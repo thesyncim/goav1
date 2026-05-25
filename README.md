@@ -158,6 +158,8 @@ The initial implementation covers:
   caller-owned inter-prediction side data.
 - Public decoder tile residual CDF, decode-state, and block-loop request
   lifecycle helpers for caller-owned entropy adaptation.
+- Public zero-allocation decoder tile residual decode/reconstruct bridge with
+  caller-owned residual scratch.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

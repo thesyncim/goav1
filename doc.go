@@ -12,8 +12,9 @@
 // and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, residual reconstruction primitives, post-reconstruction filtering
 // helpers, tile block/transform geometry, transform-context replay helpers,
-// tile-level restoration orchestration, decoder residual-state setup, decoder
-// postfilter scratch binding, superres upscaling, and film-grain output
+// tile-level restoration orchestration, decoder residual-state setup and
+// residual execution bridges, decoder postfilter scratch binding, superres
+// upscaling, and film-grain output
 // helpers. The decoder and encoder APIs will grow at this top level as the
 // internal pipeline stabilizes.
 //
