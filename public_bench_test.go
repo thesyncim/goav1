@@ -1200,6 +1200,11 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 	lowOverhead := publicDecoderResidualLowOverheadStream()
 	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
+	rtpPayloadsBytes := 0
+	for i := range rtpPayloads {
+		rtpPayloadsBytes += len(rtpPayloads[i])
+	}
 	var events [4]av1.DecoderEvent
 	var rtpBuffer [128]byte
 	var rtpSpans [4]av1.RTPObuSpan
@@ -1228,6 +1233,20 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			var stream av1.DecoderStream
 			size, err := av1.DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			if err != nil {
+				b.Fatal(err)
+			}
+			sum += size.Events + size.RTPBuffer + size.RTPSpans + size.Event.Plan.JobCount
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("rtp-payloads", func(b *testing.B) {
+		b.SetBytes(int64(rtpPayloadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			var stream av1.DecoderStream
+			size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, rtpPayloads, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}

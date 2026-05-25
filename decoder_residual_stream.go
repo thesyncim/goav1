@@ -148,6 +148,52 @@ func DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream DecoderStream, us
 	return size, nil
 }
 
+// DecoderFrameWorkResidualRTPPayloadsStreamScratchLen validates an ordered AV1
+// RTP payload batch against a copy of stream and reports reusable max scratch
+// needed by RunRTPPayloads. If used is non-zero, rtpBuffer must contain the
+// preserved fragment bytes from the live stream runner.
+func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
+	var size DecoderFrameWorkResidualStreamScratchSize
+	for i := range payloads {
+		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payloads[i])
+		nextSize := DecoderFrameWorkResidualStreamScratchSize{
+			Events:    eventCount,
+			RTPBuffer: plannedUsed,
+			RTPSpans:  eventCount,
+		}
+		size = size.Max(nextSize)
+		if err != nil {
+			return size, err
+		}
+		if len(rtpBuffer) < plannedUsed || len(rtpSpans) < eventCount {
+			return size, ErrRTPShortBuffer
+		}
+		if len(events) < eventCount {
+			return size, ErrDecoderEventBufferTooSmall
+		}
+
+		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payloads[i])
+		if err != nil {
+			return size, err
+		}
+		if actualUsed != plannedUsed || count != eventCount {
+			return size, ErrDecoderInvalidFrameWorkState
+		}
+		sequence, _ := stream.SequenceHeader()
+		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
+		if err != nil {
+			return size, err
+		}
+		nextSize.Event = eventSize
+		size = size.Max(nextSize)
+		used = actualUsed
+		if !stream.InRTPFragment() {
+			used = 0
+		}
+	}
+	return size, nil
+}
+
 // RunLowOverhead parses a low-overhead OBU buffer into caller-owned event
 // scratch and immediately runs the parsed events through EventRunner.
 func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {

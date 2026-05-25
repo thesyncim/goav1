@@ -2087,6 +2087,54 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPPayload(t *testing.T) 
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPPayloads(t *testing.T) {
+	payload := publicDecoderResidualRTPPayload()
+	payloads := publicDecoderResidualFragmentedRTPPayloads()
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	var rtpBuffer [128]byte
+	var rtpSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	single, err := av1.DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream, 0, payload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, payloads, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Events != 1 ||
+		size.RTPBuffer == 0 ||
+		size.RTPSpans != 1 ||
+		size.Event != single.Event {
+		t.Fatalf("rtp payload batch scratch size=%+v single=%+v", size, single)
+	}
+	if stream.HasSequenceHeader() || stream.InRTPFragment() {
+		t.Fatal("RTP payload batch scratch sizing mutated caller stream")
+	}
+	if events[0].Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("last sized event=%+v", events[0])
+	}
+
+	shortRTP, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, payloads, 1, rtpBuffer[:size.RTPBuffer-1], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short rtp buffer err=%v want %v", err, av1.ErrRTPShortBuffer)
+	}
+	if shortRTP.RTPBuffer != size.RTPBuffer || shortRTP.Events != 1 || shortRTP.RTPSpans != 1 {
+		t.Fatalf("short rtp payload batch scratch size=%+v want buffer %d", shortRTP, size.RTPBuffer)
+	}
+
+	shortEvents, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, payloads, 1, rtpBuffer[:], rtpSpans[:], events[:0], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if !errors.Is(err, av1.ErrDecoderEventBufferTooSmall) {
+		t.Fatalf("short events err=%v want %v", err, av1.ErrDecoderEventBufferTooSmall)
+	}
+	if shortEvents.Events != 1 || shortEvents.RTPBuffer == 0 || shortEvents.RTPSpans != 1 {
+		t.Fatalf("short events payload batch scratch size=%+v", shortEvents)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualStreamScratchLenRTPFragment(t *testing.T) {
 	var stream av1.DecoderStream
 	var events [2]av1.DecoderEvent
@@ -2294,6 +2342,7 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 func TestPublicDecoderFrameWorkResidualStreamScratchLenAllocs(t *testing.T) {
 	lowOverhead := publicDecoderResidualLowOverheadStream()
 	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
 	var events [4]av1.DecoderEvent
 	var rtpBuffer [128]byte
 	var rtpSpans [4]av1.RTPObuSpan
@@ -2303,6 +2352,7 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenAllocs(t *testing.T) {
 	var err error
 	var lowSize av1.DecoderFrameWorkResidualStreamScratchSize
 	var rtpSize av1.DecoderFrameWorkResidualStreamScratchSize
+	var rtpPayloadsSize av1.DecoderFrameWorkResidualStreamScratchSize
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		var stream av1.DecoderStream
@@ -2311,12 +2361,22 @@ func TestPublicDecoderFrameWorkResidualStreamScratchLenAllocs(t *testing.T) {
 			return
 		}
 		rtpSize, err = av1.DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		if err != nil {
+			return
+		}
+		rtpPayloadsSize, err = av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, rtpPayloads, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lowSize.Events != 3 || rtpSize.Events != 3 || rtpSize.RTPBuffer == 0 || rtpSize.RTPSpans != 3 {
-		t.Fatalf("scratch sizes low=%+v rtp=%+v", lowSize, rtpSize)
+	if lowSize.Events != 3 ||
+		rtpSize.Events != 3 ||
+		rtpSize.RTPBuffer == 0 ||
+		rtpSize.RTPSpans != 3 ||
+		rtpPayloadsSize.Events != 1 ||
+		rtpPayloadsSize.RTPBuffer == 0 ||
+		rtpPayloadsSize.RTPSpans != 1 {
+		t.Fatalf("scratch sizes low=%+v rtp=%+v payloads=%+v", lowSize, rtpSize, rtpPayloadsSize)
 	}
 	if allocs != 0 {
 		t.Fatalf("DecoderFrameWorkResidualStreamScratchLen allocated: %f", allocs)
