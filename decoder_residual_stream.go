@@ -31,10 +31,11 @@ type DecoderFrameWorkResidualStreamScratchSize struct {
 	Event     DecoderFrameWorkResidualEventScratchSize
 }
 
-// DecoderFrameWorkResidualStreamScratch carries typed caller-owned parser and
-// event side-data arenas for BindDecoderFrameWorkResidualStreamRunner.
+// DecoderFrameWorkResidualStreamScratch carries typed caller-owned parser,
+// residual event, side-data, and output arenas for residual stream runners.
 type DecoderFrameWorkResidualStreamScratch struct {
 	Events   []DecoderEvent
+	Event    DecoderFrameWorkResidualEventScratch
 	SideData DecoderFrameWorkSideDataScratch
 	Outputs  []*Frame
 
@@ -50,6 +51,25 @@ func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkRes
 		RTPSpans:  max(s.RTPSpans, other.RTPSpans),
 		Event:     s.Event.Max(other.Event),
 	}
+}
+
+// BindDecoderFrameWorkResidualStreamEventRunner binds a complete residual
+// stream runner from caller-owned stream and event scratch. It first binds the
+// nested residual event runner, then binds parser/RTP scratch and stream output
+// slots around it.
+func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, sequence SequenceHeader, event DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
+	if stream == nil {
+		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, ErrDecoderInvalidFrameWorkState
+	}
+	eventRunner, side, err := BindDecoderFrameWorkResidualEventRunner(size.Event, sequence, event, runtime, scratch.Event, batchRunner)
+	if err != nil {
+		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+	}
+	streamRunner, err := BindDecoderFrameWorkResidualStreamRunner(size, stream, eventRunner, scratch)
+	if err != nil {
+		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+	}
+	return streamRunner, side, nil
 }
 
 // BindDecoderFrameWorkResidualStreamRunner binds a stream runner from
