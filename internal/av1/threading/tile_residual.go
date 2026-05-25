@@ -278,6 +278,27 @@ type FrameWorkTileResidualDefaultRequest struct {
 	ResidualScratch []int16
 }
 
+// FrameWorkTileResidualRunnerWorker owns the reusable hot-path state for one
+// worker lane in FrameWorkTileResidualRunner.
+type FrameWorkTileResidualRunnerWorker struct {
+	State                  tile.DecodeState
+	CDFStorage             FrameWorkTileResidualCDFStorage
+	Scratch                FrameWorkTileResidualScratch
+	PredictionScratch      FrameWorkPredictionScratch
+	InterPredictionScratch FrameWorkInterPredictionScratch
+	Int32Scratch           []int32
+	ResidualScratch        []int16
+	Stats                  FrameWorkTileResidualStats
+}
+
+// FrameWorkTileResidualRunner decodes and reconstructs every job assigned to a
+// frame-work worker batch using only caller-owned per-worker storage.
+type FrameWorkTileResidualRunner struct {
+	Workers []FrameWorkTileResidualRunnerWorker
+	Request FrameWorkTileResidualDefaultRequest
+	Predict bool
+}
+
 // FrameWorkTileResidualStats summarizes the composed block-loop/coefficient
 // decode and reconstruction work for one tile job.
 type FrameWorkTileResidualStats struct {
@@ -293,6 +314,86 @@ type FrameWorkTileResidualStats struct {
 	Residuals        int
 	Predictions      int
 	RestorationUnits int
+}
+
+// Run implements FrameWorkBatchRunner for the default residual decode path.
+func (r *FrameWorkTileResidualRunner) Run(b FrameWorkBatch) error {
+	if r == nil || int(b.Batch.Worker) >= len(r.Workers) {
+		return ErrInvalidBatch
+	}
+	worker := &r.Workers[b.Batch.Worker]
+	worker.Stats = FrameWorkTileResidualStats{}
+	for i := 0; i < len(b.Jobs); i++ {
+		if err := b.JobDecodeState(i, &worker.State); err != nil {
+			return err
+		}
+		if err := b.InitTileResidualCDFStorage(&worker.CDFStorage); err != nil {
+			return err
+		}
+		req := r.Request
+		req.Int32Scratch = worker.Int32Scratch
+		req.ResidualScratch = worker.ResidualScratch
+		var predictionScratch *FrameWorkPredictionScratch
+		if r.Predict {
+			worker.PredictionScratch.Inter = &worker.InterPredictionScratch
+			predictionScratch = &worker.PredictionScratch
+		}
+		stats, err := b.DecodeAndReconstructJobResidualsDefault(i, &worker.State, worker.CDFStorage.CDFs(), &worker.Scratch, req.withPredictionScratch(predictionScratch))
+		worker.Stats.Add(stats)
+		if err != nil {
+			return err
+		}
+		if err := b.RetainTileResidualCDFStorage(i, &worker.State, &worker.CDFStorage); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (req FrameWorkTileResidualDefaultRequest) withPredictionScratch(scratch *FrameWorkPredictionScratch) FrameWorkTileResidualDefaultRequest {
+	req.PredictionScratch = scratch
+	return req
+}
+
+// Add accumulates another residual stats snapshot into s.
+func (s *FrameWorkTileResidualStats) Add(other FrameWorkTileResidualStats) {
+	if s == nil {
+		return
+	}
+	s.Loop.PartitionReads += other.Loop.PartitionReads
+	s.Loop.Blocks += other.Loop.Blocks
+	s.Loop.SegmentPredictions += other.Loop.SegmentPredictions
+	s.Loop.SegmentIDs += other.Loop.SegmentIDs
+	s.Loop.Prefixes += other.Loop.Prefixes
+	s.Loop.PredictionModes += other.Loop.PredictionModes
+	s.Loop.IntraModes += other.Loop.IntraModes
+	s.Loop.InterEntries += other.Loop.InterEntries
+	s.Loop.InterReferences += other.Loop.InterReferences
+	s.Loop.InterModes += other.Loop.InterModes
+	s.Loop.RefMVStacks += other.Loop.RefMVStacks
+	s.Loop.DRLIndices += other.Loop.DRLIndices
+	s.Loop.InterMVReferences += other.Loop.InterMVReferences
+	s.Loop.MotionVectors += other.Loop.MotionVectors
+	s.Loop.MVResiduals += other.Loop.MVResiduals
+	s.Loop.InterpFilters += other.Loop.InterpFilters
+	s.Loop.InterIntras += other.Loop.InterIntras
+	s.Loop.MotionModes += other.Loop.MotionModes
+	s.Loop.CompoundBlends += other.Loop.CompoundBlends
+	s.Loop.CoefficientBlocks += other.Loop.CoefficientBlocks
+	s.Loop.CoefficientTXBs += other.Loop.CoefficientTXBs
+	s.Loop.CoefficientNonZero += other.Loop.CoefficientNonZero
+	s.Loop.CoefficientAllZero += other.Loop.CoefficientAllZero
+	s.Loop.CoefficientEOBTotal += other.Loop.CoefficientEOBTotal
+	s.Loop.DeltaReads += other.Loop.DeltaReads
+	s.CoefficientBlocks += other.CoefficientBlocks
+	s.SkippedBlocks += other.SkippedBlocks
+	s.TXBs += other.TXBs
+	s.NonZero += other.NonZero
+	s.AllZero += other.AllZero
+	s.EOBTotal += other.EOBTotal
+	s.Residuals += other.Residuals
+	s.Predictions += other.Predictions
+	s.RestorationUnits += other.RestorationUnits
 }
 
 // JobBlockLoopRequest derives the block-loop request for Jobs[index] from the

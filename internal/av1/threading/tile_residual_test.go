@@ -299,6 +299,65 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsDefault(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualRunnerRun(t *testing.T) {
+	ctx, _, _, _, req := testFrameWorkResidualDriver(t)
+	var retained FrameWorkTileResidualCDFStorage
+	retainedValid := false
+	ctx.RetainedTileResidualCDFs = &retained
+	ctx.RetainedTileResidualCDFsValid = &retainedValid
+	ctx.Jobs[0].UpdatesFrameContext = true
+	var runner FrameWorkTileResidualRunner
+	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
+	runner.Workers[0].Int32Scratch = req.Int32Scratch
+	runner.Workers[0].ResidualScratch = req.ResidualScratch
+	afterBlocks := 0
+	runner.Request.AfterBlock = func(visit tile.BlockLoopVisit) error {
+		afterBlocks++
+		if !visit.CoefficientsValid {
+			t.Fatalf("visit missing coefficients: %+v", visit)
+		}
+		return nil
+	}
+
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if stats := runner.Workers[0].Stats; stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.TXBs != 1 || stats.Residuals != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if afterBlocks != 1 {
+		t.Fatalf("afterBlocks=%d want 1", afterBlocks)
+	}
+	if !retainedValid {
+		t.Fatal("retained CDF storage not marked valid")
+	}
+}
+
+func TestFrameWorkTileResidualRunnerExecuteFrameWork(t *testing.T) {
+	ctx, _, _, _, req := testFrameWorkResidualDriver(t)
+	var batches [1]Batch
+	n, err := BuildBatches(batches[:], ctx.Jobs, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var runner FrameWorkTileResidualRunner
+	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
+	runner.Workers[0].Int32Scratch = req.Int32Scratch
+	runner.Workers[0].ResidualScratch = req.ResidualScratch
+	if err := pool.ExecuteFrameWorkRunner(batches[:n], ctx.Jobs, ctx, &runner); err != nil {
+		t.Fatal(err)
+	}
+	if stats := runner.Workers[0].Stats; stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.Residuals != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsUsesBatchCDEFIndexMap(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	ctx.CDEF = parser.CDEFParams{Bits: 0, StrengthCount: 1}
@@ -953,6 +1012,22 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsDefaultAllocs(t *testing.
 	})
 	if allocs != 0 {
 		t.Fatalf("DecodeAndReconstructJobResidualsDefault allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkTileResidualRunnerRunAllocs(t *testing.T) {
+	ctx, _, _, _, req := testFrameWorkResidualDriver(t)
+	var runner FrameWorkTileResidualRunner
+	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
+	runner.Workers[0].Int32Scratch = req.Int32Scratch
+	runner.Workers[0].ResidualScratch = req.ResidualScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := runner.Run(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkTileResidualRunner.Run allocated: %f", allocs)
 	}
 }
 
