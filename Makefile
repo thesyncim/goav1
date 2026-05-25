@@ -18,6 +18,7 @@ fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkSideDataBinding
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
