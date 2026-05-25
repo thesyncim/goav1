@@ -248,6 +248,82 @@ func TestPublicDecoderFrameWorkResidualMaxScratchLen(t *testing.T) {
 	if _, _, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlane(99)); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("invalid plane max scratch err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
+
+	colorBatch := batch
+	colorBatch.Sequence.ColorConfig.MonoChrome = false
+	colorBatch.Segmentation.Enabled = true
+	colorBatch.Segmentation.Data.Segments[3].DeltaQ = -64
+	frame32, frame16, err := av1.DecoderFrameWorkResidualMaxFrameScratchLen(colorBatch, colorBatch.Quantization.BaseQIdx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonLossless32, nonLossless16, err := av1.ReconstructBlockMaxScratchLen(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame32 != nonLossless32 || frame16 != nonLossless16 {
+		t.Fatalf("frame scratch=%d/%d want %d/%d", frame32, frame16, nonLossless32, nonLossless16)
+	}
+}
+
+func TestPublicDecoderFrameWorkBatchResidualScratchBinding(t *testing.T) {
+	batch, state, storage, scratch, _ := publicDecoderResidualBatchDriver(t)
+	size, err := av1.DecoderFrameWorkBatchResidualScratchLen(batch, batch.Quantization.BaseQIdx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want32, want16, err := av1.DecoderFrameWorkResidualMaxFrameScratchLen(batch, batch.Quantization.BaseQIdx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Int32Scratch != want32 || size.ResidualScratch != want16 || size.LoopContextAbove != 1 {
+		t.Fatalf("batch residual scratch=%+v want int32=%d residual=%d loop=1", size, want32, want16)
+	}
+
+	arena := av1.DecoderFrameWorkBatchResidualScratch{
+		Int32Scratch:     make([]int32, size.Int32Scratch+1),
+		ResidualScratch:  make([]int16, size.ResidualScratch+1),
+		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove+1),
+	}
+	arena.Int32Scratch[size.Int32Scratch] = 99
+	arena.ResidualScratch[size.ResidualScratch] = 77
+	arena.LoopContextAbove[size.LoopContextAbove].Partition[0] = 55
+	bound, err := av1.BindDecoderFrameWorkBatchResidualRequestScratch(size, arena)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bound.Tile.Int32Scratch) != size.Int32Scratch ||
+		len(bound.Tile.ResidualScratch) != size.ResidualScratch ||
+		len(bound.LoopContextAbove) != size.LoopContextAbove {
+		t.Fatalf("bound scratch lens int32=%d residual=%d loop=%d want %+v",
+			len(bound.Tile.Int32Scratch), len(bound.Tile.ResidualScratch), len(bound.LoopContextAbove), size)
+	}
+	if arena.Int32Scratch[size.Int32Scratch] != 99 ||
+		arena.ResidualScratch[size.ResidualScratch] != 77 ||
+		arena.LoopContextAbove[size.LoopContextAbove].Partition[0] != 55 {
+		t.Fatal("scratch bind touched storage past requested lengths")
+	}
+
+	bound.Tile.TransformMode = batch.TransformRef.TransformMode
+	bound.Tile.UseDefaultTransforms = true
+	stats, err := av1.DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, state, &storage, &scratch, bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Loop.Blocks != 2 || stats.TXBs != 2 || stats.Residuals != 2 {
+		t.Fatalf("stats=%+v", stats)
+	}
+
+	shortArena := arena
+	shortArena.ResidualScratch = shortArena.ResidualScratch[:size.ResidualScratch-1]
+	if _, err := av1.BindDecoderFrameWorkBatchResidualRequestScratch(size, shortArena); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short residual scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	negativeSize := size
+	negativeSize.Int32Scratch = -1
+	if _, err := av1.BindDecoderFrameWorkBatchResidualRequestScratch(negativeSize, arena); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("negative scratch size err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
 }
 
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
@@ -319,6 +395,24 @@ func TestPublicDecodeAndRetainDecoderFrameWorkJobResiduals(t *testing.T) {
 	}
 	if retainedValid {
 		t.Fatal("non-update job retained residual CDF storage")
+	}
+}
+
+func TestPublicDecodeAndRetainDecoderFrameWorkJobResidualsDefaultTransforms(t *testing.T) {
+	batch, state, _, scratch, req := publicDecoderResidualDriver(t)
+	req.Transforms = nil
+	req.UseDefaultTransforms = true
+	var storage av1.DecoderFrameWorkTileResidualCDFStorage
+	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := av1.DecodeAndRetainDecoderFrameWorkJobResiduals(batch, 0, state, &storage, &scratch, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Loop.Blocks != 1 || stats.TXBs != 1 || stats.Residuals != 1 {
+		t.Fatalf("stats=%+v", stats)
 	}
 }
 
@@ -532,8 +626,24 @@ func TestPublicDecodeAndRetainDecoderFrameWorkJobResidualsAllocs(t *testing.T) {
 }
 
 func TestPublicDecodeAndRetainDecoderFrameWorkBatchResidualsAllocs(t *testing.T) {
-	batch, state, storage, scratch, req := publicDecoderResidualBatchDriver(t)
+	batch, state, storage, scratch, _ := publicDecoderResidualBatchDriver(t)
+	scratchSize, err := av1.DecoderFrameWorkBatchResidualScratchLen(batch, batch.Quantization.BaseQIdx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arena := av1.DecoderFrameWorkBatchResidualScratch{
+		Int32Scratch:     make([]int32, scratchSize.Int32Scratch),
+		ResidualScratch:  make([]int16, scratchSize.ResidualScratch),
+		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, scratchSize.LoopContextAbove),
+	}
+	var req av1.DecoderFrameWorkBatchResidualRequest
 	allocs := testing.AllocsPerRun(1000, func() {
+		req, err = av1.BindDecoderFrameWorkBatchResidualRequestScratch(scratchSize, arena)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Tile.TransformMode = batch.TransformRef.TransformMode
+		req.Tile.UseDefaultTransforms = true
 		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 			t.Fatal(err)
 		}

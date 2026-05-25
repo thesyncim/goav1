@@ -252,8 +252,11 @@ type FrameWorkTileResidualRequest struct {
 	CDEFIndexMap      *FrameWorkCDEFIndexMap
 	LoopFilterMap     *FrameWorkLoopFilterMap
 	Restoration       *FrameWorkTileRestorationRequest
-	Transforms        FrameWorkBlockTransformSelector
-	AfterBlock        tile.BlockLoopVisitor
+	// UseDefaultTransforms derives transform decisions from the frame-work
+	// block mode state when Transforms is nil.
+	UseDefaultTransforms bool
+	Transforms           FrameWorkBlockTransformSelector
+	AfterBlock           tile.BlockLoopVisitor
 
 	Int32Scratch    []int32
 	ResidualScratch []int16
@@ -420,7 +423,7 @@ func (b FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) {
 // caller's prediction hook, decodes residual TXBs, and reconstructs each decoded
 // TXB into the batch output frame.
 func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) (FrameWorkTileResidualStats, error) {
-	if state == nil || scratch == nil || req.Transforms == nil {
+	if state == nil || scratch == nil || (req.Transforms == nil && !req.UseDefaultTransforms) {
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
 	}
 	scratch.stats = FrameWorkTileResidualStats{}
@@ -602,7 +605,7 @@ func (c *frameWorkTileResidualLoopController) predictDeferredCFLChroma() error {
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
-	transforms, err := c.req.Transforms(visit)
+	transforms, err := c.selectBlockTransforms(visit)
 	if err != nil {
 		return tile.BlockCoeffRequest{}, err
 	}
@@ -646,6 +649,16 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 	}, nil
 }
 
+func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if c.req.Transforms != nil {
+		return c.req.Transforms(visit)
+	}
+	if c.req.UseDefaultTransforms {
+		return c.batch.ReadBlockTransforms(c.state, visit)
+	}
+	return FrameWorkBlockTransforms{}, ErrInvalidBatch
+}
+
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
 	if c.req.Predict == nil && c.req.PredictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if block.Plane != 0 && frameWorkVisitUsesCFL(visit) {
@@ -686,6 +699,13 @@ func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
 		visit.Prediction.Intra &&
 		visit.Prediction.ChromaModeValid &&
 		visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL
+}
+
+func (b FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if visit.Prediction.Valid && visit.Prediction.Intra {
+		return b.ReadIntraBlockTransforms(state, visit)
+	}
+	return b.ReadInterBlockTransforms(state, visit)
 }
 
 func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {

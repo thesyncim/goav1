@@ -96,10 +96,7 @@ func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state
 }
 
 func ReadDecoderFrameWorkBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	if visit.Prediction.Valid && visit.Prediction.Intra {
-		return ReadDecoderFrameWorkIntraBlockTransforms(batch, state, visit)
-	}
-	return ReadDecoderFrameWorkInterBlockTransforms(batch, state, visit)
+	return batch.ReadBlockTransforms(state, visit)
 }
 
 func DecodeAndReconstructDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs DecoderFrameWorkTileResidualCDFs, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
@@ -135,6 +132,82 @@ type DecoderFrameWorkBatchResidualRequest struct {
 	// LoopContextAbove optionally backs one job's root-column context at a time.
 	// When nil, the helper leaves Tile.Loop.ContextCarrier unchanged.
 	LoopContextAbove []TileBlockLoopRootAboveContext
+}
+
+// DecoderFrameWorkBatchResidualScratchSize reports the caller-owned scratch
+// needed to decode all jobs in one frame-work worker batch.
+type DecoderFrameWorkBatchResidualScratchSize struct {
+	Int32Scratch     int
+	ResidualScratch  int
+	LoopContextAbove int
+}
+
+// DecoderFrameWorkBatchResidualScratch carries typed caller-owned arenas for
+// BindDecoderFrameWorkBatchResidualRequestScratch.
+type DecoderFrameWorkBatchResidualScratch struct {
+	Int32Scratch     []int32
+	ResidualScratch  []int16
+	LoopContextAbove []TileBlockLoopRootAboveContext
+}
+
+func DecoderFrameWorkResidualMaxFrameScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (int32Len int, int16Len int, err error) {
+	planes := [3]DecoderFrameWorkPlane{DecoderFrameWorkPlaneY}
+	planeCount := 1
+	if !batch.Sequence.ColorConfig.MonoChrome {
+		planes[1] = DecoderFrameWorkPlaneU
+		planes[2] = DecoderFrameWorkPlaneV
+		planeCount = 3
+	}
+	segmentCount := 1
+	if batch.Segmentation.Enabled {
+		segmentCount = MaxSegments
+	}
+	for segmentID := 0; segmentID < segmentCount; segmentID++ {
+		for plane := 0; plane < planeCount; plane++ {
+			next32, next16, err := DecoderFrameWorkResidualMaxScratchLen(batch, currentQIndex, uint8(segmentID), planes[plane])
+			if err != nil {
+				return 0, 0, err
+			}
+			if next32 > int32Len {
+				int32Len = next32
+			}
+			if next16 > int16Len {
+				int16Len = next16
+			}
+		}
+	}
+	return int32Len, int16Len, nil
+}
+
+func DecoderFrameWorkBatchResidualScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (DecoderFrameWorkBatchResidualScratchSize, error) {
+	int32Len, residualLen, err := DecoderFrameWorkResidualMaxFrameScratchLen(batch, currentQIndex)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualScratchSize{}, err
+	}
+	loopContextLen, err := DecoderFrameWorkBatchResidualLoopContextAboveLen(batch)
+	if err != nil {
+		return DecoderFrameWorkBatchResidualScratchSize{}, err
+	}
+	return DecoderFrameWorkBatchResidualScratchSize{
+		Int32Scratch:     int32Len,
+		ResidualScratch:  residualLen,
+		LoopContextAbove: loopContextLen,
+	}, nil
+}
+
+func BindDecoderFrameWorkBatchResidualRequestScratch(size DecoderFrameWorkBatchResidualScratchSize, scratch DecoderFrameWorkBatchResidualScratch) (DecoderFrameWorkBatchResidualRequest, error) {
+	if decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.LoopContextAbove, size.LoopContextAbove) {
+		return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
+	}
+	return DecoderFrameWorkBatchResidualRequest{
+		Tile: DecoderFrameWorkTileResidualRequest{
+			Int32Scratch:    scratch.Int32Scratch[:size.Int32Scratch],
+			ResidualScratch: scratch.ResidualScratch[:size.ResidualScratch],
+		},
+		LoopContextAbove: scratch.LoopContextAbove[:size.LoopContextAbove],
+	}, nil
 }
 
 func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatch) (int, error) {
@@ -183,6 +256,10 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 		}
 	}
 	return total, nil
+}
+
+func decoderFrameWorkResidualScratchTooShort[T any](scratch []T, need int) bool {
+	return need < 0 || len(scratch) < need
 }
 
 func decoderFrameWorkApplyBatchResidualLoopOverrides(dst *TileBlockLoopRequest, overrides TileBlockLoopRequest) {
