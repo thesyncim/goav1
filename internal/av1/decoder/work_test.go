@@ -1699,6 +1699,65 @@ func TestFrameWorkStateRunEventWithContextRunnerFrameOBU(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunEventWithResidualRunnerFrameOBU(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
+	framePayload = append(framePayload, make([]byte, 256)...)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testStillSequenceHeaderPayload(64, 64))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+	var runner threading.FrameWorkTileResidualRunner
+	runner.Workers = []threading.FrameWorkTileResidualRunnerWorker{
+		{
+			Int32Scratch:    make([]int32, 32768),
+			ResidualScratch: make([]int16, 4096),
+		},
+	}
+
+	result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Step.Kind != FrameWorkStepBegin ||
+		result.Output == nil ||
+		result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		state.Active() {
+		t.Fatalf("result=%+v active=%v", result, state.Active())
+	}
+	if stats := runner.Workers[0].Stats; stats.Loop.Blocks == 0 || stats.CoefficientBlocks == 0 || stats.TXBs == 0 {
+		t.Fatalf("residual runner stats=%+v", stats)
+	}
+	if slot, ok := refs.ReferenceSlot(0); !ok || slot != result.Step.Begin.Surface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, result.Step.Begin.Surface)
+	}
+}
+
 func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -3769,6 +3828,64 @@ func TestFrameWorkStateRunEventWithContextRunnerAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunEventWithResidualRunnerAllocs(t *testing.T) {
+	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
+	framePayload = append(framePayload, make([]byte, 256)...)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testStillSequenceHeaderPayload(64, 64))
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, framePayload)
+
+	var dec Stream
+	var events [2]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count=%d", count)
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+	var runner threading.FrameWorkTileResidualRunner
+	runner.Workers = []threading.FrameWorkTileResidualRunnerWorker{
+		{
+			Int32Scratch:    make([]int32, 32768),
+			ResidualScratch: make([]int16, 4096),
+		},
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
+			t.Fatalf("result=%+v", result)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkState RunEventWith residual runner allocated: %f", allocs)
+	}
+}
+
 func BenchmarkPlanTileWork(b *testing.B) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
@@ -4326,6 +4443,43 @@ func testFrameWorkFilmGrain() parser.FilmGrainParams {
 
 func noopFrameWorkBatch(FrameWorkBatch) error {
 	return nil
+}
+
+func testStillSequenceHeaderPayload(width uint64, height uint64) []byte {
+	var w testBitWriter
+	w.writeBits(0, 3)        // seq_profile
+	w.writeBool(true)        // still_picture
+	w.writeBool(true)        // reduced_still_picture_header
+	w.writeBits(5, 5)        // seq_level_idx[0]
+	w.writeBits(7, 4)        // frame_width_bits_minus_1
+	w.writeBits(7, 4)        // frame_height_bits_minus_1
+	w.writeBits(width-1, 8)  // max_frame_width_minus_1
+	w.writeBits(height-1, 8) // max_frame_height_minus_1
+	w.writeBool(false)       // use_128x128_superblock
+	w.writeBool(true)        // enable_filter_intra
+	w.writeBool(true)        // enable_intra_edge_filter
+	w.writeBool(false)       // enable_superres
+	w.writeBool(true)        // enable_cdef
+	w.writeBool(false)       // enable_restoration
+	w.writeBool(false)       // high_bitdepth
+	w.writeBool(false)       // mono_chrome
+	w.writeBool(false)       // color_description_present_flag
+	w.writeBool(false)       // color_range
+	w.writeBits(0, 2)        // chroma_sample_position
+	w.writeBool(true)        // separate_uv_delta_q
+	w.writeBool(false)       // film_grain_params_present
+	return w.trailingBits()
+}
+
+func reducedStillFrameHeaderPayloadQ(baseQIdx uint8) []byte {
+	var w testBitWriter
+	w.writeBool(true)  // disable_cdf_update
+	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // uniform_tile_spacing_flag
+	writeQuantParams(&w, baseQIdx)
+	writeZeroSegmentationParams(&w)
+	w.writeBool(false) // reduced_tx_set
+	return w.bytes()
 }
 
 type noopFrameWorkRunner struct{}
