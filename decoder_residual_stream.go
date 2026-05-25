@@ -243,7 +243,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post D
 	if err != nil {
 		return DecoderFrameWorkResidualStreamResult{EventCount: count}, err
 	}
-	run, err := r.runParsedEvents(count, post, postRunner)
+	run, err := r.runParsedEvents(count, 0, post, postRunner)
 	if err != nil {
 		return DecoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, err
 	}
@@ -251,6 +251,10 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post D
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runRTPPayloadWithOutputOffset(payload, 0, post, postRunner)
+}
+
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(payload []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
 		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
 	}
@@ -262,7 +266,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, pos
 	if err != nil {
 		return DecoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed}, err
 	}
-	run, err := r.runParsedEvents(count, post, postRunner)
+	run, err := r.runParsedEvents(count, outputOffset, post, postRunner)
 	if !r.Stream.InRTPFragment() {
 		r.RTPUsed = 0
 	}
@@ -275,7 +279,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, pos
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	var result DecoderFrameWorkResidualStreamResult
 	for i := range payloads {
-		next, err := r.runRTPPayload(payloads[i], post, postRunner)
+		next, err := r.runRTPPayloadWithOutputOffset(payloads[i], result.Run.OutputCount, post, postRunner)
 		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
 		if err != nil {
 			return result, err
@@ -284,15 +288,22 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte,
 	return result, nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
+func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
 	if count < 0 || count > len(r.Events) {
 		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderEventBufferTooSmall
 	}
+	eventRunner := r.EventRunner
+	if eventRunner.Outputs != nil {
+		if outputOffset < 0 || outputOffset > len(eventRunner.Outputs) {
+			return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
+		}
+		eventRunner.Outputs = eventRunner.Outputs[outputOffset:]
+	}
 	sequence, _ := r.Stream.SequenceHeader()
 	if postRunner != nil {
-		return r.EventRunner.RunEventsWithPostFilterRunner(sequence, r.Events[:count], r.SideDataScratch, postRunner)
+		return eventRunner.RunEventsWithPostFilterRunner(sequence, r.Events[:count], r.SideDataScratch, postRunner)
 	}
-	return r.EventRunner.RunEvents(sequence, r.Events[:count], r.SideDataScratch, post)
+	return eventRunner.RunEvents(sequence, r.Events[:count], r.SideDataScratch, post)
 }
 
 func decoderFrameWorkAccumulateResidualStreamResult(total *DecoderFrameWorkResidualStreamResult, next DecoderFrameWorkResidualStreamResult) {
@@ -308,6 +319,7 @@ func decoderFrameWorkAccumulateResidualEventsResult(total *DecoderFrameWorkResid
 	}
 	total.ExecutedTileWork += next.ExecutedTileWork
 	total.CompletedFrames += next.CompletedFrames
+	total.OutputCount += next.OutputCount
 	total.ReleaseCount += next.ReleaseCount
 	decoderFrameWorkAccumulateResidualStats(&total.Stats, next.Stats)
 }

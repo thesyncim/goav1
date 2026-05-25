@@ -52,6 +52,7 @@ type DecoderFrameWorkResidualEventRunner struct {
 	BatchRunner *DecoderFrameWorkBatchResidualRunner
 	SideData    *DecoderFrameWorkSideData
 	Stats       *DecoderFrameWorkTileResidualStats
+	Outputs     []*Frame
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -61,6 +62,7 @@ type DecoderFrameWorkResidualEventsResult struct {
 	Last             DecoderFrameWorkEventResult
 	ExecutedTileWork int
 	CompletedFrames  int
+	OutputCount      int
 	ReleaseCount     int
 	Stats            DecoderFrameWorkTileResidualStats
 }
@@ -80,6 +82,7 @@ type DecoderFrameWorkResidualEventRuntime struct {
 	WorkerPool *TileWorkerPool
 	SideData   *DecoderFrameWorkSideData
 	Stats      *DecoderFrameWorkTileResidualStats
+	Outputs    []*Frame
 }
 
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
@@ -154,6 +157,7 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 		BatchRunner:       batchRunner,
 		SideData:          runtime.SideData,
 		Stats:             runtime.Stats,
+		Outputs:           runtime.Outputs,
 	}, side, nil
 }
 
@@ -304,6 +308,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 	if post != nil && postRunner != nil {
 		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderInvalidFrameWorkState
 	}
+	if r.Outputs != nil && len(r.Outputs) < decoderFrameWorkResidualEventsOutputLen(events) {
+		return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
+	}
 	var result DecoderFrameWorkResidualEventsResult
 	single := r
 	single.Stats = nil
@@ -344,6 +351,13 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			result.ExecutedTileWork++
 		}
 		if step.Run.CompletedFrame {
+			if r.Outputs != nil {
+				if result.OutputCount >= len(r.Outputs) {
+					return result, ErrFrameShortBuffer
+				}
+				r.Outputs[result.OutputCount] = step.Output
+			}
+			result.OutputCount++
 			result.CompletedFrames++
 		}
 		result.ReleaseCount += step.Run.ReleaseCount
@@ -353,6 +367,16 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		*r.Stats = result.Stats
 	}
 	return result, nil
+}
+
+func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
+	count := 0
+	for i := range events {
+		if DecoderEventCompletesFrameWork(events[i]) {
+			count++
+		}
+	}
+	return count
 }
 
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
