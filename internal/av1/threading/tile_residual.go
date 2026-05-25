@@ -262,6 +262,22 @@ type FrameWorkTileResidualRequest struct {
 	ResidualScratch []int16
 }
 
+// FrameWorkTileResidualDefaultRequest carries the caller-owned buffers and
+// optional maps used by DecodeAndReconstructJobResidualsDefault. The block-loop
+// request and transform selection are derived from the batch's frame context.
+type FrameWorkTileResidualDefaultRequest struct {
+	CurrentSegmentMap  []uint8
+	PreviousSegmentMap []uint8
+	SegmentMapStride   int
+
+	PredictionScratch *FrameWorkPredictionScratch
+	Restoration       *FrameWorkTileRestorationRequest
+	AfterBlock        tile.BlockLoopVisitor
+
+	Int32Scratch    []int32
+	ResidualScratch []int16
+}
+
 // FrameWorkTileResidualStats summarizes the composed block-loop/coefficient
 // decode and reconstruction work for one tile job.
 type FrameWorkTileResidualStats struct {
@@ -490,6 +506,26 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		return scratch.stats, err
 	}
 	return scratch.stats, nil
+}
+
+// DecodeAndReconstructJobResidualsDefault derives the standard block-loop and
+// transform requests from the frame-work batch, then decodes and reconstructs
+// one tile job using caller-owned scratch buffers.
+func (b FrameWorkBatch) DecodeAndReconstructJobResidualsDefault(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualDefaultRequest) (FrameWorkTileResidualStats, error) {
+	loopReq, err := b.JobBlockLoopRequest(index, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride)
+	if err != nil {
+		return FrameWorkTileResidualStats{}, err
+	}
+	return b.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, FrameWorkTileResidualRequest{
+		Loop:                 loopReq,
+		TransformMode:        b.TransformRef.TransformMode,
+		PredictionScratch:    req.PredictionScratch,
+		Restoration:          req.Restoration,
+		UseDefaultTransforms: true,
+		AfterBlock:           req.AfterBlock,
+		Int32Scratch:         req.Int32Scratch,
+		ResidualScratch:      req.ResidualScratch,
+	})
 }
 
 type frameWorkTileResidualLoopController struct {

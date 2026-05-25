@@ -276,6 +276,29 @@ func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsDefault(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	afterBlocks := 0
+
+	stats, err := ctx.DecodeAndReconstructJobResidualsDefault(0, state, cdfs, &scratch, FrameWorkTileResidualDefaultRequest{
+		Int32Scratch:    req.Int32Scratch,
+		ResidualScratch: req.ResidualScratch,
+		AfterBlock: func(visit tile.BlockLoopVisit) error {
+			afterBlocks++
+			if !visit.CoefficientsValid {
+				t.Fatalf("visit missing coefficients: %+v", visit)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.TXBs != 1 || stats.Residuals != 1 || afterBlocks != 1 {
+		t.Fatalf("stats=%+v afterBlocks=%d", stats, afterBlocks)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsUsesBatchCDEFIndexMap(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	ctx.CDEF = parser.CDEFParams{Bits: 0, StrengthCount: 1}
@@ -911,6 +934,25 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("DecodeAndReconstructJobResiduals allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkBatchDecodeAndReconstructJobResidualsDefaultAllocs(t *testing.T) {
+	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
+	defaultReq := FrameWorkTileResidualDefaultRequest{
+		Int32Scratch:    req.Int32Scratch,
+		ResidualScratch: req.ResidualScratch,
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := state.Reset(ctx.Payload, ctx.Jobs[0], tile.DecodeOptions{BaseQIdx: ctx.Quantization.BaseQIdx}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ctx.DecodeAndReconstructJobResidualsDefault(0, state, cdfs, &scratch, defaultReq); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("DecodeAndReconstructJobResidualsDefault allocated: %f", allocs)
 	}
 }
 
