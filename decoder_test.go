@@ -259,6 +259,63 @@ func TestDecoderFrameWorkState(t *testing.T) {
 	}
 }
 
+func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
+	pool := testDecoderFramePool(t, 1)
+	sequence := SequenceHeader{ColorConfig: ColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}}
+	header := DecoderEvent{
+		Kind:        DecoderEventFrameHeader,
+		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
+	}
+	tileGroup := DecoderEvent{
+		Kind:      DecoderEventTileGroup,
+		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
+		TileGroup: TileGroup{Final: true},
+	}
+
+	var refs DecoderSurfaceReferences
+	var state DecoderFrameWorkState
+	plan, output, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := DecoderFrameWorkStep{
+		Kind: DecoderFrameWorkStepTile,
+		Tile: DecoderFrameTileWorkPlan{Surface: plan.Surface},
+	}
+
+	ctx, err := state.PostFilterContext(&pool, tileGroup, step, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Output != output ||
+		ctx.Event.Kind != DecoderEventTileGroup ||
+		!ctx.Event.TileGroup.Final ||
+		ctx.Step != step ||
+		ctx.ExecutedTileWork ||
+		ctx.ReferenceCount != 0 ||
+		ctx.CDEFIndexMap != nil ||
+		ctx.LoopFilterMap != nil ||
+		ctx.RestorationFrameBuffers != nil ||
+		!state.Active() {
+		t.Fatalf("ctx=%+v output=%p state active=%v", ctx, output, state.Active())
+	}
+
+	nonFinal := tileGroup
+	nonFinal.TileGroup.Final = false
+	noop, err := state.PostFilterContext(&pool, nonFinal, step, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noop.Output != nil || noop.Event.Kind != DecoderEventIgnored || noop.Step.Kind != DecoderFrameWorkStepIgnored {
+		t.Fatalf("non-final context=%+v want zero", noop)
+	}
+}
+
 func TestDecoderFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{

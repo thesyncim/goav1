@@ -322,6 +322,40 @@ func (s *FrameWorkState) FinishIfEventCompletesFrameWork(refs *SurfaceReferences
 	return true, count, nil
 }
 
+// PostFilterContext returns the final-frame postfilter context that RunStep
+// would pass to a postfilter hook, without executing tile work or publishing
+// references. Non-final events return a zero context and nil error.
+func (s *FrameWorkState) PostFilterContext(framePool *frame.Pool, event Event, step FrameWorkStep, executed bool) (FrameWorkPostFilterContext, error) {
+	if !EventCompletesFrameWork(event) {
+		return FrameWorkPostFilterContext{}, nil
+	}
+	if s == nil || !s.active {
+		return FrameWorkPostFilterContext{}, ErrInvalidFrameWorkState
+	}
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkPostFilterContext{}, ErrInvalidFrameWorkStep
+	}
+	_, referenceCount, _, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkPostFilterContext{}, err
+	}
+	output, err := frameWorkStepOutput(framePool, step)
+	if err != nil {
+		return FrameWorkPostFilterContext{}, err
+	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
+	return FrameWorkPostFilterContext{
+		Event:                   event,
+		Step:                    step,
+		Output:                  output,
+		ReferenceCount:          referenceCount,
+		ExecutedTileWork:        executed,
+		CDEFIndexMap:            cdefIndexMap,
+		LoopFilterMap:           loopFilterMap,
+		RestorationFrameBuffers: restorationFrameBuffers,
+	}, nil
+}
+
 // ShowExisting resolves a show-existing-frame event to an output surface,
 // aborts any active incomplete frame work, and applies any AV1 key-frame
 // reference reset. Active frame work is dropped only after the show-existing
@@ -450,18 +484,7 @@ func (s *FrameWorkState) RunStepWithPostFilter(refs *SurfaceReferences, framePoo
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
-	var cdefIndexMap *threading.FrameWorkCDEFIndexMap
-	var loopFilterMap *threading.FrameWorkLoopFilterMap
-	var restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
-	if s != nil && s.cdefIndexMapValid {
-		cdefIndexMap = &s.cdefIndexMap
-	}
-	if s != nil && s.loopFilterMapValid {
-		loopFilterMap = &s.loopFilterMap
-	}
-	if s != nil && s.restorationFrameBuffersValid {
-		restorationFrameBuffers = &s.restorationFrameBuffers
-	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
@@ -512,23 +535,12 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
 	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
 	var retainedTileResidualCDFsValid *bool
-	var cdefIndexMap *threading.FrameWorkCDEFIndexMap
-	var loopFilterMap *threading.FrameWorkLoopFilterMap
-	var restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
 	if s != nil && s.tileResidualCurrentCDFsValid {
 		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
 		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
-	if s != nil && s.cdefIndexMapValid {
-		cdefIndexMap = &s.cdefIndexMap
-	}
-	if s != nil && s.loopFilterMapValid {
-		loopFilterMap = &s.loopFilterMap
-	}
-	if s != nil && s.restorationFrameBuffersValid {
-		restorationFrameBuffers = &s.restorationFrameBuffers
-	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
@@ -628,6 +640,10 @@ func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil, nil
 	}
+	return frameWorkStepOutput(pool, step)
+}
+
+func frameWorkStepOutput(pool *frame.Pool, step FrameWorkStep) (*frame.Frame, error) {
 	surface, err := frameWorkStepSurface(step)
 	if err != nil {
 		return nil, err
@@ -636,6 +652,25 @@ func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep
 		return nil, frame.ErrInvalidPool
 	}
 	return pool.Frame(surface)
+}
+
+func (s *FrameWorkState) postFilterSideData() (*threading.FrameWorkCDEFIndexMap, *threading.FrameWorkLoopFilterMap, *threading.FrameWorkRestorationFrameBuffers) {
+	if s == nil {
+		return nil, nil, nil
+	}
+	var cdefIndexMap *threading.FrameWorkCDEFIndexMap
+	var loopFilterMap *threading.FrameWorkLoopFilterMap
+	var restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
+	if s.cdefIndexMapValid {
+		cdefIndexMap = &s.cdefIndexMap
+	}
+	if s.loopFilterMapValid {
+		loopFilterMap = &s.loopFilterMap
+	}
+	if s.restorationFrameBuffersValid {
+		restorationFrameBuffers = &s.restorationFrameBuffers
+	}
+	return cdefIndexMap, loopFilterMap, restorationFrameBuffers
 }
 
 func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterFunc) error {

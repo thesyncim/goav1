@@ -1796,6 +1796,80 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStatePostFilterContextPreview(t *testing.T) {
+	pool := testFramePool(t, 1)
+	surface, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cdefMap := threading.FrameWorkCDEFIndexMap{Index: make([]uint8, 1), Read: make([]bool, 1), Stride: 1, Rows: 1}
+	lfMap := threading.FrameWorkLoopFilterMap{Records: make([]threading.FrameWorkLoopFilterBlockRecord, 1), Stride: 1, Rows: 1}
+	restorationBuffers := threading.FrameWorkRestorationFrameBuffers{Plan: tile.RestorationFramePlan{Planes: 1}}
+	state := FrameWorkState{
+		Surface:                      surface,
+		ReferenceCount:               2,
+		cdefIndexMap:                 cdefMap,
+		cdefIndexMapValid:            true,
+		loopFilterMap:                lfMap,
+		loopFilterMapValid:           true,
+		restorationFrameBuffers:      restorationBuffers,
+		restorationFrameBuffersValid: true,
+		active:                       true,
+	}
+	event := finalFrameEvent(0)
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{
+			Surface:        surface,
+			ReferenceCount: 2,
+		},
+	}
+
+	ctx, err := state.PostFilterContext(&pool, event, step, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Event.Kind != event.Kind ||
+		!ctx.Event.TileGroup.Final ||
+		ctx.Step != step ||
+		ctx.Output != output ||
+		ctx.ReferenceCount != 2 ||
+		!ctx.ExecutedTileWork ||
+		ctx.CDEFIndexMap != &state.cdefIndexMap ||
+		ctx.LoopFilterMap != &state.loopFilterMap ||
+		ctx.RestorationFrameBuffers != &state.restorationFrameBuffers {
+		t.Fatalf("ctx=%+v output=%p state=%+v", ctx, output, state)
+	}
+	ctx.CDEFIndexMap.Read[0] = true
+	ctx.LoopFilterMap.Records[0].Valid = true
+	if !cdefMap.Read[0] || !lfMap.Records[0].Valid {
+		t.Fatal("preview context did not alias caller-owned side maps")
+	}
+	if !state.Active() {
+		t.Fatal("preview context mutated active state")
+	}
+
+	nonFinal := event
+	nonFinal.TileGroup.Final = false
+	noop, err := state.PostFilterContext(&pool, nonFinal, step, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noop.Output != nil || noop.Event.Kind != EventIgnored || noop.Step.Kind != FrameWorkStepIgnored {
+		t.Fatalf("non-final context=%+v want zero", noop)
+	}
+	if _, err := state.PostFilterContext(nil, event, step, true); !errors.Is(err, frame.ErrInvalidPool) {
+		t.Fatalf("nil pool err=%v want %v", err, frame.ErrInvalidPool)
+	}
+	if _, err := state.PostFilterContext(&pool, event, FrameWorkStep{}, true); !errors.Is(err, ErrInvalidFrameWorkStep) {
+		t.Fatalf("bad step err=%v want %v", err, ErrInvalidFrameWorkStep)
+	}
+	state.active = false
+	if _, err := state.PostFilterContext(&pool, event, step, true); !errors.Is(err, ErrInvalidFrameWorkState) {
+		t.Fatalf("inactive err=%v want %v", err, ErrInvalidFrameWorkState)
+	}
+}
+
 func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.T) {
 	framePayload := append([]byte{}, reducedStillFrameHeaderPayload()...)
 	framePayload = append(framePayload, 0xaa)
@@ -1944,6 +2018,33 @@ func TestFrameWorkStateRunStepWithPostFilterAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("RunStepWithPostFilter allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkStatePostFilterContextAllocs(t *testing.T) {
+	pool := testFramePool(t, 1)
+	surface, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := finalFrameEvent(0)
+	step := FrameWorkStep{
+		Kind: FrameWorkStepTile,
+		Tile: FrameTileWorkPlan{Surface: surface},
+	}
+	state := FrameWorkState{Surface: surface, active: true}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		ctx, err := state.PostFilterContext(&pool, event, step, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Output != output || ctx.ExecutedTileWork {
+			t.Fatalf("ctx=%+v output=%p", ctx, output)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("PostFilterContext allocated: %f", allocs)
 	}
 }
 
