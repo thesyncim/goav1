@@ -2170,6 +2170,18 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloads(t *testing.T) {
 		RTPSpans:        make([]av1.RTPObuSpan, len(probeEvents)),
 	}
 
+	var nilRunner *av1.DecoderFrameWorkResidualStreamRunner
+	if _, err := nilRunner.RunRTPPayloads(nil, nil); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil RTP payload batch runner err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	empty, err := runner.RunRTPPayloads(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.EventCount != 0 || empty.RTPUsed != 0 || empty.Run.Count != 0 || empty.Run.OutputCount != 0 {
+		t.Fatalf("empty RTP payload batch result=%+v", empty)
+	}
+
 	postCalls := 0
 	result, err := runner.RunRTPPayloads(rtpPayloads, func(ctx av1.DecoderFrameWorkPostFilterContext) error {
 		postCalls++
@@ -2508,6 +2520,15 @@ func TestPublicBindDecoderFrameWorkResidualStreamEventRunner(t *testing.T) {
 
 	if _, _, err := av1.BindDecoderFrameWorkResidualStreamEventRunner(size, nil, sequence, event, av1.DecoderFrameWorkResidualEventRuntime{}, scratch, &batchRunner); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
 		t.Fatalf("nil stream err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+	var untouchedBatch av1.DecoderFrameWorkBatchResidualRunner
+	shortEvents := scratch
+	shortEvents.Events = shortEvents.Events[:size.Events-1]
+	if _, _, err := av1.BindDecoderFrameWorkResidualStreamEventRunner(size, &stream, sequence, event, av1.DecoderFrameWorkResidualEventRuntime{}, shortEvents, &untouchedBatch); !errors.Is(err, av1.ErrDecoderEventBufferTooSmall) {
+		t.Fatalf("short stream event scratch err=%v want %v", err, av1.ErrDecoderEventBufferTooSmall)
+	}
+	if untouchedBatch.UseDefaultPrediction || len(untouchedBatch.States) != 0 {
+		t.Fatalf("short stream scratch mutated batch runner: %+v", untouchedBatch)
 	}
 	shortEvent := scratch
 	shortEvent.Event.Spans = shortEvent.Event.Spans[:size.Event.Plan.SpanCount-1]

@@ -61,6 +61,9 @@ func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidual
 	if stream == nil {
 		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, ErrDecoderInvalidFrameWorkState
 	}
+	if err := decoderFrameWorkResidualStreamScratchErr(size, scratch); err != nil {
+		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+	}
 	eventRunner, side, err := BindDecoderFrameWorkResidualEventRunner(size.Event, sequence, event, runtime, scratch.Event, batchRunner)
 	if err != nil {
 		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
@@ -79,20 +82,10 @@ func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStrea
 	if stream == nil {
 		return DecoderFrameWorkResidualStreamRunner{}, ErrDecoderInvalidFrameWorkState
 	}
-	if decoderFrameWorkResidualScratchTooShort(scratch.Events, size.Events) {
-		return DecoderFrameWorkResidualStreamRunner{}, ErrDecoderEventBufferTooSmall
-	}
-	if decoderFrameWorkResidualScratchTooShort(scratch.RTPBuffer, size.RTPBuffer) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.RTPSpans, size.RTPSpans) {
-		return DecoderFrameWorkResidualStreamRunner{}, ErrRTPShortBuffer
-	}
-	if decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch.SideData, size.Event.SideData) {
-		return DecoderFrameWorkResidualStreamRunner{}, ErrFrameShortBuffer
+	if err := decoderFrameWorkResidualStreamScratchErr(size, scratch); err != nil {
+		return DecoderFrameWorkResidualStreamRunner{}, err
 	}
 	if scratch.Outputs != nil {
-		if decoderFrameWorkResidualScratchTooShort(scratch.Outputs, size.Event.Outputs) {
-			return DecoderFrameWorkResidualStreamRunner{}, ErrFrameShortBuffer
-		}
 		eventRunner.Outputs = scratch.Outputs[:size.Event.Outputs]
 	}
 	return DecoderFrameWorkResidualStreamRunner{
@@ -110,6 +103,23 @@ func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStrea
 		RTPBuffer: scratch.RTPBuffer[:size.RTPBuffer],
 		RTPSpans:  scratch.RTPSpans[:size.RTPSpans],
 	}, nil
+}
+
+func decoderFrameWorkResidualStreamScratchErr(size DecoderFrameWorkResidualStreamScratchSize, scratch DecoderFrameWorkResidualStreamScratch) error {
+	if decoderFrameWorkResidualScratchTooShort(scratch.Events, size.Events) {
+		return ErrDecoderEventBufferTooSmall
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.RTPBuffer, size.RTPBuffer) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.RTPSpans, size.RTPSpans) {
+		return ErrRTPShortBuffer
+	}
+	if decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch.SideData, size.Event.SideData) {
+		return ErrFrameShortBuffer
+	}
+	if scratch.Outputs != nil && decoderFrameWorkResidualScratchTooShort(scratch.Outputs, size.Event.Outputs) {
+		return ErrFrameShortBuffer
+	}
+	return nil
 }
 
 // DecoderFrameWorkResidualLowOverheadStreamScratchLen parses a low-overhead
@@ -307,6 +317,12 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(pay
 }
 
 func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	if r == nil || r.Stream == nil {
+		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+	}
+	if post != nil && postRunner != nil {
+		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+	}
 	var result DecoderFrameWorkResidualStreamResult
 	for i := range payloads {
 		next, err := r.runRTPPayloadWithOutputOffset(payloads[i], result.Run.OutputCount, post, postRunner)
