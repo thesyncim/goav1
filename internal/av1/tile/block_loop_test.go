@@ -890,7 +890,7 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 	}
 }
 
-func TestDecodeBlockPredictionModeRejectsIntrabcBeforeInterSyntax(t *testing.T) {
+func TestDecodeBlockPredictionModeReadsIntrabcWithoutInterSyntax(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0xff}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
@@ -908,14 +908,37 @@ func TestDecodeBlockPredictionModeRejectsIntrabcBeforeInterSyntax(t *testing.T) 
 	}, BlockVisit{
 		Size: BlockSize16x16,
 	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: -1})
-	if !errors.Is(err, ErrUnsupportedSyntax) {
-		t.Fatalf("err=%v want %v", err, ErrUnsupportedSyntax)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if !result.Valid || result.Intra || !result.Intrabc || !result.IntrabcValid {
 		t.Fatalf("intrabc prediction result=%+v", result)
 	}
-	if result.InterReferencesValid || result.InterModeValid || result.InterMotionValid {
-		t.Fatalf("intrabc should not read inter syntax: %+v", result)
+	if result.InterReferencesValid || result.InterMotionValid {
+		t.Fatalf("intrabc should not read inter syntax without motion-vector decode: %+v", result)
+	}
+	if !result.InterModeValid || result.InterMode.Mode != InterModeNewMV {
+		t.Fatalf("intrabc mode=%+v valid=%v want NEWMV", result.InterMode, result.InterModeValid)
+	}
+}
+
+func TestIntrabcPredictedMVUsesNeighborMotionBeforeFallback(t *testing.T) {
+	var ctx BlockModeContext
+	neighbor := InterMotionResult{
+		Mode: InterModeResult{Mode: InterModeNewMV},
+		MV:   [2]motion.Vector{{Row: -256, Col: 16}},
+	}
+	if err := ctx.MarkIntrabcMotion(BlockSize16x16, 0, 0, neighbor); err != nil {
+		t.Fatal(err)
+	}
+	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{SBSizeMIB: 16}, BlockVisit{
+		X4: 4, Y4: 0, HaveLeft: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != neighbor.MV[0] {
+		t.Fatalf("predicted intrabc mv=%+v want %+v", got, neighbor.MV[0])
 	}
 }
 

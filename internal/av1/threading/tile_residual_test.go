@@ -494,11 +494,19 @@ func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
 			IntrabcValid: true,
 		},
 	}
-	if _, err := ctx.ReadInterBlockTransforms(&state, intrabc); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("intrabc inter transforms err=%v want %v", err, ErrInvalidBatch)
+	transforms, err = ctx.ReadInterBlockTransforms(&state, intrabc)
+	if err != nil {
+		t.Fatalf("intrabc inter transforms err=%v", err)
 	}
-	if _, err := ctx.ReadBlockTransforms(&state, intrabc); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("intrabc default transforms err=%v want %v", err, ErrInvalidBatch)
+	if !transforms.Inter || !transforms.ReadInterTX {
+		t.Fatalf("intrabc inter transforms=%+v", transforms)
+	}
+	transforms, err = ctx.ReadBlockTransforms(&state, intrabc)
+	if err != nil {
+		t.Fatalf("intrabc default transforms err=%v", err)
+	}
+	if !transforms.Inter || !transforms.ReadInterTX {
+		t.Fatalf("intrabc default transforms=%+v", transforms)
 	}
 }
 

@@ -156,8 +156,11 @@ func TestFrameWorkLoopFilterMapMarkBlockHandlesIntraAndCompound(t *testing.T) {
 	intrabc.Prediction.Intra = false
 	intrabc.Prediction.Intrabc = true
 	intrabc.Prediction.IntrabcValid = true
-	if err := filterMap.MarkBlock(intrabc, state); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("intrabc mark err=%v want %v", err, ErrInvalidBatch)
+	if err := filterMap.MarkBlock(intrabc, state); err != nil {
+		t.Fatal(err)
+	}
+	if got := filterMap.Records[0]; !got.Valid || got.Intra || got.RefFrame != 0 || got.Mode != loopfilter.ModeDeltaClassZero {
+		t.Fatalf("intrabc record=%+v", got)
 	}
 }
 

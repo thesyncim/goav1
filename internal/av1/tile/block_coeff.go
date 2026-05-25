@@ -1,6 +1,10 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/transform"
+import (
+	"fmt"
+
+	"github.com/thesyncim/goav1/internal/av1/transform"
+)
 
 type BlockCoeffCDFs struct {
 	Transform *TransformCDFs
@@ -72,7 +76,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 
 	tree, err := s.DecodeTransformTree(cdfs.Transform, modeCtx, req.Transform)
 	if err != nil {
-		return BlockCoeffResult{}, err
+		return BlockCoeffResult{}, fmt.Errorf("decode transform tree req=%+v: %w", req.Transform, err)
 	}
 	result := BlockCoeffResult{Tree: tree}
 
@@ -95,7 +99,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 		})
 	})
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("decode luma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
 	}
 
 	if req.Transform.Color.MonoChrome || !tree.HasUV {
@@ -123,7 +127,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 			})
 		})
 		if err != nil {
-			return result, err
+			return result, fmt.Errorf("decode chroma coeffs plane=%d req=%+v tree=%+v: %w", plane, req.Transform, tree, err)
 		}
 		result.Chroma[plane-1] = stats
 	}

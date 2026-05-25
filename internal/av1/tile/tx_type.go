@@ -206,7 +206,25 @@ func (m *InterTransformTypeMap) ChromaType(block TransformBlock, color parser.Co
 	if color.SubsamplingY {
 		y4 <<= 1
 	}
-	return m.At(x4, y4)
+	if typ, err := m.At(x4, y4); err == nil {
+		return typ, nil
+	}
+	if color.SubsamplingY {
+		if typ, err := m.At(x4, y4+1); err == nil {
+			return typ, nil
+		}
+	}
+	if color.SubsamplingX {
+		if typ, err := m.At(x4+1, y4); err == nil {
+			return typ, nil
+		}
+	}
+	if color.SubsamplingX && color.SubsamplingY {
+		if typ, err := m.At(x4+1, y4+1); err == nil {
+			return typ, nil
+		}
+	}
+	return 0, ErrInvalidDecodeState
 }
 
 var transformSizeSquare = [transformSizeCount]TransformSize{

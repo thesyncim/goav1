@@ -293,6 +293,47 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 	return nil
 }
 
+// MarkIntrabcMotion updates top/left motion context for intra-block-copy DVs.
+func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, result InterMotionResult) error {
+	if c == nil || !result.Mode.Mode.Valid() {
+		return ErrInvalidDecodeState
+	}
+	dims, ok := size.Dimensions()
+	if !ok || x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	for i := 0; i < int(dims.W4); i++ {
+		c.AboveIntra[x4+i] = 0
+		c.AboveChromaIntra[x4+i] = 0
+		c.AboveChromaMode[x4+i] = ChromaIntraModeDC
+		c.AboveRef[0][x4+i] = ReferenceFrameNone
+		c.AboveRef[1][x4+i] = ReferenceFrameNone
+		c.AboveCompound[x4+i] = 0
+		c.AboveInterMotion[x4+i] = result
+		c.AboveMotionValid[x4+i] = 1
+		c.AboveInterp[x4+i] = motion.InterpFilters{}
+		c.AboveInterpValid[x4+i] = 0
+		c.AboveBlockSize[x4+i] = size
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		c.LeftIntra[y4+i] = 0
+		c.LeftChromaIntra[y4+i] = 0
+		c.LeftChromaMode[y4+i] = ChromaIntraModeDC
+		c.LeftRef[0][y4+i] = ReferenceFrameNone
+		c.LeftRef[1][y4+i] = ReferenceFrameNone
+		c.LeftCompound[y4+i] = 0
+		c.LeftInterMotion[y4+i] = result
+		c.LeftMotionValid[y4+i] = 1
+		c.LeftInterp[y4+i] = motion.InterpFilters{}
+		c.LeftInterpValid[y4+i] = 0
+		c.LeftBlockSize[y4+i] = size
+	}
+	c.markGridInterMotion(size, x4, y4, result, dims)
+	return nil
+}
+
 func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, dims BlockDimensions) {
 	for y := y4; y < y4+int(dims.H4); y++ {
 		if y < 0 || y >= MaxBlockModeSlots {

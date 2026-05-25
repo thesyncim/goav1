@@ -1,6 +1,8 @@
 package threading
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -105,9 +107,6 @@ func (b FrameWorkBatch) PredictBlock(index int, visit tile.BlockLoopVisit, scrat
 	if !visit.Prediction.Valid {
 		return ErrInvalidBatch
 	}
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
-		return ErrInvalidBatch
-	}
 	if visit.Prediction.Intra {
 		if scratch == nil {
 			return ErrInvalidBatch
@@ -128,7 +127,7 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 		return ErrInvalidBatch
 	}
 	if frameWorkPredictionIsIntrabc(visit.Prediction) {
-		return ErrInvalidBatch
+		return b.predictBlockIntrabcPlane(index, visit, FrameWorkPlaneY)
 	}
 	if visit.Prediction.Intra {
 		if scratch == nil {
@@ -154,8 +153,8 @@ func (b FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, s
 // PredictBlockInter writes inter prediction pixels for every present plane of
 // one decoded inter block. Single-reference translation/OBMC/warp and
 // average/dist-wtd/wedge/diff-wtd compound translation, and non-wedge
-// inter-intra prediction are supported; scaled references and intrabc are
-// rejected until their prediction paths are integrated.
+// inter-intra prediction are supported; scaled references are rejected until
+// their prediction paths are integrated.
 func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
 	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
 	if err != nil {
@@ -169,9 +168,16 @@ func (b FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, 
 func (b FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
 	if !visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabc(visit.Prediction) ||
 		!visit.Prediction.InterMotionValid {
 		return ErrInvalidBatch
+	}
+	if frameWorkPredictionIsIntrabc(visit.Prediction) {
+		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+			if err := b.predictBlockIntrabcPlane(index, visit, plane); err != nil {
+				return fmt.Errorf("intrabc plane %d: %w", plane, err)
+			}
+		}
+		return nil
 	}
 	if visit.Prediction.InterMotion.References.Compound {
 		if scratch == nil {
@@ -746,7 +752,7 @@ func (b FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, visi
 
 func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
 	if frameWorkPredictionIsIntrabc(visit.Prediction) {
-		return ErrInvalidBatch
+		return b.predictBlockIntrabcPlane(index, visit, plane)
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
 		return ErrInvalidBatch
@@ -774,6 +780,84 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+func (b FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	if !visit.Prediction.Valid ||
+		visit.Prediction.Intra ||
+		!frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		!visit.Prediction.InterMotionValid {
+		return ErrInvalidBatch
+	}
+	x, y, width, height, subsamplingX, subsamplingY, present, err := frameWorkBlockPlanePosition(visit.Block, b.Sequence.ColorConfig, plane)
+	if err != nil || !present {
+		return err
+	}
+	if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
+		return nil
+	}
+	window, err := b.JobOutputPlane(index, plane)
+	if err != nil {
+		return err
+	}
+	width, height, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
+	if !ok || b.Output.Layout.BytesPerSample <= 0 {
+		return ErrInvalidBatch
+	}
+	if outputSubX != subsamplingX || outputSubY != subsamplingY {
+		return ErrInvalidBatch
+	}
+	geom := frameWorkPredictionPlaneGeometry{
+		Output:         output,
+		Window:         window,
+		X:              x,
+		Y:              y,
+		Width:          width,
+		Height:         height,
+		SubsamplingX:   subsamplingX,
+		SubsamplingY:   subsamplingY,
+		BytesPerSample: b.Output.Layout.BytesPerSample,
+	}
+	mv := visit.Prediction.InterMotion.MV[0]
+	if mv.Row%8 != 0 || mv.Col%8 != 0 {
+		return ErrInvalidBatch
+	}
+	rowOffset := int(mv.Row / 8)
+	colOffset := int(mv.Col / 8)
+	if geom.SubsamplingY {
+		rowOffset >>= 1
+	}
+	if geom.SubsamplingX {
+		colOffset >>= 1
+	}
+	srcX := geom.X + colOffset
+	srcY := geom.Y + rowOffset
+	if srcX < 0 || srcY < 0 || srcX+geom.Width > geom.Output.Width || srcY+geom.Height > geom.Output.Height {
+		return ErrInvalidBatch
+	}
+	rowBytes, ok := frameWorkCheckedMul(geom.Width, geom.BytesPerSample)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	for row := 0; row < geom.Height; row++ {
+		srcOff, ok := frameWorkPlaneSampleOffset(geom.Output, geom.BytesPerSample, srcX, srcY+row)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		dstOff, ok := frameWorkPlaneSampleOffset(geom.Output, geom.BytesPerSample, geom.X, geom.Y+row)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		copy(geom.Output.Pix[dstOff:dstOff+rowBytes], geom.Output.Pix[srcOff:srcOff+rowBytes])
+	}
+	return nil
 }
 
 func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
@@ -3200,6 +3284,27 @@ func frameWorkDirectionalRangeFits(minIndex int, maxIndex int) bool {
 }
 
 func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
+	offset, ok := frameWorkPlaneSampleOffset(plane, bytesPerSample, x, y)
+	if !ok {
+		return 0, false
+	}
+	switch bytesPerSample {
+	case 1:
+		if offset >= len(plane.Pix) {
+			return 0, false
+		}
+		return uint16(plane.Pix[offset]), true
+	case 2:
+		if offset+1 >= len(plane.Pix) {
+			return 0, false
+		}
+		return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8, true
+	default:
+		return 0, false
+	}
+}
+
+func frameWorkPlaneSampleOffset(plane frame.Plane, bytesPerSample int, x int, y int) (int, bool) {
 	if x < 0 || y < 0 || x >= plane.Width || y >= plane.Height {
 		return 0, false
 	}
@@ -3215,20 +3320,7 @@ func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (u
 	if !ok || offset < 0 {
 		return 0, false
 	}
-	switch bytesPerSample {
-	case 1:
-		if offset >= len(plane.Pix) {
-			return 0, false
-		}
-		return uint16(plane.Pix[offset]), true
-	case 2:
-		if offset > len(plane.Pix)-2 {
-			return 0, false
-		}
-		return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8, true
-	default:
-		return 0, false
-	}
+	return offset, true
 }
 
 func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, value uint16) bool {

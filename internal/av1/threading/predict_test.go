@@ -2061,22 +2061,29 @@ func TestFrameWorkBatchPredictBlockInterRejectsInterIntraBeforeMutation(t *testi
 	}
 }
 
-func TestFrameWorkBatchPredictBlockInterRejectsIntrabcBeforeMutation(t *testing.T) {
-	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
-	reference := testBatchFrame(t, output.Format)
-	output.Y.Pix[0] = 0x11
-	output.U.Pix[0] = 0x22
-	output.V.Pix[0] = 0x33
+func TestFrameWorkBatchPredictBlockInterIntrabcCopiesOutput(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	testFillFrame(output, 3)
+	ctx := testInterPredictionBatch(output, output)
+	for y := 0; y < 16; y++ {
+		for x := 16; x < 32; x++ {
+			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y, uint16(40+y+x-16))
+		}
+	}
 
-	ctx := testInterPredictionBatch(output, reference)
-	visit := testInterPredictionVisit(motion.Vector{})
+	visit := testInterPredictionVisit(motion.Vector{Row: -16 * 8})
 	visit.Prediction.Intrabc = true
 	visit.Prediction.IntrabcValid = true
-	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); err != nil {
+		t.Fatal(err)
 	}
-	if output.Y.Pix[0] != 0x11 || output.U.Pix[0] != 0x22 || output.V.Pix[0] != 0x33 {
-		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[0], output.U.Pix[0], output.V.Pix[0])
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
+			want := uint16(40 + y - 16 + x - 16)
+			if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y); got != want {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
+			}
+		}
 	}
 }
 

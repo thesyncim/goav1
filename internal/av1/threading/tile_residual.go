@@ -594,7 +594,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
 		if req.LoopFilterMap != nil {
 			if err := req.LoopFilterMap.MarkBlock(visit, state); err != nil {
-				return err
+				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 			}
 		}
 		if req.AfterBlock != nil {
@@ -842,9 +842,6 @@ func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
 }
 
 func (b FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
-	}
 	if visit.Prediction.Valid && visit.Prediction.Intra {
 		return b.ReadIntraBlockTransforms(state, visit)
 	}
@@ -868,9 +865,6 @@ func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit 
 
 func (b FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
 	if state == nil {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
-	}
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
 		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
 	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {

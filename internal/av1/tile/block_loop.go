@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -306,7 +308,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			}, func(block BlockVisit) error {
 				visitInfo, err := decodeBlockLoopVisitWithCoeffController(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
 				if err != nil {
-					return err
+					return fmt.Errorf("decode block=%+v: %w", block, err)
 				}
 				stats.Blocks++
 				stats.Prefixes++
@@ -376,10 +378,10 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			})
 			stats.PartitionReads += walkStats.PartitionReads
 			if err != nil {
-				return stats, err
+				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
 			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex); err != nil {
-				return stats, err
+				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
 		}
 	}
@@ -532,7 +534,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	}
 	prefix, err := s.readBlockModePrefix(cdfs.Mode, ctx, cdef, prefixReq, segmentPredicted)
 	if err != nil {
-		return BlockLoopVisit{}, err
+		return BlockLoopVisit{}, fmt.Errorf("read prefix: %w", err)
 	}
 
 	if req.Segmentation.Enabled && req.Segmentation.UpdateMap && !req.Segmentation.Data.Preskip {
@@ -564,7 +566,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	if req.DecodePredictionModes {
 		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment)
 		if err != nil {
-			return BlockLoopVisit{}, err
+			return BlockLoopVisit{}, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
 
@@ -592,16 +594,16 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	if req.DecodeCoefficients {
 		if hasCoeffController {
 			if err := coeffController.BeforeBlockCoefficients(visit); err != nil {
-				return BlockLoopVisit{}, err
+				return BlockLoopVisit{}, fmt.Errorf("before coefficients: %w", err)
 			}
 		} else if req.BeforeCoefficients != nil {
 			if err := req.BeforeCoefficients(visit); err != nil {
-				return BlockLoopVisit{}, err
+				return BlockLoopVisit{}, fmt.Errorf("before coefficients callback: %w", err)
 			}
 		}
 		coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, visit)
 		if err != nil {
-			return BlockLoopVisit{}, err
+			return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
 		}
 		coeffVisit := req.CoeffVisitor
 		if coeffVisit == nil {
@@ -617,7 +619,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 			return coeffVisit(visit, block)
 		})
 		if err != nil {
-			return BlockLoopVisit{}, err
+			return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
 		}
 		visit.Coefficients = coefficients
 		visit.CoefficientsValid = true
@@ -649,7 +651,26 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		LumaMode:     IntraModeDC,
 	}
 	if intraFlag.Intrabc {
-		return result, ErrUnsupportedSyntax
+		result.ChromaMode = ChromaIntraModeDC
+		result.ChromaModeValid = true
+		result.MotionMode = MotionModeTranslation
+		result.MotionModeValid = true
+		result.InterMode = InterModeResult{Mode: InterModeNewMV}
+		result.InterModeValid = true
+		if req.DecodeMotionVectors {
+			motionResult, err := s.readIntrabcMotion(cdfs.MV, ctx, req, block)
+			if err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+			result.InterMotion = motionResult.Motion
+			result.InterMotionValid = true
+			result.MVResiduals = motionResult.Residuals
+			result.MVResidualValid = motionResult.ResidualValid
+			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
+				return BlockPredictionModeResult{}, err
+			}
+		}
+		return result, nil
 	}
 	if !intraFlag.Intra {
 		refs, err := s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
@@ -1201,6 +1222,61 @@ func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback [refer
 	return out
 }
 
+func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit) (InterMotionDecodeResult, error) {
+	if s == nil {
+		return InterMotionDecodeResult{}, ErrInvalidDecodeState
+	}
+	pred, err := intrabcPredictedMV(ctx, req, block)
+	if err != nil {
+		return InterMotionDecodeResult{}, err
+	}
+	mv, residual, err := s.ReadMotionVector(cdfs, pred, MVSubpelNone)
+	if err != nil {
+		return InterMotionDecodeResult{}, err
+	}
+	if !motionVectorValid(mv) {
+		return InterMotionDecodeResult{}, ErrInvalidDecodeState
+	}
+	return InterMotionDecodeResult{
+		Motion: InterMotionResult{
+			Mode: InterModeResult{Mode: InterModeNewMV},
+			MV:   [2]motion.Vector{mv},
+		},
+		Residuals:     [2]MVResidualResult{residual},
+		ResidualValid: [2]bool{true},
+	}, nil
+}
+
+func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit) (motion.Vector, error) {
+	if ctx == nil {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	if block.HaveLeft && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots && ctx.LeftMotionValid[block.Y4] != 0 {
+		mv := ctx.LeftInterMotion[block.Y4].MV[0]
+		if mv != (motion.Vector{}) {
+			return mv, nil
+		}
+	}
+	if block.HaveTop && block.X4 >= 0 && block.X4 < MaxBlockModeSlots && ctx.AboveMotionValid[block.X4] != 0 {
+		mv := ctx.AboveInterMotion[block.X4].MV[0]
+		if mv != (motion.Vector{}) {
+			return mv, nil
+		}
+	}
+	return intrabcFallbackMV(req, block)
+}
+
+func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, error) {
+	if req.SBSizeMIB == 0 {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	sbSize4 := int64(req.SBSizeMIB)
+	if int64(block.MIRow)-sbSize4 < int64(req.Walk.MIRowStart) {
+		return motion.Vector{Col: -int32((sbSize4*4 + intrabcDelayPixels) * 8)}, nil
+	}
+	return motion.Vector{Row: -int32(sbSize4 * 4 * 8)}, nil
+}
+
 func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
 	if !globalMotionParamsInitialized(params) {
 		return motion.Vector{}, false
@@ -1245,6 +1321,7 @@ func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV b
 const (
 	globalMotionWarpedModelPrecBits = 16
 	globalMotionTransOnlyPrecDiff   = globalMotionWarpedModelPrecBits - 3
+	intrabcDelayPixels              = 256
 )
 
 func globalMotionParamsInitialized(params parser.WarpedMotionParams) bool {

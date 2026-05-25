@@ -546,6 +546,32 @@ func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
 	}
 }
 
+func TestInterCoeffTransformSelectorChromaReusesOddSubsampledLumaMap(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector InterCoeffTransformSelector
+	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{X4: 8, Y4: 13, Size: TransformSize8x4},
+	}, transform.TypeADSTDCT); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 2,
+		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize4x4},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeADSTDCT {
+		t.Fatalf("odd chroma tx type=%d want %d", got, transform.TypeADSTDCT)
+	}
+}
+
 func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
