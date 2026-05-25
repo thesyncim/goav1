@@ -111,6 +111,8 @@ The initial implementation covers:
   primitives, and sample-plane load/store helpers for postfilter scratch.
 - Caller-owned deterministic frame pools for reusable and retained decode
   surfaces, including format-checked acquire and atomic batch release.
+- Public zero-allocation DSP plane-block fill/copy/residual-add, A64 mask
+  blending, and 8x8 min/max absolute-difference helpers.
 - Pure-Go DSP plane-block fill, copy, and clipped residual-add primitives for
   reconstruction reference paths.
 - Pure-Go intra plane prediction for DC, vertical, and horizontal
