@@ -149,6 +149,23 @@ type DecoderFrameWorkResidualEventScratch struct {
 	Batches []TileBatch
 }
 
+// Check reports whether scratch is large enough for size without binding or
+// mutating any caller-owned storage.
+func (s DecoderFrameWorkResidualEventScratch) Check(size DecoderFrameWorkResidualEventScratchSize) error {
+	if decoderFrameWorkResidualScratchTooShort(s.Spans, size.Plan.SpanCount) ||
+		decoderFrameWorkResidualScratchTooShort(s.Jobs, size.Plan.JobCount) ||
+		decoderFrameWorkResidualScratchTooShort(s.Batches, size.Plan.BatchCount) {
+		return ErrFrameShortBuffer
+	}
+	if decoderFrameWorkResidualStreamSideDataScratchTooShort(s.SideData, size.SideData) {
+		return ErrFrameShortBuffer
+	}
+	if err := decoderFrameWorkBatchResidualRunnerScratchErr(size.Runner, s.Runner); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Max returns per-arena maximum lengths and plan counts for reusable residual
 // event scratch.
 func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResidualEventScratchSize) DecoderFrameWorkResidualEventScratchSize {

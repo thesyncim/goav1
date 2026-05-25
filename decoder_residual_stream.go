@@ -14,6 +14,20 @@ type DecoderFrameWorkResidualStreamRunner struct {
 	RTPUsed   int
 }
 
+// DecoderFrameWorkResidualStreamRunnerState is a cheap snapshot of a bound
+// stream runner's parser state and reusable arena capacities.
+type DecoderFrameWorkResidualStreamRunnerState struct {
+	Bound             bool
+	HasSequenceHeader bool
+	InRTPFragment     bool
+	RTPUsed           int
+
+	EventCapacity     int
+	RTPBufferCapacity int
+	RTPSpanCapacity   int
+	OutputCapacity    int
+}
+
 // DecoderFrameWorkResidualStreamResult reports parser and decode work completed
 // by a stream-runner call.
 type DecoderFrameWorkResidualStreamResult struct {
@@ -92,6 +106,15 @@ type DecoderFrameWorkResidualStreamScratch struct {
 	RTPSpans  []RTPObuSpan
 }
 
+// Check reports whether scratch is large enough for size without binding or
+// mutating any caller-owned storage.
+func (s DecoderFrameWorkResidualStreamScratch) Check(size DecoderFrameWorkResidualStreamScratchSize) error {
+	if err := decoderFrameWorkResidualStreamScratchErr(size, s); err != nil {
+		return err
+	}
+	return s.Event.Check(size.Event)
+}
+
 // Max returns per-arena maximum lengths for reusable residual stream scratch.
 func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkResidualStreamScratchSize) DecoderFrameWorkResidualStreamScratchSize {
 	return DecoderFrameWorkResidualStreamScratchSize{
@@ -100,6 +123,33 @@ func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkRes
 		RTPSpans:  max(s.RTPSpans, other.RTPSpans),
 		Event:     s.Event.Max(other.Event),
 	}
+}
+
+// State returns a cheap snapshot of parser state and runner arena capacities.
+// A nil or unbound runner returns the zero state.
+func (r *DecoderFrameWorkResidualStreamRunner) State() DecoderFrameWorkResidualStreamRunnerState {
+	if r == nil || r.Stream == nil {
+		return DecoderFrameWorkResidualStreamRunnerState{}
+	}
+	return DecoderFrameWorkResidualStreamRunnerState{
+		Bound:             true,
+		HasSequenceHeader: r.Stream.HasSequenceHeader(),
+		InRTPFragment:     r.Stream.InRTPFragment(),
+		RTPUsed:           r.RTPUsed,
+		EventCapacity:     len(r.Events),
+		RTPBufferCapacity: len(r.RTPBuffer),
+		RTPSpanCapacity:   len(r.RTPSpans),
+		OutputCapacity:    len(r.EventRunner.Outputs),
+	}
+}
+
+// SequenceHeader returns the currently accepted sequence header, if the stream
+// runner is bound and has seen one.
+func (r *DecoderFrameWorkResidualStreamRunner) SequenceHeader() (SequenceHeader, bool) {
+	if r == nil || r.Stream == nil {
+		return SequenceHeader{}, false
+	}
+	return r.Stream.SequenceHeader()
 }
 
 // Reset clears the bound parser stream and any retained RTP fragment bytes so

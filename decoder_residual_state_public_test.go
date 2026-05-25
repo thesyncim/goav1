@@ -549,6 +549,110 @@ func TestPublicDecoderFrameWorkResidualScratchSizeMax(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamScratchCheckAndState(t *testing.T) {
+	size := av1.DecoderFrameWorkResidualStreamScratchSize{
+		Events:    2,
+		RTPBuffer: 16,
+		RTPSpans:  2,
+		Event: av1.DecoderFrameWorkResidualEventScratchSize{
+			Runner: av1.DecoderFrameWorkBatchResidualRunnerScratchSize{
+				Workers:         1,
+				Int32Scratch:    4,
+				ResidualScratch: 4,
+			},
+			SideData: av1.DecoderFrameWorkSideDataScratchSize{
+				CDEFIndexMap:  4,
+				LoopFilterMap: 4,
+			},
+			Plan:    av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1},
+			Outputs: 2,
+		},
+	}
+	scratch := publicDecoderResidualStreamScratch(size)
+	if err := scratch.Check(size); err != nil {
+		t.Fatal(err)
+	}
+	shortEvents := scratch
+	shortEvents.Events = shortEvents.Events[:size.Events-1]
+	if err := shortEvents.Check(size); !errors.Is(err, av1.ErrDecoderEventBufferTooSmall) {
+		t.Fatalf("short events err=%v want %v", err, av1.ErrDecoderEventBufferTooSmall)
+	}
+	shortRTP := scratch
+	shortRTP.RTPBuffer = shortRTP.RTPBuffer[:size.RTPBuffer-1]
+	if err := shortRTP.Check(size); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short RTP err=%v want %v", err, av1.ErrRTPShortBuffer)
+	}
+	shortOutputs := scratch
+	shortOutputs.Outputs = shortOutputs.Outputs[:size.Event.Outputs-1]
+	if err := shortOutputs.Check(size); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short outputs err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	shortEventScratch := scratch
+	shortEventScratch.Event.Spans = shortEventScratch.Event.Spans[:0]
+	if err := shortEventScratch.Check(size); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short event scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+
+	var nilRunner *av1.DecoderFrameWorkResidualStreamRunner
+	if state := nilRunner.State(); state != (av1.DecoderFrameWorkResidualStreamRunnerState{}) {
+		t.Fatalf("nil runner state=%+v", state)
+	}
+	if _, ok := nilRunner.SequenceHeader(); ok {
+		t.Fatal("nil runner reported sequence header")
+	}
+
+	var stream av1.DecoderStream
+	var events [4]av1.DecoderEvent
+	if count, err := stream.PushLowOverhead(publicDecoderResidualLowOverheadStream(), events[:]); err != nil {
+		t.Fatal(err)
+	} else if count != 3 || !stream.HasSequenceHeader() {
+		t.Fatalf("low-overhead count=%d hasSequence=%v", count, stream.HasSequenceHeader())
+	}
+	runner := av1.DecoderFrameWorkResidualStreamRunner{
+		Stream: &stream,
+		EventRunner: av1.DecoderFrameWorkResidualEventRunner{
+			Outputs: scratch.Outputs[:size.Event.Outputs],
+		},
+		Events:    scratch.Events[:size.Events],
+		RTPBuffer: scratch.RTPBuffer[:size.RTPBuffer],
+		RTPSpans:  scratch.RTPSpans[:size.RTPSpans],
+	}
+	state := runner.State()
+	if !state.Bound ||
+		!state.HasSequenceHeader ||
+		state.InRTPFragment ||
+		state.RTPUsed != 0 ||
+		state.EventCapacity != size.Events ||
+		state.RTPBufferCapacity != size.RTPBuffer ||
+		state.RTPSpanCapacity != size.RTPSpans ||
+		state.OutputCapacity != size.Event.Outputs {
+		t.Fatalf("runner state=%+v", state)
+	}
+	sequence, ok := runner.SequenceHeader()
+	if !ok || sequence.ColorConfig.BitDepth != 8 {
+		t.Fatalf("sequence ok=%v header=%+v", ok, sequence)
+	}
+
+	frameHeader := publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	var packet [8]byte
+	n, _, more, err := av1.PutRTPFragment(packet[:], frameHeader, 0, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !more {
+		t.Fatal("expected retained RTP fragment")
+	}
+	used, count, err := stream.PushRTPPayload(runner.RTPBuffer, 0, runner.RTPSpans, runner.Events, packet[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.RTPUsed = used
+	state = runner.State()
+	if count != 0 || !state.InRTPFragment || state.RTPUsed == 0 {
+		t.Fatalf("fragment count=%d state=%+v", count, state)
+	}
+}
+
 func TestPublicDecoderFrameWorkBatchResidualRunnerSideData(t *testing.T) {
 	batch, _, _, _, _ := publicDecoderResidualBatchDriver(t)
 	size, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, 1)
@@ -3969,6 +4073,57 @@ func TestPublicDecoderFrameWorkResidualStreamPlanAllocs(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("DecoderFrameWorkResidualStreamPlan.Max allocated: %f", allocs)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualStreamCheckAndStateAllocs(t *testing.T) {
+	size := av1.DecoderFrameWorkResidualStreamScratchSize{
+		Events:    3,
+		RTPBuffer: 32,
+		RTPSpans:  3,
+		Event: av1.DecoderFrameWorkResidualEventScratchSize{
+			Runner: av1.DecoderFrameWorkBatchResidualRunnerScratchSize{
+				Workers:         1,
+				Int32Scratch:    8,
+				ResidualScratch: 8,
+			},
+			SideData: av1.DecoderFrameWorkSideDataScratchSize{
+				CDEFIndexMap:  4,
+				LoopFilterMap: 4,
+			},
+			Plan:    av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1},
+			Outputs: 2,
+		},
+	}
+	scratch := publicDecoderResidualStreamScratch(size)
+	var stream av1.DecoderStream
+	runner := av1.DecoderFrameWorkResidualStreamRunner{
+		Stream: &stream,
+		EventRunner: av1.DecoderFrameWorkResidualEventRunner{
+			Outputs: scratch.Outputs[:size.Event.Outputs],
+		},
+		Events:    scratch.Events[:size.Events],
+		RTPBuffer: scratch.RTPBuffer[:size.RTPBuffer],
+		RTPSpans:  scratch.RTPSpans[:size.RTPSpans],
+		RTPUsed:   7,
+	}
+	var state av1.DecoderFrameWorkResidualStreamRunnerState
+	var err error
+	var ok bool
+	var sequence av1.SequenceHeader
+	allocs := testing.AllocsPerRun(1000, func() {
+		err = scratch.Check(size)
+		state = runner.State()
+		sequence, ok = runner.SequenceHeader()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Bound || state.RTPUsed != 7 || state.OutputCapacity != 2 || ok || sequence != (av1.SequenceHeader{}) {
+		t.Fatalf("state=%+v ok=%v sequence=%+v", state, ok, sequence)
+	}
+	if allocs != 0 {
+		t.Fatalf("DecoderFrameWorkResidualStream Check/State allocated: %f", allocs)
 	}
 }
 

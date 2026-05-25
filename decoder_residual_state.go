@@ -321,25 +321,11 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 	if size.Workers <= 0 {
 		return DecoderFrameWorkBatchResidualRunner{}, ErrThreadingInvalidWorkerCount
 	}
-	if size.RestorationRequests < 0 || size.Batch.Int32Scratch < 0 || size.Batch.ResidualScratch < 0 || size.Batch.LoopContextAbove < 0 {
-		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
-	}
-	if decoderFrameWorkResidualScratchTooShort(scratch.States, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.Storages, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.TileScratch, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.PredictionScratch, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.InterPredictionScratch, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.Stats, size.Workers) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
-		decoderFrameWorkResidualScratchTooShort(scratch.LoopContextAboveScratch, size.LoopContextAbove) {
-		return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
+	if err := decoderFrameWorkBatchResidualRunnerScratchErr(size, scratch); err != nil {
+		return DecoderFrameWorkBatchResidualRunner{}, err
 	}
 	var restorationRequests []DecoderFrameWorkTileRestorationRequest
 	if len(scratch.RestorationRequests) != 0 {
-		if decoderFrameWorkResidualScratchTooShort(scratch.RestorationRequests, size.RestorationRequests) {
-			return DecoderFrameWorkBatchResidualRunner{}, ErrFrameShortBuffer
-		}
 		restorationRequests = scratch.RestorationRequests[:size.RestorationRequests]
 	}
 	predictionScratch := scratch.PredictionScratch[:size.Workers]
@@ -361,6 +347,39 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 		ResidualScratch:        scratch.ResidualScratch[:size.ResidualScratch],
 		LoopContextAbove:       scratch.LoopContextAboveScratch[:size.LoopContextAbove],
 	}, nil
+}
+
+func decoderFrameWorkBatchResidualRunnerScratchErr(size DecoderFrameWorkBatchResidualRunnerScratchSize, scratch DecoderFrameWorkBatchResidualRunnerScratch) error {
+	if size.Workers == 0 {
+		return nil
+	}
+	if size.Workers < 0 {
+		return ErrThreadingInvalidWorkerCount
+	}
+	if size.RestorationRequests < 0 ||
+		size.Int32Scratch < 0 ||
+		size.ResidualScratch < 0 ||
+		size.LoopContextAbove < 0 ||
+		size.Batch.Int32Scratch < 0 ||
+		size.Batch.ResidualScratch < 0 ||
+		size.Batch.LoopContextAbove < 0 {
+		return ErrFrameShortBuffer
+	}
+	if decoderFrameWorkResidualScratchTooShort(scratch.States, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Storages, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.TileScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.PredictionScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.InterPredictionScratch, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Stats, size.Workers) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
+		decoderFrameWorkResidualScratchTooShort(scratch.LoopContextAboveScratch, size.LoopContextAbove) {
+		return ErrFrameShortBuffer
+	}
+	if len(scratch.RestorationRequests) != 0 && decoderFrameWorkResidualScratchTooShort(scratch.RestorationRequests, size.RestorationRequests) {
+		return ErrFrameShortBuffer
+	}
+	return nil
 }
 
 func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) error {
