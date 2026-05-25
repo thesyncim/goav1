@@ -147,7 +147,8 @@ type DecoderFrameWorkSideData struct {
 // request views from caller-owned scratch at final-frame callback time, after
 // tile residual decode has filled frame side data.
 type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
-	Scratch DecoderFrameWorkPostFilterRequestScratch
+	Scratch              DecoderFrameWorkPostFilterRequestScratch
+	RestorationOptimized bool
 
 	Size    DecoderFrameWorkPostFilterScratchSize
 	Request DecoderFrameWorkPostFilterRequest
@@ -161,7 +162,9 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx Decode
 	if r == nil {
 		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderInvalidFrameWorkState
 	}
-	return ctx.SupportedPostFilterScratchLen(DecoderFrameWorkPostFilterRequest{})
+	return ctx.SupportedPostFilterScratchLen(DecoderFrameWorkPostFilterRequest{
+		Restoration: DecoderFrameWorkRestorationPostFilterRequest{Optimized: r.RestorationOptimized},
+	})
 }
 
 // Apply binds exact request views from Scratch, applies supported postfilters,
@@ -175,6 +178,7 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 		return err
 	}
 	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	side.RestorationOptimized = r.RestorationOptimized
 	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
 	if err != nil {
 		return err

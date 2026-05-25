@@ -1085,7 +1085,7 @@ func publicDecoderPostFilterFramePool(t testing.TB, format av1.FrameFormat, coun
 	return pool
 }
 
-func publicDecoderPostFilterFrame(t *testing.T, format av1.FrameFormat) *av1.Frame {
+func publicDecoderPostFilterFrame(t testing.TB, format av1.FrameFormat) *av1.Frame {
 	t.Helper()
 	layout, err := av1.FrameRequiredSize(format)
 	if err != nil {

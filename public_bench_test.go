@@ -779,6 +779,11 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		},
 	}
 	event := publicDecoderResidualRunnerFrameEvent()
+	event.CDEF = av1.CDEFParams{
+		Damping:       5,
+		StrengthCount: 1,
+		YStrength:     [av1.MaxCDEFStrengths]uint8{63},
+	}
 	var scratchSpans [2]av1.TileSpan
 	var scratchJobs [2]av1.TileJob
 	var scratchBatches [1]av1.TileBatch
@@ -810,7 +815,31 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	var jobs [2]av1.TileJob
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
-	postRunner := av1.DecoderFrameWorkSupportedPostFilterRunner{}
+	format := av1.FrameFormat{
+		Width:      int(event.FrameSize.CodedWidth),
+		Height:     int(event.FrameSize.Height),
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}
+	probeEvent := event
+	probeEvent.SequenceHeader = sequence
+	probeOutput := publicDecoderPostFilterFrame(b, format)
+	probeCtx := av1.DecoderFrameWorkPostFilterContext{
+		Event:                   probeEvent,
+		Output:                  probeOutput,
+		CDEFIndexMap:            &side.CDEFIndexMap,
+		LoopFilterMap:           &side.LoopFilterMap,
+		RestorationFrameBuffers: &side.RestorationFrameBuffers,
+	}
+	var probe av1.DecoderFrameWorkSupportedPostFilterScratchRunner
+	postScratchSize, err := probe.ScratchLen(probeCtx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	postRunner := av1.DecoderFrameWorkSupportedPostFilterScratchRunner{
+		Scratch: publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(postScratchSize)),
+	}
 	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
 		State:             &state,
 		Refs:              &refs,
@@ -842,6 +871,9 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		}
 		if result.Output == nil || result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
 			b.Fatalf("result=%+v", result)
+		}
+		if !postRunner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) || postRunner.Context.RemainingPostFilters() != 0 {
+			b.Fatalf("postfilter result=%+v remaining=%b", postRunner.Result, postRunner.Context.RemainingPostFilters())
 		}
 		sum += runner.Stats[0].Residuals + runner.Stats[0].TXBs
 	}
