@@ -299,6 +299,44 @@ func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
+	payload := make([]byte, 16)
+	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	req := av1.TileLumaCoeffTreeRequest{
+		TreeRequest: av1.TileTransformTreeRequest{Size: av1.TileBlockSize4x4, VisibleW4: 1, VisibleH4: 1},
+		Tree:        av1.TileTransformTreeResult{Y: av1.TileTransformSize4x4},
+		Class:       av1.TransformClass2D,
+	}
+	var cdfs av1.TileCoeffCDFs
+	var state av1.TileDecodeState
+	var ctx av1.TileCoeffEntropyContext
+	var scratch av1.TileCoeffTreeScratch
+
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := av1.InitTileCoeffCDFsDefault(&cdfs, 0); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		ctx.Reset()
+		stats, err := av1.DecodeTileLumaCoefficients(&state, &cdfs, &ctx, &scratch, req, func(block av1.TileLumaCoeffBlock) error {
+			sum += block.Result.EOB
+			return nil
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += stats.TXBs
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicOutputFilters(b *testing.B) {
 	superSrc := av1.FrameSamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
 	superDst := av1.FrameSamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}
