@@ -1848,6 +1848,64 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBoundSideDataRunnerIgnoresInactiveReusableScratch(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		Kind:           EventFrameHeader,
+		SequenceHeader: seq,
+		FrameHeader: parser.FrameHeaderPrefix{
+			FrameType:       parser.FrameTypeKey,
+			PrimaryRefFrame: parser.PrimaryRefNone,
+		},
+		FrameSize: parser.FrameSize{
+			CodedWidth:          64,
+			UpscaledWidth:       64,
+			Height:              64,
+			SuperResDenominator: 8,
+		},
+	}
+	pool := testFramePoolForSize(t, event.FrameSize.CodedWidth, event.FrameSize.Height, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	plan, output, err := state.Begin(&refs, &pool, seq, event, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := FrameWorkBatch{
+		Step:                  FrameWorkStep{Kind: FrameWorkStepBegin, Begin: plan},
+		Output:                output,
+		FrameWorkFrameContext: frameWorkFrameContext(event, threading.FrameWorkSequenceContextFromHeader(seq)),
+	}
+	size, err := FrameWorkSideDataScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != (FrameWorkSideDataScratchSize{}) {
+		t.Fatalf("inactive size=%+v want zero", size)
+	}
+
+	runner := FrameWorkBoundSideDataRunner{
+		CDEFIndex:          make([]uint8, 4),
+		CDEFRead:           make([]bool, 4),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		RestorationRecords: make([]tile.RestorationUnitRecord, 16),
+		RestorationAbove:   make([]uint16, 256),
+		RestorationBelow:   make([]uint16, 256),
+	}
+	if err := runner.BindFrameWorkSideData(&state, ctx); err != nil {
+		t.Fatal(err)
+	}
+	cdefMap, lfMap, restorationBuffers := state.postFilterSideData()
+	if cdefMap != nil || lfMap != nil || restorationBuffers != nil {
+		t.Fatalf("inactive side data cdef=%+v lf=%+v restoration=%+v", cdefMap, lfMap, restorationBuffers)
+	}
+	if runner.CDEFIndexMap.Stride != 0 || len(runner.CDEFIndexMap.Index) != 0 ||
+		runner.LoopFilterMap.Stride != 0 || len(runner.LoopFilterMap.Records) != 0 ||
+		runner.RestorationFrameBuffers.Plan.Planes != 0 {
+		t.Fatalf("runner retained inactive side data: %+v", runner)
+	}
+}
+
 func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
 	seq := testSequence()
 	ctx := FrameWorkBatch{

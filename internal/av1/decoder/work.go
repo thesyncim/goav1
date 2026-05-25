@@ -988,7 +988,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 	if r == nil {
 		return ErrInvalidFrameWorkState
 	}
-	if frameWorkCDEFActive(b.CDEF) || len(r.CDEFIndex) != 0 || len(r.CDEFRead) != 0 {
+	if frameWorkCDEFActive(b.CDEF) {
 		_, _, length, err := b.CDEFIndexMapShape()
 		if err != nil {
 			return err
@@ -1005,7 +1005,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		}
 		r.CDEFIndexMap = cdefMap
 	}
-	if frameWorkLoopFilterActive(b.LoopFilter) || len(r.LoopFilterRecords) != 0 {
+	if frameWorkLoopFilterActive(b.LoopFilter) {
 		_, _, length, err := b.LoopFilterMapShape()
 		if err != nil {
 			return err
@@ -1022,8 +1022,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		}
 		r.LoopFilterMap = lfMap
 	}
-	if frameWorkRestorationActive(b.Restoration) || len(r.RestorationRecords) != 0 ||
-		len(r.RestorationAbove) != 0 || len(r.RestorationBelow) != 0 {
+	if frameWorkRestorationActive(b.Restoration) {
 		buffers, err := b.BindRestorationFrameBuffers(r.RestorationRecords, r.RestorationAbove, r.RestorationBelow)
 		if err != nil {
 			return err
