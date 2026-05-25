@@ -292,6 +292,15 @@ func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 	if got, err := CoeffBRContext(levels, TransformSize4x4, transform.Class2D, 0); err != nil || got != 3 {
 		t.Fatalf("CoeffBRContext populated=%d err=%v want 3", got, err)
 	}
+	mustSetCoeffLevel(t, levels, TransformSize4x4, 1, MaxBaseBRRange+9)
+	mustSetCoeffLevel(t, levels, TransformSize4x4, 4, MaxBaseBRRange+7)
+	mustSetCoeffLevel(t, levels, TransformSize4x4, 5, MaxBaseBRRange+5)
+	if got, err := CoeffBRContext(levels, TransformSize4x4, transform.Class2D, 0); err != nil || got != 6 {
+		t.Fatalf("CoeffBRContext saturated 2d dc=%d err=%v want 6", got, err)
+	}
+	if got, err := CoeffBRContext(levels, TransformSize4x4, transform.Class2D, 1); err != nil || got != 13 {
+		t.Fatalf("CoeffBRContext saturated 2d non-dc=%d err=%v want 13", got, err)
+	}
 	if got, err := CoeffBRContext(make([]uint8, scratchLen), TransformSize4x4, transform.Class2D, 10); err != nil || got != 14 {
 		t.Fatalf("CoeffBRContext outer=%d err=%v want 14", got, err)
 	}

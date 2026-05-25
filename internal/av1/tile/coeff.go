@@ -831,6 +831,17 @@ func CoeffBRContext(levels []uint8, size TransformSize, class transform.Class, c
 	if padded+2*stride+2 >= len(levels) || padded+4 >= len(levels) {
 		return 0, ErrInvalidDecodeState
 	}
+	if class == transform.Class2D && coeffIndex != 0 {
+		mag := minInt(int(levels[padded+1]), MaxBaseBRRange) +
+			minInt(int(levels[padded+stride]), MaxBaseBRRange) +
+			minInt(int(levels[padded+stride+1]), MaxBaseBRRange)
+		mag = minInt((mag+1)>>1, 6)
+		if row < 2 && col < 2 {
+			return mag + 7, nil
+		}
+		return mag + 14, nil
+	}
+
 	mag := int(levels[padded+1]) + int(levels[padded+stride])
 	switch class {
 	case transform.Class2D:
