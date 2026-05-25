@@ -156,8 +156,8 @@ The initial implementation covers:
   storage, plus decoder-level loop-restoration frame buffers.
 - Public decoder reference-MV and temporal motion-field storage binding for
   caller-owned inter-prediction side data.
-- Public decoder tile residual CDF and decode-state lifecycle helpers for
-  caller-owned entropy adaptation.
+- Public decoder tile residual CDF, decode-state, and block-loop request
+  lifecycle helpers for caller-owned entropy adaptation.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,

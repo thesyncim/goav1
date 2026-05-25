@@ -394,6 +394,13 @@ func BenchmarkPublicDecoderResidualState(b *testing.B) {
 	}
 	var storage av1.DecoderFrameWorkTileResidualCDFStorage
 	var state av1.TileDecodeState
+	blockLoopBatch := publicBenchmarkDecoderBlockLoopBatch()
+	rootColumns, err := av1.DecoderFrameWorkJobBlockLoopContextRootColumns(blockLoopBatch, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	above := make([]av1.TileBlockLoopRootAboveContext, rootColumns)
+	segMap := make([]uint8, 96*96)
 
 	b.SetBytes(int64(len(batch.Payload)))
 	b.ReportAllocs()
@@ -411,12 +418,43 @@ func BenchmarkPublicDecoderResidualState(b *testing.B) {
 		if err := av1.RetainDecoderFrameWorkTileResidualCDFStorage(batch, 1, &state, &storage); err != nil {
 			b.Fatal(err)
 		}
-		if cdfs.TransformType == nil || !retainedValid {
+		carrier, err := av1.BindTileBlockLoopContextCarrier(rootColumns, above)
+		if err != nil {
+			b.Fatal(err)
+		}
+		req, err := av1.DecoderFrameWorkJobBlockLoopRequest(blockLoopBatch, 0, segMap, nil, 96, &carrier)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if cdfs.TransformType == nil || !retainedValid || req.ContextCarrier != &carrier {
 			b.Fatal("residual state not initialized")
 		}
-		sum += int(state.CurrentBaseQIdx)
+		sum += int(state.CurrentBaseQIdx) + int(req.SBSizeMIB)
 	}
 	publicBenchmarkSink = sum
+}
+
+func publicBenchmarkDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
+	return av1.DecoderFrameWorkBatch{
+		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
+				Use128x128Superblock: true,
+				EnableDualFilter:     true,
+				EnableFilterIntra:    true,
+				EnableOrderHint:      true,
+				OrderHintBits:        5,
+				ColorConfig:          av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameHeader:         av1.FrameHeaderPrefix{OrderHint: 9},
+			FrameSize:           av1.FrameSize{CodedWidth: 300, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
+			TileInfo:            av1.TileInfo{InterpolationFilter: av1.InterpolationSwitchable, UseRefFrameMVS: true},
+			ReferenceOrderHints: [av1.InterRefsPerFrame]uint32{1, 9, 10, 4, 5, 6, 7},
+			SkipMode:            av1.SkipModeParams{Allowed: true, Enabled: true},
+			CDEF:                av1.CDEFParams{Bits: 2, StrengthCount: 4},
+			Delta:               av1.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+		},
+		Jobs: []av1.TileJob{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
+	}
 }
 
 func publicBenchmarkLowOverheadStream() []byte {

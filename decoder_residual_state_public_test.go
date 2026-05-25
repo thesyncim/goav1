@@ -119,6 +119,69 @@ func TestPublicDecoderTileResidualStateRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderBlockLoopRequestAndContextBinding(t *testing.T) {
+	batch := publicDecoderBlockLoopBatch()
+	rootColumns, err := av1.DecoderFrameWorkJobBlockLoopContextRootColumns(batch, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootColumns != 2 {
+		t.Fatalf("root columns=%d want 2", rootColumns)
+	}
+
+	above := make([]av1.TileBlockLoopRootAboveContext, rootColumns+1)
+	above[0].Partition[0] = 11
+	above[rootColumns].Partition[0] = 7
+	carrier, err := av1.BindTileBlockLoopContextCarrier(rootColumns, above)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(carrier.Above) != rootColumns {
+		t.Fatalf("carrier above=%d want %d", len(carrier.Above), rootColumns)
+	}
+	if above[0].Partition[0] != 0 {
+		t.Fatalf("carrier bind did not clear active above storage: %+v", above[0].Partition)
+	}
+	if above[rootColumns].Partition[0] != 7 {
+		t.Fatal("carrier bind touched caller storage past active root columns")
+	}
+
+	segMap := make([]uint8, 96*96)
+	req, err := av1.DecoderFrameWorkJobBlockLoopRequest(batch, 0, segMap, nil, 96, &carrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ContextCarrier != &carrier {
+		t.Fatalf("context carrier=%p want %p", req.ContextCarrier, &carrier)
+	}
+	if req.Walk.Root != av1.TileBlockLevel128x128 ||
+		req.Walk.MIColStart != 32 || req.Walk.MIRowStart != 32 ||
+		req.Walk.MIColEnd != 76 || req.Walk.MIRowEnd != 66 {
+		t.Fatalf("walk=%+v", req.Walk)
+	}
+	if !req.SkipMode.Enabled || req.CDEF.Bits != 2 ||
+		!req.Delta.DeltaQPresent || req.SBSizeMIB != 32 || !req.Monochrome ||
+		len(req.CurrentSegmentMap) != len(segMap) || req.SegmentMapStride != 96 ||
+		req.InterpolationFilter != av1.InterpolationSwitchable || !req.EnableDualFilter ||
+		!req.EnableFilterIntra || !req.EnableOrderHint || req.OrderHintBits != 5 ||
+		req.CurrentOrderHint != 9 || req.ReferenceOrderHints[4] != 5 ||
+		req.RefFrameSide[av1.TileReferenceFrameLast2] != -1 ||
+		req.RefFrameSide[av1.TileReferenceFrameLast3] != 1 ||
+		!req.UseRefFrameMVS || !req.TemporalMVSampleUnavailable {
+		t.Fatalf("request=%+v", req)
+	}
+
+	if _, err := av1.BindTileBlockLoopContextCarrier(-1, nil); !errors.Is(err, av1.ErrTileInvalidDecodeState) {
+		t.Fatalf("negative carrier err=%v want %v", err, av1.ErrTileInvalidDecodeState)
+	}
+	if _, err := av1.BindTileBlockLoopContextCarrier(rootColumns, above[:rootColumns-1]); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short carrier err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	if _, err := av1.DecoderFrameWorkJobBlockLoopRequest(batch, 1, nil, nil, 0, nil); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("bad job err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
 func TestPublicDecoderTileResidualStateAllocs(t *testing.T) {
 	var initial av1.DecoderFrameWorkTileResidualCDFStorage
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {
@@ -141,7 +204,13 @@ func TestPublicDecoderTileResidualStateAllocs(t *testing.T) {
 	}
 	var storage av1.DecoderFrameWorkTileResidualCDFStorage
 	var state av1.TileDecodeState
-	var err error
+	blockLoopBatch := publicDecoderBlockLoopBatch()
+	rootColumns, err := av1.DecoderFrameWorkJobBlockLoopContextRootColumns(blockLoopBatch, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	above := make([]av1.TileBlockLoopRootAboveContext, rootColumns)
+	segMap := make([]uint8, 96*96)
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		err = av1.InitDecoderFrameWorkTileResidualCDFStorage(batch, &storage)
@@ -154,12 +223,44 @@ func TestPublicDecoderTileResidualStateAllocs(t *testing.T) {
 			return
 		}
 		err = av1.RetainDecoderFrameWorkTileResidualCDFStorage(batch, 1, &state, &storage)
+		if err != nil {
+			return
+		}
+		var carrier av1.TileBlockLoopContextCarrier
+		carrier, err = av1.BindTileBlockLoopContextCarrier(rootColumns, above)
+		if err != nil {
+			return
+		}
+		_, err = av1.DecoderFrameWorkJobBlockLoopRequest(blockLoopBatch, 0, segMap, nil, 96, &carrier)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if allocs != 0 {
 		t.Fatalf("allocs=%v want 0", allocs)
+	}
+}
+
+func publicDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
+	return av1.DecoderFrameWorkBatch{
+		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
+			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
+				Use128x128Superblock: true,
+				EnableDualFilter:     true,
+				EnableFilterIntra:    true,
+				EnableOrderHint:      true,
+				OrderHintBits:        5,
+				ColorConfig:          av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+			}),
+			FrameHeader:         av1.FrameHeaderPrefix{OrderHint: 9},
+			FrameSize:           av1.FrameSize{CodedWidth: 300, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
+			TileInfo:            av1.TileInfo{InterpolationFilter: av1.InterpolationSwitchable, UseRefFrameMVS: true},
+			ReferenceOrderHints: [av1.InterRefsPerFrame]uint32{1, 9, 10, 4, 5, 6, 7},
+			SkipMode:            av1.SkipModeParams{Allowed: true, Enabled: true},
+			CDEF:                av1.CDEFParams{Bits: 2, StrengthCount: 4},
+			Delta:               av1.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+		},
+		Jobs: []av1.TileJob{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
 	}
 }
 
