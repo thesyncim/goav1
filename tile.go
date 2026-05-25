@@ -30,6 +30,35 @@ type TileBlockLoopVisitor = internaltile.BlockLoopVisitor
 type TileBlockLoopCoeffVisitor = internaltile.BlockLoopCoeffVisitor
 type TileBlockCoeffBlock = internaltile.BlockCoeffBlock
 type TileBlockCoeffResult = internaltile.BlockCoeffResult
+type TileBlockModeResult = internaltile.BlockModeResult
+type TileBlockPredictionModeResult = internaltile.BlockPredictionModeResult
+type TileIntraMode = internaltile.IntraMode
+type TileFilterIntraMode = internaltile.FilterIntraMode
+type TileChromaIntraMode = internaltile.ChromaIntraMode
+type TileCFLAlphaResult = internaltile.CFLAlphaResult
+type TileInterReferencesResult = internaltile.InterReferencesResult
+type TileInterMode = internaltile.InterMode
+type TileCompoundInterMode = internaltile.CompoundInterMode
+type TileCompoundInterModeComponents = internaltile.CompoundInterModeComponents
+type TileInterModeResult = internaltile.InterModeResult
+type TileReferenceMVCandidate = internaltile.ReferenceMVCandidate
+type TileReferenceMVStack = internaltile.ReferenceMVStack
+type TileReferenceMVStackResult = internaltile.ReferenceMVStackResult
+type TileInterMVReferenceSet = internaltile.InterMVReferenceSet
+type TileMVJoint = internaltile.MVJoint
+type TileMVSubpelPrecision = internaltile.MVSubpelPrecision
+type TileMVComponentResult = internaltile.MVComponentResult
+type TileMVResidualResult = internaltile.MVResidualResult
+type TileInterMotionResult = internaltile.InterMotionResult
+type TileMotionMode = internaltile.MotionMode
+type TileOverlappableNeighbor = internaltile.OverlappableNeighbor
+type TileOverlappableNeighborSet = internaltile.OverlappableNeighborSet
+type TileWarpedMotionModel = internaltile.WarpedMotionModel
+type TileInterIntraMode = internaltile.InterIntraMode
+type TileInterIntraResult = internaltile.InterIntraResult
+type TileCompoundType = internaltile.CompoundType
+type TileDiffWtdMaskType = internaltile.DiffWtdMaskType
+type TileCompoundBlendResult = internaltile.CompoundBlendResult
 type TileTransformSize = internaltile.TransformSize
 type TileTransformDimensions = internaltile.TransformDimensions
 type TileTransformPartitionRequest = internaltile.TransformPartitionRequest
@@ -141,6 +170,81 @@ const (
 	TileBlockSize4x16    TileBlockSize = internaltile.BlockSize4x16
 	TileBlockSize4x8     TileBlockSize = internaltile.BlockSize4x8
 	TileBlockSize4x4     TileBlockSize = internaltile.BlockSize4x4
+
+	TileIntraModeDC               TileIntraMode = internaltile.IntraModeDC
+	TileIntraModeVertical         TileIntraMode = internaltile.IntraModeVertical
+	TileIntraModeHorizontal       TileIntraMode = internaltile.IntraModeHorizontal
+	TileIntraModeD45              TileIntraMode = internaltile.IntraModeD45
+	TileIntraModeD135             TileIntraMode = internaltile.IntraModeD135
+	TileIntraModeD113             TileIntraMode = internaltile.IntraModeD113
+	TileIntraModeD157             TileIntraMode = internaltile.IntraModeD157
+	TileIntraModeD203             TileIntraMode = internaltile.IntraModeD203
+	TileIntraModeD67              TileIntraMode = internaltile.IntraModeD67
+	TileIntraModeSmooth           TileIntraMode = internaltile.IntraModeSmooth
+	TileIntraModeSmoothVertical   TileIntraMode = internaltile.IntraModeSmoothVertical
+	TileIntraModeSmoothHorizontal TileIntraMode = internaltile.IntraModeSmoothHorizontal
+	TileIntraModePaeth            TileIntraMode = internaltile.IntraModePaeth
+
+	TileFilterIntraModeDC         TileFilterIntraMode = internaltile.FilterIntraModeDC
+	TileFilterIntraModeVertical   TileFilterIntraMode = internaltile.FilterIntraModeVertical
+	TileFilterIntraModeHorizontal TileFilterIntraMode = internaltile.FilterIntraModeHorizontal
+	TileFilterIntraModeD157       TileFilterIntraMode = internaltile.FilterIntraModeD157
+	TileFilterIntraModePaeth      TileFilterIntraMode = internaltile.FilterIntraModePaeth
+
+	TileChromaIntraModeDC               TileChromaIntraMode = internaltile.ChromaIntraModeDC
+	TileChromaIntraModeVertical         TileChromaIntraMode = internaltile.ChromaIntraModeVertical
+	TileChromaIntraModeHorizontal       TileChromaIntraMode = internaltile.ChromaIntraModeHorizontal
+	TileChromaIntraModeD45              TileChromaIntraMode = internaltile.ChromaIntraModeD45
+	TileChromaIntraModeD135             TileChromaIntraMode = internaltile.ChromaIntraModeD135
+	TileChromaIntraModeD113             TileChromaIntraMode = internaltile.ChromaIntraModeD113
+	TileChromaIntraModeD157             TileChromaIntraMode = internaltile.ChromaIntraModeD157
+	TileChromaIntraModeD203             TileChromaIntraMode = internaltile.ChromaIntraModeD203
+	TileChromaIntraModeD67              TileChromaIntraMode = internaltile.ChromaIntraModeD67
+	TileChromaIntraModeSmooth           TileChromaIntraMode = internaltile.ChromaIntraModeSmooth
+	TileChromaIntraModeSmoothVertical   TileChromaIntraMode = internaltile.ChromaIntraModeSmoothVertical
+	TileChromaIntraModeSmoothHorizontal TileChromaIntraMode = internaltile.ChromaIntraModeSmoothHorizontal
+	TileChromaIntraModePaeth            TileChromaIntraMode = internaltile.ChromaIntraModePaeth
+	TileChromaIntraModeCFL              TileChromaIntraMode = internaltile.ChromaIntraModeCFL
+
+	TileInterModeNearestMV TileInterMode = internaltile.InterModeNearestMV
+	TileInterModeNearMV    TileInterMode = internaltile.InterModeNearMV
+	TileInterModeGlobalMV  TileInterMode = internaltile.InterModeGlobalMV
+	TileInterModeNewMV     TileInterMode = internaltile.InterModeNewMV
+
+	TileCompoundInterModeNearestNearest TileCompoundInterMode = internaltile.CompoundInterModeNearestNearest
+	TileCompoundInterModeNearNear       TileCompoundInterMode = internaltile.CompoundInterModeNearNear
+	TileCompoundInterModeNearestNew     TileCompoundInterMode = internaltile.CompoundInterModeNearestNew
+	TileCompoundInterModeNewNearest     TileCompoundInterMode = internaltile.CompoundInterModeNewNearest
+	TileCompoundInterModeNearNew        TileCompoundInterMode = internaltile.CompoundInterModeNearNew
+	TileCompoundInterModeNewNear        TileCompoundInterMode = internaltile.CompoundInterModeNewNear
+	TileCompoundInterModeGlobalGlobal   TileCompoundInterMode = internaltile.CompoundInterModeGlobalGlobal
+	TileCompoundInterModeNewNew         TileCompoundInterMode = internaltile.CompoundInterModeNewNew
+
+	TileMVJointZero       TileMVJoint = internaltile.MVJointZero
+	TileMVJointHorizontal TileMVJoint = internaltile.MVJointHorizontal
+	TileMVJointVertical   TileMVJoint = internaltile.MVJointVertical
+	TileMVJointBoth       TileMVJoint = internaltile.MVJointBoth
+
+	TileMVSubpelNone TileMVSubpelPrecision = internaltile.MVSubpelNone
+	TileMVSubpelLow  TileMVSubpelPrecision = internaltile.MVSubpelLow
+	TileMVSubpelHigh TileMVSubpelPrecision = internaltile.MVSubpelHigh
+
+	TileMotionModeTranslation TileMotionMode = internaltile.MotionModeTranslation
+	TileMotionModeOBMC        TileMotionMode = internaltile.MotionModeOBMC
+	TileMotionModeWarp        TileMotionMode = internaltile.MotionModeWarp
+
+	TileInterIntraModeDC         TileInterIntraMode = internaltile.InterIntraModeDC
+	TileInterIntraModeVertical   TileInterIntraMode = internaltile.InterIntraModeVertical
+	TileInterIntraModeHorizontal TileInterIntraMode = internaltile.InterIntraModeHorizontal
+	TileInterIntraModeSmooth     TileInterIntraMode = internaltile.InterIntraModeSmooth
+
+	TileCompoundTypeAverage TileCompoundType = internaltile.CompoundTypeAverage
+	TileCompoundTypeDistWtd TileCompoundType = internaltile.CompoundTypeDistWtd
+	TileCompoundTypeWedge   TileCompoundType = internaltile.CompoundTypeWedge
+	TileCompoundTypeDiffWtd TileCompoundType = internaltile.CompoundTypeDiffWtd
+
+	TileDiffWtdMaskType38    TileDiffWtdMaskType = internaltile.DiffWtdMaskType38
+	TileDiffWtdMaskType38Inv TileDiffWtdMaskType = internaltile.DiffWtdMaskType38Inv
 
 	TileTransformSize4x4   TileTransformSize = internaltile.TransformSize4x4
 	TileTransformSize8x8   TileTransformSize = internaltile.TransformSize8x8

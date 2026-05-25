@@ -123,6 +123,8 @@ The initial implementation covers:
   nearest/reference-copy reconstruction paths.
 - Public zero-allocation motion-vector, reference-origin, and inter-prediction
   helpers for full-pixel and fractional translational prediction.
+- Public decoder frame-work prediction bridge for block, luma, intra, inter,
+  CfL, OBMC, and compound prediction with caller-owned scratch.
 - Public AV1 transform scan/scratch helpers and dequantization lookup tables
   with caller-buffer coefficient dequantization for residual reconstruction.
 - Pure-Go inverse identity transform foundation with AV1 transform-size shifts
@@ -159,7 +161,7 @@ The initial implementation covers:
 - Public decoder tile residual CDF, decode-state, and block-loop request
   lifecycle helpers for caller-owned entropy adaptation.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
-  caller-owned residual scratch.
+  caller-owned prediction and residual scratch.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
@@ -172,8 +174,8 @@ The initial implementation covers:
 - AV1 header-derived frame formats, including monochrome surface layout.
 - Allocation regression tests for the critical byte-level paths.
 - Public hot-path benchmarks for OBU iteration, RTP packetization/assembly,
-  frame sample round-trips, reconstruction/deblocking primitives, and output
-  filters.
+  frame sample round-trips, decoder prediction, reconstruction/deblocking
+  primitives, and output filters.
 
 Public APIs live at the module root:
 

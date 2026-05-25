@@ -278,6 +278,27 @@ func BenchmarkPublicPredictionReconstructionAndLoopFilter(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
+	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := publicDecoderPredictionBatch(output)
+	visit := publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)
+	var scratch av1.DecoderFrameWorkIntraPredictionScratch
+	publicSeedDecoderPredictionIntraEdges(output, 10, 50)
+
+	b.SetBytes(16 * 16)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := av1.PredictDecoderFrameWorkBlockLumaIntra(batch, 0, visit, &scratch); err != nil {
+			b.Fatal(err)
+		}
+		sum += int(output.Y.Pix[16*output.Y.Stride+16])
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicOutputFilters(b *testing.B) {
 	superSrc := av1.FrameSamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
 	superDst := av1.FrameSamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}

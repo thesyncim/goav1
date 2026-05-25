@@ -10,11 +10,11 @@
 // and Annex B OBU parsing, AV1 RTP payload iteration, construction,
 // caller-owned RTP sizing, sequence-header parsing, caller-owned frame pools
 // and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
-// prediction, residual reconstruction primitives, post-reconstruction filtering
-// helpers, tile block/transform geometry, transform-context replay helpers,
-// tile-level restoration orchestration, decoder residual-state setup and
-// residual execution bridges, decoder postfilter scratch binding, superres
-// upscaling, and film-grain output
+// prediction, decoder frame-work prediction bridges, residual reconstruction
+// primitives, post-reconstruction filtering helpers, tile block/transform
+// geometry, transform-context replay helpers, tile-level restoration
+// orchestration, decoder residual-state setup and residual execution bridges,
+// decoder postfilter scratch binding, superres upscaling, and film-grain output
 // helpers. The decoder and encoder APIs will grow at this top level as the
 // internal pipeline stabilizes.
 //
