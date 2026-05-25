@@ -577,7 +577,7 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 		Loop:          loopReq,
 		TransformMode: batch.TransformRef.TransformMode,
 		Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-			return av1.ReadDecoderFrameWorkInterBlockTransforms(batch, &state, visit)
+			return av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, visit)
 		},
 		Int32Scratch:    make([]int32, int32Len),
 		ResidualScratch: make([]int16, int16Len),
@@ -632,18 +632,22 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	loopContextLen, err := av1.DecoderFrameWorkBatchResidualLoopContextAboveLen(batch)
+	if err != nil {
+		b.Fatal(err)
+	}
 	state := &av1.TileDecodeState{}
 	var scratch av1.DecoderFrameWorkTileResidualScratch
 	req := av1.DecoderFrameWorkBatchResidualRequest{
 		Tile: av1.DecoderFrameWorkTileResidualRequest{
 			TransformMode: batch.TransformRef.TransformMode,
 			Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-				return av1.ReadDecoderFrameWorkInterBlockTransforms(batch, state, visit)
+				return av1.ReadDecoderFrameWorkBlockTransforms(batch, state, visit)
 			},
 			Int32Scratch:    make([]int32, int32Len),
 			ResidualScratch: make([]int16, int16Len),
 		},
-		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, 1),
+		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, loopContextLen),
 	}
 
 	b.SetBytes(int64(len(batch.Payload)))

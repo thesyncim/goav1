@@ -87,6 +87,13 @@ func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state
 	return batch.ReadInterBlockTransforms(state, visit)
 }
 
+func ReadDecoderFrameWorkBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
+	if visit.Prediction.Valid && visit.Prediction.Intra {
+		return ReadDecoderFrameWorkIntraBlockTransforms(batch, state, visit)
+	}
+	return ReadDecoderFrameWorkInterBlockTransforms(batch, state, visit)
+}
+
 func DecodeAndReconstructDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs DecoderFrameWorkTileResidualCDFs, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	return batch.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, req)
 }
@@ -120,6 +127,20 @@ type DecoderFrameWorkBatchResidualRequest struct {
 	// LoopContextAbove optionally backs one job's root-column context at a time.
 	// When nil, the helper leaves Tile.Loop.ContextCarrier unchanged.
 	LoopContextAbove []TileBlockLoopRootAboveContext
+}
+
+func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatch) (int, error) {
+	maxRootColumns := 0
+	for i := range batch.Jobs {
+		rootColumns, err := DecoderFrameWorkJobBlockLoopContextRootColumns(batch, i)
+		if err != nil {
+			return 0, err
+		}
+		if rootColumns > maxRootColumns {
+			maxRootColumns = rootColumns
+		}
+	}
+	return maxRootColumns, nil
 }
 
 func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {

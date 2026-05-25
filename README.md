@@ -179,9 +179,9 @@ The initial implementation covers:
   decode/reconstruct, job residual decode/reconstruct, and batch residual
   decode/retain entry points.
 - Public zero-allocation decoder tile residual decode/reconstruct bridge with
-  caller-owned prediction and residual scratch, plus a job helper that composes
-  decode-state setup, residual decode/reconstruct, and CDF retention and a
-  batch helper for worker callbacks with multiple tile jobs.
+  caller-owned prediction and residual scratch, intra/inter transform dispatch,
+  batch loop-context sizing, plus job and batch helpers that compose
+  decode-state setup, residual decode/reconstruct, and CDF retention.
 - Public tile-level loop-restoration frame planning, caller-owned
   record/boundary binding, boundary extension, and unit/frame apply helpers.
 - Public zero-allocation superres upscaling and film-grain RNG, scaling,
