@@ -115,6 +115,8 @@ The initial implementation covers:
   reconstruction reference paths.
 - Pure-Go intra plane prediction for DC, vertical, and horizontal
   reconstruction blocks with caller-owned edge buffers.
+- Public zero-allocation intra, directional intra, filter-intra edge, and CFL
+  prediction helpers for caller-owned reconstruction paths.
 - Pure-Go full-pixel motion-vector helpers and inter plane prediction for
   nearest/reference-copy reconstruction paths.
 - Public AV1 transform scan/scratch helpers and dequantization lookup tables
