@@ -113,6 +113,28 @@ type FrameWorkBoundSideDataRunner struct {
 	RestorationFrameBuffers threading.FrameWorkRestorationFrameBuffers
 }
 
+// FrameWorkSideDataScratchSize reports caller-owned side-data storage needed by
+// FrameWorkBoundSideDataRunner for one frame context.
+type FrameWorkSideDataScratchSize struct {
+	CDEF                int
+	LoopFilterRecords   int
+	RestorationRecords  int
+	RestorationBoundary int
+}
+
+// FrameWorkSideDataScratch carries caller-owned backing storage for
+// FrameWorkBoundSideDataRunner.
+type FrameWorkSideDataScratch struct {
+	CDEFIndex []uint8
+	CDEFRead  []bool
+
+	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
+
+	RestorationRecords []tile.RestorationUnitRecord
+	RestorationAbove   []uint16
+	RestorationBelow   []uint16
+}
+
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
 // records the acquired output surface between the frame begin event, any later
 // tile-group continuation events, and the final reference publication step.
@@ -908,6 +930,56 @@ func (fn FrameWorkSideDataFunc) BindFrameWorkSideData(s *FrameWorkState, b Frame
 		return nil
 	}
 	return fn(s, b)
+}
+
+// FrameWorkSideDataScratchLen reports the caller-owned side-data scratch needed
+// for active postfilter stages in b.
+func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize, error) {
+	var size FrameWorkSideDataScratchSize
+	if frameWorkCDEFActive(b.CDEF) {
+		_, _, length, err := b.CDEFIndexMapShape()
+		if err != nil {
+			return FrameWorkSideDataScratchSize{}, err
+		}
+		size.CDEF = length
+	}
+	if frameWorkLoopFilterActive(b.LoopFilter) {
+		_, _, length, err := b.LoopFilterMapShape()
+		if err != nil {
+			return FrameWorkSideDataScratchSize{}, err
+		}
+		size.LoopFilterRecords = length
+	}
+	if frameWorkRestorationActive(b.Restoration) {
+		plan, err := b.RestorationFramePlan()
+		if err != nil {
+			return FrameWorkSideDataScratchSize{}, err
+		}
+		size.RestorationRecords = plan.UnitRecordLen()
+		size.RestorationBoundary = plan.BoundaryBufferLen()
+	}
+	return size, nil
+}
+
+// BindRunner validates and slices caller-owned scratch for
+// FrameWorkBoundSideDataRunner.
+func (s FrameWorkSideDataScratchSize) BindRunner(scratch FrameWorkSideDataScratch) (FrameWorkBoundSideDataRunner, error) {
+	if s.CDEF < 0 || s.LoopFilterRecords < 0 || s.RestorationRecords < 0 || s.RestorationBoundary < 0 ||
+		len(scratch.CDEFIndex) < s.CDEF || len(scratch.CDEFRead) < s.CDEF ||
+		len(scratch.LoopFilterRecords) < s.LoopFilterRecords ||
+		len(scratch.RestorationRecords) < s.RestorationRecords ||
+		len(scratch.RestorationAbove) < s.RestorationBoundary ||
+		len(scratch.RestorationBelow) < s.RestorationBoundary {
+		return FrameWorkBoundSideDataRunner{}, frame.ErrShortBuffer
+	}
+	return FrameWorkBoundSideDataRunner{
+		CDEFIndex:          scratch.CDEFIndex[:s.CDEF],
+		CDEFRead:           scratch.CDEFRead[:s.CDEF],
+		LoopFilterRecords:  scratch.LoopFilterRecords[:s.LoopFilterRecords],
+		RestorationRecords: scratch.RestorationRecords[:s.RestorationRecords],
+		RestorationAbove:   scratch.RestorationAbove[:s.RestorationBoundary],
+		RestorationBelow:   scratch.RestorationBelow[:s.RestorationBoundary],
+	}, nil
 }
 
 // BindFrameWorkSideData binds side-data storage for any active CDEF,

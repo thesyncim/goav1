@@ -1811,14 +1811,26 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := FrameWorkBoundSideDataRunner{
-		CDEFIndex:         make([]uint8, cdefLen),
-		CDEFRead:          make([]bool, cdefLen),
-		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, lfLen),
-		RestorationRecords: make([]tile.RestorationUnitRecord,
-			restorationPlan.UnitRecordLen()),
-		RestorationAbove: make([]uint16, restorationPlan.BoundaryBufferLen()),
-		RestorationBelow: make([]uint16, restorationPlan.BoundaryBufferLen()),
+	size, err := FrameWorkSideDataScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.CDEF != cdefLen ||
+		size.LoopFilterRecords != lfLen ||
+		size.RestorationRecords != restorationPlan.UnitRecordLen() ||
+		size.RestorationBoundary != restorationPlan.BoundaryBufferLen() {
+		t.Fatalf("size=%+v cdef=%d lf=%d restoration=%+v", size, cdefLen, lfLen, restorationPlan)
+	}
+	runner, err := size.BindRunner(FrameWorkSideDataScratch{
+		CDEFIndex:          make([]uint8, size.CDEF),
+		CDEFRead:           make([]bool, size.CDEF),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
+		RestorationAbove:   make([]uint16, size.RestorationBoundary),
+		RestorationBelow:   make([]uint16, size.RestorationBoundary),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := runner.BindFrameWorkSideData(&state, ctx); err != nil {
 		t.Fatal(err)
@@ -1833,6 +1845,57 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 	if restorationBuffers == nil || restorationBuffers.Plan != runner.RestorationFrameBuffers.Plan ||
 		len(restorationBuffers.Records[0]) != restorationPlan.UnitRecords[0] {
 		t.Fatalf("restorationBuffers=%+v runner=%+v plan=%+v", restorationBuffers, runner.RestorationFrameBuffers, restorationPlan)
+	}
+}
+
+func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
+	seq := testSequence()
+	ctx := FrameWorkBatch{
+		FrameWorkFrameContext: frameWorkFrameContext(Event{
+			SequenceHeader: seq,
+			FrameSize: parser.FrameSize{
+				CodedWidth:          64,
+				UpscaledWidth:       64,
+				Height:              64,
+				SuperResDenominator: 8,
+			},
+			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{4}},
+			CDEF: parser.CDEFParams{
+				Bits:          1,
+				StrengthCount: 1,
+				YStrength:     [parser.MaxCDEFStrengths]uint8{8},
+			},
+			Restoration: parser.RestorationParams{
+				Type:      [3]parser.RestorationType{parser.RestorationWiener},
+				UnitSizeY: 64,
+			},
+		}, threading.FrameWorkSequenceContextFromHeader(seq)),
+	}
+	size, err := FrameWorkSideDataScratchLen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := FrameWorkSideDataScratch{
+		CDEFIndex:          make([]uint8, size.CDEF),
+		CDEFRead:           make([]bool, size.CDEF),
+		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
+		RestorationAbove:   make([]uint16, size.RestorationBoundary),
+		RestorationBelow:   make([]uint16, size.RestorationBoundary),
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		runner, err := size.BindRunner(scratch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(runner.CDEFIndex) != size.CDEF ||
+			len(runner.LoopFilterRecords) != size.LoopFilterRecords ||
+			len(runner.RestorationRecords) != size.RestorationRecords {
+			t.Fatalf("runner=%+v size=%+v", runner, size)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkSideDataScratchSize.BindRunner allocated: %f", allocs)
 	}
 }
 
