@@ -613,6 +613,13 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.Completed |= FrameWorkPostFilterLoopFilter
 		result.LoopFilter = loopFilterResult
 	}
+	// Save the deblock boundary lines (afterCDEF=false) for restoration before
+	// CDEF mutates the inter-stripe rows libaom needs as filter context.
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) && remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
+			return ctx, result, err
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
 		if err != nil {
@@ -621,6 +628,13 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterCDEF)
 		result.Completed |= FrameWorkPostFilterCDEF
 		result.CDEF = cdefResult
+	}
+	// Save the CDEF boundary lines (afterCDEF=true) for the frame-edge stripes
+	// that have no neighboring deblock context.
+	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, true); err != nil {
+			return ctx, result, err
+		}
 	}
 	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
 		restorationResult, err := ctx.ApplyLoopRestorationPostFilter(req.Restoration)
@@ -641,6 +655,34 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.FilmGrain = filmGrainResult
 	}
 	return ctx, result, nil
+}
+
+// saveRestorationBoundariesForRequest is the AV1 loop-restoration boundary save
+// pass that captures pre-CDEF (afterCDEF=false) and post-CDEF (afterCDEF=true)
+// boundary samples from ctx.Output for use during restoration application.
+func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req FrameWorkRestorationPostFilterRequest, afterCDEF bool) error {
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	boundaries := req.Boundaries
+	if frameWorkRestorationBoundariesEmpty(boundaries) && ctx.RestorationFrameBuffers != nil {
+		boundaries = ctx.RestorationFrameBuffers.Boundaries
+	}
+	if frameWorkRestorationBoundariesEmpty(boundaries) {
+		return nil
+	}
+	plan, err := ctx.LoopRestorationPostFilterPlan()
+	if err != nil {
+		return err
+	}
+	if !plan.Active {
+		return nil
+	}
+	bytesPerSample := ctx.Output.Layout.BytesPerSample
+	if bytesPerSample == 0 {
+		bytesPerSample = 1
+	}
+	return tile.SaveRestorationFrameBoundaryLinesFromFrame(plan, *ctx.Output, bytesPerSample, boundaries, afterCDEF)
 }
 
 // ApplyCallerPostFilters runs all active postfilters in AV1 order. Unlike the
@@ -724,6 +766,11 @@ func (ctx FrameWorkPostFilterContext) ApplyPreSuperResPostFilters(req FrameWorkP
 		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
 		result.Completed |= FrameWorkPostFilterLoopFilter
 		result.LoopFilter = loopFilterResult
+	}
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) && remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
+			return ctx, result, err
+		}
 	}
 	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
 		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)

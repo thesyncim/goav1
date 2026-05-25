@@ -1,6 +1,7 @@
 package tile
 
 import (
+	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
 )
@@ -244,6 +245,158 @@ func SaveRestorationFrameBoundaryLines(planes []RestorationFrameBoundaryPlane, a
 	}
 	return nil
 }
+
+// SaveRestorationBoundaryLinesFromFramePlane saves stripe boundary rows directly
+// from a byte-backed frame plane (8-bit or little-endian 16-bit). It ports
+// libaom's av1_loop_restoration_save_boundary_lines for one plane without
+// requiring caller-owned uint16 sample scratch for the whole frame.
+func SaveRestorationBoundaryLinesFromFramePlane(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, boundaries RestorationStripeBoundaries, afterCDEF bool) error {
+	if !grid.validGeometry() || plane.Stride <= 0 || plane.Width <= 0 || plane.Height <= 0 {
+		return ErrInvalidPlan
+	}
+	if bytesPerSample != 1 && bytesPerSample != 2 {
+		return ErrInvalidPlan
+	}
+	if plane.Width != int(grid.PlaneWidth) || plane.Height != int(grid.PlaneHeight) {
+		return ErrInvalidPlan
+	}
+	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+		return err
+	}
+	planeHeight := int(grid.PlaneHeight)
+	stripeHeight := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	stripeOff := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	if stripeHeight <= 0 {
+		return ErrInvalidPlan
+	}
+	for tileStripe := 0; ; tileStripe++ {
+		relY0 := maxInt(0, tileStripe*stripeHeight-stripeOff)
+		if relY0 >= planeHeight {
+			break
+		}
+		relY1 := minInt((tileStripe+1)*stripeHeight-stripeOff, planeHeight)
+		useDeblockAbove := tileStripe > 0
+		useDeblockBelow := relY1 < planeHeight
+
+		switch {
+		case !afterCDEF:
+			if useDeblockAbove {
+				if err := saveRestorationDeblockBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY0-restorationCtxVert, tileStripe, true, boundaries); err != nil {
+					return err
+				}
+			}
+			if useDeblockBelow {
+				if err := saveRestorationDeblockBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY1, tileStripe, false, boundaries); err != nil {
+					return err
+				}
+			}
+		default:
+			if !useDeblockAbove {
+				if err := saveRestorationCDEFBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY0, tileStripe, true, boundaries); err != nil {
+					return err
+				}
+			}
+			if !useDeblockBelow {
+				if err := saveRestorationCDEFBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY1-1, tileStripe, false, boundaries); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// SaveRestorationFrameBoundaryLinesFromFrame ports
+// av1_loop_restoration_save_boundary_lines for an entire byte-backed frame.
+func SaveRestorationFrameBoundaryLinesFromFrame(plan RestorationFramePlan, frm av1frame.Frame, bytesPerSample int, boundaries [3]RestorationStripeBoundaries, afterCDEF bool) error {
+	if err := validateRestorationFramePlan(plan); err != nil {
+		return err
+	}
+	planeCount := int(plan.Planes)
+	if planeCount != 1 && planeCount != 3 {
+		return ErrInvalidPlan
+	}
+	for plane := 0; plane < planeCount; plane++ {
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		buffer, err := restorationFramePlaneBuffer(frm, plane)
+		if err != nil {
+			return err
+		}
+		if err := SaveRestorationBoundaryLinesFromFramePlane(grid, buffer, bytesPerSample, boundaries[plane], afterCDEF); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func saveRestorationDeblockBoundaryLinesFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	planeHeight := int(grid.PlaneHeight)
+	linesToSave := minInt(restorationCtxVert, planeHeight-row)
+	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
+		return ErrInvalidPlan
+	}
+	for i := 0; i < linesToSave; i++ {
+		if err := saveRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, row+i, stripe, i, above, boundaries); err != nil {
+			return err
+		}
+	}
+	if linesToSave == 1 {
+		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(dst, srcLine)
+	}
+	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+}
+
+func saveRestorationCDEFBoundaryLinesFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	if row < 0 || row >= int(grid.PlaneHeight) {
+		return ErrInvalidPlan
+	}
+	for i := 0; i < restorationCtxVert; i++ {
+		if err := saveRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, row, stripe, i, above, boundaries); err != nil {
+			return err
+		}
+	}
+	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+}
+
+func saveRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, srcRow int, stripe int, ctxRow int, above bool, boundaries RestorationStripeBoundaries) error {
+	width := int(grid.PlaneWidth)
+	if srcRow < 0 || srcRow >= plane.Height || width > plane.Width {
+		return ErrInvalidPlan
+	}
+	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, width)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	rowOffset := srcRow * plane.Stride
+	out := dst[restorationExtraHorz : restorationExtraHorz+width]
+	switch bytesPerSample {
+	case 1:
+		src := plane.Pix[rowOffset : rowOffset+width]
+		for i := 0; i < width; i++ {
+			out[i] = uint16(src[i])
+		}
+	case 2:
+		src := plane.Pix[rowOffset : rowOffset+width*2]
+		for i := 0; i < width; i++ {
+			out[i] = uint16(src[2*i]) | uint16(src[2*i+1])<<8
+		}
+	default:
+		return ErrInvalidPlan
+	}
+	return nil
+}
+
 
 // SetupRestorationStripeBoundary ports setup_processing_stripe_boundary for
 // sample slices. unitRect is the enclosing restoration-unit rectangle; dataOrigin
