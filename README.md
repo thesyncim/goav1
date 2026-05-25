@@ -117,16 +117,16 @@ The initial implementation covers:
   reconstruction blocks with caller-owned edge buffers.
 - Pure-Go full-pixel motion-vector helpers and inter plane prediction for
   nearest/reference-copy reconstruction paths.
-- AV1 dequantization lookup tables and caller-buffer coefficient
-  dequantization for residual reconstruction.
+- Public AV1 transform scan/scratch helpers and dequantization lookup tables
+  with caller-buffer coefficient dequantization for residual reconstruction.
 - Pure-Go inverse identity transform foundation with AV1 transform-size shifts
   and caller-buffer residual output.
 - Pure-Go 4x4 and 8x8 inverse DCT residual output with caller-owned transform
   scratch.
 - Zero-allocation inverse transform dispatch for DCT_DCT and IDTX residual
   paths with per-transform scratch sizing.
-- Zero-allocation reconstruction bridge for dequantization, inverse transform,
-  and clipped plane residual application.
+- Public zero-allocation residual reconstruction bridge for dequantization,
+  inverse transform, and clipped plane residual application.
 - Zero-allocation AV1 loop-filter level, delta, segmentation, and threshold
   derivation for post-reconstruction deblocking setup.
 - Pure-Go narrow loop-filter edge deblocking for 8/10/12-bit reconstruction

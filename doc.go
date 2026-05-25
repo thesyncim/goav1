@@ -8,9 +8,10 @@
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
 // and Annex B OBU parsing, AV1 RTP payload iteration, construction,
-// caller-owned RTP sizing, sequence-header parsing, and caller-owned frame
-// pools and sample-plane scratch helpers. The decoder and encoder APIs will
-// grow at this top level as the internal pipeline stabilizes.
+// caller-owned RTP sizing, sequence-header parsing, caller-owned frame pools
+// and sample-plane scratch helpers, and residual reconstruction primitives. The
+// decoder and encoder APIs will grow at this top level as the internal pipeline
+// stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly
