@@ -13,6 +13,22 @@ func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQInd
 	})
 }
 
+func DecoderFrameWorkBlockQuantizer(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane) (Quantizer, bool, error) {
+	return batch.BlockQuantizer(currentQIndex, segmentID, plane)
+}
+
+func DecoderFrameWorkBlockQIndex(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8) (uint8, bool, error) {
+	return batch.BlockQIndex(currentQIndex, segmentID)
+}
+
+func DecoderFrameWorkBlockCoeffPlanePosition(batch DecoderFrameWorkBatch, index int, visit TileBlockVisit, block TileBlockCoeffBlock) (DecoderFrameWorkPlane, int, int, error) {
+	return batch.BlockCoeffPlanePosition(index, visit, block)
+}
+
+func ReconstructDecoderFrameWorkBlockCoeff(batch DecoderFrameWorkBatch, index int, req DecoderFrameWorkBlockCoeffReconstruction) error {
+	return batch.ReconstructBlockCoeff(index, req)
+}
+
 func InitDecoderFrameWorkTileResidualCDFStorageDefault(storage *DecoderFrameWorkTileResidualCDFStorage, baseQIndex uint8) error {
 	return storage.InitDefault(baseQIndex)
 }
