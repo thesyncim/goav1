@@ -154,7 +154,11 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			if negative {
 				level = -level
 			}
-			level = (level * scale) >> txScale
+			// libaom: dq_coeff = (int32)((int64)level * dqv & 0xffffff). The 24-bit
+			// mask saturates the product before the txScale shift to match
+			// libaom's tran_low_t bitwidth assumption.
+			product := (level * scale) & 0xffffff
+			level = product >> txScale
 			if negative {
 				level = -level
 			}
