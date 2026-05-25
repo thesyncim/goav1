@@ -419,7 +419,7 @@ func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersChromaWithLumaDirec
 	}
 }
 
-func testFrameWorkCDEFFrame(t *testing.T, format frame.Format) *frame.Frame {
+func testFrameWorkCDEFFrame(t testing.TB, format frame.Format) *frame.Frame {
 	t.Helper()
 	layout, err := frame.RequiredSize(format)
 	if err != nil {
@@ -432,7 +432,7 @@ func testFrameWorkCDEFFrame(t *testing.T, format frame.Format) *frame.Frame {
 	return &output
 }
 
-func testFrameWorkCDEFPostFilterRequest(t *testing.T, ctx FrameWorkPostFilterContext, event Event) FrameWorkCDEFPostFilterRequest {
+func testFrameWorkCDEFPostFilterRequest(t testing.TB, ctx FrameWorkPostFilterContext, event Event) FrameWorkCDEFPostFilterRequest {
 	t.Helper()
 	batch := threading.FrameWorkBatch{
 		FrameWorkFrameContext: threading.FrameWorkFrameContext{

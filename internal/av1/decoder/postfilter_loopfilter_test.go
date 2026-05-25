@@ -224,6 +224,24 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *te
 	}
 }
 
+func TestFrameWorkLoopFilterPostFilterScratchSizeBindEdges(t *testing.T) {
+	size := FrameWorkLoopFilterPostFilterScratchSize{Edges: 3}
+	storage := make([]FrameWorkLoopFilterPostFilterEdge, 4)
+	got, err := size.BindEdges(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || cap(got) != cap(storage) {
+		t.Fatalf("bound len/cap=%d/%d want len 3 cap %d", len(got), cap(got), cap(storage))
+	}
+	if _, err := size.BindEdges(storage[:2]); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("short bind err=%v want %v", err, frame.ErrShortBuffer)
+	}
+	if _, err := (FrameWorkLoopFilterPostFilterScratchSize{Edges: -1}).BindEdges(storage); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("negative bind err=%v want %v", err, frame.ErrShortBuffer)
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
@@ -1721,6 +1739,77 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 	}
 }
 
+func BenchmarkLoopFilterPostFilterPlan(b *testing.B) {
+	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+			Map:   filterMap,
+			Edges: edges,
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if plan.StoredEdges != 72 {
+			b.Fatalf("stored edges=%d want 72", plan.StoredEdges)
+		}
+	}
+}
+
+func BenchmarkApplyLoopFilterEdges(b *testing.B) {
+	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFillLoopFilterFrame(ctx.Output)
+		result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
+			Map:   filterMap,
+			Edges: edges,
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Applied != 72 {
+			b.Fatalf("applied=%d want 72", result.Applied)
+		}
+	}
+}
+
+func BenchmarkApplySupportedPostFiltersLoopFilterCDEF(b *testing.B) {
+	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
+	ctx.Event.SequenceHeader.EnableCDEF = true
+	ctx.Event.CDEF = parser.CDEFParams{
+		Damping:       5,
+		StrengthCount: 1,
+		YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		UVStrength:    [parser.MaxCDEFStrengths]uint8{63},
+	}
+	cdefReq := testFrameWorkCDEFPostFilterRequest(b, ctx, ctx.Event)
+	req := FrameWorkPostFilterRequest{
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Map:   filterMap,
+			Edges: edges,
+		},
+		CDEF: cdefReq,
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFillLoopFilterFrame(ctx.Output)
+		next, result, err := ctx.ApplySupportedPostFilters(req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Completed != FrameWorkPostFilterLoopFilter|FrameWorkPostFilterCDEF ||
+			result.LoopFilter.Applied != 72 ||
+			result.CDEF.Units == 0 ||
+			next.RemainingPostFilters() != 0 {
+			b.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+		}
+	}
+}
+
 func testFillFrameWorkLoopFilterPattern(plane frame.Plane) {
 	for y := 0; y < plane.Height; y++ {
 		for x := 0; x < plane.Width; x++ {
@@ -1842,7 +1931,7 @@ func testFrameWorkLoopFilterPostFilterRecordAt(col0 int, row0 int, col1 int, row
 	}
 }
 
-func testFrameWorkLoopFilterPostFilterMap(t *testing.T, size parser.FrameSize, records ...threading.FrameWorkLoopFilterBlockRecord) FrameWorkLoopFilterMap {
+func testFrameWorkLoopFilterPostFilterMap(t testing.TB, size parser.FrameSize, records ...threading.FrameWorkLoopFilterBlockRecord) FrameWorkLoopFilterMap {
 	t.Helper()
 	cols, rows, err := frameWorkLoopFilterMapGrid(size)
 	if err != nil {
@@ -1862,4 +1951,56 @@ func testFrameWorkLoopFilterPostFilterMap(t *testing.T, size parser.FrameSize, r
 		}
 	}
 	return filterMap
+}
+
+func benchmarkLoopFilterPostFilterFixture(b *testing.B) (FrameWorkPostFilterContext, FrameWorkLoopFilterMap, []FrameWorkLoopFilterPostFilterEdge) {
+	b.Helper()
+	const width = 64
+	const height = 64
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	records := make([]threading.FrameWorkLoopFilterBlockRecord, 0, 16)
+	for row := 0; row < 16; row += 4 {
+		for col := 0; col < 16; col += 4 {
+			records = append(records, testFrameWorkLoopFilterPostFilterRecordAt(col, row, col+4, row+4))
+		}
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(b, size, records...)
+	output := testFrameWorkCDEFFrame(b, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY:    [2]uint8{63, 63},
+				LevelU:    63,
+				LevelV:    63,
+				Sharpness: 1,
+			},
+		},
+		Output:        output,
+		LoopFilterMap: &filterMap,
+	}
+	scratch, err := ctx.LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{Map: filterMap})
+	if err != nil {
+		b.Fatal(err)
+	}
+	edges, err := scratch.BindEdges(make([]FrameWorkLoopFilterPostFilterEdge, scratch.Edges))
+	if err != nil {
+		b.Fatal(err)
+	}
+	if scratch.Edges != 72 {
+		b.Fatalf("edge scratch=%d want 72", scratch.Edges)
+	}
+	return ctx, filterMap, edges
+}
+
+func benchmarkFillLoopFilterFrame(output *frame.Frame) {
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	testFillFrameWorkLoopFilterPattern(output.U)
+	testFillFrameWorkLoopFilterPattern(output.V)
 }

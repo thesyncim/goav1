@@ -46,6 +46,15 @@ type FrameWorkLoopFilterPostFilterScratchSize struct {
 	Edges int
 }
 
+// BindEdges validates and slices caller-owned edge storage for loop-filter
+// planning/application.
+func (s FrameWorkLoopFilterPostFilterScratchSize) BindEdges(edges []FrameWorkLoopFilterPostFilterEdge) ([]FrameWorkLoopFilterPostFilterEdge, error) {
+	if s.Edges < 0 || len(edges) < s.Edges {
+		return nil, frame.ErrShortBuffer
+	}
+	return edges[:s.Edges], nil
+}
+
 // Max returns the per-field maximum loop-filter scratch size.
 func (s FrameWorkLoopFilterPostFilterScratchSize) Max(other FrameWorkLoopFilterPostFilterScratchSize) FrameWorkLoopFilterPostFilterScratchSize {
 	return FrameWorkLoopFilterPostFilterScratchSize{Edges: maxInt(s.Edges, other.Edges)}
