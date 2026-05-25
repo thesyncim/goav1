@@ -133,6 +133,23 @@ func TestPredictCFLPlaneBlockMatchesLibaomCorpus(t *testing.T) {
 	}
 }
 
+func TestPredictCFLPlaneBlockVisibleUsesPaddedAC(t *testing.T) {
+	plane, _ := testPlane(16, 12, 1, 16)
+	fillCFLTestPlane(plane, 1, 64)
+	ac := make([]int16, CFLBufSquare)
+	for row := 0; row < 16; row++ {
+		for col := 0; col < 16; col++ {
+			ac[row*CFLBufLine+col] = int16(row + col)
+		}
+	}
+	if err := PredictCFLPlaneBlockVisible(plane, 1, 8, 0, 0, 16, 12, 16, 16, ac, 8); err != nil {
+		t.Fatal(err)
+	}
+	if got := plane.Pix[11*plane.Stride+15]; got == 64 {
+		t.Fatal("visible CfL prediction did not update clipped edge sample")
+	}
+}
+
 func TestPadCFLReconQ3MatchesLibaom(t *testing.T) {
 	recon := make([]uint16, CFLBufSquare)
 	for row := 0; row < 4; row++ {

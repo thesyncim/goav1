@@ -926,19 +926,74 @@ func TestIntrabcPredictedMVUsesNeighborMotionBeforeFallback(t *testing.T) {
 	var ctx BlockModeContext
 	neighbor := InterMotionResult{
 		Mode: InterModeResult{Mode: InterModeNewMV},
-		MV:   [2]motion.Vector{{Row: -256, Col: 16}},
+		MV:   [2]motion.Vector{{Row: -512}},
 	}
 	if err := ctx.MarkIntrabcMotion(BlockSize16x16, 0, 0, neighbor); err != nil {
 		t.Fatal(err)
 	}
-	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{SBSizeMIB: 16}, BlockVisit{
-		X4: 4, Y4: 0, HaveLeft: true,
+	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{
+		Walk:      BlockWalkRequest{MIColEnd: 32, MIRowEnd: 64},
+		SBSizeMIB: 16,
+	}, BlockVisit{
+		MICol: 4, MIRow: 32,
+		X4: 4, Y4: 0, Size: BlockSize16x16, HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != neighbor.MV[0] {
 		t.Fatalf("predicted intrabc mv=%+v want %+v", got, neighbor.MV[0])
+	}
+}
+
+func TestIntrabcPredictedMVUsesOuterGridBeforeFallback(t *testing.T) {
+	var ctx BlockModeContext
+	outer := InterMotionResult{
+		Mode: InterModeResult{Mode: InterModeNewMV},
+		MV:   [2]motion.Vector{{Row: -512}},
+	}
+	dims, ok := BlockSize8x8.Dimensions()
+	if !ok {
+		t.Fatal("bad block size")
+	}
+	ctx.markGridInterMotion(BlockSize8x8, 2, 2, outer, dims)
+	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{
+		Walk:      BlockWalkRequest{MIColEnd: 32, MIRowEnd: 64},
+		SBSizeMIB: 16,
+	}, BlockVisit{
+		MICol: 4, MIRow: 32,
+		X4: 4, Y4: 4,
+		Size:    BlockSize8x8,
+		HaveTop: true, HaveLeft: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != outer.MV[0] {
+		t.Fatalf("predicted intrabc mv=%+v want outer %+v", got, outer.MV[0])
+	}
+}
+
+func TestIntrabcDVValidMatchesLibaomTileAndWavefrontGuards(t *testing.T) {
+	req := BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			MIColEnd: 160,
+			MIRowEnd: 64,
+		},
+		SBSizeMIB:  16,
+		Color:      parser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
+		Monochrome: false,
+	}
+	validBlock := BlockVisit{MICol: 0, MIRow: 32, Size: BlockSize16x16}
+	if !intrabcDVValid(motion.Vector{Row: -512}, req, validBlock) {
+		t.Fatal("full-SB upward intrabc DV should be valid")
+	}
+	invalidTop := BlockVisit{MICol: 148, MIRow: 16, Size: BlockSize16x8}
+	if intrabcDVValid(motion.Vector{Row: -520}, req, invalidTop) {
+		t.Fatal("DV with source top above the tile should be invalid")
+	}
+	if intrabcDVValid(motion.Vector{Row: -511}, req, validBlock) {
+		t.Fatal("sub-pixel intrabc DV should be invalid")
 	}
 }
 

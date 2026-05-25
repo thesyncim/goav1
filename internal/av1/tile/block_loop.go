@@ -1234,6 +1234,15 @@ func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req
 	if err != nil {
 		return InterMotionDecodeResult{}, err
 	}
+	if !intrabcDVTileValid(mv, req, block) {
+		if altPred, ok := intrabcAlternateFallbackMV(req, block, pred); ok {
+			altMV := motion.Vector{Row: altPred.Row + residual.Diff.Row, Col: altPred.Col + residual.Diff.Col}
+			if motionVectorValid(altMV) && intrabcDVTileValid(altMV, req, block) {
+				mv = altMV
+				pred = altPred
+			}
+		}
+	}
 	if !motionVectorValid(mv) {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
@@ -1251,15 +1260,26 @@ func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block Block
 	if ctx == nil {
 		return motion.Vector{}, ErrInvalidDecodeState
 	}
-	if block.HaveLeft && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots && ctx.LeftMotionValid[block.Y4] != 0 {
-		mv := ctx.LeftInterMotion[block.Y4].MV[0]
-		if mv != (motion.Vector{}) {
-			return mv, nil
-		}
+	stack, err := ctx.IntrabcReferenceDVStack(ReferenceMVStackRequest{
+		Size:         block.Size,
+		X4:           block.X4,
+		Y4:           block.Y4,
+		HaveTop:      block.HaveTop,
+		HaveLeft:     block.HaveLeft,
+		HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+		MICol:        block.MICol,
+		MIRow:        block.MIRow,
+
+		TileMIColStart: req.Walk.MIColStart,
+		TileMIRowStart: req.Walk.MIRowStart,
+		TileMIColEnd:   req.Walk.MIColEnd,
+		TileMIRowEnd:   req.Walk.MIRowEnd,
+	})
+	if err != nil {
+		return motion.Vector{}, err
 	}
-	if block.HaveTop && block.X4 >= 0 && block.X4 < MaxBlockModeSlots && ctx.AboveMotionValid[block.X4] != 0 {
-		mv := ctx.AboveInterMotion[block.X4].MV[0]
-		if mv != (motion.Vector{}) {
+	for i := 0; i < MaxMVRefCandidates && i < stack.Count; i++ {
+		if mv := stack.Candidates[i].This; mv != (motion.Vector{}) && intrabcDVValid(mv, req, block) {
 			return mv, nil
 		}
 	}
@@ -1275,6 +1295,113 @@ func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, e
 		return motion.Vector{Col: -int32((sbSize4*4 + intrabcDelayPixels) * 8)}, nil
 	}
 	return motion.Vector{Row: -int32(sbSize4 * 4 * 8)}, nil
+}
+
+func intrabcAlternateFallbackMV(req BlockLoopRequest, block BlockVisit, pred motion.Vector) (motion.Vector, bool) {
+	fallback, err := intrabcFallbackMV(req, block)
+	if err != nil || pred != fallback {
+		return motion.Vector{}, false
+	}
+	sbSize4 := int64(req.SBSizeMIB)
+	horizontal := motion.Vector{Col: -int32((sbSize4*4 + intrabcDelayPixels) * 8)}
+	vertical := motion.Vector{Row: -int32(sbSize4 * 4 * 8)}
+	if pred == horizontal {
+		return vertical, true
+	}
+	return horizontal, true
+}
+
+func intrabcDVTileValid(dv motion.Vector, req BlockLoopRequest, block BlockVisit) bool {
+	if dv.Row&7 != 0 || dv.Col&7 != 0 {
+		return false
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return false
+	}
+	blockW := int64(dims.W4) * 4
+	blockH := int64(dims.H4) * 4
+	srcTop := int64(block.MIRow)*4*8 + int64(dv.Row)
+	srcLeft := int64(block.MICol)*4*8 + int64(dv.Col)
+	tileTop := int64(req.Walk.MIRowStart) * 4 * 8
+	tileLeft := int64(req.Walk.MIColStart) * 4 * 8
+	if srcTop < tileTop || srcLeft < tileLeft {
+		return false
+	}
+	srcBottom := (int64(block.MIRow)*4+blockH)*8 + int64(dv.Row)
+	srcRight := (int64(block.MICol)*4+blockW)*8 + int64(dv.Col)
+	tileBottom := int64(req.Walk.MIRowEnd) * 4 * 8
+	tileRight := int64(req.Walk.MIColEnd) * 4 * 8
+	if srcBottom > tileBottom || srcRight > tileRight {
+		return false
+	}
+	if !req.Monochrome {
+		if blockW < 8 && req.Color.SubsamplingX && srcLeft < tileLeft+4*8 {
+			return false
+		}
+		if blockH < 8 && req.Color.SubsamplingY && srcTop < tileTop+4*8 {
+			return false
+		}
+	}
+	return true
+}
+
+func intrabcDVValid(dv motion.Vector, req BlockLoopRequest, block BlockVisit) bool {
+	if dv.Row&7 != 0 || dv.Col&7 != 0 || req.SBSizeMIB == 0 {
+		return false
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return false
+	}
+	blockW := int64(dims.W4) * 4
+	blockH := int64(dims.H4) * 4
+	srcTop := int64(block.MIRow)*4*8 + int64(dv.Row)
+	srcLeft := int64(block.MICol)*4*8 + int64(dv.Col)
+	tileTop := int64(req.Walk.MIRowStart) * 4 * 8
+	tileLeft := int64(req.Walk.MIColStart) * 4 * 8
+	if srcTop < tileTop || srcLeft < tileLeft {
+		return false
+	}
+	srcBottom := (int64(block.MIRow)*4+blockH)*8 + int64(dv.Row)
+	srcRight := (int64(block.MICol)*4+blockW)*8 + int64(dv.Col)
+	tileBottom := int64(req.Walk.MIRowEnd) * 4 * 8
+	tileRight := int64(req.Walk.MIColEnd) * 4 * 8
+	if srcBottom > tileBottom || srcRight > tileRight {
+		return false
+	}
+	if !req.Monochrome {
+		if blockW < 8 && req.Color.SubsamplingX && srcLeft < tileLeft+4*8 {
+			return false
+		}
+		if blockH < 8 && req.Color.SubsamplingY && srcTop < tileTop+4*8 {
+			return false
+		}
+	}
+
+	mibSizeLog2 := 4
+	if req.SBSizeMIB > 16 {
+		mibSizeLog2 = 5
+	}
+	maxMIBSize := int64(1 << mibSizeLog2)
+	sbSize := maxMIBSize * 4
+	activeSBRow := int64(block.MIRow) >> mibSizeLog2
+	activeSB64Col := (int64(block.MICol) * 4) >> 6
+	srcSBRow := ((srcBottom >> 3) - 1) / sbSize
+	srcSB64Col := ((srcRight >> 3) - 1) >> 6
+	totalSB64PerRow := ((int64(req.Walk.MIColEnd) - int64(req.Walk.MIColStart) - 1) >> 4) + 1
+	activeSB64 := activeSBRow*totalSB64PerRow + activeSB64Col
+	srcSB64 := srcSBRow*totalSB64PerRow + srcSB64Col
+	if srcSB64 >= activeSB64-intrabcDelaySB64 {
+		return false
+	}
+	gradient := int64(1 + intrabcDelaySB64)
+	if sbSize > 64 {
+		gradient++
+	}
+	wfOffset := gradient * (activeSBRow - srcSBRow)
+	return srcSBRow <= activeSBRow &&
+		srcSB64Col < activeSB64Col-intrabcDelaySB64+wfOffset
 }
 
 func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
@@ -1322,6 +1449,7 @@ const (
 	globalMotionWarpedModelPrecBits = 16
 	globalMotionTransOnlyPrecDiff   = globalMotionWarpedModelPrecBits - 3
 	intrabcDelayPixels              = 256
+	intrabcDelaySB64                = intrabcDelayPixels / 64
 )
 
 func globalMotionParamsInitialized(params parser.WarpedMotionParams) bool {

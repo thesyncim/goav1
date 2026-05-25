@@ -572,6 +572,31 @@ func TestInterCoeffTransformSelectorChromaReusesOddSubsampledLumaMap(t *testing.
 	}
 }
 
+func TestInterCoeffTransformSelectorChromaFallsBackWhenMappedTypeUnsupported(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector InterCoeffTransformSelector
+	selector.ResetForColor(&state, nil, false, false, false, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
+	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{X4: 0, Y4: 0, Size: TransformSize4x4},
+	}, transform.TypeFlipADSTDCT); err != nil {
+		t.Fatal(err)
+	}
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 2,
+		Block: TransformBlock{X4: 0, Y4: 0, Size: TransformSize32x32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeDCTDCT {
+		t.Fatalf("unsupported chroma tx type=%d want %d", got, transform.TypeDCTDCT)
+	}
+}
+
 func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {

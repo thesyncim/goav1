@@ -139,7 +139,18 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 		return transform.TypeDCTDCT, nil
 	}
 	if req.Plane != 0 {
-		return s.Map.ChromaType(req.Block, s.Color)
+		typ, err := s.Map.ChromaType(req.Block, s.Color)
+		if err != nil {
+			return 0, err
+		}
+		size, err := req.Block.Size.TransformSize()
+		if err != nil {
+			return 0, ErrInvalidDecodeState
+		}
+		if !typ.Supported(size) {
+			return transform.TypeDCTDCT, nil
+		}
+		return typ, nil
 	}
 	typ, err := s.State.ReadInterTransformType(s.CDFs, InterTransformTypeRequest{
 		Size:          req.Block.Size,

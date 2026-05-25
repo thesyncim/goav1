@@ -598,6 +598,10 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	lumaY := geom.Y
 	lumaW := geom.Width
 	lumaH := geom.Height
+	fullWidth, fullHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return err
+	}
 	if geom.SubsamplingX {
 		lumaX <<= 1
 		lumaW <<= 1
@@ -609,7 +613,10 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if err := frameWorkSubsampleLumaCFLQ3(scratch.ReconQ3[:], luma, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, lumaX, lumaY, lumaW, lumaH, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return err
 	}
-	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], geom.Width, geom.Height); err != nil {
+	if _, _, err := prediction.PadCFLReconQ3(scratch.ReconQ3[:], geom.Width, geom.Height, fullWidth, fullHeight); err != nil {
+		return ErrInvalidBatch
+	}
+	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], fullWidth, fullHeight); err != nil {
 		return ErrInvalidBatch
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
@@ -628,7 +635,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := prediction.PredictCFLPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.ACQ3[:], alphaQ3); err != nil {
+	if err := prediction.PredictCFLPlaneBlockVisible(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, fullWidth, fullHeight, scratch.ACQ3[:], alphaQ3); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

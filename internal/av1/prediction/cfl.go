@@ -192,7 +192,13 @@ func SubtractCFLAverage(srcQ3 []uint16, dstQ3 []int16, width int, height int) er
 // PredictCFLPlaneBlock ports libaom's cfl_predict_lbd_c/hbd_c over a plane
 // block that already contains the chroma DC prediction.
 func PredictCFLPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, acQ3 []int16, alphaQ3 int) error {
-	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
+	return PredictCFLPlaneBlockVisible(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, acQ3, alphaQ3)
+}
+
+// PredictCFLPlaneBlockVisible applies CfL to a clipped visible rectangle using
+// an AC buffer computed over the full padded CfL block.
+func PredictCFLPlaneBlockVisible(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, acWidth int, acHeight int, acQ3 []int16, alphaQ3 int) error {
+	block, err := planeBlockWindow(dst, bytesPerSample, x, y, visibleWidth, visibleHeight)
 	if err != nil {
 		return err
 	}
@@ -200,12 +206,14 @@ func PredictCFLPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x
 	if err != nil {
 		return err
 	}
-	if !validCFLSize(width, height) || !fixedCFLBlockFits(len(acQ3), width, height) || alphaQ3 < -16 || alphaQ3 > 16 {
+	if visibleWidth <= 0 || visibleHeight <= 0 || visibleWidth > acWidth || visibleHeight > acHeight ||
+		!validCFLSize(acWidth, acHeight) || !fixedCFLBlockFits(len(acQ3), acWidth, acHeight) ||
+		alphaQ3 < -16 || alphaQ3 > 16 {
 		return ErrInvalidPrediction
 	}
-	for row := 0; row < height; row++ {
+	for row := 0; row < visibleHeight; row++ {
 		line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-		for col := 0; col < width; col++ {
+		for col := 0; col < visibleWidth; col++ {
 			scaled := roundPowerOfTwoSigned(alphaQ3*int(acQ3[row*CFLBufLine+col]), 6)
 			current := readCFLPlaneSample(line, bytesPerSample, col)
 			writeCFLPlaneSample(line, bytesPerSample, col, uint16(clampInt(current+scaled, 0, int(max))))
