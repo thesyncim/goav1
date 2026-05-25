@@ -1784,6 +1784,104 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayload(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualStreamRunnerRTPPayloads(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	lowOverhead := publicDecoderResidualLowOverheadStream()
+	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
+	var probeStream av1.DecoderStream
+	var probeEvents [4]av1.DecoderEvent
+	count, err := probeStream.PushLowOverhead(lowOverhead, probeEvents[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := probeStream.SequenceHeader()
+	if !ok {
+		t.Fatal("probe stream missing sequence")
+	}
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, probeEvents[:count], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(probeEvents[count-1].FrameSize.CodedWidth),
+		Height:       int(probeEvents[count-1].FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 1)
+	var stream av1.DecoderStream
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var side av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualEventScratch(size)
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, probeEvents[count-1], av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &side,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := av1.DecoderFrameWorkResidualStreamRunner{
+		Stream:          &stream,
+		EventRunner:     eventRunner,
+		Events:          make([]av1.DecoderEvent, len(probeEvents)),
+		SideDataScratch: scratch.SideData,
+		RTPBuffer:       make([]byte, len(lowOverhead)),
+		RTPSpans:        make([]av1.RTPObuSpan, len(probeEvents)),
+	}
+
+	postCalls := 0
+	result, err := runner.RunRTPPayloads(rtpPayloads, func(ctx av1.DecoderFrameWorkPostFilterContext) error {
+		postCalls++
+		if !ctx.ExecutedTileWork || ctx.Step.Kind != av1.DecoderFrameWorkStepTile {
+			t.Fatalf("postfilter ctx=%+v", ctx)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventCount != count ||
+		result.RTPUsed != 0 ||
+		runner.RTPUsed != 0 ||
+		result.Run.Count != count ||
+		result.Run.ExecutedTileWork != 1 ||
+		result.Run.CompletedFrames != 1 ||
+		result.Run.Last.Output == nil ||
+		postCalls != 1 ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("rtp batch result=%+v retained=%d postCalls=%d stats=%+v", result, runner.RTPUsed, postCalls, stats)
+	}
+	if _, ok := refs.ReferenceSlot(0); !ok {
+		t.Fatal("RTP payload batch runner did not publish decoded frame")
+	}
+}
+
 func TestPublicBindDecoderFrameWorkResidualStreamRunner(t *testing.T) {
 	workerPool, err := av1.NewTileWorkerPool(1)
 	if err != nil {
@@ -2078,6 +2176,7 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 
 	lowOverhead := publicDecoderResidualLowOverheadStream()
 	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
 	var probeStream av1.DecoderStream
 	var probeEvents [4]av1.DecoderEvent
 	count, err := probeStream.PushLowOverhead(lowOverhead, probeEvents[:])
@@ -2162,6 +2261,20 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 		stream.Reset()
 		runner.RTPUsed = 0
 		result, runErr = runner.RunRTPPayload(rtpPayload, nil)
+		if runErr != nil {
+			err = runErr
+			return
+		}
+		if result.Run.CompletedFrames != 1 || stats.TXBs == 0 || runner.RTPUsed != 0 {
+			err = av1.ErrThreadingInvalidBatch
+		}
+
+		pool.Reset()
+		refs.Reset()
+		state.Reset()
+		stream.Reset()
+		runner.RTPUsed = 0
+		result, runErr = runner.RunRTPPayloads(rtpPayloads, nil)
 		if runErr != nil {
 			err = runErr
 			return
@@ -2940,6 +3053,52 @@ func publicDecoderResidualRTPPayload() []byte {
 		panic(err)
 	}
 	return payload[:n]
+}
+
+func publicDecoderResidualFragmentedRTPPayloads() [][]byte {
+	payloads := make([][]byte, 0, 4)
+
+	sequence := [...]av1.RTPElement{
+		{Data: publicDecoderResidualRTPElement(av1.OBUSequenceHeader, publicDecoderResidualSequenceHeaderPayload())},
+	}
+	var packet [128]byte
+	n, err := av1.PutRTPPayload(packet[:], av1.RTPAggregationHeader{
+		ElementCount:                1,
+		StartsNewCodedVideoSequence: true,
+	}, sequence[:])
+	if err != nil {
+		panic(err)
+	}
+	payloads = append(payloads, append([]byte(nil), packet[:n]...))
+
+	frameHeader := publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	n, next, more, err := av1.PutRTPFragment(packet[:], frameHeader, 0, 2, false)
+	if err != nil {
+		panic(err)
+	}
+	if !more {
+		panic("expected frame header RTP fragment")
+	}
+	payloads = append(payloads, append([]byte(nil), packet[:n]...))
+	n, _, more, err = av1.PutRTPFragment(packet[:], frameHeader, next, len(packet), false)
+	if err != nil {
+		panic(err)
+	}
+	if more {
+		panic("unexpected third frame header RTP fragment")
+	}
+	payloads = append(payloads, append([]byte(nil), packet[:n]...))
+
+	tile := [...]av1.RTPElement{
+		{Data: publicDecoderResidualRTPElement(av1.OBUTileGroup, []byte{0x80})},
+	}
+	n, err = av1.PutRTPPayload(packet[:], av1.RTPAggregationHeader{ElementCount: 1}, tile[:])
+	if err != nil {
+		panic(err)
+	}
+	payloads = append(payloads, append([]byte(nil), packet[:n]...))
+
+	return payloads
 }
 
 func publicDecoderResidualRTPElement(typ av1.OBUType, payload []byte) []byte {

@@ -1065,6 +1065,11 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 
 	lowOverhead := publicDecoderResidualLowOverheadStream()
 	rtpPayload := publicDecoderResidualRTPPayload()
+	rtpPayloads := publicDecoderResidualFragmentedRTPPayloads()
+	rtpPayloadsBytes := 0
+	for i := range rtpPayloads {
+		rtpPayloadsBytes += len(rtpPayloads[i])
+	}
 	var probeStream av1.DecoderStream
 	var probeEvents [4]av1.DecoderEvent
 	count, err := probeStream.PushLowOverhead(lowOverhead, probeEvents[:])
@@ -1159,6 +1164,27 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			stream.Reset()
 			runner.RTPUsed = 0
 			result, err := runner.RunRTPPayload(rtpPayload, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
+				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
+			}
+			sum += stats.Residuals + stats.TXBs
+		}
+		publicBenchmarkSink = sum
+	})
+	b.Run("rtp-payloads", func(b *testing.B) {
+		b.SetBytes(int64(rtpPayloadsBytes))
+		b.ReportAllocs()
+		sum := 0
+		for i := 0; i < b.N; i++ {
+			pool.Reset()
+			refs.Reset()
+			state.Reset()
+			stream.Reset()
+			runner.RTPUsed = 0
+			result, err := runner.RunRTPPayloads(rtpPayloads, nil)
 			if err != nil {
 				b.Fatal(err)
 			}

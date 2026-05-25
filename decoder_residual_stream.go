@@ -173,6 +173,19 @@ func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadWithPostFilterRunner
 	return r.runRTPPayload(payload, nil, post)
 }
 
+// RunRTPPayloads depacketizes and runs an ordered batch of AV1 RTP payloads,
+// preserving RTP fragment state across payloads and aggregating completed event
+// work into one result.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runRTPPayloads(payloads, post, nil)
+}
+
+// RunRTPPayloadsWithPostFilterRunner is RunRTPPayloads using a direct
+// postfilter runner instead of a postfilter callback.
+func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsWithPostFilterRunner(payloads [][]byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	return r.runRTPPayloads(payloads, nil, post)
+}
+
 func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
 		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
@@ -213,6 +226,18 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, pos
 	return DecoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed, Run: run}, nil
 }
 
+func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+	var result DecoderFrameWorkResidualStreamResult
+	for i := range payloads {
+		next, err := r.runRTPPayload(payloads[i], post, postRunner)
+		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
 func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
 	if count < 0 || count > len(r.Events) {
 		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderEventBufferTooSmall
@@ -222,6 +247,23 @@ func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, post D
 		return r.EventRunner.RunEventsWithPostFilterRunner(sequence, r.Events[:count], r.SideDataScratch, postRunner)
 	}
 	return r.EventRunner.RunEvents(sequence, r.Events[:count], r.SideDataScratch, post)
+}
+
+func decoderFrameWorkAccumulateResidualStreamResult(total *DecoderFrameWorkResidualStreamResult, next DecoderFrameWorkResidualStreamResult) {
+	total.EventCount += next.EventCount
+	total.RTPUsed = next.RTPUsed
+	decoderFrameWorkAccumulateResidualEventsResult(&total.Run, next.Run)
+}
+
+func decoderFrameWorkAccumulateResidualEventsResult(total *DecoderFrameWorkResidualEventsResult, next DecoderFrameWorkResidualEventsResult) {
+	total.Count += next.Count
+	if next.Count > 0 {
+		total.Last = next.Last
+	}
+	total.ExecutedTileWork += next.ExecutedTileWork
+	total.CompletedFrames += next.CompletedFrames
+	total.ReleaseCount += next.ReleaseCount
+	decoderFrameWorkAccumulateResidualStats(&total.Stats, next.Stats)
 }
 
 func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
