@@ -246,19 +246,22 @@ func (stack ReferenceMVStack) resolveCompoundInterMVReferences(mode CompoundInte
 	if err != nil {
 		return InterMVReferenceSet{}, err
 	}
-	nearCandidate, err := stack.candidate(1 + refMVIndex)
-	if err != nil {
-		return InterMVReferenceSet{}, err
-	}
 	refs := InterMVReferenceSet{
 		Nearest: [2]motion.Vector{
 			motion.LowerPrecision(nearestCandidate.This, allowHighPrecision, forceInteger),
 			motion.LowerPrecision(nearestCandidate.Compound, allowHighPrecision, forceInteger),
 		},
-		Near: [2]motion.Vector{
+	}
+	refs.Near = refs.Nearest
+	if mode == CompoundInterModeNearNear || mode == CompoundInterModeNearNew || mode == CompoundInterModeNewNear {
+		nearCandidate, err := stack.candidate(1 + refMVIndex)
+		if err != nil {
+			return InterMVReferenceSet{}, err
+		}
+		refs.Near = [2]motion.Vector{
 			motion.LowerPrecision(nearCandidate.This, allowHighPrecision, forceInteger),
 			motion.LowerPrecision(nearCandidate.Compound, allowHighPrecision, forceInteger),
-		},
+		}
 	}
 	refs.Residual = refs.Nearest
 

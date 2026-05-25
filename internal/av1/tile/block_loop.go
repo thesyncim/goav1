@@ -700,7 +700,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			HaveLeft:            block.HaveLeft,
 		})
 		if err != nil {
-			return BlockPredictionModeResult{}, err
+			return BlockPredictionModeResult{}, fmt.Errorf("read inter references: %w", err)
 		}
 		result.InterReferences = refs
 		result.InterReferencesValid = true
@@ -735,7 +735,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				TemporalMVSampleUnavailable: req.TemporalMVSampleUnavailable,
 			})
 			if err != nil {
-				return BlockPredictionModeResult{}, err
+				return BlockPredictionModeResult{}, fmt.Errorf("build ref mv stack: %w", err)
 			}
 			mode, err := s.ReadBlockInterMode(cdfs.InterMode, InterModeRequest{
 				Compound:            refs.Compound,
@@ -745,15 +745,15 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				ModeContext:         stack.ModeContext,
 			})
 			if err != nil {
-				return BlockPredictionModeResult{}, err
+				return BlockPredictionModeResult{}, fmt.Errorf("read inter mode: %w", err)
 			}
 			drlReq, err := stack.Stack.DRLRequestForMode(mode)
 			if err != nil {
-				return BlockPredictionModeResult{}, err
+				return BlockPredictionModeResult{}, fmt.Errorf("select drl request: %w", err)
 			}
 			drlIndex, err := s.ReadDRLIndex(cdfs.InterMode, drlReq)
 			if err != nil {
-				return BlockPredictionModeResult{}, err
+				return BlockPredictionModeResult{}, fmt.Errorf("read drl index: %w", err)
 			}
 			result.InterMode = mode
 			result.InterModeValid = true
@@ -764,7 +764,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			if !interModeUsesGlobalOnly(mode) {
 				mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
 				if err != nil {
-					return BlockPredictionModeResult{}, err
+					return BlockPredictionModeResult{}, fmt.Errorf("resolve inter mv references mode=%+v drl=%d stack_count=%d nearest=%d: %w", mode, drlIndex, stack.Stack.Count, stack.NearestCount, err)
 				}
 				result.InterMVReferences = mvRefs
 				result.InterMVReferencesValid = true
@@ -778,7 +778,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					Precision:    MVPrecision(req.AllowHighPrecisionMV, req.ForceIntegerMV),
 				})
 				if err != nil {
-					return BlockPredictionModeResult{}, err
+					return BlockPredictionModeResult{}, fmt.Errorf("read inter motion: %w", err)
 				}
 				result.InterMotion = motionResult.Motion
 				result.InterMotionValid = true
@@ -795,7 +795,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						Compound:                 refs.Compound,
 					})
 					if err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("read inter-intra: %w", err)
 					}
 					result.InterIntra = interIntra
 					result.InterIntraValid = true
@@ -815,11 +815,11 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
 					})
 					if err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("collect overlappable neighbors: %w", err)
 					}
 					numProjRef, err := overlappableNeighbors.WarpSampleCountForBlock(block, refs.Ref[0])
 					if err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("count warp samples: %w", err)
 					}
 					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
 						Size:                  block.Size,
@@ -836,14 +836,14 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						NumProjRef:            numProjRef,
 					})
 					if err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("read motion mode: %w", err)
 					}
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
 					if motionMode == MotionModeWarp {
 						model, invalid, err := overlappableNeighbors.WarpProjection(block, refs.Ref[0], motionResult.Motion.MV[0])
 						if err != nil {
-							return BlockPredictionModeResult{}, err
+							return BlockPredictionModeResult{}, fmt.Errorf("project warped motion: %w", err)
 						}
 						result.WarpedMotionInvalid = invalid
 						if !invalid {
@@ -874,7 +874,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						HaveLeft:              block.HaveLeft,
 					})
 					if err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("read compound blend: %w", err)
 					}
 					result.CompoundBlend = blend
 					result.CompoundBlendValid = true
@@ -894,27 +894,27 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					HaveLeft:         block.HaveLeft,
 				})
 				if err != nil {
-					return BlockPredictionModeResult{}, err
+					return BlockPredictionModeResult{}, fmt.Errorf("read interp filters: %w", err)
 				}
 				result.InterpFilters = filters
 				result.InterpFiltersValid = true
 				result.InterpFilterReads = filterReads
 				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
-					return BlockPredictionModeResult{}, err
+					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}
 				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
-					return BlockPredictionModeResult{}, err
+					return BlockPredictionModeResult{}, fmt.Errorf("mark inter filters: %w", err)
 				}
 				if result.CompoundBlendValid {
 					if err := ctx.MarkCompoundBlend(block.Size, block.X4, block.Y4, result.CompoundBlend); err != nil {
-						return BlockPredictionModeResult{}, err
+						return BlockPredictionModeResult{}, fmt.Errorf("mark compound blend: %w", err)
 					}
 				}
 				return result, nil
 			}
 		}
 		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
-			return BlockPredictionModeResult{}, err
+			return BlockPredictionModeResult{}, fmt.Errorf("mark inter references: %w", err)
 		}
 		return result, nil
 	}

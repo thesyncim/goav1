@@ -127,6 +127,27 @@ func TestResolveCompoundInterMVReferencesMatchesLibaomSelection(t *testing.T) {
 	}
 }
 
+func TestResolveCompoundNewNewDoesNotRequireNearCandidate(t *testing.T) {
+	stack := refMVTestStack()
+	stack.Count = 2
+	refs, err := stack.ResolveInterMVReferences(InterModeResult{
+		Compound:     true,
+		CompoundMode: CompoundInterModeNewNew,
+	}, 1, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refs.Nearest != ([2]motion.Vector{{Row: 2, Col: -2}, {Row: -2, Col: 2}}) {
+		t.Fatalf("nearest=%+v", refs.Nearest)
+	}
+	if refs.Near != refs.Nearest {
+		t.Fatalf("near=%+v want nearest", refs.Near)
+	}
+	if refs.Residual != ([2]motion.Vector{stack.Candidates[1].This, stack.Candidates[1].Compound}) {
+		t.Fatalf("residual=%+v", refs.Residual)
+	}
+}
+
 func TestReferenceMVStackRejectsInvalidInputs(t *testing.T) {
 	stack := refMVTestStack()
 	if _, err := stack.DRLContext(3); !errors.Is(err, ErrInvalidDecodeState) {

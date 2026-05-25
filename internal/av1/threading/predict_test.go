@@ -174,6 +174,32 @@ func TestFrameWorkBatchPredictBlockLumaIntraClipsFrameEdge(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterClipsFrameEdge(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 320, Height: 180, BitDepth: 8, MonoChrome: true, Align: 64})
+	reference := testBatchFrame(t, output.Format)
+	testFillFrame(output, 7)
+	testFillFrame(reference, 0x55)
+	ctx := testInterPredictionBatch(output, reference)
+	ctx.Jobs = []tile.Job{{SBCols: 5, SBRows: 3}}
+
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Block = tile.BlockVisit{
+		MICol: 0, MIRow: 44, MIColEnd: 16, MIRowEnd: 46,
+		X4: 0, Y4: 12, Size: tile.BlockSize64x16, VisibleW4: 16, VisibleH4: 2,
+		HaveTop: true,
+	}
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for y := 176; y < 180; y++ {
+		for x := 0; x < 64; x++ {
+			if got := output.Y.Pix[y*output.Y.Stride+x]; got != 0x55 {
+				t.Fatalf("sample(%d,%d)=%d want 0x55", x, y, got)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaDirectionalKnownVectors(t *testing.T) {
 	tests := []struct {
 		name string

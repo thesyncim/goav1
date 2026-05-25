@@ -1412,10 +1412,11 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 	if err != nil {
 		return frameWorkPredictionPlaneGeometry{}, false, err
 	}
-	if !frameWorkPlaneBlockFits(window, x, y, width, height) {
+	if b.Output == nil {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
-	if b.Output == nil {
+	width, height, ok = frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
+	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
 	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
