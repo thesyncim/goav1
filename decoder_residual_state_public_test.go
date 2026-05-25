@@ -2700,6 +2700,94 @@ func TestPublicBindDecoderFrameWorkResidualStreamEventRunner(t *testing.T) {
 	}
 }
 
+func TestPublicBindDecoderFrameWorkResidualStreamPlanRunner(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	payloads := [...][]byte{
+		publicDecoderResidualRTPPayload(),
+		publicDecoderResidualRTPFramePayload(),
+	}
+	var probeStream av1.DecoderStream
+	var probeEvents [4]av1.DecoderEvent
+	var probeRTPBuffer [256]byte
+	var probeRTPSpans [4]av1.RTPObuSpan
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	plan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, payloads[:], 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.HasEvent() || plan.Bind.Event.Kind != av1.DecoderEventTileGroup || plan.Size.Event.Outputs != 2 {
+		t.Fatalf("stream plan=%+v", plan)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
+		Height:       int(plan.Bind.Event.FrameSize.Height),
+		BitDepth:     8,
+		MonoChrome:   true,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	}, 2)
+	var stream av1.DecoderStream
+	var refs av1.DecoderSurfaceReferences
+	var state av1.DecoderFrameWorkState
+	var referenceSurfaces [av1.InterRefsPerFrame]int
+	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
+	var releases [av1.RefFrames]int
+	var stats av1.DecoderFrameWorkTileResidualStats
+	var side av1.DecoderFrameWorkSideData
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	scratch := publicDecoderResidualStreamScratch(plan.Size)
+	runner, boundSide, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &state,
+		Refs:              &refs,
+		FramePool:         &pool,
+		Align:             64,
+		ReferenceSurfaces: referenceSurfaces[:],
+		ReferenceFrames:   referenceFrames[:],
+		Releases:          releases[:],
+		WorkerPool:        workerPool,
+		SideData:          &side,
+		Stats:             &stats,
+	}, scratch, &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.Stream != &stream ||
+		runner.EventRunner.BatchRunner != &batchRunner ||
+		len(runner.Events) != plan.Size.Events ||
+		len(runner.EventRunner.Outputs) != plan.Size.Event.Outputs ||
+		len(boundSide.CDEFIndexMap.Index) == 0 ||
+		len(boundSide.LoopFilterMap.Records) == 0 {
+		t.Fatalf("plan-bound runner=%+v side=%+v plan=%+v", runner, boundSide, plan)
+	}
+
+	result, err := runner.RunRTPPayloads(payloads[:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EventCount != 5 ||
+		result.Run.CompletedFrames != 2 ||
+		result.Run.OutputCount != 2 ||
+		result.Run.Outputs[0] == nil ||
+		result.Run.Outputs[1] != result.Run.Last.Output ||
+		stats.TXBs == 0 ||
+		stats.Residuals == 0 {
+		t.Fatalf("plan-bound result=%+v stats=%+v", result, stats)
+	}
+
+	if _, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, nil, av1.DecoderFrameWorkResidualEventRuntime{}, scratch, &batchRunner); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil stream plan bind err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualStreamScratchLenLowOverhead(t *testing.T) {
 	payload := publicDecoderResidualLowOverheadStream()
 	var stream av1.DecoderStream
@@ -3254,6 +3342,14 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 		RTPSpans:  1,
 		Event:     eventSize,
 	}
+	combinedPlan := av1.DecoderFrameWorkResidualStreamPlan{
+		Size: combinedSize,
+		Bind: av1.DecoderFrameWorkResidualEventBindPlan{
+			Sequence:   sequence,
+			Event:      event,
+			EventIndex: 0,
+		},
+	}
 	combinedScratch := publicDecoderResidualStreamScratch(combinedSize)
 	var combinedRunner av1.DecoderFrameWorkResidualStreamRunner
 	var side av1.DecoderFrameWorkSideData
@@ -3271,6 +3367,22 @@ func TestPublicBindDecoderFrameWorkResidualStreamRunnerAllocs(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("BindDecoderFrameWorkResidualStreamEventRunner allocated: %f", allocs)
+	}
+
+	allocs = testing.AllocsPerRun(1000, func() {
+		combinedRunner, side, err = av1.BindDecoderFrameWorkResidualStreamPlanRunner(combinedPlan, &stream, av1.DecoderFrameWorkResidualEventRuntime{}, combinedScratch, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(combinedRunner.Events) != combinedSize.Events ||
+		len(combinedRunner.RTPBuffer) != combinedSize.RTPBuffer ||
+		len(combinedRunner.EventRunner.Spans) != 0 ||
+		len(side.CDEFIndexMap.Index) == 0 {
+		t.Fatalf("plan-bound runner=%+v side=%+v plan=%+v", combinedRunner, side, combinedPlan)
+	}
+	if allocs != 0 {
+		t.Fatalf("BindDecoderFrameWorkResidualStreamPlanRunner allocated: %f", allocs)
 	}
 }
 

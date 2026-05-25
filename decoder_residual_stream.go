@@ -89,6 +89,15 @@ func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidual
 	return streamRunner, side, nil
 }
 
+// BindDecoderFrameWorkResidualStreamPlanRunner binds a complete residual stream
+// runner directly from a stream plan returned by
+// DecoderFrameWorkResidualLowOverheadStreamPlan,
+// DecoderFrameWorkResidualRTPPayloadStreamPlan, or
+// DecoderFrameWorkResidualRTPPayloadsStreamPlan.
+func BindDecoderFrameWorkResidualStreamPlanRunner(plan DecoderFrameWorkResidualStreamPlan, stream *DecoderStream, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
+	return BindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, plan.Bind.Event, runtime, scratch, batchRunner)
+}
+
 // BindDecoderFrameWorkResidualStreamRunner binds a stream runner from
 // caller-owned parser and side-data scratch. The eventRunner is owned by the
 // caller and is copied into the returned stream runner.
