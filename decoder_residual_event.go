@@ -56,7 +56,9 @@ type DecoderFrameWorkResidualEventRunner struct {
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
-// events run through a residual event runner.
+// events run through a residual event runner. CompletedFrames counts decoded
+// final tile frames; OutputCount counts display outputs, including
+// show-existing-frame events that reuse a retained reference.
 type DecoderFrameWorkResidualEventsResult struct {
 	Count            int
 	Last             DecoderFrameWorkEventResult
@@ -125,7 +127,7 @@ func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResi
 // storage for the nested residual batch runner; the returned event runner keeps
 // a pointer to it.
 func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualEventScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualEventRunner, DecoderFrameWorkSideData, error) {
-	if batchRunner == nil {
+	if size.Runner.Workers != 0 && batchRunner == nil {
 		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrThreadingInvalidBatch
 	}
 	if decoderFrameWorkResidualScratchTooShort(scratch.Spans, size.Plan.SpanCount) ||
@@ -134,15 +136,21 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrFrameShortBuffer
 	}
 
-	boundRunner, err := BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
-	if err != nil {
-		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+	if size.Runner.Workers != 0 {
+		boundRunner, err := BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
+		if err != nil {
+			return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+		}
+		*batchRunner = boundRunner
 	}
-	side, err := BindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
-	if err != nil {
-		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+	var side DecoderFrameWorkSideData
+	if decoderFrameWorkResidualEventNeedsSideData(event) {
+		var err error
+		side, err = BindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
+		if err != nil {
+			return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+		}
 	}
-	*batchRunner = boundRunner
 	return DecoderFrameWorkResidualEventRunner{
 		State:             runtime.State,
 		Refs:              runtime.Refs,
@@ -234,20 +242,25 @@ func (r DecoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(seque
 // caller-owned spans/jobs/batches and reports both residual-runner scratch and
 // frame-level side-data scratch for the event.
 func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
-	runner, plan, err := DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, workers, spans, jobs, batches)
-	if err != nil {
-		return DecoderFrameWorkResidualEventScratchSize{}, err
+	size := DecoderFrameWorkResidualEventScratchSize{
+		Outputs: decoderFrameWorkResidualEventOutputLen(event),
 	}
-	sideData, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
-	if err != nil {
-		return DecoderFrameWorkResidualEventScratchSize{}, err
+	if decoderFrameWorkResidualEventHasTilePayload(event) {
+		runner, plan, err := DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, workers, spans, jobs, batches)
+		if err != nil {
+			return DecoderFrameWorkResidualEventScratchSize{}, err
+		}
+		size.Runner = runner
+		size.Plan = plan
 	}
-	return DecoderFrameWorkResidualEventScratchSize{
-		Runner:   runner,
-		SideData: sideData,
-		Plan:     plan,
-		Outputs:  decoderFrameWorkResidualEventOutputLen(event),
-	}, nil
+	if decoderFrameWorkResidualEventNeedsSideData(event) {
+		sideData, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
+		if err != nil {
+			return DecoderFrameWorkResidualEventScratchSize{}, err
+		}
+		size.SideData = sideData
+	}
+	return size, nil
 }
 
 // DecoderFrameWorkResidualEventsScratchLen reports reusable scratch for the
@@ -344,7 +357,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		if err != nil {
 			return result, err
 		}
-		eventStats, err := single.BatchRunner.TotalStats()
+		eventStats, err := decoderFrameWorkResidualRunnerStats(single.BatchRunner)
 		if err != nil {
 			return result, err
 		}
@@ -354,7 +367,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		if step.Run.ExecutedTileWork {
 			result.ExecutedTileWork++
 		}
-		if step.Run.CompletedFrame {
+		if decoderFrameWorkResidualResultOutputsFrame(step) {
 			if r.Outputs != nil {
 				if result.OutputCount >= len(r.Outputs) {
 					return result, ErrFrameShortBuffer
@@ -362,6 +375,8 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 				r.Outputs[result.OutputCount] = step.Output
 			}
 			result.OutputCount++
+		}
+		if step.Run.CompletedFrame {
 			result.CompletedFrames++
 		}
 		result.ReleaseCount += step.Run.ReleaseCount
@@ -382,7 +397,7 @@ func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
 }
 
 func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
-	if DecoderEventCompletesFrameWork(event) {
+	if DecoderEventOutputsFrame(event) {
 		return 1
 	}
 	return 0
@@ -393,7 +408,7 @@ func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
 // is attached to both the active frame-work state and the residual runner after
 // planning and before tile work runs.
 func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest) (DecoderFrameWorkEventResult, error) {
-	if req.Runner == nil {
+	if decoderFrameWorkResidualEventHasTilePayload(req.Event) && req.Runner == nil {
 		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
 	}
 	if req.Post != nil && req.PostRunner != nil {
@@ -402,8 +417,10 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	event := req.Event
 	event.SequenceHeader = req.Sequence
 
-	if err := req.Runner.ResetStats(); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+	if req.Runner != nil {
+		if err := req.Runner.ResetStats(); err != nil {
+			return DecoderFrameWorkEventResult{}, err
+		}
 	}
 	if req.Stats != nil {
 		*req.Stats = DecoderFrameWorkTileResidualStats{}
@@ -419,8 +436,10 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		return DecoderFrameWorkEventResult{}, err
 	}
 	if hasTile && req.SideData != nil {
-		if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+		if tile.JobCount != 0 {
+			if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
+				return DecoderFrameWorkEventResult{}, err
+			}
 		}
 		if err := SetDecoderFrameWorkSideData(req.State, *req.SideData); err != nil {
 			return DecoderFrameWorkEventResult{}, err
@@ -476,7 +495,7 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	} else {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
-	stats, statsErr := req.Runner.TotalStats()
+	stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
 	if req.Stats != nil {
 		*req.Stats = stats
 	}
@@ -493,6 +512,17 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkTileResidualStats, error) {
+	if runner == nil {
+		return DecoderFrameWorkTileResidualStats{}, nil
+	}
+	return runner.TotalStats()
+}
+
+func decoderFrameWorkResidualResultOutputsFrame(result DecoderFrameWorkEventResult) bool {
+	return result.Output != nil && (result.Run.CompletedFrame || result.Step.Kind == DecoderFrameWorkStepShowExisting)
 }
 
 func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWorkStepResult, post DecoderFrameWorkPostFilterRunner) *Frame {

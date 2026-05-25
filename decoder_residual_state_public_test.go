@@ -711,7 +711,10 @@ func TestPublicDecoderFrameWorkResidualEventRunner(t *testing.T) {
 	if !ok || slot < 0 {
 		t.Fatalf("decoded frame was not published to reference slot 0: slot=%d ok=%v", slot, ok)
 	}
-	if _, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{Runner: nil}); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+	if _, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
+		Event:  av1.DecoderEvent{Kind: av1.DecoderEventFrame},
+		Runner: nil,
+	}); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("nil residual event runner err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
 }
@@ -1556,6 +1559,97 @@ func TestPublicDecoderFrameWorkResidualEventRunnerRunEvents(t *testing.T) {
 	shortSideScratch.CDEFIndexMap = shortSideScratch.CDEFIndexMap[:size.SideData.CDEFIndexMap-1]
 	if _, err := eventRunner.RunEvents(sequence, events[:], shortSideScratch, nil); !errors.Is(err, av1.ErrFrameShortBuffer) {
 		t.Fatalf("short event-list side scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.T) {
+	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}}
+	event := av1.DecoderEvent{
+		Kind: av1.DecoderEventExistingFrame,
+		FrameHeader: av1.FrameHeaderPrefix{
+			ShowExistingFrame: true,
+			ExistingFrameIdx:  0,
+		},
+		ExistingFrame: av1.ReferenceFrame{FrameType: av1.FrameTypeInter},
+		FrameSize: av1.FrameSize{
+			CodedWidth:    16,
+			UpscaledWidth: 16,
+			Height:        16,
+		},
+	}
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Runner != (av1.DecoderFrameWorkBatchResidualRunnerScratchSize{}) ||
+		size.SideData != (av1.DecoderFrameWorkSideDataScratchSize{}) ||
+		size.Plan != (av1.DecoderTileWorkPlan{}) ||
+		size.Outputs != 1 {
+		t.Fatalf("show-existing scratch size=%+v", size)
+	}
+	listSize, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, []av1.DecoderEvent{event}, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listSize != size {
+		t.Fatalf("show-existing list scratch=%+v single=%+v", listSize, size)
+	}
+
+	pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		Width:      16,
+		Height:     16,
+		BitDepth:   8,
+		MonoChrome: true,
+		Align:      64,
+	}, 1)
+	referenceSlot, referenceFrame, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refs av1.DecoderSurfaceReferences
+	var releases [av1.RefFrames]int
+	if _, err := refs.Refresh(1<<0, referenceSlot, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state av1.DecoderFrameWorkState
+	var outputs [1]*av1.Frame
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, av1.DecoderFrameWorkResidualEventRuntime{
+		State:     &state,
+		Refs:      &refs,
+		FramePool: &pool,
+		Releases:  releases[:],
+		Outputs:   outputs[:],
+	}, publicDecoderResidualEventScratch(size), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eventRunner.RunEvents(sequence, []av1.DecoderEvent{event}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 ||
+		result.ExecutedTileWork != 0 ||
+		result.CompletedFrames != 0 ||
+		result.OutputCount != 1 ||
+		result.Last.Step.Kind != av1.DecoderFrameWorkStepShowExisting ||
+		result.Last.Output != referenceFrame ||
+		outputs[0] != referenceFrame ||
+		state.Active() {
+		t.Fatalf("show-existing result=%+v output=%p/%p active=%v", result, result.Last.Output, referenceFrame, state.Active())
+	}
+
+	shortOutputRunner := eventRunner
+	shortOutputRunner.Outputs = outputs[:0]
+	if _, err := shortOutputRunner.RunEvents(sequence, []av1.DecoderEvent{event}, av1.DecoderFrameWorkSideDataScratch{}, nil); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short show-existing output err=%v want %v", err, av1.ErrFrameShortBuffer)
 	}
 }
 

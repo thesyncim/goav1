@@ -124,6 +124,13 @@ func EventCompletesFrameWork(event Event) bool {
 	return (event.Kind == EventFrame || event.Kind == EventTileGroup) && event.TileGroup.Final
 }
 
+// EventOutputsFrame reports whether event can produce a display frame. Unlike
+// EventCompletesFrameWork, this includes show-existing-frame events that output
+// a retained reference without running tile work.
+func EventOutputsFrame(event Event) bool {
+	return EventCompletesFrameWork(event) || event.Kind == EventExistingFrame
+}
+
 // Active reports whether a frame has begun and not yet been finished, aborted,
 // or reset.
 func (s *FrameWorkState) Active() bool {

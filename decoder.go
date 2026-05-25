@@ -190,6 +190,10 @@ func DecoderEventCompletesFrameWork(event DecoderEvent) bool {
 	return internaldecoder.EventCompletesFrameWork(event)
 }
 
+func DecoderEventOutputsFrame(event DecoderEvent) bool {
+	return internaldecoder.EventOutputsFrame(event)
+}
+
 func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 	return internalthreading.NewPool(workers)
 }

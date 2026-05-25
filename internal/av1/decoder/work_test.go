@@ -295,6 +295,40 @@ func TestEventCompletesFrameWork(t *testing.T) {
 	}
 }
 
+func TestEventOutputsFrame(t *testing.T) {
+	tests := []struct {
+		name  string
+		event Event
+		want  bool
+	}{
+		{
+			name:  "final frame",
+			event: Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}},
+			want:  true,
+		},
+		{
+			name:  "show existing",
+			event: Event{Kind: EventExistingFrame},
+			want:  true,
+		},
+		{
+			name:  "frame header",
+			event: Event{Kind: EventFrameHeader},
+			want:  false,
+		},
+		{
+			name:  "non-final tile group",
+			event: Event{Kind: EventTileGroup},
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		if got := EventOutputsFrame(tt.event); got != tt.want {
+			t.Fatalf("%s: EventOutputsFrame=%v want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestFrameWorkStateLifecycle(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))

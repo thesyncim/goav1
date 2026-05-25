@@ -221,6 +221,18 @@ func TestDecoderEventCompletesFrameWork(t *testing.T) {
 	}
 }
 
+func TestDecoderEventOutputsFrame(t *testing.T) {
+	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+		t.Fatal("final frame did not output frame")
+	}
+	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventExistingFrame}) {
+		t.Fatal("show existing frame did not output frame")
+	}
+	if DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventTileGroup}) {
+		t.Fatal("non-final tile group output frame")
+	}
+}
+
 func TestDecoderFrameWorkState(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
 	sequence := SequenceHeader{ColorConfig: ColorConfig{
