@@ -650,6 +650,50 @@ func BenchmarkPublicDecoderCoeffReplayReconstructionAdapter(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderBlockCoeffDecodeReconstruction(b *testing.B) {
+	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := publicDecoderBlockCoeffSimpleBatch(output)
+	req := publicDecoderBlockCoeffDecodeRequest(b, batch, false)
+	payload := make([]byte, 32)
+	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	var state av1.TileDecodeState
+	var transformCDFs av1.TileTransformCDFs
+	var coeffCDFs av1.TileCoeffCDFs
+	cdfs := av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}
+	var transformCtx av1.TileTransformContext
+	var coeffCtx av1.TileCoeffEntropyContext
+	var scratch av1.TileBlockCoeffScratch
+
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := av1.InitTileTransformCDFsDefault(&transformCDFs); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0); err != nil {
+			b.Fatal(err)
+		}
+		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		transformCtx.Reset()
+		coeffCtx.Reset()
+		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
+		result, err := av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
+			sum += block.Result.EOB + block.Plane
+			return nil
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += result.TotalStats().TXBs + int(output.Y.Pix[i%len(output.Y.Pix)])
+	}
+	publicBenchmarkSink = sum
+}
+
 func publicBenchmarkDecoderFrame(b *testing.B, format av1.FrameFormat) *av1.Frame {
 	b.Helper()
 	layout, err := av1.FrameRequiredSize(format)

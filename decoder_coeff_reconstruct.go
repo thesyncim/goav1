@@ -12,6 +12,13 @@ type DecoderFrameWorkCoeffReconstructionContext struct {
 	ResidualScratch []int16
 }
 
+// DecoderFrameWorkBlockCoeffDecodeRequest composes one block coefficient decode
+// request with the frame-work reconstruction context for the same block.
+type DecoderFrameWorkBlockCoeffDecodeRequest struct {
+	Decode         TileBlockCoeffRequest
+	Reconstruction DecoderFrameWorkCoeffReconstructionContext
+}
+
 func DecoderFrameWorkLumaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffReconstructionContext, block TileLumaCoeffBlock) DecoderFrameWorkBlockCoeffReconstruction {
 	return DecoderFrameWorkBlockCoeffReconstruction{
 		Visit: ctx.Visit,
@@ -56,4 +63,24 @@ func ReconstructDecoderFrameWorkLumaCoeffBlock(batch DecoderFrameWorkBatch, inde
 
 func ReconstructDecoderFrameWorkChromaCoeffBlock(batch DecoderFrameWorkBatch, index int, ctx DecoderFrameWorkCoeffReconstructionContext, block TileChromaCoeffBlock) error {
 	return ReconstructDecoderFrameWorkBlockCoeff(batch, index, DecoderFrameWorkChromaCoeffBlockReconstruction(ctx, block))
+}
+
+func DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs TileBlockCoeffCDFs, transformCtx *TileTransformContext, coeffCtx *TileCoeffEntropyContext, scratch *TileBlockCoeffScratch, req DecoderFrameWorkBlockCoeffDecodeRequest, visit TileBlockCoeffVisitor) (TileBlockCoeffResult, error) {
+	return DecodeTileBlockCoefficients(state, cdfs, transformCtx, coeffCtx, scratch, req.Decode, func(block TileBlockCoeffBlock) error {
+		if err := ReconstructDecoderFrameWorkBlockCoeff(batch, index, DecoderFrameWorkBlockCoeffReconstruction{
+			Visit:           req.Reconstruction.Visit,
+			Block:           block,
+			Transform:       block.Transform,
+			CurrentQIndex:   req.Reconstruction.CurrentQIndex,
+			SegmentID:       req.Reconstruction.SegmentID,
+			Int32Scratch:    req.Reconstruction.Int32Scratch,
+			ResidualScratch: req.Reconstruction.ResidualScratch,
+		}); err != nil {
+			return err
+		}
+		if visit != nil {
+			return visit(block)
+		}
+		return nil
+	})
 }

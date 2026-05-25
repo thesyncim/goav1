@@ -144,6 +144,33 @@ func TestPublicReconstructDecoderFrameWorkCoeffReplayAdapters(t *testing.T) {
 	}
 }
 
+func TestPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients(t *testing.T) {
+	output := publicDecoderBlockCoeffFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
+	batch := publicDecoderBlockCoeffSimpleBatch(output)
+	state, cdfs, transformCtx, coeffCtx, scratch, req := publicDecoderBlockCoeffDecodeDriver(t, batch, false)
+
+	count := 0
+	result, err := av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
+		count++
+		if block.Plane != 0 || block.Block.Size != av1.TileTransformSize8x8 {
+			t.Fatalf("block=%+v", block)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Luma.TXBs != 1 || result.TotalStats().TXBs != 1 || count != 1 {
+		t.Fatalf("result=%+v total=%+v count=%d", result, result.TotalStats(), count)
+	}
+
+	state, cdfs, transformCtx, coeffCtx, scratch, req = publicDecoderBlockCoeffDecodeDriver(t, batch, true)
+	if _, err := av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, nil); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("short reconstruction scratch err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	}
+}
+
 func TestPublicReconstructDecoderFrameWorkBlockCoeffRejectsInvalidInputs(t *testing.T) {
 	output := publicDecoderBlockCoeffFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
@@ -206,6 +233,47 @@ func TestPublicReconstructDecoderFrameWorkCoeffReplayAdaptersAllocs(t *testing.T
 			t.Fatal(err)
 		}
 	})
+	if allocs != 0 {
+		t.Fatalf("allocs=%v want 0", allocs)
+	}
+}
+
+func TestPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficientsAllocs(t *testing.T) {
+	output := publicDecoderBlockCoeffFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := publicDecoderBlockCoeffSimpleBatch(output)
+	var state av1.TileDecodeState
+	var transformCDFs av1.TileTransformCDFs
+	var coeffCDFs av1.TileCoeffCDFs
+	cdfs := av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}
+	var transformCtx av1.TileTransformContext
+	var coeffCtx av1.TileCoeffEntropyContext
+	var scratch av1.TileBlockCoeffScratch
+	req := publicDecoderBlockCoeffDecodeRequest(t, batch, false)
+	payload := make([]byte, 32)
+	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	var err error
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		err = av1.InitTileTransformCDFsDefault(&transformCDFs)
+		if err != nil {
+			return
+		}
+		err = av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0)
+		if err != nil {
+			return
+		}
+		err = av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{})
+		if err != nil {
+			return
+		}
+		transformCtx.Reset()
+		coeffCtx.Reset()
+		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
+		_, err = av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if allocs != 0 {
 		t.Fatalf("allocs=%v want 0", allocs)
 	}
@@ -327,6 +395,60 @@ func publicDecoderBlockCoeffSimpleRequest() av1.DecoderFrameWorkBlockCoeffRecons
 		},
 		Transform:     av1.TransformTypeDCTDCT,
 		CurrentQIndex: 32,
+	}
+}
+
+func publicDecoderBlockCoeffDecodeDriver(tb publicDecoderBlockCoeffTB, batch av1.DecoderFrameWorkBatch, shortScratch bool) (av1.TileDecodeState, av1.TileBlockCoeffCDFs, av1.TileTransformContext, av1.TileCoeffEntropyContext, av1.TileBlockCoeffScratch, av1.DecoderFrameWorkBlockCoeffDecodeRequest) {
+	tb.Helper()
+	var transformCDFs av1.TileTransformCDFs
+	if err := av1.InitTileTransformCDFsDefault(&transformCDFs); err != nil {
+		tb.Fatalf("InitTileTransformCDFsDefault err=%v", err)
+	}
+	var coeffCDFs av1.TileCoeffCDFs
+	if err := av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0); err != nil {
+		tb.Fatalf("InitTileCoeffCDFsDefault err=%v", err)
+	}
+	var state av1.TileDecodeState
+	payload := make([]byte, 32)
+	if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: len(payload)}, av1.TileDecodeOptions{}); err != nil {
+		tb.Fatalf("ResetTileDecodeState err=%v", err)
+	}
+	req := publicDecoderBlockCoeffDecodeRequest(tb, batch, shortScratch)
+	return state, av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}, av1.TileTransformContext{}, av1.TileCoeffEntropyContext{}, av1.TileBlockCoeffScratch{}, req
+}
+
+func publicDecoderBlockCoeffDecodeRequest(tb publicDecoderBlockCoeffTB, batch av1.DecoderFrameWorkBatch, shortScratch bool) av1.DecoderFrameWorkBlockCoeffDecodeRequest {
+	tb.Helper()
+	visit := av1.TileBlockVisit{
+		MICol: 0, MIRow: 0, MIColEnd: 2, MIRowEnd: 2,
+		X4: 0, Y4: 0, Size: av1.TileBlockSize8x8, VisibleW4: 2, VisibleH4: 2,
+	}
+	reconstructReq := av1.DecoderFrameWorkBlockCoeffReconstruction{
+		Visit: visit,
+		Block: av1.TileBlockCoeffBlock{
+			Plane: 0,
+			Block: av1.TileTransformBlock{X4: 0, Y4: 0, Size: av1.TileTransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+		},
+		Transform:     av1.TransformTypeDCTDCT,
+		CurrentQIndex: 32,
+	}
+	ctx := publicDecoderBlockCoeffReplayContext(tb, batch, reconstructReq, av1.DecoderFrameWorkPlaneY)
+	if shortScratch {
+		ctx.Int32Scratch = nil
+	}
+	return av1.DecoderFrameWorkBlockCoeffDecodeRequest{
+		Decode: av1.TileBlockCoeffRequest{
+			Transform: av1.TileTransformTreeRequest{
+				Size:          av1.TileBlockSize8x8,
+				VisibleW4:     2,
+				VisibleH4:     2,
+				Color:         av1.ColorConfig{MonoChrome: true},
+				Inter:         true,
+				TransformMode: av1.TransformModeLargest,
+			},
+			LumaType: av1.TransformTypeDCTDCT,
+		},
+		Reconstruction: ctx,
 	}
 }
 
