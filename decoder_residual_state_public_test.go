@@ -1111,6 +1111,7 @@ func TestPublicDecoderFrameWorkResidualEventCallerPostFilterScratchRunner(t *tes
 	var jobs [2]av1.TileJob
 	var batches [1]av1.TileBatch
 	var releases [av1.RefFrames]int
+	var outputs [1]*av1.Frame
 	eventRunner := av1.DecoderFrameWorkResidualEventRunner{
 		State:             &state,
 		Refs:              &refs,
@@ -1125,6 +1126,8 @@ func TestPublicDecoderFrameWorkResidualEventCallerPostFilterScratchRunner(t *tes
 		Releases:          releases[:],
 		WorkerPool:        workerPool,
 		BatchRunner:       &runner,
+		SideData:          &side,
+		Outputs:           outputs[:],
 	}
 
 	result, err := eventRunner.RunWithPostFilterRunner(sequence, event, &side, &postRunner)
@@ -1139,7 +1142,7 @@ func TestPublicDecoderFrameWorkResidualEventCallerPostFilterScratchRunner(t *tes
 		state.Active() ||
 		postRunner.Result.Completed != wantCompleted ||
 		postRunner.Result.SuperRes.Output.Format.Width != int(event.FrameSize.UpscaledWidth) ||
-		postRunner.Context.Output == result.Output ||
+		postRunner.Context.Output != result.Output ||
 		postRunner.Context.Output.Format.Width != int(event.FrameSize.UpscaledWidth) ||
 		!postRunner.Context.DetachedPostFilterOutput() ||
 		postRunner.Context.RemainingPostFilters() != 0 {
@@ -1148,6 +1151,27 @@ func TestPublicDecoderFrameWorkResidualEventCallerPostFilterScratchRunner(t *tes
 	slot, ok := refs.ReferenceSlot(0)
 	if !ok || slot < 0 {
 		t.Fatalf("decoded frame was not published to reference slot 0: slot=%d ok=%v", slot, ok)
+	}
+
+	pool.Reset()
+	refs.Reset()
+	state.Reset()
+	outputs[0] = nil
+	events := [...]av1.DecoderEvent{
+		{Kind: av1.DecoderEventSequenceHeader, SequenceHeader: sequence, NewCodedVideoSequence: true},
+		event,
+	}
+	listResult, err := eventRunner.RunEventsWithPostFilterRunner(av1.SequenceHeader{}, events[:], publicDecoderFrameWorkSideDataScratch(eventScratch.SideData), &postRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listResult.OutputCount != 1 ||
+		listResult.Last.Output == nil ||
+		outputs[0] != listResult.Last.Output ||
+		outputs[0] != postRunner.Context.Output ||
+		postRunner.Context.Output.Format.Width != int(event.FrameSize.UpscaledWidth) ||
+		!postRunner.Context.DetachedPostFilterOutput() {
+		t.Fatalf("list result=%+v output=%p postOutput=%p", listResult, outputs[0], postRunner.Context.Output)
 	}
 
 	allocs := testing.AllocsPerRun(100, func() {

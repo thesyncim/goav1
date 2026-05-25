@@ -182,6 +182,12 @@ type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
 	Result  DecoderFrameWorkPostFilterResult
 }
 
+// DecoderFrameWorkPostFilterOutputProvider exposes the final display output
+// selected by a direct postfilter runner.
+type DecoderFrameWorkPostFilterOutputProvider interface {
+	PostFilterOutput() (*Frame, bool)
+}
+
 // DecoderFrameWorkCallerPostFilterScratchRunner binds caller-owned full
 // postfilter request views from typed scratch at final-frame callback time. It
 // allows superres to switch Context.Output to detached caller-owned storage.
@@ -235,6 +241,14 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	r.Context = next
 	r.Result = result
 	return nil
+}
+
+// PostFilterOutput returns the final publishable output after Apply.
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) PostFilterOutput() (*Frame, bool) {
+	if r == nil || r.Context.Output == nil {
+		return nil, false
+	}
+	return r.Context.Output, true
 }
 
 // ScratchLen reports caller-owned scratch for ctx. When superres is active,
@@ -292,6 +306,14 @@ func (r *DecoderFrameWorkCallerPostFilterScratchRunner) Apply(ctx DecoderFrameWo
 	r.Context = next
 	r.Result = result
 	return nil
+}
+
+// PostFilterOutput returns the final display output after Apply.
+func (r *DecoderFrameWorkCallerPostFilterScratchRunner) PostFilterOutput() (*Frame, bool) {
+	if r == nil || r.Context.Output == nil {
+		return nil, false
+	}
+	return r.Context.Output, true
 }
 
 // DecoderFrameWorkPostFilterScratchContext builds a header-derived final-frame

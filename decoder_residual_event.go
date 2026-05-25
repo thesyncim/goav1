@@ -486,12 +486,28 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	if statsErr != nil {
 		return DecoderFrameWorkEventResult{}, statsErr
 	}
+	output = decoderFrameWorkResidualPostFilterOutput(output, run, req.PostRunner)
 	return DecoderFrameWorkEventResult{
 		Step:           step,
 		Output:         output,
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWorkStepResult, post DecoderFrameWorkPostFilterRunner) *Frame {
+	if !run.CompletedFrame || post == nil {
+		return output
+	}
+	provider, ok := post.(DecoderFrameWorkPostFilterOutputProvider)
+	if !ok {
+		return output
+	}
+	postOutput, ok := provider.PostFilterOutput()
+	if !ok || postOutput == nil {
+		return output
+	}
+	return postOutput
 }
 
 func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event DecoderEvent) SequenceHeader {
