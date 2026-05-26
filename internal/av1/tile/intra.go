@@ -232,6 +232,15 @@ type BlockPredictionModeResult struct {
 
 	CompoundBlend      CompoundBlendResult
 	CompoundBlendValid bool
+
+	// SubChromaInter holds the per-sub-block chroma MVs libaom's
+	// build_inter_predictors_sub8x8 iterates over for inter blocks whose
+	// luma width or height is 4 under chroma subsampling. The chroma plane
+	// of the anchor block is split into the 1-4 luma 4x4 cells of its
+	// chroma footprint, each predicted with its own luma neighbor's MV.
+	// See tile.SubChromaInterResult for the full rationale.
+	SubChromaInter      SubChromaInterResult
+	SubChromaInterValid bool
 }
 
 var yModeSizeContext = [blockSizeCount]int{

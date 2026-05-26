@@ -1226,6 +1226,24 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				result.InterpFilters = filters
 				result.InterpFiltersValid = true
 				result.InterpFilterReads = filterReads
+				// libaom's build_inter_predictors_sub8x8 path runs at the
+				// chroma anchor of any inter block whose luma block has
+				// width or height 4 under chroma subsampling. Collect
+				// the per-sub-block MVs before MarkInterMotion writes
+				// the anchor's own MV to the grid; the helper records
+				// the anchor cell with the just-decoded filters and the
+				// caller-supplied anchor MV/reference (the neighbor
+				// cells come straight off the grid).
+				if hasChroma := HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color); hasChroma {
+					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, block.X4, block.Y4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
+						selfCell := &sub.Cells[sub.Count-1]
+						selfCell.MV = result.InterMotion.MV[0]
+						selfCell.Reference = refs.Ref[0]
+						selfCell.InterpFilters = filters
+						result.SubChromaInter = sub
+						result.SubChromaInterValid = true
+					}
+				}
 				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}

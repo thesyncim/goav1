@@ -825,7 +825,92 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 			return nil
 		}
 	}
+	// libaom's build_inter_predictors_sub8x8 splits the chroma block of an
+	// inter block whose luma width or height is 4 (under chroma
+	// subsampling) into per-luma-cell sub-blocks, each predicted with
+	// its own neighbor's MV. The tile decoder pre-computed those cells in
+	// visit.Prediction.SubChromaInter; we drive them here for U/V only,
+	// keeping luma on the standard single-MV path.
+	if visit.Prediction.SubChromaInterValid && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
+		return b.predictBlockInterSubChromaPlane(index, visit, plane)
+	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+// predictBlockInterSubChromaPlane drives libaom's sub8x8 chroma prediction
+// for one chroma plane. It iterates over the chroma sub-blocks recorded by
+// the tile decoder (see tile.CollectSubChromaInterCells) and dispatches a
+// translational predictor per cell using that cell's own MV.
+func (b FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
+		return ErrInvalidBatch
+	}
+	if !visit.Prediction.SubChromaInterValid {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	sub := visit.Prediction.SubChromaInter
+	if sub.Count <= 0 {
+		return ErrInvalidBatch
+	}
+	for i := 0; i < sub.Count; i++ {
+		cell := sub.Cells[i]
+		cellX := geom.X + cell.OffsetX
+		cellY := geom.Y + cell.OffsetY
+		width := cell.Width
+		height := cell.Height
+		if cellX < geom.X || cellY < geom.Y {
+			return ErrInvalidBatch
+		}
+		if cellX+width > geom.X+geom.Width {
+			width = geom.X + geom.Width - cellX
+		}
+		if cellY+height > geom.Y+geom.Height {
+			height = geom.Y + geom.Height - cellY
+		}
+		if width <= 0 || height <= 0 {
+			continue
+		}
+		reference, refOk := frameWorkReferenceFromTile(cell.Reference)
+		if !refOk {
+			return ErrInvalidBatch
+		}
+		refWindow, err := b.ReferencePlane(reference, plane)
+		if err != nil {
+			return err
+		}
+		ref := frame.Plane{
+			Pix:    refWindow.Pix,
+			Stride: refWindow.Stride,
+			Width:  refWindow.Width,
+			Height: refWindow.Height,
+		}
+		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+		if err != nil {
+			return err
+		}
+		if !sameSize {
+			if err := frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+				cellX, cellY, cellX, cellY, width, height, cell.MV, geom.SubsamplingX, geom.SubsamplingY, cell.InterpFilters); err != nil {
+				return err
+			}
+			continue
+		}
+		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(cellX, cellY, cell.MV, geom.SubsamplingX, geom.SubsamplingY)
+		if err != nil {
+			return ErrInvalidBatch
+		}
+		if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, cellX, cellY, refX, refY, width, height, subX, subY, cell.InterpFilters); err != nil {
+			return ErrInvalidBatch
+		}
+	}
+	return nil
 }
 
 // predictBlockInterGlobalWarpPlane mirrors libaom's WARP_PRED dispatch for
