@@ -1,6 +1,7 @@
 package tile
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -606,6 +607,9 @@ func (req ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int
 		different = different || temporalMVDifferent(second, req.GlobalMVs[1])
 	}
 	stack.addOrWeight(candidate, 2)
+	if req.MICol == 64 && req.MIRow == 18 {
+		entropy.TraceLabel("TPL_MV mi=(%d,%d) blkRC=(%d,%d) sampleRC=(%d,%d) origMV=(%d,%d) projMV=(%d,%d) different=%v", req.MICol, req.MIRow, blkRow, blkCol, sampleRow, sampleCol, sample.MV.Row, sample.MV.Col, candidate.This.Row, candidate.This.Col, different)
+	}
 	return true, different, nil
 }
 
@@ -670,8 +674,13 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
+			if req.MICol == 64 && req.MIRow == 18 {
+				entropy.TraceLabel("ABOVE mi=(%d,%d) slot=%d off=%d step=%d weight=%d candMV0=(%d,%d) candRef=[%d,%d] size=%d m=%d n=%d", req.MICol, req.MIRow, slot, off, step, weight, c.AboveInterMotion[slot].MV[0].Row, c.AboveInterMotion[slot].MV[0].Col, int(c.AboveInterMotion[slot].References.Ref[0]), int(c.AboveInterMotion[slot].References.Ref[1]), int(c.AboveBlockSize[slot]), matches, newMatches)
+			}
 			result.RowMatches += matches
 			result.NewMVMatches += newMatches
+		} else if req.MICol == 64 && req.MIRow == 18 {
+			entropy.TraceLabel("ABOVE_SKIP mi=(%d,%d) slot=%d off=%d step=%d aboveIntra=%d motionValid=%d size=%d", req.MICol, req.MIRow, slot, off, step, int(c.AboveIntra[slot]), int(c.AboveMotionValid[slot]), int(c.AboveBlockSize[slot]))
 		}
 		off += step
 	}
@@ -706,8 +715,13 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
+			if req.MICol == 64 && req.MIRow == 18 {
+				entropy.TraceLabel("LEFT mi=(%d,%d) slot=%d off=%d step=%d weight=%d candMV0=(%d,%d) candRef=[%d,%d] size=%d m=%d n=%d", req.MICol, req.MIRow, slot, off, step, weight, c.LeftInterMotion[slot].MV[0].Row, c.LeftInterMotion[slot].MV[0].Col, int(c.LeftInterMotion[slot].References.Ref[0]), int(c.LeftInterMotion[slot].References.Ref[1]), int(c.LeftBlockSize[slot]), matches, newMatches)
+			}
 			result.ColumnMatches += matches
 			result.NewMVMatches += newMatches
+		} else if req.MICol == 64 && req.MIRow == 18 {
+			entropy.TraceLabel("LEFT_SKIP mi=(%d,%d) slot=%d off=%d step=%d leftIntra=%d motionValid=%d size=%d", req.MICol, req.MIRow, slot, off, step, int(c.LeftIntra[slot]), int(c.LeftMotionValid[slot]), int(c.LeftBlockSize[slot]))
 		}
 		off += step
 	}
