@@ -1248,6 +1248,98 @@ func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
 	}
 }
 
+// TestScanGridColReferenceMVsAdvancesProcessedColsForIntra pins that the
+// outer column scan updates *processedCols unconditionally from the cell's
+// recorded mi_size, even when the cell is intra (or carries no matching
+// inter ref). libaom's scan_col_mbmi computes weight/processed_cols from the
+// candidate's bsize BEFORE calling add_ref_mv_candidate, which performs the
+// inter-block / ref-frame match. Without this advance, a goav1 outer column
+// scan that finds only an intra cell at col_offset=-3 would leave
+// processedCols at its pre-scan value, then re-enter cells at col_offset=-5
+// that libaom's gate would have skipped — inflating ref_mv_count and
+// drifting the DRL CDF. Mirror of the row-side guarantee in
+// TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra.
+func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	// Seed an intra neighbor at (x=3, y=3) within the current SB: the cell
+	// at X4=6 + colOffset=-3, Y4=2 + rowOffset=1 + i=0. MotionValid=0
+	// (intra) but BlockSize recorded so the scan honors libaom's mi_size
+	// stride.
+	ctx.GridBlockSize[3][3] = BlockSize16x16
+	ctx.GridBlockSizeVisited[3][3] = 1
+	ctx.GridMotionValid[3][3] = 0
+
+	processedCols := 2
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize16x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize16x8,
+		References: target,
+		X4:         6,
+		Y4:         2,
+		MIRow:      2,
+		MICol:      6,
+		HaveTop:    true,
+		HaveLeft:   true,
+	}
+	ctx.scanGridColReferenceMVs(req, dims, -3, -6, &processedCols, &matches, &newMatches, &stack)
+	if stack.Count != 0 || matches != 0 {
+		t.Fatalf("intra-only scan should not add a candidate: stack=%d matches=%d", stack.Count, matches)
+	}
+	// The candidate's bsize is BLOCK_16X16 (sizeW4=4). inc = AOMMIN(
+	//   -maxColOffset + colOffset + 1, sizeW4) = AOMMIN(6-3+1=4, 4) = 4.
+	// *processedCols = inc - colOffset - 1 = 4 - (-3) - 1 = 6. Pre-fix the
+	// scan returned without touching processedCols, leaving it at its
+	// pre-scan value (2) and admitting a spurious col_offset=-5 scan.
+	if processedCols != 6 {
+		t.Fatalf("expected processedCols=6 after stepping over intra neighbor (BLOCK_16X16); got %d", processedCols)
+	}
+}
+
+// TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra mirrors the
+// column-side guarantee for the row scan: scan_row_mbmi must update
+// *processedRows from the cell's mi_size before checking ref-frame match.
+func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	// Seed an intra neighbor at (x=3, y=3) within the current SB: the cell
+	// at X4=2 + colOffset=1 + i=0, Y4=6 + rowOffset=-3. MotionValid=0 (intra)
+	// but BlockSize recorded so the scan honors libaom's mi_size stride.
+	ctx.GridBlockSize[3][3] = BlockSize16x16
+	ctx.GridBlockSizeVisited[3][3] = 1
+	ctx.GridMotionValid[3][3] = 0
+
+	processedRows := 2
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize8x16.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize8x16,
+		References: target,
+		X4:         2,
+		Y4:         6,
+		MIRow:      6,
+		MICol:      2,
+		HaveTop:    true,
+		HaveLeft:   true,
+	}
+	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	if stack.Count != 0 || matches != 0 {
+		t.Fatalf("intra-only scan should not add a candidate: stack=%d matches=%d", stack.Count, matches)
+	}
+	if processedRows != 6 {
+		t.Fatalf("expected processedRows=6 after stepping over intra neighbor (BLOCK_16X16); got %d", processedRows)
+	}
+}
+
 // TestBuildReferenceMVStackSingleRefMVsReflectFinalSort verifies that
 // SingleRefMVs[] mirrors the final sorted stack order, not the insertion
 // order produced by extendSingleReferenceMVStack. libaom's

@@ -1,10 +1,26 @@
 package tile
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
+var debugRefMV = os.Getenv("GOAV1_DEBUG_REFMV") != ""
+
+func dbgPrintf(req ReferenceMVStackRequest, format string, args ...any) {
+	if !debugRefMV {
+		return
+	}
+	if req.MIRow != 34 || req.MICol != 4 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "REFMV mi=(%d,%d) X4=%d Y4=%d size=%d: ", req.MICol, req.MIRow, req.X4, req.Y4, req.Size)
+	fmt.Fprintf(os.Stderr, format, args...)
+	fmt.Fprintln(os.Stderr)
+}
 
 const (
 	MaxMVRefCandidates   = 2
@@ -492,6 +508,10 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		// nearest/near cache, e.g. quantizer_00 frame 1 mi=(46,10).
 		result.Stack.setSingleRefMVs(req.GlobalMVs[0])
 	}
+	dbgPrintf(req, "STACK count=%d row=%d col=%d ctx=%d nearest=%d", result.Stack.Count, result.RowMatches, result.ColumnMatches, result.ModeContext, result.NearestCount)
+	for i := 0; i < result.Stack.Count; i++ {
+		dbgPrintf(req, "  stack[%d] this=(%d,%d) w=%d", i, result.Stack.Candidates[i].This.Row, result.Stack.Candidates[i].This.Col, result.Stack.Candidates[i].Weight)
+	}
 	return result, nil
 }
 
@@ -818,20 +838,24 @@ func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions)
 			maxColOffset = clampInt(maxColOffset, int(req.TileMIColStart)-int(req.MICol), int(req.TileMIColEnd)-int(req.MICol)-1)
 		}
 	}
+	// gridMaxRowOffset and gridMaxColOffset are intentionally NOT clamped by
+	// -Y4 / -X4 so the inter ref-MV outer row/column scan can reach into the
+	// SB above / SB to the left through the SBTop* / SBLeft* snapshots (see
+	// crossSBGridNeighborBlockSize). libaom's frame-wide mi grid exposes those
+	// cells transparently; goav1 stages them via the carrier's Above/Left
+	// snapshots at SB-store time.
+	//
+	// Without the column extension a block at the left edge of an SB
+	// (e.g. quantizer_00 frame 1 mi=(32,0) BLOCK_16X8) would drop libaom's
+	// outer_col[-3] and outer_col[-5] candidates. Without the matching row
+	// extension a block near the top edge of an SB (e.g. quantizer_00 frame 1
+	// mi=(4,34) BLOCK_4X8 Y4=2) would drop libaom's outer_row[-3] candidate,
+	// undercounting refmv_count and shifting the DRL CDF off libaom one cell.
+	//
+	// The tile-relative clamps on maxRowOffset/maxColOffset above keep the
+	// cross-SB lookup from crossing a tile boundary; the per-SB carrier always
+	// lives in the same tile as the consuming SB.
 	gridMaxRowOffset := maxRowOffset
-	if req.HaveTop {
-		gridMaxRowOffset = maxInt(gridMaxRowOffset, -req.Y4)
-	}
-	// gridMaxColOffset is intentionally NOT clamped by -X4 so the inter
-	// ref-MV outer column scan can reach into the SB to the left through
-	// the SBLeft* snapshots (see crossSBGridNeighborBlockSize). libaom's
-	// frame-wide mi grid exposes those cells transparently; goav1 stages
-	// them via the carrier's Left slot at SB-store time. Without the
-	// extension a block at the left edge of an SB (e.g. quantizer_00 frame
-	// 1 mi=(32,0) BLOCK_16X8) would drop libaom's outer_col[-3] and
-	// outer_col[-5] candidates, undercounting refmv_count and miscomputing
-	// the DRL/refmv contexts. The row direction stays clamped because the
-	// SB-top snapshots are only safe for IBC reads (see scanGridBlockReferenceMV).
 	gridMaxColOffset := maxColOffset
 	return maxRowOffset, maxColOffset, gridMaxRowOffset, gridMaxColOffset
 }
@@ -899,7 +923,13 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 		// is inter or intra. Use the recorded size for the step even when
 		// the cell has no usable motion candidate so the scan never
 		// re-samples cells already covered by an intra neighbor's mi_size.
-		size, sizeKnown := c.gridNeighborBlockSize(x, y)
+		// Cross-SB cells (y<0) fall back to the SB-top snapshot so rows in
+		// the prior SB are visible to the scan, mirroring scanGridColReferenceMVs
+		// which uses the SB-left snapshot for x<0. libaom's frame-wide mi grid
+		// covers these cells transparently; the per-SB carrier stages them at
+		// SB-store time and the tile-relative clamp on maxRowOffset prevents
+		// the lookup from crossing a tile boundary.
+		size, sizeKnown := c.crossSBGridNeighborBlockSize(req, x, y)
 		if !sizeKnown {
 			i++
 			continue
@@ -915,16 +945,22 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 		if step <= 0 {
 			step = 1
 		}
-		candidate, _, ok := c.gridInterMotion(x, y)
-		if !ok {
-			i += step
-			continue
-		}
+		// libaom's scan_row_mbmi updates weight and processed_rows
+		// unconditionally based on the candidate's bsize, then defers the
+		// inter/ref-frame check to add_ref_mv_candidate. Mirror that here so
+		// a deeper outer row scan (row_offset=-5 after an intra cell at
+		// row_offset=-3) does not re-enter cells libaom's processed_rows
+		// gate would skip. See the matching note in scanGridColReferenceMVs.
 		weight := 2
 		if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
 			inc := minInt(-maxRowOffset+rowOffset+1, sizeH4)
 			weight = maxInt(weight, inc)
 			*processedRows = inc - rowOffset - 1
+		}
+		candidate, _, ok := c.crossSBInterGridInterMotion(req, x, y)
+		if !ok {
+			i += step
+			continue
 		}
 		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 		*matches += m
@@ -1017,16 +1053,24 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 		if step <= 0 {
 			step = 1
 		}
-		candidate, _, ok := c.crossSBInterGridInterMotion(req, x, y)
-		if !ok {
-			i += step
-			continue
-		}
+		// libaom's scan_col_mbmi updates weight and processed_cols
+		// unconditionally based on the candidate's bsize, then defers the
+		// inter/ref-frame check to add_ref_mv_candidate. Mirror that here:
+		// advance processedCols from the cell's recorded size even when the
+		// cell is intra or carries no matching motion candidate. Without this
+		// advance, a deeper outer column scan (e.g. col_offset=-5 after an
+		// intra cell at col_offset=-3) re-enters cells libaom's processed_cols
+		// gate would skip and inflates the ref_mv_count, drifting the DRL CDF.
 		weight := 2
 		if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
 			inc := minInt(-maxColOffset+colOffset+1, sizeW4)
 			weight = maxInt(weight, inc)
 			*processedCols = inc - colOffset - 1
+		}
+		candidate, _, ok := c.crossSBInterGridInterMotion(req, x, y)
+		if !ok {
+			i += step
+			continue
 		}
 		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 		*matches += m
