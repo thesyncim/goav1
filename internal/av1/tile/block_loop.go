@@ -1258,6 +1258,18 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter filters: %w", err)
 				}
+				if result.InterIntraValid && result.InterIntra.Enabled {
+					// MarkInterMotion -> MarkInter clears AboveInterIntra /
+					// LeftInterIntra; record the inter-intra status here so
+					// the warp findSamples scan rejects this neighbor for
+					// later blocks (matches libaom's ref_frame[1] =
+					// INTRA_FRAME bookkeeping for inter-intra blocks). The
+					// fallback path below also calls MarkInterIntra after
+					// its MarkInter.
+					if err := ctx.MarkInterIntra(block.Size, block.X4, block.Y4); err != nil {
+						return BlockPredictionModeResult{}, fmt.Errorf("mark inter-intra neighbors: %w", err)
+					}
+				}
 				if result.CompoundBlendValid {
 					if err := ctx.MarkCompoundBlend(block.Size, block.X4, block.Y4, result.CompoundBlend); err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("mark compound blend: %w", err)
