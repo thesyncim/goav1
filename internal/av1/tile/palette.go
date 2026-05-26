@@ -229,12 +229,30 @@ func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext
 		if err := s.readPaletteColorsY(ctx, req, dst); err != nil {
 			return fmt.Errorf("palette colors y size=%d block=%v x4=%d y4=%d: %w", dst.YSize, req.Size, req.X4, req.Y4, err)
 		}
+	}
+	return s.readPaletteModeUV(cdfs, ctx, req, dst, mapScratch)
+}
+
+// ReadPaletteTokens decodes the palette color-map index trees that libaom
+// reads via av1_decode_palette_tokens, after the mbmi syntax is fully
+// consumed.
+func (s *DecodeState) ReadPaletteTokens(cdfs *IntraModeCDFs, req PaletteModeRequest, dst *PaletteModeResult, mapScratch *PaletteModeScratch) error {
+	if s == nil || cdfs == nil || dst == nil || mapScratch == nil {
+		return ErrInvalidDecodeState
+	}
+	if dst.YSize > 0 {
 		if err := s.readPaletteColorMapY(cdfs, req, dst, &mapScratch.Y); err != nil {
 			return fmt.Errorf("palette map y size=%d block=%v x4=%d y4=%d colors=%v: %w", dst.YSize, req.Size, req.X4, req.Y4, dst.YColors, err)
 		}
 		dst.YMap = &mapScratch.Y
 	}
-	return s.readPaletteModeUV(cdfs, ctx, req, dst, mapScratch)
+	if dst.UVSize > 0 {
+		if err := s.readPaletteColorMapUV(cdfs, req, dst, &mapScratch.UV); err != nil {
+			return fmt.Errorf("palette map uv size=%d block=%v x4=%d y4=%d u=%v v=%v: %w", dst.UVSize, req.Size, req.X4, req.Y4, dst.UColors, dst.VColors, err)
+		}
+		dst.UVMap = &mapScratch.UV
+	}
+	return nil
 }
 
 type PaletteModeRequest struct {
@@ -284,10 +302,6 @@ func (s *DecodeState) readPaletteModeUV(cdfs *IntraModeCDFs, ctx *BlockModeConte
 	if err := s.readPaletteColorsUV(ctx, req, dst); err != nil {
 		return fmt.Errorf("palette colors uv size=%d block=%v x4=%d y4=%d: %w", dst.UVSize, req.Size, req.X4, req.Y4, err)
 	}
-	if err := s.readPaletteColorMapUV(cdfs, req, dst, &mapScratch.UV); err != nil {
-		return fmt.Errorf("palette map uv size=%d block=%v x4=%d y4=%d u=%v v=%v: %w", dst.UVSize, req.Size, req.X4, req.Y4, dst.UColors, dst.VColors, err)
-	}
-	dst.UVMap = &mapScratch.UV
 	return nil
 }
 func PaletteAllowed(allowScreenContentTools bool, size BlockSize) (bool, error) {

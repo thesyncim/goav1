@@ -1030,6 +1030,22 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	}
 	result.FilterIntraMode = filterMode
 	result.FilterIntraValid = filterValid
+	if err := s.ReadPaletteTokens(cdfs.Intra, PaletteModeRequest{
+		AllowScreenContentTools: req.AllowScreenContentTools,
+		Size:                    block.Size,
+		LumaMode:                mode,
+		X4:                      block.X4,
+		Y4:                      block.Y4,
+		HaveTop:                 block.HaveTop,
+		HaveLeft:                block.HaveLeft,
+		BitDepth:                req.Color.BitDepth,
+		Color:                   req.Color,
+		ChromaMode:              result.ChromaMode,
+		ChromaModeValid:         result.ChromaModeValid,
+		HasChroma:               hasChroma,
+	}, &result.Palette, paletteMap); err != nil {
+		return BlockPredictionModeResult{}, err
+	}
 	return result, nil
 }
 
