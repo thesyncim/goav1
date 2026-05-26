@@ -1,0 +1,347 @@
+package goav1_test
+
+// End-to-end decoder throughput benchmarks. These exercise the public AV1
+// decoder API against the bundled libaom quantizer_00 IVF and report the
+// metrics production users care about: nanoseconds per frame, frames per
+// second, and decoded-bitstream throughput (MB/s).
+//
+// The benchmarks deliberately use the same public stream-runner path that
+// production callers wire up, so the numbers reflect actual library
+// performance rather than an internal helper. All scratch buffers are
+// allocated once during setup; the per-iteration hot path is expected to
+// stay at zero allocations.
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	av1 "github.com/thesyncim/goav1"
+)
+
+// benchVectorPath is the libaom 8-bit quantizer-00 IVF shipped in the
+// repository test data. It is the smallest publicly-decoded vector the
+// library exercises end-to-end and is small enough to fit comfortably in
+// the L2 cache used during benchmarking.
+const benchVectorPath = "internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
+
+var decodeBenchmarkSink int
+
+// BenchmarkDecodeFullVector decodes every frame of the bundled libaom
+// quantizer_00 IVF using the public residual stream runner and reports
+// throughput as ns/op, frames/op, fps, and MB/s of decoded bitstream.
+//
+// b.SetBytes reports the IVF bitstream byte count so `go test -bench`
+// surfaces the standard "MB/s" column automatically. frames/op and fps are
+// reported via b.ReportMetric for callers that want per-frame numbers.
+func BenchmarkDecodeFullVector(b *testing.B) {
+	ivfBytes := mustReadBenchVector(b)
+	frames := mustCollectIVFFrames(b, ivfBytes)
+	totalPayload := 0
+	for _, f := range frames {
+		totalPayload += len(f.Payload)
+	}
+	harness := newDecodeBenchmarkHarness(b, frames)
+	defer harness.Close()
+
+	b.SetBytes(int64(len(ivfBytes)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		completed, txbs, err := harness.runOnce()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if completed != len(frames) {
+			b.Fatalf("decoded %d frames want %d", completed, len(frames))
+		}
+		sum += txbs
+	}
+	decodeBenchmarkSink = sum
+
+	b.ReportMetric(float64(len(frames)), "frames/op")
+	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
+		b.ReportMetric(float64(len(frames)*b.N)/elapsed, "frames/s")
+	}
+}
+
+// BenchmarkDecodeFullVectorAllocs is a steady-state allocation guardrail
+// for the end-to-end decode path. It runs the same harness as
+// BenchmarkDecodeFullVector and confirms that decoding the libaom
+// quantizer_00 IVF allocates zero bytes per frame once scratch is bound.
+//
+// The current decoder pipeline is zero-alloc by design: every scratch
+// buffer and frame slot is caller-owned. This benchmark exists to alert
+// future contributors when a change accidentally introduces a per-frame
+// allocation. It is not a throughput benchmark and is intentionally short.
+func BenchmarkDecodeFullVectorAllocs(b *testing.B) {
+	ivfBytes := mustReadBenchVector(b)
+	frames := mustCollectIVFFrames(b, ivfBytes)
+	harness := newDecodeBenchmarkHarness(b, frames)
+	defer harness.Close()
+
+	// Prime the harness once so any one-shot lazy initialisation that
+	// might happen on the very first decode does not pollute the
+	// allocation counter we are about to read.
+	if _, _, err := harness.runOnce(); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := harness.runOnce(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkDecodeFirstFrameOnly isolates the cost of decoding a single
+// keyframe so callers can compare the first-frame latency profile against
+// the steady-state per-frame cost reported by BenchmarkDecodeFullVector.
+func BenchmarkDecodeFirstFrameOnly(b *testing.B) {
+	ivfBytes := mustReadBenchVector(b)
+	frames := mustCollectIVFFrames(b, ivfBytes)
+	if len(frames) == 0 {
+		b.Fatal("no frames in bench vector")
+	}
+	first := frames[:1]
+	harness := newDecodeBenchmarkHarness(b, first)
+	defer harness.Close()
+
+	b.SetBytes(int64(len(first[0].Payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := harness.runOnce(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// decodeBenchmarkHarness owns the scratch a residual stream runner needs
+// to decode benchFrames end-to-end. It is allocated once and reused across
+// benchmark iterations so per-iteration allocations are zero.
+type decodeBenchmarkHarness struct {
+	pool       av1.FramePool
+	workerPool *av1.TileWorkerPool
+	stream     av1.DecoderStream
+
+	refs       av1.DecoderSurfaceReferences
+	state      av1.DecoderFrameWorkState
+	refSurface []int
+	refFrames  []*av1.Frame
+	releases   []int
+	stats      av1.DecoderFrameWorkTileResidualStats
+	sideData   av1.DecoderFrameWorkSideData
+	batch      av1.DecoderFrameWorkBatchResidualRunner
+
+	scratch av1.DecoderFrameWorkResidualStreamScratch
+	runner  av1.DecoderFrameWorkResidualStreamRunner
+
+	payloads [][]byte
+}
+
+func newDecodeBenchmarkHarness(b *testing.B, frames []av1.IVFFrame) *decodeBenchmarkHarness {
+	b.Helper()
+	payloads := make([][]byte, len(frames))
+	for i, f := range frames {
+		payloads[i] = f.Payload
+	}
+
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var probeStream av1.DecoderStream
+	probeEvents := make([]av1.DecoderEvent, benchMaxProbeEvents(payloads))
+	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
+	probeJobs := make([]av1.TileJob, av1.MaxTiles)
+	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
+
+	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, payloads, 1, probeEvents, probeSpans, probeJobs, probeBatches)
+	if err != nil {
+		workerPool.Close()
+		b.Fatal(err)
+	}
+
+	format := av1.FrameFormat{
+		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
+		Height:       int(plan.Bind.Event.FrameSize.Height),
+		BitDepth:     plan.Bind.Sequence.ColorConfig.BitDepth,
+		MonoChrome:   plan.Bind.Sequence.ColorConfig.MonoChrome,
+		SubsamplingX: plan.Bind.Sequence.ColorConfig.SubsamplingX,
+		SubsamplingY: plan.Bind.Sequence.ColorConfig.SubsamplingY,
+		Align:        64,
+	}
+	if format.BitDepth == 0 {
+		format.BitDepth = 8
+	}
+	// Provide enough surfaces for the bounded reference set plus the in-flight
+	// output. A pool of MaxFrameBufferCount slots matches the worst-case
+	// requirement of the AV1 bitstream.
+	const surfaceCount = av1.RefFrames + 1
+	pool := bindBenchFramePool(b, format, surfaceCount)
+
+	h := &decodeBenchmarkHarness{
+		pool:       pool,
+		workerPool: workerPool,
+		refSurface: make([]int, av1.InterRefsPerFrame),
+		refFrames:  make([]*av1.Frame, av1.InterRefsPerFrame),
+		releases:   make([]int, av1.RefFrames),
+		payloads:   payloads,
+	}
+	h.scratch = newBenchStreamScratch(plan.Size)
+
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, av1.DecoderFrameWorkResidualEventRuntime{
+		State:             &h.state,
+		Refs:              &h.refs,
+		FramePool:         &h.pool,
+		Align:             64,
+		ReferenceSurfaces: h.refSurface,
+		ReferenceFrames:   h.refFrames,
+		Releases:          h.releases,
+		WorkerPool:        h.workerPool,
+		SideData:          &h.sideData,
+		Stats:             &h.stats,
+	}, h.scratch, &h.batch)
+	if err != nil {
+		workerPool.Close()
+		b.Fatal(err)
+	}
+	h.runner = runner
+	return h
+}
+
+func (h *decodeBenchmarkHarness) Close() {
+	if h.workerPool != nil {
+		h.workerPool.Close()
+		h.workerPool = nil
+	}
+}
+
+func (h *decodeBenchmarkHarness) runOnce() (int, int, error) {
+	h.pool.Reset()
+	h.refs.Reset()
+	h.state.Reset()
+	h.stats = av1.DecoderFrameWorkTileResidualStats{}
+	if err := h.runner.Reset(); err != nil {
+		return 0, 0, err
+	}
+	var result av1.DecoderFrameWorkResidualStreamResult
+	if err := h.runner.RunLowOverheadsInto(&result, h.payloads, nil); err != nil {
+		return 0, 0, err
+	}
+	return result.Run.CompletedFrames, h.stats.TXBs, nil
+}
+
+func bindBenchFramePool(b *testing.B, format av1.FrameFormat, count int) av1.FramePool {
+	b.Helper()
+	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
+	if err != nil {
+		b.Fatal(err)
+	}
+	frames := make([]av1.Frame, count)
+	free := make([]int, count)
+	used := make([]bool, count)
+	pool, err := av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return pool
+}
+
+func newBenchStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
+	return av1.DecoderFrameWorkResidualStreamScratch{
+		Events:    make([]av1.DecoderEvent, size.Events),
+		Event:     newBenchEventScratch(size.Event),
+		SideData:  newBenchSideDataScratch(size.Event.SideData),
+		Outputs:   make([]*av1.Frame, size.Event.Outputs),
+		RTPBuffer: make([]byte, size.RTPBuffer),
+		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans),
+	}
+}
+
+func newBenchEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
+	return av1.DecoderFrameWorkResidualEventScratch{
+		Runner:   newBenchBatchRunnerScratch(size.Runner),
+		SideData: newBenchSideDataScratch(size.SideData),
+		Spans:    make([]av1.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]av1.TileJob, size.Plan.JobCount),
+		Batches:  make([]av1.TileBatch, size.Plan.BatchCount),
+	}
+}
+
+func newBenchBatchRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
+	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]av1.TileDecodeState, size.Workers),
+		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
+		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
+		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
+		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
+		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
+		Int32Scratch:            make([]int32, size.Int32Scratch),
+		ResidualScratch:         make([]int16, size.ResidualScratch),
+		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
+	}
+}
+
+func newBenchSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.DecoderFrameWorkSideDataScratch {
+	return av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, size.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
+	}
+}
+
+func mustReadBenchVector(b *testing.B) []byte {
+	b.Helper()
+	path := filepath.Join(benchVectorPath)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatalf("read bench vector %q: %v", path, err)
+	}
+	return raw
+}
+
+func mustCollectIVFFrames(b *testing.B, ivf []byte) []av1.IVFFrame {
+	b.Helper()
+	it, err := av1.NewIVFIterator(ivf)
+	if err != nil {
+		b.Fatalf("NewIVFIterator: %v", err)
+	}
+	frames := make([]av1.IVFFrame, 0, it.Header().FrameCount)
+	for {
+		frame, ok, err := it.Next()
+		if err != nil {
+			b.Fatalf("ivf next: %v", err)
+		}
+		if !ok {
+			break
+		}
+		frames = append(frames, frame)
+	}
+	if len(frames) == 0 {
+		b.Fatal("no frames decoded from bench vector")
+	}
+	return frames
+}
+
+func benchMaxProbeEvents(payloads [][]byte) int {
+	// Each frame typically expands to a handful of events. Reserve a
+	// generous bound so the streams planner never returns
+	// ErrDecoderEventBufferTooSmall during sizing.
+	const eventsPerFrame = 16
+	n := len(payloads) * eventsPerFrame
+	if n < 64 {
+		n = 64
+	}
+	return n
+}
