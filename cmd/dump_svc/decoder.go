@@ -17,13 +17,31 @@ type decodeStats struct {
 	TemporalUnits    int
 	CompletedFrames  int
 	BytesOut         int64
+
+	// FailureEvents captures the (TemporalID, SpatialID) layer
+	// composition of the payload that triggered a decode error so the
+	// CLI can surface "which layer was in flight when we died" together
+	// with the proximate decoder error string.
+	FailureEvents string
+}
+
+// decodeOptions bundles the per-Decode tuning knobs the CLI surfaces.
+// SpatialLayer == spatialLayerHighest (-1) follows libaom aomdec's
+// output_all_layers=0 convention: emit the highest-SpatialID frame the
+// temporal unit publishes. A non-negative value pins emission to that
+// SpatialID, skipping temporal units that did not publish at that layer.
+type decodeOptions struct {
+	Quiet        bool
+	Log          io.Writer
+	SpatialLayer int8
 }
 
 // decoder owns the caller-supplied scratch needed to drive an SVC IVF
 // through the goav1 public residual stream runner. The layout mirrors
 // cmd/aom-go-dec/decoder.go: this command differs only in how it picks
 // which completed-frame surface to emit per temporal unit (the highest
-// spatial layer the temporal unit publishes).
+// spatial layer the temporal unit publishes, or the pinned layer ID
+// when -spatial-layer is set).
 //
 // The runner is bound around a single frame.Pool, which constrains us
 // to SVC streams whose spatial layers share one CodedWidth x Height
@@ -154,15 +172,20 @@ func (d *decoder) Close() {
 
 // Decode drives the bound payloads one temporal unit at a time. After
 // each payload it inspects the residual runner's Outputs slice and
-// writes only the highest-SpatialID completed frame for that temporal
-// unit, matching libaom aomdec's output_all_layers=0 convention.
+// writes the selected spatial layer's completed frame for that temporal
+// unit. With opts.SpatialLayer == spatialLayerHighest (-1) it matches
+// libaom aomdec's output_all_layers=0 convention (last non-nil output);
+// with a non-negative value it pins emission to that SpatialID.
 //
 // The runner's Outputs slice aliases caller-owned storage that gets
 // reused on the next call into the runner, so the *Frame samples must
 // be copied (or in our case, written to the io.Writer) before the next
 // Decode iteration.
-func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (decodeStats, error) {
+func (d *decoder) Decode(dst io.Writer, opts decodeOptions) (decodeStats, error) {
 	var stats decodeStats
+	if opts.Log == nil {
+		opts.Log = io.Discard
+	}
 
 	d.pool.Reset()
 	d.refs.Reset()
@@ -177,7 +200,12 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (decodeStats,
 		start := time.Now()
 		result = av1.DecoderFrameWorkResidualStreamResult{}
 		if err := d.runner.RunLowOverheadInto(&result, payload, nil); err != nil {
-			return stats, fmt.Errorf("payload %d (%d bytes): %w", i, len(payload), err)
+			// Annotate the failure with the layer composition of the
+			// failing payload so the caller knows which (T, S) pair was
+			// in flight at the moment of the proximate decoder error.
+			stats.FailureEvents = describePayloadLayers(payload)
+			return stats, fmt.Errorf("payload %d (%d bytes, layers=%s): %w",
+				i, len(payload), stats.FailureEvents, err)
 		}
 		stats.PayloadsConsumed++
 		stats.TemporalUnits++
@@ -185,31 +213,92 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (decodeStats,
 
 		// The residual runner can publish multiple completed frames per
 		// payload (e.g. an SVC temporal unit that publishes one frame
-		// per spatial layer). Walk the outputs to find the last
-		// non-nil frame (the runner appends outputs in event order, so
-		// the last one corresponds to the highest spatial layer the
-		// temporal unit reached).
-		var emit *av1.Frame
-		for _, frame := range result.Run.Outputs {
-			if frame != nil {
-				emit = frame
-				stats.CompletedFrames++
-			}
-		}
+		// per spatial layer). Walk the parsed events (which carry the
+		// SVC (T, S) tagging) in lock-step with the output slots to
+		// pick either the highest spatial layer (default) or the frame
+		// whose SpatialID matches opts.SpatialLayer.
+		events := d.runner.Events[:result.EventCount]
+		emit, emitSpatialID, completedInUnit := selectOutput(events, result.Run.Outputs, opts.SpatialLayer)
+		stats.CompletedFrames += completedInUnit
 		if emit != nil {
 			n, werr := writeYUVFrame(dst, emit)
 			stats.BytesOut += n
 			if werr != nil {
+				stats.FailureEvents = describePayloadLayers(payload)
 				return stats, fmt.Errorf("payload %d write: %w", i, werr)
 			}
 		}
-		if !quiet {
-			fmt.Fprintf(log, "tu=%d payload=%d ms=%.3f outputs=%d completed_frames=%d\n",
+		if !opts.Quiet {
+			fmt.Fprintf(opts.Log,
+				"tu=%d payload=%d ms=%.3f outputs=%d completed_frames=%d emit=%v emit_spatial_id=%d\n",
 				i, len(payload), float64(elapsed.Microseconds())/1000.0,
-				result.Run.OutputCount, result.Run.CompletedFrames)
+				result.Run.OutputCount, result.Run.CompletedFrames, emit != nil, emitSpatialID)
 		}
 	}
 	return stats, nil
+}
+
+// selectOutput pairs the parsed-event slice with the output slice to
+// pick the *Frame the CLI should emit for one payload. Output slots are
+// filled in event order (one slot per frame-publishing event, in the
+// order the runner processed those events), so by walking events and
+// outputs in lock-step we can correlate each output to the SpatialID
+// the event carried.
+//
+// Layer selection rules:
+//
+//   - spatialLayer == spatialLayerHighest (-1): emit the last non-nil
+//     entry. The residual stream runner processes events in OBU order
+//     and SVC OBUs are emitted in ascending SpatialID per temporal
+//     unit, so the last non-nil frame corresponds to the highest
+//     spatial layer the temporal unit reached. This matches libaom
+//     aomdec's default output_all_layers=0 behavior.
+//
+//   - spatialLayer >= 0: emit only the frame whose event SpatialID
+//     matches the pinned layer. If the temporal unit did not publish
+//     at that layer we return nil (and the caller writes no bytes for
+//     this temporal unit), which matches an SFU that drops everything
+//     above its operating point.
+//
+// The returned int is the total number of non-nil outputs in this
+// payload regardless of which one we pick, so the CLI's summary
+// reflects the total decode work the runner actually performed (not
+// just the bytes we serialised). The returned SpatialID is the layer
+// of the *Frame we emit, or -1 if no frame is emitted.
+func selectOutput(events []av1.DecoderEvent, outputs []*av1.Frame, spatialLayer int8) (*av1.Frame, int8, int) {
+	completed := 0
+	var last *av1.Frame
+	var lastSpatial int8 = -1
+	var pinned *av1.Frame
+	var pinnedSpatial int8 = -1
+	outIdx := 0
+	for i := range events {
+		if !av1.DecoderEventOutputsFrame(events[i]) {
+			continue
+		}
+		if outIdx >= len(outputs) {
+			break
+		}
+		frame := outputs[outIdx]
+		outIdx++
+		if frame == nil {
+			// Slot reserved for this event but the runner did not
+			// publish a surface (e.g. a hidden frame). Don't count
+			// it toward completed frames.
+			continue
+		}
+		completed++
+		last = frame
+		lastSpatial = int8(events[i].SpatialID)
+		if spatialLayer >= 0 && int8(events[i].SpatialID) == spatialLayer {
+			pinned = frame
+			pinnedSpatial = int8(events[i].SpatialID)
+		}
+	}
+	if spatialLayer >= 0 {
+		return pinned, pinnedSpatial, completed
+	}
+	return last, lastSpatial, completed
 }
 
 // writeYUVFrame writes a decoded frame's Y, U, V planes to dst stripping

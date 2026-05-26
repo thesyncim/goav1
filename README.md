@@ -326,8 +326,16 @@ A second example program under
 streams: it inspects the parsed sequence header's operating-points
 list, logs the per-(temporal, spatial) OBU fan-out, and dumps the
 highest-spatial-layer YUV per temporal unit (libaom
-`output_all_layers=0` behavior). Use `-svc-info` to print the SVC
-structure without decoding pixels:
+`output_all_layers=0` behavior). The CLI auto-installs
+`GOAV1_SCALED_PRED=1` into the process environment so SVC streams
+take the scaled-inter prediction path by default; pass
+`-scaled-pred=false` to disable. It also supports pinning a
+specific spatial layer through `-spatial-layer=N` and selecting the
+output sample format with `-format=i420|yuv420p10le` (or the
+`-i420` / `-yuv420p10le` shorthand aliases); format mismatches
+against the bitstream bit depth are rejected before any YUV bytes
+are written. Use `-svc-info` to print the SVC structure without
+decoding pixels:
 
 ```sh
 go build -o ./bin/dump_svc ./cmd/dump_svc
@@ -339,7 +347,10 @@ See [docs/svc.md](docs/svc.md) for the integrator-facing SVC guide
 and the current support snapshot. SVC decode is in active
 development; the L1T2 vector currently passes frame 0 lenient MD5
 but mismatches later frames, and L2T1 / L2T2 require the multi-pool
-surface routing path described in `docs/svc.md`.
+surface routing path described in `docs/svc.md`. When a decode
+error stops mid-stream the CLI exits non-zero and annotates the
+failing payload with its parsed (TemporalID, SpatialID) layer
+composition plus the proximate decoder error message.
 
 ## Status
 

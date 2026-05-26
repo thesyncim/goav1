@@ -362,8 +362,21 @@ GOAV1_SCALED_PRED=1 go test -tags goav1_oracle,goav1_scaled_pred \
 libaom's `aomdec` with the default `output_all_layers=0` emits exactly
 one YUV frame per temporal unit, at the highest `SpatialID` the
 temporal unit publishes. `cmd/dump_svc/main.go` follows the same
-convention so its output can be diffed against the libaom reference
-without per-layer interleaving.
+convention by default, and surfaces the choice through the
+`-spatial-layer=N` flag: `-1` (the default) emits the highest layer
+the temporal unit publishes, while a non-negative `N` pins emission
+to a specific `SpatialID` (any temporal unit that did not publish at
+that layer simply emits no bytes for that TU, mirroring an SFU that
+drops everything above its operating point).
+
+`cmd/dump_svc` also auto-installs `GOAV1_SCALED_PRED=1` into the
+process environment unless the caller passed `-scaled-pred=false`,
+which means out-of-the-box invocations of the CLI take the
+scaled-inter path whenever an SVC stream needs it. The companion
+output-format flags (`-format=i420 | yuv420p10le`, and the
+`-i420` / `-yuv420p10le` shorthand aliases) reject mismatches against
+the bitstream's bit depth so callers do not silently produce
+half-resolution YUV from a misconfigured filter chain.
 
 The selection rule applies *after* a temporal unit's events have all
 been driven through the runner:
