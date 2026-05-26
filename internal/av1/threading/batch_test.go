@@ -702,11 +702,16 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 130x65 frame, SBX=1 col, SBCols=2. The visible coded width is 130 so
+	// the second SB contributes a visible 130-64=66 pixel strip. The
+	// MI-aligned writable extent reaches mi_cols*4 = 34*4 = 136 luma
+	// pixels (mi_cols = ((130+7)>>3)<<1 = 34), so ClipWidth = 136-64 = 72.
 	if y.Plane != FrameWorkPlaneY || y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 ||
-		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 {
+		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 ||
+		y.ClipWidth != 72 || y.ClipHeight != 65 || y.ClipRowBytes != 72 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
-	if len(y.Pix) != (y.Height-1)*y.Stride+y.RowBytes {
+	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
 		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
 	}
 	y.Pix[0] = 0x7a
@@ -718,8 +723,10 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Chroma 4:2:0: visible width 65/2 rounded = 33, MI-aligned (luma 136 -> chroma 68): clip 68-32=36.
 	if u.Plane != FrameWorkPlaneU || u.X != 32 || u.Y != 0 || u.Width != 33 || u.Height != 33 ||
-		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 {
+		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 ||
+		u.ClipWidth != 36 || u.ClipHeight != 33 || u.ClipRowBytes != 36 {
 		t.Fatalf("U plane region=%+v", u)
 	}
 	u.Pix[0] = 0x55
@@ -732,7 +739,8 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v.Plane != FrameWorkPlaneV || v.X != 32 || v.Y != 0 || v.Width != 33 || v.Height != 33 ||
-		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 {
+		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 ||
+		v.ClipWidth != 36 || v.ClipHeight != 33 || v.ClipRowBytes != 36 {
 		t.Fatalf("V plane region=%+v", v)
 	}
 	v.Pix[0] = 0x33

@@ -203,20 +203,37 @@ func TestFrameWorkBatchPredictBlockInterClipsFrameEdge(t *testing.T) {
 // TestFrameWorkClipVisiblePixelsToWindow covers the boundary cases that show
 // up in the 34x34 libaom-extended fast-suite vector: MI-aligned blocks at the
 // right/bottom edge whose nominal extent (e.g. 4x4 or 8x8 transforms aligned
-// to MI col 8 in a 34-pixel-wide luma plane) overshoots the coded frame by 2
-// pixels and must clip down to the visible strip without losing the y or x
-// dimension. The chroma corner cases (4:2:0 17-pixel plane) round MI col 8
-// down to a 1-sample strip.
+// to MI col 8 in a 34-pixel-wide luma plane) overshoots the coded frame and
+// must clip down to the writable extent.
+//
+// When ClipWidth/ClipHeight are zero, the clamp falls back to Width/Height
+// (visible coded-frame edge) — this is the older single-extent behaviour and
+// is what the test harness in TestFrameWorkBatchPredictBlockLumaIntraDC and
+// friends still relies on.
+//
+// When ClipWidth/ClipHeight are set, the clamp clamps to the MI-aligned
+// writable extent (xd->mi_params.mi_cols * MI_SIZE in libaom; region.MIColEnd
+// * 4 in goav1). This is the regression behaviour pinned by the structural
+// past-visible-write fix: blocks that straddle the visible boundary keep
+// writing into the past-visible padding so later blocks see the same
+// neighbors libaom does. Frame-edge MD5 / output is still computed over the
+// visible Width/Height range; the past-visible writes land in the stride
+// padding that the MD5 harness ignores.
 func TestFrameWorkClipVisiblePixelsToWindow(t *testing.T) {
 	luma := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 34, Height: 34}
 	chroma := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 17, Height: 17}
+	// MI-aligned luma extent for a 34x34 frame: mi_cols = ((34+7)>>3)<<1 = 10,
+	// luma write extent = 10*4 = 40. Chroma 4:2:0 = 20.
+	lumaAligned := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 34, Height: 34, ClipWidth: 40, ClipHeight: 40}
+	chromaAligned := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 17, Height: 17, ClipWidth: 20, ClipHeight: 20}
 	tests := []struct {
-		name              string
-		window            FrameWorkPlaneRegion
-		x, y, w, h        int
-		wantW, wantH      int
-		wantOK            bool
+		name         string
+		window       FrameWorkPlaneRegion
+		x, y, w, h   int
+		wantW, wantH int
+		wantOK       bool
 	}{
+		// Visible-extent fallback (legacy semantics).
 		{"luma corner 8x8 visible 2x2", luma, 32, 32, 8, 8, 2, 2, true},
 		{"luma right 4x8 visible 2x8", luma, 32, 8, 4, 8, 2, 8, true},
 		{"luma right 4x4 visible 2x4", luma, 32, 16, 4, 4, 2, 4, true},
@@ -233,6 +250,21 @@ func TestFrameWorkClipVisiblePixelsToWindow(t *testing.T) {
 		{"zero width rejects", luma, 0, 0, 0, 4, 0, 0, false},
 		{"zero height rejects", luma, 0, 0, 4, 0, 0, 0, false},
 		{"negative origin rejects", luma, -1, 0, 4, 4, 0, 0, false},
+		// Aligned-extent semantics: ClipWidth/ClipHeight > Width/Height.
+		// A block whose nominal extent fits inside the MI-aligned write
+		// extent must return its full size, not the smaller visible clip.
+		{"aligned luma corner 8x8 full 8x8", lumaAligned, 32, 32, 8, 8, 8, 8, true},
+		{"aligned luma right 4x8 full 4x8", lumaAligned, 32, 8, 4, 8, 4, 8, true},
+		{"aligned luma right 4x4 full 4x4", lumaAligned, 32, 16, 4, 4, 4, 4, true},
+		{"aligned luma bottom 16x8 full 16x8", lumaAligned, 0, 32, 16, 8, 16, 8, true},
+		{"aligned luma MI col 9 4x4 full 4x4", lumaAligned, 36, 8, 4, 4, 4, 4, true},
+		{"aligned luma MI col 9 8x8 full 4x8", lumaAligned, 36, 0, 8, 8, 4, 8, true},
+		{"aligned luma at exact aligned boundary", lumaAligned, 40, 0, 4, 4, 0, 0, false},
+		{"aligned chroma corner 4x4 full 4x4", chromaAligned, 16, 16, 4, 4, 4, 4, true},
+		{"aligned chroma right 2x4 full 2x4", chromaAligned, 16, 8, 2, 4, 2, 4, true},
+		{"aligned chroma bottom 4x2 full 4x2", chromaAligned, 8, 16, 4, 2, 4, 2, true},
+		{"aligned chroma 2x4 at MI col 9 full 2x4", chromaAligned, 18, 0, 2, 4, 2, 4, true},
+		{"aligned chroma block at exact aligned boundary", chromaAligned, 20, 0, 2, 4, 0, 0, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,6 +274,102 @@ func TestFrameWorkClipVisiblePixelsToWindow(t *testing.T) {
 					tc.x, tc.y, tc.w, tc.h, gotW, gotH, ok, tc.wantW, tc.wantH, tc.wantOK)
 			}
 		})
+	}
+}
+
+// TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment pins the MI-aligned
+// writable extent that JobOutputPlane records on a 34x34 frame's output
+// region. The visible Width/Height stay at the coded-frame edge (34 / 17 for
+// chroma 4:2:0) but ClipWidth/ClipHeight extend to mi_cols * MI_SIZE
+// (40 luma, 20 chroma). The window's Pix slice extends through
+// (ClipHeight-1)*Stride + ClipRowBytes so AV1 prediction and residual writes
+// past the visible edge stay within the underlying plane buffer.
+//
+// This is the regression behaviour locked in for the structural
+// past-visible-write fix: predictors that previously zero-clipped at col 34
+// (luma) / 17 (chroma) now write up to col 39 / 19, exactly mirroring
+// libaom's xd->mi_params.mi_cols * MI_SIZE write boundary.
+func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        34,
+		Height:       34,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	ctx := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: 34, Height: 34},
+		},
+		Jobs: []tile.Job{
+			{Tile: 0, Row: 0, Col: 0, SBX: 0, SBY: 0, SBCols: 1, SBRows: 1},
+		},
+	}
+	y, err := ctx.JobOutputPlane(0, FrameWorkPlaneY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y.X != 0 || y.Y != 0 || y.Width != 34 || y.Height != 34 ||
+		y.ClipWidth != 40 || y.ClipHeight != 34 || y.ClipRowBytes != 40 {
+		t.Fatalf("Y plane region=%+v", y)
+	}
+	// Luma plane.Height = 34 caps ClipHeight at 34 (mi_aligned 40 > 34, so
+	// the buffer's visible Height bounds win). Past-visible writes land in
+	// the stride padding (Stride bytes per row).
+	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
+		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
+	}
+	if y.Stride < y.ClipRowBytes {
+		t.Fatalf("Y Stride=%d ClipRowBytes=%d", y.Stride, y.ClipRowBytes)
+	}
+
+	u, err := ctx.JobOutputPlane(0, FrameWorkPlaneU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.X != 0 || u.Y != 0 || u.Width != 17 || u.Height != 17 ||
+		u.ClipWidth != 20 || u.ClipHeight != 17 || u.ClipRowBytes != 20 {
+		t.Fatalf("U plane region=%+v", u)
+	}
+	if len(u.Pix) != (u.ClipHeight-1)*u.Stride+u.ClipRowBytes {
+		t.Fatalf("U len=%d region=%+v", len(u.Pix), u)
+	}
+	v, err := ctx.JobOutputPlane(0, FrameWorkPlaneV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.X != 0 || v.Y != 0 || v.Width != 17 || v.Height != 17 ||
+		v.ClipWidth != 20 || v.ClipHeight != 17 || v.ClipRowBytes != 20 {
+		t.Fatalf("V plane region=%+v", v)
+	}
+	// Verify the clip helper accepts past-visible writes: a 4x4 luma block at
+	// MI col 8 (luma pixel 32) of a 34-wide frame returns the full 4x4
+	// (writable past visible) instead of clipping to (2,4).
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(y, 32, 0, 4, 4); !ok || w != 4 || h != 4 {
+		t.Fatalf("luma MI col 8 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
+	}
+	// And a 4x4 luma block at MI col 9 (luma pixel 36) returns (4,4) instead
+	// of failing (its origin is within the aligned write extent of 40).
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(y, 36, 0, 4, 4); !ok || w != 4 || h != 4 {
+		t.Fatalf("luma MI col 9 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
+	}
+	// A block past the aligned extent still fails.
+	if _, _, ok := frameWorkClipVisiblePixelsToWindow(y, 40, 0, 4, 4); ok {
+		t.Fatalf("luma at aligned boundary should reject")
+	}
+	// Chroma equivalents: 2x2 block at chroma MI col 8 (chroma pixel 16) and
+	// MI col 9 (chroma pixel 18) both stay inside the aligned chroma extent
+	// of 20.
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(u, 16, 0, 4, 4); !ok || w != 4 || h != 4 {
+		t.Fatalf("chroma MI col 8 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
+	}
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(u, 18, 0, 2, 4); !ok || w != 2 || h != 4 {
+		t.Fatalf("chroma MI col 9 2x4 clip=(%d,%d,%v) want (2,4,true)", w, h, ok)
 	}
 }
 

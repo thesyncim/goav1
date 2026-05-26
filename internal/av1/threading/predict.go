@@ -358,12 +358,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		}
 		return ErrInvalidBatch
 	}
-	dst := frame.Plane{
-		Pix:    window.Pix,
-		Stride: window.Stride,
-		Width:  window.Width,
-		Height: window.Height,
-	}
+	dst := frameWorkPlaneFromWindow(window)
 	absX := x
 	absY := y
 	x -= window.X
@@ -441,12 +436,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 		}
 		return ErrInvalidBatch
 	}
-	dst := frame.Plane{
-		Pix:    window.Pix,
-		Stride: window.Stride,
-		Width:  window.Width,
-		Height: window.Height,
-	}
+	dst := frameWorkPlaneFromWindow(window)
 	x := absX - window.X
 	y := absY - window.Y
 	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, tx.X4, tx.Y4)
@@ -1571,6 +1561,13 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 	if outputSubX != subsamplingX || outputSubY != subsamplingY {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
+	// Extend the predictor's plane bound to the MI-aligned writable extent so
+	// prediction writes past the visible edge land in the underlying buffer's
+	// past-visible stride padding instead of failing the planeBlockWindow
+	// bounds check (libaom writes whole transform blocks regardless of where
+	// the visible boundary lands; later blocks read those samples as
+	// predictor neighbors).
+	output = frameWorkExtendPlaneToClip(output, window, b.Output.Layout.BytesPerSample)
 	return frameWorkPredictionPlaneGeometry{
 		Output:         output,
 		Window:         window,
@@ -1582,6 +1579,53 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 		SubsamplingY:   subsamplingY,
 		BytesPerSample: b.Output.Layout.BytesPerSample,
 	}, true, nil
+}
+
+// frameWorkExtendPlaneToClip returns a frame.Plane view whose Width/Height
+// span the window's MI-aligned writable extent. The plane.Pix slice is widened
+// to (clipHeight-1)*Stride + clipWidth*BytesPerSample so prediction writes
+// past the visible edge stay within the underlying frame buffer. When the
+// window has no recorded clip extent the plane is returned unchanged.
+func frameWorkExtendPlaneToClip(plane frame.Plane, window FrameWorkPlaneRegion, bytesPerSample int) frame.Plane {
+	clipWidth := window.ClipWidth
+	if clipWidth <= 0 {
+		clipWidth = window.Width
+	}
+	clipHeight := window.ClipHeight
+	if clipHeight <= 0 {
+		clipHeight = window.Height
+	}
+	// Translate window-relative clip extent (which starts at window.X /
+	// window.Y) into plane-relative bounds.
+	planeWidth := window.X + clipWidth
+	planeHeight := window.Y + clipHeight
+	if planeWidth <= plane.Width && planeHeight <= plane.Height {
+		return plane
+	}
+	if planeWidth > plane.Stride/bytesPerSample {
+		planeWidth = plane.Stride / bytesPerSample
+	}
+	if planeWidth < plane.Width {
+		planeWidth = plane.Width
+	}
+	if planeHeight < plane.Height {
+		planeHeight = plane.Height
+	}
+	// Recompute Pix length to span (planeHeight-1)*Stride + planeWidth*BPS.
+	// The original Pix already spans the full plane buffer; we just need to
+	// ensure callers can read/write up to the new bounds. Don't extend Pix
+	// beyond the existing slice length; that would be a logic bug.
+	newRowBytes := planeWidth * bytesPerSample
+	newLen := (planeHeight-1)*plane.Stride + newRowBytes
+	if newLen > len(plane.Pix) {
+		newLen = len(plane.Pix)
+	}
+	return frame.Plane{
+		Pix:    plane.Pix[:newLen],
+		Stride: plane.Stride,
+		Width:  planeWidth,
+		Height: planeHeight,
+	}
 }
 
 func frameWorkPredictionPlaneEdgeBlock(block tile.BlockVisit, geom frameWorkPredictionPlaneGeometry) tile.BlockVisit {
@@ -2784,31 +2828,72 @@ func frameWorkBlockLumaPredictionExtentPixels(block tile.BlockVisit) (int, int, 
 	return int(dims.W4) * 4, int(dims.H4) * 4, nil
 }
 
+// frameWorkPlaneFromWindow returns a frame.Plane view that spans the window's
+// writable (MI-aligned) extent. Width/Height match ClipWidth/ClipHeight when
+// set (falling back to Width/Height); this is the extent prediction and
+// residual writes may legitimately reach when blocks straddle the visible
+// edge.
+func frameWorkPlaneFromWindow(window FrameWorkPlaneRegion) frame.Plane {
+	width := window.ClipWidth
+	if width <= 0 {
+		width = window.Width
+	}
+	height := window.ClipHeight
+	if height <= 0 {
+		height = window.Height
+	}
+	return frame.Plane{
+		Pix:    window.Pix,
+		Stride: window.Stride,
+		Width:  width,
+		Height: height,
+	}
+}
+
 // frameWorkClipVisiblePixelsToWindow trims a block's pixel rectangle to the
 // caller's plane window. The window's pixel-grid origin is (window.X,
-// window.Y) and its visible extent is window.Width x window.Height samples.
-// Callers pass the block's absolute plane-grid coordinates plus its MI-aligned
-// visible width and height; the helper returns the rectangle clipped to the
-// window's coded-frame edge.
+// window.Y); writes are permitted up to the MI-aligned trailing edge
+// (window.ClipWidth x window.ClipHeight, falling back to window.Width x
+// window.Height when ClipWidth/ClipHeight are zero). Callers pass the block's
+// absolute plane-grid coordinates plus its MI-aligned visible width and
+// height; the helper returns the rectangle clipped to the window's writable
+// (MI-aligned) edge.
+//
+// AV1 prediction and residual writes may legitimately land past the visible
+// coded-frame edge: libaom writes whole transform blocks regardless of the
+// visible boundary and later blocks read those past-visible samples as
+// predictor neighbors. The writable extent is the MI-aligned region
+// (xd->mi_params.mi_cols * MI_SIZE in libaom; region.MIColEnd*4 in goav1),
+// not the visible width. Clipping to the visible width drops past-visible
+// stores and causes downstream blocks to read zeros where libaom has the
+// previously-written samples. Use frameWorkPlaneBlockStartsBeyondOutput
+// to detect blocks whose origin lies entirely past the coded frame (the
+// MI grid can round up beyond the visible region; those blocks are
+// silently skipped).
 //
 // The clamp returns ok=false when the block's origin lands outside the
-// window (negative coordinates or x/y at or past the window end). When ok is
-// true the returned (width, height) is the largest sub-rectangle that fits
-// inside the window: blocks that straddle the right/bottom frame boundary
-// (e.g. a 4x4/4x8/8x4 transform at the 34-pixel edge of a 34x34 frame) are
-// reduced to the visible 2-pixel strip in luma or the 1-pixel strip in
-// 4:2:0 chroma. Callers must use the returned width/height for the
-// downstream writeback and the input predWidth/predHeight for libaom's
-// edge/DC/Smooth sample weighting.
+// writable region (negative coordinates or x/y at or past the writable end).
+// When ok is true the returned (width, height) is the largest sub-rectangle
+// that fits inside the writable region. Callers must use the returned
+// width/height for the downstream writeback and the input predWidth/predHeight
+// for libaom's edge/DC/Smooth sample weighting.
 func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y int, width int, height int) (int, int, bool) {
 	if width <= 0 || height <= 0 || x < window.X || y < window.Y {
 		return 0, 0, false
 	}
-	windowXEnd, ok := frameWorkCheckedAdd(window.X, window.Width)
+	clipWidth := window.ClipWidth
+	if clipWidth <= 0 {
+		clipWidth = window.Width
+	}
+	clipHeight := window.ClipHeight
+	if clipHeight <= 0 {
+		clipHeight = window.Height
+	}
+	windowXEnd, ok := frameWorkCheckedAdd(window.X, clipWidth)
 	if !ok {
 		return 0, 0, false
 	}
-	windowYEnd, ok := frameWorkCheckedAdd(window.Y, window.Height)
+	windowYEnd, ok := frameWorkCheckedAdd(window.Y, clipHeight)
 	if !ok {
 		return 0, 0, false
 	}

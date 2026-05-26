@@ -1,7 +1,6 @@
 package threading
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/reconstruct"
@@ -98,12 +97,7 @@ func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeff
 		return ErrInvalidBatch
 	}
 
-	dst := frame.Plane{
-		Pix:    geom.window.Pix,
-		Stride: geom.window.Stride,
-		Width:  geom.window.Width,
-		Height: geom.window.Height,
-	}
+	dst := frameWorkPlaneFromWindow(geom.window)
 	cfg := reconstruct.Block{
 		Size:           geom.size,
 		Transform:      req.Transform,
