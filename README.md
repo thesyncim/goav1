@@ -398,6 +398,48 @@ The `MB/s` column is computed from the IVF bitstream byte count; the
 `frames/s` metric is added via `b.ReportMetric` and is the most useful
 single number for capacity planning.
 
+### Post-filter performance
+
+The frame-level post-filter chain (loop filter -> CDEF -> loop
+restoration) dominates the cost of any frame that signals all three
+stages. The benchmarks in
+`internal/av1/decoder/postfilter_chain_bench_test.go` measure each
+stage in isolation and as a chain on a shared synthetic 128x128 4:2:0
+8-bit frame so the per-stage cost is directly comparable:
+
+```sh
+go test -bench='^BenchmarkApply(LoopFilter|CDEF|LoopRestoration|FullPostFilter)$' \
+        -benchtime=5s -run=^$ ./internal/av1/decoder
+```
+
+Example output on an Apple M4 Max with Go 1.23 (lower is better; the
+`MB/s` denominator is the decoded pixel byte count Y+U+V):
+
+| Stage              | ns/op     | ms/frame | MB/s  | Share of full chain |
+|--------------------|-----------|----------|-------|---------------------|
+| Loop filter        |   727 570 |   0.728  | 33.78 |                ~29% |
+| CDEF               | 1 480 415 |   1.480  | 16.60 |                ~59% |
+| Loop restoration   |   341 944 |   0.342  | 71.87 |                ~14% |
+| Full chain (LF+CDEF+LR) | 2 497 145 |   2.497  |  9.84 |              100% |
+
+The shares slightly exceed 100% because each stage benchmark warms its
+own caches in isolation; the chained benchmark amortises some of that
+cost across all three stages.
+
+Notes:
+- The frame size is intentionally bounded to 128x128 luma because the
+  loop-filter benchmark fixture packs every 16x16 block into a single
+  super-block mode context (32 4x4-slot limit). Throughput scales
+  approximately linearly with frame area, so the MB/s column is the
+  best cross-size comparison metric.
+- All scratch buffers are bound once during fixture setup; the
+  per-iteration hot path stays at `0 B/op`, matching the rest of the
+  decoder.
+- Film grain and super-res are not in the supported frame-pool
+  publication chain on this fixture, so the "Full chain" benchmark
+  reflects the steady-state cost of the three stages that are always
+  applied together on the publishable surface.
+
 ### Per-stage micro-benchmarks
 
 The most expensive decode stages each have benchmarks in their own
