@@ -61,6 +61,17 @@ type BlockModeContext struct {
 	LeftCompGroup    [MaxBlockModeSlots]uint8
 	AboveCompIndex   [MaxBlockModeSlots]uint8
 	LeftCompIndex    [MaxBlockModeSlots]uint8
+	// AboveInterIntra/LeftInterIntra mirror libaom's per-MI inter-intra
+	// status. libaom records inter-intra blocks with
+	// mbmi->ref_frame[1] = INTRA_FRAME while goav1 keeps Ref[1] =
+	// ReferenceFrameNone for them. Neighbor scans that need to know
+	// "has any second ref" (ref_frame[1] != NONE_FRAME) - distinct from
+	// "has an inter second ref" (has_second_ref, i.e. ref_frame[1] >
+	// INTRA_FRAME) - consult this flag. Notably av1_findSamples rejects
+	// inter-intra neighbors as warp-affine sample sources because their
+	// ref_frame[1] is INTRA_FRAME, not NONE_FRAME.
+	AboveInterIntra  [MaxBlockModeSlots]uint8
+	LeftInterIntra   [MaxBlockModeSlots]uint8
 	AboveInterMotion [MaxBlockModeSlots]InterMotionResult
 	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
 	AboveMotionValid [MaxBlockModeSlots]uint8
