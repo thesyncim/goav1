@@ -213,25 +213,27 @@ func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext
 		return err
 	}
 	use, err := s.Reader.ReadCDF(modeCDF)
-	if err != nil || use == 0 {
-		return err
-	}
-	sizeCDF, err := cdfs.PaletteYSizeCDF(sizeCtx)
 	if err != nil {
 		return err
 	}
-	sizeSym, err := s.Reader.ReadCDF(sizeCDF)
-	if err != nil {
-		return err
+	if use != 0 {
+		sizeCDF, err := cdfs.PaletteYSizeCDF(sizeCtx)
+		if err != nil {
+			return err
+		}
+		sizeSym, err := s.Reader.ReadCDF(sizeCDF)
+		if err != nil {
+			return err
+		}
+		dst.YSize = uint8(sizeSym + PaletteMinSize)
+		if err := s.readPaletteColorsY(ctx, req, dst); err != nil {
+			return fmt.Errorf("palette colors y size=%d block=%v x4=%d y4=%d: %w", dst.YSize, req.Size, req.X4, req.Y4, err)
+		}
+		if err := s.readPaletteColorMapY(cdfs, req, dst, &mapScratch.Y); err != nil {
+			return fmt.Errorf("palette map y size=%d block=%v x4=%d y4=%d colors=%v: %w", dst.YSize, req.Size, req.X4, req.Y4, dst.YColors, err)
+		}
+		dst.YMap = &mapScratch.Y
 	}
-	dst.YSize = uint8(sizeSym + PaletteMinSize)
-	if err := s.readPaletteColorsY(ctx, req, dst); err != nil {
-		return fmt.Errorf("palette colors y size=%d block=%v x4=%d y4=%d: %w", dst.YSize, req.Size, req.X4, req.Y4, err)
-	}
-	if err := s.readPaletteColorMapY(cdfs, req, dst, &mapScratch.Y); err != nil {
-		return fmt.Errorf("palette map y size=%d block=%v x4=%d y4=%d colors=%v: %w", dst.YSize, req.Size, req.X4, req.Y4, dst.YColors, err)
-	}
-	dst.YMap = &mapScratch.Y
 	return s.readPaletteModeUV(cdfs, ctx, req, dst, mapScratch)
 }
 
