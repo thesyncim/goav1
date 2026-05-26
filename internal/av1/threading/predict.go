@@ -2047,10 +2047,6 @@ func frameWorkInterScratchPlane(buf []byte, bytesPerSample int, width int, heigh
 	}, nil
 }
 
-func frameWorkAverageCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int) error {
-	return frameWorkBlendCompoundBlock(dst, first, second, bytesPerSample, dstX, dstY, width, height, 8, 8)
-}
-
 func frameWorkOBMCAboveHeight(size tile.BlockSize, geom frameWorkPredictionPlaneGeometry) (int, error) {
 	dims, ok := size.Dimensions()
 	if !ok {

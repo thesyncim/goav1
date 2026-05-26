@@ -246,29 +246,6 @@ func frameWorkBlockCoeffPosition(region FrameWorkJobRegion, visit tile.BlockVisi
 	return x, y, nil
 }
 
-func frameWorkPlaneBlockFits(region FrameWorkPlaneRegion, x int, y int, width int, height int) bool {
-	if width <= 0 || height <= 0 || x < region.X || y < region.Y {
-		return false
-	}
-	xEnd, ok := frameWorkCheckedAdd(x, width)
-	if !ok {
-		return false
-	}
-	yEnd, ok := frameWorkCheckedAdd(y, height)
-	if !ok {
-		return false
-	}
-	regionXEnd, ok := frameWorkCheckedAdd(region.X, region.Width)
-	if !ok {
-		return false
-	}
-	regionYEnd, ok := frameWorkCheckedAdd(region.Y, region.Height)
-	if !ok {
-		return false
-	}
-	return xEnd <= regionXEnd && yEnd <= regionYEnd
-}
-
 func frameWorkQuantizePlane(plane FrameWorkPlane) (quantize.Plane, bool) {
 	switch plane {
 	case FrameWorkPlaneY:

@@ -1202,14 +1202,6 @@ func mustFrameWorkTileResidualCDFs(t *testing.T, baseQIndex uint8) FrameWorkTile
 	return storage.CDFs()
 }
 
-func testFrameWorkDCTTransforms(tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	return FrameWorkBlockTransforms{
-		Inter:  true,
-		Luma:   transform.TypeDCTDCT,
-		Chroma: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
-	}, nil
-}
-
 func testFrameWorkResidualScratch(t *testing.T, ctx FrameWorkBatch, size transform.Size, typ transform.Type) ([]int32, []int16) {
 	t.Helper()
 	q, lossless, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, FrameWorkPlaneY)

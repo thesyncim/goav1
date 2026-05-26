@@ -22,10 +22,6 @@ func predictPaeth(block planeBlock, bytesPerSample int, above []uint16, left []u
 	}
 }
 
-func predictSmooth(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	return predictSmoothWithExtent(block, bytesPerSample, block.width, block.height, above, left)
-}
-
 func predictSmoothWithExtent(block planeBlock, bytesPerSample int, predWidth int, predHeight int, above []uint16, left []uint16) error {
 	weightsW, err := smoothWeightsForSize(predWidth)
 	if err != nil {
@@ -50,10 +46,6 @@ func predictSmoothWithExtent(block planeBlock, bytesPerSample int, predWidth int
 	return nil
 }
 
-func predictSmoothVertical(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	return predictSmoothVerticalWithExtent(block, bytesPerSample, block.height, above, left)
-}
-
 func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predHeight int, above []uint16, left []uint16) error {
 	weights, err := smoothWeightsForSize(predHeight)
 	if err != nil {
@@ -69,10 +61,6 @@ func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predH
 		}
 	}
 	return nil
-}
-
-func predictSmoothHorizontal(block planeBlock, bytesPerSample int, above []uint16, left []uint16) error {
-	return predictSmoothHorizontalWithExtent(block, bytesPerSample, block.width, above, left)
 }
 
 func predictSmoothHorizontalWithExtent(block planeBlock, bytesPerSample int, predWidth int, above []uint16, left []uint16) error {
