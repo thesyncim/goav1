@@ -308,3 +308,94 @@ func BenchmarkPoolExecuteFrameWork(b *testing.B) {
 func noopFrameWorkBatch(FrameWorkBatch) error {
 	return nil
 }
+
+// TestFrameWorkPlaneRangeChromaSubsampleMatchesLibaomCeil pins the chroma
+// sub-sampling formula used by frameWorkPlaneRange. AV1 / libaom compute the
+// chroma extent from a luma extent as ROUND_POWER_OF_TWO(end, ss), i.e.
+// (end + ss) >> ss for ss in {0, 1}. For ss=1 (4:2:0 / 4:2:2 / 4:4:0) the
+// expanded form (end + 1) >> 1 is mathematically identical to the implemented
+// (end >> 1) + (end & 1):
+//
+//	end even N:  N/2 == (N + 1) >> 1 == (N >> 1) + 0
+//	end odd  N:  (N+1)/2 == (N + 1) >> 1 == (N >> 1) + 1
+//
+// This ceil rounding is REQUIRED at frame edges where CodedWidth/CodedHeight
+// can be odd: the partially-covered last luma column (or row) MUST contribute
+// its chroma sample to the visible/MD5 extent (frame/buffer.go allocates
+// the chroma plane as (W + ssx) >> ssx samples wide). Switching to floor
+// rounding (end >> 1) would silently drop the rightmost chroma column on
+// odd-CodedWidth frames such as the 1x1 fast-suite 1280x720, leaking a
+// stride-padding sample into the MD5.
+//
+// AV1 tile/SB boundaries are always MI-aligned (multiples of MI_SIZE=4 luma
+// pixels => even), so inner boundaries are unaffected by ceil-vs-floor; the
+// formula's odd-end branch only fires at the right/bottom frame edge.
+func TestFrameWorkPlaneRangeChromaSubsampleMatchesLibaomCeil(t *testing.T) {
+	tests := []struct {
+		start uint32
+		end   uint32
+		// wantStart/wantEnd are the chroma extents when subsampled=true.
+		wantStart uint32
+		wantEnd   uint32
+	}{
+		// Even (MI-aligned) ends: ceil == floor.
+		{start: 0, end: 0, wantStart: 0, wantEnd: 0},
+		{start: 0, end: 8, wantStart: 0, wantEnd: 4},
+		{start: 0, end: 64, wantStart: 0, wantEnd: 32},
+		{start: 64, end: 128, wantStart: 32, wantEnd: 64},
+		{start: 0, end: 640, wantStart: 0, wantEnd: 320}, // SVC L2T1 base width
+		{start: 0, end: 1280, wantStart: 0, wantEnd: 640},
+		// Odd ends (only valid at frame edges): ceil must round up.
+		{start: 0, end: 1, wantStart: 0, wantEnd: 1},
+		{start: 0, end: 17, wantStart: 0, wantEnd: 9}, // 34x34 +1 visible would be 17
+		{start: 0, end: 33, wantStart: 0, wantEnd: 17},
+		{start: 0, end: 35, wantStart: 0, wantEnd: 18}, // 35-wide frame edge
+		{start: 0, end: 67, wantStart: 0, wantEnd: 34}, // 67-wide frame edge
+		{start: 64, end: 67, wantStart: 32, wantEnd: 34},
+	}
+	for _, tt := range tests {
+		// Subsampled axis: must match libaom's ROUND_POWER_OF_TWO(end, 1).
+		gotStart, gotEnd := frameWorkPlaneRange(tt.start, tt.end, true)
+		libaomEnd := (tt.end + 1) >> 1
+		libaomStart := tt.start >> 1
+		if gotStart != tt.wantStart || gotEnd != tt.wantEnd {
+			t.Fatalf("frameWorkPlaneRange(%d,%d,true)=(%d,%d) want (%d,%d)", tt.start, tt.end, gotStart, gotEnd, tt.wantStart, tt.wantEnd)
+		}
+		if gotEnd != libaomEnd {
+			t.Fatalf("frameWorkPlaneRange(%d,%d,true) end=%d != libaom (end+1)>>1=%d", tt.start, tt.end, gotEnd, libaomEnd)
+		}
+		// Start uses floor (start >> 1). Tile/SB starts are always MI-aligned
+		// (multiples of MI_SIZE=4 luma => even), so floor and ceil agree, but
+		// the formula's left edge must NEVER round up, otherwise two adjacent
+		// jobs with MI-aligned boundaries would overlap on the chroma column.
+		if gotStart != libaomStart {
+			t.Fatalf("frameWorkPlaneRange(%d,%d,true) start=%d != floor (start>>1)=%d", tt.start, tt.end, gotStart, libaomStart)
+		}
+		// Non-subsampled axis: identity.
+		gotStart, gotEnd = frameWorkPlaneRange(tt.start, tt.end, false)
+		if gotStart != tt.start || gotEnd != tt.end {
+			t.Fatalf("frameWorkPlaneRange(%d,%d,false)=(%d,%d) want (%d,%d)", tt.start, tt.end, gotStart, gotEnd, tt.start, tt.end)
+		}
+	}
+}
+
+// TestFrameWorkPlaneRangeAdjacentJobsNoChromaOverlap pins that two jobs whose
+// MI-aligned luma extents abut at an even luma column (every valid AV1 tile/SB
+// boundary) produce chroma ranges that abut without overlap: job A's chroma
+// end equals job B's chroma start. This is the safety property that prevents
+// the formula from leaking one chroma column of writes from one SB stripe
+// into the next.
+func TestFrameWorkPlaneRangeAdjacentJobsNoChromaOverlap(t *testing.T) {
+	// Walk every plausible MI-aligned boundary up to a generous limit. MI_SIZE
+	// is 4 luma pixels and SB sizes are >= 64, so any tile/SB-aligned boundary
+	// is a multiple of 4 (hence even). Cover the broader "multiple of 4" set
+	// to be safe.
+	for boundary := uint32(0); boundary <= 4096; boundary += 4 {
+		// Job A: [0, boundary). Job B: [boundary, boundary+8).
+		_, aEnd := frameWorkPlaneRange(0, boundary, true)
+		bStart, _ := frameWorkPlaneRange(boundary, boundary+8, true)
+		if aEnd != bStart {
+			t.Fatalf("boundary luma=%d chroma aEnd=%d bStart=%d (gap or overlap)", boundary, aEnd, bStart)
+		}
+	}
+}

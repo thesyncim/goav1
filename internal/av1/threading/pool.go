@@ -612,6 +612,21 @@ func frameWorkFramePlane(output *frame.Frame, plane FrameWorkPlane) (frame.Plane
 	}
 }
 
+// frameWorkPlaneRange projects a luma [start, end) pixel range onto its
+// chroma extent when the axis is sub-sampled (ss=1). It implements libaom's
+// chroma-extent convention: floor on the start, ceil on the end. The end
+// formula (end >> 1) + (end & 1) is the expanded form of libaom's
+// ROUND_POWER_OF_TWO(end, ss) for ss=1, i.e. (end + 1) >> 1 — they produce
+// identical results for every uint32 input. Ceil rounding on the end is
+// REQUIRED at frame edges where CodedWidth/Height can be odd (the partially
+// covered last luma column contributes a chroma sample to the visible/MD5
+// extent). Tile/SB boundaries are always MI-aligned (multiples of MI_SIZE=4
+// luma => even), so the odd-end branch only fires at the right/bottom frame
+// edge; floor and ceil agree for every interior boundary, which keeps two
+// abutting MI-aligned jobs from overlapping on the chroma column. See
+// TestFrameWorkPlaneRangeChromaSubsampleMatchesLibaomCeil and
+// TestFrameWorkPlaneRangeAdjacentJobsNoChromaOverlap for the pinned
+// behaviour.
 func frameWorkPlaneRange(start uint32, end uint32, subsampled bool) (uint32, uint32) {
 	if !subsampled {
 		return start, end
