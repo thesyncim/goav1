@@ -19,6 +19,56 @@ type DecoderModelInfo = internalparser.DecoderModelInfo
 // list, describing the scalable layer combinations a decoder may select.
 type OperatingPoint = internalparser.OperatingPoint
 
+// AV1 scalability constants mirroring the operating_point_idc() syntax
+// element (AV1 spec section 6.4.1).
+const (
+	// MaxOperatingPointTemporalLayers is the maximum temporal_id count a
+	// single operating_point_idc value can describe.
+	MaxOperatingPointTemporalLayers = internalparser.MaxOperatingPointTemporalLayers
+
+	// MaxOperatingPointSpatialLayers is the maximum spatial_id count a
+	// single operating_point_idc value can describe.
+	MaxOperatingPointSpatialLayers = internalparser.MaxOperatingPointSpatialLayers
+
+	// OperatingPointIDCBits is the width of the operating_point_idc
+	// syntax element in bits.
+	OperatingPointIDCBits = internalparser.OperatingPointIDCBits
+
+	// OperatingPointIDCAnyLayer is the operating_point_idc sentinel that
+	// selects every (temporal_id, spatial_id) combination.
+	OperatingPointIDCAnyLayer = internalparser.OperatingPointIDCAnyLayer
+)
+
+// OperatingPointIDCMatches reports whether a layer-tagged OBU with the
+// supplied (temporal_id, spatial_id) participates in the operating point
+// described by idc. idc == OperatingPointIDCAnyLayer matches every layer;
+// otherwise the OBU participates only if both layer-bit positions are set
+// in idc, matching libaom's is_obu_in_current_operating_point().
+func OperatingPointIDCMatches(idc uint16, temporalID uint8, spatialID uint8) bool {
+	return internalparser.OperatingPointIDCMatches(idc, temporalID, spatialID)
+}
+
+// OperatingPointTemporalLayerCount reports the number of distinct
+// temporal layers selected by idc per AV1 spec section 6.4.1. idc == 0
+// yields 1.
+func OperatingPointTemporalLayerCount(idc uint16) uint8 {
+	return internalparser.OperatingPointTemporalLayerCount(idc)
+}
+
+// OperatingPointSpatialLayerCount reports the number of distinct spatial
+// layers selected by idc per AV1 spec section 6.4.1. idc == 0 yields 1.
+func OperatingPointSpatialLayerCount(idc uint16) uint8 {
+	return internalparser.OperatingPointSpatialLayerCount(idc)
+}
+
+// SelectOperatingPoint returns the first index into
+// seq.OperatingPoints[:seq.OperatingPointsCount] whose IDC covers the
+// supplied (temporal_id, spatial_id), matching libaom's "first match wins"
+// convention. ok is false when no operating point covers the layer pair.
+func SelectOperatingPoint(seq SequenceHeader, temporalID uint8, spatialID uint8) (index int, ok bool) {
+	return internalparser.SelectOperatingPoint(seq, temporalID, spatialID)
+}
+
 // ColorConfig is the AV1 sequence-level color description: bit depth,
 // monochrome flag, chroma subsampling, color primaries, transfer function,
 // matrix coefficients, and full-range flag.

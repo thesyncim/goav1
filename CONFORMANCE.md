@@ -255,6 +255,32 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | depacketizer state machine, frame assembler;   |
 |    |                                  |         |                                  | round-trip alloc-tested and fuzzed.            |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
+| 35 | OBU extension header (temporal_id| Yes     | internal/av1/obu/header.go       | obu_extension_header() parsed per spec section |
+|    |  + spatial_id + reserved bits)   |         | internal/av1/obu/header_test.go  | 5.3.3: 3-bit temporal_id, 2-bit spatial_id,    |
+|    |                                  |         |                                  | 3 reserved bits validated as zero              |
+|    |                                  |         |                                  | (ErrReservedBit). PutHeader round-trips IDs    |
+|    |                                  |         |                                  | for every (T<8, S<4) pair.                     |
+|    | TemporalID / SpatialID on Event  | Yes     | internal/av1/decoder/stream.go   | Every Event PushUnit emits carries the OBU     |
+|    |                                  |         | internal/av1/decoder/stream_svc_test.go | extension header's (TemporalID, SpatialID); |
+|    |                                  |         |                                  | sequence, frame, frame-header, tile-group,     |
+|    |                                  |         |                                  | metadata, tile-list, padding all tagged.       |
++----+----------------------------------+---------+----------------------------------+------------------------------------------------+
+| 36 | operating_points_cnt_minus_1 +   | Yes     | internal/av1/parser/sequence.go  | Sequence header parses up to 32 operating      |
+|    | operating_point_idc[]            |         |                                  | points (12-bit IDC, level, tier, optional      |
+|    |                                  |         |                                  | decoder-model + initial-display-delay).        |
+|    | decoder_model_present_for_op[i]  | Yes     | internal/av1/parser/sequence.go  | Per-op DecoderModelPresent gates the           |
+|    |                                  |         | internal/av1/parser/frame_size.go| operating_parameters_info(); frame-header      |
+|    |                                  |         |                                  | buffer_removal_time decode honours the         |
+|    |                                  |         |                                  | per-OP layer filter.                           |
+|    | op_pt_idc layer routing          | Yes     | internal/av1/parser/operating_point.go | OperatingPointIDCMatches /                 |
+|    |                                  |         | internal/av1/parser/operating_point_test.go | SelectOperatingPoint replicate libaom's |
+|    |                                  |         |                                  | is_obu_in_current_operating_point() filter:    |
+|    |                                  |         |                                  | idc==0 -> any layer; otherwise low-8 bits      |
+|    |                                  |         |                                  | select temporal_id, high-4 bits select         |
+|    |                                  |         |                                  | spatial_id. Re-exported as                     |
+|    |                                  |         |                                  | OperatingPointIDCMatches and                   |
+|    |                                  |         |                                  | SelectOperatingPoint at the root.              |
++----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 ```
 
 ### Cross-cutting items not enumerated above
