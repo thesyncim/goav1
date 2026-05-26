@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package obu
 
 // TemporalUnit is one Section 5 low-overhead temporal unit. Raw aliases the

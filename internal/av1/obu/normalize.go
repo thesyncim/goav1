@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package obu
 
 import "github.com/thesyncim/goav1/internal/av1/bitstream"

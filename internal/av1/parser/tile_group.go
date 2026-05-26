@@ -1,3 +1,11 @@
+// Ported from libaom:
+//   av1/decoder/decodeframe.c
+//   av1/decoder/obu.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package parser
 
 import "github.com/thesyncim/goav1/internal/av1/bitstream"

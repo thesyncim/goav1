@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 // Package obu parses AV1 Open Bitstream Units.
 //
 // It only owns OBU framing: headers, optional extension headers, optional OBU

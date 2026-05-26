@@ -1,3 +1,11 @@
+// Ported from libaom:
+//   av1/common/obu_util.c
+//   av1/decoder/obu.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package obu
 
 // Header is the parsed AV1 OBU header and optional extension header.
