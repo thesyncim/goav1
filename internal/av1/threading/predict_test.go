@@ -1571,6 +1571,81 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageMatchesMotion(t *test
 	}
 }
 
+// TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV pins the
+// integer-pel compound-average path used by NEAREST_NEAREST blocks with
+// MV=(0,0)/(0,0). With sub-pel offsets of zero the convolve degenerates to
+// a copy, so the per-pixel blend is exactly (a+b+1)>>1. Pinning specific
+// arithmetic samples here protects the libaom-equivalent rounding constant
+// (1<<(DistPrecisionBits-1) = 8) at offsets 8/8 from silently regressing
+// to a truncating average.
+func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, output.Format)
+	// Set up a constant-coloured 16x16 luma block on each reference so the
+	// average degenerates to a deterministic per-pixel formula. Position
+	// (16,16) matches testCompoundInterPredictionVisit's destination block.
+	const blockX, blockY, blockW, blockH = 16, 16, 16, 16
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 115)
+			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 117)
+		}
+	}
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	visit := testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeAverage)
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
+			// (115 + 117 + 1) >> 1 = 116
+			if got != 116 {
+				t.Fatalf("compound avg(115,117) at (%d,%d) = %d, want 116", blockX+col, blockY+row, got)
+			}
+		}
+	}
+	// Also pin the asymmetric case where the average rounds up.
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 164)
+			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 165)
+		}
+	}
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
+			// (164 + 165 + 1) >> 1 = 165
+			if got != 165 {
+				t.Fatalf("compound avg(164,165) at (%d,%d) = %d, want 165", blockX+col, blockY+row, got)
+			}
+		}
+	}
+	// Same-value inputs must blend back to themselves (no off-by-one drift).
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 164)
+			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 164)
+		}
+	}
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
+		t.Fatal(err)
+	}
+	for row := 0; row < blockH; row++ {
+		for col := 0; col < blockW; col++ {
+			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
+			if got != 164 {
+				t.Fatalf("compound avg(164,164) at (%d,%d) = %d, want 164", blockX+col, blockY+row, got)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterCompoundChromaSubsampledMatchesMotion(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	last := testBatchFrame(t, output.Format)
