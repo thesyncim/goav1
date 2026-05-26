@@ -856,16 +856,14 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	// reads xd->above_mbmi / xd->left_mbmi (pointers to the actual neighbors,
 	// unaffected by writes to xd->mi[0]).
 	//
-	// Gated on AllowIntrabc: only intra-only frames with intrabc enabled can
-	// produce intra blocks whose above/left neighbor is intrabc (i.e.,
-	// inter-marked in our slot tracking). Inter frames mix intra/inter
-	// blocks but the upstream coefficient / mode decoders still carry other
-	// independent slot-overwrite bugs whose adapted CDFs happen to align
-	// with the (also-wrong) tx_size context on this codepath; rolling them
-	// all over simultaneously would regress those vectors. Limit the
-	// snapshot scope to the frames where the intrabc path is reachable.
+	// The snapshot fires for every block: intra-only frames with intrabc
+	// enabled, inter frames with mixed intra/inter blocks, and key frames.
+	// Without the snapshot, get_tx_size_context() reads the just-written
+	// current block's flags and selects the wrong category/context for
+	// `selected_tx_size`, which propagates into a diverging adapted CDF
+	// across frame 0 → frame 1.
 	ctx.TxNeighborValid = false
-	if req.AllowIntrabc && block.X4 >= 0 && block.X4 < MaxBlockModeSlots && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots {
+	if block.X4 >= 0 && block.X4 < MaxBlockModeSlots && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots {
 		ctx.TxNeighborValid = true
 		ctx.TxAboveNeighborIntra = ctx.AboveIntra[block.X4]
 		ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[block.X4]

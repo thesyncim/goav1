@@ -205,6 +205,62 @@ func TestReadSelectedTransformSize(t *testing.T) {
 	}
 }
 
+// TestSelectedTransformContextSnapshotForInterFrameIntraBlock pins the
+// libaom-aligned get_tx_size_context() neighbor-snapshot behaviour for an
+// intra block decoded inside an inter frame. Before the fix, the snapshot was
+// gated on AllowIntrabc, so inter frames read the current block's
+// just-written AboveIntra/LeftIntra slots and selected the wrong tx_size
+// CDF context (which then adapted divergently and broke frame 1+ MD5s).
+func TestSelectedTransformContextSnapshotForInterFrameIntraBlock(t *testing.T) {
+	var ctx BlockModeContext
+
+	// Seed the above neighbor at column 4 as an INTER block (AboveIntra=0)
+	// with block-size 16x16, and the left neighbor at row 0 as an INTER
+	// block (LeftIntra=0) with block-size 16x16. tx_size_context() for an
+	// 8x8 intra block at (x4=4, y4=0) should evaluate the inter-neighbor
+	// branch: above = block_size_wide(16) >= max_tx_wide(8) → 1, and
+	// left = block_size_high(16) >= max_tx_high(8) → 1, giving ctx=2.
+	ctx.AboveIntra[4] = 0
+	ctx.AboveBlockSize[4] = BlockSize16x16
+	ctx.LeftIntra[0] = 0
+	ctx.LeftBlockSize[0] = BlockSize16x16
+
+	gotPre, err := ctx.SelectedTransformContextWithAvailability(TransformSize8x8, 4, 0, true, true)
+	if err != nil || gotPre != 2 {
+		t.Fatalf("pre-mark ctx=%d err=%v want 2", gotPre, err)
+	}
+
+	// Take the snapshot, then simulate the current block marking itself
+	// intra at the same slot. The live AboveIntra/LeftIntra now report
+	// the current block (intra=1), but the snapshot must preserve the
+	// pre-mark neighbor values.
+	ctx.TxNeighborValid = true
+	ctx.TxAboveNeighborIntra = ctx.AboveIntra[4]
+	ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[4]
+	ctx.TxLeftNeighborIntra = ctx.LeftIntra[0]
+	ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[0]
+
+	ctx.AboveIntra[4] = 1
+	ctx.AboveBlockSize[4] = BlockSize8x8
+	ctx.LeftIntra[0] = 1
+	ctx.LeftBlockSize[0] = BlockSize8x8
+
+	gotPost, err := ctx.SelectedTransformContextWithAvailability(TransformSize8x8, 4, 0, true, true)
+	if err != nil || gotPost != 2 {
+		t.Fatalf("post-mark ctx=%d err=%v want 2 (snapshot must hold neighbor flags)", gotPost, err)
+	}
+
+	// Without the snapshot, the function reads the just-written current
+	// block's flags (intra=1, size=8x8): the inter-neighbor branch is
+	// skipped, so above = AboveTx[4] (0) >= dims.Log2W (1) → 0, similarly
+	// for left. ctx degenerates to 0 — the buggy pre-fix value.
+	ctx.TxNeighborValid = false
+	gotNoSnap, err := ctx.SelectedTransformContextWithAvailability(TransformSize8x8, 4, 0, true, true)
+	if err != nil || gotNoSnap != 0 {
+		t.Fatalf("no-snapshot ctx=%d err=%v want 0 (post-mark stale read)", gotNoSnap, err)
+	}
+}
+
 func TestReadTransformPartitionSplit(t *testing.T) {
 	var cdfs TransformCDFs
 	if err := cdfs.InitDefault(); err != nil {
