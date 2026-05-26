@@ -2094,12 +2094,6 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 			next.TileInfo.InterpolationFilter = parser.InterpolationSwitchable
 			return next
 		}(), visit: valid},
-		{name: "outside job", ctx: ctx, visit: func() tile.BlockLoopVisit {
-			visit := valid
-			visit.Block.MICol = 16
-			visit.Block.MIColEnd = 20
-			return visit
-		}()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2108,6 +2102,17 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 			}
 		})
 	}
+	// A block whose plane origin lands entirely beyond the output frame (for
+	// example because the bitstream rounded the MI grid up past the visible
+	// area) is silently skipped to match libaom's clip-to-visible behavior.
+	t.Run("outside job", func(t *testing.T) {
+		visit := valid
+		visit.Block.MICol = 16
+		visit.Block.MIColEnd = 20
+		if err := ctx.PredictBlockLumaInter(0, visit); err != nil {
+			t.Fatalf("outside job err=%v want nil", err)
+		}
+	})
 	if err := ctx.PredictBlockLumaInterWithFilters(0, valid, motion.InterpFilters{X: motion.InterpFilter(99)}); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad filters err=%v want %v", err, ErrInvalidBatch)
 	}

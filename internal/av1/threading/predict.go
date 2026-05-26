@@ -1415,6 +1415,14 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 	if b.Output == nil {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
+	// A block can land entirely beyond the visible output plane when the
+	// bitstream's MI grid was rounded up past the coded frame dimensions
+	// (libaom clips prediction writes to the visible area rather than
+	// rejecting the block). Treat that case as a silently-skipped prediction;
+	// genuinely malformed callers still hit the !ok path below.
+	if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
+		return frameWorkPredictionPlaneGeometry{}, false, nil
+	}
 	width, height, ok = frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
 	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
