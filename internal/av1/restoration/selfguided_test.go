@@ -174,6 +174,27 @@ func TestSelfguidedScratchLenAndAllocs(t *testing.T) {
 	}
 }
 
+func BenchmarkApplySelfguidedRestoration(b *testing.B) {
+	scratchLen, err := SelfguidedScratchLen(64, 64)
+	if err != nil {
+		b.Fatal(err)
+	}
+	scratch := make([]int32, scratchLen)
+	stride := 64 + 2*SGRProjBorderHorz
+	origin := SGRProjBorderVert*stride + SGRProjBorderHorz
+	src := make([]uint16, stride*(64+2*SGRProjBorderVert))
+	dst := make([]uint16, 64*64)
+	rnd := newRestorationRandom(restorationDeterministicSeed)
+	for i := range src {
+		src[i] = uint16(rnd.pseudoUniform(1 << 12))
+	}
+	b.SetBytes(int64(64 * 64 * 2))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int{8, 11}, 12, scratch)
+	}
+}
+
 func TestSelfguidedRestorationRejectsInvalidInputs(t *testing.T) {
 	scratchLen, err := SelfguidedScratchLen(8, 8)
 	if err != nil {

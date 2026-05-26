@@ -3,6 +3,7 @@ package loopfilter
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -331,3 +332,135 @@ func BenchmarkFilter4BlockEdge(b *testing.B) {
 		_, _ = Filter4BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
 	}
 }
+
+func BenchmarkFilterBlockEdge(b *testing.B) {
+	plane := testPlane(64, 64, 1, 64)
+	params := parser.LoopFilterParams{LevelY: [2]uint8{16, 16}}
+	for _, width := range []int{4, 6, 8, 14} {
+		req := FilterBlockRequest{
+			FilterEdgeRequest: FilterEdgeRequest{
+				LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeHorizontal, SegmentID: 0, RefFrame: 0},
+				X:            0,
+				Y:            32,
+				Length:       64,
+			},
+			Width: width,
+		}
+		b.Run("width="+strconv.Itoa(width), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_, _ = FilterBlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
+			}
+		})
+	}
+}
+
+// TestFilterWideBlockEdgeAllocs pins every block-edge dispatcher (the
+// width-specific wrappers and the generic FilterBlockEdge) to zero per-call
+// allocations. The wrappers all funnel into filterBlockEdgeWidth, which
+// resolves the level on the stack and dispatches to FilterEdgeByWidth; this
+// test catches regressions in that fast path for every supported width.
+func TestFilterWideBlockEdgeAllocs(t *testing.T) {
+	plane := testPlane(64, 64, 1, 64)
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			setSample(plane, 1, x, y, uint16((x*7+y*11)&0xff))
+		}
+	}
+	params := parser.LoopFilterParams{LevelY: [2]uint8{16, 16}}
+	edgeReq := FilterEdgeRequest{
+		LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeHorizontal, SegmentID: 0, RefFrame: 0},
+		X:            0,
+		Y:            32,
+		Length:       64,
+	}
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "Filter6BlockEdge",
+			call: func() error {
+				_, err := Filter6BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, edgeReq)
+				return err
+			},
+		},
+		{
+			name: "Filter8BlockEdge",
+			call: func() error {
+				_, err := Filter8BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, edgeReq)
+				return err
+			},
+		},
+		{
+			name: "Filter14BlockEdge",
+			call: func() error {
+				_, err := Filter14BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, edgeReq)
+				return err
+			},
+		},
+		{
+			name: "FilterBlockEdge/4",
+			call: func() error {
+				_, err := FilterBlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, FilterBlockRequest{FilterEdgeRequest: edgeReq, Width: 4})
+				return err
+			},
+		},
+		{
+			name: "FilterBlockEdge/14",
+			call: func() error {
+				_, err := FilterBlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, FilterBlockRequest{FilterEdgeRequest: edgeReq, Width: 14})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); err != nil {
+				t.Fatalf("warm-up err=%v", err)
+			}
+			allocs := testing.AllocsPerRun(1000, func() {
+				if err := tc.call(); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("%s allocated: %f", tc.name, allocs)
+			}
+		})
+	}
+}
+
+// TestFilterEdgeByWidthAllocs covers the lower-level FilterEdgeByWidth used by
+// callers that already hold a resolved level/thresholds pair.
+func TestFilterEdgeByWidthAllocs(t *testing.T) {
+	plane := testPlane(64, 64, 1, 64)
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			setSample(plane, 1, x, y, uint16((x*7+y*11)&0xff))
+		}
+	}
+	thresholds, err := ThresholdsForLevel(16, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, width := range []int{4, 6, 8, 14} {
+		width := width
+		t.Run("width="+strconv.Itoa(width), func(t *testing.T) {
+			if err := FilterEdgeByWidth(width, plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds); err != nil {
+				t.Fatalf("warm-up err=%v", err)
+			}
+			allocs := testing.AllocsPerRun(1000, func() {
+				if err := FilterEdgeByWidth(width, plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("FilterEdgeByWidth(%d) allocated: %f", width, allocs)
+			}
+		})
+	}
+}
+

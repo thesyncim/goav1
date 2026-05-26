@@ -217,6 +217,10 @@ func TestCDEFAllocs(t *testing.T) {
 	for i := range input {
 		input[i] = uint16(rnd.generate(1 << 12))
 	}
+	src8 := make([]uint8, 16*8)
+	for i := range src8 {
+		src8[i] = uint8(rnd.generate(256))
+	}
 	dst := make([]uint16, 16*16)
 	blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}, {BY: 1, BX: 1}}
 	var dirs DirectionGrid
@@ -232,6 +236,9 @@ func TestCDEFAllocs(t *testing.T) {
 		Height:            8,
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
+		if err := CopyRect8To16(dst, 16, src8, 16, 8, 8); err != nil {
+			t.Fatal(err)
+		}
 		if err := CopyRect16To16(dst, 16, dst, 16, 8, 8); err != nil {
 			t.Fatal(err)
 		}
@@ -351,6 +358,65 @@ func BenchmarkFilterBlock(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = FilterBlock(dst, 8, 0, input, cdefBlockOrigin(), params)
+	}
+}
+
+func BenchmarkFilterFrameBlocks(b *testing.B) {
+	rnd := newCDEFRandom(cdefDeterministicSeed)
+	input := make([]uint16, InputBufferSize)
+	for i := range input {
+		input[i] = uint16(rnd.generate(1 << 10))
+	}
+	blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}, {BY: 1, BX: 1}}
+	dst := make([]uint16, 16*16)
+	var dirs DirectionGrid
+	var vars VarianceGrid
+	params := FrameFilterParams{
+		Plane:             PlaneY,
+		Level:             9,
+		SecondaryStrength: 2,
+		Damping:           5,
+		CoeffShift:        2,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, params)
+	}
+}
+
+func BenchmarkCopyRect8To16(b *testing.B) {
+	rnd := newCDEFRandom(cdefDeterministicSeed)
+	const width = 64
+	const height = 64
+	srcStride := width + 5
+	dstStride := width + 9
+	src := make([]uint8, srcStride*height)
+	dst := make([]uint16, dstStride*height)
+	for i := range src {
+		src[i] = uint8(rnd.generate(256))
+	}
+	b.SetBytes(int64(width * height))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = CopyRect8To16(dst, dstStride, src, srcStride, width, height)
+	}
+}
+
+func BenchmarkCopyRect16To16(b *testing.B) {
+	rnd := newCDEFRandom(cdefDeterministicSeed)
+	const width = 64
+	const height = 64
+	srcStride := width + 7
+	dstStride := width + 9
+	src := make([]uint16, srcStride*height)
+	dst := make([]uint16, dstStride*height)
+	for i := range src {
+		src[i] = uint16(rnd.generate(1 << 16))
+	}
+	b.SetBytes(int64(width * height * 2))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = CopyRect16To16(dst, dstStride, src, srcStride, width, height)
 	}
 }
 

@@ -352,6 +352,79 @@ func BenchmarkParseFrameSizeInter(b *testing.B) {
 	}
 }
 
+// TestParseFrameSizeInterAllocs pins ParseFrameSize on the inter path (which
+// runs every inter frame) to zero allocations. The function builds the
+// FrameSize value on the stack and writes into caller-supplied references, so
+// future changes that promote any of the fixed-size scratch buffers (e.g. the
+// shortRefInfo array used by setShortFrameReferences) to the heap will trip
+// this test.
+func TestParseFrameSizeInterAllocs(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefix(t, seq, false, false, 4)
+	refs := oneReferenceState(seq, 0, 1)
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x02, 8) // refresh_frame_flags
+	w.writeBool(false)   // frame_refs_short_signaling
+	for i := 0; i < InterRefsPerFrame; i++ {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBool(false) // use_superres
+	w.writeBool(false) // render_and_frame_size_different
+	payload = w.bytes()
+
+	if _, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0); err != nil {
+		t.Fatalf("ParseFrameSize err=%v", err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ParseFrameSize allocated: %f", allocs)
+	}
+}
+
+// TestParseFrameSizeShortSignalingAllocs covers the short-signaling reference
+// derivation path which uses on-stack scratch arrays (shortRefInfo, set).
+func TestParseFrameSizeShortSignalingAllocs(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
+	payload, prefix := buildInterFramePrefix(t, seq, false, false, 4)
+	refs := oneReferenceState(seq, 0, 1)
+	for i := range refs.Frames {
+		refs.Frames[i].Valid = true
+		refs.Frames[i].OrderHint = uint32(i)
+	}
+
+	var w testBitWriter
+	w.writeBitsFrom(payload, prefix.BitsRead)
+	w.writeBits(0x02, 8) // refresh_frame_flags
+	w.writeBool(true)    // frame_refs_short_signaling
+	w.writeBits(0, 3)    // last_frame_idx
+	w.writeBits(3, 3)    // golden_frame_idx
+	w.writeBool(false)   // use_superres
+	w.writeBool(false)   // render_and_frame_size_different
+	payload = w.bytes()
+
+	// Warm up: this path may error on the synthetic ordering; if so, just skip
+	// the lock-in since we cannot validate the steady state.
+	if _, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0); err != nil {
+		t.Skipf("short-signaling path unavailable in test fixture: %v", err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := ParseFrameSize(payload, seq, prefix, &refs, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ParseFrameSize short-signaling allocated: %f", allocs)
+	}
+}
+
 func buildShownKeyFramePrefix(t *testing.T, seq SequenceHeader, frameSizeOverride bool) ([]byte, FrameHeaderPrefix) {
 	t.Helper()
 	payload, prefix, err := buildShownKeyFramePrefixRaw(seq, frameSizeOverride)
