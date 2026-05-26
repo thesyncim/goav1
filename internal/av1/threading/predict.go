@@ -376,7 +376,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		if !ok {
 			return ErrInvalidBatch
 		}
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, visit.Block, scratch, true)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, visit.Block, scratch, true)
 		if err != nil {
 			return err
 		}
@@ -388,7 +388,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(visit.Block, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, window.Width, window.Height)
 		if err != nil {
 			return err
 		}
@@ -402,7 +402,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, visit.Block, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, visit.Block, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 		if !ok {
 			return ErrInvalidBatch
 		}
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, true)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, edgeBlock, scratch, true)
 		if err != nil {
 			return err
 		}
@@ -469,7 +469,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, window.Width, window.Height)
 		if err != nil {
 			return err
 		}
@@ -483,7 +483,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -515,7 +515,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	}
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, geom.SubsamplingX, geom.SubsamplingY)
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height)
 		if err != nil {
 			return err
 		}
@@ -528,7 +528,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -585,7 +585,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, absX, absY, predWidth, predHeight, geom.SubsamplingX, geom.SubsamplingY)
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height)
 		if err != nil {
 			return err
 		}
@@ -598,7 +598,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -643,7 +643,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 		return ErrInvalidBatch
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &scratch.Intra, false)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, &scratch.Intra, false)
 	if err != nil {
 		return err
 	}
@@ -1095,7 +1095,7 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 		return ErrInvalidBatch
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -3261,10 +3261,23 @@ func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.Transfor
 }
 
 func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
-	return frameWorkIntraPredictionEdgesWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, block, scratch, fillMissing)
+	return frameWorkIntraPredictionEdgesWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, 0, 0, block, scratch, fillMissing)
 }
 
-func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, edgeWidth int, edgeHeight int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
+// frameWorkIntraPredictionEdgesWithExtent builds the top/left/top-left intra
+// predictor edge samples for one block. visibleW / visibleH are the
+// past-visible-end positions in the same coordinate system as x / dst (so for
+// window-local callers they pass window.Width / window.Height, and for
+// geom-absolute callers they pass geom.Window.X + geom.Window.Width and
+// geom.Window.Y + geom.Window.Height). When visibleW or visibleH is <= 0 the
+// function falls back to dst.Width / dst.Height (legacy "no visible bound"
+// behavior). The visible bound is required to match libaom's
+// n_top_px = min(txwpx, xr+txwpx) / n_left_px = min(txhpx, yd+txhpx) edge
+// truncation: blocks straddling the right or bottom visible edge must read
+// only the in-frame neighbor samples and replicate the last visible sample
+// for the past-visible slots, never the MI-aligned past-visible neighbors
+// that libaom does not see.
+func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, edgeWidth int, edgeHeight int, visibleW int, visibleH int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
 	if scratch == nil {
 		return prediction.IntraEdges{}, ErrInvalidBatch
 	}
@@ -3273,30 +3286,60 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		edgeHeight > frameWorkIntraPredictionMaxEdgeSamples {
 		return prediction.IntraEdges{}, ErrInvalidBatch
 	}
+	readBoundX := dst.Width
+	if visibleW > 0 && visibleW < readBoundX {
+		readBoundX = visibleW
+	}
+	readBoundY := dst.Height
+	if visibleH > 0 && visibleH < readBoundY {
+		readBoundY = visibleH
+	}
 	var edges prediction.IntraEdges
+	// Track libaom's n_top_px / n_left_px so the AboveLeft selection below
+	// can match libaom when the block straddles the visible edge:
+	// nTopPx == 0 && nLeftPx > 0 -> AboveLeft = left_ref[0] = load(x-1, y)
+	// nTopPx > 0 && nLeftPx == 0 -> AboveLeft = above_ref[0] = load(x, y-1)
+	// otherwise (both > 0)        -> AboveLeft = load(x-1, y-1)
+	nTopPx := 0
+	nLeftPx := 0
 	if block.HaveTop {
 		if y <= 0 {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
 		available := edgeWidth
-		if x+available > dst.Width {
-			available = dst.Width - x
+		if x+available > readBoundX {
+			available = readBoundX - x
 		}
-		if available <= 0 {
-			return prediction.IntraEdges{}, ErrInvalidBatch
-		}
-		for col := 0; col < available; col++ {
-			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x+col, y-1)
-			if !ok {
-				return prediction.IntraEdges{}, ErrInvalidBatch
+		if available > 0 {
+			nTopPx = available
+			for col := 0; col < available; col++ {
+				sample, ok := frameWorkLoadSample(dst, bytesPerSample, x+col, y-1)
+				if !ok {
+					return prediction.IntraEdges{}, ErrInvalidBatch
+				}
+				scratch.Above[col] = sample
 			}
-			scratch.Above[col] = sample
+			for col := available; col < edgeWidth; col++ {
+				scratch.Above[col] = scratch.Above[available-1]
+			}
+			edges.Above = scratch.Above[:edgeWidth]
+			edges.AboveAvailable = true
+		} else {
+			// libaom n_top_px=0 fallback: when the block has HaveTop but the
+			// entire top neighbor lies past the visible right edge, fill
+			// above_row with left_ref[0] when n_left_px>0 (HaveLeft and not
+			// past the bottom visible edge) or with base+1 (=129 for 8-bit)
+			// otherwise. frameWorkMissingAboveSample implements that fallback.
+			sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
+			if err != nil {
+				return prediction.IntraEdges{}, err
+			}
+			for col := 0; col < edgeWidth; col++ {
+				scratch.Above[col] = sample
+			}
+			edges.Above = scratch.Above[:edgeWidth]
+			edges.AboveAvailable = true
 		}
-		for col := available; col < edgeWidth; col++ {
-			scratch.Above[col] = scratch.Above[available-1]
-		}
-		edges.Above = scratch.Above[:edgeWidth]
-		edges.AboveAvailable = true
 	} else if fillMissing {
 		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
@@ -3313,24 +3356,37 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
 		available := edgeHeight
-		if y+available > dst.Height {
-			available = dst.Height - y
+		if y+available > readBoundY {
+			available = readBoundY - y
 		}
-		if available <= 0 {
-			return prediction.IntraEdges{}, ErrInvalidBatch
-		}
-		for row := 0; row < available; row++ {
-			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y+row)
-			if !ok {
-				return prediction.IntraEdges{}, ErrInvalidBatch
+		if available > 0 {
+			nLeftPx = available
+			for row := 0; row < available; row++ {
+				sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y+row)
+				if !ok {
+					return prediction.IntraEdges{}, ErrInvalidBatch
+				}
+				scratch.Left[row] = sample
 			}
-			scratch.Left[row] = sample
+			for row := available; row < edgeHeight; row++ {
+				scratch.Left[row] = scratch.Left[available-1]
+			}
+			edges.Left = scratch.Left[:edgeHeight]
+			edges.LeftAvailable = true
+		} else {
+			// libaom n_left_px=0 fallback: mirror n_top_px=0 — when the block
+			// starts past the bottom visible edge, fill left with the top
+			// neighbor (if HaveTop) or with base+1 otherwise.
+			sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+			if err != nil {
+				return prediction.IntraEdges{}, err
+			}
+			for row := 0; row < edgeHeight; row++ {
+				scratch.Left[row] = sample
+			}
+			edges.Left = scratch.Left[:edgeHeight]
+			edges.LeftAvailable = true
 		}
-		for row := available; row < edgeHeight; row++ {
-			scratch.Left[row] = scratch.Left[available-1]
-		}
-		edges.Left = scratch.Left[:edgeHeight]
-		edges.LeftAvailable = true
 	} else if fillMissing {
 		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
@@ -3343,7 +3399,21 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		edges.LeftAvailable = true
 	}
 	if block.HaveTop && block.HaveLeft {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
+		var sample uint16
+		var ok bool
+		switch {
+		case nTopPx > 0 && nLeftPx > 0:
+			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
+		case nTopPx > 0:
+			// n_left_px=0: AboveLeft = above_ref[0] = load(x, y-1)
+			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		case nLeftPx > 0:
+			// n_top_px=0: AboveLeft = left_ref[0] = load(x-1, y)
+			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		default:
+			// both 0: AboveLeft = base (=128 for 8-bit)
+			sample, ok = frameWorkIntraBoundaryDefault(bitDepth, 0)
+		}
 		if !ok {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
@@ -3360,7 +3430,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 	return edges, nil
 }
 
-func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, enableIntraEdgeFilter bool, smoothNeighbor bool, allowTopRight bool, allowBottomLeft bool) (prediction.DirectionalEdges, error) {
+func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, enableIntraEdgeFilter bool, smoothNeighbor bool, allowTopRight bool, allowBottomLeft bool, visibleW int, visibleH int) (prediction.DirectionalEdges, error) {
 	if scratch == nil || angle <= 0 || angle >= 270 {
 		return prediction.DirectionalEdges{}, ErrInvalidBatch
 	}
@@ -3373,23 +3443,23 @@ func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bi
 
 	switch {
 	case angle < 90:
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, width, allowTopRight, block, scratch); err != nil {
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, width, allowTopRight, block, scratch, visibleW); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	case angle < 180:
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, -height, width+height, width, false, block, scratch); err != nil {
+		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, -height, width+height, width, false, block, scratch, visibleW); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, -width, width+height, height, false, block, scratch); err != nil {
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, -width, width+height, height, false, block, scratch, visibleH); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	default:
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, height, allowBottomLeft, block, scratch); err != nil {
+		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, height, allowBottomLeft, block, scratch, visibleH); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	}
 	if angle != 90 && angle != 180 {
-		topLeft, err := frameWorkDirectionalAboveLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+		topLeft, err := frameWorkDirectionalAboveLeftSample(dst, bytesPerSample, bitDepth, x, y, block, visibleW, visibleH, width, height)
 		if err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
@@ -3482,13 +3552,60 @@ func frameWorkDirectionalEdgeFilterRangeFits(origin int, npx int) bool {
 		npx <= frameWorkIntraEdgeScratchSamples
 }
 
-func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
+// frameWorkDirectionalAboveLeftSample mirrors libaom's above_row[-1] /
+// left_col[-1] derivation. The visibleW / visibleH arguments are the
+// past-visible-end positions in the same coordinate system as x / y / dst;
+// width / height are the directional-predictor primary extents (txwpx /
+// txhpx). When visibleW or visibleH is <= 0, the routine reverts to the
+// pre-edge-truncation behavior (no past-visible accounting).
+func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit, visibleW int, visibleH int, width int, height int) (uint16, error) {
 	if block.HaveTop && block.HaveLeft {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
-		if !ok {
-			return 0, ErrInvalidBatch
+		nTopPx := width
+		if visibleW > 0 {
+			nTopPx = visibleW - x
+			if nTopPx < 0 {
+				nTopPx = 0
+			}
+			if nTopPx > width {
+				nTopPx = width
+			}
 		}
-		return sample, nil
+		nLeftPx := height
+		if visibleH > 0 {
+			nLeftPx = visibleH - y
+			if nLeftPx < 0 {
+				nLeftPx = 0
+			}
+			if nLeftPx > height {
+				nLeftPx = height
+			}
+		}
+		switch {
+		case nTopPx > 0 && nLeftPx > 0:
+			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
+			if !ok {
+				return 0, ErrInvalidBatch
+			}
+			return sample, nil
+		case nTopPx > 0:
+			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+			if !ok {
+				return 0, ErrInvalidBatch
+			}
+			return sample, nil
+		case nLeftPx > 0:
+			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+			if !ok {
+				return 0, ErrInvalidBatch
+			}
+			return sample, nil
+		default:
+			sample, ok := frameWorkIntraBoundaryDefault(bitDepth, 0)
+			if !ok {
+				return 0, ErrInvalidBatch
+			}
+			return sample, nil
+		}
 	}
 	if block.HaveTop {
 		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
@@ -3511,7 +3628,16 @@ func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bi
 	return sample, nil
 }
 
-func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryWidth int, allowTopRight bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) error {
+// frameWorkFillDirectionalAbove fills the above directional-predictor edge.
+// visibleW is the past-visible-end column in the same coordinate system as x
+// / dst (so window-local callers pass window.Width and geom-absolute callers
+// pass geom.Window.X + geom.Window.Width). When visibleW <= 0 the function
+// falls back to dst.Width (legacy behavior). The visible bound is required
+// to mirror libaom's n_top_px = min(txwpx, xr + txwpx) /
+// n_topright_px = min(txwpx, xr) caps: when a transform block straddles the
+// visible right edge, libaom clamps the real-sample range to the visible
+// extent and replicates the last visible sample for the past-visible slots.
+func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryWidth int, allowTopRight bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, visibleW int) error {
 	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
 		return ErrInvalidBatch
 	}
@@ -3528,25 +3654,66 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	if y <= 0 {
 		return ErrInvalidBatch
 	}
-	// libaom caps top-right loads to primaryWidth real samples (n_topright_px =
-	// min(txwpx, xr)) and extends the rest from the last real sample. Without the
-	// cap, directional predictors read additional already-decoded above samples
-	// that libaom never sees and the prediction diverges.
-	topRightLimit := dst.Width - x - primaryWidth
+	readBoundX := dst.Width
+	if visibleW > 0 && visibleW < readBoundX {
+		readBoundX = visibleW
+	}
+	// libaom caps n_top_px = min(txwpx, xr + txwpx) and
+	// n_topright_px = min(txwpx, xr). For a block at x with primary
+	// transform width primaryWidth and a visible plane extent of
+	// readBoundX, that means real samples come from cols
+	// x..min(x+primaryWidth, readBoundX)-1 with the rest replicated, and
+	// when allowTopRight is set the top-right extension may extend at most
+	// to readBoundX-1 (a further primaryWidth cols, capped).
+	primaryLimit := readBoundX - x
+	if primaryLimit < 0 {
+		primaryLimit = 0
+	}
+	if primaryLimit > primaryWidth {
+		primaryLimit = primaryWidth
+	}
+	if primaryLimit == 0 {
+		// libaom n_top_px == 0 fallback: fill the entire above buffer with
+		// left_ref[0] (load(x-1, y)) when HaveLeft, else base+1=129.
+		// frameWorkMissingAboveSample implements exactly that contract.
+		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return err
+		}
+		for i := minIndex; i <= maxIndex; i++ {
+			scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+		}
+		return nil
+	}
+	topRightLimit := readBoundX - x - primaryWidth
 	if topRightLimit < 0 {
 		topRightLimit = 0
 	}
 	if topRightLimit > primaryWidth {
 		topRightLimit = primaryWidth
 	}
-	maxRealOffset := primaryWidth - 1
-	if allowTopRight {
-		maxRealOffset = primaryWidth + topRightLimit - 1
+	// libaom stores the above_row buffer in three logical zones:
+	//   zone A: i in [0, primaryWidth-1]
+	//     - i < primaryLimit:      real sample (load from above)
+	//     - i >= primaryLimit:     replicate above_row[primaryLimit-1]
+	//   zone B: i in [primaryWidth, primaryWidth + topRightLimit - 1] when allowTopRight
+	//     - real sample (load from above)
+	//   zone C: rest (i >= primaryWidth + topRightLimit, or no allowTopRight)
+	//     - replicate the last filled sample, which is either above_row[primaryWidth+topRightLimit-1]
+	//       (when allowTopRight && topRightLimit > 0) or above_row[primaryLimit-1] otherwise.
+	maxRealEnd := primaryLimit
+	if allowTopRight && topRightLimit > 0 {
+		maxRealEnd = primaryWidth + topRightLimit
 	}
 	for i := minIndex; i <= maxIndex; i++ {
-		sampleX := x + i
-		if i > maxRealOffset {
-			sampleX = x + maxRealOffset
+		var sampleX int
+		switch {
+		case i < primaryLimit:
+			sampleX = x + i
+		case allowTopRight && i >= primaryWidth && i < primaryWidth+topRightLimit:
+			sampleX = x + i
+		default:
+			sampleX = x + maxRealEnd - 1
 		}
 		if sampleX < 0 {
 			sampleX = 0
@@ -3562,7 +3729,11 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	return nil
 }
 
-func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryHeight int, allowBottomLeft bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch) error {
+// frameWorkFillDirectionalLeft fills the left directional-predictor edge.
+// visibleH is the past-visible-end row in the same coordinate system as y
+// / dst. See frameWorkFillDirectionalAbove for the n_left_px /
+// n_bottomleft_px contract this mirrors.
+func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryHeight int, allowBottomLeft bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, visibleH int) error {
 	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
 		return ErrInvalidBatch
 	}
@@ -3579,23 +3750,56 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 	if x <= 0 {
 		return ErrInvalidBatch
 	}
-	// Mirror libaom's n_bottomleft_px = min(txhpx, yd) cap: real samples past
-	// primaryHeight are limited to primaryHeight more rows, then extension.
-	bottomLeftLimit := dst.Height - y - primaryHeight
+	readBoundY := dst.Height
+	if visibleH > 0 && visibleH < readBoundY {
+		readBoundY = visibleH
+	}
+	// Mirror libaom's n_left_px = min(txhpx, yd + txhpx) and
+	// n_bottomleft_px = min(txhpx, yd) caps.
+	primaryLimit := readBoundY - y
+	if primaryLimit < 0 {
+		primaryLimit = 0
+	}
+	if primaryLimit > primaryHeight {
+		primaryLimit = primaryHeight
+	}
+	if primaryLimit == 0 {
+		// libaom n_left_px == 0 fallback: fill with above_ref[0] (load(x, y-1))
+		// when HaveTop, else base-1=127. frameWorkMissingLeftSample implements
+		// that contract.
+		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
+		if err != nil {
+			return err
+		}
+		for i := minIndex; i <= maxIndex; i++ {
+			scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+		}
+		return nil
+	}
+	bottomLeftLimit := readBoundY - y - primaryHeight
 	if bottomLeftLimit < 0 {
 		bottomLeftLimit = 0
 	}
 	if bottomLeftLimit > primaryHeight {
 		bottomLeftLimit = primaryHeight
 	}
-	maxRealOffset := primaryHeight - 1
-	if allowBottomLeft {
-		maxRealOffset = primaryHeight + bottomLeftLimit - 1
+	// Mirror frameWorkFillDirectionalAbove's libaom three-zone layout:
+	//   zone A: i < primaryLimit -> real sample (load from x-1, y+i)
+	//   zone B: allowBottomLeft && i in [primaryHeight, primaryHeight+bottomLeftLimit) -> real
+	//   zone C: otherwise -> replicate the last filled sample (maxRealEnd-1).
+	maxRealEnd := primaryLimit
+	if allowBottomLeft && bottomLeftLimit > 0 {
+		maxRealEnd = primaryHeight + bottomLeftLimit
 	}
 	for i := minIndex; i <= maxIndex; i++ {
-		sampleY := y + i
-		if i > maxRealOffset {
-			sampleY = y + maxRealOffset
+		var sampleY int
+		switch {
+		case i < primaryLimit:
+			sampleY = y + i
+		case allowBottomLeft && i >= primaryHeight && i < primaryHeight+bottomLeftLimit:
+			sampleY = y + i
+		default:
+			sampleY = y + maxRealEnd - 1
 		}
 		if sampleY < 0 {
 			sampleY = 0

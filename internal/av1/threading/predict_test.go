@@ -803,7 +803,7 @@ func TestFrameWorkFillDirectionalAboveCapsTopRightToPrimaryWidth(t *testing.T) {
 		HaveTop: true,
 	}
 	const primaryWidth = 4
-	if err := frameWorkFillDirectionalAbove(dst, 1, 8, 16, 16, 0, primaryWidth+8-1, primaryWidth, true, block, &scratch); err != nil {
+	if err := frameWorkFillDirectionalAbove(dst, 1, 8, 16, 16, 0, primaryWidth+8-1, primaryWidth, true, block, &scratch, 0); err != nil {
 		t.Fatalf("fill: %v", err)
 	}
 	// Indices 0..3 read columns 16..19 verbatim.
@@ -826,6 +826,115 @@ func TestFrameWorkFillDirectionalAboveCapsTopRightToPrimaryWidth(t *testing.T) {
 		if got := scratch.Above[frameWorkDirectionalEdgeOrigin+i]; got != last {
 			t.Fatalf("extension above[%d]=%d want %d", i, got, last)
 		}
+	}
+}
+
+// TestFrameWorkFillDirectionalAboveTruncatesToVisibleRightEdge pins the
+// behavior of frameWorkFillDirectionalAbove when a block straddles the
+// visible right edge. libaom's intra predictor caps the real-sample range
+// to n_top_px = min(txwpx, xr + txwpx); past-visible columns are replicated
+// from the last visible neighbor sample, never read from MI-padding bytes
+// (which carry past-visible writes from earlier blocks that libaom never
+// sees). The 34x34 libaom-extended vector exposed this divergence: an 8x8
+// transform at x=32 in a 34-wide plane had n_top_px=2 in libaom but goav1
+// previously loaded all 8 cols from MI-padding, yielding a different above
+// row and a downstream MD5 mismatch.
+func TestFrameWorkFillDirectionalAboveTruncatesToVisibleRightEdge(t *testing.T) {
+	// Allocate a 40-wide buffer so we can seed both the visible cols (0..33)
+	// and the MI-padding cols (34..39) with distinct values, then verify the
+	// fill ignores the MI-padding cols when visibleW=34.
+	const Stride, H = 40, 16
+	const visibleW = 34
+	pix := make([]byte, Stride*H)
+	dst := frame.Plane{Pix: pix, Stride: Stride, Width: Stride, Height: H}
+	// Above row (y=7): distinct per-column markers so the fill output records
+	// exactly which cols were loaded. Marker(c) = c + 1.
+	for c := 0; c < Stride; c++ {
+		pix[7*Stride+c] = byte(c + 1)
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	block := tile.BlockVisit{
+		Size:    tile.BlockSize8x8,
+		HaveTop: true,
+	}
+	const x = 32
+	const primaryWidth = 8
+	// Range covers primary (0..primaryWidth-1) and top-right extension
+	// (primaryWidth..primaryWidth+primaryWidth-1) per libaom's directional
+	// above buffer layout.
+	maxIndex := primaryWidth + primaryWidth - 1
+	if err := frameWorkFillDirectionalAbove(dst, 1, 8, x, 8, 0, maxIndex, primaryWidth, true, block, &scratch, visibleW); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	// libaom: n_top_px = min(8, (34 - 32 - 8) + 8) = min(8, 2) = 2.
+	//         n_topright_px = min(8, 34 - 32 - 8) = min(8, -6) -> 0.
+	// Real samples land at cols 32, 33 (markers 33, 34); the remaining
+	// primary slots (i=2..7) and the entire top-right extension
+	// (i=8..15) must replicate col 33's marker (=34).
+	want := []uint16{33, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34, 34}
+	for i, w := range want {
+		got := scratch.Above[frameWorkDirectionalEdgeOrigin+i]
+		if got != w {
+			t.Fatalf("above[%d]=%d want %d (visibleW=%d should cap real loads to cols 32..33)", i, got, w, visibleW)
+		}
+	}
+}
+
+// TestFrameWorkIntraPredictionEdgesWithExtentTruncatesToVisibleRightEdge
+// pins the equivalent libaom contract for the non-directional edge builder:
+// the above buffer copies n_top_px real samples and replicates the last
+// real one for the remaining edgeWidth-n_top_px slots. The 34x34 right-edge
+// 8x8 DC / Smooth / Paeth block must see Above[0..1] = real cols and
+// Above[2..7] = replicated last visible neighbor.
+func TestFrameWorkIntraPredictionEdgesWithExtentTruncatesToVisibleRightEdge(t *testing.T) {
+	const Stride, H = 40, 16
+	const visibleW = 34
+	pix := make([]byte, Stride*H)
+	dst := frame.Plane{Pix: pix, Stride: Stride, Width: Stride, Height: H}
+	for c := 0; c < Stride; c++ {
+		// Distinct marker per column on the above row (y=7) and on the
+		// left column (x=31) so we can assert which neighbors were read.
+		pix[7*Stride+c] = byte(c + 1)
+	}
+	for r := 0; r < H; r++ {
+		pix[r*Stride+31] = byte(r + 100)
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	block := tile.BlockVisit{
+		Size:     tile.BlockSize8x8,
+		HaveTop:  true,
+		HaveLeft: true,
+	}
+	const x, y = 32, 8
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, 1, 8, x, y, 8, 8, 8, 8, visibleW, 0, block, &scratch, true)
+	if err != nil {
+		t.Fatalf("edges: %v", err)
+	}
+	if !edges.AboveAvailable || len(edges.Above) < 8 {
+		t.Fatalf("expected AboveAvailable with len>=8, got %v len=%d", edges.AboveAvailable, len(edges.Above))
+	}
+	// n_top_px = min(8, (34-32-8)+8) = 2. Above[0] = col 32, Above[1] = col 33,
+	// Above[2..7] = replicated col 33 (the last visible).
+	wantAbove := []uint16{33, 34, 34, 34, 34, 34, 34, 34}
+	for i, w := range wantAbove {
+		if edges.Above[i] != w {
+			t.Fatalf("Above[%d]=%d want %d", i, edges.Above[i], w)
+		}
+	}
+	// Left is unrestricted by the right-edge cap: 8 real samples from col 31.
+	if !edges.LeftAvailable || len(edges.Left) < 8 {
+		t.Fatalf("expected LeftAvailable with len>=8, got %v len=%d", edges.LeftAvailable, len(edges.Left))
+	}
+	for i := 0; i < 8; i++ {
+		want := uint16(y + i + 100)
+		if edges.Left[i] != want {
+			t.Fatalf("Left[%d]=%d want %d", i, edges.Left[i], want)
+		}
+	}
+	// AboveLeft = load(x-1, y-1) since n_top_px>0 and n_left_px>0.
+	wantAL := uint16((y-1)*1 + 100)
+	if edges.AboveLeft != wantAL {
+		t.Fatalf("AboveLeft=%d want %d", edges.AboveLeft, wantAL)
 	}
 }
 
@@ -3758,7 +3867,7 @@ func TestFrameWorkDirectionalPredictionEdgesCornerBlock32x32D157(t *testing.T) {
 		Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8,
 		HaveTop: false, HaveLeft: false,
 	}
-	edges, err := frameWorkDirectionalPredictionEdges(dst, 1, 8, 0, 0, width, height, angle, block, &scratch, true, false, false, false)
+	edges, err := frameWorkDirectionalPredictionEdges(dst, 1, 8, 0, 0, width, height, angle, block, &scratch, true, false, false, false, 0, 0)
 	if err != nil {
 		t.Fatalf("directional edges: %v", err)
 	}
