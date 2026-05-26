@@ -342,6 +342,7 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 	}
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = 0
+		c.AboveMode[x4+i] = IntraModeDC
 		c.AboveChromaIntra[x4+i] = 0
 		c.AboveChromaMode[x4+i] = ChromaIntraModeDC
 		c.AboveRef[0][x4+i] = ReferenceFrameNone
@@ -352,9 +353,12 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		c.AboveInterp[x4+i] = motion.InterpFilters{}
 		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
+		c.AbovePaletteY[x4+i] = paletteContext{}
+		c.AbovePaletteUV[x4+i] = paletteContext{}
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
+		c.LeftMode[y4+i] = IntraModeDC
 		c.LeftChromaIntra[y4+i] = 0
 		c.LeftChromaMode[y4+i] = ChromaIntraModeDC
 		c.LeftRef[0][y4+i] = ReferenceFrameNone
@@ -365,6 +369,8 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		c.LeftInterp[y4+i] = motion.InterpFilters{}
 		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
+		c.LeftPaletteY[y4+i] = paletteContext{}
+		c.LeftPaletteUV[y4+i] = paletteContext{}
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
