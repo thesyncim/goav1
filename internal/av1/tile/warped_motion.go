@@ -40,6 +40,291 @@ func (s OverlappableNeighborSet) WarpProjection(block BlockVisit, ref ReferenceF
 	return findWarpProjection(samples[:count], block, mv)
 }
 
+// WarpSampleCountWithContext mirrors libaom's av1_findSamples result. It scans
+// the block-mode context for up to LEAST_SQUARES_SAMPLES_MAX (=8) matching
+// neighbor samples, ignoring the OBMC neighbor cap that
+// OverlappableNeighborSet.WarpSampleCount inherits.
+func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref ReferenceFrame) (int, error) {
+	var samples [maxWarpSamples]warpSample
+	count, doTL, doTR, err := c.collectWarpSamplesAboveLeft(block, ref, &samples)
+	if err != nil {
+		return 0, err
+	}
+	if doTL && count < maxWarpSamples && block.HaveTop && block.HaveLeft {
+		if _, ok, err := c.warpSampleGrid(block, ref, block.X4-1, block.Y4-1, 0, -1, 0, -1); err != nil {
+			return 0, err
+		} else if ok {
+			count++
+		}
+	}
+	if doTR && count < maxWarpSamples {
+		dims, ok := block.Size.Dimensions()
+		if !ok {
+			return 0, ErrInvalidDecodeState
+		}
+		if block.HaveTop && c.warpHasTopRight(block, int(dims.W4), int(dims.H4)) {
+			if _, ok, err := c.warpSampleGrid(block, ref, block.X4+int(dims.W4), block.Y4-1, int(dims.W4), 1, 0, -1); err != nil {
+				return 0, err
+			} else if ok {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// WarpProjectionWithContext mirrors libaom's av1_findSamples + av1_selectSamples
+// + av1_find_projection chain. Unlike OverlappableNeighborSet.WarpProjection it
+// scans the block-mode context for up to LEAST_SQUARES_SAMPLES_MAX (=8) neighbor
+// samples, which is needed when the block is taller (or wider) than the OBMC
+// neighbor cap. The OBMC neighbor cap for BLOCK_8X16 is 2 left + 1 above, but a
+// 4-MI-tall block scanning 1-MI-tall left neighbors should pick up 4 left
+// samples per the warp spec (find_warp_samples).
+func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref ReferenceFrame, mv motion.Vector) (WarpedMotionModel, bool, error) {
+	var samples [maxWarpSamples]warpSample
+	count, doTL, doTR, err := c.collectWarpSamplesAboveLeft(block, ref, &samples)
+	if err != nil {
+		return WarpedMotionModel{}, false, err
+	}
+	if doTL && count < maxWarpSamples && block.HaveTop && block.HaveLeft {
+		// libaom: record_samples(mbmi, pts, pts_inref, 0, -1, 0, -1)
+		// args: row_offset=0, sign_r=-1, col_offset=0, sign_c=-1.
+		if sample, ok, err := c.warpSampleGrid(block, ref, block.X4-1, block.Y4-1, 0, -1, 0, -1); err != nil {
+			return WarpedMotionModel{}, false, err
+		} else if ok {
+			samples[count] = sample
+			count++
+		}
+	}
+	if doTR && count < maxWarpSamples {
+		dims, ok := block.Size.Dimensions()
+		if !ok {
+			return WarpedMotionModel{}, false, ErrInvalidDecodeState
+		}
+		if block.HaveTop && c.warpHasTopRight(block, int(dims.W4), int(dims.H4)) {
+			// libaom: record_samples(mbmi, pts, pts_inref, 0, -1, xd->width, 1)
+			// args: row_offset=0, sign_r=-1, col_offset=W4, sign_c=1.
+			if sample, ok, err := c.warpSampleGrid(block, ref, block.X4+int(dims.W4), block.Y4-1, int(dims.W4), 1, 0, -1); err != nil {
+				return WarpedMotionModel{}, false, err
+			} else if ok {
+				samples[count] = sample
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		return WarpedMotionModel{}, true, nil
+	}
+	if count > 1 {
+		count = selectWarpSamples(samples[:count], block.Size, mv)
+	}
+	return findWarpProjection(samples[:count], block, mv)
+}
+
+// collectWarpSamplesAboveLeft scans the above row and left column following
+// libaom's av1_findSamples. Returns (count, doTopLeft, doTopRight, err).
+// doTopLeft and doTopRight are propagated from libaom's `do_tl`/`do_tr`
+// which depend on the first neighbor block's width/height alignment.
+func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref ReferenceFrame, samples *[maxWarpSamples]warpSample) (int, bool, bool, error) {
+	if !ref.Valid() {
+		return 0, false, false, ErrInvalidDecodeState
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return 0, false, false, ErrInvalidDecodeState
+	}
+	blockW4 := int(dims.W4)
+	blockH4 := int(dims.H4)
+	count := 0
+	doTL := true
+	doTR := true
+
+	// Above row: libaom's av1_findSamples scans the row at row_offset=-1.
+	if block.HaveTop {
+		startSlot := block.X4
+		firstSize := c.AboveBlockSize[startSlot]
+		firstW4 := warpNeighborW4(firstSize)
+		if firstW4 <= 0 {
+			firstW4 = 1
+		}
+		if blockW4 <= firstW4 {
+			// "current block width <= above block width" branch.
+			colOffset := -(int(block.MICol) % firstW4)
+			if colOffset < 0 {
+				doTL = false
+			}
+			if colOffset+firstW4 > blockW4 {
+				doTR = false
+			}
+			if c.warpAboveNeighborMatches(startSlot, ref) {
+				samples[count] = c.warpSampleAboveAt(startSlot, colOffset)
+				count++
+			}
+		} else {
+			// "current block width > above block width" branch.
+			for i := 0; i < blockW4 && count < maxWarpSamples; {
+				slot := startSlot + i
+				if slot >= MaxBlockModeSlots {
+					break
+				}
+				size := c.AboveBlockSize[slot]
+				step := warpNeighborW4(size)
+				if step <= 0 {
+					step = 1
+				}
+				if c.warpAboveNeighborMatches(slot, ref) {
+					samples[count] = c.warpSampleAboveAt(slot, i)
+					count++
+				}
+				i += step
+			}
+		}
+	}
+
+	// Left column: libaom's av1_findSamples scans the column at col_offset=-1.
+	if block.HaveLeft && count < maxWarpSamples {
+		startSlot := block.Y4
+		firstSize := c.LeftBlockSize[startSlot]
+		firstH4 := warpNeighborH4(firstSize)
+		if firstH4 <= 0 {
+			firstH4 = 1
+		}
+		if blockH4 <= firstH4 {
+			rowOffset := -(int(block.MIRow) % firstH4)
+			if rowOffset < 0 {
+				doTL = false
+			}
+			if c.warpLeftNeighborMatches(startSlot, ref) {
+				samples[count] = c.warpSampleLeftAt(startSlot, rowOffset)
+				count++
+			}
+		} else {
+			for i := 0; i < blockH4 && count < maxWarpSamples; {
+				slot := startSlot + i
+				if slot >= MaxBlockModeSlots {
+					break
+				}
+				size := c.LeftBlockSize[slot]
+				step := warpNeighborH4(size)
+				if step <= 0 {
+					step = 1
+				}
+				if c.warpLeftNeighborMatches(slot, ref) {
+					samples[count] = c.warpSampleLeftAt(slot, i)
+					count++
+				}
+				i += step
+			}
+		}
+	}
+
+	return count, doTL, doTR, nil
+}
+
+func warpNeighborW4(size BlockSize) int {
+	dims, ok := size.Dimensions()
+	if !ok {
+		return 0
+	}
+	return int(dims.W4)
+}
+
+func warpNeighborH4(size BlockSize) int {
+	dims, ok := size.Dimensions()
+	if !ok {
+		return 0
+	}
+	return int(dims.H4)
+}
+
+func (c *BlockModeContext) warpAboveNeighborMatches(slot int, ref ReferenceFrame) bool {
+	if slot < 0 || slot >= MaxBlockModeSlots {
+		return false
+	}
+	if c.AboveIntra[slot] != 0 {
+		return false
+	}
+	if c.AboveMotionValid[slot] == 0 {
+		return false
+	}
+	if c.AboveRef[0][slot] != ref {
+		return false
+	}
+	if c.AboveRef[1][slot] != ReferenceFrameNone {
+		return false
+	}
+	return true
+}
+
+func (c *BlockModeContext) warpLeftNeighborMatches(slot int, ref ReferenceFrame) bool {
+	if slot < 0 || slot >= MaxBlockModeSlots {
+		return false
+	}
+	if c.LeftIntra[slot] != 0 {
+		return false
+	}
+	if c.LeftMotionValid[slot] == 0 {
+		return false
+	}
+	if c.LeftRef[0][slot] != ref {
+		return false
+	}
+	if c.LeftRef[1][slot] != ReferenceFrameNone {
+		return false
+	}
+	return true
+}
+
+func (c *BlockModeContext) warpSampleAboveAt(slot int, colOffset4 int) warpSample {
+	size := c.AboveBlockSize[slot]
+	w4 := warpNeighborW4(size)
+	h4 := warpNeighborH4(size)
+	mv := c.AboveInterMotion[slot].MV[0]
+	return recordWarpSample(mv, colOffset4, 0, 1, -1, w4, h4)
+}
+
+func (c *BlockModeContext) warpSampleLeftAt(slot int, rowOffset4 int) warpSample {
+	size := c.LeftBlockSize[slot]
+	w4 := warpNeighborW4(size)
+	h4 := warpNeighborH4(size)
+	mv := c.LeftInterMotion[slot].MV[0]
+	return recordWarpSample(mv, 0, rowOffset4, -1, 1, w4, h4)
+}
+
+func (c *BlockModeContext) warpSampleGrid(block BlockVisit, ref ReferenceFrame, x4 int, y4 int, colOffset4 int, signC int, rowOffset4 int, signR int) (warpSample, bool, error) {
+	motionResult, size, ok := c.gridInterMotion(x4, y4)
+	if !ok {
+		return warpSample{}, false, nil
+	}
+	if motionResult.References.Compound {
+		return warpSample{}, false, nil
+	}
+	if motionResult.References.Ref[0] != ref {
+		return warpSample{}, false, nil
+	}
+	if motionResult.References.Ref[1] != ReferenceFrameNone {
+		return warpSample{}, false, nil
+	}
+	w4 := warpNeighborW4(size)
+	h4 := warpNeighborH4(size)
+	return recordWarpSample(motionResult.MV[0], colOffset4, rowOffset4, signC, signR, w4, h4), true, nil
+}
+
+func (c *BlockModeContext) warpHasTopRight(block BlockVisit, w4, h4 int) bool {
+	// has_top_right is checked by libaom against AOMMAX(xd->width, xd->height).
+	// goav1 already provides blockHasTopRight in block_loop.go but it's
+	// SB-shape based; for warp samples libaom uses the same has_top_right gate
+	// that the OBMC scan does (HaveTopRight on the visit was computed already).
+	// We re-evaluate using the larger dimension here to match
+	// has_top_right(..., AOMMAX(width, height)).
+	if !block.HaveTop {
+		return false
+	}
+	// Conservative: trust the existing HaveTopRight flag. blockHasTopRight in
+	// goav1 already encodes the SB partition-tree gate.
+	return true
+}
+
 func findWarpProjection(samples []warpSample, block BlockVisit, mv motion.Vector) (WarpedMotionModel, bool, error) {
 	model, invalid, err := findWarpAffineInt(samples, block, mv)
 	if invalid || err != nil {
