@@ -186,9 +186,24 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         | internal/av1/decoder/postfilter_filmgrain.go | blocks, per-row apply; covered by   |
 |    |                                  |         |                                  | av1-1-b8-23-film_grain-50.ivf (not in fast).   |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-| 24 | Tile groups: single              | Yes     | internal/av1/parser/tile_group.go | Single-tile group is the default path.        |
-|    | Tile groups: multiple            | Yes     | internal/av1/parser/tile_group.go | ParseTileGroupHeader supports start/end span;  |
+| 24 | Tile groups: single              | Yes     | internal/av1/parser/tile_group.go | Single-tile group is the default path; every  |
+|    |                                  |         |                                  | committed fast-suite vector uses Cols=1 Rows=1.|
+|    | Tile groups: multiple            | Partial | internal/av1/parser/tile_group.go | ParseTileGroupHeader supports start/end span;  |
 |    |                                  |         | internal/av1/decoder/stream.go   | continuation tile groups re-use frameState.    |
+|    |                                  |         |                                  | Targeted vector coverage is limited: libaom    |
+|    |                                  |         |                                  | v3.14.0's published AV1 test suite has no      |
+|    |                                  |         |                                  | dedicated av1-1-b8-XX-tiles.ivf bitstream, so  |
+|    |                                  |         |                                  | the only multi-tile vectors in the manifest    |
+|    |                                  |         |                                  | are the SVC streams (L1T2: Cols=3 Rows=1;      |
+|    |                                  |         |                                  | L2T1 / L2T2: Cols=3 base, Cols=4 enhancement). |
+|    |                                  |         |                                  | All three carry VectorLabelMultiTile in        |
+|    |                                  |         |                                  | testvector/libaom_manifest.go for filtering.   |
+|    |                                  |         |                                  | L1T2 frame 0 PASS in the relevant-cohort       |
+|    |                                  |         |                                  | dry-run; L2T1 / L2T2 enhancement-layer frame 0 |
+|    |                                  |         |                                  | errors "threading: invalid batch" before tile  |
+|    |                                  |         |                                  | reconstruction - the root cause is the multi-  |
+|    |                                  |         |                                  | pool SVC surface routing path, not the tile    |
+|    |                                  |         |                                  | boundary. See the SVC vector table in §2.      |
 |    | Tile lists (OBU_TILE_LIST)       | Yes     | internal/av1/parser/tile_list.go | ParseTileListOBU parses the                    |
 |    |                                  |         | internal/av1/decoder/stream.go   | tile_list_obu() header and per-tile entries    |
 |    |                                  |         |                                  | (anchor_frame_idx, anchor_tile_row/col,        |
@@ -203,7 +218,11 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Frame type: inter                | Yes     | internal/av1/parser/frame.go     | FrameTypeInter; mostly bit-exact, mfmv/mv      |
 |    |                                  |         |                                  | desync on later frames (see vector table).     |
 |    | Frame type: switch               | Yes     | internal/av1/parser/frame.go     | FrameTypeSwitch parsed; ErrorResilientMode     |
-|    |                                  |         |                                  | implied. No committed switch-frame vector.     |
+|    |                                  |         |                                  | + FrameSizeOverride + RefreshFrameFlags=0xff   |
+|    |                                  |         |                                  | implied; reference slots reset on the          |
+|    |                                  |         |                                  | switch surface. Parser + stream regression     |
+|    |                                  |         |                                  | tests committed; no upstream libaom v3.14.0    |
+|    |                                  |         |                                  | switch-frame conformance vector available.     |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 26 | Show-existing-frame              | Yes     | internal/av1/parser/frame.go     | parseShowExistingFrameHeader; decoder event    |
 |    |                                  |         | internal/av1/decoder/stream.go   | EventExistingFrame; surface lookup + abort     |
@@ -360,22 +379,65 @@ documented in [docs/svc.md](docs/svc.md).
 | # | Vector                                            | Layout | Lenient | Strict | Notes                                       |
 +---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
 | 1 | av1-1-b8-22-svc-L1T2.ivf                          | L1T2   | PARTIAL | FAIL   | Single spatial layer (640x360), two         |
-|   | (libaom av1 8-bit svc L1T2)                       |        |         |        | temporal layers. Frame 0 (T0 base) PASS;    |
-|   |                                                   |        |         |        | frame 1 currently errors                    |
-|   |                                                   |        |         |        | `threading: invalid batch` on the inter-    |
-|   |                                                   |        |         |        | layer reference path. Single-pool friendly. |
+|   | (libaom av1 8-bit svc L1T2)                       |        |         |        | temporal layers. Cols=3 Rows=1 (multi-      |
+|   |                                                   |        |         |        | tile). Frame 0 (T0 base) PASS; frame 1      |
+|   |                                                   |        |         |        | currently errors `threading: invalid batch` |
+|   |                                                   |        |         |        | on the inter-layer reference path. Single-  |
+|   |                                                   |        |         |        | pool friendly. Tagged VectorLabelMultiTile. |
 +---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
 | 2 | av1-1-b8-22-svc-L2T1.ivf                          | L2T1   | FAIL    | FAIL   | Two spatial layers (640x360 + 1280x720).    |
-|   | (libaom av1 8-bit svc L2T1)                       |        |         |        | Requires the multi-pool surface routing     |
-|   |                                                   |        |         |        | path (`FrameSurfaceProvider` /              |
+|   | (libaom av1 8-bit svc L2T1)                       |        |         |        | Cols=3 base, Cols=4 enhancement (multi-     |
+|   |                                                   |        |         |        | tile). Requires the multi-pool surface      |
+|   |                                                   |        |         |        | routing path (`FrameSurfaceProvider` /      |
 |   |                                                   |        |         |        | `FrameSurfaceReleaser`); higher-layer       |
-|   |                                                   |        |         |        | frame 0 mismatches the libaom reference.    |
+|   |                                                   |        |         |        | frame 0 errors `threading: invalid batch`   |
+|   |                                                   |        |         |        | at spatial=1 before tile reconstruction.    |
+|   |                                                   |        |         |        | Failure is multi-pool surface routing, not  |
+|   |                                                   |        |         |        | the tile boundary. Tagged                   |
+|   |                                                   |        |         |        | VectorLabelMultiTile.                       |
 +---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
 | 3 | av1-1-b8-22-svc-L2T2.ivf                          | L2T2   | FAIL    | FAIL   | Two spatial + two temporal layers           |
-|   | (libaom av1 8-bit svc L2T2)                       |        |         |        | (640x360 + 1280x720). Multi-pool path.      |
-|   |                                                   |        |         |        | Higher-layer frame 0 mismatches.            |
+|   | (libaom av1 8-bit svc L2T2)                       |        |         |        | (640x360 + 1280x720). Cols=3 base, Cols=4   |
+|   |                                                   |        |         |        | enhancement (multi-tile). Multi-pool path.  |
+|   |                                                   |        |         |        | Higher-layer frame 0 shares the L2T1 multi- |
+|   |                                                   |        |         |        | pool routing failure. Tagged                |
+|   |                                                   |        |         |        | VectorLabelMultiTile.                       |
 +---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
 ```
+
+### Multi-tile vector coverage
+
+The libaom v3.14.0 published AV1 test suite does not include a
+dedicated "av1-1-b8-XX-tiles.ivf" stream, so the only committed
+multi-tile bitstreams are the three SVC vectors above. All three
+carry `VectorLabelMultiTile` in
+`internal/av1/testvector/libaom_manifest.go`; the cohort can be
+selected via
+`LibaomRemoteManifest().SelectRemote(0, VectorLabelMultiTile, nil)`.
+
+Frame-0 status on the multi-tile probe set:
+
+- **L1T2 (Cols=3 Rows=1, single spatial layer).** Frame 0 PASS
+  under the lenient gate via `make dryrun-relevant`. The 3-tile-
+  column decode and tile-group boundary handling do *not* surface
+  an entropy desync or tile-group continuation bug on this vector.
+  This is the only multi-tile vector that exercises the tile path
+  without SVC multi-pool complexity.
+- **L2T1 / L2T2.** Frame 0 spatial=0 (the 3-tile base layer)
+  decodes; frame 0 spatial=1 (the 4-tile enhancement layer) errors
+  `threading: invalid batch` before tile reconstruction begins.
+  The root cause is the multi-pool SVC surface routing path and
+  *not* the multi-tile boundary; this is the same gap that blocks
+  every enhancement-layer frame.
+
+Net: targeted multi-tile decode parity is unproblematic at
+Cols<=3 (L1T2 frame 0). Cols=4 with SVC spatial scalability stays
+gated behind the multi-pool surface-routing gap that already
+blocks L2T1 / L2T2 single-frame parity. A dedicated non-SVC
+multi-tile vector remains absent from the libaom suite; if one
+becomes available upstream it should be added to
+`SuiteLevelExtended` so the tile path can be probed independently
+of SVC.
 
 Run the SVC dry-run with:
 
@@ -531,8 +593,18 @@ work items, ordered by how much of the fast suite they would unblock:
    requires it today. (Metadata OBU payload parsing landed via
    `obu.ParseMetadata` and the `Metadata*` public types in the root
    package.)
-8. **Switch frames.** Parsed but no committed vector exercises the
-   switch-frame reset path end-to-end.
+8. **Switch frames.** Parser routes `FrameTypeSwitch` with
+   `error_resilient_mode = 1`, `frame_size_override_flag = 1`, and
+   `refresh_frame_flags = 0xff` per AV1 spec §5.9.1 / §5.9.5;
+   `ReferenceState` and `SurfaceReferences` both refresh every slot
+   onto the decoded switch surface so the decoder can resume
+   bitstream switching without any prior context. Parser, frame-
+   size, and stream-level regression tests are committed
+   (`TestParseFrameHeaderPrefixSwitchFrame`,
+   `TestParseFrameSizeSwitchFrame*`,
+   `TestStreamSwitchFrame*`). The upstream libaom v3.14.0 test-data
+   set does not ship a dedicated `S_FRAME` IVF, so no end-to-end
+   MD5 oracle vector is committed to the extended cohort.
 
 With the fast suite now 8/8 PASS under the lenient first-frame
 gate, the next milestone is bit-exact strict every-frame parity on

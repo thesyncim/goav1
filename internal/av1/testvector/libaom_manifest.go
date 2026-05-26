@@ -110,7 +110,11 @@ var libaomRemoteVectors = [...]RemoteVector{
 		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L1T2.ivf.md5", SHA1: "2bc12b16385ea14323bc79607fb8dfbd7edaf8ef"},
 		Oracle: OracleFrameMD5,
 		Levels: SuiteLevelRelevant | SuiteLevelFull,
-		Labels: VectorLabelSVC,
+		// VectorLabelMultiTile: every frame uses Cols=3, Rows=1 - this
+		// is the only single-spatial-layer multi-tile vector in the
+		// libaom v3.14.0 AV1 suite (the L2T* vectors are also multi-
+		// tile but pair the tile path with multi-pool SVC).
+		Labels: VectorLabelSVC | VectorLabelMultiTile,
 	},
 	{
 		Tag:    TagDecoderLibaomFilmGrain,
@@ -160,7 +164,12 @@ var libaomRemoteVectors = [...]RemoteVector{
 	//   - mid- and lossless-Q 10-bit quantizer streams
 	//   - sub-block-aligned and odd 34x34 / 66x66 sizes
 	//   - >= 192x192 resolutions that hit multi-superblock tile rows
-	//   - the remaining libaom SVC permutations (L2T1, L2T2)
+	//   - the remaining libaom SVC permutations (L2T1, L2T2), which
+	//     also exercise the multi-tile path: base-layer frames use
+	//     Cols=3 and enhancement-layer frames use Cols=4. The libaom
+	//     v3.14.0 suite does not publish a dedicated multi-tile
+	//     bitstream, so these vectors plus L1T2 above carry
+	//     VectorLabelMultiTile for tile-path probe filtering.
 	{
 		Tag:    TagDecoderLibaomQuantizer10Bit32,
 		Kind:   KindDecoder,
@@ -239,7 +248,10 @@ var libaomRemoteVectors = [...]RemoteVector{
 		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L2T1.ivf.md5", SHA1: "0f75f2ac44e61fc83be70c955410fa378e433237"},
 		Oracle: OracleFrameMD5,
 		Levels: SuiteLevelExtended | SuiteLevelFull,
-		Labels: VectorLabelSVC,
+		// VectorLabelMultiTile: base-layer frames use Cols=3 Rows=1,
+		// enhancement-layer frames use Cols=4 Rows=1. See the cohort
+		// note above.
+		Labels: VectorLabelSVC | VectorLabelMultiTile,
 	},
 	{
 		Tag:    TagDecoderLibaomSVCL2T2,
@@ -249,7 +261,10 @@ var libaomRemoteVectors = [...]RemoteVector{
 		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L2T2.ivf.md5", SHA1: "f476a10ff06d750129f8229755d51e17ff141b2a"},
 		Oracle: OracleFrameMD5,
 		Levels: SuiteLevelExtended | SuiteLevelFull,
-		Labels: VectorLabelSVC,
+		// VectorLabelMultiTile: base-layer frames use Cols=3 Rows=1,
+		// enhancement-layer frames use Cols=4 Rows=1. See the cohort
+		// note above.
+		Labels: VectorLabelSVC | VectorLabelMultiTile,
 	},
 }
 

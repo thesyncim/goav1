@@ -16,7 +16,13 @@ import (
 //   - 10-bit streams across the full quantizer range (q=32, q=63);
 //   - sub-superblock-aligned (34x34, 64x64, 66x66) and multi-superblock
 //     (208x208, 226x226) frame sizes;
-//   - additional SVC permutations (L2T1, L2T2).
+//   - additional SVC permutations (L2T1, L2T2) which also exercise
+//     the multi-tile path (Cols=3 base, Cols=4 enhancement) - libaom
+//     v3.14.0 ships no dedicated av1-1-b8-XX-tiles.ivf, so the SVC
+//     vectors are the only committed multi-tile bitstreams. See
+//     VectorLabelMultiTile in remote.go and the SVC L1T2 entry in
+//     libaom_manifest.go for the non-SVC tile-path probe at
+//     SuiteLevelRelevant.
 //
 // Each vector executes runLibaomFrameWorkDryRun, which gates strictly on
 // frame 0's MD5 by default and logs a per-frame progress line for later

@@ -52,6 +52,16 @@ const (
 	VectorLabelFilmGrain
 	VectorLabelMonochrome
 	VectorLabelHighBitDepth
+	// VectorLabelMultiTile marks streams that exercise the multi-tile
+	// decode path (TileInfo.Cols > 1 or TileInfo.Rows > 1). The libaom
+	// v3.14.0 published AV1 test suite does not include a dedicated
+	// multi-tile bitstream (e.g. "av1-1-b8-XX-tiles.ivf"); the only
+	// committed multi-tile vectors in the manifest are the SVC ones:
+	// L1T2 has Cols=3 on every frame, L2T1 / L2T2 emit Cols=3 base
+	// layers and Cols=4 enhancement layers. Selecting by this label
+	// via SelectRemote(0, VectorLabelMultiTile, nil) returns the
+	// multi-tile probe cohort.
+	VectorLabelMultiTile
 )
 
 // RemoteFile describes one checksum-pinned test-data object. Name is a single
