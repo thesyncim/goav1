@@ -530,6 +530,77 @@ func TestBuildReferenceMVStackUsesOuterGridCandidateForNearMV(t *testing.T) {
 	}
 }
 
+// TestBuildReferenceMVStackIntraNearestAdvancesProcessedRows mirrors the
+// cdf_update frame 1 block (mi_row=20, mi_col=0) ref-MV stack search:
+//
+//   - The block is BLOCK_8X16 (W4=2, H4=4) at SB-local Y4=20, X4=0.
+//   - The nearest above row holds an intra BLOCK_8X16 neighbor; the left
+//     edge is unavailable (frame boundary).
+//   - A NewMV top-right candidate occupies the diagonal slot.
+//   - The outer row at row_offset=-5 holds the BLOCK_8X32 NewMV candidate
+//     that completes libaom's stack.
+//
+// libaom's scan_row_mbmi sets processed_rows from the neighbor's block size
+// regardless of whether the neighbor is inter or intra, so row_offset=-3 is
+// skipped and row_offset=-5 supplies the second stack entry. The earlier
+// goav1 path gated the processed_rows update on AboveMotionValid which kept
+// processedRows=0, scanned row_offset=-3, advanced processedRows on a
+// duplicate sample, and then suppressed the row_offset=-5 add. The result
+// was stack.Count=1, no DRL bit, and NEWMV/NEARMV mode drift two blocks
+// downstream.
+func TestBuildReferenceMVStackIntraNearestAdvancesProcessedRows(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	topRight := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNewMV},
+		MV:         [2]motion.Vector{{Row: -5, Col: -69}},
+	}
+	outer := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNewMV},
+		MV:         [2]motion.Vector{{Row: -10, Col: -69}},
+	}
+
+	// Above row: an intra BLOCK_8X16 neighbor whose AboveBlockSize must
+	// still be populated so libaom's processed_rows stride is honoured.
+	if err := ctx.MarkIntra(BlockSize8x16, 0, 16, true, IntraModeDC); err != nil {
+		t.Fatal(err)
+	}
+	// Top-right diagonal slot at (Y4=19, X4=2) lives in the prior block.
+	dims8x16, _ := BlockSize8x16.Dimensions()
+	ctx.markGridInterMotion(BlockSize8x16, 2, 16, topRight, dims8x16)
+	// Outer row=-5 candidate at SB-local (Y4=15, X4=1) corresponds to a
+	// BLOCK_8X32 inter neighbor decoded earlier in the SB.
+	dims8x32, _ := BlockSize8x32.Dimensions()
+	ctx.markGridInterMotion(BlockSize8x32, 0, 8, outer, dims8x32)
+
+	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
+		Size:         BlockSize8x16,
+		References:   target,
+		X4:           0,
+		Y4:           20,
+		MICol:        0,
+		MIRow:        20,
+		HaveTop:      true,
+		HaveLeft:     false,
+		HaveTopRight: true,
+		GlobalMVs:    [2]motion.Vector{{Row: -4, Col: -70}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 2 {
+		t.Fatalf("stack count=%d want 2 stack=%+v", result.Stack.Count, result.Stack)
+	}
+	if result.Stack.Candidates[0].This != topRight.MV[0] {
+		t.Fatalf("nearest candidate=%+v want %+v", result.Stack.Candidates[0], topRight.MV[0])
+	}
+	if result.Stack.Candidates[1].This != outer.MV[0] {
+		t.Fatalf("outer candidate=%+v want %+v", result.Stack.Candidates[1], outer.MV[0])
+	}
+}
+
 func TestBuildReferenceMVStackUsesTopRightBeforeNearestCutoff(t *testing.T) {
 	var ctx BlockModeContext
 	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}

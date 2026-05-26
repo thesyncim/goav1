@@ -621,26 +621,31 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 	for off := 0; off < end; {
 		slot := req.X4 + off
 		size := c.AboveBlockSize[slot]
-		step := c.aboveCandidateStep(slot, end-off)
+		sizeW4 := blockSizeWidth4(size)
+		sizeH4 := blockSizeHeight4(size)
+		// libaom's scan_row_mbmi sets the iteration stride and
+		// processed_rows from the neighbor's block size regardless of
+		// whether the neighbor is inter or intra. Gating these updates on
+		// AboveMotionValid kept processedRows at zero when the nearest above
+		// row was intra, which let the outer scan re-enter row offsets
+		// libaom already covered and prematurely promote processedRows on a
+		// duplicate candidate, hiding the row=-5 outer sample that libaom
+		// adds to the ref-MV stack.
+		step := minInt(int(dims.W4), sizeW4)
+		if dims.W4 >= refMVMaxScanBlock4 {
+			step = maxInt(step, 4)
+		}
+		if step > end-off {
+			step = end - off
+		}
+		if step <= 0 {
+			step = 1
+		}
 		weight := 2
-		if c.AboveMotionValid[slot] != 0 {
-			sizeW4 := blockSizeWidth4(size)
-			sizeH4 := blockSizeHeight4(size)
-			step = minInt(int(dims.W4), sizeW4)
-			if dims.W4 >= refMVMaxScanBlock4 {
-				step = maxInt(step, 4)
-			}
-			if step > end-off {
-				step = end - off
-			}
-			if step <= 0 {
-				step = 1
-			}
-			if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
-				inc := minInt(-maxRowOffset, sizeH4)
-				weight = maxInt(weight, inc)
-				*processedRows = inc
-			}
+		if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
+			inc := minInt(-maxRowOffset, sizeH4)
+			weight = maxInt(weight, inc)
+			*processedRows = inc
 		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
@@ -657,26 +662,26 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 	for off := 0; off < end; {
 		slot := req.Y4 + off
 		size := c.LeftBlockSize[slot]
-		step := c.leftCandidateStep(slot, end-off)
+		sizeW4 := blockSizeWidth4(size)
+		sizeH4 := blockSizeHeight4(size)
+		// See scanAboveReferenceMVs: the iteration stride and processedCols
+		// update from the neighbor's block size regardless of inter/intra so
+		// the outer column scan respects libaom's processed_cols stride.
+		step := minInt(int(dims.H4), sizeH4)
+		if dims.H4 >= refMVMaxScanBlock4 {
+			step = maxInt(step, 4)
+		}
+		if step > end-off {
+			step = end - off
+		}
+		if step <= 0 {
+			step = 1
+		}
 		weight := 2
-		if c.LeftMotionValid[slot] != 0 {
-			sizeW4 := blockSizeWidth4(size)
-			sizeH4 := blockSizeHeight4(size)
-			step = minInt(int(dims.H4), sizeH4)
-			if dims.H4 >= refMVMaxScanBlock4 {
-				step = maxInt(step, 4)
-			}
-			if step > end-off {
-				step = end - off
-			}
-			if step <= 0 {
-				step = 1
-			}
-			if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
-				inc := minInt(-maxColOffset, sizeW4)
-				weight = maxInt(weight, inc)
-				*processedCols = inc
-			}
+		if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
+			inc := minInt(-maxColOffset, sizeW4)
+			weight = maxInt(weight, inc)
+			*processedCols = inc
 		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
