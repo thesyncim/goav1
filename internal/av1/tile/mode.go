@@ -144,6 +144,17 @@ type BlockModeContext struct {
 	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
+
+	// GridBlockSizeVisited mirrors GridBlockSize but signals whether the
+	// containing slot was ever recorded by markGridInterMotion or
+	// clearGridInterMotion. Outer ref-MV scans use it to distinguish "slot
+	// was a real intra/inter neighbor of known size" (advance by mi_size
+	// of GridBlockSize, matching libaom's scan_row/col stride) from "slot
+	// is past the decoded region" (skip cell-by-cell). Without this flag a
+	// zeroed GridBlockSize (BlockSize128x128) collides with unvisited cells
+	// and forces the scan to fall back to a 4x4 stride past intra neighbors,
+	// oversampling deeper cells libaom never visits.
+	GridBlockSizeVisited [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF

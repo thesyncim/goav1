@@ -1091,3 +1091,91 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal(t *testing.T) {
 		t.Fatalf("expected no candidates from SBDiagonal fallback, matches=%d stack.Count=%d", matches, stack.Count)
 	}
 }
+
+// TestScanGridColReferenceMVsUsesSBLeftHistory verifies that the outer
+// column reference-MV scan picks up the cross-SB neighbor in the prior SB
+// when colOffset reaches x4<0. Mirrors libaom_av1_8-bit_mv frame 1 block
+// (mi_row=26, mi_col=36) where the outer_col[-5] candidate at (mi_row=22,
+// mi_col=31) sits in the SB to the left of the current SB(mi_col=32..63).
+// Without the SBLeft fallback the col scan silently dropped the candidate,
+// undercounting refmv_count from 3 to 2 and steering the DRL_INDEX cdf
+// one cell off libaom.
+func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	leftMV := motion.Vector{Row: -8, Col: 10}
+	candidate := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{leftMV},
+	}
+	// Seed depth=0 of the SB-left snapshot at y4=11 (the cell five columns
+	// left of the current X4=4 in the SB to the left). With X4=4 and
+	// colOffset=-5, x = -1 (depth = -(-1) - 1 = 0). With rowOffset=1
+	// (|colOffset|>1) and i=0, y = Y4 + rowOffset = 11.
+	ctx.SBLeftInterMotionGrid[0][11] = candidate
+	ctx.SBLeftMotionValidGrid[0][11] = 1
+	ctx.SBLeftBlockSizeGrid[0][11] = BlockSize16x8
+
+	processedCols := 4
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize8x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize8x8,
+		References: target,
+		X4:         4,
+		Y4:         10,
+		MIRow:      26,
+		MICol:      36,
+		HaveTop:    true,
+		HaveLeft:   true,
+	}
+	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	if stack.Count == 0 {
+		t.Fatalf("expected SBLeft candidate to be added to stack, count=%d", stack.Count)
+	}
+	if stack.Candidates[0].This != leftMV {
+		t.Fatalf("candidate=%+v want this=%+v", stack.Candidates[0].This, leftMV)
+	}
+}
+
+// TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft verifies the
+// SBLeft fallback in the outer column scan gates on HaveLeft so blocks
+// at the leftmost SB column do not consult a stale snapshot.
+func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	ctx.SBLeftInterMotionGrid[0][11] = InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: -8, Col: 10}},
+	}
+	ctx.SBLeftMotionValidGrid[0][11] = 1
+	ctx.SBLeftBlockSizeGrid[0][11] = BlockSize16x8
+
+	processedCols := 4
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize8x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize8x8,
+		References: target,
+		X4:         4,
+		Y4:         10,
+		MIRow:      26,
+		MICol:      0,
+		HaveTop:    true,
+		HaveLeft:   false,
+	}
+	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	if stack.Count != 0 {
+		t.Fatalf("expected no candidate without HaveLeft, count=%d", stack.Count)
+	}
+}

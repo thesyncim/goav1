@@ -1,9 +1,11 @@
 package tile
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
+
 
 const (
 	MaxMVRefCandidates   = 2
@@ -396,11 +398,21 @@ func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, r
 			c.GridInterMotion[y][x] = result
 			c.GridMotionValid[y][x] = 1
 			c.GridBlockSize[y][x] = size
+			c.GridBlockSizeVisited[y][x] = 1
 		}
 	}
 }
 
-func (c *BlockModeContext) clearGridInterMotion(x4 int, y4 int, dims BlockDimensions) {
+// clearGridInterMotion marks the block's grid cells as having no motion
+// candidate (MotionValid=0) while preserving the block size so outer ref-MV
+// scans can still advance by the candidate's mi_size step. libaom's
+// scan_row_mbmi / scan_col_mbmi advance i += len = AOMMIN(xd->size,
+// mi_size_*[candidate->bsize]) regardless of whether the candidate is inter
+// or intra, so an intra neighbor consumes its full extent in the scan and
+// blocks deeper in the column/row are skipped. Zeroing GridBlockSize would
+// collapse the step to 1 (4x4) and let goav1's outer scan oversample cells
+// libaom never visits, producing a spurious column/row match.
+func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, dims BlockDimensions) {
 	for y := y4; y < y4+int(dims.H4); y++ {
 		if y < 0 || y >= MaxBlockModeSlots {
 			continue
@@ -411,7 +423,8 @@ func (c *BlockModeContext) clearGridInterMotion(x4 int, y4 int, dims BlockDimens
 			}
 			c.GridInterMotion[y][x] = InterMotionResult{}
 			c.GridMotionValid[y][x] = 0
-			c.GridBlockSize[y][x] = 0
+			c.GridBlockSize[y][x] = size
+			c.GridBlockSizeVisited[y][x] = 1
 		}
 	}
 }
@@ -471,6 +484,14 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		c.extendSingleReferenceMVStack(req, dims, &result.Stack)
 	}
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
+	if req.MICol == 46 && (req.MIRow == 10 || req.MIRow == 11) {
+		entropy.TraceLabel("REFMV_DEBUG mi=(%d,%d) wh=(%d,%d) RowMatches=%d ColumnMatches=%d NearestMatch=%d RefMatchCount=%d StackCount=%d NearestCount=%d",
+			req.MICol, req.MIRow, dims.W4, dims.H4, result.RowMatches, result.ColumnMatches, nearestMatch, refMatchCount,
+			result.Stack.Count, result.NearestCount)
+		for i := 0; i < result.Stack.Count; i++ {
+			entropy.TraceLabel("REFMV_STACK[%d] mi=(%d,%d) mv=(%d,%d) weight=%d", i, req.MICol, req.MIRow, result.Stack.Candidates[i].This.Row, result.Stack.Candidates[i].This.Col, result.Stack.Candidates[i].Weight)
+		}
+	}
 	return result, nil
 }
 
@@ -801,10 +822,17 @@ func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions)
 	if req.HaveTop {
 		gridMaxRowOffset = maxInt(gridMaxRowOffset, -req.Y4)
 	}
+	// gridMaxColOffset is intentionally NOT clamped by -X4 so the inter
+	// ref-MV outer column scan can reach into the SB to the left through
+	// the SBLeft* snapshots (see crossSBGridNeighborBlockSize). libaom's
+	// frame-wide mi grid exposes those cells transparently; goav1 stages
+	// them via the carrier's Left slot at SB-store time. Without the
+	// extension a block at the left edge of an SB (e.g. quantizer_00 frame
+	// 1 mi=(32,0) BLOCK_16X8) would drop libaom's outer_col[-3] and
+	// outer_col[-5] candidates, undercounting refmv_count and miscomputing
+	// the DRL/refmv contexts. The row direction stays clamped because the
+	// SB-top snapshots are only safe for IBC reads (see scanGridBlockReferenceMV).
 	gridMaxColOffset := maxColOffset
-	if req.HaveLeft {
-		gridMaxColOffset = maxInt(gridMaxColOffset, -req.X4)
-	}
 	return maxRowOffset, maxColOffset, gridMaxRowOffset, gridMaxColOffset
 }
 
@@ -866,8 +894,13 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 	for i := 0; i < end; {
 		x := req.X4 + colOffset + i
 		y := req.Y4 + rowOffset
-		candidate, size, ok := c.gridInterMotion(x, y)
-		if !ok {
+		// libaom's scan_row_mbmi always advances i += AOMMIN(xd->width,
+		// mi_size_wide[candidate->bsize]) regardless of whether the candidate
+		// is inter or intra. Use the recorded size for the step even when
+		// the cell has no usable motion candidate so the scan never
+		// re-samples cells already covered by an intra neighbor's mi_size.
+		size, sizeKnown := c.gridNeighborBlockSize(x, y)
+		if !sizeKnown {
 			i++
 			continue
 		}
@@ -881,6 +914,11 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 		}
 		if step <= 0 {
 			step = 1
+		}
+		candidate, _, ok := c.gridInterMotion(x, y)
+		if !ok {
+			i += step
+			continue
 		}
 		weight := 2
 		if dims.W4 >= 2 && int(dims.W4) <= sizeW4 {
@@ -956,8 +994,15 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 	for i := 0; i < end; {
 		x := req.X4 + colOffset
 		y := req.Y4 + rowOffset + i
-		candidate, size, ok := c.gridInterMotion(x, y)
-		if !ok {
+		// libaom's scan_col_mbmi always advances i += AOMMIN(xd->height,
+		// mi_size_high[candidate->bsize]) regardless of whether the candidate
+		// is inter or intra. Use the recorded size for the step even when
+		// the cell has no usable motion candidate so the scan never
+		// re-samples cells already covered by an intra neighbor's mi_size.
+		// Cross-SB cells (x<0) fall back to the SB-left snapshot so columns
+		// in the prior SB are visible to the scan.
+		size, sizeKnown := c.crossSBGridNeighborBlockSize(req, x, y)
+		if !sizeKnown {
 			i++
 			continue
 		}
@@ -971,6 +1016,11 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 		}
 		if step <= 0 {
 			step = 1
+		}
+		candidate, _, ok := c.crossSBInterGridInterMotion(req, x, y)
+		if !ok {
+			i += step
+			continue
 		}
 		weight := 2
 		if dims.H4 >= 2 && int(dims.H4) <= sizeH4 {
@@ -1118,6 +1168,89 @@ func (c *BlockModeContext) gridInterMotion(x4 int, y4 int) (InterMotionResult, B
 		return InterMotionResult{}, 0, false
 	}
 	return c.GridInterMotion[y4][x4], c.GridBlockSize[y4][x4], true
+}
+
+// gridNeighborBlockSize returns the block size recorded at (x4, y4)
+// regardless of whether the cell carries a usable motion candidate.
+// MarkIntra records the intra block's size in GridBlockSize while clearing
+// GridMotionValid so outer ref-MV scans can advance by libaom's
+// `i += mi_size_*[candidate->bsize]` stride past intra neighbors without
+// oversampling cells the candidate already covers. Returns (size, true) when
+// a Mark*() recorded a size at the slot, (0, false) when the slot is out of
+// range. The "size present" signal is the gridBlockSizeVisited bitmap, which
+// flips only when markGridInterMotion / clearGridInterMotion writes the slot.
+func (c *BlockModeContext) gridNeighborBlockSize(x4 int, y4 int) (BlockSize, bool) {
+	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
+		return 0, false
+	}
+	if c.GridBlockSizeVisited[y4][x4] == 0 {
+		return 0, false
+	}
+	return c.GridBlockSize[y4][x4], true
+}
+
+// crossSBGridNeighborBlockSize mirrors gridNeighborBlockSize but transparently
+// falls back to the SB-top / SB-left / SB-diagonal snapshots when the lookup
+// crosses the current superblock boundary. libaom's mi grid is frame-wide so
+// scan_row_mbmi / scan_col_mbmi see prior-SB neighbors without ceremony; goav1
+// keeps a per-SB grid and stages the prior SB's bottom rows in SBTop*Grid /
+// its right columns in SBLeft*Grid (depth 0 = adjacent cell, depth d = d+1
+// cells away). Used by the inter ref-MV outer row/column scan so a block at
+// the top edge (Y4=0) or left edge (X4=0) of an SB still observes deep outer
+// offsets (-3, -5) that would otherwise be clipped at the SB boundary.
+func (c *BlockModeContext) crossSBGridNeighborBlockSize(req ReferenceMVStackRequest, x4, y4 int) (BlockSize, bool) {
+	if c == nil {
+		return 0, false
+	}
+	if y4 < 0 && x4 < 0 {
+		if !req.HaveTop || !req.HaveLeft {
+			return 0, false
+		}
+		d := -y4 - 1
+		e := -x4 - 1
+		if d < 0 || d >= intrabcCrossSBHistory || e < 0 || e >= intrabcCrossSBHistory {
+			return 0, false
+		}
+		if c.SBDiagonalMotionValidGrid[d][e] == 0 {
+			return 0, false
+		}
+		return c.SBDiagonalBlockSizeGrid[d][e], true
+	}
+	if y4 < 0 {
+		if !req.HaveTop {
+			return 0, false
+		}
+		depth := -y4 - 1
+		if depth < 0 || depth >= intrabcCrossSBHistory ||
+			x4 < 0 || x4 >= MaxBlockModeSlots ||
+			c.SBTopMotionValidGrid[depth][x4] == 0 {
+			return 0, false
+		}
+		return c.SBTopBlockSizeGrid[depth][x4], true
+	}
+	if x4 < 0 {
+		if !req.HaveLeft {
+			return 0, false
+		}
+		depth := -x4 - 1
+		if depth < 0 || depth >= intrabcCrossSBHistory ||
+			y4 < 0 || y4 >= MaxBlockModeSlots ||
+			c.SBLeftMotionValidGrid[depth][y4] == 0 {
+			return 0, false
+		}
+		return c.SBLeftBlockSizeGrid[depth][y4], true
+	}
+	return c.gridNeighborBlockSize(x4, y4)
+}
+
+// crossSBInterGridInterMotion mirrors gridInterMotion but consults the SB-top
+// / SB-left / SB-diagonal snapshots when the lookup crosses the superblock
+// boundary. Symmetric to crossSBIntrabcGridInterMotion but returns the full
+// InterMotionResult so the inter ref-MV outer row/column scan can match the
+// candidate's reference frame, mode (NEWMV detection), and motion vector
+// against the current block's reference list.
+func (c *BlockModeContext) crossSBInterGridInterMotion(req ReferenceMVStackRequest, x4, y4 int) (InterMotionResult, BlockSize, bool) {
+	return c.crossSBIntrabcGridInterMotion(req, x4, y4)
 }
 
 // crossSBIntrabcGridInterMotion returns the InterMotionResult and block size
