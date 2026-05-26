@@ -487,3 +487,161 @@ func FuzzReadTransformPartitionSplit(f *testing.F) {
 		}
 	})
 }
+
+// TestTransformPartitionCategoryMatchesLibaom pins TransformPartitionContext's
+// category index to libaom's txfm_partition_context() formula for every valid
+// (bsize_max_tx, depth, from) triple reachable by libaom's
+// read_tx_size_vartx() (depth in [0..MAX_VARTX_DEPTH-1] = [0,1]).
+//
+// libaom formula (av1/common/av1_common_int.h: txfm_partition_context):
+//
+//	max_tx_size = get_sqr_tx_size(AOMMAX(block_size_wide[bsize],
+//	                                     block_size_high[bsize]))
+//	base  = (TX_SIZES - 1 - max_tx_size) * 2
+//	bonus = (txsize_sqr_up_map[tx_size] != max_tx_size &&
+//	         max_tx_size > TX_8X8) ? 1 : 0
+//	cat   = base + bonus
+//
+// goav1's category = 2*(int(TransformSize64x64)-int(dims.Max)) - req.Depth.
+// The two formulas converge for all reachable inputs because dims.Max collapses
+// rectangular `from` sizes onto their containing square (e.g. TX_32X16 →
+// Max=3 = TX_32X32) and Depth shifts the result to mirror the bonus +1 that
+// libaom adds when txsize_sqr_up_map[tx_size] != max_tx_size.
+func TestTransformPartitionCategoryMatchesLibaom(t *testing.T) {
+	type chain struct {
+		bsize    BlockSize
+		root     TransformSize // libaom's max_txsize_rect_lookup[bsize]
+		sqr      TransformSize // libaom's get_sqr_tx_size(AOMMAX(bw,bh))
+		baseLog2 uint8         // libaom's max_tx_size as log2 (1..4 for 8..64)
+	}
+	chains := []chain{
+		{BlockSize8x8, TransformSize8x8, TransformSize8x8, 1},
+		{BlockSize16x16, TransformSize16x16, TransformSize16x16, 2},
+		{BlockSize32x32, TransformSize32x32, TransformSize32x32, 3},
+		{BlockSize64x64, TransformSize64x64, TransformSize64x64, 4},
+		{BlockSize64x32, TransformSize64x32, TransformSize64x64, 4},
+		{BlockSize32x16, TransformSize32x16, TransformSize32x32, 3},
+		{BlockSize16x8, TransformSize16x8, TransformSize16x16, 2},
+		{BlockSize8x4, TransformSize8x4, TransformSize8x8, 1},
+		{BlockSize32x8, TransformSize32x8, TransformSize32x32, 3},
+		{BlockSize16x4, TransformSize16x4, TransformSize16x16, 2},
+	}
+	sqrUpMap := map[TransformSize]TransformSize{
+		TransformSize4x4:   TransformSize4x4,
+		TransformSize8x8:   TransformSize8x8,
+		TransformSize16x16: TransformSize16x16,
+		TransformSize32x32: TransformSize32x32,
+		TransformSize64x64: TransformSize64x64,
+		TransformSize4x8:   TransformSize8x8,
+		TransformSize8x4:   TransformSize8x8,
+		TransformSize8x16:  TransformSize16x16,
+		TransformSize16x8:  TransformSize16x16,
+		TransformSize16x32: TransformSize32x32,
+		TransformSize32x16: TransformSize32x32,
+		TransformSize32x64: TransformSize64x64,
+		TransformSize64x32: TransformSize64x64,
+		TransformSize4x16:  TransformSize16x16,
+		TransformSize16x4:  TransformSize16x16,
+		TransformSize8x32:  TransformSize32x32,
+		TransformSize32x8:  TransformSize32x32,
+		TransformSize16x64: TransformSize64x64,
+		TransformSize64x16: TransformSize64x64,
+	}
+	for _, ch := range chains {
+		depths := []struct {
+			depth int
+			from  TransformSize
+		}{
+			{0, ch.root},
+		}
+		if dims, ok := ch.root.Dimensions(); ok && dims.Max > 1 {
+			depths = append(depths, struct {
+				depth int
+				from  TransformSize
+			}{1, dims.Sub})
+		}
+		for _, d := range depths {
+			base := int(2 * (4 - ch.baseLog2))
+			bonus := 0
+			if sqrUpMap[d.from] != ch.sqr && ch.sqr > TransformSize8x8 {
+				bonus = 1
+			}
+			wantCat := base + bonus
+			var ctx BlockModeContext
+			gotCat, _, err := ctx.TransformPartitionContext(TransformPartitionRequest{
+				Size:     ch.bsize,
+				From:     d.from,
+				Depth:    d.depth,
+				HaveTop:  true,
+				HaveLeft: true,
+			})
+			if err != nil {
+				t.Fatalf("bsize=%v from=%v depth=%d: %v", ch.bsize, d.from, d.depth, err)
+			}
+			if gotCat != wantCat {
+				t.Fatalf("bsize=%v from=%v depth=%d: cat=%d want %d (libaom base=%d bonus=%d)",
+					ch.bsize, d.from, d.depth, gotCat, wantCat, base, bonus)
+			}
+		}
+	}
+}
+
+// TestTransformPartitionContextNeighborComparisonMatchesLibaom pins the
+// above/left neighbor comparison in libaom's txfm_partition_context():
+//
+//	above = *above_ctx < tx_size_wide[tx_size]
+//	left  = *left_ctx  < tx_size_high[tx_size]
+//
+// goav1 compares log2 widths/heights instead of pixel widths/heights; since
+// the recorded values are powers of two the comparison must produce the same
+// boolean outcome.
+func TestTransformPartitionContextNeighborComparisonMatchesLibaom(t *testing.T) {
+	cases := []struct {
+		recordLog2 uint8
+		fromSize   TransformSize
+	}{
+		{0, TransformSize8x8},
+		{1, TransformSize8x8},
+		{2, TransformSize8x8},
+		{1, TransformSize16x16},
+		{2, TransformSize16x16},
+		{3, TransformSize16x16},
+		{2, TransformSize32x32},
+		{3, TransformSize32x32},
+		{0, TransformSize64x64},
+		{4, TransformSize64x64},
+	}
+	for _, c := range cases {
+		var ctx BlockModeContext
+		ctx.AboveTx[0] = c.recordLog2
+		ctx.LeftTx[0] = c.recordLog2
+		fromDims, ok := c.fromSize.Dimensions()
+		if !ok {
+			t.Fatalf("missing dims for %v", c.fromSize)
+		}
+		_, gotCtx, err := ctx.TransformPartitionContext(TransformPartitionRequest{
+			Size:     BlockSize64x64,
+			From:     c.fromSize,
+			Depth:    0,
+			HaveTop:  true,
+			HaveLeft: true,
+		})
+		if err != nil {
+			t.Fatalf("from=%v record=%d: %v", c.fromSize, c.recordLog2, err)
+		}
+		recordPixels := 4 << c.recordLog2
+		fromW := int(fromDims.W4) << 2
+		fromH := int(fromDims.H4) << 2
+		want := 0
+		if recordPixels < fromW {
+			want++
+		}
+		if recordPixels < fromH {
+			want++
+		}
+		if gotCtx != want {
+			t.Fatalf("from=%v record=%d (px=%d) txw=%d txh=%d: ctx=%d want %d",
+				c.fromSize, c.recordLog2, recordPixels, fromW, fromH, gotCtx, want)
+		}
+	}
+}
