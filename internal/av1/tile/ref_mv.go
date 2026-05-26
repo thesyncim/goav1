@@ -499,9 +499,17 @@ func (req ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, st
 			}
 			if blkRow == 0 && blkCol == 0 {
 				result.FirstAvailable = added
-			}
-			if different {
-				result.GlobalMVDifferent = true
+				// libaom only sets the GLOBALMV mode-context bit based on the
+				// (blk_row=0, blk_col=0) temporal sample. Earlier goav1 OR'd
+				// `different` across the whole scan and the extension
+				// positions, which produced a different mode_context whenever
+				// a non-(0,0) temporal MV deviated from the global MV by 16+
+				// quarter pels and incorrectly steered inter mode reads to
+				// zeromv_cdf[1] instead of zeromv_cdf[0] for blocks with no
+				// (0,0) temporal sample available.
+				if different {
+					result.GlobalMVDifferent = true
+				}
 			}
 		}
 	}
@@ -514,12 +522,8 @@ func (req ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, st
 			{voffset - 2, hoffset},
 		}
 		for _, pos := range positions {
-			added, different, err := req.addTemporalReferenceMV(pos[0], pos[1], stack)
-			if err != nil {
+			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack); err != nil {
 				return temporalReferenceMVResult{}, err
-			}
-			if added && different {
-				result.GlobalMVDifferent = true
 			}
 		}
 	}
