@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 // Package bitstream contains byte-level AV1 bitstream primitives.
 //
 // The package is deliberately small and allocation-free. Higher-level parser

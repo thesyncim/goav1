@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package rtp
 
 // FragmentReassembler rebuilds a single fragmented OBU into a caller-owned

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package frame
 
 // Pool is a deterministic LIFO pool over caller-owned frame storage.

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package rtp
 
 // PutFragment writes one AV1 RTP payload containing a fragment of obu.

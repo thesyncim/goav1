@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package rtp
 
 // OBUSpan points at one complete OBU in a caller-owned output buffer.

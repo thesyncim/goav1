@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
 package frame
 
 // SamplePlane is a caller-owned uint16 view of a frame plane. Stride is in
