@@ -801,6 +801,139 @@ func TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow(t *testing.T) {
 	}
 }
 
+// TestFrameWorkCopyCDEFInputRightEdgeReplicatesLastColumn pins libaom's CDEF
+// av1_cdef_copy_sb8_16 read behavior for non-rightmost superblocks whose visible
+// plane width ends inside the central copy's hsize+CDEF_HBORDER reach. The
+// chroma 33-wide plane in the libaom 66x66 vector hits unit (0,0) with unit
+// width 32: the kernel's directional secondary taps at bx=7 (cols 28..31) need
+// samples at cols 32 and 33 of the input buffer. Col 32 is visible (real
+// sample); col 33 in libaom comes from the YV12 buffer's
+// aligned-but-out-of-crop padding (uv_width vs uv_crop_width), which holds the
+// last visible column replicated by alignment/decode writes. Our SamplePlane is
+// exactly the visible window, so frameWorkCopyCDEFInput synthesizes the
+// extension by replicating the last visible column into the right border. The
+// final CDEF unit column must keep the VeryLarge sentinel just like libaom's
+// fill_rect(...CDEF_VERY_LARGE) frame_boundary[RIGHT] overlay when fbc ==
+// nhfb - 1.
+func TestFrameWorkCopyCDEFInputRightEdgeReplicatesLastColumn(t *testing.T) {
+	const planeHeight = 33
+	const planeWidth = 33
+	const unitX = 0
+	const unitY = 0
+	const unitW = 32
+	const unitH = 32
+
+	src := frame.SamplePlane{
+		Pix:    make([]uint16, planeWidth*planeHeight),
+		Stride: planeWidth,
+		Width:  planeWidth,
+		Height: planeHeight,
+	}
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			src.Pix[y*src.Stride+x] = uint16(300 + x)
+		}
+	}
+
+	input := make([]uint16, cdef.InputBufferSize)
+	for i := range input {
+		input[i] = cdef.VeryLarge
+	}
+	if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
+		t.Fatalf("frameWorkCopyCDEFInput: %v", err)
+	}
+
+	originRow := cdef.VerticalBorder
+	originCol := cdef.HorizontalBorder
+	at := func(row, col int) uint16 {
+		return input[(originRow+row)*cdef.BStride+originCol+col]
+	}
+
+	// Visible cols 0..32 must hold the real samples (last visible col is 32).
+	// Rows past the visible plane within the CDEF VerticalBorder are independently
+	// covered by TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow.
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			if got, want := at(y, x), uint16(300+x); got != want {
+				t.Fatalf("input row=%d col=%d got=%d want=%d", y, x, got, want)
+			}
+		}
+	}
+	// Cols past the visible plane within the CDEF HorizontalBorder must replicate
+	// the last visible column instead of leaving VeryLarge — otherwise the kernel's
+	// directional taps at bx=7 would diverge from libaom's av1_cdef_copy_sb8_16
+	// read into out-of-crop frame buffer padding. The bottom-row replication
+	// extends the visible rows below the plane into wantSrcY1 first; the column
+	// replication then carries the last visible column across both the visible
+	// rows and the bottom-extension rows so that the bottom-right corner is also
+	// populated with the last visible sample (libaom-equivalent nearest-pixel
+	// 2D edge extension for past-visible CDEF input).
+	const lastVisible = planeWidth - 1
+	wantSrcY1 := unitY + unitH + cdef.VerticalBorder
+	for y := 0; y < wantSrcY1; y++ {
+		for x := planeWidth; x < unitX+unitW+cdef.HorizontalBorder; x++ {
+			if got, want := at(y, x), uint16(300+lastVisible); got != want {
+				t.Fatalf("right-extension row=%d col=%d got=%d want=%d", y, x, got, want)
+			}
+		}
+	}
+}
+
+// TestFrameWorkCopyCDEFInputFinalColumnKeepsVeryLarge pins the libaom branch in
+// cdef_prepare_fb that fills the right border with VERY_LARGE when the unit is
+// the final superblock column (fbc == nhfb - 1) — i.e., the unit's right edge
+// coincides with the plane's right edge. Replicating the last visible column in
+// that case would diverge from libaom's frame_boundary[RIGHT] overlay and
+// regress vectors whose rightmost CDEF unit has visible content (e.g. SB(1,0)
+// of the 66x66 Y plane).
+func TestFrameWorkCopyCDEFInputFinalColumnKeepsVeryLarge(t *testing.T) {
+	const planeHeight = 66
+	const planeWidth = 66
+	// Final luma CDEF unit at column 1: unitX=64 unitW=2, ends exactly at plane
+	// right edge. This matches the libaom fbc == nhfb - 1 branch.
+	const unitX = 64
+	const unitY = 0
+	const unitW = 2
+	const unitH = 64
+
+	src := frame.SamplePlane{
+		Pix:    make([]uint16, planeWidth*planeHeight),
+		Stride: planeWidth,
+		Width:  planeWidth,
+		Height: planeHeight,
+	}
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			src.Pix[y*src.Stride+x] = uint16(400 + x)
+		}
+	}
+
+	input := make([]uint16, cdef.InputBufferSize)
+	for i := range input {
+		input[i] = cdef.VeryLarge
+	}
+	if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
+		t.Fatalf("frameWorkCopyCDEFInput: %v", err)
+	}
+
+	originRow := cdef.VerticalBorder
+	originCol := cdef.HorizontalBorder
+	at := func(row, col int) uint16 {
+		return input[(originRow+row)*cdef.BStride+originCol+col]
+	}
+
+	// Right border cols (relative offsets unitW..unitW+HorizontalBorder-1) must
+	// remain VeryLarge to match libaom's fill_rect(...VERY_LARGE) branch on the
+	// rightmost superblock unit.
+	for y := 0; y < unitH; y++ {
+		for x := unitW; x < unitW+cdef.HorizontalBorder; x++ {
+			if got := at(y, x); got != cdef.VeryLarge {
+				t.Fatalf("final-column right border row=%d col=%d got=%d want VeryLarge", y, x, got)
+			}
+		}
+	}
+}
+
 // TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge pins the libaom branch in
 // cdef_prepare_fb that fills the bottom border with VERY_LARGE when the unit is
 // the final superblock row (fbr == nvfb - 1) — i.e., the unit's bottom edge

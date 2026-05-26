@@ -34,7 +34,7 @@ func cdefDebugLogChromaPreLR(output *frame.Frame) {
 	if len(u.Pix) == 0 {
 		return
 	}
-	for r := 20; r < 36; r++ {
+	for r := 20; r < 36 && r < u.Height; r++ {
 		vals := make([]byte, 8)
 		for c := 0; c < 8 && c < u.Width; c++ {
 			vals[c] = u.Pix[r*u.Stride+c]

@@ -357,11 +357,53 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 	// The final superblock unit row keeps the VeryLarge sentinel just like
 	// libaom's fill_rect(...CDEF_VERY_LARGE) branch when fbr == nvfb - 1.
 	wantSrcY1 := unitY + unitH + cdef.VerticalBorder
-	if srcY1 < wantSrcY1 && srcY1 > 0 && unitY+unitH < src.Height {
+	rowExtend := srcY1 < wantSrcY1 && srcY1 > 0 && unitY+unitH < src.Height
+	if rowExtend {
 		lastRowOffset := dstOffset + (copyH-1)*cdef.BStride
 		for row := srcY1; row < wantSrcY1; row++ {
 			extOffset := dstOffset + (row-srcY0)*cdef.BStride
 			copy(input[extOffset:extOffset+copyW], input[lastRowOffset:lastRowOffset+copyW])
+		}
+	}
+	// Same scenario, but symmetric on the horizontal axis: libaom's central
+	// av1_cdef_copy_sb8_16 read for a non-rightmost superblock pulls in
+	// hsize + CDEF_HBORDER columns from the dst frame buffer. When the visible
+	// plane width ends inside that read (e.g. 33-wide chroma in the 66x66
+	// vector at SB(0,0): visible cols 0..32 vs the read of cols 0..39 for
+	// hsize=32 + HBORDER=8), libaom reads from the YV12 buffer's
+	// aligned-but-out-of-crop padding which holds the last visible column via
+	// implicit alignment/decode writes. Our SamplePlane is exactly the visible
+	// window, so the right border stays at VeryLarge and the kernel's
+	// directional secondary taps at the right edge of the unit diverge —
+	// producing the V plane col-31 -1 divergence on 66x66 once the bottom-edge
+	// fix already covered the row direction. Y plane SBs whose hsize=64 only
+	// reach +2 into the right halo with visible content, so the read never
+	// hits the VeryLarge sentinel and luma stays unaffected by this branch.
+	//
+	// Synthesize the equivalent extension by replicating the last visible
+	// column into the CDEF input right border whenever the unit is not the
+	// final unit column but the visible plane ends inside the unit's
+	// HorizontalBorder reach. The final superblock unit column keeps the
+	// VeryLarge sentinel just like libaom's fill_rect(...CDEF_VERY_LARGE)
+	// frame_boundary[RIGHT] overlay when fbc == nhfb - 1.
+	//
+	// Apply column extension after row extension so that the bottom-right
+	// corner of the input buffer (which is doubly past-visible for chroma SBs
+	// on 66x66) is also populated with the last visible pixel.
+	wantSrcX1 := unitX + unitW + cdef.HorizontalBorder
+	if srcX1 < wantSrcX1 && srcX1 > 0 && unitX+unitW < src.Width {
+		extRows := copyH
+		if rowExtend {
+			extRows = wantSrcY1 - srcY0
+		}
+		for row := 0; row < extRows; row++ {
+			rowOffset := dstOffset + row*cdef.BStride
+			last := input[rowOffset+copyW-1]
+			extStart := rowOffset + copyW
+			extEnd := rowOffset + (wantSrcX1 - srcX0)
+			for i := extStart; i < extEnd; i++ {
+				input[i] = last
+			}
 		}
 	}
 	return nil
