@@ -1034,9 +1034,37 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 }
 
 func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *int, newMatches *int, stack *ReferenceMVStack) {
-	candidate, size, ok := c.gridInterMotion(req.X4+colOffset, req.Y4+rowOffset)
+	x := req.X4 + colOffset
+	y := req.Y4 + rowOffset
+	candidate, size, ok := c.gridInterMotion(x, y)
 	if !ok {
-		return
+		// Fall back to the cross-SB snapshots only for cells in the SB to the
+		// LEFT of the current one (x < 0, y >= 0). libaom's frame-level mi grid
+		// covers this neighbor without an SB boundary; without the fallback
+		// goav1 silently drops it, undercounting RowMatches for the outer scan
+		// at (-1, -1) when the current block sits at the left edge of an SB
+		// whose left neighbor (in the prior SB) is an inter block. This shifts
+		// the refmv mode-context and steers the DRL_INDEX cdf one cell off
+		// libaom on cdf_update frame 1.
+		//
+		// Cells in the SB above (y < 0) or above-and-to-the-left (both negative)
+		// are intentionally NOT routed through the cross-SB snapshots here: the
+		// IBC top/diagonal grids carry inter-motion state captured at SB store
+		// time, but the regular inter MV scan in libaom applies tile/coding
+		// bounds the snapshots do not encode, and engaging that path destabilises
+		// the mv vector residual decode and causes downstream coeff golomb
+		// state errors on libaom_av1_8-bit_mv.
+		if x >= 0 || y < 0 || !req.HaveLeft {
+			return
+		}
+		depth := -x - 1
+		if depth < 0 || depth >= intrabcCrossSBHistory ||
+			y >= MaxBlockModeSlots ||
+			c.SBLeftMotionValidGrid[depth][y] == 0 {
+			return
+		}
+		candidate = c.SBLeftInterMotionGrid[depth][y]
+		size = c.SBLeftBlockSizeGrid[depth][y]
 	}
 	m, n := stack.addDirectCandidate(candidate, size, req.References, 4, req.GlobalMVs, req.GlobalMotionType)
 	*matches += m
