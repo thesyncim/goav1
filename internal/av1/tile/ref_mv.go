@@ -1017,14 +1017,33 @@ func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest,
 func (c *BlockModeContext) scanGridBlockIntrabcDV(req ReferenceMVStackRequest, rowOffset int, colOffset int, weight uint16, stack *ReferenceMVStack) {
 	x := req.X4 + colOffset
 	y := req.Y4 + rowOffset
+	if y < 0 && x < 0 {
+		// Diagonal across both SB borders: corresponds to libaom's mi grid
+		// cell at (mi_col-1, mi_row-1). Both prior SB column's top row and
+		// prior SB row's left column converge there; the SBTop snapshot's
+		// slot 0 represents (mi_col-?, mi_row-1) when HaveTop; treat it as
+		// the diagonal candidate when available. If unavailable (no top
+		// neighbor) we cannot recover that cell from the carrier.
+		return
+	}
 	if y < 0 {
-		// Cross-SB diagonal/row lookup: consult the SB-top snapshot of the row
+		// Cross-SB-row lookup: consult the SB-top snapshot of the row
 		// directly above the current superblock. This mirrors libaom's
 		// frame-level mi grid, which is unaffected by in-SB block decode.
 		if !req.HaveTop || x < 0 || x >= MaxBlockModeSlots || c.SBTopMotionValid[x] == 0 {
 			return
 		}
 		stack.addOrWeight(ReferenceMVCandidate{This: c.SBTopInterMotion[x].MV[0]}, weight)
+		return
+	}
+	if x < 0 {
+		// Cross-SB-column lookup: consult the SB-left snapshot of the column
+		// directly to the left of the current superblock. Same rationale as
+		// the SB-top snapshot but for the row dimension.
+		if !req.HaveLeft || y < 0 || y >= MaxBlockModeSlots || c.SBLeftMotionValid[y] == 0 {
+			return
+		}
+		stack.addOrWeight(ReferenceMVCandidate{This: c.SBLeftInterMotion[y].MV[0]}, weight)
 		return
 	}
 	candidate, _, ok := c.gridInterMotion(x, y)

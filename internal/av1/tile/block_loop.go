@@ -453,6 +453,9 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftCompIndex = left.mode.CompIndex
 		scratch.Mode.LeftInterMotion = left.mode.InterMotion
 		scratch.Mode.LeftMotionValid = left.mode.MotionValid
+		scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
+		scratch.Mode.SBLeftMotionValid = left.mode.MotionValid
+		scratch.Mode.SBLeftBlockSize = left.mode.BlockSize
 		scratch.Mode.LeftInterp = left.mode.Interp
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize

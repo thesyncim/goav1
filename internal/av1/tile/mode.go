@@ -67,6 +67,14 @@ type BlockModeContext struct {
 	SBTopInterMotion [MaxBlockModeSlots]InterMotionResult
 	SBTopMotionValid [MaxBlockModeSlots]uint8
 	SBTopBlockSize   [MaxBlockModeSlots]BlockSize
+
+	// SBLeftInterMotion is the SB-row-equivalent snapshot of the column
+	// immediately to the left of the current superblock. LeftInterMotion is
+	// overwritten as in-SB blocks decode, but cross-SB scans need the prior
+	// SB column's per-row state to find diagonal/outer-column neighbors.
+	SBLeftInterMotion [MaxBlockModeSlots]InterMotionResult
+	SBLeftMotionValid [MaxBlockModeSlots]uint8
+	SBLeftBlockSize   [MaxBlockModeSlots]BlockSize
 	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
 	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
 	AboveInterpValid [MaxBlockModeSlots]uint8
