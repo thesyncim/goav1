@@ -61,6 +61,106 @@ func TestCoeffCDFsInitDefaultMatchesLibaom(t *testing.T) {
 	assertEntropyCDFValues(t, q1.TXBSkip[0][0].Values(), []uint16{2397, 0, 0})
 }
 
+// TestCoeffCDFsInitDefaultHighQIndexMatchesLibaom pins the q-context=3 (high
+// qindex, baseQIndex > 120) coefficient CDFs against libaom's exact values
+// from av1/common/token_cdfs.h. This is the q-context selected for the 10-bit
+// quantizer_32 (baseQIdx=128) and quantizer_63 (baseQIdx=255) test vectors;
+// regressions in the q-context-3 CDF initialization would silently break
+// entropy decode for high-qindex 10-bit streams while leaving the
+// q-context-0 default cohort intact. The expected values are stored AS the
+// inverse-CDF form (CDFProbTop minus the cumulative-probability constants in
+// token_cdfs.h), matching what CoeffCDFs.InitDefault writes into entropy.CDF.
+//
+// See decodetxb-side note: bit-exact decode of the q32/q63 10-bit first-block
+// luma 8x8 DCT_DCT TXB was verified against libaom-NEON, confirming the
+// q-context-3 CDFs are correctly wired through the high-qindex branch of
+// CoeffQContext.
+func TestCoeffCDFsInitDefaultHighQIndexMatchesLibaom(t *testing.T) {
+	// baseQIdx=128 (10-bit q32) and 255 (10-bit q63) both map to q-context 3.
+	if got := CoeffQContext(128); got != 3 {
+		t.Fatalf("CoeffQContext(128)=%d want 3 (10-bit q32 baseQIdx)", got)
+	}
+	if got := CoeffQContext(255); got != 3 {
+		t.Fatalf("CoeffQContext(255)=%d want 3 (10-bit q63 baseQIdx)", got)
+	}
+	if got := CoeffQContext(121); got != 3 {
+		t.Fatalf("CoeffQContext(121)=%d want 3 (q-ctx 3 lower bound)", got)
+	}
+
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(128); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each `want` is the inverse-CDF form expected after InitCDF. The
+	// cumulative-probability constants are sourced from libaom's
+	// av1/common/token_cdfs.h at q-context index 3 (the fourth row of each
+	// outer table). For AOM_CDF4(a0,a1,a2) the storage is
+	// {CDFProbTop-a0, CDFProbTop-a1, CDFProbTop-a2, 0, 0}.
+	tests := []struct {
+		name string
+		cdf  *entropy.CDF
+		want []uint16
+	}{
+		// av1_default_dc_sign_cdfs[3][PLANE_Y][0] = AOM_CDF2(128*125=16000).
+		// q-context 3 dc-sign matches q-context 0; the entire table is
+		// replicated across all four q-context indices in libaom.
+		{name: "dc sign y ctx0 qctx3", cdf: &cdfs.DCSign[CoeffPlaneY][0], want: []uint16{16768, 0, 0}},
+
+		// av1_default_txb_skip_cdfs[3][TX_4X4][0] = AOM_CDF2(26887).
+		// Stored as {32768-26887, 32768-32768, 0} = {5881, 0, 0}.
+		{name: "txb skip 4x4 ctx0 qctx3", cdf: &cdfs.TXBSkip[0][0], want: []uint16{5881, 0, 0}},
+
+		// av1_default_coeff_base_multi_cdfs[3][TX_4X4][PLANE_Y][0] =
+		// AOM_CDF4(7062, 16472, 22319). q-context 3 lives in the high
+		// qindex regime where the DC-only base CDF skews coarser than
+		// q-context 0.
+		{name: "coeff base 4x4 y ctx0 qctx3", cdf: &cdfs.CoeffBase[0][CoeffPlaneY][0], want: []uint16{25706, 16296, 10449, 0, 0}},
+
+		// av1_default_coeff_lps_multi_cdfs[3][TX_4X4][PLANE_Y][0] =
+		// AOM_CDF4(18315, 24289, 27551). Used by the base-range reader
+		// when level > NUM_BASE_LEVELS at q-ctx 3.
+		{name: "coeff br 4x4 y ctx0 qctx3", cdf: &cdfs.CoeffBR[0][CoeffPlaneY][0], want: []uint16{14453, 8479, 5217, 0, 0}},
+
+		// av1_default_coeff_base_eob_multi_cdfs[3][TX_4X4][PLANE_Y][0] =
+		// AOM_CDF3(22497, 31198). The eob-base reader used at the last
+		// scan position; mis-selecting this CDF would skew the very
+		// first non-zero level read for every high-qindex block.
+		{name: "coeff base eob 4x4 y ctx0 qctx3", cdf: &cdfs.CoeffBaseEOB[0][CoeffPlaneY][0], want: []uint16{10271, 1570, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertEntropyCDFValues(t, tt.cdf.Values(), tt.want)
+		})
+	}
+
+	// Also pin the q-context=3 CDFs for baseQIdx=255 so a future regression
+	// that special-cases the upper qindex bound does not silently diverge
+	// from baseQIdx=128.
+	var q255 CoeffCDFs
+	if err := q255.InitDefault(255); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := q255.TXBSkip[0][0].Values(), cdfs.TXBSkip[0][0].Values(); !cdfValuesEqual(got, want) {
+		t.Fatalf("baseQIdx=255 TXBSkip diverges from baseQIdx=128: got=%v want=%v", got, want)
+	}
+	if got, want := q255.CoeffBase[0][CoeffPlaneY][0].Values(), cdfs.CoeffBase[0][CoeffPlaneY][0].Values(); !cdfValuesEqual(got, want) {
+		t.Fatalf("baseQIdx=255 CoeffBase diverges from baseQIdx=128: got=%v want=%v", got, want)
+	}
+}
+
+func cdfValuesEqual(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestCoeffContextsMatchLibaom(t *testing.T) {
 	ctxTests := []struct {
 		size TransformSize
