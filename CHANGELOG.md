@@ -17,6 +17,15 @@ the categories that matter to integrators: correctness gains against
 the libaom conformance vectors, the public API and CLI surface,
 performance instrumentation, hardening / fuzz coverage, and CI.
 
+**Milestone: all 8 fast-suite vectors pass.** The lenient first-frame
+MD5 gate (`make dryrun-fast`) is now 8/8 PASS on the libaom
+`SuiteLevelFast` cohort. The CI `testvectors` workflow asserts the
+full eight-vector pass set as the regression gate (`c55be7e`); any
+fast-suite regression now fails CI. The last vector to flip green was
+`libaom_av1_8-bit_intra-only_intrabc_extreme_dv` after the diagonal
+SB-corner snapshot for the cross-superblock intrabc DV scan landed in
+`5f88540`.
+
 ### Added
 
 #### Tooling and public API
@@ -103,8 +112,10 @@ performance instrumentation, hardening / fuzz coverage, and CI.
 
 This section lists the high-leverage correctness fixes that
 unblocked specific libaom fast-suite vectors. The pass set went
-from a single vector to seven of eight over the course of this
-work.
+from a single vector to all eight over the course of this work;
+the final flip is the cross-SB intrabc DV diagonal-corner fix in
+`5f88540` (see "IntraBC (`intrabc_extreme_dv` vector) - final
+fix" below).
 
 #### Inter / motion vector decode (`mv` vector)
 
@@ -128,13 +139,25 @@ work.
 `intrabc` neighbor history follow-up that is in flight but does not
 yet unblock the `intrabc_extreme_dv` vector.)
 
-#### IntraBC entropy (`intrabc_extreme_dv` vector)
+#### IntraBC (`intrabc_extreme_dv` vector) - final fix
 
 - Snapshot the `tx_size` neighbor context for intrabc frames so the
-  entropy stream is now bit-exact against libaom on the
-  `intrabc_extreme_dv` vector (`2bae671`). The remaining divergence
-  is isolated to the reconstruction layer; intrabc entropy parity is
-  no longer a suspected cause.
+  entropy stream is bit-exact against libaom on the
+  `intrabc_extreme_dv` vector (`2bae671`).
+- **Carry intrabc DV across SB diagonal corners** so the cross-SB
+  intrabc DV scan can reach the block diagonally up-and-to-the-left
+  of the current SB (`5f88540`). libaom's `setup_ref_mv_list` /
+  `scan_blk_mbmi(-1, -1)` reads the mi grid cell at
+  `(mi_col-1, mi_row-1)`, which on an SB-row boundary sits inside
+  the diagonal SB; the per-SB carrier already snapshotted the SB
+  above and the SB to the left but had no slot for that diagonal
+  corner, so the DV reference fell through to the SB fallback and
+  produced a wrong block-copy source. A `Diagonal /
+  PendingDiagonal` double-buffer on the block-loop context carrier
+  closes the gap with no extra allocations (the persistent slices
+  survive the `BindTileBlockLoopContextCarrier` swap), and brings
+  the libaom fast-suite intrabc vector to PASS. This is the
+  8/8 milestone fix.
 
 #### Entropy and CDF adaptation (`cdf_update` vector)
 
@@ -211,14 +234,66 @@ yet unblock the `intrabc_extreme_dv` vector.)
   snapshot to pin down the directional edge-clip behavior
   (`ed3275b`).
 
-#### Scalable video coding (SVC)
+#### Scalable video coding (SVC) and scaled inter prediction
 
 - Track libaom dry-run frame state per spatial layer so the extended
   cohort can compare layer-by-layer surfaces (`ea6ad77`).
 - Route SVC reference resolution across the spatial-layer surface
   pools so each layer resolves its own inter-layer references
-  (`51de381`). The reference-resolution API works end-to-end; scaled
-  inter prediction between layers is the next gate.
+  (`51de381`).
+- Scaffold AV1 scaled inter-prediction MV math: Q14 reference-scale
+  factor and Q10 sub-pel stepper derivation per spec section 7.11.3.3
+  (`79e0689`), so enhancement-layer prediction can reference a
+  different-sized base layer.
+- Implement the AV1 scaled inter-prediction 8-tap convolver kernels
+  (8-bit and 10/12-bit, plus edge-clamping variants) and wire them
+  into the threading prediction dispatch behind
+  `GOAV1_SCALED_PRED=1` / the `goav1_scaled_pred` build tag
+  (`34375a5`). The same-size translational fast path remains the
+  default.
+- Substitute `gm_mv` for GLOBALMV neighbors in the ref-MV stack so
+  the global-motion candidate is evaluated at the current block's
+  position, matching libaom's `setup_ref_mv_list` /
+  `add_ref_mv_candidate` (`a69cc66`).
+- Warp GLOBALMV blocks with non-translational global motion: promote
+  blocks whose mode is `GLOBALMV` / `GLOBAL_GLOBALMV` and whose
+  frame-level warp model is ROTZOOM or AFFINE to `WARP_PRED` when
+  the reference is not scaled and the block min-side is at least 8
+  luma samples (`716f5e7`), matching libaom's
+  `av1_init_warp_params`.
+- Fall back warp + scaled blocks to translational scaled prediction:
+  blocks whose motion mode is `WARPED_CAUSAL` (or whose frame-level
+  global motion is non-translational) keep
+  `inter_pred_params->mode = TRANSLATION_PRED` when the reference is
+  scaled, per libaom's `allow_warp()` (`cba7b3e`).
+
+#### Tile List and Metadata OBU payloads
+
+- Parse Tile List OBU payloads: `ParseTileListOBU` reads the
+  `tile_list_obu()` header
+  (`output_frame_width/height_in_tiles_minus_1`,
+  `tile_count_minus_1`) and the per-tile prefixes
+  (`anchor_frame_idx`, `anchor_tile_row/col`,
+  `tile_data_size_minus_1`) plus the per-tile data slice, exposed
+  through `EventTileList` with a `TileListErr` field for partial
+  payloads (`ef7d430`). `AppendTileListOBU` writes the same surface
+  back. The same commit also adds the `LowOverheadToAnnexB` /
+  `AnnexBToLowOverhead` Annex B transcoder helpers for container
+  repackaging. End-to-end tile-list playback (anchor-frame reuse +
+  per-tile reconstruction blit) remains future work.
+- Parse AV1 Metadata OBU payloads: `obu.ParseMetadata` decodes all
+  spec variants (ITU-T T.35, HDR-CLL, HDR-MDCV, scalability,
+  timecode) for HDR10+/CLLI/MDCV signaling and CEA-708 captions in
+  downstream consumers (`5bb6c1f`).
+
+#### Cross-validation tooling
+
+- Trace coefficient entropy decode for libaom cross-validation:
+  `ReadCoefficientsTXB` can now emit a record of every non-zero
+  coefficient it produces so the entropy decode output can be diffed
+  line-by-line against libaom's `read_coeffs_txb`, isolating
+  ~1 LSB pixel deltas to their entropy-vs-reconstruction origin
+  (`b012d40`).
 
 ### Changed
 
@@ -280,16 +355,17 @@ The lenient gate is the first-frame MD5; the strict gate
 | `mv`                            | PASS                      | (diagnostic)         |
 | `mfmv`                          | PASS                      | (diagnostic)         |
 | `monochrome`                    | PASS                      | (diagnostic)         |
-| `intra-only_intrabc_extreme_dv` | FAIL (later frames)       | FAIL                 |
+| `intra-only_intrabc_extreme_dv` | PASS                      | (diagnostic)         |
 
-The `testvectors` CI workflow asserts the seven-vector lenient pass
-set as a regression gate. The `intra-only_intrabc_extreme_dv` vector
-is the next unblock target; after the cross-superblock intrabc
-neighbor history work (`4c680b8`, `7a65271`, `0a8d482`, `1bb40cb`)
-and the `tx_size` neighbor context snapshot (`2bae671`), the entropy
-stream is now bit-exact against libaom for intrabc frames. The
-remaining divergence is isolated to the reconstruction layer and is
-the active debugging target.
+**The fast suite is 8/8 PASS under the lenient first-frame MD5
+gate.** The `testvectors` CI workflow now asserts the full
+eight-vector pass set as the regression gate (`c55be7e`); any
+regression on a fast-suite vector fails CI. The final flip came
+from `5f88540`, which added the diagonal SB-corner snapshot for
+the cross-superblock intrabc DV scan; this closed the
+reconstruction-layer divergence on `intrabc_extreme_dv` after the
+earlier entropy-parity work (`2bae671`, `0a8d482`, `7a65271`,
+`1bb40cb`, `4c680b8`).
 
 The 10-bit `quantizer_32` / `quantizer_63` extended-cohort vectors
 benefited from the bit-depth conformance work (`42a8b88`, `403e42b`,

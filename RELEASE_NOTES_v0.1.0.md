@@ -13,9 +13,16 @@ promises. Pin a commit or a tagged release in `go.mod`.
 
 ## Highlights
 
-- **Seven of eight libaom `SuiteLevelFast` vectors pass** the
-  lenient first-frame MD5 gate. The CI workflow asserts the
-  seven-vector pass set as a regression gate on every push.
+- **All 8 libaom `SuiteLevelFast` vectors PASS** the lenient
+  first-frame MD5 gate. This is the cornerstone of `v0.1.0`: the
+  fast suite went from 7/8 to 8/8 after `5f88540` carried the
+  intrabc DV across the SB diagonal corner so the cross-superblock
+  DV scan could reach the block diagonally up-and-to-the-left of
+  the current SB, pairing with the earlier `tx_size` neighbor
+  context snapshot (`2bae671`) that brought the intrabc entropy
+  stream to bit-exact parity. The CI workflow now asserts the
+  full eight-vector pass set as the regression gate on every push
+  (`c55be7e`).
 - **End-to-end CLI** (`cmd/aom-go-dec`) turns an IVF into raw YUV
   using only the public API. It is the canonical example of how
   to wire goav1 into a downstream pipeline.
@@ -23,6 +30,17 @@ promises. Pin a commit or a tagged release in `go.mod`.
   residual stream runner, the postfilter dispatch, and the
   inverse qmatrix dequant path, guarded by allocation-regression
   benchmarks that fail CI on regression.
+- **Scalable video coding plumbing**: per-spatial-layer dry-run
+  frame state (`ea6ad77`), SVC reference resolution across the
+  spatial-layer surface pools (`51de381`), Q14/Q10 scaled
+  inter-prediction MV math (`79e0689`), and the scaled
+  inter-prediction 8-tap convolver kernels behind a build-tag
+  switch (`34375a5`).
+- **Tile List and Metadata OBU payloads** parsed end-to-end via
+  `ParseTileListOBU` (`ef7d430`) and `obu.ParseMetadata`
+  (`5bb6c1f`); the Tile List commit also ships
+  `LowOverheadToAnnexB` / `AnnexBToLowOverhead` transcoders for
+  container repackaging.
 - **Public API documentation** on every long-lived caller-facing
   type and helper, plus a top-level `ARCHITECTURE.md` and
   `CONFORMANCE.md` for new contributors and integrators.
@@ -95,17 +113,12 @@ changes. Depend on them only with a vendored commit pin.
 
 ## What is known broken
 
-- **`intra-only_intrabc_extreme_dv` libaom vector**. The
-  framework dry-run hits a known mismatch in later frames.
-  Initial intrabc decode (`865639b`), advancing the intrabc
-  vector to MD5 (`0b1fe9d`), resetting stale intra-mode and
-  palette context (`4c680b8`), and snapshotting SB-top / SB-left
-  / prior-SB-interior neighbor history for the cross-superblock
-  intrabc DV scan (`0a8d482`, `7a65271`, `1bb40cb`) are in
-  flight. Until the vector flips green, intrabc paths that are
-  not yet covered are explicitly rejected (`7e2f748`,
-  `dca70b0`) so that downstream callers see a clear error
-  rather than a silent miscompare.
+- **Strict every-frame MD5 mode**. The lenient first-frame gate
+  is 8/8 on the fast suite, but the strict every-frame gate
+  (`GOAV1_STRICT_MD5=1`) only clears `16x16_size` today. The
+  other seven vectors mismatch on later frames; the diagnostic
+  CI group emits them as an informational snapshot. Expanding
+  strict coverage is the next milestone after `v0.1.0`.
 - **Encoder**. Not implemented. The repository is decoder-first;
   the encoder foundation is on the roadmap (see `README.md`
   "Principles").
@@ -116,7 +129,15 @@ changes. Depend on them only with a vendored commit pin.
   suite is available via `make testvectors-full` for local
   parity sweeps. It is not part of the default CI gate and is
   expected to surface failures while broader vector coverage is
-  built out.
+  built out. The opt-in `make dryrun-extended` cohort (10-bit
+  q-sweep, sub-superblock and multi-superblock sizes, remaining
+  SVC permutations) also surfaces known mismatches; only the
+  `64x64` size vector clears frame 0 today. Scaled inter
+  prediction between spatial layers is the next SVC gate.
+- **Tile List end-to-end playback**. Tile List OBU payloads now
+  parse (`ef7d430`), but anchor-frame reuse, per-tile
+  reconstruction, and the output-frame blit step from libaom's
+  `read_and_decode_one_tile_list` are not yet wired.
 
 ## Reproducing the v0.1.0 state
 

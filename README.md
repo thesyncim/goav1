@@ -319,28 +319,35 @@ wired in - the same configuration used by the throughput benchmarks. See
 
 ## Status
 
+**All 8 libaom `SuiteLevelFast` vectors PASS** the lenient
+first-frame MD5 gate. `make dryrun-fast` is 8/8 on the cohort
+(`quantizer_00`, `16x16_size`, `all-intra`, `cdf_update`, `mv`,
+`mfmv`, `monochrome`, `intra-only_intrabc_extreme_dv`). The CI
+`testvectors` workflow asserts the full eight-vector pass set on
+every push (`c55be7e`); any fast-suite regression now fails CI.
+The final flip came from `5f88540`, which carried the intrabc DV
+across the SB diagonal corner so the cross-superblock DV scan
+could reach the block diagonally up-and-to-the-left of the current
+SB, pairing with the earlier `tx_size` neighbor context snapshot
+(`2bae671`) that brought the intrabc entropy stream to bit-exact
+parity.
+
 Realtime decode is in active development. The supporting primitives -
 transport, OBU/sequence/frame-header parsing, tile work scheduling, residual
 decode, reconstruction, and the post-filter pipeline - all have public APIs
-and unit-test coverage. End-to-end frame output through the libaom
-conformance vectors is partial:
+and unit-test coverage.
 
 - `make testvectors-fast` exercises the committed test-vector suite and the
   oracle-tagged libaom frame-MD5 checks. It runs in CI on every push and is
   expected to stay green.
-- `make dryrun-fast` runs the in-progress framework dry-run against the
-  eight `SuiteLevelFast` libaom vectors. Seven of the eight currently pass
-  the lenient first-frame MD5 gate (`quantizer_00`, `16x16_size`,
-  `all-intra`, `cdf_update`, `mv`, `mfmv`, `monochrome`); the remaining
-  vector (`intra-only_intrabc_extreme_dv`) still hits a known mismatch.
-  The entropy stream for intrabc frames is now bit-exact against libaom
-  after the `tx_size` neighbor context snapshot landed; the remaining
-  divergence is isolated to the reconstruction layer and is the active
-  debugging target. The `testvectors` workflow asserts the seven-vector
-  pass set as a regression gate and emits an informational `strict-md5`
-  group (which only `16x16_size` currently clears) for diagnostic
-  snapshots. Set `GOAV1_STRICT_MD5=1` locally to upgrade the check to
-  every frame.
+- `make dryrun-fast` runs the framework dry-run against the eight
+  `SuiteLevelFast` libaom vectors. All eight pass the lenient
+  first-frame MD5 gate. The `testvectors` workflow asserts the
+  eight-vector pass set as a regression gate and emits an
+  informational `strict-md5` group (which only `16x16_size`
+  currently clears) for diagnostic snapshots. Set
+  `GOAV1_STRICT_MD5=1` locally to upgrade the check to every
+  frame.
 - `make testvectors-full` will download and execute the full libaom remote
   suite. It is not part of the default CI gate and is intended for local
   parity sweeps.

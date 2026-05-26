@@ -101,14 +101,15 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Palette UV                       | Partial | internal/av1/tile/palette.go     | UV palette size/color/CDF entry decoding       |
 |    |                                  |         |                                  | implemented; same wiring gap as Y.             |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-|  9 | IntraBC                          | Partial | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
+|  9 | IntraBC                          | Yes     | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
 |    |                                  |         | internal/av1/tile/intrabc_debug.go | stack and intra-mode entry implemented;       |
-|    |                                  |         |                                  | entropy stream is now bit-exact against libaom |
-|    |                                  |         |                                  | on intrabc frames (tx_size neighbor context    |
-|    |                                  |         |                                  | snapshot, 2bae671); remaining divergence on    |
-|    |                                  |         |                                  | the intrabc_extreme_dv vector is isolated to   |
-|    |                                  |         |                                  | the reconstruction layer. See vector table     |
-|    |                                  |         |                                  | row 7.                                         |
+|    |                                  |         |                                  | entropy stream bit-exact against libaom on    |
+|    |                                  |         |                                  | intrabc frames (tx_size neighbor context       |
+|    |                                  |         |                                  | snapshot, 2bae671); cross-SB DV diagonal-      |
+|    |                                  |         |                                  | corner snapshot (5f88540) closes the           |
+|    |                                  |         |                                  | reconstruction-layer gap, bringing the         |
+|    |                                  |         |                                  | intrabc_extreme_dv fast-suite vector to PASS.  |
+|    |                                  |         |                                  | See vector table row 7.                        |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 10 | Inter mode NEARESTMV             | Yes     | internal/av1/tile/inter_mode.go  | InterModeNearestMV; ref_mv stack populated.    |
 |    | Inter mode NEARMV                | Yes     | internal/av1/tile/inter_mode.go  | InterModeNearMV.                               |
@@ -279,6 +280,12 @@ their current pass/fail state under `make dryrun-fast` (lenient
 first-frame MD5) and `GOAV1_STRICT_MD5=1` (every-frame MD5). All eight
 ship under `internal/av1/testdata/libaom/`.
 
+**The lenient gate is now 8/8 PASS** after `5f88540` closed the
+last reconstruction-layer divergence on `intrabc_extreme_dv`. The
+`testvectors` CI workflow asserts the full eight-vector pass set
+on every push (`c55be7e`). The strict every-frame gate is still
+informational and only `16x16_size` currently clears it.
+
 ```
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 | # | Vector                                            | Lenient | Strict | First mismatch (under strict)              |
@@ -301,11 +308,12 @@ ship under `internal/av1/testdata/libaom/`.
 | 6 | av1-1-b8-06-mfmv.ivf                              | PASS    | FAIL   | Frame 1 (motion-field projection path      |
 |   | (libaom av1 8-bit mfmv)                           |         |        | for the first ref-frame-MVS consumer).     |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
-| 7 | av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf     | FAIL    | FAIL   | Frame 0 (intrabc extreme-DV intra-only     |
-|   | (libaom av1 8-bit intra-only intrabc extreme dv)  |         |        | output diverges from libaom). Only vector  |
-|   |                                                   |         |        | failing the lenient gate. Entropy stream   |
-|   |                                                   |         |        | is now bit-exact (2bae671); residual       |
-|   |                                                   |         |        | divergence is reconstruction-layer only.   |
+| 7 | av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf     | PASS    | FAIL   | Frame 0 PASS under the lenient gate after  |
+|   | (libaom av1 8-bit intra-only intrabc extreme dv)  |         |        | the diagonal-corner SB snapshot for the    |
+|   |                                                   |         |        | cross-SB intrabc DV scan (5f88540); pairs  |
+|   |                                                   |         |        | with the tx_size neighbor context snapshot |
+|   |                                                   |         |        | (2bae671). Strict gate still fails on      |
+|   |                                                   |         |        | later frames (diagnostic only).            |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 | 8 | av1-1-b8-24-monochrome.ivf                        | PASS    | FAIL   | Frame 1 (monochrome inter divergence;      |
 |   | (libaom av1 8-bit monochrome)                     |         |        | overlaps with the mv/mfmv mismatch).       |
@@ -372,13 +380,14 @@ mfmv_refs/mfmv_projections` counters printed by the dry-run harness.
   `internal/av1/tile/motion_field.go` and
   `internal/av1/threading/ref_mv_frame.go`; libaom's
   `av1_setup_motion_field()` ordering parity.
-- **Vector 7, frame 0 mismatch (`intrabc-extreme-dv`).** Intra-only.
-  Entropy stream is bit-exact against libaom (the `tx_size` neighbor
-  context snapshot in `2bae671` closed the last gap). Remaining
-  divergence is reconstruction-layer only. Suspects: intrabc
-  reference-fetch / edge-clip during the cross-superblock copy in
-  `internal/av1/tile/block_loop.go` and the reconstruction copy region
-  in `internal/av1/reconstruct/block.go`.
+- **Vector 7 (`intrabc-extreme-dv`).** Intra-only. **Lenient
+  gate now PASS** after `5f88540` added the diagonal SB-corner
+  snapshot for the cross-superblock intrabc DV scan, building on
+  the `tx_size` neighbor context snapshot (`2bae671`) that brought
+  the entropy stream to bit-exact parity. Strict every-frame mode
+  still mismatches on later frames; the surface to inspect there
+  is `internal/av1/tile/block_loop.go` (intrabc reference-fetch /
+  edge-clip across the cross-SB copy region).
 - **Vector 8, frame 1 mismatch (`monochrome`).** Same surface as
   vectors 5/6 (mv + mfmv): inter prediction on the Y plane only, no
   UV planes to mask the divergence.
@@ -395,12 +404,13 @@ libaom dumper for the same vector.
 The "Partial" and "No" rows above translate roughly into the following
 work items, ordered by how much of the fast suite they would unblock:
 
-1. **IntraBC end-to-end output parity.** The only fast vector failing the
-   lenient gate is `intrabc-extreme-dv`. The implementation is wired all
-   the way through `block_loop.go`; the entropy stream is now bit-exact
-   against libaom for intrabc frames (`2bae671`), so the open question
-   is the intra-block-copy reference fetch / reconstruction copy region
-   when the DV crosses the previous superblock boundary.
+1. **IntraBC strict every-frame parity.** The fast-suite intrabc
+   vector now PASSES the lenient first-frame gate after the
+   diagonal SB-corner snapshot for the cross-superblock intrabc DV
+   scan (`5f88540`) and the `tx_size` neighbor context snapshot
+   (`2bae671`). Strict every-frame mode still mismatches on later
+   frames; that is now a diagnostic gap rather than a lenient-gate
+   failure.
 2. **Motion field / motion-vector parity on frame 1 of inter vectors.**
    Strict mode fails immediately on frame 1 of `cdf-update`, `mv`,
    `mfmv`, and `monochrome`. The shared surface is the first non-key
@@ -439,9 +449,11 @@ work items, ordered by how much of the fast suite they would unblock:
 8. **Switch frames.** Parsed but no committed vector exercises the
    switch-frame reset path end-to-end.
 
-Once the fast suite is bit-exact under strict MD5, the next milestone is
-`SuiteLevelRelevant`, which adds intra-bc beyond the extreme-DV case,
-SVC, more film-grain vectors, monochrome variants, and 10-bit content.
+With the fast suite now 8/8 PASS under the lenient first-frame
+gate, the next milestone is bit-exact strict every-frame parity on
+the same eight vectors, followed by `SuiteLevelRelevant`, which
+adds intra-bc beyond the extreme-DV case, SVC, more film-grain
+vectors, monochrome variants, and 10-bit content.
 
 ---
 
