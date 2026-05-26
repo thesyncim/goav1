@@ -1514,6 +1514,22 @@ func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plan
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
+	// OBMC / sub-block area predictions may straddle a scaled reference. The
+	// regular same-size convolver below assumes ref.Width / ref.Height equal
+	// geom.Output.Width / geom.Output.Height; for SVC L2T1 spatial=1 the
+	// enhancement layer references the half-size spatial=0 base, so the
+	// area must run through the scaled 8-tap convolver instead. libaom
+	// mirror: av1_make_inter_predictor() routes through
+	// av1_convolve_2d_scale_c whenever av1_is_scaled(sf).
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
+		return err
+	}
+	if !sameSize {
+		return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, geom.Output.Width, geom.Output.Height,
+			geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, absX, absY, width, height, mv,
+			geom.SubsamplingX, geom.SubsamplingY, filters)
+	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(absX, absY, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
 		return ErrInvalidBatch

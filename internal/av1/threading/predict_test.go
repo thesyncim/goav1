@@ -2365,6 +2365,119 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
 }
 
+// TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledConvolver
+// pins the libaom behaviour described in dec_calc_subpel_params /
+// av1_make_inter_predictor (av1/common/reconinter.c) for OBMC neighbor
+// predictions against scaled references. The main block prediction already
+// dispatches through the scaled convolver, but each OBMC overlappable
+// neighbor prediction also has to go through the same scaled path —
+// otherwise the neighbor area is filled from the wrong source-plane
+// coordinates and the OBMC blend writes garbage into the leftmost / topmost
+// overlap columns of the block.
+//
+// Concretely: with a 32x32 reference scaled into a 64x64 output, OBMC LEFT
+// for the central 16x16 block at (16, 16) must produce the same leftmost
+// 8 columns as a plain scaled translational predictor on the LEFT
+// neighbor's MV, then blended into the base prediction via the 8-wide
+// OBMC mask. Before the fix predictInterReferenceAreaToScratch dropped
+// to the same-size convolver and corrupted those 8 columns; the SVC L2T1
+// spatial=1 enhancement layer flagged it at dst (96..103, 0) of frame 0.
+func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledConvolver(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
+	output := testBatchFrame(t, format)
+	want := testBatchFrame(t, format)
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, MonoChrome: true, Align: 64})
+	// Deterministic pseudo-random reference so the scaled convolver does
+	// real work and an off-by-scale neighbor read would diverge sample-
+	// for-sample from the libaom reference.
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((y*29+x*19+11)&0xff))
+		}
+	}
+
+	baseMV := motion.Vector{Row: 4, Col: -6}
+	leftMV := motion.Vector{Row: -3, Col: 11}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+
+	ctx := testInterPredictionBatch(output, reference)
+	// Single LEFT neighbor with a distinct MV so the OBMC blend reads
+	// from a different source-plane area than the base prediction.
+	visit := testInterPredictionVisit(baseMV)
+	visit.Prediction.MotionMode = tile.MotionModeOBMC
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.OverlappableNeighborsValid = true
+	visit.Prediction.OverlappableNeighbors.LeftCount = 1
+	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+		RelY4: 0,
+		Span4: 4,
+		Size:  tile.BlockSize16x16,
+		Motion: tile.InterMotionResult{
+			References: visit.Prediction.InterMotion.References,
+			MV:         [2]motion.Vector{leftMV},
+		},
+		InterpFilters:      filters,
+		InterpFiltersValid: true,
+	}
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterOBMCWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatalf("PredictBlockLumaInterOBMCWithFilters err=%v", err)
+	}
+
+	// libaom reference: scaled translational predictor for the base block,
+	// then a scaled neighbor prediction blended into the leftmost overlap
+	// columns via the OBMC mask.
+	wantCtx := testInterPredictionBatch(want, reference)
+	geom, ok, err := wantCtx.blockPredictionPlaneGeometry(0, visit.Block, FrameWorkPlaneY)
+	if err != nil || !ok {
+		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
+	}
+	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
+	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		t.Fatalf("base scaled-ref err=%v", err)
+	}
+	overlap, err := frameWorkOBMCLeftWidth(visit.Block.Size, geom)
+	if err != nil {
+		t.Fatalf("OBMC left width err=%v", err)
+	}
+	if overlap <= 0 || overlap > geom.Width {
+		t.Fatalf("unexpected overlap=%d width=%d", overlap, geom.Width)
+	}
+	height, ok := frameWorkOBMCPlaneSpan(visit.Prediction.OverlappableNeighbors.Left[0].Span4, geom.SubsamplingY)
+	if !ok {
+		t.Fatalf("OBMC plane span invalid")
+	}
+	if height > geom.Height {
+		height = geom.Height
+	}
+	var neighborScratch FrameWorkInterPredictionScratch
+	neighbor, err := frameWorkInterScratchPlane(neighborScratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		t.Fatalf("neighbor scratch err=%v", err)
+	}
+	// Neighbor prediction must go through the scaled convolver anchored
+	// to the same geom.Output dimensions as the base prediction; this is
+	// what predictInterReferenceAreaToScratch must do under the fix.
+	if err := frameWorkPredictScaledReferencePlaneWithDims(neighbor, refPlane, geom.Output.Width, geom.Output.Height,
+		geom.BytesPerSample, want.Format.BitDepth, 0, 0, geom.X, geom.Y, overlap, height, leftMV,
+		geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		t.Fatalf("neighbor scaled-ref err=%v", err)
+	}
+	mask, ok := frameWorkOBMCMask(overlap)
+	if !ok {
+		t.Fatalf("missing OBMC mask for overlap=%d", overlap)
+	}
+	if err := frameWorkBlendOBMCH(want.Y, neighbor, geom.BytesPerSample, geom.X, geom.Y, 0, 0, overlap, height, mask); err != nil {
+		t.Fatalf("blend OBMC H err=%v", err)
+	}
+
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+}
+
 // TestFrameWorkBatchPredictBlockInterWarpScaledAllocs locks the steady-state
 // allocation profile for the warp+scaled fallback path so the SVC vectors
 // stay zero-alloc per visit.
