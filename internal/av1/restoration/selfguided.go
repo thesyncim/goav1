@@ -332,7 +332,44 @@ func maxSample(bitDepth uint8) (uint16, error) {
 }
 
 func borderedBlockFits(length int, stride int, origin int, width int, height int, borderX int, borderY int) bool {
-	return blockFitsAt(length, stride, origin-borderY*stride-borderX, width+2*borderX, height+2*borderY)
+	if stride <= 0 || borderX < 0 || borderY < 0 || width <= 0 || height <= 0 {
+		return false
+	}
+	// Compute origin-borderY*stride-borderX with overflow-checked arithmetic
+	// so a hostile origin/stride combination cannot wrap the comparison
+	// inside blockFitsAt.
+	borderRows, ok := checkedMul(borderY, stride)
+	if !ok {
+		return false
+	}
+	originLessRows, ok := checkedSub(origin, borderRows)
+	if !ok {
+		return false
+	}
+	startOrigin, ok := checkedSub(originLessRows, borderX)
+	if !ok {
+		return false
+	}
+	totalWidth, ok := checkedAdd(width, 2*borderX)
+	if !ok {
+		return false
+	}
+	totalHeight, ok := checkedAdd(height, 2*borderY)
+	if !ok {
+		return false
+	}
+	return blockFitsAt(length, stride, startOrigin, totalWidth, totalHeight)
+}
+
+func checkedSub(a int, b int) (int, bool) {
+	c := a - b
+	if b > 0 && c > a {
+		return 0, false
+	}
+	if b < 0 && c < a {
+		return 0, false
+	}
+	return c, true
 }
 
 func blockFits(length int, stride int, width int, height int) bool {

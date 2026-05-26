@@ -209,6 +209,39 @@ func TestApplyWienerRestorationRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+// TestApplyWienerRestorationRejectsOverflowStride confirms that an
+// attacker-controlled srcStride/srcOrigin combination cannot wrap the
+// bordered-block size check and slip past validation.
+func TestApplyWienerRestorationRejectsOverflowStride(t *testing.T) {
+	scratch := make([]uint16, 1024)
+	dst := make([]uint16, 16)
+	src := make([]uint16, 16)
+	const maxInt = int(^uint(0) >> 1)
+	// borderY*stride * 3 should overflow, and origin should be small enough
+	// to require subtraction to remain inside bounds.
+	err := ApplyWienerRestoration(src, maxInt/2, 0, dst, 4, 4, 4, DefaultWienerInfo(), 8, scratch)
+	if !errors.Is(err, ErrInvalidRestoration) {
+		t.Fatalf("err=%v want %v", err, ErrInvalidRestoration)
+	}
+}
+
+// TestApplySelfguidedRestorationRejectsOverflowStride confirms the same
+// overflow guard is reachable from the self-guided entry point.
+func TestApplySelfguidedRestorationRejectsOverflowStride(t *testing.T) {
+	scratchLen, err := SelfguidedScratchLen(4, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := make([]int32, scratchLen)
+	dst := make([]uint16, 16)
+	src := make([]uint16, 16)
+	const maxInt = int(^uint(0) >> 1)
+	err = ApplySelfguidedRestoration(src, maxInt/2, 0, dst, 4, 4, 4, 0, [2]int{}, 8, scratch)
+	if !errors.Is(err, ErrInvalidRestoration) {
+		t.Fatalf("err=%v want %v", err, ErrInvalidRestoration)
+	}
+}
+
 func FuzzApplyWienerRestoration(f *testing.F) {
 	f.Add(uint8(8), uint8(8), uint8(0), int16(3), int16(-7), int16(15), []byte{0, 64, 128, 255})
 	f.Add(uint8(31), uint8(17), uint8(2), int16(-5), int16(8), int16(46), []byte{255, 1, 2, 3, 4})
