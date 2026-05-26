@@ -7,7 +7,11 @@
 package prediction
 
 const (
-	intraEdgeMaxSize         = 129
+	// intraEdgeMaxSize bounds the longest filter/upsample edge directional
+	// intra prediction needs: width + height + origin_extra. For libaom's
+	// 128x128 SB intra prediction this is 128+128+1 = 257; smaller blocks
+	// just use a prefix of the buffer.
+	intraEdgeMaxSize         = 257
 	intraEdgeMaxUpsampleSize = 16
 	intraEdgeTaps            = 5
 )

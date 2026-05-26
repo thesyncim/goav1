@@ -905,17 +905,19 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		result.InterReferences = refs
 		result.InterReferencesValid = true
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
+		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
 			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
-				Size:         block.Size,
-				References:   refs,
-				X4:           block.X4,
-				Y4:           block.Y4,
-				HaveTop:      block.HaveTop,
-				HaveLeft:     block.HaveLeft,
-				HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
-				GlobalMVs:    globalMVs,
-				RefSignBias:  req.RefSignBias,
+				Size:             block.Size,
+				References:       refs,
+				X4:               block.X4,
+				Y4:               block.Y4,
+				HaveTop:          block.HaveTop,
+				HaveLeft:         block.HaveLeft,
+				HaveTopRight:     blockHasTopRight(req.SBSizeMIB, block),
+				GlobalMVs:        globalMVs,
+				GlobalMotionType: globalMotionTypes,
+				RefSignBias:      req.RefSignBias,
 
 				MICol:          block.MICol,
 				MIRow:          block.MIRow,

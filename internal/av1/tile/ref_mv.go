@@ -1,6 +1,9 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/motion"
+import (
+	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+)
 
 const (
 	MaxMVRefCandidates   = 2
@@ -51,8 +54,9 @@ type ReferenceMVStackRequest struct {
 	TileMIColEnd   uint32
 	TileMIRowEnd   uint32
 
-	GlobalMVs   [2]motion.Vector
-	RefSignBias [referenceFrameCount]bool
+	GlobalMVs        [2]motion.Vector
+	GlobalMotionType [2]parser.GlobalMotionType
+	RefSignBias      [referenceFrameCount]bool
 
 	TemporalMVs          *TemporalMotionField
 	OrderHintBits        uint8
@@ -93,7 +97,7 @@ func (c *BlockModeContext) IntrabcReferenceDVStack(req ReferenceMVStackRequest) 
 		c.scanLeftIntrabcDVs(req, dims, searchMaxColOffset, &processedCols, &stack)
 	}
 	if req.HaveTopRight {
-		if candidate, ok := c.topRightInterMotion(req, dims); ok {
+		if candidate, _, ok := c.topRightInterMotion(req, dims); ok {
 			stack.addOrWeight(ReferenceMVCandidate{This: candidate.MV[0]}, 4)
 		}
 	}
@@ -639,7 +643,7 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 			}
 		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], req.References, uint16(step*weight))
+			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 			result.RowMatches += matches
 			result.NewMVMatches += newMatches
 		}
@@ -675,7 +679,7 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 			}
 		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], req.References, uint16(step*weight))
+			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 			result.ColumnMatches += matches
 			result.NewMVMatches += newMatches
 		}
@@ -748,11 +752,11 @@ func (c *BlockModeContext) scanLeftIntrabcDVs(req ReferenceMVStackRequest, dims 
 }
 
 func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
-	candidate, ok := c.topRightInterMotion(req, dims)
+	candidate, size, ok := c.topRightInterMotion(req, dims)
 	if !ok {
 		return
 	}
-	matches, newMatches := result.Stack.addDirectCandidate(candidate, req.References, 4)
+	matches, newMatches := result.Stack.addDirectCandidate(candidate, size, req.References, 4, req.GlobalMVs, req.GlobalMotionType)
 	result.RowMatches += matches
 	result.NewMVMatches += newMatches
 }
@@ -879,7 +883,7 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 			weight = maxInt(weight, inc)
 			*processedRows = inc - rowOffset - 1
 		}
-		m, n := stack.addDirectCandidate(candidate, req.References, uint16(step*weight))
+		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 		*matches += m
 		*newMatches += n
 		i += step
@@ -969,7 +973,7 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 			weight = maxInt(weight, inc)
 			*processedCols = inc - colOffset - 1
 		}
-		m, n := stack.addDirectCandidate(candidate, req.References, uint16(step*weight))
+		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 		*matches += m
 		*newMatches += n
 		i += step
@@ -1025,11 +1029,11 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 }
 
 func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *int, newMatches *int, stack *ReferenceMVStack) {
-	candidate, _, ok := c.gridInterMotion(req.X4+colOffset, req.Y4+rowOffset)
+	candidate, size, ok := c.gridInterMotion(req.X4+colOffset, req.Y4+rowOffset)
 	if !ok {
 		return
 	}
-	m, n := stack.addDirectCandidate(candidate, req.References, 4)
+	m, n := stack.addDirectCandidate(candidate, size, req.References, 4, req.GlobalMVs, req.GlobalMotionType)
 	*matches += m
 	*newMatches += n
 }
@@ -1140,18 +1144,18 @@ func (c *BlockModeContext) crossSBIntrabcGridInterMotion(req ReferenceMVStackReq
 	return c.gridInterMotion(x4, y4)
 }
 
-func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims BlockDimensions) (InterMotionResult, bool) {
+func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims BlockDimensions) (InterMotionResult, BlockSize, bool) {
 	x := req.X4 + int(dims.W4)
 	y := req.Y4 - 1
 	if y >= 0 {
-		candidate, _, ok := c.gridInterMotion(x, y)
-		return candidate, ok
+		candidate, size, ok := c.gridInterMotion(x, y)
+		return candidate, size, ok
 	}
 	if !req.HaveTop || x < 0 || x >= MaxBlockModeSlots ||
 		c.AboveIntra[x] != 0 || c.AboveMotionValid[x] == 0 {
-		return InterMotionResult{}, false
+		return InterMotionResult{}, 0, false
 	}
-	return c.AboveInterMotion[x], true
+	return c.AboveInterMotion[x], c.AboveBlockSize[x], true
 }
 
 func blockSizeWidth4(size BlockSize) int {
@@ -1391,14 +1395,22 @@ func blockIsLastVerticalRect(block BlockVisit, dims BlockDimensions) bool {
 	return (int(block.MICol)&(levelSize-1))+int(dims.W4) >= levelSize
 }
 
-func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, refs InterReferencesResult, weight uint16) (int, int) {
+func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, candidateSize BlockSize, refs InterReferencesResult, weight uint16, globalMVs [2]motion.Vector, globalTypes [2]parser.GlobalMotionType) (int, int) {
 	if refs.Compound {
 		if !candidate.References.Compound ||
 			candidate.References.Ref[0] != refs.Ref[0] ||
 			candidate.References.Ref[1] != refs.Ref[1] {
 			return 0, 0
 		}
-		stack.addOrWeight(ReferenceMVCandidate{This: candidate.MV[0], Compound: candidate.MV[1]}, weight)
+		this := candidate.MV[0]
+		comp := candidate.MV[1]
+		if isGlobalMVBlock(candidate.Mode, candidateSize, globalTypes[0]) {
+			this = globalMVs[0]
+		}
+		if isGlobalMVBlock(candidate.Mode, candidateSize, globalTypes[1]) {
+			comp = globalMVs[1]
+		}
+		stack.addOrWeight(ReferenceMVCandidate{This: this, Compound: comp}, weight)
 		return 1, boolInt(candidate.Mode.usesNewMV())
 	}
 
@@ -1407,13 +1419,54 @@ func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, r
 		if candidate.References.Ref[ref] != refs.Ref[0] {
 			continue
 		}
-		stack.addOrWeight(ReferenceMVCandidate{This: candidate.MV[ref]}, weight)
+		mv := candidate.MV[ref]
+		if isGlobalMVBlock(candidate.Mode, candidateSize, globalTypes[0]) {
+			mv = globalMVs[0]
+		}
+		stack.addOrWeight(ReferenceMVCandidate{This: mv}, weight)
 		matches++
 	}
 	if matches == 0 {
 		return 0, 0
 	}
 	return matches, boolInt(candidate.Mode.usesNewMV())
+}
+
+// isGlobalMVBlock mirrors libaom's is_global_mv_block(): the candidate is
+// treated as a global-motion block when its prediction mode is GLOBALMV or
+// GLOBAL_GLOBALMV, the corresponding warp model is non-translational (RotZoom
+// or Affine), and the candidate's smaller side is at least 8 luma samples
+// (W4 >= 2 and H4 >= 2). libaom substitutes the global MV evaluated at the
+// CURRENT decode block's position for such candidates so two neighbors decoded
+// with the same affine model still contribute distinct ref-MV stack entries
+// when the projection produces different sub-pel values at different positions.
+// Without this substitution goav1 reuses the candidate's stored MV — evaluated
+// at the candidate's own position — which collapses entries libaom keeps
+// separate and undercounts ref_mv_count, e.g. cdf_update frame 1 block (12,4)
+// where the left BLOCK_16X16 GLOBALMV neighbor dedups against the above
+// BLOCK_16X8 NEARESTMV candidate.
+func isGlobalMVBlock(mode InterModeResult, size BlockSize, gmType parser.GlobalMotionType) bool {
+	if gmType <= parser.GlobalMotionTranslation {
+		return false
+	}
+	if !isGlobalMode(mode) {
+		return false
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return false
+	}
+	if dims.W4 < 2 || dims.H4 < 2 {
+		return false
+	}
+	return true
+}
+
+func isGlobalMode(mode InterModeResult) bool {
+	if mode.Compound {
+		return mode.CompoundMode == CompoundInterModeGlobalGlobal
+	}
+	return mode.Mode == InterModeGlobalMV
 }
 
 func (stack *ReferenceMVStack) addSingleFallbackCandidate(candidate InterMotionResult, target ReferenceFrame, signBias [referenceFrameCount]bool) {

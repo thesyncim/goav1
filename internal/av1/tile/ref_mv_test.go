@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestReferenceMVStackDRLContextMatchesLibaomAndDav1d(t *testing.T) {
@@ -748,5 +749,139 @@ func seedLeftMotion(ctx *BlockModeContext, y4 int, size BlockSize, result InterM
 		ctx.LeftInterMotion[slot] = result
 		ctx.LeftMotionValid[slot] = 1
 		ctx.LeftBlockSize[slot] = size
+	}
+}
+
+// TestBuildReferenceMVStackGlobalMVSubstitution verifies that a GLOBALMV
+// neighbor whose corresponding warp model is non-translational contributes the
+// gm_mv evaluated at the CURRENT decode block's position to the ref-MV stack
+// instead of the candidate's own stored MV. This mirrors libaom's
+// is_global_mv_block() substitution inside add_ref_mv_candidate and is the
+// missing link that caused the cdf_update frame 1 block (12,4) DRL bit to
+// diverge: before this fix the left BLOCK_16X16 GLOBALMV neighbor and the
+// above BLOCK_16X8 NEARESTMV neighbor both contributed the candidate's stored
+// MV (-9,-67), so the outer_blk[-1,-1] (-10,-67) candidate that libaom keeps
+// distinct deduped against an entry that should have been (-9,-66) — leaving
+// goav1's stack with 3 entries instead of 4 and short-circuiting the NEARMV
+// DRL loop one bit early.
+func TestBuildReferenceMVStackGlobalMVSubstitution(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	candidateMV := motion.Vector{Row: -9, Col: -67}
+	// Seed an above neighbor whose stored prediction mode is GLOBALMV. libaom
+	// substitutes gm_mv_candidates[0] for this neighbor in the stack.
+	seedAboveMotion(&ctx, 4, BlockSize16x8, InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeGlobalMV},
+		MV:         [2]motion.Vector{candidateMV},
+	})
+	// Seed a NEARESTMV left neighbor that contributes its own stored MV
+	// unchanged so the substitution effect is observable in isolation.
+	leftMV := motion.Vector{Row: -11, Col: -66}
+	seedLeftMotion(&ctx, 4, BlockSize16x16, InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{leftMV},
+	})
+	gmMV := motion.Vector{Row: -9, Col: -66}
+	req := ReferenceMVStackRequest{
+		Size:             BlockSize8x8,
+		References:       target,
+		X4:               4,
+		Y4:               4,
+		HaveTop:          true,
+		HaveLeft:         true,
+		GlobalMVs:        [2]motion.Vector{gmMV},
+		GlobalMotionType: [2]parser.GlobalMotionType{parser.GlobalMotionRotZoom},
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 2 {
+		t.Fatalf("stack count=%d want 2", result.Stack.Count)
+	}
+	// libaom's stack has the above neighbor at slot 0 (added first, then the
+	// REF_CAT_LEVEL boost) carrying the substituted gm_mv, not the candidate
+	// stored MV. Sorting may or may not reorder; both orderings are valid as
+	// long as one slot is the gm_mv and the other is the left neighbor MV.
+	gotGM := false
+	gotLeft := false
+	for i := 0; i < result.Stack.Count; i++ {
+		switch result.Stack.Candidates[i].This {
+		case gmMV:
+			gotGM = true
+		case leftMV:
+			gotLeft = true
+		case candidateMV:
+			t.Fatalf("stack[%d] should not carry the candidate's stored MV=%+v when gm substitution applies; got=%+v", i, candidateMV, result.Stack.Candidates[i])
+		}
+	}
+	if !gotGM {
+		t.Fatalf("stack missing substituted gm_mv=%+v; got=%+v", gmMV, result.Stack.Candidates[:result.Stack.Count])
+	}
+	if !gotLeft {
+		t.Fatalf("stack missing left neighbor mv=%+v; got=%+v", leftMV, result.Stack.Candidates[:result.Stack.Count])
+	}
+}
+
+// TestBuildReferenceMVStackTranslationOnlySkipsGlobalMVSubstitution checks that
+// a GLOBALMV neighbor whose warp model is identity or translation-only does
+// NOT trigger the gm_mv substitution; libaom restricts the substitution to
+// non-translational warps via the `type > TRANSLATION` guard.
+func TestBuildReferenceMVStackTranslationOnlySkipsGlobalMVSubstitution(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	candidateMV := motion.Vector{Row: -9, Col: -67}
+	seedAboveMotion(&ctx, 4, BlockSize16x8, InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeGlobalMV},
+		MV:         [2]motion.Vector{candidateMV},
+	})
+	req := ReferenceMVStackRequest{
+		Size:             BlockSize8x8,
+		References:       target,
+		X4:               4,
+		Y4:               0,
+		HaveTop:          true,
+		GlobalMVs:        [2]motion.Vector{{Row: -9, Col: -66}},
+		GlobalMotionType: [2]parser.GlobalMotionType{parser.GlobalMotionTranslation},
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 1 || result.Stack.Candidates[0].This != candidateMV {
+		t.Fatalf("stack=%+v want single entry with candidate mv=%+v", result.Stack.Candidates[:result.Stack.Count], candidateMV)
+	}
+}
+
+// TestBuildReferenceMVStackSmallGlobalMVBlockSkipsSubstitution checks that the
+// gm_mv substitution requires the candidate's minimum side to be at least 8
+// luma samples (W4>=2 and H4>=2), matching libaom's block_size_allowed gate.
+func TestBuildReferenceMVStackSmallGlobalMVBlockSkipsSubstitution(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	candidateMV := motion.Vector{Row: -9, Col: -67}
+	seedAboveMotion(&ctx, 4, BlockSize8x4, InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeGlobalMV},
+		MV:         [2]motion.Vector{candidateMV},
+	})
+	req := ReferenceMVStackRequest{
+		Size:             BlockSize8x8,
+		References:       target,
+		X4:               4,
+		Y4:               4,
+		HaveTop:          true,
+		GlobalMVs:        [2]motion.Vector{{Row: -9, Col: -66}},
+		GlobalMotionType: [2]parser.GlobalMotionType{parser.GlobalMotionRotZoom},
+	}
+	result, err := ctx.BuildReferenceMVStack(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stack.Count != 1 || result.Stack.Candidates[0].This != candidateMV {
+		t.Fatalf("stack=%+v want single entry with candidate mv=%+v (W=8 H=4 fails min>=8 gate)", result.Stack.Candidates[:result.Stack.Count], candidateMV)
 	}
 }
