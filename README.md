@@ -478,6 +478,18 @@ CI is expected to fail on allocation regressions covered by unit tests. As the
 decoder grows, benchmark thresholds should move into generated history files or
 a dedicated comparison step.
 
+## Changelog
+
+The session-by-session change history lives in
+[CHANGELOG.md](CHANGELOG.md) in keep-a-changelog format. It groups
+work into correctness fixes against the libaom conformance vectors,
+public API and CLI additions, performance work, hardening / fuzz
+coverage, and CI infrastructure, and includes the current
+`SuiteLevelFast` test-vector pass/fail table.
+
+Pre-release notes for the upcoming `v0.1.0` tag live in
+[RELEASE_NOTES_v0.1.0.md](RELEASE_NOTES_v0.1.0.md).
+
 ## License
 
 goav1 is distributed under the BSD 2-Clause license. See [LICENSE](LICENSE)
