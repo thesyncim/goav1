@@ -200,6 +200,93 @@ func TestFrameWorkBatchPredictBlockInterClipsFrameEdge(t *testing.T) {
 	}
 }
 
+// TestFrameWorkClipVisiblePixelsToWindow covers the boundary cases that show
+// up in the 34x34 libaom-extended fast-suite vector: MI-aligned blocks at the
+// right/bottom edge whose nominal extent (e.g. 4x4 or 8x8 transforms aligned
+// to MI col 8 in a 34-pixel-wide luma plane) overshoots the coded frame by 2
+// pixels and must clip down to the visible strip without losing the y or x
+// dimension. The chroma corner cases (4:2:0 17-pixel plane) round MI col 8
+// down to a 1-sample strip.
+func TestFrameWorkClipVisiblePixelsToWindow(t *testing.T) {
+	luma := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 34, Height: 34}
+	chroma := FrameWorkPlaneRegion{X: 0, Y: 0, Width: 17, Height: 17}
+	tests := []struct {
+		name              string
+		window            FrameWorkPlaneRegion
+		x, y, w, h        int
+		wantW, wantH      int
+		wantOK            bool
+	}{
+		{"luma corner 8x8 visible 2x2", luma, 32, 32, 8, 8, 2, 2, true},
+		{"luma right 4x8 visible 2x8", luma, 32, 8, 4, 8, 2, 8, true},
+		{"luma right 4x4 visible 2x4", luma, 32, 16, 4, 4, 2, 4, true},
+		{"luma bottom 8x4 visible 8x2", luma, 16, 32, 8, 4, 8, 2, true},
+		{"luma bottom 16x8 visible 16x2", luma, 0, 32, 16, 8, 16, 2, true},
+		{"luma right-most pixel 1x1 visible 1x1", luma, 33, 33, 1, 1, 1, 1, true},
+		{"luma 4x4 at MI col 9 entirely past visible", luma, 36, 8, 4, 4, 0, 0, false},
+		{"luma 8x8 at MI col 9 entirely past visible", luma, 36, 0, 8, 8, 0, 0, false},
+		{"luma block at exact right boundary", luma, 34, 0, 4, 4, 0, 0, false},
+		{"chroma corner 4x4 visible 1x1", chroma, 16, 16, 4, 4, 1, 1, true},
+		{"chroma right 2x4 visible 1x4", chroma, 16, 8, 2, 4, 1, 4, true},
+		{"chroma bottom 4x2 visible 4x1", chroma, 8, 16, 4, 2, 4, 1, true},
+		{"chroma 2x4 entirely past visible", chroma, 18, 0, 2, 4, 0, 0, false},
+		{"zero width rejects", luma, 0, 0, 0, 4, 0, 0, false},
+		{"zero height rejects", luma, 0, 0, 4, 0, 0, 0, false},
+		{"negative origin rejects", luma, -1, 0, 4, 4, 0, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotW, gotH, ok := frameWorkClipVisiblePixelsToWindow(tc.window, tc.x, tc.y, tc.w, tc.h)
+			if ok != tc.wantOK || gotW != tc.wantW || gotH != tc.wantH {
+				t.Fatalf("clip(x=%d,y=%d,w=%d,h=%d) = (%d,%d,%v) want (%d,%d,%v)",
+					tc.x, tc.y, tc.w, tc.h, gotW, gotH, ok, tc.wantW, tc.wantH, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestFrameWorkPlaneBlockStartsBeyondOutput covers the rounded-up MI grid
+// short-circuit: a 34x34 frame allocates MI cols 0..9 (rounded to a multiple
+// of 8), so partition walks can address blocks starting at MI col 9 (luma
+// pixel 36) which has zero visible samples. The clip path returns ok=false
+// for those blocks; this helper distinguishes that genuinely-out-of-bounds
+// case from negative/origin-prefix coordinates so callers can skip silently
+// instead of failing the batch.
+func TestFrameWorkPlaneBlockStartsBeyondOutput(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 34, Height: 34, BitDepth: 8, Align: 64, SubsamplingX: true, SubsamplingY: true})
+	tests := []struct {
+		name  string
+		plane FrameWorkPlane
+		x, y  int
+		want  bool
+	}{
+		{"luma origin", FrameWorkPlaneY, 0, 0, false},
+		{"luma last visible (33, 33)", FrameWorkPlaneY, 33, 33, false},
+		{"luma at right edge (34, 0)", FrameWorkPlaneY, 34, 0, true},
+		{"luma at bottom edge (0, 34)", FrameWorkPlaneY, 0, 34, true},
+		{"luma at MI col 9 (36, 8)", FrameWorkPlaneY, 36, 8, true},
+		{"luma at MI row 9 (8, 36)", FrameWorkPlaneY, 8, 36, true},
+		{"luma negative x rejected (not beyond)", FrameWorkPlaneY, -1, 0, false},
+		{"luma negative y rejected (not beyond)", FrameWorkPlaneY, 0, -1, false},
+		{"chroma U origin", FrameWorkPlaneU, 0, 0, false},
+		{"chroma U last visible (16, 16)", FrameWorkPlaneU, 16, 16, false},
+		{"chroma U at right edge (17, 0)", FrameWorkPlaneU, 17, 0, true},
+		{"chroma U at MI col 9 (18, 4)", FrameWorkPlaneU, 18, 4, true},
+		{"chroma V last visible (16, 16)", FrameWorkPlaneV, 16, 16, false},
+		{"chroma V at bottom edge (8, 17)", FrameWorkPlaneV, 8, 17, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := frameWorkPlaneBlockStartsBeyondOutput(output, tc.plane, tc.x, tc.y); got != tc.want {
+				t.Fatalf("plane=%d (%d,%d) = %v want %v", tc.plane, tc.x, tc.y, got, tc.want)
+			}
+		})
+	}
+	if got := frameWorkPlaneBlockStartsBeyondOutput(nil, FrameWorkPlaneY, 0, 0); got != false {
+		t.Fatalf("nil output: got=%v want false", got)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaDirectionalKnownVectors(t *testing.T) {
 	tests := []struct {
 		name string

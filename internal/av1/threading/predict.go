@@ -2784,6 +2784,22 @@ func frameWorkBlockLumaPredictionExtentPixels(block tile.BlockVisit) (int, int, 
 	return int(dims.W4) * 4, int(dims.H4) * 4, nil
 }
 
+// frameWorkClipVisiblePixelsToWindow trims a block's pixel rectangle to the
+// caller's plane window. The window's pixel-grid origin is (window.X,
+// window.Y) and its visible extent is window.Width x window.Height samples.
+// Callers pass the block's absolute plane-grid coordinates plus its MI-aligned
+// visible width and height; the helper returns the rectangle clipped to the
+// window's coded-frame edge.
+//
+// The clamp returns ok=false when the block's origin lands outside the
+// window (negative coordinates or x/y at or past the window end). When ok is
+// true the returned (width, height) is the largest sub-rectangle that fits
+// inside the window: blocks that straddle the right/bottom frame boundary
+// (e.g. a 4x4/4x8/8x4 transform at the 34-pixel edge of a 34x34 frame) are
+// reduced to the visible 2-pixel strip in luma or the 1-pixel strip in
+// 4:2:0 chroma. Callers must use the returned width/height for the
+// downstream writeback and the input predWidth/predHeight for libaom's
+// edge/DC/Smooth sample weighting.
 func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y int, width int, height int) (int, int, bool) {
 	if width <= 0 || height <= 0 || x < window.X || y < window.Y {
 		return 0, 0, false
@@ -2808,6 +2824,14 @@ func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y in
 	return width, height, width > 0 && height > 0
 }
 
+// frameWorkPlaneBlockStartsBeyondOutput reports whether a block's plane-grid
+// origin lies entirely past the coded-frame extent of output. AV1 bitstreams
+// can address blocks whose MI grid was rounded up past the coded width/height
+// (e.g. a 34x34 frame rounds to a 40x40 MI grid, so partition walks emit
+// blocks at MI col 9 starting at luma pixel 36). Callers use this short-circuit
+// to skip prediction/reconstruction silently when the block has no visible
+// samples to write, distinct from the genuine clip-failure path. Negative
+// coordinates are rejected so they hit the caller's invalid-batch path.
 func frameWorkPlaneBlockStartsBeyondOutput(output *frame.Frame, plane FrameWorkPlane, x int, y int) bool {
 	if output == nil || x < 0 || y < 0 {
 		return false
