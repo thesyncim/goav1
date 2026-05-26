@@ -2164,6 +2164,9 @@ func TestFrameWorkBatchPredictBlockInterIntrabcCopiesOutput(t *testing.T) {
 }
 
 func TestFrameWorkBatchPredictBlockInterRejectsScaledReferenceBeforeMutation(t *testing.T) {
+	if frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
+	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	output.Y.Pix[16*output.Y.Stride+16] = 0x44
@@ -2182,7 +2185,43 @@ func TestFrameWorkBatchPredictBlockInterRejectsScaledReferenceBeforeMutation(t *
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterRoutesScaledReferenceWhenEnabled(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	// Fill the reference with a uniform value: 8-tap kernels sum to 128 (1.0
+	// in Q7), so a uniform reference must produce that same value at every
+	// output sample regardless of scale factors or sub-pel phase.
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, 0xa5)
+		}
+	}
+	for y := 0; y < reference.U.Height; y++ {
+		for x := 0; x < reference.U.Width; x++ {
+			setFrameWorkTestSample(reference.U, reference.Layout.BytesPerSample, x, y, 0x5a)
+			setFrameWorkTestSample(reference.V, reference.Layout.BytesPerSample, x, y, 0x33)
+		}
+	}
+	// Seed a sentinel byte that the scaled convolver must overwrite.
+	output.Y.Pix[16*output.Y.Stride+16] = 0x00
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); err != nil {
+		t.Fatalf("PredictBlockInterWithFilters err=%v", err)
+	}
+	if got := output.Y.Pix[16*output.Y.Stride+16]; got != 0xa5 {
+		t.Fatalf("scaled prediction did not write uniform ref value at (16,16): got=%#x want=%#x", got, 0xa5)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMutation(t *testing.T) {
+	if frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
+	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	last := testBatchFrame(t, output.Format)
 	bwd := testBatchFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, Align: 64})

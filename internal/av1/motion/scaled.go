@@ -222,27 +222,15 @@ func validScaleRatio(refSize int, curSize int) bool {
 	return true
 }
 
-// TODO(scaled-subpel-kernel): Wire up an 8-tap scaled convolver and route
-// scaled-reference prediction blocks through it. The same-size translational
-// fast path (predictInterPlaneBlock8 / predictInterPlaneBlockHighBD) cannot
-// step the source position by a non-unit stride, so a new family is required
-// — matching libaom's av1_convolve_2d_scale_c / av1_highbd_convolve_2d_scale_c:
+// Scaled 8-tap convolver: see ConvolveScale2D8 /
+// ConvolveScale2D8Clamped / ConvolveScale2DHighBD /
+// ConvolveScale2DHighBDClamped in convolve_scale.go for the kernels matching
+// libaom's av1_convolve_2d_scale_c / av1_highbd_convolve_2d_scale_c. They are
+// driven by ScaledBlockOrigin's Q10 source position and per-output stepper,
+// plus a precomputed SubpelKernelTable per axis (SubpelKernelTableFor).
 //
-//   func convolve2DScale8(
-//       dst frame.Plane, ref frame.Plane,
-//       dstX, dstY int, width, height int,
-//       startXQ10 int64, xStepQ10 int64,
-//       startYQ10 int64, yStepQ10 int64,
-//       xKernels [16][filterTaps]int16,
-//       yKernels [16][filterTaps]int16,
-//   )
-//
-//   func convolve2DScaleHighBD(... bitDepth uint8, max uint16, ...)
-//
-// (Plus *Clamped variants that extend the source plane edges so out-of-bounds
-// taps replicate the boundary, as predictInterPlaneBlock8 does today.)
-//
-// Once those kernels are in, the predict.go validator can flip from "reject
-// scaled refs" to "route scaled refs through the new path" behind a build/env
-// guard so the existing 7-vector fast suite keeps the rejection until the
-// scaled kernels are conformance-tested against libaom.
+// The threading prediction path dispatches scaled-reference inter blocks
+// through these kernels when the goav1_scaled_pred build tag or
+// GOAV1_SCALED_PRED=1 environment variable is set; the default build keeps
+// rejecting scaled refs to leave the 7-vector fast suite on its
+// battle-tested same-size translational path.

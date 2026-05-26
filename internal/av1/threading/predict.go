@@ -1258,8 +1258,13 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
-	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
 		return err
+	}
+	if !sameSize {
+		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
@@ -1286,8 +1291,13 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
-	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
 		return err
+	}
+	if !sameSize {
+		return frameWorkPredictScaledReferencePlane(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			0, 0, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
