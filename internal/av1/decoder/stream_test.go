@@ -214,6 +214,41 @@ func showExistingFrameHeaderPayload(index uint8) []byte {
 	return w.bytes()
 }
 
+// switchFrameHeaderPayload encodes a complete shown S_FRAME frame header that
+// the Stream parser pipeline can fully consume. The encoded bitstream matches
+// AV1 §5.9.1 / §5.9.5 / §5.9.7 for a switch frame in a sequence with
+// enable_order_hint = 0 and frame_id_numbers_present_flag = 0: the syntax
+// skips error_resilient_mode (implied 1), frame_size_override_flag (implied
+// 1), primary_ref_frame (error_resilient skips), refresh_frame_flags (S_FRAME
+// implies 0xff), and frame_refs_short_signaling (no order hint).
+func switchFrameHeaderPayload() []byte {
+	var w testBitWriter
+	w.writeBool(false)
+	w.writeBits(uint64(parser.FrameTypeSwitch), 2)
+	w.writeBool(true)
+	w.writeBool(false)
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBits(0, 3)
+	}
+	w.writeBits(15, 4)
+	w.writeBits(8, 4)
+	w.writeBool(false)
+	w.writeBool(false)
+	w.writeBool(false)
+	w.writeBits(0, 2)
+	w.writeBool(false)
+	w.writeBool(false)
+	w.writeBool(false)
+	writeZeroQuantParams(&w)
+	writeZeroSegmentationParams(&w)
+	w.writeBool(false)
+	w.writeBool(false)
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		w.writeBool(false)
+	}
+	return w.bytes()
+}
+
 func writeZeroQuantParams(w *testBitWriter) {
 	writeQuantParams(w, 0)
 }
@@ -1016,6 +1051,153 @@ func TestStreamCarriesReferenceFrameHeaderState(t *testing.T) {
 	}
 	if copyEvent.LoopFilter.ModeRefDeltaUpdate || copyEvent.LoopFilter.Deltas.Ref[2] != 4 {
 		t.Fatalf("copied loopfilter=%+v", copyEvent.LoopFilter)
+	}
+}
+
+func TestStreamSwitchFrameRefreshesAllReferenceSlots(t *testing.T) {
+	// AV1 §5.9.1: an S_FRAME implies error_resilient_mode = 1 and (via
+	// frame_size syntax) refresh_frame_flags = 0xff. A decoder joining
+	// the stream at this frame must therefore resume without prior
+	// state: every reference slot is rewritten to the decoded switch
+	// surface.
+	var dec Stream
+	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+		t.Fatal(err)
+	}
+
+	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	keyEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyEvent.FrameHeader.FrameType != parser.FrameTypeKey {
+		t.Fatalf("key event=%+v", keyEvent)
+	}
+	if keyEvent.FrameSize.RefreshFrameFlags != 0xff {
+		t.Fatalf("key RefreshFrameFlags=%02x want ff", keyEvent.FrameSize.RefreshFrameFlags)
+	}
+	for i := 0; i < parser.RefFrames; i++ {
+		if !dec.references.Frames[i].Valid {
+			t.Fatalf("references[%d] should be valid after key", i)
+		}
+	}
+
+	switchFrame := append([]byte{}, switchFrameHeaderPayload()...)
+	switchFrame = append(switchFrame, 0xbb)
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, switchFrame), false)
+	if err != nil {
+		t.Fatalf("S_FRAME PushOBU err=%v", err)
+	}
+	if event.Kind != EventFrame {
+		t.Fatalf("S_FRAME event kind=%v", event.Kind)
+	}
+	if event.FrameHeader.FrameType != parser.FrameTypeSwitch {
+		t.Fatalf("S_FRAME FrameType=%v", event.FrameHeader.FrameType)
+	}
+	if !event.FrameHeader.ErrorResilientMode || !event.FrameHeader.FrameSizeOverride {
+		t.Fatalf("S_FRAME header=%+v", event.FrameHeader)
+	}
+	if event.FrameSize.RefreshFrameFlags != 0xff {
+		t.Fatalf("S_FRAME RefreshFrameFlags=%02x want ff", event.FrameSize.RefreshFrameFlags)
+	}
+	if event.FrameHeader.PrimaryRefFrame != parser.PrimaryRefNone {
+		t.Fatalf("S_FRAME PrimaryRefFrame=%d want %d", event.FrameHeader.PrimaryRefFrame, parser.PrimaryRefNone)
+	}
+	if !event.TileGroup.Final {
+		t.Fatalf("S_FRAME tile group not final: %+v", event.TileGroup)
+	}
+	for i := 0; i < parser.RefFrames; i++ {
+		ref := dec.references.Frames[i]
+		if !ref.Valid || ref.FrameType != parser.FrameTypeSwitch {
+			t.Fatalf("references[%d]=%+v want valid FrameTypeSwitch", i, ref)
+		}
+	}
+}
+
+func TestStreamSwitchFrameSurfaceReferencesReset(t *testing.T) {
+	// SurfaceReferences book-keeping: an S_FRAME with
+	// refresh_frame_flags = 0xff rewrites every surface slot and
+	// releases all previously held distinct surfaces.
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0xff, 5, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refs.Refresh(0x0f, 6, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	event := Event{
+		Kind: EventFrame,
+		FrameHeader: parser.FrameHeaderPrefix{
+			FrameType:          parser.FrameTypeSwitch,
+			ShowFrame:          true,
+			ErrorResilientMode: true,
+			FrameSizeOverride:  true,
+		},
+		FrameSize: parser.FrameSize{RefreshFrameFlags: 0xff},
+		TileGroup: parser.TileGroup{Final: true},
+	}
+	count, err := refs.FinishFrame(event, 7, releases[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("release count=%d want 2", count)
+	}
+	released5, released6 := false, false
+	for i := 0; i < count; i++ {
+		switch releases[i] {
+		case 5:
+			released5 = true
+		case 6:
+			released6 = true
+		}
+	}
+	if !released5 || !released6 {
+		t.Fatalf("releases=%v want both 5 and 6", releases[:count])
+	}
+	for i := 0; i < parser.RefFrames; i++ {
+		slot, ok := refs.ReferenceSlot(i)
+		if !ok || slot != 7 {
+			t.Fatalf("after S_FRAME, ref[%d]=%d ok=%v want 7", i, slot, ok)
+		}
+	}
+}
+
+func TestStreamSwitchFrameProvidesReferencesForFollowingInter(t *testing.T) {
+	// Surface routing treats S_FRAME like inter for reference
+	// resolution; the seven inter slots all resolve to the switch
+	// surface until the next refresh.
+	var refs SurfaceReferences
+	var releases [parser.RefFrames]int
+	if _, err := refs.Refresh(0xff, 9, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+	event := Event{
+		Kind: EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{
+			FrameType:          parser.FrameTypeSwitch,
+			ErrorResilientMode: true,
+			FrameSizeOverride:  true,
+		},
+		FrameSize: parser.FrameSize{
+			RefFrameIdx: [parser.InterRefsPerFrame]uint8{0, 1, 2, 3, 4, 5, 6},
+		},
+	}
+	var surfaces [parser.InterRefsPerFrame]int
+	count, err := refs.FrameReferences(event, surfaces[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != parser.InterRefsPerFrame {
+		t.Fatalf("count=%d", count)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if surfaces[i] != 9 {
+			t.Fatalf("surfaces[%d]=%d want 9", i, surfaces[i])
+		}
 	}
 }
 
