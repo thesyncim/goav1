@@ -1125,7 +1125,15 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("collect overlappable neighbors: %w", err)
 					}
-					numProjRef, err := overlappableNeighbors.WarpSampleCountForBlock(block, refs.Ref[0])
+					// libaom's av1_findSamples scans the full above row and
+					// left column past the OBMC neighbor cap (commit 0e64960
+					// landed the wider scan as WarpProjectionWithContext for the
+					// actual warp projection). Use the same wider scan here so
+					// num_proj_ref matches libaom — the OBMC-capped count
+					// undershoots for blocks with many short left neighbors,
+					// which steers ReadMotionMode into the OBMC CDF when libaom
+					// reads the 3-symbol WARP CDF.
+					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0])
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("count warp samples: %w", err)
 					}
