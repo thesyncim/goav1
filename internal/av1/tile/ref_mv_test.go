@@ -1301,6 +1301,99 @@ func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 	}
 }
 
+// TestScanGridRowReferenceMVsUsesSBTopHistory verifies that the outer row
+// reference-MV scan picks up the cross-SB neighbor in the SB above when
+// rowOffset reaches y4<0. Mirrors quantizer_00 frame 1 mi=(4,34)
+// BLOCK_4X8 Y4=2 where outer_row[-3] (rowOffset=-3) maps to y4=-1 inside
+// the SB at mi_row=16..31, exposed via SBTopBlockSizeGrid /
+// SBTopInterMotionGrid depth 0 (the SB-above's bottommost row).
+// Without the SBTop fallback the row scan silently dropped the candidate,
+// undercounting refmv_count and shifting the DRL CDF off libaom.
+// Symmetric to TestScanGridColReferenceMVsUsesSBLeftHistory.
+func TestScanGridRowReferenceMVsUsesSBTopHistory(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	aboveMV := motion.Vector{Row: -8, Col: 10}
+	candidate := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{aboveMV},
+	}
+	// Seed depth=0 of the SB-top snapshot at x4=5 (the cell three rows
+	// above the current Y4=2 in the SB above, hosted at the SB-above's
+	// bottommost row). With Y4=2 and rowOffset=-3, y = -1
+	// (depth = -(-1) - 1 = 0). With colOffset=1 (|rowOffset|>1) and i=0,
+	// x = X4 + colOffset = 4 + 1 = 5.
+	ctx.SBTopInterMotionGrid[0][5] = candidate
+	ctx.SBTopMotionValidGrid[0][5] = 1
+	ctx.SBTopBlockSizeGrid[0][5] = BlockSize8x8
+	ctx.SBTopBlockSizeVisitedGrid[0][5] = 1
+
+	processedRows := 0
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize4x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize4x8,
+		References: target,
+		X4:         4,
+		Y4:         2,
+		MIRow:      34,
+		MICol:      4,
+		HaveTop:    true,
+		HaveLeft:   true,
+	}
+	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	if stack.Count == 0 {
+		t.Fatalf("expected SBTop candidate to be added to stack, count=%d", stack.Count)
+	}
+	if stack.Candidates[0].This != aboveMV {
+		t.Fatalf("candidate=%+v want this=%+v", stack.Candidates[0].This, aboveMV)
+	}
+}
+
+// TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop verifies the SBTop
+// fallback in the outer row scan gates on HaveTop so blocks at the topmost
+// SB row do not consult a stale snapshot. Symmetric to
+// TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft.
+func TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	ctx.SBTopInterMotionGrid[0][5] = InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: -8, Col: 10}},
+	}
+	ctx.SBTopMotionValidGrid[0][5] = 1
+	ctx.SBTopBlockSizeGrid[0][5] = BlockSize8x8
+	ctx.SBTopBlockSizeVisitedGrid[0][5] = 1
+
+	processedRows := 0
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize4x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize4x8,
+		References: target,
+		X4:         4,
+		Y4:         2,
+		MIRow:      2,
+		MICol:      4,
+		HaveTop:    false,
+		HaveLeft:   true,
+	}
+	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	if stack.Count != 0 {
+		t.Fatalf("expected no candidate without HaveTop, count=%d", stack.Count)
+	}
+}
+
 // TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra mirrors the
 // column-side guarantee for the row scan: scan_row_mbmi must update
 // *processedRows from the cell's mi_size before checking ref-frame match.
