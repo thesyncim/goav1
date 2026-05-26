@@ -15,10 +15,7 @@ func PutFragment(dst []byte, obu []byte, offset int, mtu int, startsNewCodedVide
 
 	maxData := mtu - 1
 	remaining := len(obu) - offset
-	payloadLen := remaining
-	if payloadLen > maxData {
-		payloadLen = maxData
-	}
+	payloadLen := min(remaining, maxData)
 
 	nextOffset = offset + payloadLen
 	more = nextOffset < len(obu)

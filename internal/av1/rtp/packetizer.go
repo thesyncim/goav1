@@ -250,7 +250,7 @@ func PacketizeOBUs(obus []PacketizerOBU, limits PayloadSizeLimits, packets []Pac
 	}
 
 	unused := 0
-	for i := 0; i < count; i++ {
+	for i := range count {
 		available := limits.MaxPayloadLen - 1
 		if i == 0 {
 			available -= limits.FirstPacketReductionLen
@@ -316,7 +316,7 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 	packet := PacketPlan{FirstOBU: 0}
 	remaining := maxPayload - limits.FirstPacketReductionLen
 
-	for obuIndex := 0; obuIndex < len(obus); obuIndex++ {
+	for obuIndex := range obus {
 		isLastOBU := obuIndex == len(obus)-1
 		current := &obus[obuIndex]
 
@@ -369,10 +369,7 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		if mustWriteSize {
 			maxFirstFragment = maxFragmentSize(remaining)
 		}
-		firstFragmentSize := current.Size - 1
-		if firstFragmentSize > maxFirstFragment {
-			firstFragmentSize = maxFirstFragment
-		}
+		firstFragmentSize := min(current.Size-1, maxFirstFragment)
 
 		if firstFragmentSize == 0 {
 			packet.NumOBUElements--

@@ -146,7 +146,7 @@ func TestPayloadIteratorManyElementsNoIndexWrap(t *testing.T) {
 	var payload [1 + 300*2]byte
 	payload[0] = 0x00
 	off := 1
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		payload[off] = 0x01
 		payload[off+1] = byte(i)
 		off += 2
@@ -157,7 +157,7 @@ func TestPayloadIteratorManyElementsNoIndexWrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		elem, ok, err := it.Next()
 		if err != nil {
 			t.Fatal(err)
@@ -195,7 +195,7 @@ func TestPutPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < len(elements); i++ {
+	for i := range elements {
 		elem, ok, err := it.Next()
 		if err != nil {
 			t.Fatal(err)
@@ -300,7 +300,7 @@ func TestRTPAllocs(t *testing.T) {
 func BenchmarkPayloadIterator(b *testing.B) {
 	payload := []byte{0x20, 0x02, 0xaa, 0xbb, 0xcc, 0xdd}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		it, _ := NewIterator(payload)
 		for {
 			_, ok, _ := it.Next()

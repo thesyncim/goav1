@@ -108,7 +108,7 @@ func FuzzIterator(f *testing.F) {
 		if err != nil {
 			return
 		}
-		for i := 0; i < 64; i++ {
+		for range 64 {
 			frame, ok, err := it.Next()
 			if err != nil {
 				return

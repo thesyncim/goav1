@@ -331,7 +331,7 @@ func BenchmarkAssembleFrame(b *testing.B) {
 	var obus [1]FrameOBU
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _ = AssembleFrame(out[:], payloads, obus[:])
 	}
 }

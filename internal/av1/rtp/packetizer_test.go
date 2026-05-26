@@ -140,7 +140,7 @@ func TestCountPacketizerOBUsRejectsMalformedOBU(t *testing.T) {
 
 func TestPacketizerWritesLengthForMoreThanThreeOBUs(t *testing.T) {
 	var frame []byte
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		frame = appendPacketizerOBU(frame, obu.TypeMetadata, []byte{byte(i)})
 	}
 
@@ -204,7 +204,7 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	}
 
 	var payload [16]byte
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		size, ok := packetizer.NextPacketSize()
 		if !ok {
 			t.Fatalf("missing size for packet %d", i)
@@ -246,7 +246,7 @@ func TestPacketizerFragmentsOBU(t *testing.T) {
 	var spans [4]OBUSpan
 	var dep Depacketizer
 	used := 0
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		n, marker, ok, err := packetizer.NextPacket(out[:])
 		if err != nil {
 			t.Fatal(err)
@@ -310,7 +310,7 @@ func TestPacketizeOBUCountMatchesPacketizeOBUs(t *testing.T) {
 	if planCount != packetized || planCount != 3 {
 		t.Fatalf("planCount=%d packetized=%d want 3", planCount, packetized)
 	}
-	for i := 0; i < planCount; i++ {
+	for i := range planCount {
 		if packets[i].PacketSize == 0 || packets[i].NumOBUElements == 0 {
 			t.Fatalf("packet[%d]=%+v", i, packets[i])
 		}
@@ -520,7 +520,7 @@ func BenchmarkPacketizer(b *testing.B) {
 	var payload [32]byte
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		packetizer, _ := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, true, true, obus[:], packets[:], work[:])
 		_, _, _, _ = packetizer.NextPacket(payload[:])
 	}

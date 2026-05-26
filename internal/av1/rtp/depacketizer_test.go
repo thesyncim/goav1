@@ -311,7 +311,7 @@ func BenchmarkDepacketizer(b *testing.B) {
 	var out [32]byte
 	var spans [4]OBUSpan
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var dep Depacketizer
 		_, _, _, _ = dep.Push(out[:], 0, spans[:], payload[:n])
 	}
@@ -326,7 +326,7 @@ func BenchmarkDepacketizerPushSize(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var dep Depacketizer
 		_, _, _, _ = dep.PushSize(0, payload[:n])
 	}
