@@ -19,6 +19,9 @@ type DecoderFrameWorkBlockCoeffDecodeRequest struct {
 	Reconstruction DecoderFrameWorkCoeffReconstructionContext
 }
 
+// DecoderFrameWorkLumaCoeffBlockReconstruction packages a decoded luma
+// coefficient block together with the reconstruction context required to
+// apply it to the output frame.
 func DecoderFrameWorkLumaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffReconstructionContext, block TileLumaCoeffBlock) DecoderFrameWorkBlockCoeffReconstruction {
 	return DecoderFrameWorkBlockCoeffReconstruction{
 		Visit: ctx.Visit,
@@ -38,6 +41,9 @@ func DecoderFrameWorkLumaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffRecon
 	}
 }
 
+// DecoderFrameWorkChromaCoeffBlockReconstruction packages a decoded chroma
+// coefficient block together with the reconstruction context required to
+// apply it to the output frame.
 func DecoderFrameWorkChromaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffReconstructionContext, block TileChromaCoeffBlock) DecoderFrameWorkBlockCoeffReconstruction {
 	return DecoderFrameWorkBlockCoeffReconstruction{
 		Visit: ctx.Visit,
@@ -57,14 +63,23 @@ func DecoderFrameWorkChromaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffRec
 	}
 }
 
+// ReconstructDecoderFrameWorkLumaCoeffBlock reconstructs a single luma
+// coefficient block into the output frame for the batch entry at index.
 func ReconstructDecoderFrameWorkLumaCoeffBlock(batch DecoderFrameWorkBatch, index int, ctx DecoderFrameWorkCoeffReconstructionContext, block TileLumaCoeffBlock) error {
 	return ReconstructDecoderFrameWorkBlockCoeff(batch, index, DecoderFrameWorkLumaCoeffBlockReconstruction(ctx, block))
 }
 
+// ReconstructDecoderFrameWorkChromaCoeffBlock reconstructs a single chroma
+// coefficient block into the output frame for the batch entry at index.
 func ReconstructDecoderFrameWorkChromaCoeffBlock(batch DecoderFrameWorkBatch, index int, ctx DecoderFrameWorkCoeffReconstructionContext, block TileChromaCoeffBlock) error {
 	return ReconstructDecoderFrameWorkBlockCoeff(batch, index, DecoderFrameWorkChromaCoeffBlockReconstruction(ctx, block))
 }
 
+// DecodeAndReconstructDecoderFrameWorkBlockCoefficients decodes the block
+// coefficients described by req.Decode and immediately reconstructs each
+// emitted coefficient block into the output frame, then forwards the block
+// to visit. It fuses the two decode/reconstruct steps for callers that do
+// not need to separate them.
 func DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs TileBlockCoeffCDFs, transformCtx *TileTransformContext, coeffCtx *TileCoeffEntropyContext, scratch *TileBlockCoeffScratch, req DecoderFrameWorkBlockCoeffDecodeRequest, visit TileBlockCoeffVisitor) (TileBlockCoeffResult, error) {
 	return DecodeTileBlockCoefficients(state, cdfs, transformCtx, coeffCtx, scratch, req.Decode, func(block TileBlockCoeffBlock) error {
 		if err := ReconstructDecoderFrameWorkBlockCoeff(batch, index, DecoderFrameWorkBlockCoeffReconstruction{
