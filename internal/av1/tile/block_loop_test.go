@@ -225,6 +225,95 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	}
 }
 
+// TestBlockLoopLoadFirstRootIndependentOfCarrierLength locks the boundary
+// load (haveTop=false, haveLeft=false) at the first root column to produce
+// scratch state independent of (a) the carrier Above slice length and (b)
+// any prior content in the carrier's right-neighbor slots. The frame-edge
+// (0,0) root SB never reads carrier data via the haveTop/haveLeft gates, so
+// the resulting scratch must match the single-SB (len=1, zero carrier) case
+// regardless of multi-SB layouts. Regression coverage for the hypothesis
+// that multi-SB rootCols allocation could leak past the carrier's
+// rootColIndex=0 slot into the first block's tx_size / coefficient context.
+func TestBlockLoopLoadFirstRootIndependentOfCarrierLength(t *testing.T) {
+	baseline := func() BlockLoopScratch {
+		var s BlockLoopScratch
+		if err := blockLoopLoadRootContext(&s, nil, 0, false, false, 16); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	want := baseline()
+
+	for _, n := range []int{1, 2, 3, 8} {
+		n := n
+		t.Run("len="+itoaTest(n), func(t *testing.T) {
+			carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, n)}
+			// Seed every slot with non-zero state. If the load path were to
+			// reach past rootColIndex=0 via the haveTop=false gate it would
+			// pull this data into scratch and the comparison below would
+			// reject it.
+			for i := range carrier.Above {
+				slot := &carrier.Above[i]
+				slot.Partition[0] = 1
+				slot.mode.Skip[0] = 1
+				slot.mode.Intra[0] = 1
+				slot.mode.Mode[0] = IntraModeDC
+				slot.mode.BlockSize[0] = BlockSize32x32
+				slot.mode.MotionValid[0] = 1
+				slot.Coeff[0][0] = 13
+				slot.Coeff[1][0] = 17
+				slot.Coeff[2][0] = 19
+			}
+			carrier.Left.Partition[0] = 5
+			carrier.Left.mode.Skip[0] = 1
+			carrier.Left.mode.Mode[0] = IntraModePaeth
+			carrier.Left.mode.BlockSize[0] = BlockSize64x64
+			carrier.Left.Coeff[0][0] = 21
+
+			var scratch BlockLoopScratch
+			if err := blockLoopLoadRootContext(&scratch, &carrier, 0, false, false, 16); err != nil {
+				t.Fatal(err)
+			}
+			// Partition / Mode / CoeffCtx must all match the single-SB baseline.
+			if scratch.Partition != want.Partition {
+				t.Errorf("len=%d: Partition differs from baseline", n)
+			}
+			if scratch.CoeffCtx != want.CoeffCtx {
+				t.Errorf("len=%d: CoeffCtx differs from baseline", n)
+			}
+			if scratch.Mode != want.Mode {
+				t.Errorf("len=%d: Mode differs from baseline", n)
+			}
+			if scratch.CDEF != want.CDEF {
+				t.Errorf("len=%d: CDEF differs from baseline", n)
+			}
+		})
+	}
+}
+
+func itoaTest(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
 func TestDecodeBlockLoopContextCarrierStoresRootEdges(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset(make([]byte, 16), Job{Offset: 0, Size: 16}, DecodeOptions{}); err != nil {
