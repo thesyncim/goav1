@@ -56,6 +56,17 @@ type BlockModeContext struct {
 	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
 	AboveMotionValid [MaxBlockModeSlots]uint8
 	LeftMotionValid  [MaxBlockModeSlots]uint8
+
+	// SBTopInterMotion mirrors libaom's frame-level mi grid for the row of
+	// cells immediately above the current superblock. Unlike AboveInterMotion
+	// it is loaded once at superblock start (from the caller's carrier) and
+	// never overwritten while the superblock is being decoded. Cross-SB
+	// diagonal/outer mv-ref scans consult this snapshot instead of the live
+	// AboveInterMotion array, so an in-SB block does not mask the prior SB
+	// row's neighbor when its column overlaps the diagonal lookup.
+	SBTopInterMotion [MaxBlockModeSlots]InterMotionResult
+	SBTopMotionValid [MaxBlockModeSlots]uint8
+	SBTopBlockSize   [MaxBlockModeSlots]BlockSize
 	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
 	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
 	AboveInterpValid [MaxBlockModeSlots]uint8

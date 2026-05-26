@@ -1015,7 +1015,19 @@ func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest,
 }
 
 func (c *BlockModeContext) scanGridBlockIntrabcDV(req ReferenceMVStackRequest, rowOffset int, colOffset int, weight uint16, stack *ReferenceMVStack) {
-	candidate, _, ok := c.gridInterMotion(req.X4+colOffset, req.Y4+rowOffset)
+	x := req.X4 + colOffset
+	y := req.Y4 + rowOffset
+	if y < 0 {
+		// Cross-SB diagonal/row lookup: consult the SB-top snapshot of the row
+		// directly above the current superblock. This mirrors libaom's
+		// frame-level mi grid, which is unaffected by in-SB block decode.
+		if !req.HaveTop || x < 0 || x >= MaxBlockModeSlots || c.SBTopMotionValid[x] == 0 {
+			return
+		}
+		stack.addOrWeight(ReferenceMVCandidate{This: c.SBTopInterMotion[x].MV[0]}, weight)
+		return
+	}
+	candidate, _, ok := c.gridInterMotion(x, y)
 	if !ok {
 		return
 	}
