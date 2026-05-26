@@ -1,5 +1,39 @@
 package goav1
 
+// This file exposes the caller-owned residual-decode state and the helpers
+// that drive coefficient decode, block reconstruction, and the per-job
+// residual runner.
+//
+// The helpers fall into these groups:
+//
+//   - DecoderFrameWorkResidualScratchLen / MaxScratchLen /
+//     MaxFrameScratchLen / BatchResidualScratchLen /
+//     BatchResidualRunnerScratchLen: shape helpers that report the
+//     caller-owned scratch lengths required for per-block, per-job, and
+//     per-batch residual processing.
+//   - DecoderFrameWorkBlockQuantizer / BlockQIndex /
+//     BlockCoeffPlanePosition: per-block helpers that resolve the
+//     quantizer, q-index, and plane position for one block.
+//   - InitDecoderFrameWorkTileResidualCDFStorage{,Default} /
+//     DecoderFrameWorkTileResidualCDFsFromStorage: caller-owned CDF
+//     storage and binding.
+//   - InitDecoderFrameWorkJobDecodeState /
+//     RetainDecoderFrameWorkTileResidualCDFStorage: per-job CDF lifecycle.
+//   - InitDecoderFrameWorkTileRestorationRequestReferences /
+//     DecoderFrameWorkJobBlockLoopContextRootColumns /
+//     BindTileBlockLoopContextCarrier / DecoderFrameWorkJobBlockLoopRequest:
+//     per-job block-loop setup.
+//   - ReadDecoderFrameWorkIntraBlockTransforms / Inter / BlockTransforms /
+//     ReconstructDecoderFrameWorkBlockCoeff / DecodeAndReconstruct /
+//     DecodeAndRetain*: the residual decode + reconstruct pipeline.
+//   - DecoderFrameWorkBatchResidualRunner and its
+//     BindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
+//     ResetStats, TotalStats helpers: the bounded per-batch executor that
+//     ties the residual pipeline to the worker pool.
+
+// DecoderFrameWorkResidualScratchLen reports the int32 and int16 residual
+// scratch lengths required to reconstruct one block at (size, typ) for the
+// given quantizer context.
 func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane, size TransformSize, typ TransformType) (int32Len int, int16Len int, err error) {
 	q, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
 	if err != nil {
@@ -13,6 +47,9 @@ func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQInd
 	})
 }
 
+// DecoderFrameWorkResidualMaxScratchLen reports the worst-case int32 and
+// int16 residual scratch lengths needed for any block in the given
+// quantizer context. Callers use it to size persistent per-worker buffers.
 func DecoderFrameWorkResidualMaxScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane) (int32Len int, int16Len int, err error) {
 	_, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
 	if err != nil {
