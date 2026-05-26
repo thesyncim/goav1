@@ -462,6 +462,114 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsUnsupportedBe
 	}
 }
 
+// TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersSVCEnhancementLayer
+// regression-tests CDEF on a 1280x720 frame (an SVC enhancement-layer-sized
+// resolution where the unit grid is 20x12 and the chroma grid is 640x360).
+// CDEF must derive every dimension from the per-frame Event/Output, never from
+// a hardcoded global resolution. This guards against future regressions where
+// CDEF assumes a single global frame size and trips when the enhancement layer
+// decodes at a larger size than the base layer.
+func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersSVCEnhancementLayer(t *testing.T) {
+	const width = 1280
+	const height = 720
+	const expectedLumaCols = (width + cdef.BlockSize - 1) / cdef.BlockSize  // 20
+	const expectedLumaRows = (height + cdef.BlockSize - 1) / cdef.BlockSize // 12
+	const expectedUnits = expectedLumaCols * expectedLumaRows               // 240
+
+	seq := testSequence()
+	seq.EnableCDEF = true
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 1,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+			UVStrength:    [parser.MaxCDEFStrengths]uint8{63},
+		},
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{
+		Width: width, Height: height, BitDepth: 8,
+		SubsamplingX: true, SubsamplingY: true, Align: 32,
+	})
+	testFillFrameWorkCDEFPlane(output.Y)
+	testFillFrameWorkCDEFPlane(output.U)
+	testFillFrameWorkCDEFPlane(output.V)
+	beforeY := testCopyFrameWorkCDEFPlane(output.Y)
+	beforeU := testCopyFrameWorkCDEFPlane(output.U)
+	beforeV := testCopyFrameWorkCDEFPlane(output.V)
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+
+	// Verify the unit grid derives from the per-frame size, not a hardcoded
+	// global resolution. An SVC base layer of 640x360 would yield 10x6=60
+	// units; the enhancement layer must report 20x12=240.
+	cols, rows, err := frameWorkCDEFUnitGrid(event.FrameSize)
+	if err != nil {
+		t.Fatalf("frameWorkCDEFUnitGrid err=%v", err)
+	}
+	if cols != expectedLumaCols || rows != expectedLumaRows {
+		t.Fatalf("unit grid=%dx%d want %dx%d", cols, rows, expectedLumaCols, expectedLumaRows)
+	}
+
+	// Sanity-check scratch sizing scales with the frame's plane dimensions.
+	size, err := ctx.CDEFPostFilterScratchLen()
+	if err != nil {
+		t.Fatalf("CDEFPostFilterScratchLen err=%v", err)
+	}
+	if size.Samples[0] < width*height || size.Dst[0] < width*height {
+		t.Fatalf("luma scratch=%d/%d want >= %d", size.Samples[0], size.Dst[0], width*height)
+	}
+	chromaSize := (width / 2) * (height / 2)
+	if size.Samples[1] < chromaSize || size.Samples[2] < chromaSize {
+		t.Fatalf("chroma sample scratch=%d/%d want >= %d", size.Samples[1], size.Samples[2], chromaSize)
+	}
+	if size.DirectionGrid < expectedUnits || size.VarianceGrid < expectedUnits {
+		t.Fatalf("direction/variance grid=%d/%d want >= %d", size.DirectionGrid, size.VarianceGrid, expectedUnits)
+	}
+	// Per-unit scratch buffers stay bounded by the CDEF unit (64x64) plus
+	// borders; they must not scale with frame resolution.
+	if size.Input != cdef.InputBufferSize || size.UnitDst != cdef.InputBufferSize {
+		t.Fatalf("input/unitDst scratch=%d/%d want %d", size.Input, size.UnitDst, cdef.InputBufferSize)
+	}
+
+	req := testFrameWorkCDEFPostFilterRequest(t, ctx, event)
+	if req.IndexMap.Stride != expectedLumaCols || req.IndexMap.Rows != expectedLumaRows {
+		t.Fatalf("indexMap stride/rows=%d/%d want %d/%d",
+			req.IndexMap.Stride, req.IndexMap.Rows, expectedLumaCols, expectedLumaRows)
+	}
+
+	result, err := ctx.ApplyCDEFPostFilter(req)
+	if err != nil {
+		t.Fatalf("ApplyCDEFPostFilter err=%v", err)
+	}
+	if result.Planes != 3 {
+		t.Fatalf("planes=%d want 3", result.Planes)
+	}
+	// All 240 units have non-zero strengths and are marked read, so every
+	// unit should run on every plane.
+	if result.Units != expectedUnits*3 {
+		t.Fatalf("units=%d want %d", result.Units, expectedUnits*3)
+	}
+	if result.Blocks == 0 {
+		t.Fatalf("blocks=0; want > 0")
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.Y, beforeY) {
+		t.Fatal("CDEF did not change luma samples")
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.U, beforeU) {
+		t.Fatal("CDEF did not change U samples")
+	}
+	if !testFrameWorkCDEFPlaneChanged(output.V, beforeV) {
+		t.Fatal("CDEF did not change V samples")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersChromaWithLumaDirectionPass(t *testing.T) {
 	const width = 128
 	const height = 64
