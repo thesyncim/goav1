@@ -282,15 +282,12 @@ func FuzzUpdateCDF(f *testing.F) {
 	f.Add(uint8(MaxSymbols), []byte{15, 0, 14, 7})
 
 	f.Fuzz(func(t *testing.T, symbolCount uint8, symbols []byte) {
-		n := int(symbolCount%MaxSymbols) + 1
-		if n < 2 {
-			n = 2
-		}
+		n := max(int(symbolCount%MaxSymbols)+1, 2)
 		var cdf [MaxSymbols + 1]uint16
 		if err := InitUniformCDF(cdf[:], n); err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < len(symbols); i++ {
+		for i := range symbols {
 			symbol := int(symbols[i]) % n
 			if err := UpdateCDF(cdf[:], n, symbol); err != nil {
 				t.Fatalf("UpdateCDF err=%v n=%d symbol=%d cdf=%v", err, n, symbol, cdf[:n+1])
@@ -308,15 +305,12 @@ func FuzzCDFState(f *testing.F) {
 	f.Add(uint8(MaxSymbols), []byte{15, 0, 14, 7})
 
 	f.Fuzz(func(t *testing.T, symbolCount uint8, symbols []byte) {
-		n := int(symbolCount%MaxSymbols) + 1
-		if n < 2 {
-			n = 2
-		}
+		n := max(int(symbolCount%MaxSymbols)+1, 2)
 		var cdf CDF
 		if err := cdf.InitUniform(n); err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < len(symbols); i++ {
+		for i := range symbols {
 			symbol := int(symbols[i]) % n
 			var copy CDF
 			if err := copy.CopyFrom(&cdf); err != nil {
@@ -346,7 +340,7 @@ func BenchmarkInitUniformCDF(b *testing.B) {
 	var cdf [MaxSymbols + 1]uint16
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InitUniformCDF(cdf[:], MaxSymbols)
 	}
 }
@@ -355,7 +349,7 @@ func BenchmarkCDFStateInitUniform(b *testing.B) {
 	var cdf CDF
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = cdf.InitUniform(MaxSymbols)
 	}
 }
@@ -380,7 +374,7 @@ func BenchmarkCDFStateCopyFrom(b *testing.B) {
 	var dst CDF
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = dst.CopyFrom(&src)
 	}
 }
@@ -390,7 +384,7 @@ func assertCDFValues(t *testing.T, got []uint16, want []uint16) {
 	if len(got) != len(want) {
 		t.Fatalf("len=%d want %d", len(got), len(want))
 	}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", got, want)
 		}

@@ -141,7 +141,7 @@ func TestReaderReadSymbol(t *testing.T) {
 		t.Fatalf("symbol=%d want 0", symbol)
 	}
 	want := []uint16{15360, 0, 1}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if cdf[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", cdf, want)
 		}
@@ -162,7 +162,7 @@ func TestReaderReadCDF(t *testing.T) {
 		t.Fatalf("symbol=%d want 0", symbol)
 	}
 	want := []uint16{15360, 0, 1}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if cdf.Values()[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
 		}
@@ -183,7 +183,7 @@ func TestReaderReadSignedDeltaZero(t *testing.T) {
 		t.Fatalf("delta=%d want 0", delta)
 	}
 	want := []uint16{4464, 628, 89, 0, 1}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if cdf.Values()[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
 		}
@@ -445,7 +445,7 @@ func BenchmarkReaderReadBit(b *testing.B) {
 	src := []byte{0xff, 0x00, 0xa5, 0x5a}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadBit()
 	}
@@ -455,7 +455,7 @@ func BenchmarkReaderReadUniform(b *testing.B) {
 	src := []byte{0xff, 0x00, 0xa5, 0x5a}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadUniform(257)
 	}
@@ -465,7 +465,7 @@ func BenchmarkReaderReadSubexp(b *testing.B) {
 	src := []byte{0xff, 0x00, 0xa5, 0x5a}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadSubexp(257, 3)
 	}
@@ -476,7 +476,7 @@ func BenchmarkReaderReadSymbol(b *testing.B) {
 	cdf := []uint16{24576, 16384, 8192, 0, 0}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadSymbol(cdf, 4)
 	}
@@ -490,7 +490,7 @@ func BenchmarkReaderReadCDF(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadCDF(&cdf)
 	}
@@ -504,7 +504,7 @@ func BenchmarkReaderReadSignedDelta(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := NewReader(src)
 		_, _ = r.ReadSignedDelta(&cdf, DeltaSmall)
 	}

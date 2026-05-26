@@ -25,7 +25,7 @@ func InitCDF(dst []uint16, cumulative []uint16) error {
 	}
 
 	previous := uint16(0)
-	for i := 0; i < len(cumulative); i++ {
+	for i := range cumulative {
 		v := cumulative[i]
 		if v <= previous || v > CDFProbTop {
 			return ErrInvalidCDF
