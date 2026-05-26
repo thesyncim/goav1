@@ -144,10 +144,10 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 		return ErrInvalidQuantizer
 	}
 
-	for col := 0; col < width; col++ {
+	for col := range width {
 		dstCol := dst[col*dstStride : col*dstStride+height]
 		coeffCol := coeff[col*coeffStride : col*coeffStride+height]
-		for row := 0; row < height; row++ {
+		for row := range height {
 			scale := q.AC
 			if row == 0 && col == 0 {
 				scale = q.DC

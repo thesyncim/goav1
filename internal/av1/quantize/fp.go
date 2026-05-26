@@ -32,7 +32,7 @@ func QuantizeFPNoQMatrix(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []
 		}
 	}
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		qcoeff[i] = 0
 		dqcoeff[i] = 0
 	}

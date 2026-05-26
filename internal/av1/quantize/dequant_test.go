@@ -433,8 +433,8 @@ func FuzzDequantizeBlock(f *testing.F) {
 		dstStride := height + 3
 		coeff := make([]int16, coeffStride*width)
 		dst := make([]int32, dstStride*width)
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				coeff[col*coeffStride+row] = coeffValue + int16(row+col)
 			}
 		}
@@ -450,8 +450,8 @@ func FuzzDequantizeBlock(f *testing.F) {
 		if err := DequantizeBlock(dst, dstStride, coeff, coeffStride, width, height, q); err != nil {
 			t.Fatalf("DequantizeBlock err=%v", err)
 		}
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				scale := ac
 				if row == 0 && col == 0 {
 					scale = dc
@@ -534,7 +534,7 @@ func BenchmarkDequantizeBlock(b *testing.B) {
 	dst := make([]int32, 64*64)
 	q := Quantizer{DC: 80, AC: 97}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = DequantizeBlock(dst, 64, coeff, 64, 64, 64, q)
 	}
 }

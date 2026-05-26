@@ -31,17 +31,14 @@ func FuzzDequantizeBlockScaledQMatrix(f *testing.F) {
 		// 256.
 		base := rawQM
 		for i := range iqMatrix {
-			v := base + uint16(i)
-			if v < 1 {
-				v = 1
-			}
+			v := max(base+uint16(i), 1)
 			iqMatrix[i] = v % 257
 			if iqMatrix[i] == 0 {
 				iqMatrix[i] = 1
 			}
 		}
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				coeff[col*coeffStride+row] = coeffValue + int16(row+col)
 			}
 		}
@@ -72,8 +69,8 @@ func FuzzDequantizeBlockScaledQMatrix(f *testing.F) {
 		// dequant result must be int32 representable; this catches
 		// any pathological multiply that overflows the bound used by
 		// downstream inverse-transform code.
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				scale := int32(ac)
 				if row == 0 && col == 0 {
 					scale = int32(dc)
