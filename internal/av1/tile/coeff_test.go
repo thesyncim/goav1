@@ -524,6 +524,25 @@ func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
 	}
 }
 
+// TestCoeffTraceStubIsNoOp guards the goav1_coeff_trace build tag's no-op
+// stub. The trace helpers are wired into ReadCoefficientsTXB hot paths to
+// capture (c, pos, base, golomb, level, sign) tuples for cross-validation
+// against libaom's read_coeffs_txb. The stub variant must never observe
+// or mutate state so the default build retains zero overhead.
+func TestCoeffTraceStubIsNoOp(t *testing.T) {
+	coeffTraceBlock(0, 0, 0, int(TransformSize4x4), 0, 0)
+	coeffTraceCoeff(0, 0, 0, 0, 0, 0)
+	coeffTraceCulLevel(0)
+
+	// Should also leave decode behaviour intact: re-run the single-DC
+	// canonical block and confirm coeff[0]==1 and cul_level==17 still hold
+	// after the trace points fire.
+	result, coeffs := readCoefficientsTXBForTest(t, []byte{0x00}, TransformSize4x4, transform.Class2D, CoeffPlaneY, 0)
+	if result.AllZero || result.EOB != 1 || coeffs[0] != 1 || result.CulLevel != 17 {
+		t.Fatalf("trace stub disturbed decode: result=%+v coeff[0]=%d", result, coeffs[0])
+	}
+}
+
 func TestCoeffRejectsInvalidInputs(t *testing.T) {
 	var cdfs CoeffCDFs
 	if _, err := cdfs.TXBSkipCDF(TransformSize4x4, 0); !errors.Is(err, entropy.ErrInvalidCDF) {

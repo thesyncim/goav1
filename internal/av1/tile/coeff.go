@@ -659,6 +659,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 	}
 
+	coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eob.Position)
 	maxScanLine := 0
 	for c := 0; c < eob.Position; c++ {
 		pos := int(scan[c])
@@ -683,13 +684,21 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if err != nil {
 			return TXBDecodeResult{}, fmt.Errorf("read coeff sign c=%d pos=%d level=%d: %w", c, pos, level, err)
 		}
+		baseLevel := level
+		golombExtra := 0
 		if level >= MaxBaseBRRange {
 			tail, err := s.readCoeffGolomb()
 			if err != nil {
 				return TXBDecodeResult{}, fmt.Errorf("read coeff golomb c=%d pos=%d level=%d: %w", c, pos, level, err)
 			}
+			golombExtra = tail
 			level += tail
 		}
+		signBit := 0
+		if negative {
+			signBit = 1
+		}
+		coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
 		culLevel += level
 		if level > int(^uint16(0)>>1) {
 			return TXBDecodeResult{}, fmt.Errorf("coeff level overflow c=%d pos=%d level=%d: %w", c, pos, level, ErrInvalidDecodeState)
@@ -713,6 +722,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		culLevel += 2 << CoeffContextBits
 	}
 
+	coeffTraceCulLevel(culLevel)
 	return TXBDecodeResult{
 		EOB:         eob.Position,
 		MaxScanLine: maxScanLine,
