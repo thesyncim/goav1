@@ -49,7 +49,7 @@ func TestBlendA64MaskMatchesLibaomCorpus(t *testing.T) {
 			for _, height := range []int{4, 8, 16, 32, 64} {
 				for _, subX := range []bool{false, true} {
 					for _, subY := range []bool{false, true} {
-						for iter := 0; iter < 8; iter++ {
+						for iter := range 8 {
 							dstStride := width + rnd.pseudoUniform(17)
 							src0Stride := width + rnd.pseudoUniform(17)
 							src1Stride := width + rnd.pseudoUniform(17)
@@ -205,14 +205,14 @@ func BenchmarkBlendA64Mask(b *testing.B) {
 	fillBlendSamples(src1, 0xfff, rnd)
 	fillBlendMask(mask, rnd)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = BlendA64Mask(dst, 64, src0, 64, src1, 64, mask, 128, 64, 64, true, true, 12)
 	}
 }
 
 func blendA64MaskLibaomReference(dst []uint16, dstStride int, src0 []uint16, src0Stride int, src1 []uint16, src1Stride int, mask []uint8, maskStride int, width int, height int, subX bool, subY bool) {
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			var m int
 			switch {
 			case !subX && !subY:

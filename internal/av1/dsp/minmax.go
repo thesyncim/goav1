@@ -18,10 +18,10 @@ func MinMaxAbsDiff8x8(a []byte, aStride int, b []byte, bStride int, bytesPerSamp
 	var maxDiff uint16
 	switch bytesPerSample {
 	case 1:
-		for row := 0; row < 8; row++ {
+		for row := range 8 {
 			aLine := a[row*aStride : row*aStride+8]
 			bLine := b[row*bStride : row*bStride+8]
-			for col := 0; col < 8; col++ {
+			for col := range 8 {
 				diff := absDiff8(aLine[col], bLine[col])
 				if diff < minDiff {
 					minDiff = diff
@@ -32,10 +32,10 @@ func MinMaxAbsDiff8x8(a []byte, aStride int, b []byte, bStride int, bytesPerSamp
 			}
 		}
 	case 2:
-		for row := 0; row < 8; row++ {
+		for row := range 8 {
 			aLine := a[row*aStride : row*aStride+rowBytes]
 			bLine := b[row*bStride : row*bStride+rowBytes]
-			for col := 0; col < 8; col++ {
+			for col := range 8 {
 				i := col * 2
 				av := uint16(aLine[i]) | uint16(aLine[i+1])<<8
 				bv := uint16(bLine[i]) | uint16(bLine[i+1])<<8

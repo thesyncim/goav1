@@ -17,7 +17,7 @@ func FillPlaneBlock(dst frame.Plane, bytesPerSample int, x int, y int, width int
 		v := byte(value)
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := 0; i < len(line); i++ {
+			for i := range line {
 				line[i] = v
 			}
 		}
@@ -84,7 +84,7 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
 			resLine := residual[row*residualStride : row*residualStride+width]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				line[col] = byte(clipSample(int(line[col])+int(resLine[col]), max))
 			}
 		}
@@ -92,7 +92,7 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
 			resLine := residual[row*residualStride : row*residualStride+width]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				i := col * 2
 				sample := int(uint16(line[i]) | uint16(line[i+1])<<8)
 				out := clipSample(sample+int(resLine[col]), max)

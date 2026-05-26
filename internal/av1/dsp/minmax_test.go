@@ -8,7 +8,7 @@ import (
 func TestMinMaxAbsDiff8x8MinValue(t *testing.T) {
 	var a [64]byte
 	var b [64]byte
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		for j := range a {
 			a[j] = 0
 			b[j] = 255
@@ -28,7 +28,7 @@ func TestMinMaxAbsDiff8x8MinValue(t *testing.T) {
 func TestMinMaxAbsDiff8x8MaxValue(t *testing.T) {
 	var a [64]byte
 	var b [64]byte
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		for j := range a {
 			a[j] = 0
 			b[j] = 0
@@ -83,8 +83,8 @@ func TestMinMaxAbsDiff8x8CompareReferenceAndVaryStride(t *testing.T) {
 func TestMinMaxAbsDiff8x8HighBitDepth(t *testing.T) {
 	var a [64 * 2]byte
 	var b [64 * 2]byte
-	for i := 0; i < 64; i++ {
-		for j := 0; j < 64; j++ {
+	for i := range 64 {
+		for j := range 64 {
 			put16(a[:], j, 0)
 			put16(b[:], j, 65535)
 		}
@@ -103,8 +103,8 @@ func TestMinMaxAbsDiff8x8HighBitDepth(t *testing.T) {
 func TestMinMaxAbsDiff8x8HighBitDepthMaxValue(t *testing.T) {
 	var a [64 * 2]byte
 	var b [64 * 2]byte
-	for i := 0; i < 64; i++ {
-		for j := 0; j < 64; j++ {
+	for i := range 64 {
+		for j := range 64 {
 			put16(a[:], j, 0)
 			put16(b[:], j, 0)
 		}
@@ -229,8 +229,8 @@ func fillMinMax16(dst []byte, seed uint32) {
 func referenceMinMaxAbsDiff8x8(a []byte, aStride int, b []byte, bStride int, bytesPerSample int) (uint16, uint16) {
 	minDiff := uint16(^uint16(0))
 	var maxDiff uint16
-	for row := 0; row < 8; row++ {
-		for col := 0; col < 8; col++ {
+	for row := range 8 {
+		for col := range 8 {
 			var diff uint16
 			if bytesPerSample == 1 {
 				diff = absDiff8(a[row*aStride+col], b[row*bStride+col])

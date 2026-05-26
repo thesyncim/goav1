@@ -40,8 +40,8 @@ func TestCopyPlaneBlockHighBitDepth(t *testing.T) {
 	if err := CopyPlaneBlock(dst, src, 2, 2, 1, 1, 2, 3, 2); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getSample(dst, 2, 2+x, 1+y)
 			want := uint16(1000 + (2+y)*10 + 1 + x)
 			if got != want {
@@ -64,8 +64,8 @@ func TestAddResidualPlaneBlock8BitClips(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []uint16{0, 99, 100, 255, 120, 80, 255, 255}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 2 {
+		for x := range 4 {
 			got := getSample(plane, 1, x, y)
 			if got != want[y*4+x] {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want[y*4+x])
@@ -87,8 +87,8 @@ func TestAddResidualPlaneBlockHighBitDepthClips(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []uint16{0, 899, 900, 1000, 1023, 1023}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getSample(plane, 2, x, y)
 			if got != want[y*3+x] {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want[y*3+x])
@@ -202,7 +202,7 @@ func FuzzPlaneBlockOps(f *testing.F) {
 func BenchmarkFillPlaneBlock(b *testing.B) {
 	plane, _ := testPlane(64, 64, 1, 64)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = FillPlaneBlock(plane, 1, 0, 0, 64, 64, 128)
 	}
 }
@@ -211,7 +211,7 @@ func BenchmarkCopyPlaneBlock(b *testing.B) {
 	src, _ := testPlane(64, 64, 1, 64)
 	dst, _ := testPlane(64, 64, 1, 64)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = CopyPlaneBlock(dst, src, 1, 0, 0, 0, 0, 64, 64)
 	}
 }
@@ -220,7 +220,7 @@ func BenchmarkAddResidualPlaneBlock(b *testing.B) {
 	plane, _ := testPlane(64, 64, 1, 64)
 	residual := make([]int16, 64*64)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = AddResidualPlaneBlock(plane, 1, 8, 0, 0, 64, 64, residual, 64)
 	}
 }

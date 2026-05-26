@@ -23,8 +23,8 @@ func BlendA64Mask(dst []uint16, dstStride int, src0 []uint16, src0Stride int, sr
 		return ErrInvalidBlock
 	}
 
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			s0 := src0[row*src0Stride+col]
 			s1 := src1[row*src1Stride+col]
 			if s0 > max || s1 > max {
