@@ -1,3 +1,11 @@
+// Ported from libaom:
+//   av1/common/av1_inv_txfm2d.c
+//   av1/common/enums.h
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package transform
 
 // Type identifies the AV1 inverse transform kind for a residual block.

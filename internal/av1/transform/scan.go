@@ -1,3 +1,9 @@
+// Ported from libaom: av1/common/scan.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package transform
 
 // Class identifies the directional class of an AV1 transform type.

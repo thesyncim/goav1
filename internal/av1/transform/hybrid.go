@@ -1,3 +1,9 @@
+// Ported from libaom: av1/common/av1_inv_txfm2d.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package transform
 
 type tx1DType uint8

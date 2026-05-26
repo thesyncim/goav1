@@ -1,3 +1,9 @@
+// Ported from libaom: aom_dsp/blend_a64_mask.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package dsp
 
 const blendA64MaxAlpha = 64

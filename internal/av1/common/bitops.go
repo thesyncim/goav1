@@ -1,3 +1,9 @@
+// Ported from libaom: aom_ports/bitops.h
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package common
 
 import "math/bits"

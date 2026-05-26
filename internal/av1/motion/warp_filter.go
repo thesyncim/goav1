@@ -1,3 +1,9 @@
+// Ported from libaom: av1/common/warped_motion.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package motion
 
 var warpedFilter = [warpedPixelPrecShifts*3 + 1][filterTaps]int16{

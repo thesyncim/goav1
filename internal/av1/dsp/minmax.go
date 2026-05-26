@@ -1,3 +1,9 @@
+// Ported from libaom: aom_dsp/sad.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package dsp
 
 // MinMaxAbsDiff8x8 returns the minimum and maximum absolute sample difference

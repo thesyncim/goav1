@@ -1,3 +1,11 @@
+// Ported from libaom:
+//   av1/common/reconinter.c
+//   aom_dsp/aom_convolve.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package motion
 
 import (
