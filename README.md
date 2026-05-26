@@ -332,11 +332,15 @@ conformance vectors is partial:
   eight `SuiteLevelFast` libaom vectors. Seven of the eight currently pass
   the lenient first-frame MD5 gate (`quantizer_00`, `16x16_size`,
   `all-intra`, `cdf_update`, `mv`, `mfmv`, `monochrome`); the remaining
-  vector (`intra-only_intrabc_extreme_dv`) still hits a known mismatch in
-  later frames. The `testvectors` workflow asserts the seven-vector pass
-  set as a regression gate and emits an informational `strict-md5` group
-  (which only `16x16_size` currently clears) for diagnostic snapshots.
-  Set `GOAV1_STRICT_MD5=1` locally to upgrade the check to every frame.
+  vector (`intra-only_intrabc_extreme_dv`) still hits a known mismatch.
+  The entropy stream for intrabc frames is now bit-exact against libaom
+  after the `tx_size` neighbor context snapshot landed; the remaining
+  divergence is isolated to the reconstruction layer and is the active
+  debugging target. The `testvectors` workflow asserts the seven-vector
+  pass set as a regression gate and emits an informational `strict-md5`
+  group (which only `16x16_size` currently clears) for diagnostic
+  snapshots. Set `GOAV1_STRICT_MD5=1` locally to upgrade the check to
+  every frame.
 - `make testvectors-full` will download and execute the full libaom remote
   suite. It is not part of the default CI gate and is intended for local
   parity sweeps.
@@ -351,7 +355,13 @@ conformance vectors is partial:
   is a diagnostic for surfacing latent decoder gaps. As of this writing
   only the `64x64` size vector clears frame 0; the other eight surface
   known mismatches in 10-bit high-Q reconstruction, sub-superblock size
-  boundaries, and the SVC frame-0 pipeline.
+  boundaries, and the SVC frame-0 pipeline. Bit-depth conformance fixes
+  have landed on the dequant and inverse-transform stages so 10-bit
+  `quantizer_32` / `quantizer_63` no longer mismatch on those inputs;
+  the remaining divergence is suspected to live elsewhere in the
+  reconstruction path. On the SVC side, per-spatial-layer dry-run
+  state tracking and inter-layer reference resolution work end-to-end;
+  scaled inter prediction between spatial layers is the next gate.
 
 The encoder, SIMD acceleration, and platform-specific assembly backends are
 not implemented yet.

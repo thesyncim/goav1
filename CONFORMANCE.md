@@ -46,8 +46,11 @@ ship under `internal/av1/testdata/libaom/`.
 |  2 | Bit depth 8                      | Yes     | internal/av1/frame/              | Full pipeline; primary conformance target.     |
 |    | Bit depth 10                     | Partial | internal/av1/frame/              | Frame storage, transforms, deblock, CDEF,      |
 |    |                                  |         | internal/av1/loopfilter/         | superres, restoration, film grain all carry    |
-|    |                                  |         | internal/av1/transform/          | 10-bit code paths; no committed 10-bit vector  |
-|    |                                  |         |                                  | is in the dryrun-fast set yet.                 |
+|    |                                  |         | internal/av1/transform/          | 10-bit code paths; bit-depth clamps now flow   |
+|    |                                  |         | internal/av1/quantize/           | through dequant (403e42b) and inverse          |
+|    |                                  |         |                                  | transforms (42a8b88, 266e8cd); 10-bit q32 and  |
+|    |                                  |         |                                  | q63 extended vectors still mismatch with root  |
+|    |                                  |         |                                  | cause suspected elsewhere in reconstruction.   |
 |    | Bit depth 12                     | Partial | internal/av1/frame/              | Same surface as 10-bit; no committed 12-bit    |
 |    |                                  |         | internal/av1/loopfilter/         | vector; only profile-2 gate is exercised.      |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
@@ -100,9 +103,12 @@ ship under `internal/av1/testdata/libaom/`.
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  9 | IntraBC                          | Partial | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
 |    |                                  |         | internal/av1/tile/intrabc_debug.go | stack and intra-mode entry implemented;       |
-|    |                                  |         |                                  | end-to-end output diverges on the              |
-|    |                                  |         |                                  | intrabc_extreme_dv fast vector (frame 0 MD5    |
-|    |                                  |         |                                  | mismatch). See vector table row 7.             |
+|    |                                  |         |                                  | entropy stream is now bit-exact against libaom |
+|    |                                  |         |                                  | on intrabc frames (tx_size neighbor context    |
+|    |                                  |         |                                  | snapshot, 2bae671); remaining divergence on    |
+|    |                                  |         |                                  | the intrabc_extreme_dv vector is isolated to   |
+|    |                                  |         |                                  | the reconstruction layer. See vector table     |
+|    |                                  |         |                                  | row 7.                                         |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 10 | Inter mode NEARESTMV             | Yes     | internal/av1/tile/inter_mode.go  | InterModeNearestMV; ref_mv stack populated.    |
 |    | Inter mode NEARMV                | Yes     | internal/av1/tile/inter_mode.go  | InterModeNearMV.                               |
@@ -288,7 +294,9 @@ ship under `internal/av1/testdata/libaom/`.
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 | 7 | av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf     | FAIL    | FAIL   | Frame 0 (intrabc extreme-DV intra-only     |
 |   | (libaom av1 8-bit intra-only intrabc extreme dv)  |         |        | output diverges from libaom). Only vector  |
-|   |                                                   |         |        | failing the lenient gate.                  |
+|   |                                                   |         |        | failing the lenient gate. Entropy stream   |
+|   |                                                   |         |        | is now bit-exact (2bae671); residual       |
+|   |                                                   |         |        | divergence is reconstruction-layer only.   |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 | 8 | av1-1-b8-24-monochrome.ivf                        | PASS    | FAIL   | Frame 1 (monochrome inter divergence;      |
 |   | (libaom av1 8-bit monochrome)                     |         |        | overlaps with the mv/mfmv mismatch).       |
@@ -356,9 +364,12 @@ mfmv_refs/mfmv_projections` counters printed by the dry-run harness.
   `internal/av1/threading/ref_mv_frame.go`; libaom's
   `av1_setup_motion_field()` ordering parity.
 - **Vector 7, frame 0 mismatch (`intrabc-extreme-dv`).** Intra-only.
-  Suspects: DV decoding and DV validity in
-  `internal/av1/tile/block_loop.go` (`intrabcPredictedMV*`,
-  `intrabcDVValid`), edge-clip during intrabc reference fetch.
+  Entropy stream is bit-exact against libaom (the `tx_size` neighbor
+  context snapshot in `2bae671` closed the last gap). Remaining
+  divergence is reconstruction-layer only. Suspects: intrabc
+  reference-fetch / edge-clip during the cross-superblock copy in
+  `internal/av1/tile/block_loop.go` and the reconstruction copy region
+  in `internal/av1/reconstruct/block.go`.
 - **Vector 8, frame 1 mismatch (`monochrome`).** Same surface as
   vectors 5/6 (mv + mfmv): inter prediction on the Y plane only, no
   UV planes to mask the divergence.
@@ -377,9 +388,10 @@ work items, ordered by how much of the fast suite they would unblock:
 
 1. **IntraBC end-to-end output parity.** The only fast vector failing the
    lenient gate is `intrabc-extreme-dv`. The implementation is wired all
-   the way through `block_loop.go`; the open question is the
-   intra-block-copy reference fetch when the DV crosses the previous
-   superblock boundary.
+   the way through `block_loop.go`; the entropy stream is now bit-exact
+   against libaom for intrabc frames (`2bae671`), so the open question
+   is the intra-block-copy reference fetch / reconstruction copy region
+   when the DV crosses the previous superblock boundary.
 2. **Motion field / motion-vector parity on frame 1 of inter vectors.**
    Strict mode fails immediately on frame 1 of `cdf-update`, `mv`,
    `mfmv`, and `monochrome`. The shared surface is the first non-key
@@ -390,15 +402,26 @@ work items, ordered by how much of the fast suite they would unblock:
 4. **Profile 1 / Profile 2 end-to-end coverage.** 10-bit and 4:4:4 / 4:2:2
    conformance vectors are not in the fast suite. Adding them under
    `internal/av1/testdata/libaom/` and the dryrun harness will surface
-   any remaining 10/12-bit path bugs.
-5. **Palette wiring.** Palette mode decode is implemented in
+   any remaining 10/12-bit path bugs. Bit-depth conformance fixes have
+   landed on the dequant and inverse-transform stages (`42a8b88`,
+   `403e42b`, `266e8cd`), but the extended-cohort 10-bit `quantizer_32`
+   and `quantizer_63` vectors still mismatch. The root cause is
+   suspected to live elsewhere in reconstruction rather than in the
+   transform/dequant inputs.
+5. **Scalable video coding (SVC).** Per-spatial-layer dry-run frame
+   state (`ea6ad77`) and inter-layer reference resolution
+   (`51de381`) work end-to-end; the next gate is **scaled inter
+   prediction between spatial layers**. The extended L2T1 / L2T2
+   cohort vectors still mismatch on frame 0 of the higher spatial
+   layer.
+6. **Palette wiring.** Palette mode decode is implemented in
    `internal/av1/tile/palette.go` but is not yet exercised by the
    block-loop predictor. Wire it in once a palette-using vector is in
    the dryrun-fast set.
-6. **Tile list OBU and Metadata OBU payloads.** Currently emitted as
+7. **Tile list OBU and Metadata OBU payloads.** Currently emitted as
    opaque events; payloads are not parsed. No fast-suite vector
    requires either today.
-7. **Switch frames.** Parsed but no committed vector exercises the
+8. **Switch frames.** Parsed but no committed vector exercises the
    switch-frame reset path end-to-end.
 
 Once the fast suite is bit-exact under strict MD5, the next milestone is

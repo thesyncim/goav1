@@ -128,6 +128,14 @@ work.
 `intrabc` neighbor history follow-up that is in flight but does not
 yet unblock the `intrabc_extreme_dv` vector.)
 
+#### IntraBC entropy (`intrabc_extreme_dv` vector)
+
+- Snapshot the `tx_size` neighbor context for intrabc frames so the
+  entropy stream is now bit-exact against libaom on the
+  `intrabc_extreme_dv` vector (`2bae671`). The remaining divergence
+  is isolated to the reconstruction layer; intrabc entropy parity is
+  no longer a suspected cause.
+
 #### Entropy and CDF adaptation (`cdf_update` vector)
 
 - Read the post-segment id before the CDEF index (`4264755`).
@@ -165,6 +173,15 @@ yet unblock the `intrabc_extreme_dv` vector.)
 - Mask the dequantized coefficient product to 24 bits (`1e1e304`).
 - Bit-exact libaom comparison tests for inverse ADST8
   (`af49ff4`) and inverse DCT16 (`5755782`).
+- Plumb the active bit-depth into the inverse-transform stage
+  clamps so 10- and 12-bit reconstruction stops truncating
+  intermediate state through the 8-bit int16 envelope (`42a8b88`).
+- Clamp dequantized coefficients to the bit-depth bound so the
+  inverse-transform input domain matches libaom across all
+  profiles (`403e42b`).
+- Anchor the inverse-transform paths to libaom with 2D bit-exact
+  tests covering the TX_TYPE / TX_SIZE pairs exercised by the
+  fast and extended suites (`266e8cd`).
 
 #### Loop filter, CDEF, restoration, film grain
 
@@ -188,6 +205,20 @@ yet unblock the `intrabc_extreme_dv` vector.)
 - Wire framework side data into the oracle dry-run (`e586480`).
 - Reject explicitly unsupported intrabc paths until the full neighbor
   history lands (`7e2f748`, `dca70b0`).
+- Swap the 32x8 and 8x32 motion-mode and OBMC default CDFs so the
+  rectangular-block entropy state matches libaom (`1edf7e5`).
+- Lock the D157 corner-frame intra predictions against a libaom
+  snapshot to pin down the directional edge-clip behavior
+  (`ed3275b`).
+
+#### Scalable video coding (SVC)
+
+- Track libaom dry-run frame state per spatial layer so the extended
+  cohort can compare layer-by-layer surfaces (`ea6ad77`).
+- Route SVC reference resolution across the spatial-layer surface
+  pools so each layer resolves its own inter-layer references
+  (`51de381`). The reference-resolution API works end-to-end; scaled
+  inter prediction between layers is the next gate.
 
 ### Changed
 
@@ -253,9 +284,18 @@ The lenient gate is the first-frame MD5; the strict gate
 
 The `testvectors` CI workflow asserts the seven-vector lenient pass
 set as a regression gate. The `intra-only_intrabc_extreme_dv` vector
-is the next unblock target; the cross-superblock intrabc neighbor
-history work is in flight (`4c680b8`, `7a65271`, `0a8d482`,
-`1bb40cb`).
+is the next unblock target; after the cross-superblock intrabc
+neighbor history work (`4c680b8`, `7a65271`, `0a8d482`, `1bb40cb`)
+and the `tx_size` neighbor context snapshot (`2bae671`), the entropy
+stream is now bit-exact against libaom for intrabc frames. The
+remaining divergence is isolated to the reconstruction layer and is
+the active debugging target.
+
+The 10-bit `quantizer_32` / `quantizer_63` extended-cohort vectors
+benefited from the bit-depth conformance work (`42a8b88`, `403e42b`,
+`266e8cd`) but still mismatch; the root cause is suspected to live
+elsewhere in the reconstruction path rather than in dequant or the
+inverse transform.
 
 The strict-MD5 column is informational only and is emitted as a
 diagnostic CI group. It is expected to expand as the per-frame
