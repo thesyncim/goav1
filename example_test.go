@@ -70,6 +70,59 @@ func Example() {
 	// frame 1 ts=1 bytes=54381 obus=2
 }
 
+// ExampleParseSequenceHeader extends Example by pulling the first OBU out of
+// the same IVF fixture, classifying it with ParseOBUHeader, and parsing its
+// payload as an AV1 sequence header. This is the path callers use to size
+// frame pools and configure the rest of the decode pipeline before any
+// frame work begins.
+func ExampleParseSequenceHeader() {
+	path := filepath.Join("internal", "av1", "testdata", "libaom",
+		"av1-1-b8-00-quantizer-00.ivf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Println("read fixture:", err)
+		return
+	}
+
+	it, err := av1.NewIVFIterator(raw)
+	if err != nil {
+		fmt.Println("ivf iterator:", err)
+		return
+	}
+	frame, ok, err := it.Next()
+	if err != nil || !ok {
+		fmt.Println("ivf next:", err)
+		return
+	}
+
+	// Iterate the OBUs in the first temporal unit and locate the sequence
+	// header. Sequence headers are usually the second OBU (after the
+	// temporal delimiter) in the very first frame.
+	payload := frame.Payload
+	for len(payload) > 0 {
+		unit, n, err := av1.ParseLowOverheadOBU(payload)
+		if err != nil {
+			fmt.Println("obu parse:", err)
+			return
+		}
+		if unit.Header.Type == av1.OBUSequenceHeader {
+			seq, err := av1.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				fmt.Println("sequence parse:", err)
+				return
+			}
+			fmt.Printf("profile=%d max=%dx%d sb128=%v monochrome=%v\n",
+				seq.SeqProfile, seq.MaxFrameWidth, seq.MaxFrameHeight,
+				seq.Use128x128Superblock, seq.ColorConfig.MonoChrome)
+			break
+		}
+		payload = payload[n:]
+	}
+
+	// Output:
+	// profile=0 max=352x288 sb128=true monochrome=false
+}
+
 // countOBUs walks one IVF frame payload as a low-overhead AV1 OBU stream and
 // returns the number of OBU units it contains. ParseLowOverheadOBU does not
 // allocate; the returned Unit values reference the input slice directly.

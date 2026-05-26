@@ -222,13 +222,67 @@ The initial implementation covers:
 Public APIs live at the module root:
 
 ```go
-import "github.com/thesyncim/goav1"
+import av1 "github.com/thesyncim/goav1"
 ```
+
+The root package re-exports the long-lived caller-facing types and helpers in
+groups that follow the decode pipeline:
+
+- IVF/OBU/RTP transport: `NewIVFIterator`, `NewLowOverheadIterator`,
+  `NewTemporalUnitIterator`, `NewAnnexBIterator`, `NewRTPPayloadIterator`,
+  `AssembleRTPFrame`, plus the matching `Parse*` and `Put*` helpers.
+- Sequence and frame headers: `SequenceHeader`, `FrameHeaderPrefix`,
+  `FrameSize`, `TileInfo`, and the per-syntax parameter blocks
+  (`QuantizationParams`, `LoopFilterParams`, `CDEFParams`,
+  `RestorationParams`, `FilmGrainParams`, etc.).
+- Decoder driving: `DecoderStream`, `DecoderEvent`, `DecoderFrameWorkState`,
+  `DecoderSurfaceReferences`, `FramePool`, and the `BeginDecoderFrameWork` /
+  `RunDecoderFrameWorkEventWithContext` lifecycle helpers.
+- Worker pool and tile work: `NewTileWorkerPool`, `TileBatch`, `TileJob`,
+  `PlanDecoderTileWork`, `ExecuteDecoderFrameWorkStep`.
+- Residual decode + reconstruct: the
+  `DecoderFrameWorkBatchResidualRunner` and the per-job
+  `DecodeAndReconstructDecoderFrameWorkJobResiduals` /
+  `DecodeAndRetainDecoderFrameWorkJobResiduals` helpers.
+- Post-filter pipeline: `BindDecoderFrameWorkPostFilterRequest`
+  composes loop-filter, CDEF, super-res, loop-restoration, and film-grain
+  stages over caller-owned scratch.
+
+See the executable
+[Example](https://pkg.go.dev/github.com/thesyncim/goav1#example-package)
+in `example_test.go` for the minimum read-side smoke path.
+
+## Status
+
+Realtime decode is in active development. The supporting primitives -
+transport, OBU/sequence/frame-header parsing, tile work scheduling, residual
+decode, reconstruction, and the post-filter pipeline - all have public APIs
+and unit-test coverage. End-to-end frame output through the libaom
+conformance vectors is partial:
+
+- `make testvectors-fast` exercises the committed test-vector suite and the
+  oracle-tagged libaom frame-MD5 checks. It runs in CI on every push and is
+  expected to stay green.
+- `make dryrun-fast` runs the in-progress framework dry-run against the
+  eight `SuiteLevelFast` libaom vectors. Six of the eight currently pass the
+  lenient first-frame MD5 gate; the other two still hit known mismatches
+  in later frames. Set `GOAV1_STRICT_MD5=1` to upgrade the check to every
+  frame for diagnostic snapshots.
+- `make testvectors-full` will download and execute the full libaom remote
+  suite. It is not part of the default CI gate and is intended for local
+  parity sweeps.
+
+The encoder, SIMD acceleration, and platform-specific assembly backends are
+not implemented yet.
 
 ## References
 
 - [AV1 Bitstream & Decoding Process Specification](https://aomediacodec.github.io/av1-spec/av1-spec.pdf)
 - [RTP Payload Format For AV1](https://aomediacodec.github.io/av1-rtp-spec/)
+- [libaom AV1 test vectors](https://storage.googleapis.com/aom-test-data) -
+  the upstream conformance corpus; the `make testvectors-fast` slice is a
+  curated subset that ships with the repository (see
+  `internal/av1/testdata/libaom`).
 - dav1d architecture and performance practices.
 - libaom realtime encoder behavior.
 - libwebrtc AV1 RTP behavior.
@@ -236,12 +290,15 @@ import "github.com/thesyncim/goav1"
 ## Development
 
 ```sh
-make test
-make testvectors
-make bench
-make bench-public
-make alloc
-make fuzz-smoke
+make test                 # unit tests across all packages
+make testvectors          # committed test-vector suite (with oracle)
+make testvectors-fast     # fast slice including oracle MD5 checks
+make dryrun-fast          # in-progress framework dry-run against fast vectors
+make bench                # microbenchmarks
+make bench-public         # public-API benchmarks
+make alloc                # zero-allocation regression coverage
+make fuzz-smoke           # short fuzz harness sweep
+make ci-local             # fmt-check + vet + test + alloc
 ```
 
 CI is expected to fail on allocation regressions covered by unit tests. As the
