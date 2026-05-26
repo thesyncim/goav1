@@ -167,24 +167,50 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 // runLibaomFrameWorkDryRun executes the libaom framework dry-run for a single
 // vector. It supports two MD5 verification modes:
 //
-//   - Lenient mode (default): only frame 0's MD5 must match the official digest;
-//     subsequent frames merely log a per-frame progress line indicating whether
-//     they match. This is the behaviour required by `make testvectors-fast` and
-//     the `dryrun-fast` CI workflow, which gate on the six currently-passing
-//     vectors. A vector with correct frame 0 but broken later frames still
-//     "passes" in this mode — the per-frame log makes the silent mismatch
-//     visible without failing CI.
+//   - Lenient mode (default): only the first emitted output's MD5 must match
+//     the official digest; subsequent outputs merely log a progress line
+//     indicating whether they match. This is the behaviour required by
+//     `make testvectors-fast` and the `dryrun-fast` CI workflow, which gate
+//     on the currently-passing fast cohort. A vector with a correct first
+//     output but broken later outputs still "passes" in this mode — the
+//     per-output log makes the silent mismatch visible without failing CI.
 //
-//   - Strict mode (GOAV1_STRICT_MD5=1): every frame's MD5 must match the
-//     official digest. Any mismatch fails the subtest. This mode is intended
-//     for diagnostic snapshots — it surfaces vectors whose later frames are
-//     silently wrong while frame 0 happens to be correct.
+//   - Strict mode (GOAV1_STRICT_MD5=1): every emitted output's MD5 must
+//     match the official digest. Any mismatch fails the subtest. This mode
+//     is intended for diagnostic snapshots — it surfaces vectors whose
+//     later outputs are silently wrong while the first happens to be
+//     correct.
+//
+// SVC handling: libaom's aomdec with the default output_all_layers=0 emits
+// one MD5 per temporal unit at the highest-spatial-layer output. The
+// dry-run mirrors that:
+//
+//   - Each spatial layer gets its own frame pool, reference state, and
+//     motion store. SVC streams with mixed-size spatial layers (e.g. L2T1
+//     base 640x360 + enhancement 1280x720) cannot share one frame.Pool
+//     because Pool.AcquireFormat is strict about width/height, and
+//     reference slots are independent per spatial layer.
+//
+//   - Within an IVF frame, per-completed-frame MD5s are buffered. After
+//     all events in the IVF frame have been processed, MD5 emission
+//     depends on whether multiple spatial layers were observed:
+//
+//   - Non-SVC (max SpatialID == 0): emit one MD5 per completed frame in
+//     order. This preserves the original per-CompletedFrame counting that
+//     the existing fast 7-vector gate relies on (streams with multiple
+//     frames packed into one IVF frame — ALTREF backup + shown frame —
+//     emit one MD5 per completion).
+//
+//   - SVC (max SpatialID > 0): emit ONE MD5 for the LAST completed frame
+//     at the highest SpatialID. Lower-spatial-layer frames are decoded
+//     for reference but not emitted, matching aomdec's
+//     output_all_layers=0 default.
 //
 // In both modes, a trailing summary line is logged:
 //
-//	vector=NAME frames=N md5_matches=M first_mismatch=F
+//	vector=NAME temporal_units=N md5_matches=M first_mismatch=F
 //
-// where first_mismatch is -1 if every frame matched.
+// where first_mismatch is -1 if every emitted output matched.
 func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	t.Helper()
 	strictMD5 := os.Getenv("GOAV1_STRICT_MD5") == "1"
@@ -203,20 +229,8 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	defer workerPool.Close()
 
 	var stream decoder.Stream
-	var refs decoder.SurfaceReferences
-	var state decoder.FrameWorkState
-	var pool frame.Pool
-	var poolFormat frame.Format
-	var havePool bool
-	var backing []byte
-	var frameSlots []frame.Frame
-	var free []int
-	var used []bool
-	var mvEntryBacking []tile.ReferenceMVEntry
-	var temporalEntryBacking []tile.TemporalMotionEntry
-	var mvFrames []tile.ReferenceMVFrame
-	var mvStore []tile.TemporalMotionReferenceFrame
-	var mvLength int
+	layers := newLibaomSpatialLayers()
+	defer layers.keepAlive()
 
 	var events [16]decoder.Event
 	var referenceSurfaces [parser.InterRefsPerFrame]int
@@ -227,22 +241,10 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	var releases [parser.RefFrames]int
 
 	frameCount := 0
-	completed := 0
+	temporalUnits := 0
 	md5Matches := 0
 	firstMismatch := -1
-	tileJobs := 0
-	retainedContexts := 0
-	partitionReads := 0
-	blockPrefixReads := 0
-	blockDeltaPaths := 0
-	predictionModeReads := 0
-	intraModeReads := 0
-	residualTXBs := 0
-	residuals := 0
-	predictions := 0
-	cdefUnitsRead := 0
-	temporalReferenceResolves := 0
-	temporalMotionProjections := 0
+	stats := libaomFrameWorkStats{}
 	for {
 		ivfFrame, ok, err := it.Next()
 		if err != nil {
@@ -253,52 +255,62 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 		}
 		count, err := stream.PushLowOverhead(ivfFrame.Payload, events[:])
 		if err != nil {
-			t.Fatalf("frame %d PushLowOverhead: %v", ivfFrame.Index, err)
+			t.Fatalf("ivf frame %d PushLowOverhead: %v", ivfFrame.Index, err)
 		}
+
+		// Per-IVF-frame (temporal-unit) postfilter tracking. aomdec with the
+		// default output_all_layers=0 emits one MD5 per highest-spatial-layer
+		// output for each temporal unit. Within a single IVF frame the
+		// stream may complete several frames (e.g. an ALTREF backup decode
+		// plus a shown frame in non-SVC streams), each carrying its own
+		// shown/no-show flag. We retain the postfilter output and SpatialID
+		// for every completed frame and, after all events have run, emit
+		// digest checks according to whether the IVF frame contains a
+		// single spatial layer (non-SVC: one digest per completed frame —
+		// the original behaviour) or multiple spatial layers (SVC: only the
+		// LAST completed frame at the highest SpatialID).
+		var ivfPostMD5s [32]MD5
+		var ivfPostSpatial [32]int
+		ivfPostCount := 0
+		maxSpatial := uint8(0)
+
 		for i := 0; i < count; i++ {
 			event := events[i]
 			if !eventRunsFrameWork(event) {
 				continue
 			}
-			if !havePool {
-				pool, poolFormat, backing, frameSlots, free, used = bindLibaomVectorFramePool(t, event, 16)
-				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindLibaomVectorMotionStore(t, event, len(frameSlots))
-				havePool = true
-			} else {
-				gotFormat := frameFormatFromEvent(event)
-				if gotFormat != poolFormat {
-					t.Fatalf("frame %d format=%+v want %+v", ivfFrame.Index, gotFormat, poolFormat)
-				}
-			}
+			layer := layers.layer(t, event)
 
-			var postMD5 MD5
-			postRan := false
-			currentMVSurface := -1
-			result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
+			var (
+				postMD5          MD5
+				postRan          bool
+				currentMVSurface = -1
+			)
+			result, err := layer.state.RunEventWithContextAndSideDataAndPostFilterRunners(&layer.refs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
 				}
-				if surface >= len(mvFrames) || mvLength == 0 {
+				if surface >= len(layer.mvFrames) || layer.mvLength == 0 {
 					return decoder.ErrInvalidSurfaceReference
 				}
-				if currentMVSurface != surface || mvFrames[surface].Entries == nil {
-					first := surface * mvLength
-					currentMVFrame, err := ctx.BindReferenceMVFrame(mvEntryBacking[first : first+mvLength])
+				if currentMVSurface != surface || layer.mvFrames[surface].Entries == nil {
+					first := surface * layer.mvLength
+					currentMVFrame, err := ctx.BindReferenceMVFrame(layer.mvEntryBacking[first : first+layer.mvLength])
 					if err != nil {
 						return err
 					}
-					mvFrames[surface] = currentMVFrame
+					layer.mvFrames[surface] = currentMVFrame
 					currentMVSurface = surface
 				}
-				ctx.CurrentMVFrame = &mvFrames[surface]
+				ctx.CurrentMVFrame = &layer.mvFrames[surface]
 				if ctx.TileInfo.UseRefFrameMVS {
-					temporalMVs, err := ctx.BindTemporalMotionField(temporalEntryBacking)
+					temporalMVs, err := ctx.BindTemporalMotionField(layer.temporalEntryBacking)
 					if err != nil {
 						return err
 					}
 					ctx.TemporalMVs = &temporalMVs
-					resolved, err := decoder.ResolveTemporalMotionReferences(referenceSurfaces[:len(ctx.References)], mvStore, ctx.ReferenceMVs[:])
+					resolved, err := decoder.ResolveTemporalMotionReferences(referenceSurfaces[:len(ctx.References)], layer.mvStore, ctx.ReferenceMVs[:])
 					if err != nil {
 						return err
 					}
@@ -309,8 +321,8 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					if err != nil {
 						return err
 					}
-					temporalReferenceResolves += resolved
-					temporalMotionProjections += setupStats.Projections
+					stats.temporalReferenceResolves += resolved
+					stats.temporalMotionProjections += setupStats.Projections
 				}
 				var restorationReq *threading.FrameWorkTileRestorationRequest
 				if ctx.RestorationFrameBuffers != nil {
@@ -351,7 +363,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					}
 					var interScratch threading.FrameWorkInterPredictionScratch
 					predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
-					stats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
+					jobStats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
 						Loop:          loopReq,
 						TransformMode: ctx.TransformRef.TransformMode,
 						CDEFIndexMap:  ctx.CDEFIndexMap,
@@ -368,34 +380,34 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 						PredictionScratch: &predictionScratch,
 					})
 					if err != nil {
-						return fmt.Errorf("decode/reconstruct job %d stats=%+v: %w", j, stats, err)
+						return fmt.Errorf("decode/reconstruct job %d stats=%+v: %w", j, jobStats, err)
 					}
 					if err := ctx.RetainTileResidualCDFStorage(j, &decodeState, &storage); err != nil {
 						return err
 					}
-					partitionReads += stats.Loop.PartitionReads
-					blockPrefixReads += stats.Loop.Prefixes
-					blockDeltaPaths += stats.Loop.Blocks
-					predictionModeReads += stats.Loop.PredictionModes
-					intraModeReads += stats.Loop.IntraModes
-					residualTXBs += stats.TXBs
-					residuals += stats.Residuals
-					predictions += stats.Predictions
+					stats.partitionReads += jobStats.Loop.PartitionReads
+					stats.blockPrefixReads += jobStats.Loop.Prefixes
+					stats.blockDeltaPaths += jobStats.Loop.Blocks
+					stats.predictionModeReads += jobStats.Loop.PredictionModes
+					stats.intraModeReads += jobStats.Loop.IntraModes
+					stats.residualTXBs += jobStats.TXBs
+					stats.residuals += jobStats.Residuals
+					stats.predictions += jobStats.Predictions
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}
 					if _, err := ctx.LoopRestorationPlan(false); err != nil {
 						return err
 					}
-					tileJobs++
+					stats.tileJobs++
 					if decodeState.RetainFrameContext {
-						retainedContexts++
+						stats.retainedContexts++
 					}
 				}
 				if ctx.CDEFIndexMap != nil {
 					for _, read := range ctx.CDEFIndexMap.Read {
 						if read {
-							cdefUnitsRead++
+							stats.cdefUnitsRead++
 						}
 					}
 				}
@@ -413,93 +425,219 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					return fmt.Errorf("apply supported postfilters: %w", err)
 				}
 				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
+					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
 						return err
 					}
-				}
-				digestIndex := int(ivfFrame.Index)
-				if digestIndex >= len(digests) || digests[digestIndex].FrameIndex != ivfFrame.Index {
-					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
 				}
 				got, err := FrameMD5(*post.Context.Output)
 				if err != nil {
 					return err
-				}
-				if ivfFrame.Index == 0 && got != digests[digestIndex].MD5 {
-					return fmt.Errorf("frame 0 md5 got=%x official=%x", got, digests[digestIndex].MD5)
-				}
-				if strictMD5 && got != digests[digestIndex].MD5 {
-					return fmt.Errorf("frame %d md5 got=%x official=%x (strict mode)", ivfFrame.Index, got, digests[digestIndex].MD5)
 				}
 				postMD5 = got
 				postRan = true
 				return nil
 			}))
 			if err != nil {
-				t.Fatalf("frame %d RunEventWithContextAndPostFilter: %v", ivfFrame.Index, err)
+				t.Fatalf("ivf frame %d spatial=%d RunEventWithContextAndSideDataAndPostFilterRunners: %v", ivfFrame.Index, event.SpatialID, err)
 			}
 			if result.Run.CompletedFrame {
 				if !postRan {
-					t.Fatalf("frame %d completed without postfilter", ivfFrame.Index)
+					t.Fatalf("ivf frame %d spatial=%d completed without postfilter", ivfFrame.Index, event.SpatialID)
 				}
-				digestIndex := int(ivfFrame.Index)
-				if digestIndex >= len(digests) {
-					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
+				if ivfPostCount >= len(ivfPostMD5s) {
+					t.Fatalf("ivf frame %d completed-frame buffer overflow (cap=%d)", ivfFrame.Index, len(ivfPostMD5s))
 				}
-				if postMD5 == digests[digestIndex].MD5 {
-					md5Matches++
-				} else if firstMismatch < 0 {
-					firstMismatch = int(ivfFrame.Index)
+				ivfPostMD5s[ivfPostCount] = postMD5
+				ivfPostSpatial[ivfPostCount] = int(event.SpatialID)
+				ivfPostCount++
+				if event.SpatialID > maxSpatial {
+					maxSpatial = event.SpatialID
 				}
-				t.Logf("frame %d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d mfmv_refs=%d mfmv_projections=%d",
-					ivfFrame.Index, postMD5, digests[digestIndex].MD5, residualTXBs, residuals, cdefUnitsRead, temporalReferenceResolves, temporalMotionProjections)
-				completed++
 			}
+		}
+
+		// Emit digest checks for this IVF frame. Non-SVC (maxSpatial==0):
+		// one digest per completed frame in order, matching the original
+		// per-CompletedFrame counting that the fast 7-vector gate relies on.
+		// SVC (maxSpatial>0): one digest per IVF frame at the LAST
+		// completed frame whose SpatialID == maxSpatial — i.e. the
+		// highest-spatial-layer output for that temporal unit. This
+		// mirrors libaom aomdec with output_all_layers=0.
+		var emitMD5s [32]MD5
+		var emitSpatial [32]int
+		emitCount := 0
+		if ivfPostCount > 0 {
+			if maxSpatial == 0 {
+				for i := 0; i < ivfPostCount; i++ {
+					emitMD5s[emitCount] = ivfPostMD5s[i]
+					emitSpatial[emitCount] = ivfPostSpatial[i]
+					emitCount++
+				}
+			} else {
+				// Find the LAST completed frame at the highest spatial layer.
+				lastIdx := -1
+				for i := 0; i < ivfPostCount; i++ {
+					if uint8(ivfPostSpatial[i]) == maxSpatial {
+						lastIdx = i
+					}
+				}
+				if lastIdx >= 0 {
+					emitMD5s[emitCount] = ivfPostMD5s[lastIdx]
+					emitSpatial[emitCount] = ivfPostSpatial[lastIdx]
+					emitCount++
+				}
+			}
+		}
+
+		for k := 0; k < emitCount; k++ {
+			if temporalUnits >= len(digests) {
+				t.Fatalf("ivf frame %d temporal_unit=%d has no official digest (have %d)", ivfFrame.Index, temporalUnits, len(digests))
+			}
+			expected := digests[temporalUnits].MD5
+			match := emitMD5s[k] == expected
+			if temporalUnits == 0 && !match {
+				t.Fatalf("ivf frame %d temporal_unit=0 spatial=%d md5 got=%x official=%x", ivfFrame.Index, emitSpatial[k], emitMD5s[k], expected)
+			}
+			if strictMD5 && !match {
+				t.Fatalf("ivf frame %d temporal_unit=%d spatial=%d md5 got=%x official=%x (strict mode)", ivfFrame.Index, temporalUnits, emitSpatial[k], emitMD5s[k], expected)
+			}
+			if match {
+				md5Matches++
+			} else if firstMismatch < 0 {
+				firstMismatch = temporalUnits
+			}
+			t.Logf("ivf=%d temporal_unit=%d spatial=%d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d mfmv_refs=%d mfmv_projections=%d",
+				ivfFrame.Index, temporalUnits, emitSpatial[k], emitMD5s[k], expected, stats.residualTXBs, stats.residuals, stats.cdefUnitsRead, stats.temporalReferenceResolves, stats.temporalMotionProjections)
+			temporalUnits++
 		}
 		frameCount++
 	}
-	t.Logf("vector=%s frames=%d md5_matches=%d first_mismatch=%d", vector.Name, completed, md5Matches, firstMismatch)
-	if frameCount != len(digests) || completed != len(digests) {
-		t.Fatalf("frames=%d completed=%d want %d", frameCount, completed, len(digests))
+	t.Logf("vector=%s temporal_units=%d md5_matches=%d first_mismatch=%d", vector.Name, temporalUnits, md5Matches, firstMismatch)
+	if temporalUnits != len(digests) {
+		t.Fatalf("temporal_units=%d want %d (ivf_frames=%d)", temporalUnits, len(digests), frameCount)
 	}
-	if tileJobs == 0 {
+	if stats.tileJobs == 0 {
 		t.Fatal("no tile jobs ran")
 	}
-	if retainedContexts == 0 {
+	if stats.retainedContexts == 0 {
 		t.Fatal("no context-update tile was retained")
 	}
-	if partitionReads == 0 {
+	if stats.partitionReads == 0 {
 		t.Fatal("no partition syntax was read")
 	}
-	if blockPrefixReads == 0 {
+	if stats.blockPrefixReads == 0 {
 		t.Fatal("no block prefix syntax was read")
 	}
-	if blockDeltaPaths == 0 {
+	if stats.blockDeltaPaths == 0 {
 		t.Fatal("no block delta syntax path ran")
 	}
-	if predictionModeReads == 0 {
+	if stats.predictionModeReads == 0 {
 		t.Fatal("no prediction mode syntax was read")
 	}
-	if intraModeReads == 0 {
+	if stats.intraModeReads == 0 {
 		t.Fatal("no intra mode syntax was read")
 	}
-	if residualTXBs == 0 {
+	if stats.residualTXBs == 0 {
 		t.Fatal("no residual TXBs were decoded")
 	}
-	if residuals == 0 {
+	if stats.residuals == 0 {
 		t.Fatal("no residual blocks were reconstructed")
 	}
-	if predictions == 0 {
+	if stats.predictions == 0 {
 		t.Fatal("no prediction blocks were written")
 	}
-	runtime.KeepAlive(backing)
-	runtime.KeepAlive(frameSlots)
-	runtime.KeepAlive(free)
-	runtime.KeepAlive(used)
-	runtime.KeepAlive(mvEntryBacking)
-	runtime.KeepAlive(temporalEntryBacking)
-	runtime.KeepAlive(mvFrames)
-	runtime.KeepAlive(mvStore)
+}
+
+// libaomFrameWorkStats accumulates the per-vector dry-run counters used to
+// assert that the framework exercised tile, prediction, residual, CDEF, and
+// MFMV code paths at least once.
+type libaomFrameWorkStats struct {
+	tileJobs                  int
+	retainedContexts          int
+	partitionReads            int
+	blockPrefixReads          int
+	blockDeltaPaths           int
+	predictionModeReads       int
+	intraModeReads            int
+	residualTXBs              int
+	residuals                 int
+	predictions               int
+	cdefUnitsRead             int
+	temporalReferenceResolves int
+	temporalMotionProjections int
+}
+
+// libaomSpatialLayerState owns the dry-run frame pool, reference state, and
+// motion store for one spatial layer (SpatialID). SVC streams with mixed
+// spatial-layer dimensions (e.g. L2T1/L2T2: 640x360 + 1280x720) require a
+// per-layer pool because frame.Pool stores a single Format and rejects
+// AcquireFormat calls whose dimensions differ from the bound format.
+// Reference state is also independent per layer because each spatial layer
+// resolves its own reference slots.
+type libaomSpatialLayerState struct {
+	spatialID uint8
+	format    frame.Format
+
+	pool                 frame.Pool
+	state                decoder.FrameWorkState
+	refs                 decoder.SurfaceReferences
+	backing              []byte
+	frameSlots           []frame.Frame
+	free                 []int
+	used                 []bool
+	mvEntryBacking       []tile.ReferenceMVEntry
+	temporalEntryBacking []tile.TemporalMotionEntry
+	mvFrames             []tile.ReferenceMVFrame
+	mvStore              []tile.TemporalMotionReferenceFrame
+	mvLength             int
+}
+
+// libaomSpatialLayers indexes per-spatial-layer dry-run state by SpatialID.
+// The zero value is ready to use; layers are bound lazily on first use.
+type libaomSpatialLayers struct {
+	byID map[uint8]*libaomSpatialLayerState
+}
+
+func newLibaomSpatialLayers() *libaomSpatialLayers {
+	return &libaomSpatialLayers{byID: make(map[uint8]*libaomSpatialLayerState)}
+}
+
+// layer returns the per-spatial-layer state for event.SpatialID, binding it
+// (pool + motion store) on first observation. The pool is sized to 16 slots
+// at the format implied by the first event seen for that spatial layer,
+// which is the layer's native CodedWidth x Height — matching how libaom
+// configures one decoder instance per spatial layer.
+func (s *libaomSpatialLayers) layer(t *testing.T, event decoder.Event) *libaomSpatialLayerState {
+	t.Helper()
+	id := event.SpatialID
+	layer, ok := s.byID[id]
+	if !ok {
+		layer = &libaomSpatialLayerState{spatialID: id}
+		layer.pool, layer.format, layer.backing, layer.frameSlots, layer.free, layer.used = bindLibaomVectorFramePool(t, event, 16)
+		layer.mvEntryBacking, layer.temporalEntryBacking, layer.mvFrames, layer.mvStore, layer.mvLength = bindLibaomVectorMotionStore(t, event, len(layer.frameSlots))
+		s.byID[id] = layer
+		return layer
+	}
+	if got := frameFormatFromEvent(event); got != layer.format {
+		t.Fatalf("spatial layer %d format=%+v want %+v (per-layer pool was bound to first-seen size)", id, got, layer.format)
+	}
+	return layer
+}
+
+// keepAlive defers GC of every layer's backing storage until after the
+// test completes, matching the runtime.KeepAlive guarantees the original
+// single-pool path provided.
+func (s *libaomSpatialLayers) keepAlive() {
+	for _, layer := range s.byID {
+		runtime.KeepAlive(layer.backing)
+		runtime.KeepAlive(layer.frameSlots)
+		runtime.KeepAlive(layer.free)
+		runtime.KeepAlive(layer.used)
+		runtime.KeepAlive(layer.mvEntryBacking)
+		runtime.KeepAlive(layer.temporalEntryBacking)
+		runtime.KeepAlive(layer.mvFrames)
+		runtime.KeepAlive(layer.mvStore)
+	}
 }
 
 func eventCompletesDecodedFrame(event decoder.Event) bool {
