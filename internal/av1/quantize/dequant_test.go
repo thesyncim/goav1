@@ -254,6 +254,35 @@ func TestDequantizeBlockRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+// TestDequantizeBlockScaledQMatrixRejectsOverflowSize confirms that a
+// hostile width*height pair (with either dimension negative or the product
+// overflowing int) is rejected before the iqMatrix slice-length compare can
+// silently underflow.
+func TestDequantizeBlockScaledQMatrixRejectsOverflowSize(t *testing.T) {
+	dst := make([]int32, 4)
+	coeff := make([]int16, 4)
+	iqMatrix := make([]uint16, 4)
+	q := Quantizer{DC: 4, AC: 8}
+	const maxInt = int(^uint(0) >> 1)
+	cases := []struct {
+		name           string
+		width, height  int
+	}{
+		{"zero-width", 0, 4},
+		{"negative-width", -1, 4},
+		{"zero-height", 4, 0},
+		{"negative-height", 4, -1},
+		{"overflow-product", maxInt/2 + 1, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := DequantizeBlockScaledQMatrix(dst, 2, coeff, 2, tc.width, tc.height, q, 0, iqMatrix); !errors.Is(err, ErrInvalidQuantizer) {
+				t.Fatalf("DequantizeBlockScaledQMatrix err=%v want %v", err, ErrInvalidQuantizer)
+			}
+		})
+	}
+}
+
 func TestDequantizeBlockAllocs(t *testing.T) {
 	coeff := make([]int16, 16*16)
 	dst := make([]int32, 16*16)

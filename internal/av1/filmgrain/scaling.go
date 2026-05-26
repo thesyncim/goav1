@@ -56,6 +56,16 @@ func ScaleLUT(lut []uint8, index int, bitDepth uint8) (uint8, error) {
 }
 
 func scaleLUT(lut []uint8, index int, bitDepth uint8) uint8 {
+	// Defense in depth: clip the input sample to the legal bitdepth range
+	// before deriving the LUT index. Internal callers receive uint16 samples
+	// from decoded planes; a malformed bitstream that left a value above
+	// (1<<bitDepth)-1 in a plane would otherwise drive lut[x] out of range.
+	maxIndex := (1 << bitDepth) - 1
+	if index < 0 {
+		index = 0
+	} else if index > maxIndex {
+		index = maxIndex
+	}
 	shift := int(bitDepth - 8)
 	x := index >> shift
 	if bitDepth == 8 || x == ScalingLUTSize-1 {

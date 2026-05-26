@@ -118,7 +118,13 @@ func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 // weighting before the transform-size dequant shift. iqMatrix is indexed by
 // libaom's row-major coefficient position and must cover width*height entries.
 func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
-	if len(iqMatrix) < width*height {
+	if width <= 0 || height <= 0 {
+		return ErrInvalidQuantizer
+	}
+	// Use checkedMul before the slice-length compare so a hostile caller
+	// cannot trigger silent integer overflow on width*height.
+	samples, ok := checkedMul(width, height)
+	if !ok || len(iqMatrix) < samples {
 		return ErrInvalidQuantizer
 	}
 	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix)

@@ -117,6 +117,55 @@ func TestScalingRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+// TestScaleLUTClampsOutOfRangeIndex exercises the defense-in-depth clamp in
+// the internal scaleLUT helper. Internal apply callers feed raw uint16 sample
+// values that, on a malformed bitstream, can exceed (1<<bitDepth)-1 and would
+// otherwise drive lut[x] out of bounds.
+func TestScaleLUTClampsOutOfRangeIndex(t *testing.T) {
+	var lut [ScalingLUTSize]uint8
+	if err := BuildScalingLUT(lut[:], []ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		index    int
+		bitDepth uint8
+		want     uint8
+	}{
+		{"8bit above max", 1 << 12, 8, lut[ScalingLUTSize-1]},
+		{"10bit above max", 1 << 14, 10, lut[ScalingLUTSize-1]},
+		{"12bit above max", 1 << 16, 12, lut[ScalingLUTSize-1]},
+		{"negative index", -1, 10, lut[0]},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scaleLUT(lut[:], tc.index, tc.bitDepth)
+			if got != tc.want {
+				t.Fatalf("scaleLUT(%d, %d)=%d want %d", tc.index, tc.bitDepth, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyLumaSampleClampsOutOfRangeOrig confirms ApplyLumaSample no longer
+// panics when the original sample is outside the legal bitdepth range. The
+// public entrypoint rejects such samples with ErrInvalidParams, and the
+// internal helper clips defensively so concurrent apply paths cannot OOB.
+func TestApplyLumaSampleClampsOutOfRangeOrig(t *testing.T) {
+	var lut [ScalingLUTSize]uint8
+	if err := BuildScalingLUT(lut[:], []ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}); err != nil {
+		t.Fatal(err)
+	}
+	// applyLumaSample must not panic for any uint16 input under any
+	// supported bitdepth even when the sample exceeds the bitdepth range.
+	for _, bd := range []uint8{8, 10, 12} {
+		for _, orig := range []uint16{0, 1, 1<<bd - 1, 1 << bd, (1 << 16) - 1} {
+			_ = applyLumaSample(orig, 0, lut[:], bd, 8, false)
+			_ = applyLumaSample(orig, 0, lut[:], bd, 11, true)
+		}
+	}
+}
+
 func TestScalingAllocs(t *testing.T) {
 	points := [...]ScalingPoint{{Value: 3, Scaling: 7}, {Value: 8, Scaling: 11}, {Value: 20, Scaling: 2}}
 	var lut [ScalingLUTSize]uint8

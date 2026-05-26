@@ -294,7 +294,16 @@ func validateLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8,
 		params.ScalingShift > 11 {
 		return ErrInvalidParams
 	}
-	need := (params.Height-1)*params.Stride + params.Width
+	// Use overflow-checked arithmetic so a hostile Stride value cannot pass
+	// the slice-length compare via a wrapped product.
+	rowStride, ok := checkedMulNonNegative(params.Height-1, params.Stride)
+	if !ok {
+		return ErrInvalidParams
+	}
+	need, ok := checkedAdd(rowStride, params.Width)
+	if !ok {
+		return ErrInvalidParams
+	}
 	if len(dst) < need || len(src) < need {
 		return ErrInvalidParams
 	}
@@ -318,11 +327,47 @@ func validateChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16,
 		params.ScalingShift > 11 {
 		return ErrInvalidParams
 	}
-	need := (params.Height-1)*params.Stride + params.Width
+	rowStride, ok := checkedMulNonNegative(params.Height-1, params.Stride)
+	if !ok {
+		return ErrInvalidParams
+	}
+	need, ok := checkedAdd(rowStride, params.Width)
+	if !ok {
+		return ErrInvalidParams
+	}
 	lumaRows := ((params.Height - 1) << shiftY) + 1
-	lumaNeed := (lumaRows-1)*params.LumaStride + ((params.Width - 1) << shiftX) + 1 + shiftX
+	lumaRowStride, ok := checkedMulNonNegative(lumaRows-1, params.LumaStride)
+	if !ok {
+		return ErrInvalidParams
+	}
+	lumaTail, ok := checkedAdd(((params.Width-1)<<shiftX)+1, shiftX)
+	if !ok {
+		return ErrInvalidParams
+	}
+	lumaNeed, ok := checkedAdd(lumaRowStride, lumaTail)
+	if !ok {
+		return ErrInvalidParams
+	}
 	if len(dst) < need || len(src) < need || len(luma) < lumaNeed {
 		return ErrInvalidParams
 	}
 	return nil
+}
+
+func checkedAdd(a int, b int) (int, bool) {
+	c := a + b
+	if (b > 0 && c < a) || (b < 0 && c > a) {
+		return 0, false
+	}
+	return c, true
+}
+
+func checkedMulNonNegative(a int, b int) (int, bool) {
+	if a < 0 || b < 0 {
+		return 0, false
+	}
+	if a != 0 && b > int(^uint(0)>>1)/a {
+		return 0, false
+	}
+	return a * b, true
 }

@@ -415,6 +415,58 @@ func TestApplyChromaRowRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+// TestApplyLumaRowRejectsOverflowStride confirms that an attacker-controlled
+// Stride combined with a non-trivial Height cannot wrap the slice-size compare
+// via integer overflow.
+func TestApplyLumaRowRejectsOverflowStride(t *testing.T) {
+	dst, src := testLumaRowBuffers(4, 1, 8, 100)
+	grain := make([]int16, LumaGrainSamples)
+	lut := testLumaRowScaling(64)
+	const maxInt = int(^uint(0) >> 1)
+	params := LumaRowParams{
+		Width:        4,
+		Height:       8,
+		Stride:       maxInt/4 + 1,
+		BitDepth:     8,
+		ScalingShift: 8,
+	}
+	if err := ApplyLumaRow(dst, src, grain, lut[:], params); !errors.Is(err, ErrInvalidParams) {
+		t.Fatalf("ApplyLumaRow err=%v want %v", err, ErrInvalidParams)
+	}
+}
+
+// TestApplyChromaRowRejectsOverflowStride mirrors the luma overflow guard for
+// the chroma path so an attacker-controlled Stride/LumaStride pair cannot wrap
+// the slice-size compare.
+func TestApplyChromaRowRejectsOverflowStride(t *testing.T) {
+	dst, src := testChromaRowBuffers(4, 1, 8, 100)
+	luma := testChromaRowLuma(4, 1, 8, false, false, 80)
+	grain := make([]int16, ChromaGrainSamples)
+	lut := testLumaRowScaling(64)
+	const maxInt = int(^uint(0) >> 1)
+	for _, name := range []string{"stride", "luma-stride"} {
+		params := ChromaRowParams{
+			Width:        4,
+			Height:       4,
+			Stride:       8,
+			LumaStride:   8,
+			BitDepth:     8,
+			ScalingShift: 8,
+		}
+		switch name {
+		case "stride":
+			params.Stride = maxInt/4 + 1
+		case "luma-stride":
+			params.LumaStride = maxInt/4 + 1
+		}
+		t.Run(name, func(t *testing.T) {
+			if err := ApplyChromaRow(dst, src, luma, grain, lut[:], params); !errors.Is(err, ErrInvalidParams) {
+				t.Fatalf("ApplyChromaRow err=%v want %v", err, ErrInvalidParams)
+			}
+		})
+	}
+}
+
 func TestApplyLumaRowAllocs(t *testing.T) {
 	const (
 		width  = 64
