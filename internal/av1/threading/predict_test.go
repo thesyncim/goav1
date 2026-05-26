@@ -3436,3 +3436,138 @@ func seedFrameWorkDirectionalEdges(output *frame.Frame, max uint16, above uint16
 	}
 	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, aboveLeft&max)
 }
+
+// TestFrameWorkApplyDirectionalIntraEdgeFilterCornerBlock32x32D157 pins the
+// directional intra-edge-filter dispatch for the 32x32 D157 luma block at the
+// frame's top-left corner. The 34x34 fast vector exercises this exact
+// configuration (mi=0,0, EnableIntraEdgeFilter=true, smoothNeighbor=false,
+// HaveTop=false, HaveLeft=false, angle=151 from luma angle delta -2) as its
+// first decoded block, so any future change to the dispatch in
+// frameWorkApplyDirectionalIntraEdgeFilter that drops the corner-filter call,
+// flips the strength derivation, or re-enables the (top, left) edge filters
+// when the corresponding neighbour counts are zero would silently regress the
+// vector's reconstruction. The fixture mirrors libaom's
+// build_directional_and_filter_intra_predictors fallback when both
+// n_top_px=0 and n_left_px=0: above defaults to 127, left defaults to 129,
+// and the above-left default 128 is preserved by the corner filter
+// (128*5 + 127*6 + 129*5 = 2048; (2048+8)>>4 = 128).
+func TestFrameWorkApplyDirectionalIntraEdgeFilterCornerBlock32x32D157(t *testing.T) {
+	const (
+		width  = 32
+		height = 32
+		angle  = 151 // libaom p_angle for D157 with luma_angle_delta=-2
+	)
+	var scratch FrameWorkIntraPredictionScratch
+	origin := frameWorkDirectionalEdgeOrigin
+	for i := range scratch.Above {
+		scratch.Above[i] = 127
+	}
+	for i := range scratch.Left {
+		scratch.Left[i] = 129
+	}
+	scratch.Above[origin-1] = 128
+	scratch.Left[origin-1] = 128
+	block := tile.BlockVisit{
+		MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8,
+		Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8,
+		HaveTop: false, HaveLeft: false,
+	}
+	edges := prediction.DirectionalEdges{
+		Above:       scratch.Above[:],
+		Left:        scratch.Left[:],
+		AboveOrigin: origin,
+		LeftOrigin:  origin,
+	}
+	if err := frameWorkApplyDirectionalIntraEdgeFilter(8, width, height, angle, block, false, &edges, &scratch); err != nil {
+		t.Fatalf("apply edge filter: %v", err)
+	}
+	// The corner filter rewrites above[-1] and left[-1] to
+	// (left[0]*5 + above[-1]*6 + above[0]*5 + 8) >> 4. For the all-default
+	// fallback (127/128/129) the result is again 128.
+	if got := scratch.Above[origin-1]; got != 128 {
+		t.Fatalf("above[-1]=%d want 128 (corner filter no-op)", got)
+	}
+	if got := scratch.Left[origin-1]; got != 128 {
+		t.Fatalf("left[-1]=%d want 128 (corner filter no-op)", got)
+	}
+	// The above and left edge filters must be skipped because nTop=0 and
+	// nLeft=0 — same as libaom's `if (n_top_px > 0)` guard. Confirm the
+	// default above samples remain 127 and the default left samples remain
+	// 129 (i.e. FilterIntraEdge was not run on them).
+	for i := 0; i < width+height; i++ {
+		if got := scratch.Above[origin+i]; got != 127 {
+			t.Fatalf("above[%d]=%d want 127 (filter must be skipped)", i, got)
+		}
+		if got := scratch.Left[origin+i]; got != 129 {
+			t.Fatalf("left[%d]=%d want 129 (filter must be skipped)", i, got)
+		}
+	}
+	// UseIntraEdgeUpsample returns false for blockWH=64 with d=61>=40, so
+	// the upsample step must NOT be marked active.
+	if edges.UpsampleAbove {
+		t.Fatalf("UpsampleAbove=true want false (d=61>=40 disables upsample for blockWH=64)")
+	}
+	if edges.UpsampleLeft {
+		t.Fatalf("UpsampleLeft=true want false (d=-29, |d|>=8 + blockWH=64 disables upsample)")
+	}
+}
+
+// TestFrameWorkDirectionalPredictionEdgesCornerBlock32x32D157 drives the
+// full edge-fill + edge-filter dispatch via frameWorkDirectionalPredictionEdges
+// for the 34x34 vector's first decoded block. The test seeds an empty plane,
+// requests the corner-block edges, and asserts the returned DirectionalEdges
+// match libaom's fallback for n_top_px=n_left_px=0 — bit-exactly equivalent
+// to what TestPredictDirectionalIntraPlaneBlockCornerFrame32x32D157 pins at
+// the prediction-API level.
+func TestFrameWorkDirectionalPredictionEdgesCornerBlock32x32D157(t *testing.T) {
+	const (
+		width  = 32
+		height = 32
+		angle  = 151
+	)
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	testFillFrame(output, 0)
+	dst := frame.Plane{
+		Pix:    output.Y.Pix,
+		Stride: output.Y.Stride,
+		Width:  output.Y.Width,
+		Height: output.Y.Height,
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	block := tile.BlockVisit{
+		MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8,
+		Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8,
+		HaveTop: false, HaveLeft: false,
+	}
+	edges, err := frameWorkDirectionalPredictionEdges(dst, 1, 8, 0, 0, width, height, angle, block, &scratch, true, false, false, false)
+	if err != nil {
+		t.Fatalf("directional edges: %v", err)
+	}
+	origin := frameWorkDirectionalEdgeOrigin
+	if edges.AboveOrigin != origin || edges.LeftOrigin != origin {
+		t.Fatalf("edge origins: got above=%d left=%d want %d", edges.AboveOrigin, edges.LeftOrigin, origin)
+	}
+	// Corner-filter output preserves 128 for the all-default fallback.
+	if got := edges.Above[origin-1]; got != 128 {
+		t.Fatalf("above[-1]=%d want 128", got)
+	}
+	if got := edges.Left[origin-1]; got != 128 {
+		t.Fatalf("left[-1]=%d want 128", got)
+	}
+	// Above samples remain at the missing-above default (127). Left samples
+	// remain at the missing-left default (129). The edge filter is skipped
+	// for both edges when no real neighbours exist.
+	for i := 0; i < width+height-1; i++ {
+		if got := edges.Above[origin+i]; got != 127 {
+			t.Fatalf("above[%d]=%d want 127", i, got)
+		}
+		if got := edges.Left[origin+i]; got != 129 {
+			t.Fatalf("left[%d]=%d want 129", i, got)
+		}
+	}
+	// Upsample is disabled for blockWH=64 with d=|angle-90|=61>=40 (above)
+	// and d=|angle-180|=29 in zone 2 (left).
+	if edges.UpsampleAbove || edges.UpsampleLeft {
+		t.Fatalf("upsample flags: above=%v left=%v want both false", edges.UpsampleAbove, edges.UpsampleLeft)
+	}
+}
