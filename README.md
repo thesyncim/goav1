@@ -428,3 +428,45 @@ make ci-local             # fmt-check + vet + test + alloc
 CI is expected to fail on allocation regressions covered by unit tests. As the
 decoder grows, benchmark thresholds should move into generated history files or
 a dedicated comparison step.
+
+## License
+
+goav1 is distributed under the BSD 2-Clause license. See [LICENSE](LICENSE)
+for the full text.
+
+Portions of this repository are derived from libaom, the AV1 reference
+implementation released by the Alliance for Open Media. Those portions are
+redistributed under the same BSD 2-Clause terms, and the Alliance for Open
+Media Patent License 1.0 that accompanies libaom is reproduced verbatim in
+[PATENTS](PATENTS), as required by section 1.2.1 of that grant. Callers and
+redistributors must keep both LICENSE and PATENTS together with any
+source-form distribution of goav1.
+
+A complete list of upstream attributions covering libaom, dav1d, libwebrtc,
+the AV1 bitstream and RTP specifications, and the bundled libaom test
+vectors lives in [NOTICE](NOTICE). The pinned upstream commits and the
+working-tree paths where the upstream LICENSE / PATENTS / COPYING files are
+preserved are tracked in [third_party/upstream.lock](third_party/upstream.lock)
+and produced on demand by `make sync-upstreams`.
+
+## Acknowledgements
+
+This project would not exist without the work of the AV1 community.
+
+- The **Alliance for Open Media** and the contributors to **libaom** —
+  the AV1 reference encoder/decoder at
+  https://aomedia.googlesource.com/aom — whose bitstream syntax,
+  reconstruction logic, default CDFs, dequantization scales, transform
+  scan tables, loop-filter / CDEF / restoration / film-grain code, and
+  conformance test vectors are the substrate on which goav1 is built.
+  The pinned reference is `v3.14.0`.
+- The **VideoLAN dav1d authors** — https://code.videolan.org/videolan/dav1d
+  — whose decoder architecture, OBU parsing layout, tile/decode
+  pipeline shape, and DSP organisation informed the package layout of
+  this repository. The pinned reference is `1.5.3`.
+- The **WebRTC project** at https://webrtc.googlesource.com/src for
+  the AV1 RTP payload and depayload behavior that drives the
+  realtime-focused RTP code in this repository.
+
+All bugs in the Go port are ours; all good ideas above the bitstream
+edge belong to the upstream authors named above.

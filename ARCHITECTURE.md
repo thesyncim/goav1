@@ -34,6 +34,7 @@ and orchestration, and the root package exports the caller-facing API only.
 10. [Build Tags and Environment Variables](#build-tags-and-environment-variables)
 11. [Known Limitations and Roadmap](#known-limitations-and-roadmap)
 12. [Upstream References](#upstream-references)
+    - [Licensing](#licensing)
 
 ---
 
@@ -1100,6 +1101,50 @@ When adding behavior:
 `make sync-upstreams` performs shallow, sparse clones of the pinned
 upstreams under `third_party/upstream/` (gitignored).
 `make verify-upstreams` checks each local clone is at the pinned commit.
+
+### Licensing
+
+goav1 is distributed under the BSD 2-Clause license recorded in the
+root `LICENSE` file. The license text matches the upstream libaom
+`LICENSE` (preserved verbatim at
+`third_party/upstream/libaom/LICENSE`) so that derivative work from
+libaom carries forward under identical terms.
+
+The companion `PATENTS` file at the repository root is a byte-for-byte
+copy of the Alliance for Open Media Patent License 1.0 published with
+libaom (`third_party/upstream/libaom/PATENTS`). Section 1.2.1 of that
+license requires the grant to be reproduced "in the root directory of
+the source code with its Implementation" for source-form distribution;
+keeping `LICENSE` and `PATENTS` together at the module root satisfies
+that condition. Distributors who repackage goav1 in binary form must
+include both files in their documentation, legal notices, or
+equivalent materials per section 1.2.1(b).
+
+Third-party attributions for libaom, dav1d, libwebrtc, the AV1
+bitstream and RTP specifications, and the bundled libaom test vectors
+are collected in the root `NOTICE` file. Each entry records the
+upstream URL, the pinned reference, the upstream license, and a
+verbatim copy of the upstream copyright notice.
+
+Files in this repository that are direct ports of libaom (or dav1d /
+libwebrtc) C code should cite their upstream source path with a
+header comment of the form
+
+```go
+// Ported from libaom: av1/common/<file>.c
+```
+
+near the top of the file or function. This makes the derivation
+visible during code review, keeps the BSD attribution requirement
+satisfied at the source level, and helps diff against the upstream
+when chasing bit-exact regressions. Numerical tables reproduced
+verbatim (default CDFs, dequantization scales, transform scan orders,
+qmatrix levels) carry the same citation in the table file header.
+
+The reference checkouts under `third_party/upstream/<name>/` are
+ignored by git but always re-materialised by `make sync-upstreams`;
+they exist purely to make the upstream license text and source layout
+available locally. They MUST NOT be edited.
 
 ---
 
