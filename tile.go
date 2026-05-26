@@ -1,12 +1,49 @@
 package goav1
 
+// This file re-exports the per-tile decode types from the internal tile,
+// loopfilter, and restoration packages.
+//
+// The exported identifiers fall into the following groups:
+//
+//   - LoopFilter* identifies loop-filter planes and edges used by the
+//     loop-filter helpers in loopfilter.go.
+//   - TileBlockLevel*, TilePartition*, TileBlockSize* describe the AV1
+//     superblock partitioning tree and the block sizes that result from it.
+//   - TileBlockLoop* drives a deterministic block-by-block walk over a tile
+//     with caller-owned context carriers.
+//   - TileBlockCoeff* / TileLuma*/Chroma*CoeffTree* parameterize the
+//     coefficient decode tree the tile entropy reader walks.
+//   - TileTXBContext, TileCoeffContextRequest, TileTXBDecodeRequest /
+//     TileTXBDecodeResult drive the per-transform-block entropy context.
+//   - TileIntraMode*, TileFilterIntraMode*, TileChromaIntraMode*,
+//     TileCFLAlphaResult, TileInterMode*, TileMVJoint, TileMVSubpelPrecision
+//     describe the per-block mode and motion decode outputs.
+//   - TileTransformSize*, TileTransformPartition*, TileTransformTree*,
+//     TileExtTXSetType, TileExtTXSets* describe the AV1 transform partition
+//     tree and ext-tx set selection.
+//   - TileReferenceMV* / TileTemporalMotion* hold the per-tile reference and
+//     temporal motion-vector buffers used by inter prediction.
+//   - TileRestoration* / RestorationWiener*, RestorationSGRParams hold the
+//     loop-restoration plan, records, scratches, and apply results consumed
+//     by tile_restoration.go and the post-filter helpers in postfilter.go.
+//
+// Concrete entry points for the operations these types parameterize live in
+// the corresponding *.go files (postfilter.go, tile_restoration.go,
+// tile_coeff_tree.go, tile_coeff_context.go, tile_transform_context.go,
+// tile_geometry.go, decoder_prediction.go, decoder_coeff_reconstruct.go).
+
 import (
 	internalloopfilter "github.com/thesyncim/goav1/internal/av1/loopfilter"
 	internalrestoration "github.com/thesyncim/goav1/internal/av1/restoration"
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
+// LoopFilterPlane identifies the luma or chroma plane targeted by a
+// loop-filter operation.
 type LoopFilterPlane = internalloopfilter.Plane
+
+// LoopFilterEdge identifies the orientation (vertical or horizontal) of a
+// loop-filter edge.
 type LoopFilterEdge = internalloopfilter.Edge
 
 type TileBlockLevel = internaltile.BlockLevel
@@ -116,10 +153,31 @@ type TileRestorationUnitRecordBoundaryScratchSize = internaltile.RestorationUnit
 type TileRestorationUnitRecordBoundaryScratch = internaltile.RestorationUnitRecordBoundaryScratch
 type TileRestorationFrameSampleScratchSize = internaltile.RestorationFrameSampleScratchSize
 
+// RestorationWienerFilter is the 7-tap Wiener filter described by an
+// AV1 restoration unit.
 type RestorationWienerFilter = internalrestoration.WienerFilter
+
+// RestorationWienerInfo carries the Wiener filter info (taps and clipping)
+// for one restoration unit.
 type RestorationWienerInfo = internalrestoration.WienerInfo
+
+// RestorationSGRParams is one entry of the AV1 self-guided restoration
+// parameter table (radii r0/r1 and per-radius eps0/eps1).
 type RestorationSGRParams = internalrestoration.SGRParams
 
+// AV1 tile decode constants.
+//
+// The TilePartition*, TileBlockModeContexts, TileBlockSize*, TileBlockLevel*,
+// and TileTransform*/TileExtTXSet* values enumerate the per-block partition,
+// mode, block-size, level, and ext-tx set categories defined by sections 5-9
+// of the AV1 specification.
+//
+// TileReferenceFrame* identifies the seven AV1 inter reference slots, the
+// LoopFilterPlane* / LoopFilterEdge* values identify loop-filter targets,
+// and TileIntraMode*, TileFilterIntraMode*, TileChromaIntraMode*,
+// TileInterMode*, TileCompoundInterMode*, TileMotionMode*,
+// TileInterIntraMode*, TileCompoundType*, and TileDiffWtdMaskType* values
+// enumerate the per-block prediction modes available to AV1.
 const (
 	TilePartitionContexts = internaltile.PartitionContexts
 	TileMaxPartitionSlots = internaltile.MaxPartitionSlots
@@ -300,4 +358,6 @@ const (
 	TileExtTXSetAll16         TileExtTXSetType = internaltile.ExtTXSetAll16
 )
 
+// ErrTileInvalidDecodeState is returned by the tile-decode helpers when the
+// supplied state is nil or otherwise inconsistent with the requested operation.
 var ErrTileInvalidDecodeState = internaltile.ErrInvalidDecodeState
