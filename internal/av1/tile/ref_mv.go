@@ -82,7 +82,7 @@ func (c *BlockModeContext) IntrabcReferenceDVStack(req ReferenceMVStackRequest) 
 	if err != nil {
 		return ReferenceMVStack{}, err
 	}
-	searchMaxRowOffset, searchMaxColOffset, gridMaxRowOffset, gridMaxColOffset := referenceMVSearchOffsets(req, dims)
+	searchMaxRowOffset, searchMaxColOffset, _, _ := referenceMVSearchOffsets(req, dims)
 	processedRows := 0
 	processedCols := 0
 	var stack ReferenceMVStack
@@ -101,7 +101,11 @@ func (c *BlockModeContext) IntrabcReferenceDVStack(req ReferenceMVStackRequest) 
 	for i := 0; i < nearestCount; i++ {
 		stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
-	c.scanOuterIntrabcDVs(req, dims, gridMaxRowOffset, gridMaxColOffset, processedRows, processedCols, &stack)
+	// Pass the full tile-clamped offsets (not the in-SB grid-capped variants)
+	// so cross-superblock outer scans reach into the prior SB's interior via
+	// the SBTopInterMotionGrid / SBLeftInterMotionGrid snapshots, mirroring
+	// libaom's frame-wide mi grid.
+	c.scanOuterIntrabcDVs(req, dims, searchMaxRowOffset, searchMaxColOffset, processedRows, processedCols, &stack)
 	sortReferenceMVStack(&stack, 0, nearestCount)
 	sortReferenceMVStack(&stack, nearestCount, stack.Count)
 	return stack, nil
@@ -895,9 +899,17 @@ func (c *BlockModeContext) scanGridRowIntrabcDVs(req ReferenceMVStackRequest, di
 	for i := 0; i < end; {
 		x := req.X4 + colOffset + i
 		y := req.Y4 + rowOffset
-		candidate, size, ok := c.gridInterMotion(x, y)
+		candidate, size, ok := c.crossSBIntrabcGridInterMotion(req, x, y)
 		if !ok {
-			i++
+			// Match libaom's scan_row_mbmi which advances by AOMMAX(len, 2)
+			// when |rowOffset|>1 (use_step_16=false). Without the size info
+			// for non-intrabc cells the conservative fallback is +2 so we
+			// skip the whole 8x8 hosting the cell rather than oversampling.
+			if absInt(rowOffset) > 1 {
+				i += 2
+			} else {
+				i++
+			}
 			continue
 		}
 		sizeW4 := blockSizeWidth4(size)
@@ -977,9 +989,17 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 	for i := 0; i < end; {
 		x := req.X4 + colOffset
 		y := req.Y4 + rowOffset + i
-		candidate, size, ok := c.gridInterMotion(x, y)
+		candidate, size, ok := c.crossSBIntrabcGridInterMotion(req, x, y)
 		if !ok {
-			i++
+			// Match libaom's scan_col_mbmi which advances by AOMMAX(len, 2)
+			// when |colOffset|>1 (use_step_16=false). Without the size info
+			// for non-intrabc cells the conservative fallback is +2 so we
+			// skip the whole 8x8 hosting the cell rather than oversampling.
+			if absInt(colOffset) > 1 {
+				i += 2
+			} else {
+				i++
+			}
 			continue
 		}
 		sizeW4 := blockSizeWidth4(size)
@@ -1059,6 +1079,65 @@ func (c *BlockModeContext) gridInterMotion(x4 int, y4 int) (InterMotionResult, B
 		return InterMotionResult{}, 0, false
 	}
 	return c.GridInterMotion[y4][x4], c.GridBlockSize[y4][x4], true
+}
+
+// crossSBIntrabcGridInterMotion returns the InterMotionResult and block size
+// at (x4, y4) honoring cross-superblock fallback to the prior SB snapshots for
+// the intrabc outer mv-ref scan. When y4 < 0 the row lives in the SB above
+// (consult SBTopInterMotionGrid); when x4 < 0 the column lives in the SB to
+// the left (SBLeftInterMotionGrid). Both negative is the diagonal cell, only
+// recoverable via the top-row snapshot the prior SB column shares with the
+// row above. Returns (result, size, false) when no candidate is available.
+func (c *BlockModeContext) crossSBIntrabcGridInterMotion(req ReferenceMVStackRequest, x4, y4 int) (InterMotionResult, BlockSize, bool) {
+	if c == nil {
+		return InterMotionResult{}, 0, false
+	}
+	if y4 < 0 && x4 < 0 {
+		// Diagonal (mi_col-1, mi_row-1). Only recoverable through the top
+		// snapshot when HaveTop is set; otherwise unavailable.
+		if !req.HaveTop {
+			return InterMotionResult{}, 0, false
+		}
+		depth := -y4 - 1
+		col := x4
+		if depth < 0 || depth >= intrabcCrossSBHistory {
+			return InterMotionResult{}, 0, false
+		}
+		// The (-1,-1) cell is the top-right corner of the prior SB to the
+		// upper-left. The SBTopInterMotionGrid snapshot covers the prior SB
+		// above the current one; cells with negative x within that snapshot
+		// live in the diagonal SB. We have no separate snapshot for it, so
+		// only the single (-1,-1) diagonal slot is reachable when HaveLeft is
+		// set, via SBLeft depth-0 column. Return unavailable here so the
+		// caller falls back to other scans for true diagonal lookups.
+		_ = col
+		return InterMotionResult{}, 0, false
+	}
+	if y4 < 0 {
+		if !req.HaveTop {
+			return InterMotionResult{}, 0, false
+		}
+		depth := -y4 - 1
+		if depth < 0 || depth >= intrabcCrossSBHistory ||
+			x4 < 0 || x4 >= MaxBlockModeSlots ||
+			c.SBTopMotionValidGrid[depth][x4] == 0 {
+			return InterMotionResult{}, 0, false
+		}
+		return c.SBTopInterMotionGrid[depth][x4], c.SBTopBlockSizeGrid[depth][x4], true
+	}
+	if x4 < 0 {
+		if !req.HaveLeft {
+			return InterMotionResult{}, 0, false
+		}
+		depth := -x4 - 1
+		if depth < 0 || depth >= intrabcCrossSBHistory ||
+			y4 < 0 || y4 >= MaxBlockModeSlots ||
+			c.SBLeftMotionValidGrid[depth][y4] == 0 {
+			return InterMotionResult{}, 0, false
+		}
+		return c.SBLeftInterMotionGrid[depth][y4], c.SBLeftBlockSizeGrid[depth][y4], true
+	}
+	return c.gridInterMotion(x4, y4)
 }
 
 func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims BlockDimensions) (InterMotionResult, bool) {

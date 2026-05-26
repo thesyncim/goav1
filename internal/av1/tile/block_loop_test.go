@@ -185,13 +185,13 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	scratch.CoeffCtx.Left[1][9] = 11
 
 	carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
-	if err := blockLoopStoreRootContext(&scratch, &carrier, 1); err != nil {
+	if err := blockLoopStoreRootContext(&scratch, &carrier, 1, 16); err != nil {
 		t.Fatal(err)
 	}
 
 	scratch = BlockLoopScratch{}
 	scratch.CDEF.Read[0] = true
-	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, true, true); err != nil {
+	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, true, true, 16); err != nil {
 		t.Fatal(err)
 	}
 	if scratch.CDEF.Read[0] {
@@ -215,7 +215,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 		t.Fatalf("coeff context above=%d left=%d", scratch.CoeffCtx.Above[2][8], scratch.CoeffCtx.Left[1][9])
 	}
 
-	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, false, false); err != nil {
+	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, false, false, 16); err != nil {
 		t.Fatal(err)
 	}
 	if scratch.Partition.Above[2] != 0 || scratch.Partition.Left[3] != 0 ||

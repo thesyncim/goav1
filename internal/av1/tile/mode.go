@@ -12,6 +12,15 @@ const (
 	cdefUnitsPerSB      = 4
 	segmentIDCDFSymbols = parser.MaxSegments
 	maxCDEFBits         = 3
+
+	// intrabcCrossSBHistory is the depth (in 4x4 mi units) of cross-superblock
+	// motion history retained for libaom's outer mv-ref scan in IBC. The outer
+	// scan reads rows -3 and -5 (and column equivalents) into the previous SB's
+	// interior; libaom's frame-level mi grid covers those cells directly. Five
+	// rows are sufficient because MVREF_ROW_COLS=3 caps the outer scan at
+	// row/col offset -5 from the current block, while in-SB scans handle the
+	// remaining cells via the live grid.
+	intrabcCrossSBHistory = 5
 )
 
 // BlockModeCDFs contains the caller-owned CDFs used by the block syntax prefix:
@@ -68,6 +77,17 @@ type BlockModeContext struct {
 	SBTopMotionValid [MaxBlockModeSlots]uint8
 	SBTopBlockSize   [MaxBlockModeSlots]BlockSize
 
+	// SBTopInterMotionGrid extends SBTopInterMotion with additional rows of the
+	// prior superblock above the current one. Depth 0 is the row immediately
+	// above the SB (mirrors SBTopInterMotion) and deeper indices correspond to
+	// progressively higher mi rows inside the prior SB. This is the carrier
+	// for libaom's outer mv-ref row scan (offsets -3 and -5) which would
+	// otherwise read into the prior SB's interior. Cells outside the prior
+	// SB's actual content keep MotionValid==0.
+	SBTopInterMotionGrid [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	SBTopMotionValidGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	SBTopBlockSizeGrid   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+
 	// SBLeftInterMotion is the SB-row-equivalent snapshot of the column
 	// immediately to the left of the current superblock. LeftInterMotion is
 	// overwritten as in-SB blocks decode, but cross-SB scans need the prior
@@ -75,6 +95,15 @@ type BlockModeContext struct {
 	SBLeftInterMotion [MaxBlockModeSlots]InterMotionResult
 	SBLeftMotionValid [MaxBlockModeSlots]uint8
 	SBLeftBlockSize   [MaxBlockModeSlots]BlockSize
+
+	// SBLeftInterMotionGrid extends SBLeftInterMotion with additional columns
+	// of the prior superblock to the left of the current one. Depth 0 is the
+	// column immediately to the left (mirrors SBLeftInterMotion) and deeper
+	// indices correspond to progressively earlier mi columns inside the prior
+	// SB. Carrier for libaom's outer mv-ref column scan (offsets -3 and -5).
+	SBLeftInterMotionGrid [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	SBLeftMotionValidGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	SBLeftBlockSizeGrid   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
 	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
 	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
 	AboveInterpValid [MaxBlockModeSlots]uint8

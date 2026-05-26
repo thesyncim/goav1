@@ -78,6 +78,15 @@ type blockModeAboveContext struct {
 	BlockSize   [MaxBlockModeSlots]BlockSize
 	PaletteY    [MaxBlockModeSlots]paletteContext
 	PaletteUV   [MaxBlockModeSlots]paletteContext
+
+	// InterMotionHistory captures the bottom intrabcCrossSBHistory rows of the
+	// prior SB's grid in row-major order: depth 0 is the bottom row of the
+	// prior SB (= row immediately above the current SB), depth d is d+1 rows
+	// above. Mirrors what libaom's frame-wide mi grid would expose for the IBC
+	// outer mv-ref row scan reaching back into the prior SB.
+	InterMotionHistory [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	MotionValidHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	BlockSizeHistory   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
 }
 
 type blockModeLeftContext struct {
@@ -101,6 +110,15 @@ type blockModeLeftContext struct {
 	BlockSize   [MaxBlockModeSlots]BlockSize
 	PaletteY    [MaxBlockModeSlots]paletteContext
 	PaletteUV   [MaxBlockModeSlots]paletteContext
+
+	// InterMotionHistory captures the rightmost intrabcCrossSBHistory columns
+	// of the prior SB-to-left's grid: depth 0 is the rightmost column (=
+	// column immediately to the left of the current SB), depth d is d+1
+	// columns to the left. Mirrors libaom's frame mi grid for the IBC outer
+	// mv-ref column scan reaching back into the prior SB.
+	InterMotionHistory [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	MotionValidHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	BlockSizeHistory   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -287,7 +305,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 	for miRow := req.Walk.MIRowStart; miRow < req.Walk.MIRowEnd; miRow += rootSize {
 		for miCol := req.Walk.MIColStart; miCol < req.Walk.MIColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - req.Walk.MIColStart) / rootSize)
-			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > req.Walk.neighborMIRowStart(), miCol > req.Walk.neighborMIColStart()); err != nil {
+			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > req.Walk.neighborMIRowStart(), miCol > req.Walk.neighborMIColStart(), req.SBSizeMIB); err != nil {
 				return stats, err
 			}
 			rootReq := BlockWalkRequest{
@@ -386,7 +404,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			if err != nil {
 				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
-			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex); err != nil {
+			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB); err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
 		}
@@ -394,7 +412,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 	return stats, nil
 }
 
-func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool) error {
+func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
 	scratch.Partition = PartitionContext{}
 	scratch.Mode = BlockModeContext{}
 	scratch.CDEF.Reset()
@@ -426,6 +444,9 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBTopInterMotion = above.mode.InterMotion
 		scratch.Mode.SBTopMotionValid = above.mode.MotionValid
 		scratch.Mode.SBTopBlockSize = above.mode.BlockSize
+		scratch.Mode.SBTopInterMotionGrid = above.mode.InterMotionHistory
+		scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
+		scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
 		scratch.Mode.AboveInterp = above.mode.Interp
 		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
@@ -434,6 +455,12 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		for plane := 0; plane < 3; plane++ {
 			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
 		}
+		// Fill cells past the current SB column (slots SBSizeMIB..) with the
+		// neighboring SB-above-and-right's left-edge data so cross-SB lookups
+		// such as topright (which reads frame mi col >= mi_col + W4) and outer
+		// row scans extending past column SBSizeMIB-1 see libaom's frame-wide
+		// mi grid content rather than zeroed slots from a smaller SB layout.
+		extendAboveContextFromRightCarrier(&scratch.Mode, carrier, rootColIndex+1, sbSizeMIB)
 	}
 	if haveLeft {
 		left := carrier.Left
@@ -456,6 +483,9 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
 		scratch.Mode.SBLeftMotionValid = left.mode.MotionValid
 		scratch.Mode.SBLeftBlockSize = left.mode.BlockSize
+		scratch.Mode.SBLeftInterMotionGrid = left.mode.InterMotionHistory
+		scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
+		scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
 		scratch.Mode.LeftInterp = left.mode.Interp
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
@@ -468,7 +498,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 	return nil
 }
 
-func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int) error {
+func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
 	if carrier == nil {
 		return nil
 	}
@@ -497,6 +527,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
 	above.mode.PaletteY = scratch.Mode.AbovePaletteY
 	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
+	captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
 	for plane := 0; plane < 3; plane++ {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
 	}
@@ -523,10 +554,143 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
 	left.mode.PaletteY = scratch.Mode.LeftPaletteY
 	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
+	captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
 	for plane := 0; plane < 3; plane++ {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
 	return nil
+}
+
+// extendAboveContextFromRightCarrier fills the per-SB AboveInterMotion and
+// SBTopInterMotion(Grid) slots past the current SB column with the left edge
+// of the SB above-and-to-the-right. libaom's frame-wide mi grid lets top-right
+// (mi_col+width, mi_row-1) and far-right outer row scans read straight into
+// the neighboring SB's interior; goav1's per-SB carrier needs an explicit
+// merge of carrier.Above[col_idx+1] to mirror that.
+func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLoopContextCarrier, rightColIndex int, sbSizeMIB uint8) {
+	if mode == nil || carrier == nil || sbSizeMIB == 0 {
+		return
+	}
+	if rightColIndex <= 0 || rightColIndex >= len(carrier.Above) {
+		return
+	}
+	right := carrier.Above[rightColIndex]
+	start := int(sbSizeMIB)
+	for off := 0; off < int(sbSizeMIB); off++ {
+		dst := start + off
+		if dst >= MaxBlockModeSlots {
+			break
+		}
+		if off >= MaxBlockModeSlots {
+			break
+		}
+		mode.AboveInterMotion[dst] = right.mode.InterMotion[off]
+		mode.AboveMotionValid[dst] = right.mode.MotionValid[off]
+		mode.AboveBlockSize[dst] = right.mode.BlockSize[off]
+		mode.AboveIntra[dst] = right.mode.Intra[off]
+		mode.AboveMode[dst] = right.mode.Mode[off]
+		mode.AboveChromaIntra[dst] = right.mode.ChromaIntra[off]
+		mode.AboveChromaMode[dst] = right.mode.ChromaMode[off]
+		mode.AboveRef[0][dst] = right.mode.Ref[0][off]
+		mode.AboveRef[1][dst] = right.mode.Ref[1][off]
+		mode.AboveCompound[dst] = right.mode.Compound[off]
+		mode.AboveCompGroup[dst] = right.mode.CompGroup[off]
+		mode.AboveCompIndex[dst] = right.mode.CompIndex[off]
+		mode.SBTopInterMotion[dst] = right.mode.InterMotion[off]
+		mode.SBTopMotionValid[dst] = right.mode.MotionValid[off]
+		mode.SBTopBlockSize[dst] = right.mode.BlockSize[off]
+	}
+	// Depth-0 of the history grid mirrors SBTopInterMotion (= the bottom row
+	// of the prior SB above us). The deeper history rows come from
+	// right.mode.InterMotionHistory[d-1] et al., which capture the bottom
+	// rows-of-the-right-SB and extend the cross-SB row scan beyond column
+	// SBSizeMIB-1.
+	for off := 0; off < int(sbSizeMIB); off++ {
+		dst := start + off
+		if dst >= MaxBlockModeSlots {
+			break
+		}
+		if off >= MaxBlockModeSlots {
+			break
+		}
+		mode.SBTopInterMotionGrid[0][dst] = right.mode.InterMotion[off]
+		mode.SBTopMotionValidGrid[0][dst] = right.mode.MotionValid[off]
+		mode.SBTopBlockSizeGrid[0][dst] = right.mode.BlockSize[off]
+		for d := 1; d < intrabcCrossSBHistory; d++ {
+			mode.SBTopInterMotionGrid[d][dst] = right.mode.InterMotionHistory[d-1][off]
+			mode.SBTopMotionValidGrid[d][dst] = right.mode.MotionValidHistory[d-1][off]
+			mode.SBTopBlockSizeGrid[d][dst] = right.mode.BlockSizeHistory[d-1][off]
+		}
+	}
+}
+
+// captureAboveCrossSBHistory copies the bottom intrabcCrossSBHistory rows of
+// the just-finished superblock's grid into the carrier's above slot so the
+// next superblock (the one immediately below) can serve IBC outer mv-ref row
+// scans (rowOffset -3, -5) that read into the prior SB's interior. Depth 0 is
+// the bottom row of the prior SB (= row immediately above the next SB).
+func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeContext, sbSizeMIB uint8) {
+	if dst == nil || mode == nil {
+		return
+	}
+	dst.InterMotionHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult{}
+	dst.MotionValidHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
+	dst.BlockSizeHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize{}
+	if sbSizeMIB == 0 {
+		return
+	}
+	bottom := int(sbSizeMIB) - 1
+	if bottom < 0 {
+		return
+	}
+	if bottom >= MaxBlockModeSlots {
+		bottom = MaxBlockModeSlots - 1
+	}
+	for d := 0; d < intrabcCrossSBHistory; d++ {
+		row := bottom - d
+		if row < 0 {
+			break
+		}
+		dst.InterMotionHistory[d] = mode.GridInterMotion[row]
+		dst.MotionValidHistory[d] = mode.GridMotionValid[row]
+		dst.BlockSizeHistory[d] = mode.GridBlockSize[row]
+	}
+}
+
+// captureLeftCrossSBHistory copies the rightmost intrabcCrossSBHistory columns
+// of the just-finished superblock's grid into the carrier's left slot so the
+// next superblock (the one immediately to the right) can serve IBC outer
+// mv-ref column scans (colOffset -3, -5) that read into the prior SB's
+// interior. Depth 0 is the rightmost column of the prior SB (= column
+// immediately to the left of the next SB).
+func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext, sbSizeMIB uint8) {
+	if dst == nil || mode == nil {
+		return
+	}
+	dst.InterMotionHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult{}
+	dst.MotionValidHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
+	dst.BlockSizeHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize{}
+	if sbSizeMIB == 0 {
+		return
+	}
+	right := int(sbSizeMIB) - 1
+	if right < 0 {
+		return
+	}
+	if right >= MaxBlockModeSlots {
+		right = MaxBlockModeSlots - 1
+	}
+	for d := 0; d < intrabcCrossSBHistory; d++ {
+		col := right - d
+		if col < 0 {
+			break
+		}
+		for y := 0; y < MaxBlockModeSlots; y++ {
+			dst.InterMotionHistory[d][y] = mode.GridInterMotion[y][col]
+			dst.MotionValidHistory[d][y] = mode.GridMotionValid[y][col]
+			dst.BlockSizeHistory[d][y] = mode.GridBlockSize[y][col]
+		}
+	}
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
