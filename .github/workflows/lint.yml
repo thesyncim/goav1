@@ -1,0 +1,50 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: gofmt (report)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::warning::gofmt: the following files would be reformatted:"
+            echo "$unformatted"
+            gofmt -d $unformatted || true
+          else
+            echo "gofmt: clean"
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go mod tidy check
+        run: |
+          cp go.mod go.mod.orig
+          if [ -f go.sum ]; then cp go.sum go.sum.orig; fi
+          go mod tidy
+          if ! diff -u go.mod.orig go.mod; then
+            echo "go.mod is not tidy; run 'go mod tidy'" >&2
+            exit 1
+          fi
+          if [ -f go.sum.orig ] && ! diff -u go.sum.orig go.sum; then
+            echo "go.sum is not tidy; run 'go mod tidy'" >&2
+            exit 1
+          fi

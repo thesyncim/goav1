@@ -1,4 +1,4 @@
-.PHONY: test bench bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc
+.PHONY: test bench bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -166,6 +166,64 @@ test-transform-conformance:
 
 alloc:
 	./scripts/check_allocs.sh
+
+vet:
+	go vet ./...
+
+fmt-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt: the following files would be reformatted:"; \
+		echo "$$unformatted"; \
+		gofmt -d $$unformatted || true; \
+	else \
+		echo "gofmt: clean"; \
+	fi
+
+fmt-check-strict:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt: the following files need formatting:" >&2; \
+		echo "$$unformatted" >&2; \
+		gofmt -d $$unformatted >&2 || true; \
+		exit 1; \
+	fi
+
+tidy-check:
+	@cp go.mod go.mod.orig; \
+	[ -f go.sum ] && cp go.sum go.sum.orig || true; \
+	go mod tidy; \
+	rc=0; \
+	diff -u go.mod.orig go.mod || rc=1; \
+	if [ -f go.sum.orig ]; then diff -u go.sum.orig go.sum || rc=1; fi; \
+	mv go.mod.orig go.mod; \
+	[ -f go.sum.orig ] && mv go.sum.orig go.sum || true; \
+	if [ $$rc -ne 0 ]; then echo "go.mod/go.sum is not tidy; run 'go mod tidy'" >&2; fi; \
+	exit $$rc
+
+dryrun-fast:
+	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
+
+ci-local: fmt-check vet test alloc
+
+help:
+	@echo "Available targets:"
+	@echo "  test                       go test ./..."
+	@echo "  bench                      go test -bench=. -benchmem ./..."
+	@echo "  bench-public               run public benchmarks"
+	@echo "  alloc                      run allocation regression checks"
+	@echo "  vet                        go vet ./..."
+	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
+	@echo "  fmt-check-strict           fail if gofmt would reformat anything"
+	@echo "  tidy-check                 fail if go.mod/go.sum is not tidy"
+	@echo "  fuzz-smoke                 short fuzz sweep across packages"
+	@echo "  testvectors                committed test-vector suite (with oracle)"
+	@echo "  testvectors-fast           fast slice of the test-vector suite"
+	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
+	@echo "  dryrun-fast                fast libaom framework dry-run (verbose)"
+	@echo "  test-motion-conformance    libaom convolve conformance"
+	@echo "  test-transform-conformance libaom transform conformance"
+	@echo "  ci-local                   run fmt-check + vet + test + alloc"
 
 sync-upstreams:
 	./scripts/sync_upstreams.sh
