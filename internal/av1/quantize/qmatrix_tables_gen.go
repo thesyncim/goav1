@@ -1,4 +1,11 @@
 // Code generated from libaom v3.13.1 av1/common/quant_common.c; DO NOT EDIT.
+//
+// Ported from libaom: av1/common/quant_common.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package quantize
 
 const iqMatrixTotalSize = 3344

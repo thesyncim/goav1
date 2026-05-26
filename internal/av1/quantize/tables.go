@@ -1,7 +1,13 @@
 // Code generated from third_party/upstream/dav1d/src/dequant_tables.c; DO NOT EDIT.
 //
+// Ported from dav1d: src/dequant_tables.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
 // Source table copyright belongs to the dav1d authors and is available under
-// the BSD 2-Clause license in third_party/upstream/dav1d/COPYING.
+// the BSD 2-Clause license in third_party/upstream/dav1d/COPYING. See LICENSE
+// for the goav1 BSD-2-Clause grant and NOTICE for the dav1d attribution.
+
 package quantize
 
 const QIndexRange = 256

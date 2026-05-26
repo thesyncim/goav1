@@ -1,3 +1,11 @@
+// Ported from libaom:
+//   av1/common/quant_common.c
+//   av1/decoder/decodetxb.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package quantize
 
 import "github.com/thesyncim/goav1/internal/av1/parser"
