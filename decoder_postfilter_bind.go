@@ -31,33 +31,52 @@ func DecoderFrameWorkCDEFIndexMapShape(sequence SequenceHeader, size FrameSize) 
 	return batch.CDEFIndexMapShape()
 }
 
+// DecoderFrameWorkLoopFilterMapShape reports the column count, row count,
+// and total entry count required to back the loop-filter map for
+// (sequence, size).
 func DecoderFrameWorkLoopFilterMapShape(sequence SequenceHeader, size FrameSize) (cols int, rows int, length int, err error) {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	return batch.LoopFilterMapShape()
 }
 
+// BindDecoderFrameWorkCDEFIndexMap wires caller-owned index and read
+// slices into a DecoderFrameWorkCDEFIndexMap sized for (sequence, size,
+// cdef). The caller retains ownership of the backing storage.
 func BindDecoderFrameWorkCDEFIndexMap(sequence SequenceHeader, size FrameSize, cdef CDEFParams, index []uint8, read []bool) (DecoderFrameWorkCDEFIndexMap, error) {
 	batch := decoderFrameWorkCDEFIndexBatch(sequence, size, cdef)
 	return batch.BindCDEFIndexMap(index, read)
 }
 
+// BindDecoderFrameWorkLoopFilterMap wires a caller-owned records slice
+// into a DecoderFrameWorkLoopFilterMap sized for (sequence, size).
 func BindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, records []DecoderFrameWorkLoopFilterBlockRecord) (DecoderFrameWorkLoopFilterMap, error) {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	return batch.BindLoopFilterMap(records)
 }
 
+// ResetDecoderFrameWorkCDEFIndexMap clears indexMap so it can be reused
+// for the next frame's CDEF post-filter pass.
 func ResetDecoderFrameWorkCDEFIndexMap(indexMap DecoderFrameWorkCDEFIndexMap) error {
 	return indexMap.Reset()
 }
 
+// MarkDecoderFrameWorkCDEFIndexMapBlock records the CDEF index for the
+// block visited at visit, using the active frame's cdef parameters. It
+// is invoked from the block-loop visitor during reconstruction.
 func MarkDecoderFrameWorkCDEFIndexMapBlock(indexMap DecoderFrameWorkCDEFIndexMap, cdef CDEFParams, visit TileBlockLoopVisit) error {
 	return indexMap.MarkBlock(cdef, visit)
 }
 
+// ResetDecoderFrameWorkLoopFilterMap clears filterMap so it can be
+// reused for the next frame's loop-filter post-filter pass.
 func ResetDecoderFrameWorkLoopFilterMap(filterMap DecoderFrameWorkLoopFilterMap) error {
 	return filterMap.Reset()
 }
 
+// MarkDecoderFrameWorkLoopFilterMapBlock records the per-block
+// loop-filter metadata for the block visited at visit, drawing the
+// delta-loopfilter state from state. It is invoked from the block-loop
+// visitor during reconstruction.
 func MarkDecoderFrameWorkLoopFilterMapBlock(filterMap DecoderFrameWorkLoopFilterMap, visit TileBlockLoopVisit, state *TileDecodeState) error {
 	return filterMap.MarkBlock(visit, state)
 }
@@ -425,6 +444,10 @@ func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilter
 	}
 }
 
+// DecoderFrameWorkSideDataScratchLen reports the caller-owned scratch
+// lengths required to back the full frame-work side data (CDEF index
+// map, loop-filter map, restoration records, restoration boundaries)
+// for (sequence, size, cdef, restoration).
 func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams) (DecoderFrameWorkSideDataScratchSize, error) {
 	_, _, cdefLength, err := DecoderFrameWorkCDEFIndexMapShape(sequence, size)
 	if err != nil {
@@ -449,6 +472,11 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 	}, nil
 }
 
+// BindDecoderFrameWorkSideData binds caller-owned scratch arenas into a
+// reusable DecoderFrameWorkSideData value containing the CDEF index map,
+// loop-filter map, and loop-restoration buffers for one frame.
+//
+// See also: DecoderFrameWorkSideDataScratchLen, SetDecoderFrameWorkSideData.
 func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
 	scratchSize, err := DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 	if err != nil {
@@ -500,6 +528,9 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 	}, nil
 }
 
+// DecoderFrameWorkPostFilterSideData projects a DecoderFrameWorkSideData
+// value into the lighter DecoderFrameWorkPostFilterRequestSideData view
+// consumed by the post-filter binding helpers.
 func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFrameWorkPostFilterRequestSideData {
 	return DecoderFrameWorkPostFilterRequestSideData{
 		LoopFilterMap:         side.LoopFilterMap,
@@ -705,6 +736,9 @@ func BindDecoderFrameWorkPostFilterRequest(size DecoderFrameWorkPostFilterScratc
 	}, nil
 }
 
+// BindDecoderFrameWorkLoopFilterPostFilterRequest binds the caller-owned
+// loop-filter map and edges slice into a
+// DecoderFrameWorkLoopFilterPostFilterRequest sized for size.
 func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFilterPostFilterScratchSize, filterMap DecoderFrameWorkLoopFilterMap, edges []DecoderFrameWorkLoopFilterPostFilterEdge) (DecoderFrameWorkLoopFilterPostFilterRequest, error) {
 	if decoderFrameWorkPostFilterScratchTooShort(edges, size.Edges) {
 		return DecoderFrameWorkLoopFilterPostFilterRequest{}, ErrFrameShortBuffer
@@ -715,16 +749,29 @@ func BindDecoderFrameWorkLoopFilterPostFilterRequest(size DecoderFrameWorkLoopFi
 	}, nil
 }
 
+// DecoderFrameWorkRestorationFramePlan returns the loop-restoration
+// frame plan for (sequence, size, restoration). The plan reports the
+// per-plane unit grid, stripe geometry, and boundary buffer sizing
+// needed to bind a DecoderFrameWorkRestorationFrameBuffers value.
 func DecoderFrameWorkRestorationFramePlan(sequence SequenceHeader, size FrameSize, restoration RestorationParams) (TileRestorationFramePlan, error) {
 	batch := decoderFrameWorkRestorationBatch(sequence, size, restoration)
 	return batch.RestorationFramePlan()
 }
 
+// BindDecoderFrameWorkRestorationFrameBuffers binds caller-owned
+// records, above-boundary, and below-boundary slices into the per-frame
+// loop-restoration buffers used by the residual and post-filter
+// pipelines.
+//
+// See also: DecoderFrameWorkRestorationFramePlan.
 func BindDecoderFrameWorkRestorationFrameBuffers(sequence SequenceHeader, size FrameSize, restoration RestorationParams, records []TileRestorationUnitRecord, above []uint16, below []uint16) (DecoderFrameWorkRestorationFrameBuffers, error) {
 	batch := decoderFrameWorkRestorationBatch(sequence, size, restoration)
 	return batch.BindRestorationFrameBuffers(records, above, below)
 }
 
+// BindDecoderFrameWorkCDEFPostFilterRequest binds the caller-owned CDEF
+// scratch (per-plane samples, dst, direction grid, variance grid,
+// input/unit-dst buffers) and indexMap into a CDEF apply request.
 func BindDecoderFrameWorkCDEFPostFilterRequest(size DecoderFrameWorkCDEFPostFilterScratchSize, indexMap DecoderFrameWorkCDEFIndexMap, sampleScratch [3][]uint16, dstScratch [3][]uint16, directionGrid []CDEFDirectionGrid, varianceGrid []CDEFVarianceGrid, inputScratch []uint16, unitDstScratch []uint16) (DecoderFrameWorkCDEFPostFilterRequest, error) {
 	if decoderFrameWorkPostFilterScratchTooShort(directionGrid, size.DirectionGrid) ||
 		decoderFrameWorkPostFilterScratchTooShort(varianceGrid, size.VarianceGrid) ||
@@ -750,6 +797,9 @@ func BindDecoderFrameWorkCDEFPostFilterRequest(size DecoderFrameWorkCDEFPostFilt
 	return req, nil
 }
 
+// BindDecoderFrameWorkSuperResPostFilterRequest binds the caller-owned
+// super-res scratch (output frame backing plus per-plane coded and
+// output scratch) into a super-res apply request.
 func BindDecoderFrameWorkSuperResPostFilterRequest(size DecoderFrameWorkSuperResPostFilterScratchSize, outputFrame []byte, codedScratch [3][]uint16, outputScratch [3][]uint16) (DecoderFrameWorkSuperResPostFilterRequest, error) {
 	if decoderFrameWorkPostFilterScratchTooShort(outputFrame, size.OutputFrame) {
 		return DecoderFrameWorkSuperResPostFilterRequest{}, ErrFrameShortBuffer
@@ -768,6 +818,11 @@ func BindDecoderFrameWorkSuperResPostFilterRequest(size DecoderFrameWorkSuperRes
 	return req, nil
 }
 
+// BindDecoderFrameWorkRestorationPostFilterRequest binds caller-owned
+// loop-restoration buffers (records, stripe boundaries, data/dst sample
+// scratch, Wiener and SGR-proj per-unit scratch, above/below boundary
+// scratch) into a loop-restoration apply request. The optimized flag
+// selects the SIMD-friendly apply path when supported.
 func BindDecoderFrameWorkRestorationPostFilterRequest(size DecoderFrameWorkRestorationPostFilterScratchSize, records [3][]TileRestorationUnitRecord, boundaries [3]TileRestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, wienerScratch []uint16, sgrProjScratch []int32, boundaryAboveScratch []uint16, boundaryBelowScratch []uint16, optimized bool) (DecoderFrameWorkRestorationPostFilterRequest, error) {
 	if decoderFrameWorkPostFilterScratchTooShort(dataScratch, size.Samples.DataLen) ||
 		decoderFrameWorkPostFilterScratchTooShort(dstScratch, size.Samples.DstLen) ||
@@ -796,6 +851,9 @@ func BindDecoderFrameWorkRestorationPostFilterRequest(size DecoderFrameWorkResto
 	}, nil
 }
 
+// BindDecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned
+// film-grain scratch (luma/chroma grain and luma/chroma sample arenas)
+// into a film-grain apply request.
 func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGrainPostFilterScratchSize, lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (DecoderFrameWorkFilmGrainPostFilterRequest, error) {
 	if decoderFrameWorkPostFilterScratchTooShort(lumaGrain, size.LumaGrain) ||
 		decoderFrameWorkPostFilterScratchTooShort(lumaSamples, size.LumaSamples) {

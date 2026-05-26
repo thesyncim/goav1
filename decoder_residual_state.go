@@ -58,50 +58,86 @@ func DecoderFrameWorkResidualMaxScratchLen(batch DecoderFrameWorkBatch, currentQ
 	return ReconstructBlockMaxScratchLen(lossless)
 }
 
+// DecoderFrameWorkBlockQuantizer resolves the per-block Quantizer for the
+// given (currentQIndex, segmentID, plane) tuple. The second return value
+// reports whether the block is lossless.
 func DecoderFrameWorkBlockQuantizer(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane) (Quantizer, bool, error) {
 	return batch.BlockQuantizer(currentQIndex, segmentID, plane)
 }
 
+// DecoderFrameWorkBlockQIndex resolves the per-block q-index for
+// (currentQIndex, segmentID). The second return value reports whether
+// the block is lossless.
 func DecoderFrameWorkBlockQIndex(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8) (uint8, bool, error) {
 	return batch.BlockQIndex(currentQIndex, segmentID)
 }
 
+// DecoderFrameWorkBlockCoeffPlanePosition reports the plane and (x, y)
+// origin of the coefficient block within the output sample plane.
 func DecoderFrameWorkBlockCoeffPlanePosition(batch DecoderFrameWorkBatch, index int, visit TileBlockVisit, block TileBlockCoeffBlock) (DecoderFrameWorkPlane, int, int, error) {
 	return batch.BlockCoeffPlanePosition(index, visit, block)
 }
 
+// ReconstructDecoderFrameWorkBlockCoeff reconstructs one decoded
+// coefficient block into the output sample plane described by req,
+// using the prediction scratch the caller already populated.
 func ReconstructDecoderFrameWorkBlockCoeff(batch DecoderFrameWorkBatch, index int, req DecoderFrameWorkBlockCoeffReconstruction) error {
 	return batch.ReconstructBlockCoeff(index, req)
 }
 
+// InitDecoderFrameWorkTileResidualCDFStorageDefault initializes storage
+// with the AV1 default CDF tables for baseQIndex. Use it once before
+// decoding the first frame of a coded video sequence.
 func InitDecoderFrameWorkTileResidualCDFStorageDefault(storage *DecoderFrameWorkTileResidualCDFStorage, baseQIndex uint8) error {
 	return storage.InitDefault(baseQIndex)
 }
 
+// DecoderFrameWorkTileResidualCDFsFromStorage returns the CDF view
+// bound from storage, ready to thread into a residual decode call.
 func DecoderFrameWorkTileResidualCDFsFromStorage(storage *DecoderFrameWorkTileResidualCDFStorage) DecoderFrameWorkTileResidualCDFs {
 	return storage.CDFs()
 }
 
+// InitDecoderFrameWorkTileResidualCDFStorage initializes storage from
+// the active frame's primary reference (or default CDFs when the frame
+// is keyframe / has no primary reference) using the batch context.
 func InitDecoderFrameWorkTileResidualCDFStorage(batch DecoderFrameWorkBatch, storage *DecoderFrameWorkTileResidualCDFStorage) error {
 	return batch.InitTileResidualCDFStorage(storage)
 }
 
+// InitDecoderFrameWorkJobDecodeState populates state from the per-job
+// metadata in batch (tile payload span, entropy reader setup,
+// segmentation/loop-filter cache, CDF retention flag).
 func InitDecoderFrameWorkJobDecodeState(batch DecoderFrameWorkBatch, index int, state *TileDecodeState) error {
 	return batch.JobDecodeState(index, state)
 }
 
+// RetainDecoderFrameWorkTileResidualCDFStorage copies the adapted CDF
+// state from state into storage when index identifies the
+// context-update tile for the frame. Other jobs leave storage
+// unchanged.
 func RetainDecoderFrameWorkTileResidualCDFStorage(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage) error {
 	return batch.RetainTileResidualCDFStorage(index, state, storage)
 }
 
+// InitDecoderFrameWorkTileRestorationRequestReferences populates the
+// reference-frame pointers inside req so loop-restoration helpers can
+// dispatch through them without re-resolving the references.
 func InitDecoderFrameWorkTileRestorationRequestReferences(req *DecoderFrameWorkTileRestorationRequest) error {
 	return req.InitReferences()
 }
 
+// DecoderFrameWorkJobBlockLoopContextRootColumns reports the number of
+// root-column above-context entries one job's block-loop carrier needs
+// to track for its tile.
 func DecoderFrameWorkJobBlockLoopContextRootColumns(batch DecoderFrameWorkBatch, index int) (int, error) {
 	return batch.JobBlockLoopContextRootColumns(index)
 }
 
+// BindTileBlockLoopContextCarrier wraps a caller-owned above-context
+// slice (length >= rootColumns) into a TileBlockLoopContextCarrier
+// ready for use with TileBlockLoopRequest. The first rootColumns
+// entries are zeroed before return.
 func BindTileBlockLoopContextCarrier(rootColumns int, above []TileBlockLoopRootAboveContext) (TileBlockLoopContextCarrier, error) {
 	if rootColumns < 0 {
 		return TileBlockLoopContextCarrier{}, ErrTileInvalidDecodeState
@@ -115,6 +151,10 @@ func BindTileBlockLoopContextCarrier(rootColumns int, above []TileBlockLoopRootA
 	}, nil
 }
 
+// DecoderFrameWorkJobBlockLoopRequest builds a TileBlockLoopRequest
+// for one job in batch, wiring the caller-owned segmentation maps,
+// segment-map stride, and block-loop context carrier into the
+// returned request.
 func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride int, carrier *TileBlockLoopContextCarrier) (TileBlockLoopRequest, error) {
 	req, err := batch.JobBlockLoopRequest(index, currentSegmentMap, previousSegmentMap, segmentMapStride)
 	if err != nil {
@@ -124,22 +164,40 @@ func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int,
 	return req, nil
 }
 
+// ReadDecoderFrameWorkIntraBlockTransforms reads the per-block
+// transform metadata for an intra-coded block using state's entropy
+// reader.
 func ReadDecoderFrameWorkIntraBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
 	return batch.ReadIntraBlockTransforms(state, visit)
 }
 
+// ReadDecoderFrameWorkInterBlockTransforms reads the per-block
+// transform metadata for an inter-coded block using state's entropy
+// reader.
 func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
 	return batch.ReadInterBlockTransforms(state, visit)
 }
 
+// ReadDecoderFrameWorkBlockTransforms reads the per-block transform
+// metadata for the block visited at visit, dispatching to intra or
+// inter as appropriate.
 func ReadDecoderFrameWorkBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
 	return batch.ReadBlockTransforms(state, visit)
 }
 
+// DecodeAndReconstructDecoderFrameWorkJobResiduals decodes and
+// reconstructs every residual in one tile job. It uses cdfs as the
+// per-job CDF view and scratch for residual int32/int16 scratch.
+//
+// See also: DecodeAndRetainDecoderFrameWorkJobResiduals.
 func DecodeAndReconstructDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, cdfs DecoderFrameWorkTileResidualCDFs, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	return batch.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, req)
 }
 
+// DecodeAndRetainDecoderFrameWorkJobResiduals is
+// DecodeAndReconstructDecoderFrameWorkJobResiduals with automatic
+// per-job decode-state setup and CDF retention into storage when this
+// job's tile is the context-update tile.
 func DecodeAndRetainDecoderFrameWorkJobResiduals(batch DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	if storage == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
@@ -264,6 +322,10 @@ type DecoderFrameWorkBatchResidualRunner struct {
 	sideDataRestorationActive bool
 }
 
+// DecoderFrameWorkResidualMaxFrameScratchLen reports the worst-case
+// per-block residual scratch lengths needed by any plane/segment in
+// the current frame. Callers size persistent per-worker scratch from
+// the returned values.
 func DecoderFrameWorkResidualMaxFrameScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (int32Len int, int16Len int, err error) {
 	planes := [3]DecoderFrameWorkPlane{DecoderFrameWorkPlaneY}
 	planeCount := 1
@@ -293,6 +355,11 @@ func DecoderFrameWorkResidualMaxFrameScratchLen(batch DecoderFrameWorkBatch, cur
 	return int32Len, int16Len, nil
 }
 
+// DecoderFrameWorkBatchResidualScratchLen reports the caller-owned
+// scratch lengths required to decode every job in one worker batch
+// (per-batch int32, residual, and loop-context-above lengths).
+//
+// See also: BindDecoderFrameWorkBatchResidualRequestScratch.
 func DecoderFrameWorkBatchResidualScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8) (DecoderFrameWorkBatchResidualScratchSize, error) {
 	int32Len, residualLen, err := DecoderFrameWorkResidualMaxFrameScratchLen(batch, currentQIndex)
 	if err != nil {
@@ -309,6 +376,11 @@ func DecoderFrameWorkBatchResidualScratchLen(batch DecoderFrameWorkBatch, curren
 	}, nil
 }
 
+// DecoderFrameWorkBatchResidualRunnerScratchLen reports the
+// caller-owned per-worker state and flat scratch lengths required by
+// DecoderFrameWorkBatchResidualRunner across workers workers.
+//
+// See also: BindDecoderFrameWorkBatchResidualRunner.
 func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, workers int) (DecoderFrameWorkBatchResidualRunnerScratchSize, error) {
 	if workers <= 0 {
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrThreadingInvalidWorkerCount
@@ -339,6 +411,10 @@ func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, 
 	}, nil
 }
 
+// BindDecoderFrameWorkBatchResidualRequestScratch slices caller-owned
+// scratch into a DecoderFrameWorkBatchResidualRequest sized for size.
+// Callers fill the remaining request fields (segmentation maps,
+// stride, tile loop overrides) before invoking the residual decoder.
 func BindDecoderFrameWorkBatchResidualRequestScratch(size DecoderFrameWorkBatchResidualScratchSize, scratch DecoderFrameWorkBatchResidualScratch) (DecoderFrameWorkBatchResidualRequest, error) {
 	if decoderFrameWorkResidualScratchTooShort(scratch.Int32Scratch, size.Int32Scratch) ||
 		decoderFrameWorkResidualScratchTooShort(scratch.ResidualScratch, size.ResidualScratch) ||
@@ -354,6 +430,13 @@ func BindDecoderFrameWorkBatchResidualRequestScratch(size DecoderFrameWorkBatchR
 	}, nil
 }
 
+// BindDecoderFrameWorkBatchResidualRunner slices caller-owned
+// per-worker state and flat scratch into a
+// DecoderFrameWorkBatchResidualRunner. The returned runner is the
+// DecoderFrameWorkBatchFunc-compatible executor that decodes every
+// job in a batch using one worker's slot.
+//
+// See also: DecoderFrameWorkBatchResidualRunner.Run.
 func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualRunnerScratchSize, scratch DecoderFrameWorkBatchResidualRunnerScratch) (DecoderFrameWorkBatchResidualRunner, error) {
 	if size.Workers <= 0 {
 		return DecoderFrameWorkBatchResidualRunner{}, ErrThreadingInvalidWorkerCount
@@ -419,6 +502,9 @@ func decoderFrameWorkBatchResidualRunnerScratchErr(size DecoderFrameWorkBatchRes
 	return nil
 }
 
+// Run decodes every residual in batch using the worker slot identified
+// by batch.Batch.Worker. It is the DecoderFrameWorkBatchFunc form of
+// the runner; pass r.Run to ExecuteDecoderFrameWorkStepWithContext.
 func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) error {
 	worker, err := r.workerIndex(batch)
 	if err != nil {
@@ -441,6 +527,10 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 	return err
 }
 
+// SetSideData attaches bound frame-level side data (CDEF index map,
+// loop-filter map, loop-restoration frame buffers) to the runner so
+// the residual decode pipeline can populate them as it walks blocks.
+// It also resets each side-data structure for a fresh frame.
 func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkSideData) error {
 	if r == nil {
 		return ErrThreadingInvalidBatch
@@ -473,10 +563,15 @@ func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkS
 	return nil
 }
 
+// SetDecoderFrameWorkBatchResidualRunnerSideData is the function-style
+// alias for (*DecoderFrameWorkBatchResidualRunner).SetSideData provided
+// for callers that prefer free functions.
 func SetDecoderFrameWorkBatchResidualRunnerSideData(runner *DecoderFrameWorkBatchResidualRunner, side DecoderFrameWorkSideData) error {
 	return runner.SetSideData(side)
 }
 
+// ResetStats clears the per-worker statistics buckets so the next
+// frame's residual decode starts with zeroed counters.
 func (r *DecoderFrameWorkBatchResidualRunner) ResetStats() error {
 	if r == nil {
 		return ErrThreadingInvalidBatch
@@ -485,6 +580,8 @@ func (r *DecoderFrameWorkBatchResidualRunner) ResetStats() error {
 	return nil
 }
 
+// TotalStats aggregates the per-worker counters into one
+// DecoderFrameWorkTileResidualStats value for the current frame.
 func (r *DecoderFrameWorkBatchResidualRunner) TotalStats() (DecoderFrameWorkTileResidualStats, error) {
 	if r == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
@@ -496,6 +593,9 @@ func (r *DecoderFrameWorkBatchResidualRunner) TotalStats() (DecoderFrameWorkTile
 	return total, nil
 }
 
+// DecoderFrameWorkBatchResidualLoopContextAboveLen reports the
+// worst-case root-column above-context length across the jobs in
+// batch, used to size the per-batch loop-context above scratch.
 func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatch) (int, error) {
 	maxRootColumns := 0
 	for i := range batch.Jobs {
@@ -510,6 +610,11 @@ func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatc
 	return maxRootColumns, nil
 }
 
+// DecodeAndRetainDecoderFrameWorkBatchResiduals decodes every job in
+// batch in order, accumulating per-tile statistics and retaining the
+// adapted CDF state for the context-update tile. It is the
+// reusable, lower-level building block underneath
+// DecoderFrameWorkBatchResidualRunner.Run.
 func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	if state == nil || storage == nil || scratch == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch

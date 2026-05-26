@@ -42,80 +42,385 @@ import (
 // and yields parsed DecoderEvent values to the caller, who drives frame work
 // from those events.
 type DecoderStream = internaldecoder.Stream
+
+// DecoderEvent is one parsed unit emitted by DecoderStream: a sequence
+// header, frame header, tile group, or other OBU classification together
+// with its payload span and parsed metadata.
 type DecoderEvent = internaldecoder.Event
+
+// DecoderEventKind tags a DecoderEvent value with the AV1 OBU category that
+// produced it. See the DecoderEvent* constants for the complete enumeration.
 type DecoderEventKind = internaldecoder.EventKind
+
+// DecoderTileWorkPlan describes a bounded tile-group decode schedule built
+// over caller-owned TileSpan, TileJob, and TileBatch slices.
+//
+// See also: PlanDecoderTileWork, ExecuteDecoderTileWork.
 type DecoderTileWorkPlan = internaldecoder.TileWorkPlan
+
+// DecoderFrameWorkPlan ties a DecoderTileWorkPlan to its acquired output
+// surface, resolved reference set, and frame-work step list for one frame.
+//
+// See also: BeginDecoderFrameWork, DecoderFrameWorkStep.
 type DecoderFrameWorkPlan = internaldecoder.FrameWorkPlan
+
+// DecoderFrameTileWorkPlan is a frame-scoped DecoderTileWorkPlan that
+// targets a specific surface index and reference count.
+//
+// See also: PlanDecoderFrameTileWork.
 type DecoderFrameTileWorkPlan = internaldecoder.FrameTileWorkPlan
+
+// DecoderShowExistingFrameWorkPlan describes a show_existing_frame event:
+// the surface that should be displayed plus any surfaces eligible for
+// release after the show.
 type DecoderShowExistingFrameWorkPlan = internaldecoder.ShowExistingFrameWorkPlan
+
+// DecoderFrameWorkStepKind tags one entry of a frame-work plan. See the
+// DecoderFrameWorkStep* constants for the complete enumeration.
 type DecoderFrameWorkStepKind = internaldecoder.FrameWorkStepKind
+
+// DecoderFrameWorkStep is one step of a DecoderFrameWorkPlan: begin, a
+// per-tile-group tile-work dispatch, a show-existing-frame action, dropped
+// work, or ignored work.
+//
+// See also: ExecuteDecoderFrameWorkStep.
 type DecoderFrameWorkStep = internaldecoder.FrameWorkStep
+
+// DecoderFrameWorkStepResult reports the outcome of executing one
+// DecoderFrameWorkStep, including whether the step completed in flight.
 type DecoderFrameWorkStepResult = internaldecoder.FrameWorkStepResult
+
+// DecoderFrameWorkBatch carries the per-batch context the executor passes
+// to a DecoderFrameWorkBatchFunc: sequence/frame context, payload, jobs,
+// and the worker index assigned to this batch.
 type DecoderFrameWorkBatch = internaldecoder.FrameWorkBatch
+
+// DecoderFrameWorkSequenceContext is a derived view of SequenceHeader
+// optimized for hot-path lookups in the frame-work batch callback.
+//
+// See also: DecoderFrameWorkSequenceContextFromHeader.
 type DecoderFrameWorkSequenceContext = internaldecoder.FrameWorkSequenceContext
+
+// DecoderFrameWorkFrameContext is the per-frame derived geometry the
+// executor threads into the per-batch callback (mi geometry, planes,
+// reference setup, etc.).
 type DecoderFrameWorkFrameContext = internaldecoder.FrameWorkFrameContext
+
+// DecoderFrameWorkJobRegion locates a tile job's region within the frame:
+// mi origin, mi size, and the bytes-per-sample-aligned plane regions.
 type DecoderFrameWorkJobRegion = internaldecoder.FrameWorkJobRegion
+
+// DecoderFrameWorkPlane identifies a plane (Y, U, or V) within frame-work
+// helpers. See the DecoderFrameWorkPlane* constants for the enumeration.
 type DecoderFrameWorkPlane = internaldecoder.FrameWorkPlane
+
+// DecoderFrameWorkPlaneRegion describes a clipped per-plane reconstruction
+// region within the output frame, ready for scratch binding.
 type DecoderFrameWorkPlaneRegion = internaldecoder.FrameWorkPlaneRegion
+
+// DecoderFrameWorkReference identifies one of the seven AV1 inter
+// reference slots. See the DecoderFrameWorkReference* constants for the
+// enumeration.
 type DecoderFrameWorkReference = internaldecoder.FrameWorkReference
+
+// DecoderFrameWorkBatchFunc is the per-batch callback invoked by the
+// frame-work executor. It receives the DecoderFrameWorkBatch and may
+// perform residual decode, reconstruction, and post-filter setup using
+// the caller-owned scratch supplied at execution time.
 type DecoderFrameWorkBatchFunc = internaldecoder.FrameWorkBatchFunc
+
+// DecoderFrameWorkEventResult classifies the outcome of one event run:
+// frame completed, dropped, or still in flight, and whether a surface
+// was released.
 type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
+
+// DecoderFrameWorkPostFilterContext bundles the per-frame post-filter
+// inputs (frame, references, side data) supplied to a
+// DecoderFrameWorkPostFilterFunc when a frame finishes.
 type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
+
+// DecoderFrameWorkPostFilterFunc is the per-frame callback invoked after
+// the final tile-group of a frame to apply loop-filter, CDEF, super-res,
+// loop-restoration, and film-grain stages.
 type DecoderFrameWorkPostFilterFunc = internaldecoder.FrameWorkPostFilterFunc
+
+// DecoderFrameWorkPostFilterRunner is the executor-resolvable interface
+// invoked by RunDecoderFrameWorkEventWithContextAndPostFilter to run the
+// full post-filter chain.
 type DecoderFrameWorkPostFilterRunner = internaldecoder.FrameWorkPostFilterRunner
+
+// DecoderFrameWorkPostFilterStage identifies one stage of the post-filter
+// pipeline (loop filter, CDEF, super-res, loop restoration, or film
+// grain). See the DecoderFrameWorkPostFilter* constants.
 type DecoderFrameWorkPostFilterStage = internaldecoder.FrameWorkPostFilterStage
+
+// DecoderFrameWorkPostFilterScratchSize reports the caller-owned scratch
+// lengths required by the full post-filter chain for one frame.
 type DecoderFrameWorkPostFilterScratchSize = internaldecoder.FrameWorkPostFilterScratchSize
+
+// DecoderFrameWorkPostFilterRequest bundles all caller-owned post-filter
+// scratch and side data into one request value that runs the loop-filter,
+// CDEF, super-res, loop-restoration, and film-grain stages.
+//
+// See also: BindDecoderFrameWorkPostFilterRequest, DecoderFrameWorkPostFilterResult.
 type DecoderFrameWorkPostFilterRequest = internaldecoder.FrameWorkPostFilterRequest
+
+// DecoderFrameWorkPostFilterResult reports the per-stage outcome of one
+// DecoderFrameWorkPostFilterRequest execution.
+//
+// See also: DecoderFrameWorkPostFilterRequest.
 type DecoderFrameWorkPostFilterResult = internaldecoder.FrameWorkPostFilterResult
+
+// DecoderFrameWorkCallerPostFilterResult is the per-stage outcome of a
+// caller-supplied post-filter runner that bypasses the built-in pipeline.
 type DecoderFrameWorkCallerPostFilterResult = internaldecoder.FrameWorkCallerPostFilterResult
+
+// DecoderFrameWorkSupportedPostFilterRunner is the built-in post-filter
+// runner that applies the full chain when all stages are supported.
 type DecoderFrameWorkSupportedPostFilterRunner = internaldecoder.FrameWorkSupportedPostFilterRunner
+
+// DecoderFrameWorkCallerPostFilterRunner is the caller-supplied
+// post-filter runner used when one or more stages are routed through a
+// custom implementation.
 type DecoderFrameWorkCallerPostFilterRunner = internaldecoder.FrameWorkCallerPostFilterRunner
+
+// DecoderFrameWorkCDEFIndexMap is the per-block CDEF index/read map that
+// post-filter helpers populate during reconstruction and consume during
+// the CDEF stage.
 type DecoderFrameWorkCDEFIndexMap = internaldecoder.FrameWorkCDEFIndexMap
+
+// DecoderFrameWorkCDEFPostFilterScratchSize reports the caller-owned
+// scratch lengths required by the CDEF stage.
 type DecoderFrameWorkCDEFPostFilterScratchSize = internaldecoder.FrameWorkCDEFPostFilterScratchSize
+
+// DecoderFrameWorkCDEFPostFilterRequest binds caller-owned CDEF scratch
+// (samples, dst, direction grid, variance grid, input/unit-dst buffers)
+// into one CDEF apply request.
+//
+// See also: BindDecoderFrameWorkCDEFPostFilterRequest.
 type DecoderFrameWorkCDEFPostFilterRequest = internaldecoder.FrameWorkCDEFPostFilterRequest
+
+// DecoderFrameWorkCDEFPostFilterResult reports per-plane CDEF statistics.
 type DecoderFrameWorkCDEFPostFilterResult = internaldecoder.FrameWorkCDEFPostFilterResult
+
+// DecoderFrameWorkLoopFilterMap is the per-block loop-filter record map
+// populated during reconstruction and consumed during the loop-filter
+// post-filter stage.
 type DecoderFrameWorkLoopFilterMap = internaldecoder.FrameWorkLoopFilterMap
+
+// DecoderFrameWorkLoopFilterBlockRecord is one entry of
+// DecoderFrameWorkLoopFilterMap, recording the per-block edge state used
+// by the loop-filter stage.
 type DecoderFrameWorkLoopFilterBlockRecord = internalthreading.FrameWorkLoopFilterBlockRecord
+
+// DecoderFrameWorkLoopFilterPostFilterRequest binds caller-owned
+// loop-filter scratch and the loop-filter map into one apply request.
+//
+// See also: BindDecoderFrameWorkLoopFilterPostFilterRequest.
 type DecoderFrameWorkLoopFilterPostFilterRequest = internaldecoder.FrameWorkLoopFilterPostFilterRequest
+
+// DecoderFrameWorkLoopFilterPostFilterEdge is one entry in the
+// loop-filter edge list consumed by the loop-filter apply request.
 type DecoderFrameWorkLoopFilterPostFilterEdge = internaldecoder.FrameWorkLoopFilterPostFilterEdge
+
+// DecoderFrameWorkLoopFilterPostFilterScratchSize reports the caller-owned
+// scratch lengths required by the loop-filter stage.
 type DecoderFrameWorkLoopFilterPostFilterScratchSize = internaldecoder.FrameWorkLoopFilterPostFilterScratchSize
+
+// DecoderFrameWorkLoopFilterPostFilterLevelStats reports per-plane
+// loop-filter level statistics observed during the apply pass.
 type DecoderFrameWorkLoopFilterPostFilterLevelStats = internaldecoder.FrameWorkLoopFilterPostFilterLevelStats
+
+// DecoderFrameWorkLoopFilterPostFilterPlan summarizes loop-filter
+// planning output: edge count, per-plane level activity, and skip flags.
 type DecoderFrameWorkLoopFilterPostFilterPlan = internaldecoder.FrameWorkLoopFilterPostFilterPlan
+
+// DecoderFrameWorkLoopFilterPostFilterApplyResult reports per-edge and
+// per-plane statistics produced by one loop-filter apply pass.
 type DecoderFrameWorkLoopFilterPostFilterApplyResult = internaldecoder.FrameWorkLoopFilterPostFilterApplyResult
+
+// DecoderFrameWorkSuperResPostFilterPlanePlan describes the per-plane
+// super-res upscale geometry derived from FrameSize and the active
+// SequenceHeader.
 type DecoderFrameWorkSuperResPostFilterPlanePlan = internaldecoder.FrameWorkSuperResPostFilterPlanePlan
+
+// DecoderFrameWorkSuperResPostFilterPlan aggregates the per-plane plans
+// for one frame's super-res execution.
 type DecoderFrameWorkSuperResPostFilterPlan = internaldecoder.FrameWorkSuperResPostFilterPlan
+
+// DecoderFrameWorkSuperResPostFilterScratchSize reports the caller-owned
+// scratch lengths required by the super-res stage.
 type DecoderFrameWorkSuperResPostFilterScratchSize = internaldecoder.FrameWorkSuperResPostFilterScratchSize
+
+// DecoderFrameWorkSuperResPostFilterRequest binds caller-owned super-res
+// scratch (output frame and per-plane coded/output scratch) into one
+// apply request.
+//
+// See also: BindDecoderFrameWorkSuperResPostFilterRequest.
 type DecoderFrameWorkSuperResPostFilterRequest = internaldecoder.FrameWorkSuperResPostFilterRequest
+
+// DecoderFrameWorkSuperResPostFilterResult reports per-plane super-res
+// statistics from one apply pass.
 type DecoderFrameWorkSuperResPostFilterResult = internaldecoder.FrameWorkSuperResPostFilterResult
+
+// DecoderFrameWorkRestorationPostFilterRequest binds caller-owned
+// loop-restoration scratch (records, boundaries, sample arenas, Wiener
+// and SGR-proj scratch) into one apply request.
+//
+// See also: BindDecoderFrameWorkRestorationPostFilterRequest.
 type DecoderFrameWorkRestorationPostFilterRequest = internaldecoder.FrameWorkRestorationPostFilterRequest
+
+// DecoderFrameWorkRestorationPostFilterScratchSize reports the
+// caller-owned scratch lengths required by the loop-restoration stage.
 type DecoderFrameWorkRestorationPostFilterScratchSize = internaldecoder.FrameWorkRestorationPostFilterScratchSize
+
+// DecoderFrameWorkFilmGrainPostFilterPlanePlan describes the per-plane
+// film-grain noise geometry derived from FilmGrainParams.
 type DecoderFrameWorkFilmGrainPostFilterPlanePlan = internaldecoder.FrameWorkFilmGrainPostFilterPlanePlan
+
+// DecoderFrameWorkFilmGrainPostFilterPlan aggregates the per-plane plans
+// for one frame's film-grain synthesis.
 type DecoderFrameWorkFilmGrainPostFilterPlan = internaldecoder.FrameWorkFilmGrainPostFilterPlan
+
+// DecoderFrameWorkFilmGrainPostFilterScratchSize reports the caller-owned
+// scratch lengths required by the film-grain stage.
 type DecoderFrameWorkFilmGrainPostFilterScratchSize = internaldecoder.FrameWorkFilmGrainPostFilterScratchSize
+
+// DecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned
+// film-grain scratch (luma/chroma grain and sample arenas) into one
+// apply request.
+//
+// See also: BindDecoderFrameWorkFilmGrainPostFilterRequest.
 type DecoderFrameWorkFilmGrainPostFilterRequest = internaldecoder.FrameWorkFilmGrainPostFilterRequest
+
+// DecoderFrameWorkFilmGrainPostFilterResult reports per-plane film-grain
+// statistics from one apply pass.
 type DecoderFrameWorkFilmGrainPostFilterResult = internaldecoder.FrameWorkFilmGrainPostFilterResult
+
+// DecoderFrameWorkFilmGrainPostFilterScalingLUTs holds the caller-owned
+// per-plane film-grain scaling lookup tables built from FilmGrainParams.
 type DecoderFrameWorkFilmGrainPostFilterScalingLUTs = internaldecoder.FrameWorkFilmGrainPostFilterScalingLUTs
+
+// DecoderFrameWorkFilmGrainPostFilterLumaGrain holds the caller-owned
+// luma grain block used by the film-grain synthesis stage.
 type DecoderFrameWorkFilmGrainPostFilterLumaGrain = internaldecoder.FrameWorkFilmGrainPostFilterLumaGrain
+
+// DecoderFrameWorkTileResidualCDFStorage owns the per-job adapted CDF
+// tables used by the residual decode pipeline. Callers retain it across
+// tile-group boundaries to propagate context updates.
+//
+// See also: InitDecoderFrameWorkTileResidualCDFStorage,
+// InitDecoderFrameWorkTileResidualCDFStorageDefault.
 type DecoderFrameWorkTileResidualCDFStorage = internalthreading.FrameWorkTileResidualCDFStorage
+
+// DecoderFrameWorkTileResidualCDFs is a view of the active per-job CDF
+// tables bound from a DecoderFrameWorkTileResidualCDFStorage.
+//
+// See also: DecoderFrameWorkTileResidualCDFsFromStorage.
 type DecoderFrameWorkTileResidualCDFs = internalthreading.FrameWorkTileResidualCDFs
+
+// DecoderFrameWorkTileResidualScratch carries per-job caller-owned
+// scratch (entropy reader state, loop context, residual scratch) used by
+// the residual decode pipeline.
 type DecoderFrameWorkTileResidualScratch = internalthreading.FrameWorkTileResidualScratch
+
+// DecoderFrameWorkTileResidualRequest bundles the caller-owned inputs
+// (CDF maps, scratches, prediction scratch, transform/loop overrides)
+// the residual decode helper consumes for one job.
+//
+// See also: DecoderFrameWorkTileResidualStats.
 type DecoderFrameWorkTileResidualRequest = internalthreading.FrameWorkTileResidualRequest
+
+// DecoderFrameWorkTileResidualStats reports per-job decode counters
+// (partitions, blocks, modes, motion vectors, coefficient totals,
+// reconstructions, etc.) produced by the residual decode pipeline.
+//
+// See also: DecoderFrameWorkTileResidualRequest.
 type DecoderFrameWorkTileResidualStats = internalthreading.FrameWorkTileResidualStats
+
+// DecoderFrameWorkBlockCoeffReconstruction is the per-block reconstruction
+// request that combines a decoded coefficient block with the prediction
+// scratch needed to assemble the output sample plane.
 type DecoderFrameWorkBlockCoeffReconstruction = internalthreading.FrameWorkBlockCoeffReconstruction
+
+// DecoderFrameWorkBlockTransforms describes the per-block transform
+// metadata (mode, type, size, partition) selected by the residual decode
+// pipeline for one tile block.
 type DecoderFrameWorkBlockTransforms = internalthreading.FrameWorkBlockTransforms
+
+// DecoderFrameWorkBlockTransformSelector is the per-block transform
+// selector callback the residual pipeline invokes to choose the
+// transform type for caller-customized decode paths.
 type DecoderFrameWorkBlockTransformSelector = internalthreading.FrameWorkBlockTransformSelector
+
+// DecoderFrameWorkBlockPredictor is the per-block prediction callback the
+// residual pipeline invokes to populate the prediction scratch before
+// reconstruction.
 type DecoderFrameWorkBlockPredictor = internalthreading.FrameWorkBlockPredictor
+
+// DecoderFrameWorkTileRestorationRequest carries the caller-owned
+// loop-restoration buffers and references threaded into the residual
+// pipeline when restoration is active for the frame.
 type DecoderFrameWorkTileRestorationRequest = internalthreading.FrameWorkTileRestorationRequest
+
+// DecoderFrameWorkPredictionScratch is the per-batch prediction scratch
+// shared by intra, inter, and CFL prediction helpers.
 type DecoderFrameWorkPredictionScratch = internalthreading.FrameWorkPredictionScratch
+
+// DecoderFrameWorkIntraPredictionScratch is the per-block intra
+// prediction scratch (above/left edge buffers, scratch plane).
 type DecoderFrameWorkIntraPredictionScratch = internalthreading.FrameWorkIntraPredictionScratch
+
+// DecoderFrameWorkInterPredictionScratch is the per-block inter
+// prediction scratch (interpolation samples, blend scratch, OBMC
+// scratch).
 type DecoderFrameWorkInterPredictionScratch = internalthreading.FrameWorkInterPredictionScratch
+
+// DecoderFrameWorkCFLPredictionScratch is the per-block CFL prediction
+// scratch (luma AC samples, reconstruction Q3 buffers).
 type DecoderFrameWorkCFLPredictionScratch = internalthreading.FrameWorkCFLPredictionScratch
+
+// DecoderFrameWorkState is the long-lived caller-owned object that ties
+// together surface-reference tracking, frame-pool acquisition, and
+// per-event frame-work execution. Callers drive the decoder by feeding
+// DecoderEvent values through state.RunEvent* helpers.
+//
+// See also: DecoderSurfaceReferences, RunDecoderFrameWorkEventWithContext.
 type DecoderFrameWorkState = internaldecoder.FrameWorkState
+
+// DecoderSurfaceReferences tracks which FramePool surface indices are
+// currently bound to each AV1 reference slot. Updates happen at frame
+// begin/finish and during show_existing_frame events.
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
+
+// DecoderFrameWorkRestorationFrameBuffers groups the caller-owned
+// loop-restoration buffers (per-plane unit records and stripe
+// boundaries) maintained across the frame's tile groups.
+//
+// See also: BindDecoderFrameWorkRestorationFrameBuffers.
 type DecoderFrameWorkRestorationFrameBuffers = internalthreading.FrameWorkRestorationFrameBuffers
+
+// TileJob is one scheduled tile decode (offset+size within the
+// tile-group payload plus per-tile metadata).
+//
+// See also: PlanDecoderTileWork, TileBatch.
 type TileJob = internaltile.Job
+
+// TileBatch groups a set of TileJob entries assigned to one worker for
+// execution by a TileWorkerPool.
+//
+// See also: TileBatchFunc, TileWorkerPool.
 type TileBatch = internalthreading.Batch
+
+// TileWorkerPool is the bounded goroutine pool that dispatches
+// TileBatch values to caller-supplied TileBatchFunc callbacks.
+//
+// See also: NewTileWorkerPool.
 type TileWorkerPool = internalthreading.Pool
+
+// TileBatchFunc is the per-batch callback signature invoked by a
+// TileWorkerPool. It receives the batch identifier and returns any
+// error from the worker's decode pass.
 type TileBatchFunc = internalthreading.BatchFunc
 
 // AV1 decoder event and frame-work step kinds.
