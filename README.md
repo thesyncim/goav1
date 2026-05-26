@@ -340,6 +340,18 @@ conformance vectors is partial:
 - `make testvectors-full` will download and execute the full libaom remote
   suite. It is not part of the default CI gate and is intended for local
   parity sweeps.
+- `make dryrun-extended` opts into the `SuiteLevelExtended` cohort: a
+  curated nine-vector probe of 10-bit mid- and lossless-quantizer streams,
+  sub-superblock-aligned and multi-superblock frame sizes (34x34, 66x66,
+  208x208, 226x226), and the remaining libaom SVC permutations (L2T1,
+  L2T2). It uses the same lenient first-frame MD5 gate as `dryrun-fast`
+  but downloads checksum-pinned vectors that are not part of the default
+  fast slice. The cohort is strictly opt-in (gated by
+  `GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1`) and is never part of CI; it
+  is a diagnostic for surfacing latent decoder gaps. As of this writing
+  only the `64x64` size vector clears frame 0; the other eight surface
+  known mismatches in 10-bit high-Q reconstruction, sub-superblock size
+  boundaries, and the SVC frame-0 pipeline.
 
 The encoder, SIMD acceleration, and platform-specific assembly backends are
 not implemented yet.
@@ -466,6 +478,7 @@ make test                 # unit tests across all packages
 make testvectors          # committed test-vector suite (with oracle)
 make testvectors-fast     # fast slice including oracle MD5 checks
 make dryrun-fast          # in-progress framework dry-run against fast vectors
+make dryrun-extended      # opt-in extended cohort (10-bit q-sweep, larger sizes, extra SVC)
 make bench                # end-to-end frames/sec + MB/sec
 make bench-all            # full microbenchmark sweep across every package
 make bench-public         # public-API benchmarks

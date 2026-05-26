@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast ci-local help
+.PHONY: test bench bench-all bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -215,6 +215,14 @@ tidy-check:
 dryrun-fast:
 	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
 
+# dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort.
+# It downloads multi-quantizer 10-bit, additional SVC, and larger-size libaom
+# vectors and exercises them through the same lenient (first-frame) MD5 gate
+# as dryrun-fast. This target is never part of CI or the default test gates;
+# it is a local diagnostic for surfacing latent decoder gaps.
+dryrun-extended:
+	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
+
 ci-local: fmt-check vet test alloc
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
@@ -252,6 +260,7 @@ help:
 	@echo "  testvectors-fast           fast slice of the test-vector suite"
 	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
 	@echo "  dryrun-fast                fast libaom framework dry-run (verbose)"
+	@echo "  dryrun-extended            opt-in extended libaom framework dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"

@@ -23,13 +23,18 @@ const (
 )
 
 // SuiteLevel lets callers select a small smoke set, a feature-relevant subset,
-// or the whole committed remote manifest.
+// an extended cohort that probes latent decoder gaps (multi-quantizer 10-bit,
+// larger sizes, SVC permutations), or the whole committed remote manifest.
+// SuiteLevelExtended is strictly opt-in: it is never part of the default fast
+// gate, but every extended vector is also tagged SuiteLevelFull so
+// testvectors-full keeps downloading the complete manifest.
 type SuiteLevel uint8
 
 const (
 	SuiteLevelFast SuiteLevel = 1 << iota
 	SuiteLevelRelevant
 	SuiteLevelFull
+	SuiteLevelExtended
 )
 
 // VectorLabel is a bitset used for relevant-suite filtering.

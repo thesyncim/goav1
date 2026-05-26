@@ -56,6 +56,20 @@ const (
 	TagDecoderLibaomMonochrome          Tag = 0x0005_000c
 	TagDecoderLibaomFilmGrain10Bit      Tag = 0x0005_000d
 	TagDecoderLibaomMonochrome10Bit     Tag = 0x0005_000e
+
+	// Extended cohort: opt-in vectors that probe multi-quantizer 10-bit,
+	// larger resolutions, and additional SVC permutations. They live in
+	// SuiteLevelExtended | SuiteLevelFull and are not part of the default
+	// fast gate.
+	TagDecoderLibaomQuantizer10Bit32 Tag = 0x0005_000f
+	TagDecoderLibaomQuantizer10Bit63 Tag = 0x0005_0010
+	TagDecoderLibaomSize34x34        Tag = 0x0005_0011
+	TagDecoderLibaomSize64x64        Tag = 0x0005_0012
+	TagDecoderLibaomSize66x66        Tag = 0x0005_0013
+	TagDecoderLibaomSize208x208      Tag = 0x0005_0014
+	TagDecoderLibaomSize226x226      Tag = 0x0005_0015
+	TagDecoderLibaomSVCL2T1          Tag = 0x0005_0016
+	TagDecoderLibaomSVCL2T2          Tag = 0x0005_0017
 )
 
 // Vector describes one byte-level input and its expected oracle output. Input

@@ -152,6 +152,105 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Levels: SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelMonochrome | VectorLabelHighBitDepth,
 	},
+
+	// Extended cohort. These vectors are tagged SuiteLevelExtended |
+	// SuiteLevelFull so they are downloaded by testvectors-full but stay
+	// out of the fast-suite default. They are intended to probe latent
+	// gaps that the small fast cohort cannot surface:
+	//   - mid- and lossless-Q 10-bit quantizer streams
+	//   - sub-block-aligned and odd 34x34 / 66x66 sizes
+	//   - >= 192x192 resolutions that hit multi-superblock tile rows
+	//   - the remaining libaom SVC permutations (L2T1, L2T2)
+	{
+		Tag:    TagDecoderLibaomQuantizer10Bit32,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 10-bit quantizer 32",
+		Stream: RemoteFile{Name: "av1-1-b10-00-quantizer-32.ivf", SHA1: "96291f6ace85980892d135a5b74188cd629c325f"},
+		MD5:    RemoteFile{Name: "av1-1-b10-00-quantizer-32.ivf.md5", SHA1: "a5ceace390d4a75d48281fe29060c21557e4f5ae"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelQuantizer | VectorLabelHighBitDepth,
+	},
+	{
+		Tag:    TagDecoderLibaomQuantizer10Bit63,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 10-bit quantizer 63",
+		Stream: RemoteFile{Name: "av1-1-b10-00-quantizer-63.ivf", SHA1: "8b6eb3fff2e0db7eac775b08c745250ca591e2d9"},
+		MD5:    RemoteFile{Name: "av1-1-b10-00-quantizer-63.ivf.md5", SHA1: "63ea689d025593e5d91760785b8e446d04d4671e"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelQuantizer | VectorLabelHighBitDepth,
+	},
+	{
+		Tag:    TagDecoderLibaomSize34x34,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit 34x34 size",
+		Stream: RemoteFile{Name: "av1-1-b8-01-size-34x34.ivf", SHA1: "4cc2a437dba56e8878113d9b390b980522542028"},
+		MD5:    RemoteFile{Name: "av1-1-b8-01-size-34x34.ivf.md5", SHA1: "57eeb971f00e64abde25be69dbcb4e3ce5065a57"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSize,
+	},
+	{
+		Tag:    TagDecoderLibaomSize64x64,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit 64x64 size",
+		Stream: RemoteFile{Name: "av1-1-b8-01-size-64x64.ivf", SHA1: "7d017daebef2d39ed42a505a8e6103ab0c0988c1"},
+		MD5:    RemoteFile{Name: "av1-1-b8-01-size-64x64.ivf.md5", SHA1: "1ff38d5ecba82fb2e6ac3b09c29c9fe74885ac29"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSize,
+	},
+	{
+		Tag:    TagDecoderLibaomSize66x66,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit 66x66 size",
+		Stream: RemoteFile{Name: "av1-1-b8-01-size-66x66.ivf", SHA1: "68b47b386f61d67cb5b824a7e6bf87c8b9c2bf7b"},
+		MD5:    RemoteFile{Name: "av1-1-b8-01-size-66x66.ivf.md5", SHA1: "25974893956ebd92df474325946130c34f880ea7"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSize,
+	},
+	{
+		Tag:    TagDecoderLibaomSize208x208,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit 208x208 size",
+		Stream: RemoteFile{Name: "av1-1-b8-01-size-208x208.ivf", SHA1: "e5900d9150c8bebc49776227afd3b0a21f5a6ac6"},
+		MD5:    RemoteFile{Name: "av1-1-b8-01-size-208x208.ivf.md5", SHA1: "86d6b9a3840aa0a77938547c905bd6f45d069681"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSize,
+	},
+	{
+		Tag:    TagDecoderLibaomSize226x226,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit 226x226 size",
+		Stream: RemoteFile{Name: "av1-1-b8-01-size-226x226.ivf", SHA1: "40dd208eb525cd90d7c0674cf787097fb909afae"},
+		MD5:    RemoteFile{Name: "av1-1-b8-01-size-226x226.ivf.md5", SHA1: "34bdef682a4eae0e0a05e4486a968af1df8b220a"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSize,
+	},
+	{
+		Tag:    TagDecoderLibaomSVCL2T1,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit svc L2T1",
+		Stream: RemoteFile{Name: "av1-1-b8-22-svc-L2T1.ivf", SHA1: "e14825f50ff845b8a6932c64cb254007a0b5e3a1"},
+		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L2T1.ivf.md5", SHA1: "0f75f2ac44e61fc83be70c955410fa378e433237"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSVC,
+	},
+	{
+		Tag:    TagDecoderLibaomSVCL2T2,
+		Kind:   KindDecoder,
+		Name:   "libaom av1 8-bit svc L2T2",
+		Stream: RemoteFile{Name: "av1-1-b8-22-svc-L2T2.ivf", SHA1: "32ef2f14ee9cb11a24a22934f4c065e926e5d236"},
+		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L2T2.ivf.md5", SHA1: "f476a10ff06d750129f8229755d51e17ff141b2a"},
+		Oracle: OracleFrameMD5,
+		Levels: SuiteLevelExtended | SuiteLevelFull,
+		Labels: VectorLabelSVC,
+	},
 }
 
 func LibaomRemoteManifest() RemoteManifest {
