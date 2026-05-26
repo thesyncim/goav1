@@ -913,6 +913,420 @@ func BenchmarkPredictInterPlaneBlockFractional(b *testing.B) {
 	}
 }
 
+// TestConvolveHighBDIdentityKernel asserts that running the High-BD
+// convolvers with the subpel=0 identity kernel ({0,0,0,128,0,0,0,0})
+// reproduces the input sample byte-for-byte at bd=10 (q32) and bd=12.
+//
+// This pins the dispatch + rounding shape for the simplest reproducible
+// case: any drift here would imply a bias-shift or final-round bug that
+// libaom does not have, because libaom's
+// av1_highbd_convolve_{x,y,2d}_sr_c are bit-exact identity at the
+// identity kernel by construction (see av1/common/convolve.c lines
+// 689-790 in libaom-v3.13.1).
+func TestConvolveHighBDIdentityKernel(t *testing.T) {
+	identity := [filterTaps]int16{0, 0, 0, 128, 0, 0, 0, 0}
+	for _, tc := range []struct {
+		name     string
+		bitDepth uint8
+	}{
+		{"bd=10", 10},
+		{"bd=12", 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			max, ok := highBDMax(tc.bitDepth)
+			if !ok {
+				t.Fatalf("highBDMax(%d) not supported", tc.bitDepth)
+			}
+			// Sized so that the full convolve window (block + filter
+			// halo) fits inside the source plane without clamping.
+			const stride = 64
+			src, _ := testPlane(32, 32, 2, stride)
+			fillHighBDMotionTestPlane(src, max)
+			t.Run("X", func(t *testing.T) {
+				dst, _ := testPlane(32, 32, 2, stride)
+				convolveXHighBD(dst, src, max, 8, 8, 8, 8, 8, 8, identity)
+				for row := 0; row < 8; row++ {
+					for col := 0; col < 8; col++ {
+						got := getSample(dst, 2, 8+col, 8+row)
+						want := getSample(src, 2, 8+col, 8+row)
+						if got != want {
+							t.Fatalf("X identity sample(%d,%d)=%d want %d", col, row, got, want)
+						}
+					}
+				}
+			})
+			t.Run("Y", func(t *testing.T) {
+				dst, _ := testPlane(32, 32, 2, stride)
+				convolveYHighBD(dst, src, max, 8, 8, 8, 8, 8, 8, identity)
+				for row := 0; row < 8; row++ {
+					for col := 0; col < 8; col++ {
+						got := getSample(dst, 2, 8+col, 8+row)
+						want := getSample(src, 2, 8+col, 8+row)
+						if got != want {
+							t.Fatalf("Y identity sample(%d,%d)=%d want %d", col, row, got, want)
+						}
+					}
+				}
+			})
+			t.Run("2D", func(t *testing.T) {
+				dst, _ := testPlane(32, 32, 2, stride)
+				convolve2DHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity, identity)
+				for row := 0; row < 8; row++ {
+					for col := 0; col < 8; col++ {
+						got := getSample(dst, 2, 8+col, 8+row)
+						want := getSample(src, 2, 8+col, 8+row)
+						if got != want {
+							t.Fatalf("2D identity sample(%d,%d)=%d want %d", col, row, got, want)
+						}
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestConvolveHighBDQ10ClampedPath pins the *clamped* HighBD convolvers
+// (the path that fires when the convolve halo overruns the reference
+// edge) against a from-scratch libaom-shaped reference. Frame 1 of the
+// q32 vector exercises this path at every block whose MV pulls the
+// filter halo across the top/left frame edge — any drift in the edge
+// extension would surface as a wave of ±N pixel diffs along the top
+// and left of the frame.
+func TestConvolveHighBDQ10ClampedPath(t *testing.T) {
+	const bd = uint8(10)
+	max := uint16((1 << bd) - 1)
+	// Use a tiny source plane so the convolve halo overruns the edge
+	// at every position; this forces the *Clamped paths exclusively.
+	src, _ := testPlane(6, 6, 2, 12)
+	fillHighBDMotionTestPlane(src, max)
+	filters := []InterpFilters{
+		{X: InterpEightTapRegular, Y: InterpEightTapRegular},
+		{X: InterpEightTapSmooth, Y: InterpEightTapSmooth},
+		{X: InterpMultiTapSharp, Y: InterpMultiTapSharp},
+		{X: InterpBilinear, Y: InterpBilinear},
+	}
+	sizes := []libaomConvolveBlockSize{
+		{width: 4, height: 4},
+		{width: 8, height: 4},
+		{width: 4, height: 8},
+	}
+	for _, sz := range sizes {
+		for _, f := range filters {
+			for _, sx := range []int{1, 7, 8, 15} {
+				for _, sy := range []int{1, 7, 8, 15} {
+					t.Run(libaomHighBDCaseName(sz, sx, sy, f)+"_clamped", func(t *testing.T) {
+						got, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+						want, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+						xKernel, err := interpKernel(f.X, sz.width, sx)
+						if err != nil {
+							t.Fatal(err)
+						}
+						yKernel, err := interpKernel(f.Y, sz.height, sy)
+						if err != nil {
+							t.Fatal(err)
+						}
+						convolve2DHighBDClamped(got, src, bd, max, 0, 0, 0, 0, sz.width, sz.height, xKernel, yKernel)
+						libaomVerbatimHighBD2DSRClamped(want, src, bd, max, 0, 0, 0, 0, sz.width, sz.height, xKernel, yKernel)
+						for row := 0; row < sz.height; row++ {
+							for col := 0; col < sz.width; col++ {
+								g := getSample(got, 2, col, row)
+								w := getSample(want, 2, col, row)
+								if g != w {
+									t.Fatalf("clamped size=%dx%d sub=(%d,%d) filters=(%d,%d) sample(%d,%d)=%d want %d",
+										sz.width, sz.height, sx, sy, f.X, f.Y, col, row, g, w)
+								}
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestConvolveHighBDQ10OneDimensional pins the X-only and Y-only
+// HighBD convolve paths (subX=0 vs subY=0) against a from-scratch
+// libaom-shaped reference. Frame 1 of q32 has many blocks that decode
+// to a one-axis MV (e.g. cell.MV = (3, 0) or (0, 5)), and those land
+// on the simpler convolveXHighBD / convolveYHighBD paths rather than
+// the 2D path.
+func TestConvolveHighBDQ10OneDimensional(t *testing.T) {
+	const bd = uint8(10)
+	max := uint16((1 << bd) - 1)
+	src, _ := testPlane(32, 32, 2, 64)
+	fillHighBDMotionTestPlane(src, max)
+	filters := []InterpFilters{
+		{X: InterpEightTapRegular, Y: InterpEightTapRegular},
+		{X: InterpEightTapSmooth, Y: InterpEightTapSmooth},
+		{X: InterpMultiTapSharp, Y: InterpMultiTapSharp},
+		{X: InterpBilinear, Y: InterpBilinear},
+	}
+	sizes := []libaomConvolveBlockSize{
+		{width: 4, height: 4},
+		{width: 8, height: 8},
+		{width: 16, height: 8},
+		{width: 16, height: 16},
+	}
+	for _, sz := range sizes {
+		for _, f := range filters {
+			for _, sub := range []int{1, 4, 7, 8, 11, 15} {
+				t.Run("X_"+libaomHighBDCaseName(sz, sub, 0, f), func(t *testing.T) {
+					got, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+					want, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+					xKernel, err := interpKernel(f.X, sz.width, sub)
+					if err != nil {
+						t.Fatal(err)
+					}
+					convolveXHighBD(got, src, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
+					libaomVerbatimHighBDXSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
+					for row := 0; row < sz.height; row++ {
+						for col := 0; col < sz.width; col++ {
+							g := getSample(got, 2, col, row)
+							w := getSample(want, 2, col, row)
+							if g != w {
+								t.Fatalf("X size=%dx%d sub=%d filter=%d sample(%d,%d)=%d want %d", sz.width, sz.height, sub, f.X, col, row, g, w)
+							}
+						}
+					}
+				})
+				t.Run("Y_"+libaomHighBDCaseName(sz, 0, sub, f), func(t *testing.T) {
+					got, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+					want, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+					yKernel, err := interpKernel(f.Y, sz.height, sub)
+					if err != nil {
+						t.Fatal(err)
+					}
+					convolveYHighBD(got, src, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, yKernel)
+					libaomVerbatimHighBDYSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, yKernel)
+					for row := 0; row < sz.height; row++ {
+						for col := 0; col < sz.width; col++ {
+							g := getSample(got, 2, col, row)
+							w := getSample(want, 2, col, row)
+							if g != w {
+								t.Fatalf("Y size=%dx%d sub=%d filter=%d sample(%d,%d)=%d want %d", sz.width, sz.height, sub, f.Y, col, row, g, w)
+							}
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// libaomVerbatimHighBDXSR ports libaom av1_highbd_convolve_x_sr_c.
+func libaomVerbatimHighBDXSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, xFilter [filterTaps]int16) {
+	foHoriz := filterTaps/2 - 1
+	bits := filterBits - round0Bits
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			res := int32(0)
+			for k := 0; k < filterTaps; k++ {
+				res += int32(xFilter[k]) * int32(getSample(src, 2, refX+x-foHoriz+k, refY+y))
+			}
+			res = int32(libaomRoundPowerOfTwo(int(res), round0Bits))
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(int(res), bits), maxVal))
+		}
+	}
+	_ = bd
+}
+
+// libaomVerbatimHighBDYSR ports libaom av1_highbd_convolve_y_sr_c.
+func libaomVerbatimHighBDYSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, yFilter [filterTaps]int16) {
+	foVert := filterTaps/2 - 1
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			res := int32(0)
+			for k := 0; k < filterTaps; k++ {
+				res += int32(yFilter[k]) * int32(getSample(src, 2, refX+x, refY+y-foVert+k))
+			}
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(int(res), filterBits), maxVal))
+		}
+	}
+	_ = bd
+}
+
+// libaomVerbatimHighBD2DSRClamped is the clamped counterpart of
+// libaomVerbatimHighBD2DSR: every reference load goes through edge
+// replication (libaom's highbd_build_mc_border equivalent).
+func libaomVerbatimHighBD2DSRClamped(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, xFilter [filterTaps]int16, yFilter [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var imBlock [(maxBlockSize + filterTaps - 1) * maxBlockSize]int16
+	imH := h + filterTaps - 1
+	foHoriz := filterTaps/2 - 1
+	foVert := filterTaps/2 - 1
+	for y := 0; y < imH; y++ {
+		for x := 0; x < w; x++ {
+			sum := int32(1) << (uint32(bd) + uint32(filterBits) - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int32(xFilter[k]) * int32(getSampleClamped(src, 2, refX+x-foHoriz+k, refY-foVert+y))
+			}
+			imBlock[y*imStride+x] = int16(libaomRoundPowerOfTwo(int(sum), round0Bits))
+		}
+	}
+	offsetBits := int(bd) + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			sum := int32(1) << uint32(offsetBits)
+			for k := 0; k < filterTaps; k++ {
+				sum += int32(yFilter[k]) * int32(imBlock[(y+k)*imStride+x])
+			}
+			res := libaomRoundPowerOfTwo(int(sum), round1Bits) - roundOffset
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, bits), maxVal))
+		}
+	}
+}
+
+// TestConvolveHighBDLibaomQ10MatchesAlgorithm pins the HighBD convolvers
+// against an independent libaom-shaped reference implementation written
+// inline (see libaomVerbatimHighBD2DSR) for a representative grid of
+// block sizes, subpel positions, and switchable interpolation filters
+// at bd=10. The reference is rewritten from scratch in this test (it
+// does not call the libaom*Ref helpers above) so any algebra mistake in
+// the production path that the helper might also have inherited (same
+// formula, same bug) shows up here as a divergence.
+func TestConvolveHighBDLibaomQ10MatchesAlgorithm(t *testing.T) {
+	const bd = uint8(10)
+	max := uint16((1 << bd) - 1)
+	sizes := []libaomConvolveBlockSize{
+		{width: 4, height: 4},
+		{width: 4, height: 8},
+		{width: 8, height: 4},
+		{width: 8, height: 8},
+		{width: 8, height: 16},
+		{width: 16, height: 16},
+		{width: 32, height: 32},
+	}
+	filters := []InterpFilters{
+		{X: InterpEightTapRegular, Y: InterpEightTapRegular},
+		{X: InterpEightTapSmooth, Y: InterpEightTapSmooth},
+		{X: InterpMultiTapSharp, Y: InterpMultiTapSharp},
+		{X: InterpBilinear, Y: InterpBilinear},
+		{X: InterpEightTapRegular, Y: InterpEightTapSmooth},
+		{X: InterpMultiTapSharp, Y: InterpBilinear},
+	}
+	subpels := []int{1, 2, 4, 7, 8, 11, 13, 15}
+	for _, sz := range sizes {
+		for _, f := range filters {
+			for _, sx := range subpels {
+				for _, sy := range subpels {
+					t.Run(libaomHighBDCaseName(sz, sx, sy, f), func(t *testing.T) {
+						src := libaomHighBDConvolveInput(sz, max)
+						got, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+						want, _ := testPlane(sz.width, sz.height, 2, sz.width*2)
+						xKernel, err := interpKernel(f.X, sz.width, sx)
+						if err != nil {
+							t.Fatal(err)
+						}
+						yKernel, err := interpKernel(f.Y, sz.height, sy)
+						if err != nil {
+							t.Fatal(err)
+						}
+						// Production call (anchored at the input
+						// origin so the convolve halo lies inside
+						// the padded source plane).
+						convolve2DHighBD(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel, yKernel)
+						// Independent libaom-shaped reference,
+						// rewritten verbatim from libaom-v3.13.1
+						// av1/common/convolve.c
+						// av1_highbd_convolve_2d_sr_c.
+						libaomVerbatimHighBD2DSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel, yKernel)
+						for row := 0; row < sz.height; row++ {
+							for col := 0; col < sz.width; col++ {
+								g := getSample(got, 2, col, row)
+								w := getSample(want, 2, col, row)
+								if g != w {
+									t.Fatalf("size=%dx%d sub=(%d,%d) filters=(%d,%d) sample(%d,%d)=%d want %d",
+										sz.width, sz.height, sx, sy, f.X, f.Y, col, row, g, w)
+								}
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func libaomHighBDCaseName(sz libaomConvolveBlockSize, sx int, sy int, f InterpFilters) string {
+	return libaomHighBDFormat(sz.width) + "x" + libaomHighBDFormat(sz.height) + "_sx" + libaomHighBDFormat(sx) + "_sy" + libaomHighBDFormat(sy) + "_fx" + libaomHighBDFormat(int(f.X)) + "_fy" + libaomHighBDFormat(int(f.Y))
+}
+
+func libaomHighBDFormat(v int) string {
+	digits := "0123456789"
+	if v == 0 {
+		return "0"
+	}
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	var buf [12]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = digits[v%10]
+		v /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+func libaomHighBDConvolveInput(size libaomConvolveBlockSize, max uint16) frame.Plane {
+	const padding = libaomInputPadding
+	plane, _ := testPlane(size.width+padding, size.height+padding, 2, (size.width+padding)*2)
+	state := uint32(0xcafe)
+	for y := 0; y < plane.Height; y++ {
+		for x := 0; x < plane.Width; x++ {
+			state = state*1664525 + 1013904223
+			setSample(plane, 2, x, y, uint16(state>>16)&max)
+		}
+	}
+	return plane
+}
+
+// libaomVerbatimHighBD2DSR is a from-scratch port of libaom-v3.13.1
+// av1/common/convolve.c av1_highbd_convolve_2d_sr_c. It intentionally
+// uses libaom's exact intermediate types (int16 im_block, int32
+// accumulators) so the test cross-checks the production path against
+// the reference algebra rather than against a Go helper that may share
+// a refactoring bug.
+func libaomVerbatimHighBD2DSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, xFilter [filterTaps]int16, yFilter [filterTaps]int16) {
+	const imStride = maxBlockSize
+	var imBlock [(maxBlockSize + filterTaps - 1) * maxBlockSize]int16
+	imH := h + filterTaps - 1
+	foHoriz := filterTaps/2 - 1
+	foVert := filterTaps/2 - 1
+	// Horizontal filter — bias is (1 << (bd + FILTER_BITS - 1)).
+	for y := 0; y < imH; y++ {
+		for x := 0; x < w; x++ {
+			sum := int32(1) << (uint32(bd) + uint32(filterBits) - 1)
+			for k := 0; k < filterTaps; k++ {
+				sum += int32(xFilter[k]) * int32(getSample(src, 2, refX+x-foHoriz+k, refY-foVert+y))
+			}
+			imBlock[y*imStride+x] = int16(libaomRoundPowerOfTwo(int(sum), round0Bits))
+		}
+	}
+	// Vertical filter — offset_bits = bd + 2 * FILTER_BITS - round_0.
+	offsetBits := int(bd) + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			sum := int32(1) << uint32(offsetBits)
+			for k := 0; k < filterTaps; k++ {
+				sum += int32(yFilter[k]) * int32(imBlock[(y+k)*imStride+x])
+			}
+			res := libaomRoundPowerOfTwo(int(sum), round1Bits) - roundOffset
+			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, bits), maxVal))
+		}
+	}
+}
+
 func testPlane(width int, height int, bytesPerSample int, stride int) (frame.Plane, []byte) {
 	buf := make([]byte, stride*height)
 	return frame.Plane{
