@@ -126,3 +126,77 @@ func TestCollectWarpSamplesAboveLeftBypassesOBMCCap(t *testing.T) {
 	_ = doTL
 	_ = doTR
 }
+
+// TestCollectWarpSamplesAboveLeftRejectsInterIntraNeighbors pins the
+// libaom rule that av1_findSamples skips neighbors with ref_frame[1] !=
+// NONE_FRAME. goav1 keeps Ref[1] = ReferenceFrameNone for inter-intra
+// blocks (so has_second_ref stays false elsewhere) and instead carries
+// the inter-intra status in the InterIntra flag. This test starts from
+// the same fixture as the cap test but marks the middle left slot as
+// inter-intra; av1_findSamples must drop that neighbor, leaving 3
+// samples (1 above + 2 left) instead of 4.
+func TestCollectWarpSamplesAboveLeftRejectsInterIntraNeighbors(t *testing.T) {
+	var ctx BlockModeContext
+	mv := motion.Vector{Row: -1, Col: -7}
+	block := BlockVisit{
+		MICol:    80,
+		MIRow:    4,
+		Size:     BlockSize8x16,
+		X4:       16,
+		Y4:       4,
+		HaveTop:  true,
+		HaveLeft: true,
+	}
+	ctx.AboveBlockSize[16] = BlockSize8x16
+	ctx.AboveRef[0][16] = ReferenceFrameLast
+	ctx.AboveRef[1][16] = ReferenceFrameNone
+	ctx.AboveInterMotion[16].MV[0] = mv
+	ctx.AboveInterMotion[16].References.Ref[0] = ReferenceFrameLast
+	ctx.AboveInterMotion[16].References.Ref[1] = ReferenceFrameNone
+	ctx.AboveMotionValid[16] = 1
+	for slot := 4; slot <= 6; slot++ {
+		ctx.LeftBlockSize[slot] = BlockSize4x4
+		ctx.LeftRef[0][slot] = ReferenceFrameLast
+		ctx.LeftRef[1][slot] = ReferenceFrameNone
+		ctx.LeftInterMotion[slot].MV[0] = mv
+		ctx.LeftInterMotion[slot].References.Ref[0] = ReferenceFrameLast
+		ctx.LeftInterMotion[slot].References.Ref[1] = ReferenceFrameNone
+		ctx.LeftMotionValid[slot] = 1
+	}
+	ctx.LeftInterIntra[5] = 1
+	var samples [maxWarpSamples]warpSample
+	count, _, _, err := ctx.collectWarpSamplesAboveLeft(block, ReferenceFrameLast, &samples)
+	if err != nil {
+		t.Fatalf("collectWarpSamplesAboveLeft: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("count = %d want 3 (1 above + 2 left after rejecting inter-intra slot 5). samples = %v", count, samples[:count])
+	}
+}
+
+// TestMarkInterIntraSetsAboveLeftFlags pins MarkInterIntra writing the
+// flag across the full block extent so subsequent neighbor scans observe
+// the inter-intra status at every covered slot.
+func TestMarkInterIntraSetsAboveLeftFlags(t *testing.T) {
+	var ctx BlockModeContext
+	if err := ctx.MarkInterIntra(BlockSize8x16, 5, 9); err != nil {
+		t.Fatalf("MarkInterIntra: %v", err)
+	}
+	for slot := 5; slot < 7; slot++ {
+		if ctx.AboveInterIntra[slot] != 1 {
+			t.Fatalf("AboveInterIntra[%d] = %d want 1", slot, ctx.AboveInterIntra[slot])
+		}
+	}
+	for slot := 9; slot < 13; slot++ {
+		if ctx.LeftInterIntra[slot] != 1 {
+			t.Fatalf("LeftInterIntra[%d] = %d want 1", slot, ctx.LeftInterIntra[slot])
+		}
+	}
+	// Slots outside the block extent stay zero.
+	if ctx.AboveInterIntra[4] != 0 || ctx.AboveInterIntra[7] != 0 {
+		t.Fatalf("AboveInterIntra leaked outside block extent: %v", ctx.AboveInterIntra[:8])
+	}
+	if ctx.LeftInterIntra[8] != 0 || ctx.LeftInterIntra[13] != 0 {
+		t.Fatalf("LeftInterIntra leaked outside block extent: %v", ctx.LeftInterIntra[:14])
+	}
+}

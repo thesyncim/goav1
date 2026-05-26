@@ -253,6 +253,13 @@ func (c *BlockModeContext) warpAboveNeighborMatches(slot int, ref ReferenceFrame
 	if c.AboveRef[1][slot] != ReferenceFrameNone {
 		return false
 	}
+	// libaom's av1_findSamples rejects inter-intra neighbors because they
+	// carry mbmi->ref_frame[1] = INTRA_FRAME != NONE_FRAME. goav1 keeps
+	// Ref[1] = NONE for inter-intra to preserve has_second_ref semantics,
+	// so consult the InterIntra flag explicitly here.
+	if c.AboveInterIntra[slot] != 0 {
+		return false
+	}
 	return true
 }
 
@@ -270,6 +277,9 @@ func (c *BlockModeContext) warpLeftNeighborMatches(slot int, ref ReferenceFrame)
 		return false
 	}
 	if c.LeftRef[1][slot] != ReferenceFrameNone {
+		return false
+	}
+	if c.LeftInterIntra[slot] != 0 {
 		return false
 	}
 	return true

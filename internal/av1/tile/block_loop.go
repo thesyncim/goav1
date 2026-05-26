@@ -1261,6 +1261,11 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
 			return BlockPredictionModeResult{}, fmt.Errorf("mark inter references: %w", err)
 		}
+		if result.InterIntraValid && result.InterIntra.Enabled {
+			if err := ctx.MarkInterIntra(block.Size, block.X4, block.Y4); err != nil {
+				return BlockPredictionModeResult{}, fmt.Errorf("mark inter-intra neighbors: %w", err)
+			}
+		}
 		return result, nil
 	}
 

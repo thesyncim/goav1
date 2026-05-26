@@ -715,6 +715,7 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.AboveCompound[x4+i] = compound
 		c.AboveCompGroup[x4+i] = compGroup
 		c.AboveCompIndex[x4+i] = compIndex
+		c.AboveInterIntra[x4+i] = 0
 		c.AboveInterMotion[x4+i] = InterMotionResult{}
 		c.AboveMotionValid[x4+i] = 0
 		c.AboveInterp[x4+i] = motion.InterpFilters{}
@@ -730,6 +731,7 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftCompound[y4+i] = compound
 		c.LeftCompGroup[y4+i] = compGroup
 		c.LeftCompIndex[y4+i] = compIndex
+		c.LeftInterIntra[y4+i] = 0
 		c.LeftInterMotion[y4+i] = InterMotionResult{}
 		c.LeftMotionValid[y4+i] = 0
 		c.LeftInterp[y4+i] = motion.InterpFilters{}
@@ -737,6 +739,36 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftBlockSize[y4+i] = size
 	}
 	c.clearGridInterMotion(size, x4, y4, dims)
+	return nil
+}
+
+// MarkInterIntra records that the block at (x4, y4) of `size` is an
+// inter-intra block. libaom mirrors this by setting mbmi->ref_frame[1]
+// = INTRA_FRAME, which makes ref_frame[1] != NONE_FRAME for any
+// neighbor scan that filters on "has any second reference" (notably
+// av1_findSamples for WARPED_CAUSAL projection). goav1 keeps Ref[1] =
+// ReferenceFrameNone for inter-intra to preserve the
+// has_second_ref(ref_frame[1] > INTRA_FRAME) semantics; this flag
+// distinguishes the two cases so consumers can pick the right one.
+func (c *BlockModeContext) MarkInterIntra(size BlockSize, x4 int, y4 int) error {
+	if c == nil {
+		return ErrInvalidDecodeState
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return ErrInvalidDecodeState
+	}
+	if x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	for i := 0; i < int(dims.W4); i++ {
+		c.AboveInterIntra[x4+i] = 1
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		c.LeftInterIntra[y4+i] = 1
+	}
 	return nil
 }
 
