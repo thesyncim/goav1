@@ -6,6 +6,11 @@
 
 Pure Go AV1 implementation focused on realtime/WebRTC decoding first.
 
+For an end-to-end map of the decoder - package layout, per-frame pipeline,
+public API surface, threading model, testing strategy, and known limitations
+- see [ARCHITECTURE.md](ARCHITECTURE.md). New contributors and integrators
+should start there. For upstream pinning policy, see [UPSTREAM.md](UPSTREAM.md).
+
 This repository is intentionally built from the transport and bitstream edge
 inward:
 
