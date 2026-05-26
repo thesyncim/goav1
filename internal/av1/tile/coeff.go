@@ -918,18 +918,22 @@ func CoeffLowerLevelsContext(levels []uint8, size TransformSize, class transform
 
 	switch class {
 	case transform.Class2D:
-		txSize, err := size.TransformSize()
-		if err != nil {
+		// libaom's get_lower_levels_ctx_2d adds av1_nz_map_ctx_offset[tx_size]
+		// indexed by the *unadjusted* tx_size, so rectangular sizes whose scan
+		// is square after av1_get_adjusted_tx_size (TX_32X64, TX_64X32) still
+		// receive the row<2/+11 or col<2/+16 bias. We must therefore compare
+		// the original transform width/height, not the (possibly square)
+		// adjusted scan dimensions.
+		dims, ok := size.Dimensions()
+		if !ok {
 			return 0, ErrInvalidDecodeState
 		}
-		scanSize, err := transform.ScanSize(txSize)
-		if err != nil {
-			return 0, ErrInvalidDecodeState
-		}
-		if scanSize.Width < scanSize.Height && row < 2 {
+		txWidth := int(dims.W4) << 2
+		txHeight := int(dims.H4) << 2
+		if txWidth < txHeight && row < 2 {
 			return ctx + 11, nil
 		}
-		if scanSize.Width > scanSize.Height && col < 2 {
+		if txWidth > txHeight && col < 2 {
 			return ctx + 16, nil
 		}
 		if row+col < 2 {

@@ -320,6 +320,22 @@ func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 		{name: "tall regular band", size: TransformSize4x8, class: transform.Class2D, index: 2, want: 6},
 		{name: "wide early column", size: TransformSize8x4, class: transform.Class2D, index: 4, want: 16},
 		{name: "wide regular band", size: TransformSize8x4, class: transform.Class2D, index: 8, want: 6},
+		// libaom indexes av1_nz_map_ctx_offset[tx_size] by the *unadjusted*
+		// tx_size, so 32x64 / 64x32 transforms (whose scan layout reduces to
+		// the 32x32 square after av1_get_adjusted_tx_size) still receive the
+		// row<2/+11 or col<2/+16 rectangular bias. The first-row / first-col
+		// positions therefore land on the rectangular branch even though the
+		// adjusted scan grid is square; the canonical libaom table at
+		// av1_nz_map_ctx_offset_32x64[1] = 11 and
+		// av1_nz_map_ctx_offset_32x64[2] = 6 reflects the unadjusted bias.
+		{name: "32x64 early row col 0", size: TransformSize32x64, class: transform.Class2D, index: 1, want: 11},
+		{name: "32x64 early row col 1", size: TransformSize32x64, class: transform.Class2D, index: 32, want: 11},
+		{name: "32x64 middle band col 0", size: TransformSize32x64, class: transform.Class2D, index: 2, want: 6},
+		{name: "32x64 outer band col 0", size: TransformSize32x64, class: transform.Class2D, index: 4, want: 21},
+		{name: "64x32 early col row 0", size: TransformSize64x32, class: transform.Class2D, index: 32, want: 16},
+		{name: "64x32 early col row 1", size: TransformSize64x32, class: transform.Class2D, index: 33, want: 16},
+		{name: "64x32 middle band row 0", size: TransformSize64x32, class: transform.Class2D, index: 64, want: 6},
+		{name: "64x32 outer band row 0", size: TransformSize64x32, class: transform.Class2D, index: 128, want: 21},
 		{name: "horiz col 0", size: TransformSize8x8, class: transform.ClassHoriz, index: 0, want: 26},
 		{name: "horiz col 1", size: TransformSize8x8, class: transform.ClassHoriz, index: 8, want: 31},
 		{name: "horiz col 2", size: TransformSize8x8, class: transform.ClassHoriz, index: 16, want: 36},
