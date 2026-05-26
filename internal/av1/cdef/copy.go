@@ -7,8 +7,8 @@ func CopyRect8To16(dst []uint16, dstStride int, src []uint8, srcStride int, widt
 		!blockFits(len(src), srcStride, width, height) {
 		return ErrInvalidCDEF
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dst[row*dstStride+col] = uint16(src[row*srcStride+col])
 		}
 	}
@@ -22,8 +22,8 @@ func CopyRect16To16(dst []uint16, dstStride int, src []uint16, srcStride int, wi
 		!blockFits(len(src), srcStride, width, height) {
 		return ErrInvalidCDEF
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dst[row*dstStride+col] = src[row*srcStride+col]
 		}
 	}

@@ -76,7 +76,7 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 			x := int(input[base])
 			maxSample := x
 			minSample := x
-			for k := 0; k < 2; k++ {
+			for k := range 2 {
 				if enablePrimary {
 					p0 := int(input[base+cdefDirections[params.Direction+2][k]])
 					p1 := int(input[base-cdefDirections[params.Direction+2][k]])
@@ -275,7 +275,7 @@ func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 			if base < 0 || base >= length {
 				return false
 			}
-			for k := 0; k < 2; k++ {
+			for k := range 2 {
 				if enablePrimary && (!indexFits(length, base+cdefDirections[params.Direction+2][k]) || !indexFits(length, base-cdefDirections[params.Direction+2][k])) {
 					return false
 				}
@@ -300,10 +300,7 @@ func constrain(diff int, threshold int, damping int) int {
 	if threshold == 0 {
 		return 0
 	}
-	shift := damping - (bits.Len(uint(threshold)) - 1)
-	if shift < 0 {
-		shift = 0
-	}
+	shift := max(damping-(bits.Len(uint(threshold))-1), 0)
 	limit := threshold - (absInt(diff) >> shift)
 	return signInt(diff) * clampInt(limit, 0, absInt(diff))
 }
@@ -314,10 +311,7 @@ func adjustStrength(strength int, variance int32) int {
 	}
 	i := 0
 	if v := variance >> 6; v != 0 {
-		i = bits.Len(uint(v)) - 1
-		if i > 12 {
-			i = 12
-		}
+		i = min(bits.Len(uint(v))-1, 12)
 	}
 	return (strength*(4+i) + 8) >> 4
 }

@@ -13,8 +13,8 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 	var cost [8]int32
 	var partial [8][15]int
 	divTable := [...]int{0, 840, 420, 280, 210, 168, 140, 120, 105}
-	for i := 0; i < 8; i++ {
-		for j := 0; j < 8; j++ {
+	for i := range 8 {
+		for j := range 8 {
 			x := int(img[i*stride+j]>>coeffShift) - 128
 			partial[0][i+j] += x
 			partial[1][i+j/2] += x
@@ -26,30 +26,30 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 			partial[7][i/2+j] += x
 		}
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		cost[2] += int32(partial[2][i] * partial[2][i])
 		cost[6] += int32(partial[6][i] * partial[6][i])
 	}
 	cost[2] *= int32(divTable[8])
 	cost[6] *= int32(divTable[8])
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		cost[0] += int32((partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * divTable[i+1])
 		cost[4] += int32((partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * divTable[i+1])
 	}
 	cost[0] += int32(partial[0][7] * partial[0][7] * divTable[8])
 	cost[4] += int32(partial[4][7] * partial[4][7] * divTable[8])
 	for i := 1; i < 8; i += 2 {
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			cost[i] += int32(partial[i][3+j] * partial[i][3+j])
 		}
 		cost[i] *= int32(divTable[8])
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			cost[i] += int32((partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * divTable[2*j+2])
 		}
 	}
 	bestCost := int32(0)
 	bestDir := 0
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if cost[i] > bestCost {
 			bestCost = cost[i]
 			bestDir = i

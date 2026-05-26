@@ -18,8 +18,8 @@ func TestCopyRectMatchesLibaomCorpus(t *testing.T) {
 			got16 := make([]uint16, dstStride*height)
 			want8 := make([]uint16, dstStride*height)
 			want16 := make([]uint16, dstStride*height)
-			for row := 0; row < height; row++ {
-				for col := 0; col < width; col++ {
+			for row := range height {
+				for col := range width {
 					v := uint16(rnd.generate(1 << 16))
 					src8[row*src8Stride+col] = uint8(v)
 					src16[row*src16Stride+col] = v
@@ -59,12 +59,12 @@ func TestFilterBlockMatchesLibaomCorpus(t *testing.T) {
 		{8, 4},
 		{8, 8},
 	} {
-		for boundary := 0; boundary < 16; boundary++ {
+		for boundary := range 16 {
 			for _, depth := range []int{8, 10, 12} {
 				shift := depth - 8
-				for iter := 0; iter < 2; iter++ {
+				for iter := range 2 {
 					input := makeCDEFBlockInput(rnd, depth, boundary, iter)
-					for dir := 0; dir < 8; dir++ {
+					for dir := range 8 {
 						for _, pri := range cdefPrimaryStrengthCorpus(shift) {
 							for _, sec := range cdefSecondaryStrengthCorpus(shift) {
 								got := make([]uint16, 8*8)
@@ -356,7 +356,7 @@ func BenchmarkFilterBlock(b *testing.B) {
 		Height:            8,
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = FilterBlock(dst, 8, 0, input, cdefBlockOrigin(), params)
 	}
 }
@@ -379,7 +379,7 @@ func BenchmarkFilterFrameBlocks(b *testing.B) {
 		CoeffShift:        2,
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, params)
 	}
 }
@@ -397,7 +397,7 @@ func BenchmarkCopyRect8To16(b *testing.B) {
 	}
 	b.SetBytes(int64(width * height))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = CopyRect8To16(dst, dstStride, src, srcStride, width, height)
 	}
 }
@@ -415,22 +415,22 @@ func BenchmarkCopyRect16To16(b *testing.B) {
 	}
 	b.SetBytes(int64(width * height * 2))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = CopyRect16To16(dst, dstStride, src, srcStride, width, height)
 	}
 }
 
 func copyRect8To16Reference(dst []uint16, dstStride int, src []uint8, srcStride int, width int, height int) {
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dst[row*dstStride+col] = uint16(src[row*srcStride+col])
 		}
 	}
 }
 
 func copyRect16To16Reference(dst []uint16, dstStride int, src []uint16, srcStride int, width int, height int) {
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dst[row*dstStride+col] = src[row*srcStride+col]
 		}
 	}
@@ -446,7 +446,7 @@ func filterBlockLibaomReference(dst []uint16, dstStride int, dstOrigin int, inpu
 			x := int(input[base])
 			maxSample := x
 			minSample := x
-			for k := 0; k < 2; k++ {
+			for k := range 2 {
 				if params.PrimaryStrength != 0 {
 					p0 := int(input[base+referenceCDEFDirections[params.Direction][k]])
 					p1 := int(input[base-referenceCDEFDirections[params.Direction][k]])
@@ -525,29 +525,29 @@ func makeCDEFBlockInput(rnd *cdefRandom, depth int, boundary int, iteration int)
 func applyCDEFBoundary(input []uint16, boundary uint8) {
 	ysize := 8 + 2*VerticalBorder
 	if boundary&1 != 0 {
-		for row := 0; row < ysize; row++ {
-			for col := 0; col < HorizontalBorder; col++ {
+		for row := range ysize {
+			for col := range HorizontalBorder {
 				input[row*BStride+col] = VeryLarge
 			}
 		}
 	}
 	if boundary&2 != 0 {
-		for row := 0; row < ysize; row++ {
+		for row := range ysize {
 			for col := HorizontalBorder + 8; col < BStride; col++ {
 				input[row*BStride+col] = VeryLarge
 			}
 		}
 	}
 	if boundary&4 != 0 {
-		for row := 0; row < VerticalBorder; row++ {
-			for col := 0; col < BStride; col++ {
+		for row := range VerticalBorder {
+			for col := range BStride {
 				input[row*BStride+col] = VeryLarge
 			}
 		}
 	}
 	if boundary&8 != 0 {
 		for row := VerticalBorder + 8; row < ysize; row++ {
-			for col := 0; col < BStride; col++ {
+			for col := range BStride {
 				input[row*BStride+col] = VeryLarge
 			}
 		}
@@ -570,10 +570,7 @@ func constrainReference(diff int, threshold int, damping int) int {
 	if threshold == 0 {
 		return 0
 	}
-	shift := damping - msbReference(threshold)
-	if shift < 0 {
-		shift = 0
-	}
+	shift := max(damping-msbReference(threshold), 0)
 	return signReference(diff) * clampReference(threshold-(absReference(diff)>>shift), 0, absReference(diff))
 }
 
@@ -583,10 +580,7 @@ func adjustStrengthReference(strength int, variance int32) int {
 	}
 	i := 0
 	if v := variance >> 6; v != 0 {
-		i = msbReference(int(v))
-		if i > 12 {
-			i = 12
-		}
+		i = min(msbReference(int(v)), 12)
 	}
 	return (strength*(4+i) + 8) >> 4
 }
@@ -640,8 +634,8 @@ func minUint16(a uint16, b uint16) uint16 {
 
 func assertBlockEqual(t *testing.T, got []uint16, want []uint16, stride int, width int, height int) {
 	t.Helper()
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			if got[row*stride+col] != want[row*stride+col] {
 				t.Fatalf("sample[%d,%d]=%d want %d", row, col, got[row*stride+col], want[row*stride+col])
 			}
