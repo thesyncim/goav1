@@ -48,18 +48,18 @@ func cdefDebugUnit(plane int, unitRow int, unitCol int) bool {
 }
 
 func cdefDebugLogUnitDst(plane int, unitRow int, unitCol int, unitDst []uint16) {
-	if plane != 1 {
+	if plane != 1 && plane != 2 {
 		return
 	}
 	if os.Getenv("GOAV1_DEBUG_CDEF_UNIT") == "" || unitRow != 0 || unitCol != 0 {
 		return
 	}
-	for r := 24; r < 32; r++ {
-		vals := make([]uint16, 8)
-		for c := 0; c < 8; c++ {
+	for r := 28; r < 32; r++ {
+		vals := make([]uint16, 12)
+		for c := 0; c < 12; c++ {
 			vals[c] = unitDst[r*cdef.BStride+c]
 		}
-		fmt.Fprintf(os.Stderr, "[CDEF] plane=1 unitDst r=%d cols 0-7: %v\n", r, vals)
+		fmt.Fprintf(os.Stderr, "[CDEF] plane=%d unitDst r=%d cols 0-11: %v\n", plane, r, vals)
 	}
 }
 
@@ -72,17 +72,17 @@ func cdefDebugLogUnit(plane int, unitRow int, unitCol int, packed uint8, params 
 		fmt.Fprintf(os.Stderr, "[CDEF] plane=0 directions row 7: %v\n", dirs[7])
 		fmt.Fprintf(os.Stderr, "[CDEF] plane=0 variances row 6: %v\n", vars[6])
 	}
-	if plane == 1 {
-		// Print input values at block by=6 (rows 24-27), col 0..7
-		fmt.Fprintf(os.Stderr, "[CDEF] plane=1 directions used row 6: %v\n", dirs[6])
-		fmt.Fprintf(os.Stderr, "[CDEF] plane=1 directions used row 7: %v\n", dirs[7])
+	if plane == 1 || plane == 2 {
+		// Print input values at block by=7 (rows 28-31), col 0..7
+		fmt.Fprintf(os.Stderr, "[CDEF] plane=%d directions used row 6: %v\n", plane, dirs[6])
+		fmt.Fprintf(os.Stderr, "[CDEF] plane=%d directions used row 7: %v\n", plane, dirs[7])
 		origin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
-		for r := 22; r < 32; r++ {
+		for r := 28; r < 34; r++ {
 			vals := make([]uint16, 12)
 			for c := 0; c < 12; c++ {
 				vals[c] = input[origin+r*cdef.BStride+c]
 			}
-			fmt.Fprintf(os.Stderr, "[CDEF] plane=1 input r=%d cols 0-11: %v\n", r, vals)
+			fmt.Fprintf(os.Stderr, "[CDEF] plane=%d input r=%d cols 0-11: %v\n", plane, r, vals)
 		}
 	}
 }

@@ -733,3 +733,122 @@ func testFrameWorkCDEFPlaneChanged(plane frame.Plane, before []byte) bool {
 	}
 	return false
 }
+
+// TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow pins libaom's CDEF
+// bot_linebuf behavior for chroma planes whose visible height ends inside a
+// non-final CDEF unit. The chroma 33-tall plane in the libaom 66x66 vector hits
+// CDEF unit row 0 with unit height 32: the kernel's bottom directional taps at
+// by=7 (rows 28..31) need samples at rows 32 and 33 of the input buffer. Row 32
+// is visible (real sample); row 33 in libaom comes from the YV12 buffer's
+// aligned-but-out-of-crop padding (uv_height vs uv_crop_height), which holds
+// the last visible row replicated by alignment/decode writes. Our SamplePlane
+// is exactly the visible window, so frameWorkCopyCDEFInput synthesizes the
+// extension by replicating the last visible row into the bottom border. The
+// final CDEF unit row must keep the VeryLarge sentinel just like libaom's
+// fill_rect(...CDEF_VERY_LARGE) when fbr == nvfb - 1.
+func TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow(t *testing.T) {
+	const planeHeight = 33
+	const planeWidth = 33
+	const unitX = 0
+	const unitY = 0
+	const unitW = 32
+	const unitH = 32
+
+	src := frame.SamplePlane{
+		Pix:    make([]uint16, planeWidth*planeHeight),
+		Stride: planeWidth,
+		Width:  planeWidth,
+		Height: planeHeight,
+	}
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			src.Pix[y*src.Stride+x] = uint16(100 + y)
+		}
+	}
+
+	input := make([]uint16, cdef.InputBufferSize)
+	for i := range input {
+		input[i] = cdef.VeryLarge
+	}
+	if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
+		t.Fatalf("frameWorkCopyCDEFInput: %v", err)
+	}
+
+	originRow := cdef.VerticalBorder
+	originCol := cdef.HorizontalBorder
+	at := func(row, col int) uint16 {
+		return input[(originRow+row)*cdef.BStride+originCol+col]
+	}
+
+	// Visible rows 0..32 must hold the real samples (last visible row is 32).
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			if got, want := at(y, x), uint16(100+y); got != want {
+				t.Fatalf("input row=%d col=%d got=%d want=%d", y, x, got, want)
+			}
+		}
+	}
+	// Rows past the visible plane within the CDEF VerticalBorder must replicate
+	// the last visible row instead of leaving VeryLarge — otherwise the kernel's
+	// directional taps at by=7 would diverge from libaom's bot_linebuf reads.
+	const lastVisible = planeHeight - 1
+	for y := planeHeight; y < unitY+unitH+cdef.VerticalBorder; y++ {
+		for x := 0; x < planeWidth; x++ {
+			if got, want := at(y, x), uint16(100+lastVisible); got != want {
+				t.Fatalf("bottom-extension row=%d col=%d got=%d want=%d", y, x, got, want)
+			}
+		}
+	}
+}
+
+// TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge pins the libaom branch in
+// cdef_prepare_fb that fills the bottom border with VERY_LARGE when the unit is
+// the final superblock row (fbr == nvfb - 1) — i.e., the unit's bottom edge
+// coincides with the plane's bottom edge. Replicating the last visible row in
+// that case would diverge from libaom and regress the Y plane on 66x66.
+func TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge(t *testing.T) {
+	const planeHeight = 66
+	const planeWidth = 66
+	// Final luma CDEF unit at row 1: unitY=64 unitH=2, ends exactly at plane
+	// bottom. This matches the libaom fbr == nvfb - 1 branch.
+	const unitX = 0
+	const unitY = 64
+	const unitW = 64
+	const unitH = 2
+
+	src := frame.SamplePlane{
+		Pix:    make([]uint16, planeWidth*planeHeight),
+		Stride: planeWidth,
+		Width:  planeWidth,
+		Height: planeHeight,
+	}
+	for y := 0; y < planeHeight; y++ {
+		for x := 0; x < planeWidth; x++ {
+			src.Pix[y*src.Stride+x] = uint16(200 + y)
+		}
+	}
+
+	input := make([]uint16, cdef.InputBufferSize)
+	for i := range input {
+		input[i] = cdef.VeryLarge
+	}
+	if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
+		t.Fatalf("frameWorkCopyCDEFInput: %v", err)
+	}
+
+	originRow := cdef.VerticalBorder
+	originCol := cdef.HorizontalBorder
+	at := func(row, col int) uint16 {
+		return input[(originRow+row)*cdef.BStride+originCol+col]
+	}
+
+	// Bottom border rows (relative offsets unitH..unitH+VerticalBorder-1)
+	// must remain VeryLarge to match libaom's fill_rect(...VERY_LARGE) branch.
+	for y := unitH; y < unitH+cdef.VerticalBorder; y++ {
+		for x := 0; x < unitW; x++ {
+			if got := at(y, x); got != cdef.VeryLarge {
+				t.Fatalf("final-unit bottom border row=%d col=%d got=%d want VeryLarge", y, x, got)
+			}
+		}
+	}
+}

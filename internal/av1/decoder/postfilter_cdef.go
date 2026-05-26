@@ -338,7 +338,33 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 	dstOffset := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder +
 		(srcY0-unitY)*cdef.BStride + (srcX0 - unitX)
 	srcOffset := srcY0*src.Stride + srcX0
-	return cdef.CopyRect16To16(input[dstOffset:], cdef.BStride, src.Pix[srcOffset:], src.Stride, copyW, copyH)
+	if err := cdef.CopyRect16To16(input[dstOffset:], cdef.BStride, src.Pix[srcOffset:], src.Stride, copyW, copyH); err != nil {
+		return err
+	}
+	// libaom's CDEF bot_linebuf for non-final superblock rows is fed from the
+	// frame buffer at rows past the current 64x64 superblock; for chroma planes
+	// whose visible height isn't a multiple of the CDEF unit height that read
+	// lands in the plane's aligned-but-out-of-crop padding (uv_height vs
+	// uv_crop_height), which libaom populates with the last visible row via
+	// implicit alignment/decode writes. Our SamplePlane is exactly the visible
+	// window, so we synthesize the equivalent extension by replicating the last
+	// visible row into the CDEF input bottom border whenever the unit is not the
+	// final unit row but the visible plane ends inside the unit's
+	// VerticalBorder reach. Without it the kernel's directional taps hit the
+	// VeryLarge sentinel even when libaom had real data, producing the V plane
+	// row-31 -1 divergence on 66x66 (chroma height 33, CDEF unit height 32).
+	//
+	// The final superblock unit row keeps the VeryLarge sentinel just like
+	// libaom's fill_rect(...CDEF_VERY_LARGE) branch when fbr == nvfb - 1.
+	wantSrcY1 := unitY + unitH + cdef.VerticalBorder
+	if srcY1 < wantSrcY1 && srcY1 > 0 && unitY+unitH < src.Height {
+		lastRowOffset := dstOffset + (copyH-1)*cdef.BStride
+		for row := srcY1; row < wantSrcY1; row++ {
+			extOffset := dstOffset + (row-srcY0)*cdef.BStride
+			copy(input[extOffset:extOffset+copyW], input[lastRowOffset:lastRowOffset+copyW])
+		}
+	}
+	return nil
 }
 
 func frameWorkCDEFBlockPositions(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int) []cdef.BlockPosition {
