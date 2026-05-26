@@ -216,6 +216,17 @@ type BlockPredictionModeResult struct {
 	WarpedMotion        WarpedMotionModel
 	WarpedMotionValid   bool
 
+	// GlobalWarpedMotion carries the frame-level global motion as a warp
+	// model (alpha/beta/gamma/delta reduced) for blocks whose AV1 mode is
+	// GLOBALMV/GLOBAL_GLOBALMV with a non-translational warp type and a
+	// block min-side of at least 8 luma samples. libaom's
+	// av1_init_warp_params(...) promotes such blocks from SIMPLE_TRANSLATION
+	// to WARP_PRED using the frame's global motion params; without this
+	// promotion goav1 produces small (~1 sample) but frame-wide off-by-one
+	// drift versus libaom across affine global-motion content.
+	GlobalWarpedMotion      WarpedMotionModel
+	GlobalWarpedMotionValid bool
+
 	OverlappableNeighbors      OverlappableNeighborSet
 	OverlappableNeighborsValid bool
 

@@ -819,7 +819,73 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
+	// libaom promotes GLOBALMV blocks with a non-translational frame-level
+	// warp model and a block min-side of at least 8 luma samples to
+	// WARP_PRED through av1_init_warp_params(). The block-level motion_mode
+	// stays SIMPLE_TRANSLATION; the warp uses the frame-level params.
+	if visit.Prediction.GlobalWarpedMotionValid {
+		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		if err != nil {
+			return err
+		}
+		if ok && geom.Width >= 8 && geom.Height >= 8 {
+			return b.predictBlockInterGlobalWarpPlane(index, visit, plane)
+		}
+		if !ok {
+			return nil
+		}
+	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters)
+}
+
+// predictBlockInterGlobalWarpPlane mirrors libaom's WARP_PRED dispatch for
+// GLOBALMV blocks that meet av1_init_warp_params()'s gating: non-translational
+// frame-level global motion and a block min-side of at least 8 luma samples.
+// The warp parameters are pre-resolved by the tile decoder; this function only
+// drives the warp filter using those params (no neighbor projection).
+func (b FrameWorkBatch) predictBlockInterGlobalWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	if !visit.Prediction.Valid ||
+		visit.Prediction.Intra ||
+		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		!visit.Prediction.InterMotionValid ||
+		!visit.Prediction.GlobalWarpedMotionValid {
+		return ErrInvalidBatch
+	}
+	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
+	if motionResult.References.Compound ||
+		!motionResult.References.Ref[0].Valid() ||
+		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		return ErrInvalidBatch
+	}
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	if err != nil || !ok {
+		return err
+	}
+	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, plane)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+		return err
+	}
+	model := visit.Prediction.GlobalWarpedMotion
+	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
 }
 
 func (b FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {

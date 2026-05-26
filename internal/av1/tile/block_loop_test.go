@@ -1504,3 +1504,261 @@ func mustBlockLoopCDFs(t *testing.T) (PartitionCDFs, BlockModeCDFs, DeltaCDFs) {
 	}
 	return partitionCDFs, modeCDFs, deltaCDFs
 }
+
+// TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock ensures
+// libaom's av1_init_warp_params() promotion is mirrored: a forced
+// InterModeGlobalMV block whose frame-level warp model is non-translational
+// and whose min-side is at least 8 luma samples receives
+// result.GlobalWarpedMotionValid=true with shear params computed from the
+// frame-level global motion matrix, not from a local neighbor projection.
+// Without the promotion the cdf_update vector's first inter frame produces
+// frame-wide ±1..±2 sample drift versus libaom across affine GM content.
+func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 5}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var interModeCDFs InterModeCDFs
+	if err := interModeCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var mvCDFs MVCDFs
+	if err := mvCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var blendCDFs CompoundBlendCDFs
+	if err := blendCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var motionCDFs MotionModeCDFs
+	if err := motionCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+	seg := parser.SegmentationParams{Enabled: true}
+	for i := range seg.Data.Segments {
+		seg.Data.Segments[i].RefFrame = -1
+	}
+	seg.Data.Segments[0].GlobalMV = true
+	global := [referenceFrameCount]parser.WarpedMotionParams{}
+	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
+	global[ReferenceFrameLast].Type = parser.GlobalMotionRotZoom
+	// A symmetric rotzoom whose alpha/beta/gamma/delta all fit inside
+	// is_affine_shear_allowed bounds. The matrix is intentionally
+	// non-translational so the promotion path triggers.
+	global[ReferenceFrameLast].Matrix = [6]int32{
+		8192, -4096,
+		1<<16 + 2048, 1024,
+		-1024, 1<<16 + 2048,
+	}
+	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
+		ReferenceFrameLast: parser.GlobalMotionRotZoom,
+	}
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+		InterMode: &interModeCDFs,
+		MV:        &mvCDFs,
+		Blend:     &blendCDFs,
+		Motion:    &motionCDFs,
+	}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		Segmentation:          seg,
+		DecodePredictionModes: true,
+		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
+		DecodeMotionModes:     true,
+		AllowHighPrecisionMV:  true,
+		AllowWarpedMotion:     true,
+		GlobalMotion:          global,
+		GlobalMotionTypes:     gmTypes,
+		ReferenceMode:         parser.ReferenceModeSingle,
+	}, BlockVisit{
+		Size:     BlockSize16x16,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1, GlobalMV: true}, &PaletteModeScratch{})
+	if err != nil {
+		t.Fatalf("decodeBlockPredictionMode: %v", err)
+	}
+	if !result.InterModeValid || result.InterMode.Mode != InterModeGlobalMV {
+		t.Fatalf("inter mode=%+v valid=%v want GLOBALMV", result.InterMode, result.InterModeValid)
+	}
+	if !result.MotionModeValid || result.MotionMode != MotionModeTranslation {
+		t.Fatalf("motion mode=%d valid=%v want SIMPLE_TRANSLATION (1)", result.MotionMode, result.MotionModeValid)
+	}
+	if !result.GlobalWarpedMotionValid {
+		t.Fatalf("global warped motion not populated: %+v", result.GlobalWarpedMotion)
+	}
+	if result.GlobalWarpedMotion.Params.Type != parser.GlobalMotionRotZoom {
+		t.Fatalf("global warped motion type=%v want RotZoom", result.GlobalWarpedMotion.Params.Type)
+	}
+	if result.GlobalWarpedMotion.Params.Matrix != global[ReferenceFrameLast].Matrix {
+		t.Fatalf("global warped motion matrix=%v want %v", result.GlobalWarpedMotion.Params.Matrix, global[ReferenceFrameLast].Matrix)
+	}
+	// alpha/beta/gamma/delta should equal the values produced by
+	// warpShearParams on the same matrix; this guards against accidental
+	// future changes to the shear-params derivation.
+	expected, ok := warpShearParams(WarpedMotionModel{Params: global[ReferenceFrameLast]})
+	if !ok {
+		t.Fatalf("test setup matrix not shear-allowed; pick a different rotzoom")
+	}
+	if result.GlobalWarpedMotion.Alpha != expected.Alpha ||
+		result.GlobalWarpedMotion.Beta != expected.Beta ||
+		result.GlobalWarpedMotion.Gamma != expected.Gamma ||
+		result.GlobalWarpedMotion.Delta != expected.Delta {
+		t.Fatalf("shear params got alpha=%d beta=%d gamma=%d delta=%d want alpha=%d beta=%d gamma=%d delta=%d",
+			result.GlobalWarpedMotion.Alpha, result.GlobalWarpedMotion.Beta,
+			result.GlobalWarpedMotion.Gamma, result.GlobalWarpedMotion.Delta,
+			expected.Alpha, expected.Beta, expected.Gamma, expected.Delta)
+	}
+}
+
+// TestDecodeBlockPredictionModeSkipsGlobalWarpForTranslationGM verifies the
+// promotion is gated on a non-translational global motion type. A GLOBALMV
+// block whose frame-level GM is TRANSLATION must not receive a populated
+// GlobalWarpedMotion - it stays on the regular sub-pel translation path.
+func TestDecodeBlockPredictionModeSkipsGlobalWarpForTranslationGM(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 5}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var interModeCDFs InterModeCDFs
+	if err := interModeCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var mvCDFs MVCDFs
+	if err := mvCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var blendCDFs CompoundBlendCDFs
+	if err := blendCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var motionCDFs MotionModeCDFs
+	if err := motionCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+	seg := parser.SegmentationParams{Enabled: true}
+	for i := range seg.Data.Segments {
+		seg.Data.Segments[i].RefFrame = -1
+	}
+	seg.Data.Segments[0].GlobalMV = true
+	global := [referenceFrameCount]parser.WarpedMotionParams{}
+	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
+	global[ReferenceFrameLast].Type = parser.GlobalMotionTranslation
+	global[ReferenceFrameLast].Matrix[0] = 13 << 13
+	global[ReferenceFrameLast].Matrix[1] = -7 << 13
+	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
+		ReferenceFrameLast: parser.GlobalMotionTranslation,
+	}
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+		InterMode: &interModeCDFs,
+		MV:        &mvCDFs,
+		Blend:     &blendCDFs,
+		Motion:    &motionCDFs,
+	}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		Segmentation:          seg,
+		DecodePredictionModes: true,
+		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
+		DecodeMotionModes:     true,
+		AllowHighPrecisionMV:  true,
+		AllowWarpedMotion:     true,
+		GlobalMotion:          global,
+		GlobalMotionTypes:     gmTypes,
+		ReferenceMode:         parser.ReferenceModeSingle,
+	}, BlockVisit{
+		Size:     BlockSize16x16,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1, GlobalMV: true}, &PaletteModeScratch{})
+	if err != nil {
+		t.Fatalf("decodeBlockPredictionMode: %v", err)
+	}
+	if !result.InterModeValid || result.InterMode.Mode != InterModeGlobalMV {
+		t.Fatalf("inter mode=%+v valid=%v want GLOBALMV", result.InterMode, result.InterModeValid)
+	}
+	if result.GlobalWarpedMotionValid {
+		t.Fatalf("global warped motion should not be populated for translational GM: %+v", result.GlobalWarpedMotion)
+	}
+}
+
+// TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock verifies the
+// promotion is gated on a block min-side of at least 8 luma samples. A
+// GLOBALMV BLOCK_4X4 (or any block under 8 on either side) with a rotzoom
+// global motion stays on the regular sub-pel translation path, matching
+// libaom's is_global_mv_block(...) block_size_allowed condition.
+func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00, 0x00, 0x00, 0x00, 0x00}, Job{Offset: 0, Size: 5}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var interModeCDFs InterModeCDFs
+	if err := interModeCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var mvCDFs MVCDFs
+	if err := mvCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var blendCDFs CompoundBlendCDFs
+	if err := blendCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var motionCDFs MotionModeCDFs
+	if err := motionCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+	seg := parser.SegmentationParams{Enabled: true}
+	for i := range seg.Data.Segments {
+		seg.Data.Segments[i].RefFrame = -1
+	}
+	seg.Data.Segments[0].GlobalMV = true
+	global := [referenceFrameCount]parser.WarpedMotionParams{}
+	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
+	global[ReferenceFrameLast].Type = parser.GlobalMotionRotZoom
+	global[ReferenceFrameLast].Matrix = [6]int32{
+		8192, -4096,
+		1<<16 + 2048, 1024,
+		-1024, 1<<16 + 2048,
+	}
+	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
+		ReferenceFrameLast: parser.GlobalMotionRotZoom,
+	}
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+		InterMode: &interModeCDFs,
+		MV:        &mvCDFs,
+		Blend:     &blendCDFs,
+		Motion:    &motionCDFs,
+	}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		Segmentation:          seg,
+		DecodePredictionModes: true,
+		DecodeInterModes:      true,
+		DecodeMotionVectors:   true,
+		DecodeMotionModes:     true,
+		AllowHighPrecisionMV:  true,
+		AllowWarpedMotion:     true,
+		GlobalMotion:          global,
+		GlobalMotionTypes:     gmTypes,
+		ReferenceMode:         parser.ReferenceModeSingle,
+	}, BlockVisit{
+		Size:     BlockSize4x4,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: 1, GlobalMV: true}, &PaletteModeScratch{})
+	if err != nil {
+		t.Fatalf("decodeBlockPredictionMode: %v", err)
+	}
+	if result.GlobalWarpedMotionValid {
+		t.Fatalf("global warped motion should not be populated for 4x4 block: %+v", result.GlobalWarpedMotion)
+	}
+}

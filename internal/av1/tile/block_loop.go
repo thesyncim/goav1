@@ -1057,6 +1057,25 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						result.OverlappableNeighbors = overlappableNeighbors
 						result.OverlappableNeighborsValid = true
 					}
+					// libaom promotes GLOBALMV/GLOBAL_GLOBALMV blocks with a
+					// non-translational frame-level warp model and a block
+					// min-side of at least 8 luma samples to WARP_PRED (see
+					// av1_init_warp_params). The motion_mode signaling
+					// (SIMPLE_TRANSLATION here) is independent of the
+					// underlying prediction path: the warp params are taken
+					// from the frame-level global motion array, not from the
+					// local OverlappableNeighbor projection.
+					if motionMode == MotionModeTranslation &&
+						!refs.Compound &&
+						refs.Ref[0].Valid() &&
+						isGlobalMVBlock(mode, block.Size, blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes)) &&
+						!blockReferenceScaled(refs, req.ScaledReferences) {
+						params := req.GlobalMotion[refs.Ref[0]]
+						if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
+							result.GlobalWarpedMotion = model
+							result.GlobalWarpedMotionValid = true
+						}
+					}
 				}
 				if req.DecodeCompoundBlend && refs.Compound {
 					blend, err := s.ReadCompoundBlend(cdfs.Blend, ctx, CompoundBlendRequest{
