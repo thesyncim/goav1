@@ -35,7 +35,7 @@ func BindPool(backing []byte, format Format, frames []Frame, free []int, used []
 		used:   used[:count],
 		top:    count,
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		start := i * layout.Size
 		end := start + layout.Size
 		frame, err := Bind(backing[start:end], format)
@@ -146,19 +146,19 @@ func (p *Pool) ReleaseMany(indices []int) error {
 		return nil
 	}
 
-	for i := 0; i < len(indices); i++ {
+	for i := range indices {
 		index := indices[i]
 		if index < 0 || index >= len(p.frames) || !p.used[index] {
 			return ErrInvalidSlot
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if indices[j] == index {
 				return ErrInvalidSlot
 			}
 		}
 	}
 
-	for i := 0; i < len(indices); i++ {
+	for i := range indices {
 		index := indices[i]
 		p.used[index] = false
 		p.free[p.top] = index
@@ -176,7 +176,7 @@ func (p *Pool) Reset() {
 		p.top = 0
 		return
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		p.free[i] = count - 1 - i
 		p.used[i] = false
 	}

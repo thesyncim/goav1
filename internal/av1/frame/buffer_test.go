@@ -395,8 +395,8 @@ func FuzzSamplePlaneRoundTrip(f *testing.F) {
 		stride := strideSamples * bytesPerSample
 		plane := Plane{Pix: make([]byte, stride*height), Stride: stride, Width: width, Height: height}
 		state := seed
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				state = state*1664525 + 1013904223
 				max := uint16(0xff)
 				if bytesPerSample == 2 {
@@ -417,8 +417,8 @@ func FuzzSamplePlaneRoundTrip(f *testing.F) {
 		if err := StoreSamplePlane(dst, bytesPerSample, samples); err != nil {
 			t.Fatalf("StoreSamplePlane err=%v", err)
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				got := getTestPlaneSample(dst, bytesPerSample, x, y)
 				want := getTestPlaneSample(plane, bytesPerSample, x, y)
 				if got != want {
@@ -443,8 +443,8 @@ func FuzzBorderedSamplePlaneRoundTrip(f *testing.F) {
 		align := 1 << (rawAlign & 3)
 		plane := Plane{Pix: make([]byte, stride*height), Stride: stride, Width: width, Height: height}
 		state := seed
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				state = state*1664525 + 1013904223
 				max := uint16(0xff)
 				if bytesPerSample == 2 {
@@ -475,8 +475,8 @@ func FuzzBorderedSamplePlaneRoundTrip(f *testing.F) {
 		if err := StoreBorderedSamplePlane(dst, bytesPerSample, samples); err != nil {
 			t.Fatalf("StoreBorderedSamplePlane err=%v", err)
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				got := getTestPlaneSample(dst, bytesPerSample, x, y)
 				want := getTestPlaneSample(plane, bytesPerSample, x, y)
 				if got != want {
@@ -496,7 +496,7 @@ func BenchmarkBindFrame(b *testing.B) {
 	buffer := make([]byte, layout.Size)
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = Bind(buffer, format)
 	}
 }
@@ -508,7 +508,7 @@ func BenchmarkSamplePlaneLoadStore(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		samples, _ := LoadSamplePlane(scratch, plane, 2)
 		_ = StoreSamplePlane(dst, 2, samples)
 	}
@@ -525,7 +525,7 @@ func BenchmarkBorderedSamplePlaneLoadStore(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		samples, _ := LoadBorderedSamplePlane(scratch, plane, 2, 32, 32, 64)
 		_ = StoreBorderedSamplePlane(dst, 2, samples)
 	}

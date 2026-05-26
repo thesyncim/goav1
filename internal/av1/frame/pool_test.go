@@ -416,7 +416,7 @@ func BenchmarkFramePoolAcquireRelease(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		index, _, err := pool.Acquire()
 		if err != nil {
 			b.Fatal(err)
@@ -443,7 +443,7 @@ func BenchmarkFramePoolAcquireFormatRelease(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		index, _, err := pool.AcquireFormat(format)
 		if err != nil {
 			b.Fatal(err)
@@ -471,7 +471,7 @@ func BenchmarkFramePoolReleaseMany(b *testing.B) {
 
 	var batch [2]int
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		index0, _, err := pool.Acquire()
 		if err != nil {
 			b.Fatal(err)
