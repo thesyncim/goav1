@@ -9,7 +9,7 @@ import (
 
 func TestFilter4EdgeHorizontal8Bit(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setSample(plane, 1, x, 0, 90)
 		setSample(plane, 1, x, 1, 90)
 		setSample(plane, 1, x, 2, 100)
@@ -21,7 +21,7 @@ func TestFilter4EdgeHorizontal8Bit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getSample(plane, 1, x, 0); got != 92 {
 			t.Fatalf("p1 sample=%d want 92", got)
 		}
@@ -39,7 +39,7 @@ func TestFilter4EdgeHorizontal8Bit(t *testing.T) {
 
 func TestFilter4EdgeVerticalHighVariance8Bit(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
-	for y := 0; y < 4; y++ {
+	for y := range 4 {
 		setSample(plane, 1, 0, y, 70)
 		setSample(plane, 1, 1, y, 90)
 		setSample(plane, 1, 2, y, 100)
@@ -51,7 +51,7 @@ func TestFilter4EdgeVerticalHighVariance8Bit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for y := 0; y < 4; y++ {
+	for y := range 4 {
 		if got := getSample(plane, 1, 0, y); got != 70 {
 			t.Fatalf("p1 sample=%d want 70", got)
 		}
@@ -70,7 +70,7 @@ func TestFilter4EdgeVerticalHighVariance8Bit(t *testing.T) {
 func TestFilter4EdgeHighBitDepth(t *testing.T) {
 	for _, bitDepth := range []uint8{10, 12} {
 		plane := testPlane(4, 4, 2, 8)
-		for x := 0; x < 4; x++ {
+		for x := range 4 {
 			setSample(plane, 2, x, 0, 900)
 			setSample(plane, 2, x, 1, 900)
 			setSample(plane, 2, x, 2, 940)
@@ -82,7 +82,7 @@ func TestFilter4EdgeHighBitDepth(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for x := 0; x < 4; x++ {
+		for x := range 4 {
 			if got := getSample(plane, 2, x, 0); got != 908 {
 				t.Fatalf("bitdepth=%d p1 sample=%d want 908", bitDepth, got)
 			}
@@ -101,7 +101,7 @@ func TestFilter4EdgeHighBitDepth(t *testing.T) {
 
 func TestFilter4EdgeLeavesMaskedSamples(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setSample(plane, 1, x, 0, 10)
 		setSample(plane, 1, x, 1, 10)
 		setSample(plane, 1, x, 2, 200)
@@ -110,7 +110,7 @@ func TestFilter4EdgeLeavesMaskedSamples(t *testing.T) {
 	if err := Filter4Edge(plane, 1, 8, EdgeHorizontal, 0, 2, 4, Thresholds{Limit: 63, BlockLimit: 20}); err != nil {
 		t.Fatal(err)
 	}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getSample(plane, 1, x, 1); got != 10 {
 			t.Fatalf("p0 sample=%d want 10", got)
 		}
@@ -220,7 +220,7 @@ func BenchmarkFilter4EdgeHorizontal(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter4Edge(plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds)
 	}
 }
@@ -229,7 +229,7 @@ func BenchmarkFilter4EdgeVertical(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter4Edge(plane, 1, 8, EdgeVertical, 32, 0, 64, thresholds)
 	}
 }

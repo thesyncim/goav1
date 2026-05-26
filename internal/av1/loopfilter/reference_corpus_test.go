@@ -24,7 +24,7 @@ func TestLoopFilterEdgesMatchLibaomOperationCorpus(t *testing.T) {
 			mask := (1 << int(bitDepth)) - 1
 			for _, edge := range []Edge{EdgeHorizontal, EdgeVertical} {
 				rnd := newLibaomTestRandom(libaomLPFDeterministicSeed)
-				for i := 0; i < libaomLPFIterations; i++ {
+				for i := range libaomLPFIterations {
 					blimit := uint8(rnd.pseudoUniform(3*MaxLevel + 5))
 					limit := uint8(rnd.pseudoUniform(MaxLevel + 1))
 					hev := uint8(rnd.pseudoUniform(MaxLevel+1) >> 4)
@@ -115,7 +115,7 @@ func libaomInitLoopFilterInput(bytesPerSample int, rnd *libaomTestRandom, limit 
 	}
 
 	plane := testPlane(libaomLPFStride, libaomLPFStride, bytesPerSample, libaomLPFStride*bytesPerSample)
-	for j := 0; j < libaomLPFNumCoeffs; j++ {
+	for j := range libaomLPFNumCoeffs {
 		src := j
 		if iteration%2 == 0 {
 			src = libaomLPFStride*(j%libaomLPFStride) + j/libaomLPFStride
@@ -127,10 +127,10 @@ func libaomInitLoopFilterInput(bytesPerSample int, rnd *libaomTestRandom, limit 
 }
 
 func applyCReferenceFilterByWidth(plane frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, width int, x int, y int, length int, thresholds Thresholds) {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		q0, step := filter4SampleOffset(plane, bytesPerSample, edge, x, y, i)
 		sample := make([]int, width)
-		for j := 0; j < width; j++ {
+		for j := range width {
 			sample[j] = readSample(plane.Pix, bytesPerSample, q0+(j-width/2)*step)
 		}
 		ref := cReferenceFilterByWidth(width, sample, bitDepth, thresholds)

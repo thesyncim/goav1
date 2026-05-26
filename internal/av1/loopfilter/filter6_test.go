@@ -10,7 +10,7 @@ import (
 
 func TestFilter6EdgeHorizontalFlat8Bit(t *testing.T) {
 	plane := testPlane(4, 6, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setSample(plane, 1, x, 0, 90)
 		setSample(plane, 1, x, 1, 90)
 		setSample(plane, 1, x, 2, 90)
@@ -24,7 +24,7 @@ func TestFilter6EdgeHorizontalFlat8Bit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getSample(plane, 1, x, 0); got != 90 {
 			t.Fatalf("p2 sample=%d want 90", got)
 		}
@@ -48,7 +48,7 @@ func TestFilter6EdgeHorizontalFlat8Bit(t *testing.T) {
 
 func TestFilter6EdgeVerticalFallback8Bit(t *testing.T) {
 	plane := testPlane(6, 4, 1, 6)
-	for y := 0; y < 4; y++ {
+	for y := range 4 {
 		setSample(plane, 1, 0, y, 80)
 		setSample(plane, 1, 1, y, 90)
 		setSample(plane, 1, 2, y, 90)
@@ -62,7 +62,7 @@ func TestFilter6EdgeVerticalFallback8Bit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for y := 0; y < 4; y++ {
+	for y := range 4 {
 		if got := getSample(plane, 1, 0, y); got != 80 {
 			t.Fatalf("p2 sample=%d want 80", got)
 		}
@@ -87,7 +87,7 @@ func TestFilter6EdgeVerticalFallback8Bit(t *testing.T) {
 func TestFilter6EdgeHighBitDepth(t *testing.T) {
 	for _, bitDepth := range []uint8{10, 12} {
 		plane := testPlane(4, 6, 2, 8)
-		for x := 0; x < 4; x++ {
+		for x := range 4 {
 			setSample(plane, 2, x, 0, 900)
 			setSample(plane, 2, x, 1, 900)
 			setSample(plane, 2, x, 2, 900)
@@ -101,7 +101,7 @@ func TestFilter6EdgeHighBitDepth(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for x := 0; x < 4; x++ {
+		for x := range 4 {
 			if got := getSample(plane, 2, x, 1); got != 905 {
 				t.Fatalf("bitdepth=%d p1 sample=%d want 905", bitDepth, got)
 			}
@@ -422,7 +422,7 @@ func BenchmarkFilter6EdgeHorizontal(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter6Edge(plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds)
 	}
 }
@@ -431,7 +431,7 @@ func BenchmarkFilter6EdgeVertical(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter6Edge(plane, 1, 8, EdgeVertical, 32, 0, 64, thresholds)
 	}
 }

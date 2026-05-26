@@ -46,7 +46,7 @@ func TestResolveBlockLevelSelectsDeltaState(t *testing.T) {
 
 func TestFilter4BlockEdgeAppliesResolvedLevel(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setSample(plane, 1, x, 0, 90)
 		setSample(plane, 1, x, 1, 90)
 		setSample(plane, 1, x, 2, 100)
@@ -71,7 +71,7 @@ func TestFilter4BlockEdgeAppliesResolvedLevel(t *testing.T) {
 	if !result.Applied || result.Level != 16 || result.Thresholds != (Thresholds{Limit: 16, BlockLimit: 52, HighEdgeVariance: 1}) {
 		t.Fatalf("result=%+v", result)
 	}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getSample(plane, 1, x, 0); got != 92 {
 			t.Fatalf("p1 sample=%d want 92", got)
 		}
@@ -175,7 +175,7 @@ func TestSpecificBlockEdgeWrappersMatchGenericDispatcher(t *testing.T) {
 
 func TestFilter4BlockEdgeSkipsZeroLevel(t *testing.T) {
 	plane := testPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setSample(plane, 1, x, 1, 90)
 		setSample(plane, 1, x, 2, 100)
 	}
@@ -197,7 +197,7 @@ func TestFilter4BlockEdgeSkipsZeroLevel(t *testing.T) {
 	if result.Applied || result.Level != 0 {
 		t.Fatalf("result=%+v", result)
 	}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getSample(plane, 1, x, 1); got != 90 {
 			t.Fatalf("p0 sample=%d want 90", got)
 		}
@@ -278,8 +278,8 @@ func FuzzFilter4BlockEdge(f *testing.F) {
 		height := int(rawHeight%32) + 4
 		edge := Edge(rawEdge & 1)
 		plane := testPlane(width, height, 1, width)
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				setSample(plane, 1, x, y, uint16((x*17+y*19)&0xff))
 			}
 		}
@@ -308,8 +308,8 @@ func FuzzFilter4BlockEdge(f *testing.F) {
 		if result.Level > MaxLevel {
 			t.Fatalf("level=%d", result.Level)
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				if got := getSample(plane, 1, x, y); got > 0xff {
 					t.Fatalf("sample(%d,%d)=%d", x, y, got)
 				}
@@ -328,7 +328,7 @@ func BenchmarkFilter4BlockEdge(b *testing.B) {
 		Length:       64,
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = Filter4BlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
 	}
 }
@@ -348,7 +348,7 @@ func BenchmarkFilterBlockEdge(b *testing.B) {
 		}
 		b.Run("width="+strconv.Itoa(width), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _ = FilterBlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
 			}
 		})

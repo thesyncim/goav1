@@ -10,8 +10,8 @@ import (
 
 func TestFilter14EdgeHorizontalFlat8Bit(t *testing.T) {
 	plane := testPlane(4, 14, 1, 4)
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 7; y++ {
+	for x := range 4 {
+		for y := range 7 {
 			setSample(plane, 1, x, y, 90)
 		}
 		for y := 7; y < 14; y++ {
@@ -25,7 +25,7 @@ func TestFilter14EdgeHorizontalFlat8Bit(t *testing.T) {
 	}
 
 	want := []uint16{90, 91, 91, 92, 93, 93, 94, 96, 97, 98, 98, 99, 99, 100}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		for y, value := range want {
 			if got := getSample(plane, 1, x, y); got != value {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, value)
@@ -37,8 +37,8 @@ func TestFilter14EdgeHorizontalFlat8Bit(t *testing.T) {
 func TestFilter14EdgeHighBitDepth(t *testing.T) {
 	for _, bitDepth := range []uint8{10, 12} {
 		plane := testPlane(4, 14, 2, 8)
-		for x := 0; x < 4; x++ {
-			for y := 0; y < 7; y++ {
+		for x := range 4 {
+			for y := range 7 {
 				setSample(plane, 2, x, y, 900)
 			}
 			for y := 7; y < 14; y++ {
@@ -52,7 +52,7 @@ func TestFilter14EdgeHighBitDepth(t *testing.T) {
 		}
 
 		want := []uint16{900, 903, 905, 908, 910, 913, 918, 923, 928, 930, 933, 935, 938, 940}
-		for x := 0; x < 4; x++ {
+		for x := range 4 {
 			for y, value := range want {
 				if got := getSample(plane, 2, x, y); got != value {
 					t.Fatalf("bitdepth=%d sample(%d,%d)=%d want %d", bitDepth, x, y, got, value)
@@ -305,7 +305,7 @@ func BenchmarkFilter14EdgeHorizontal(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter14Edge(plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds)
 	}
 }
@@ -314,7 +314,7 @@ func BenchmarkFilter14EdgeVertical(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Filter14Edge(plane, 1, 8, EdgeVertical, 32, 0, 64, thresholds)
 	}
 }

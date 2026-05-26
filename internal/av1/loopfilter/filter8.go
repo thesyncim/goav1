@@ -20,7 +20,7 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		center: 128 * scale,
 	}
 
-	for i := 0; i < length; i++ {
+	for i := range length {
 		q0, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, i)
 		p3 := readSample(dst.Pix, bytesPerSample, q0-4*step)
 		p2 := readSample(dst.Pix, bytesPerSample, q0-3*step)
