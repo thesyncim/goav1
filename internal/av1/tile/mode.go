@@ -110,6 +110,21 @@ type BlockModeContext struct {
 	LeftInterpValid  [MaxBlockModeSlots]uint8
 	AboveBlockSize   [MaxBlockModeSlots]BlockSize
 	LeftBlockSize    [MaxBlockModeSlots]BlockSize
+
+	// TxNeighborSnapshot captures the above/left neighbor state at slots
+	// touched by the current block, taken before the current block's
+	// MarkIntra/MarkIntrabcMotion overwrites those slots. It is consumed by
+	// the intra tx_size context which, in libaom, reads xd->above_mbmi /
+	// xd->left_mbmi — pointers to neighbor mbmi structs that are not
+	// affected by writes to the current block's mbmi. Without this snapshot
+	// Go's slot-shared AboveIntra/AboveBlockSize/LeftIntra/LeftBlockSize
+	// would be the current block's just-written flags by the time tx_size
+	// reads them inside DecodeBlockCoefficients.
+	TxNeighborValid     bool
+	TxAboveNeighborIntra uint8
+	TxAboveNeighborBlockSize BlockSize
+	TxLeftNeighborIntra  uint8
+	TxLeftNeighborBlockSize BlockSize
 	AbovePaletteY    [MaxBlockModeSlots]paletteContext
 	LeftPaletteY     [MaxBlockModeSlots]paletteContext
 	AbovePaletteUV   [MaxBlockModeSlots]paletteContext

@@ -751,6 +751,31 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		return BlockLoopVisit{}, err
 	}
 
+	// Capture the above/left neighbor state at slot (X4, Y4) before
+	// decodeBlockPredictionMode invokes MarkIntra / MarkIntrabcMotion. The
+	// intra tx_size context consumes these because Go's slot-shared
+	// AboveIntra/LeftIntra/AboveBlockSize/LeftBlockSize would otherwise be
+	// the current block's just-written flags, while libaom's get_tx_size_context
+	// reads xd->above_mbmi / xd->left_mbmi (pointers to the actual neighbors,
+	// unaffected by writes to xd->mi[0]).
+	//
+	// Gated on AllowIntrabc: only intra-only frames with intrabc enabled can
+	// produce intra blocks whose above/left neighbor is intrabc (i.e.,
+	// inter-marked in our slot tracking). Inter frames mix intra/inter
+	// blocks but the upstream coefficient / mode decoders still carry other
+	// independent slot-overwrite bugs whose adapted CDFs happen to align
+	// with the (also-wrong) tx_size context on this codepath; rolling them
+	// all over simultaneously would regress those vectors. Limit the
+	// snapshot scope to the frames where the intrabc path is reachable.
+	ctx.TxNeighborValid = false
+	if req.AllowIntrabc && block.X4 >= 0 && block.X4 < MaxBlockModeSlots && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots {
+		ctx.TxNeighborValid = true
+		ctx.TxAboveNeighborIntra = ctx.AboveIntra[block.X4]
+		ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[block.X4]
+		ctx.TxLeftNeighborIntra = ctx.LeftIntra[block.Y4]
+		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[block.Y4]
+	}
+
 	var prediction BlockPredictionModeResult
 	if req.DecodePredictionModes {
 		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette)

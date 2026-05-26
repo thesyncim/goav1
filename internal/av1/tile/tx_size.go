@@ -294,13 +294,29 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
+	// Use the pre-decode neighbor snapshot when available. The shared
+	// AboveIntra/AboveBlockSize/LeftIntra/LeftBlockSize slots at (x4, y4)
+	// are overwritten by the current block's MarkIntra / MarkIntrabcMotion
+	// before DecodeBlockCoefficients reads tx_size context, so without the
+	// snapshot the inter-block branch below would incorrectly read the
+	// current block's flags instead of the neighbor's.
+	aboveIntra := c.AboveIntra[x4]
+	aboveBlockSize := c.AboveBlockSize[x4]
+	leftIntra := c.LeftIntra[y4]
+	leftBlockSize := c.LeftBlockSize[y4]
+	if c.TxNeighborValid {
+		aboveIntra = c.TxAboveNeighborIntra
+		aboveBlockSize = c.TxAboveNeighborBlockSize
+		leftIntra = c.TxLeftNeighborIntra
+		leftBlockSize = c.TxLeftNeighborBlockSize
+	}
 	above := 0
 	if c.AboveTx[x4] >= dims.Log2W {
 		above = 1
 	}
-	if haveTop && c.AboveIntra[x4] == 0 {
+	if haveTop && aboveIntra == 0 {
 		above = 0
-		if aboveDims, ok := c.AboveBlockSize[x4].Dimensions(); ok && aboveDims.W4 >= dims.W4 {
+		if aboveDims, ok := aboveBlockSize.Dimensions(); ok && aboveDims.W4 >= dims.W4 {
 			above = 1
 		}
 	}
@@ -308,9 +324,9 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 	if c.LeftTx[y4] >= dims.Log2H {
 		left = 1
 	}
-	if haveLeft && c.LeftIntra[y4] == 0 {
+	if haveLeft && leftIntra == 0 {
 		left = 0
-		if leftDims, ok := c.LeftBlockSize[y4].Dimensions(); ok && leftDims.H4 >= dims.H4 {
+		if leftDims, ok := leftBlockSize.Dimensions(); ok && leftDims.H4 >= dims.H4 {
 			left = 1
 		}
 	}
