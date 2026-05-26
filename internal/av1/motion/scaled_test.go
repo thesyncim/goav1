@@ -142,9 +142,12 @@ func TestScaledBlockOriginIdentityMatchesSameSize(t *testing.T) {
 
 func TestScaledBlockOriginUpscaledRef(t *testing.T) {
 	// Upscaled current frame (1280x720) referencing half-size base (640x360):
-	// each output pel maps to 0.5 source pel, so a block whose dst origin is
-	// (16, 8) with zero MV must start at source position (8, 4) and step by
-	// 0.5 source pels per output pel.
+	// each output pel maps to 0.5 source pel, so the stepper is 0.5 Q10 per
+	// output pel. The destination block origin (16, 8) plus libaom's
+	// av1_scaled_x bias (off = (x_scale_fp - REF_NO_SCALE) * SUBPEL_OFF; for
+	// 2:1 that bias is half a source pel) lands the first tap at source
+	// integer column 7 with Q4 phase 12, not at "src 8.0 / phase 0". This
+	// libaom behaviour is what SVC L2T1 spatial=1 enhancement layers expect.
 	sf, err := NewScaleFactors(640, 360, 1280, 720)
 	if err != nil {
 		t.Fatalf("NewScaleFactors: %v", err)
@@ -161,11 +164,11 @@ func TestScaledBlockOriginUpscaledRef(t *testing.T) {
 	}
 	intX, fracQ4X := SplitScaledPosition(startX)
 	intY, fracQ4Y := SplitScaledPosition(startY)
-	if intX != 8 || fracQ4X != 0 {
-		t.Errorf("startX split=(%d, %d) want (8, 0)", intX, fracQ4X)
+	if intX != 7 || fracQ4X != 12 {
+		t.Errorf("startX split=(%d, %d) want (7, 12)", intX, fracQ4X)
 	}
-	if intY != 4 || fracQ4Y != 0 {
-		t.Errorf("startY split=(%d, %d) want (4, 0)", intY, fracQ4Y)
+	if intY != 3 || fracQ4Y != 12 {
+		t.Errorf("startY split=(%d, %d) want (3, 12)", intY, fracQ4Y)
 	}
 }
 
@@ -175,17 +178,17 @@ func TestScaledBlockOriginCarriesNegativeMV(t *testing.T) {
 		t.Fatalf("NewScaleFactors: %v", err)
 	}
 	// MV = (-8, 0) in Q3: 1 luma pel to the left. With 2:1 downscale that's
-	// 0.5 source pel.
+	// 0.5 source pel less. Combined with libaom's av1_scaled_x bias for the
+	// 2:1 ratio, the start lands at source integer column 7 with Q4 phase 4
+	// — a half-pel offset to the LEFT of phase 12 (the zero-MV case at
+	// dstX=16 — see TestScaledBlockOriginUpscaledRef).
 	startX, _, _, _, err := sf.ScaledBlockOrigin(16, 8, Vector{Col: -8}, false, false)
 	if err != nil {
 		t.Fatalf("ScaledBlockOrigin: %v", err)
 	}
-	// dst_x=16 maps to src 8.0; MV -1 luma pel maps to -0.5 source pel.
-	// Expected start = (8 - 0.5) = 7.5 in source coords = 7 integer + 0.5
-	// frac. In Q10 that is 7*1024 + 512 = 7680. Filter index = (512>>6)=8.
 	intX, fracQ4X := SplitScaledPosition(startX)
-	if intX != 7 || fracQ4X != 8 {
-		t.Errorf("start=(%d, %d) want (7, 8)", intX, fracQ4X)
+	if intX != 7 || fracQ4X != 4 {
+		t.Errorf("start=(%d, %d) want (7, 4)", intX, fracQ4X)
 	}
 }
 
@@ -193,6 +196,114 @@ func TestScaledBlockOriginRejectsZeroFactors(t *testing.T) {
 	var sf ScaleFactors
 	if _, _, _, _, err := sf.ScaledBlockOrigin(0, 0, Vector{}, false, false); err == nil {
 		t.Fatal("expected error for zero ScaleFactors")
+	}
+}
+
+// TestScaledBlockOriginLibaomBiasFrameTopLeft pins the bias-aware Q10 origin
+// for the very first block of an SVC L2T1 enhancement layer (1280x720
+// referencing the 640x360 base): a 128x128 mi-(0,0) NEARESTMV block with
+// zero MV. Before the libaom bias fix, this case returned (0,0) at xStep=512
+// with no SCALE_EXTRA_OFF, which drove the convolver to filter phase 0 at
+// each output integer column. libaom's av1_scaled_x bias instead yields a
+// negative integer-pel origin with Q4 phase 12 — the half-pel offset the
+// convolver expects for non-identity ratios.
+func TestScaledBlockOriginLibaomBiasFrameTopLeft(t *testing.T) {
+	sf, err := NewScaleFactors(640, 360, 1280, 720)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(0, 0, Vector{}, false, false)
+	if err != nil {
+		t.Fatalf("ScaledBlockOrigin: %v", err)
+	}
+	if xStep != ScaleSubpelScale/2 || yStep != ScaleSubpelScale/2 {
+		t.Fatalf("xStep=%d yStep=%d want %d", xStep, yStep, ScaleSubpelScale/2)
+	}
+	// libaom for x=0, mv=0, 2:1 downscale:
+	//   off = (8192-16384)*8 = -65536
+	//   tval = 0 + (-65536) = -65536
+	//   pos = ROUND_POWER_OF_TWO_SIGNED_64(-65536, 8) = -256
+	//   startX = -256 + SCALE_EXTRA_OFF(=32) = -224
+	if want := int64(-224); startX != want {
+		t.Errorf("startX=%d want %d", startX, want)
+	}
+	if want := int64(-224); startY != want {
+		t.Errorf("startY=%d want %d", startY, want)
+	}
+}
+
+// TestScaledBlockOriginLibaomBiasStepsCleanly walks the first eight output
+// integer columns of the same SVC L2T1 frame-top-left block and pins each
+// Q10 stepper position, integer-pel index, and Q4 sub-pel filter index.
+// Phase alternation (12/4/12/4...) and the negative integer-pel origin at
+// the left edge are the libaom-faithful behaviour; the AV1 spec convolver
+// (av1_convolve_2d_scale_c) requires these for bit-exact output.
+func TestScaledBlockOriginLibaomBiasStepsCleanly(t *testing.T) {
+	sf, err := NewScaleFactors(640, 360, 1280, 720)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	startX, _, xStep, _, err := sf.ScaledBlockOrigin(0, 0, Vector{}, false, false)
+	if err != nil {
+		t.Fatalf("ScaledBlockOrigin: %v", err)
+	}
+	cases := []struct {
+		x       int
+		wantPos int64
+		wantInt int64
+		wantQ4  int
+	}{
+		// startX=-224 + n*512, then >>10 / phase4 derivation:
+		// x=0: -224 (intX=-1, phase=12)
+		// x=1: 288  (intX=0,  phase=4)
+		// x=2: 800  (intX=0,  phase=12)
+		// x=3: 1312 (intX=1,  phase=4)
+		// x=4: 1824 (intX=1,  phase=12)
+		// x=5: 2336 (intX=2,  phase=4)
+		// x=6: 2848 (intX=2,  phase=12)
+		// x=7: 3360 (intX=3,  phase=4)
+		{0, -224, -1, 12},
+		{1, 288, 0, 4},
+		{2, 800, 0, 12},
+		{3, 1312, 1, 4},
+		{4, 1824, 1, 12},
+		{5, 2336, 2, 4},
+		{6, 2848, 2, 12},
+		{7, 3360, 3, 4},
+	}
+	for _, tc := range cases {
+		pos := startX + int64(tc.x)*xStep
+		if pos != tc.wantPos {
+			t.Errorf("x=%d pos=%d want %d", tc.x, pos, tc.wantPos)
+		}
+		intPart, subQ4 := SplitScaledPosition(pos)
+		if intPart != tc.wantInt || subQ4 != tc.wantQ4 {
+			t.Errorf("x=%d split=(%d, %d) want (%d, %d)", tc.x, intPart, subQ4, tc.wantInt, tc.wantQ4)
+		}
+	}
+}
+
+// TestScaledBlockOriginLibaomBiasChromaSubsampling pins the chroma path:
+// the av1_scaled_x bias applies independently of subsampling, but the MV
+// component scale (×2 for luma, ×1 for subsampled chroma) survives.
+func TestScaledBlockOriginLibaomBiasChromaSubsampling(t *testing.T) {
+	sf, err := NewScaleFactors(320, 180, 640, 360)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	// Chroma block at (0,0) with non-zero Q3 MV. Subsampled chroma uses the
+	// MV components directly (×1), not ×2 like luma.
+	startX, _, _, _, err := sf.ScaledBlockOrigin(0, 0, Vector{Col: 4}, true, true)
+	if err != nil {
+		t.Fatalf("ScaledBlockOrigin: %v", err)
+	}
+	// val_Q4 = 0*16 + 4*1 = 4.
+	// off    = (8192-16384)*8 = -65536.
+	// tval   = 4*8192 - 65536 = 32768 - 65536 = -32768.
+	// pos    = ROUND_POWER_OF_TWO_SIGNED_64(-32768, 8) = -((32768+128)>>8) = -128.
+	// startX = -128 + 32 = -96.
+	if want := int64(-96); startX != want {
+		t.Errorf("startX=%d want %d", startX, want)
 	}
 }
 

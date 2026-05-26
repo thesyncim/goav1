@@ -133,6 +133,14 @@ func NewScaleFactors(refWidth int, refHeight int, curWidth int, curHeight int) (
 //
 // to feed an 8-tap scaled convolver (signatures listed in the package-level
 // TODO below).
+//
+// The Q10 position computation mirrors libaom's av1_scaled_x / av1_scaled_y
+// (av1/common/scale.h), which compose the Q14 scale with a fixed
+// (scale_fp - REF_NO_SCALE) * (1 << (SUBPEL_BITS - 1)) bias before rounding
+// at Q4 precision, then adds SCALE_EXTRA_OFF to half-round the resulting Q10
+// stepper position. The bias is zero in the identity case but shifts the
+// stepper by ~half a source sample for any non-identity ratio, which is
+// observable in the SVC L2T1 spatial=1 enhancement layer's reference taps.
 func (sf ScaleFactors) ScaledBlockOrigin(dstX int, dstY int, mv Vector, subsamplingX bool, subsamplingY bool) (startX int64, startY int64, xStep int64, yStep int64, err error) {
 	if sf.XScaleFP <= 0 || sf.YScaleFP <= 0 || sf.XStepQN <= 0 || sf.YStepQN <= 0 {
 		return 0, 0, 0, 0, ErrInvalidMotion
@@ -146,30 +154,45 @@ func (sf ScaleFactors) ScaledBlockOrigin(dstX int, dstY int, mv Vector, subsampl
 		scaleY = 1
 	}
 	// Q4 source position (dst*16 + mv_Q4). This matches the same-size
-	// referenceOriginQ4 convention; for scaled prediction we lift the result
-	// to Q10 (the convolver stepper precision) before applying the Q14 scale.
+	// referenceOriginQ4 convention; libaom feeds the same Q4 value into
+	// av1_scaled_x / av1_scaled_y to derive the Q10 stepper position.
 	origX := int64(dstX)*subpelQ4Scale + int64(mv.Col)*scaleX
 	origY := int64(dstY)*subpelQ4Scale + int64(mv.Row)*scaleY
-	// Lift to Q10 source units: origQ10 = origQ4 << ScaleExtraBits. Then
-	// scaledQ10 = (origQ10 * scaleFP + (1<<(RefScaleShift-1))) >> RefScaleShift
-	// — half-up rounding mirrors libaom's av1_make_inter_predictor() scaled
-	// position derivation (av1/common/reconinter.c).
-	startX = scaleQ10Position(origX<<ScaleExtraBits, int64(sf.XScaleFP))
-	startY = scaleQ10Position(origY<<ScaleExtraBits, int64(sf.YScaleFP))
+	startX = libaomScaledQ4ToQ10(origX, int64(sf.XScaleFP))
+	startY = libaomScaledQ4ToQ10(origY, int64(sf.YScaleFP))
 	xStep = int64(sf.XStepQN)
 	yStep = int64(sf.YStepQN)
 	return startX, startY, xStep, yStep, nil
 }
 
-func scaleQ10Position(origQ10 int64, scaleFP int64) int64 {
-	const half = int64(1) << (RefScaleShift - 1)
-	prod := origQ10 * scaleFP
-	if prod >= 0 {
-		return (prod + half) >> RefScaleShift
+// libaomScaledQ4ToQ10 mirrors libaom's av1_scaled_x / av1_scaled_y from
+// av1/common/scale.h followed by the SCALE_EXTRA_OFF post-step from
+// init_subpel_params in av1/common/reconinter.h.
+//
+// libaom:
+//
+//	off  = (scale_fp - (1 << REF_SCALE_SHIFT)) * (1 << (SUBPEL_BITS - 1))
+//	tval = val_Q4 * scale_fp + off
+//	pos  = ROUND_POWER_OF_TWO_SIGNED_64(tval, REF_SCALE_SHIFT - SCALE_EXTRA_BITS)
+//	pos += SCALE_EXTRA_OFF
+//
+// Identity (scale_fp == 1<<REF_SCALE_SHIFT) makes off == 0, so identity tests
+// remain bit-exact with the pre-bias path. The bias is what shifts the Q4
+// filter phase by half a unit on every non-identity ratio.
+func libaomScaledQ4ToQ10(valQ4 int64, scaleFP int64) int64 {
+	const refNoScale = int64(1) << RefScaleShift
+	const subpelHalf = int64(1) << (subpelQ4Bits - 1)
+	off := (scaleFP - refNoScale) * subpelHalf
+	tval := valQ4*scaleFP + off
+	const shift = int64(RefScaleShift - ScaleExtraBits)
+	const half = int64(1) << (shift - 1)
+	var pos int64
+	if tval >= 0 {
+		pos = (tval + half) >> shift
+	} else {
+		pos = -((-tval + half) >> shift)
 	}
-	// Symmetric round-half-away-from-zero for negatives, matching libaom's
-	// ROUND_POWER_OF_TWO_SIGNED_64(value, n).
-	return -((-prod + half) >> RefScaleShift)
+	return pos + int64(ScaleExtraOff)
 }
 
 // SplitScaledPosition decomposes a Q10 scaled-subpel position into its
