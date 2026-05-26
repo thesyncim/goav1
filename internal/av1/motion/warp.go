@@ -66,7 +66,7 @@ func warpAffine8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int
 					}
 					coeffs := warpedFilter[offs]
 					sum := 1 << offsetBitsVert
-					for m := 0; m < filterTaps; m++ {
+					for m := range filterTaps {
 						sum += int(coeffs[m]) * int(tmp[(k+m+4)*warpedIntermediateColumns+(l+4)])
 					}
 					sum = roundPowerOfTwo(sum, reduceBitsVert)
@@ -91,7 +91,7 @@ func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]in
 			}
 			coeffs := warpedFilter[offs]
 			sum := 1 << offsetBitsHoriz
-			for m := 0; m < filterTaps; m++ {
+			for m := range filterTaps {
 				sampleX := clampInt(ix+m, 0, ref.Width-1)
 				sum += int(ref.Pix[iy*ref.Stride+sampleX]) * int(coeffs[m])
 			}
@@ -119,7 +119,7 @@ func warpAffineHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint
 					}
 					coeffs := warpedFilter[offs]
 					sum := 1 << offsetBitsVert
-					for m := 0; m < filterTaps; m++ {
+					for m := range filterTaps {
 						sum += int(coeffs[m]) * int(tmp[(k+m+4)*warpedIntermediateColumns+(l+4)])
 					}
 					sum = roundPowerOfTwo(sum, reduceBitsVert)
@@ -144,7 +144,7 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 			}
 			coeffs := warpedFilter[offs]
 			sum := 1 << offsetBitsHoriz
-			for m := 0; m < filterTaps; m++ {
+			for m := range filterTaps {
 				sampleX := clampInt(ix+m, 0, ref.Width-1)
 				sum += int(loadHighBDSample(ref, sampleX, iy)) * int(coeffs[m])
 			}

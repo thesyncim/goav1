@@ -336,9 +336,9 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 		!planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
-	for y := 0; y < height; y++ {
+	for y := range height {
 		sy := clampInt(refY+y, 0, ref.Height-1)
-		for x := 0; x < width; x++ {
+		for x := range width {
 			sx := clampInt(refX+x, 0, ref.Width-1)
 			switch bytesPerSample {
 			case 1:
@@ -358,10 +358,10 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 
 func convolveX8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(ref.Pix[(refY+y)*ref.Stride+refX+x-fo+k])
 			}
 			res := roundPowerOfTwo(sum, round0Bits)
@@ -372,10 +372,10 @@ func convolveX8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, 
 
 func convolveX8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadSample8Clamped(ref, refX+x-fo+k, refY+y))
 			}
 			res := roundPowerOfTwo(sum, round0Bits)
@@ -386,10 +386,10 @@ func convolveX8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 
 func convolveY8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(ref.Pix[(refY+y-fo+k)*ref.Stride+refX+x])
 			}
 			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
@@ -399,10 +399,10 @@ func convolveY8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, 
 
 func convolveY8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadSample8Clamped(ref, refX+x, refY+y-fo+k))
 			}
 			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
@@ -416,10 +416,10 @@ func convolve2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int,
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	for y := 0; y < imH; y++ {
-		for x := 0; x < width; x++ {
+	for y := range imH {
+		for x := range width {
 			sum := 1 << (8 + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(ref.Pix[(refY-foY+y)*ref.Stride+refX+x-foX+k])
 			}
 			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
@@ -428,10 +428,10 @@ func convolve2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int,
 	offsetBits := 8 + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -446,10 +446,10 @@ func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, re
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	for y := 0; y < imH; y++ {
-		for x := 0; x < width; x++ {
+	for y := range imH {
+		for x := range width {
 			sum := 1 << (8 + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(loadSample8Clamped(ref, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
@@ -458,10 +458,10 @@ func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, re
 	offsetBits := 8 + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -472,10 +472,10 @@ func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, re
 
 func convolveXHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSample(ref, refX+x-fo+k, refY+y))
 			}
 			res := roundPowerOfTwo(sum, round0Bits)
@@ -486,10 +486,10 @@ func convolveXHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dst
 
 func convolveXHighBDClamped(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSampleClamped(ref, refX+x-fo+k, refY+y))
 			}
 			res := roundPowerOfTwo(sum, round0Bits)
@@ -500,10 +500,10 @@ func convolveXHighBDClamped(dst frame.Plane, ref frame.Plane, max uint16, dstX i
 
 func convolveYHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSample(ref, refX+x, refY+y-fo+k))
 			}
 			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(sum, filterBits), max))
@@ -513,10 +513,10 @@ func convolveYHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dst
 
 func convolveYHighBDClamped(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSampleClamped(ref, refX+x, refY+y-fo+k))
 			}
 			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(sum, filterBits), max))
@@ -530,10 +530,10 @@ func convolve2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	for y := 0; y < imH; y++ {
-		for x := 0; x < width; x++ {
+	for y := range imH {
+		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(loadHighBDSample(ref, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0Bits))
@@ -542,10 +542,10 @@ func convolve2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint
 	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -560,10 +560,10 @@ func convolve2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, m
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	for y := 0; y < imH; y++ {
-		for x := 0; x < width; x++ {
+	for y := range imH {
+		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(loadHighBDSampleClamped(ref, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0Bits))
@@ -572,10 +572,10 @@ func convolve2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, m
 	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset

@@ -196,8 +196,8 @@ func TestPredictInterPlaneBlockHighBitDepth(t *testing.T) {
 	if err := PredictInterPlaneBlock(dst, src, 2, 1, 2, 3, 2, mv); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getSample(dst, 2, 1+x, 2+y)
 			want := uint16(1000 + (1+y)*10 + 2 + x)
 			if got != want {
@@ -328,8 +328,8 @@ func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
 	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -2, 2, 5, 3, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 5; x++ {
+	for y := range 3 {
+		for x := range 5 {
 			want := getSampleClamped(src, 1, x-2, y+2)
 			if got := getSample(dst, 1, x, y); got != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
@@ -347,8 +347,8 @@ func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
 	if err := PredictInterPlaneBlockFromOrigin(dstHigh, srcHigh, 2, 0, 0, 2, -2, 5, 3, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 5; x++ {
+	for y := range 3 {
+		for x := range 5 {
 			want := getSampleClamped(srcHigh, 2, x+2, y-2)
 			if got := getSample(dstHigh, 2, x, y); got != want {
 				t.Fatalf("highbd sample(%d,%d)=%d want %d", x, y, got, want)
@@ -639,8 +639,8 @@ func TestPredictInterPlaneBlockFromOriginFullpelHighBitDepth(t *testing.T) {
 	if err := PredictInterPlaneBlockFromOrigin(got, src, 2, 0, 0, 3, 4, 4, 3, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 3 {
+		for x := range 4 {
 			if g, w := getSample(got, 2, x, y), getSample(src, 2, 3+x, 4+y); g != w {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, g, w)
 			}
@@ -821,8 +821,8 @@ func FuzzPredictInterPlaneBlock(f *testing.F) {
 		if err := PredictInterPlaneBlock(dst, src, bytesPerSample, dstX, dstY, blockW, blockH, mv); err != nil {
 			t.Fatalf("PredictInterPlaneBlock err=%v", err)
 		}
-		for y := 0; y < blockH; y++ {
-			for x := 0; x < blockW; x++ {
+		for y := range blockH {
+			for x := range blockW {
 				got := getSample(dst, bytesPerSample, dstX+x, dstY+y)
 				want := getSample(src, bytesPerSample, refX+x, refY+y)
 				if got != want {
@@ -866,8 +866,8 @@ func FuzzPredictInterPlaneBlockFromOriginFullpel(f *testing.F) {
 		if err := PredictInterPlaneBlockFromOrigin(dst, src, bytesPerSample, dstX, dstY, refX, refY, blockW, blockH, 0, 0); err != nil {
 			t.Fatalf("PredictInterPlaneBlockFromOrigin err=%v", err)
 		}
-		for y := 0; y < blockH; y++ {
-			for x := 0; x < blockW; x++ {
+		for y := range blockH {
+			for x := range blockW {
 				got := getSample(dst, bytesPerSample, dstX+x, dstY+y)
 				want := getSample(src, bytesPerSample, refX+x, refY+y)
 				if got != want {
@@ -884,7 +884,7 @@ func BenchmarkFullpelReferenceOrigin(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _ = FullpelReferenceOrigin(64, 64, mv)
 	}
 }
@@ -897,7 +897,7 @@ func BenchmarkPredictInterPlaneBlock(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = PredictInterPlaneBlock(dst, src, 1, 0, 0, 64, 64, mv)
 	}
 }
@@ -908,7 +908,7 @@ func BenchmarkPredictInterPlaneBlockFractional(b *testing.B) {
 	fillMotionTestPlane(src)
 	mv := Vector{Col: 3, Row: 5}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 32, 32, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth})
 	}
 }
@@ -973,8 +973,8 @@ func fillHighBDMotionTestPlane(plane frame.Plane, max uint16) {
 
 func assertPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, bytesPerSample int, x int, y int, width int, height int) {
 	t.Helper()
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			g := getSample(got, bytesPerSample, x+col, y+row)
 			w := getSample(want, bytesPerSample, x+col, y+row)
 			if g != w {
@@ -986,8 +986,8 @@ func assertPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, byte
 
 func assertPlaneBlocksEqualAt(t *testing.T, got frame.Plane, gotX int, gotY int, want frame.Plane, wantX int, wantY int, bytesPerSample int, width int, height int) {
 	t.Helper()
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			g := getSample(got, bytesPerSample, gotX+col, gotY+row)
 			w := getSample(want, bytesPerSample, wantX+col, wantY+row)
 			if g != w {
@@ -999,10 +999,10 @@ func assertPlaneBlocksEqualAt(t *testing.T, got frame.Plane, gotX int, gotY int,
 
 func libaomHighBDConvolveXRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSample(src, 2, refX+x-fo+k, refY+y))
 			}
 			res := libaomRoundPowerOfTwo(sum, round0Bits)
@@ -1013,10 +1013,10 @@ func libaomHighBDConvolveXRef(dst frame.Plane, src frame.Plane, max uint16, refX
 
 func libaomHighBDConvolveYRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSample(src, 2, refX+x, refY+y-fo+k))
 			}
 			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(sum, filterBits), max))
@@ -1026,10 +1026,10 @@ func libaomHighBDConvolveYRef(dst frame.Plane, src frame.Plane, max uint16, refX
 
 func libaomHighBDConvolveXClampedRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSampleClamped(src, 2, refX+x-fo+k, refY+y))
 			}
 			res := libaomRoundPowerOfTwo(sum, round0Bits)
@@ -1040,10 +1040,10 @@ func libaomHighBDConvolveXClampedRef(dst frame.Plane, src frame.Plane, max uint1
 
 func libaomHighBDConvolveYClampedRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSampleClamped(src, 2, refX+x, refY+y-fo+k))
 			}
 			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(sum, filterBits), max))
@@ -1057,9 +1057,9 @@ func libaomHighBDConvolve2DRef(dst frame.Plane, src frame.Plane, bitDepth uint8,
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	for y := 0; y < height+filterTaps-1; y++ {
-		for x := 0; x < width; x++ {
+		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(getSample(src, 2, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
@@ -1068,10 +1068,10 @@ func libaomHighBDConvolve2DRef(dst frame.Plane, src frame.Plane, bitDepth uint8,
 	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -1086,9 +1086,9 @@ func libaomHighBDConvolve2DClampedRef(dst frame.Plane, src frame.Plane, bitDepth
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	for y := 0; y < height+filterTaps-1; y++ {
-		for x := 0; x < width; x++ {
+		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(getSampleClamped(src, 2, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
@@ -1097,10 +1097,10 @@ func libaomHighBDConvolve2DClampedRef(dst frame.Plane, src frame.Plane, bitDepth
 	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -1111,10 +1111,10 @@ func libaomHighBDConvolve2DClampedRef(dst frame.Plane, src frame.Plane, bitDepth
 
 func libaomConvolveXRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(src.Pix[(refY+y)*src.Stride+refX+x-fo+k])
 			}
 			res := libaomRoundPowerOfTwo(sum, round0Bits)
@@ -1125,10 +1125,10 @@ func libaomConvolveXRef(dst frame.Plane, src frame.Plane, refX int, refY int, ds
 
 func libaomConvolveYRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(src.Pix[(refY+y-fo+k)*src.Stride+refX+x])
 			}
 			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(sum, filterBits)))
@@ -1138,10 +1138,10 @@ func libaomConvolveYRef(dst frame.Plane, src frame.Plane, refX int, refY int, ds
 
 func libaomConvolveXClampedRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSampleClamped(src, 1, refX+x-fo+k, refY+y))
 			}
 			res := libaomRoundPowerOfTwo(sum, round0Bits)
@@ -1152,10 +1152,10 @@ func libaomConvolveXClampedRef(dst frame.Plane, src frame.Plane, refX int, refY 
 
 func libaomConvolveYClampedRef(dst frame.Plane, src frame.Plane, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 0
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(getSampleClamped(src, 1, refX+x, refY+y-fo+k))
 			}
 			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(libaomClipPixel(libaomRoundPowerOfTwo(sum, filterBits)))
@@ -1169,9 +1169,9 @@ func libaomConvolve2DRef(dst frame.Plane, src frame.Plane, refX int, refY int, d
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	for y := 0; y < height+filterTaps-1; y++ {
-		for x := 0; x < width; x++ {
+		for x := range width {
 			sum := 1 << (8 + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(src.Pix[(refY-foY+y)*src.Stride+refX+x-foX+k])
 			}
 			im[y*imStride+x] = int16(libaomRoundPowerOfTwo(sum, round0Bits))
@@ -1180,10 +1180,10 @@ func libaomConvolve2DRef(dst frame.Plane, src frame.Plane, refX int, refY int, d
 	offsetBits := 8 + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -1198,9 +1198,9 @@ func libaomConvolve2DClampedRef(dst frame.Plane, src frame.Plane, refX int, refY
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	for y := 0; y < height+filterTaps-1; y++ {
-		for x := 0; x < width; x++ {
+		for x := range width {
 			sum := 1 << (8 + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(getSampleClamped(src, 1, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int16(libaomRoundPowerOfTwo(sum, round0Bits))
@@ -1209,10 +1209,10 @@ func libaomConvolve2DClampedRef(dst frame.Plane, src frame.Plane, refX int, refY
 	offsetBits := 8 + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
