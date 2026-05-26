@@ -79,13 +79,13 @@ func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, hei
 	for row := -WienerHalfwin; row < height+WienerHalfwin; row++ {
 		dstRow := (row + WienerHalfwin) * width
 		srcRow := srcOrigin + row*srcStride
-		for col := 0; col < width; col++ {
+		for col := range width {
 			center := src[srcRow+col]
 			if center > max {
 				return false
 			}
 			sum := int32(center)<<WienerFilterBits + offset
-			for k := 0; k < WienerWin; k++ {
+			for k := range WienerWin {
 				sample := src[srcRow+col-WienerHalfwin+k]
 				if sample > max {
 					return false
@@ -100,11 +100,11 @@ func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, hei
 
 func wienerVertical(temp []uint16, tempStride int, dst []uint16, dstStride int, width int, height int, filter WienerFilter, bitDepth int, round1 int, max uint16) {
 	offset := int32(1 << (bitDepth + round1 - 1))
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			center := temp[(row+WienerHalfwin)*tempStride+col]
 			sum := int32(center)<<WienerFilterBits - offset
-			for k := 0; k < WienerWin; k++ {
+			for k := range WienerWin {
 				sum += int32(temp[(row+k)*tempStride+col]) * int32(filter[k])
 			}
 			dst[row*dstStride+col] = uint16(clampInt32(roundPowerOfTwo(sum, round1), 0, int32(max)))
@@ -144,7 +144,7 @@ func validWienerFilter(filter WienerFilter) bool {
 		return false
 	}
 	sum := int32(0)
-	for i := 0; i < WienerWin; i++ {
+	for i := range WienerWin {
 		sum += int32(filter[i])
 	}
 	return sum == 0

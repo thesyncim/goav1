@@ -163,8 +163,8 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 	}
 
 	xq := DecodeSGRXQ(xqd, params)
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			k := row*width + col
 			pre := int32(src[srcOrigin+row*srcStride+col])
 			u := pre << SGRProjRstBits
@@ -192,9 +192,9 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
 	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 1, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
-	for row := 0; row < height; row++ {
+	for row := range height {
 		if row&1 == 0 {
-			for col := 0; col < width; col++ {
+			for col := range width {
 				k := aOrigin + row*bufStride + col
 				l := dgdOrigin + row*dgdStride + col
 				nb := 5
@@ -206,7 +206,7 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 			}
 			continue
 		}
-		for col := 0; col < width; col++ {
+		for col := range width {
 			k := aOrigin + row*bufStride + col
 			l := dgdOrigin + row*dgdStride + col
 			nb := 4
@@ -220,8 +220,8 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 func selfguided(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
 	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 0, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			k := aOrigin + row*bufStride + col
 			l := dgdOrigin + row*dgdStride + col
 			nb := 5
@@ -259,10 +259,7 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 			if a*uint32(n) >= b*b {
 				p = a*uint32(n) - b*b
 			}
-			z := roundPowerOfTwoUnsigned(p*uint32(params.S[radiusIndex]), SGRProjMTableBits)
-			if z > 255 {
-				z = 255
-			}
+			z := min(roundPowerOfTwoUnsigned(p*uint32(params.S[radiusIndex]), SGRProjMTableBits), 255)
 			aBuf[k] = xByXPlus1Value(z)
 			bBuf[k] = int32(roundPowerOfTwoUnsigned(uint32(SGRProjSgr-int(aBuf[k]))*b*uint32(oneByX[n-1]), SGRProjRecipBits))
 		}
@@ -270,8 +267,8 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 }
 
 func boxsum(src []int32, srcOrigin int, width int, height int, srcStride int, radius int, squared bool, dst []int32, dstStride int) {
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			sum := int32(0)
 			y0 := maxInt(0, row-radius)
 			y1 := minInt(height-1, row+radius)

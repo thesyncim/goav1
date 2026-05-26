@@ -75,7 +75,7 @@ func TestSelfguidedRestorationConstantBlocksStayInRange(t *testing.T) {
 			width  int
 			height int
 		}{{4, 4}, {17, 19}, {64, 64}} {
-			for eps := 0; eps < SGRProjParams; eps++ {
+			for eps := range SGRProjParams {
 				stride := size.width + 2*SGRProjBorderHorz
 				origin := SGRProjBorderVert*stride + SGRProjBorderHorz
 				src := make([]uint16, stride*(size.height+2*SGRProjBorderVert))
@@ -190,7 +190,7 @@ func BenchmarkApplySelfguidedRestoration(b *testing.B) {
 	}
 	b.SetBytes(int64(64 * 64 * 2))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int{8, 11}, 12, scratch)
 	}
 }

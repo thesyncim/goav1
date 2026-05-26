@@ -302,7 +302,7 @@ func BenchmarkApplyWienerRestoration(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(64 * 64 * 2)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := ApplyWienerRestoration(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
 			b.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func referenceWienerPixel(src []uint16, stride int, origin int, row int, col int
 	round0, round1 := referenceWienerRounds(int(bitDepth))
 	center := referenceWienerHorizontal(src, stride, origin, row, col, info.HFilter, int(bitDepth), round0)
 	sum := int32(center)<<WienerFilterBits - int32(1<<(int(bitDepth)+round1-1))
-	for k := 0; k < WienerWin; k++ {
+	for k := range WienerWin {
 		v := referenceWienerHorizontal(src, stride, origin, row-WienerHalfwin+k, col, info.HFilter, int(bitDepth), round0)
 		sum += int32(v) * int32(info.VFilter[k])
 	}
@@ -324,7 +324,7 @@ func referenceWienerPixel(src []uint16, stride int, origin int, row int, col int
 func referenceWienerHorizontal(src []uint16, stride int, origin int, row int, col int, filter WienerFilter, bitDepth int, round0 int) uint16 {
 	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
 	sum := int32(src[origin+row*stride+col])<<WienerFilterBits + int32(1<<(bitDepth+WienerFilterBits-1))
-	for k := 0; k < WienerWin; k++ {
+	for k := range WienerWin {
 		sum += int32(src[origin+row*stride+col-WienerHalfwin+k]) * int32(filter[k])
 	}
 	return uint16(referenceClamp(referenceRoundPowerOfTwo(sum, round0), 0, limit-1))
