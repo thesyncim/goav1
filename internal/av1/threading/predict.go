@@ -803,7 +803,7 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 			return err
 		}
 		if ok && geom.Width >= 8 && geom.Height >= 8 {
-			return b.predictBlockInterWarpPlane(index, visit, plane)
+			return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, filters)
 		}
 		if !ok {
 			return nil
@@ -829,7 +829,7 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 			return err
 		}
 		if ok && geom.Width >= 8 && geom.Height >= 8 {
-			return b.predictBlockInterGlobalWarpPlane(index, visit, plane)
+			return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, filters)
 		}
 		if !ok {
 			return nil
@@ -844,6 +844,15 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 // The warp parameters are pre-resolved by the tile decoder; this function only
 // drives the warp filter using those params (no neighbor projection).
 func (b FrameWorkBatch) predictBlockInterGlobalWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, motion.RegularFilters)
+}
+
+// predictBlockInterGlobalWarpPlaneWithFilters extends predictBlockInterGlobalWarpPlane
+// with the translational interpolation filters that libaom would use when the
+// scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
+// allow_warp() in av1/common/reconinter.c, which returns 0 whenever
+// av1_is_scaled(sf) is true).
+func (b FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
 	if !visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
 		frameWorkPredictionIsIntrabc(visit.Prediction) ||
@@ -878,8 +887,17 @@ func (b FrameWorkBatch) predictBlockInterGlobalWarpPlane(index int, visit tile.B
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
-	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
 		return err
+	}
+	if !sameSize {
+		// libaom: av1_is_scaled(sf) makes allow_warp() return 0, so the
+		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
+		// runs the scaled 8-tap convolver on the block-level MV instead
+		// of the global warp matrix.
+		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.GlobalWarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -1043,6 +1061,15 @@ func frameWorkPredictionIsIntrabc(pred tile.BlockPredictionModeResult) bool {
 }
 
 func (b FrameWorkBatch) predictBlockInterWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
+	return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, motion.RegularFilters)
+}
+
+// predictBlockInterWarpPlaneWithFilters extends predictBlockInterWarpPlane with
+// the translational interpolation filters that libaom would use when the
+// scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
+// allow_warp() in av1/common/reconinter.c, which returns 0 whenever
+// av1_is_scaled(sf) is true).
+func (b FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters) error {
 	if !visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
 		frameWorkPredictionIsIntrabc(visit.Prediction) ||
@@ -1077,8 +1104,17 @@ func (b FrameWorkBatch) predictBlockInterWarpPlane(index int, visit tile.BlockLo
 		Width:  refWindow.Width,
 		Height: refWindow.Height,
 	}
-	if err := frameWorkValidateSameSizeReferencePlane(geom, ref); err != nil {
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
 		return err
+	}
+	if !sameSize {
+		// libaom: av1_is_scaled(sf) makes allow_warp() return 0, so the
+		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
+		// runs the scaled 8-tap convolver on the block-level MV instead
+		// of the local warp matrix.
+		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.WarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {

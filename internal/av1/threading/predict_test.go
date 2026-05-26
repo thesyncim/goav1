@@ -2218,6 +2218,182 @@ func TestFrameWorkBatchPredictBlockInterRoutesScaledReferenceWhenEnabled(t *test
 	}
 }
 
+// TestFrameWorkBatchPredictBlockInterWarpRejectsScaledReferenceBeforeMutation
+// pins the default-build behavior: warp+scaled is still a hard reject when the
+// scaled-prediction gate is off, matching the same-size invariant that the
+// 7-vector fast suite relies on.
+func TestFrameWorkBatchPredictBlockInterWarpRejectsScaledReferenceBeforeMutation(t *testing.T) {
+	if frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
+	}
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
+	fillFrameWorkInterReference(reference, 0xff)
+	output.Y.Pix[16*output.Y.Stride+16] = 0x44
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{})
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.WarpedMotionValid = true
+
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("PredictBlockLumaInterWithFilters err=%v want %v", err, ErrInvalidBatch)
+	}
+	if output.Y.Pix[16*output.Y.Stride+16] != 0x44 {
+		t.Fatalf("output mutated y=%#x", output.Y.Pix[16*output.Y.Stride+16])
+	}
+}
+
+// TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation anchors
+// the libaom behavior described in allow_warp() (av1/common/reconinter.c):
+// when av1_is_scaled(sf) is true, allow_warp() returns 0 and the predictor
+// mode stays TRANSLATION_PRED, so av1_make_inter_predictor() runs the scaled
+// 8-tap convolver on the block-level MV instead of the warp matrix. The
+// warp-dispatch output must therefore match the dedicated scaled translational
+// helper byte-for-byte.
+func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64}
+	output := testBatchFrame(t, format)
+	want := testBatchFrame(t, format)
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
+	// Deterministic pseudo-random reference so the scaled convolver does
+	// real work (no uniform shortcut); the equality check below catches
+	// any drift between the warp-dispatch fallback and the libaom
+	// reference (translational scaled convolver on the block-level MV).
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((y*31+x*17+5)&0xff))
+		}
+	}
+
+	mv := motion.Vector{Row: 5, Col: -3}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+
+	// Drive the warp dispatch with a non-identity affine wm: per libaom,
+	// the scaled-ref gate must downgrade this to translation and ignore
+	// the warp matrix entirely.
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(mv)
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	// Perturb the affine matrix so a real warp would diverge from
+	// translation; the equality check below proves the matrix is unused.
+	params.Matrix[2] = 1<<16 + 123
+	params.Matrix[5] = 1<<16 - 123
+	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.WarpedMotionValid = true
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+		t.Fatalf("PredictBlockLumaInterWithFilters err=%v", err)
+	}
+
+	// Build the libaom reference: translational scaled convolver on the
+	// block-level MV with the same filters, written at the same plane
+	// position.
+	wantCtx := testInterPredictionBatch(want, reference)
+	geom, ok, err := wantCtx.blockPredictionPlaneGeometry(0, visit.Block, FrameWorkPlaneY)
+	if err != nil || !ok {
+		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
+	}
+	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
+	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
+	}
+
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+}
+
+// TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation
+// is the GLOBALMV analogue of the warp test above. allow_warp() applies the
+// same is_scaled gate to frame-level global motion, so a non-translational
+// global warp model paired with a scaled reference must also collapse to the
+// translational scaled convolver on the block-level MV.
+func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64}
+	output := testBatchFrame(t, format)
+	want := testBatchFrame(t, format)
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((y*23+x*13+7)&0xff))
+		}
+	}
+
+	mv := motion.Vector{Row: -4, Col: 6}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapRegular}
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(mv)
+	// MotionMode stays SIMPLE_TRANSLATION so dispatch falls through to
+	// the GlobalMV branch; the scaled-ref gate must override the global
+	// warp model just like it does for block-level warp.
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeTranslation
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	params.Matrix[2] = 1<<16 + 77
+	params.Matrix[5] = 1<<16 - 77
+	visit.Prediction.GlobalWarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.GlobalWarpedMotionValid = true
+	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+		t.Fatalf("PredictBlockLumaInterWithFilters err=%v", err)
+	}
+
+	wantCtx := testInterPredictionBatch(want, reference)
+	geom, ok, err := wantCtx.blockPredictionPlaneGeometry(0, visit.Block, FrameWorkPlaneY)
+	if err != nil || !ok {
+		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
+	}
+	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
+	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
+	}
+
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+}
+
+// TestFrameWorkBatchPredictBlockInterWarpScaledAllocs locks the steady-state
+// allocation profile for the warp+scaled fallback path so the SVC vectors
+// stay zero-alloc per visit.
+func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterPredictionVisit(motion.Vector{Row: 3, Col: -5})
+	visit.Prediction.MotionModeValid = true
+	visit.Prediction.MotionMode = tile.MotionModeWarp
+	params := parser.DefaultWarpedMotionParams()
+	params.Type = parser.GlobalMotionAffine
+	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	visit.Prediction.WarpedMotionValid = true
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warp+scaled fallback allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMutation(t *testing.T) {
 	if frameWorkScaledRefEnabled() {
 		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
