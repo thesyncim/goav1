@@ -123,3 +123,72 @@ func ParseAnnexBElement(src []byte) (OBUUnit, int, error) {
 func NewAnnexBIterator(src []byte) AnnexBIterator {
 	return internalobu.NewAnnexBIterator(src)
 }
+
+// Metadata OBU public types and constants. These mirror the parsed payload
+// variants defined by AV1 spec section 5.8.
+type (
+	// MetadataType is the AV1 metadata_type leb128 field.
+	MetadataType = internalobu.MetadataType
+
+	// Metadata is the parsed AV1 Metadata OBU payload. Type selects which of
+	// the embedded variant fields is populated.
+	Metadata = internalobu.Metadata
+
+	// MetadataITUTT35 is the parsed ITU-T T.35 metadata payload, used for
+	// closed captions, HDR10+, Dolby Vision and other registered payloads.
+	MetadataITUTT35 = internalobu.MetadataITUTT35
+
+	// MetadataHDRCLL is the parsed Content Light Level Info payload.
+	MetadataHDRCLL = internalobu.MetadataHDRCLL
+
+	// MetadataHDRMDCV is the parsed Mastering Display Color Volume payload.
+	MetadataHDRMDCV = internalobu.MetadataHDRMDCV
+
+	// MetadataScalability is the parsed scalability descriptor payload.
+	MetadataScalability = internalobu.MetadataScalability
+
+	// MetadataScalabilityStructure carries the optional
+	// scalability_structure() body present when ModeIDC equals
+	// MetadataScalabilityModeSS.
+	MetadataScalabilityStructure = internalobu.ScalabilityStructure
+
+	// MetadataScalabilityTemporalGroupEntry is one entry of the
+	// scalability_structure temporal-group description.
+	MetadataScalabilityTemporalGroupEntry = internalobu.ScalabilityTemporalGroupEntry
+
+	// MetadataTimecode is the parsed metadata_timecode() payload.
+	MetadataTimecode = internalobu.MetadataTimecode
+)
+
+// AV1 metadata_type values per spec section 6.7.1.
+const (
+	MetadataTypeReserved0   MetadataType = internalobu.MetadataTypeReserved0
+	MetadataTypeITUTT35     MetadataType = internalobu.MetadataTypeITUTT35
+	MetadataTypeHDRCLL      MetadataType = internalobu.MetadataTypeHDRCLL
+	MetadataTypeHDRMDCV     MetadataType = internalobu.MetadataTypeHDRMDCV
+	MetadataTypeScalability MetadataType = internalobu.MetadataTypeScalability
+	MetadataTypeTimecode    MetadataType = internalobu.MetadataTypeTimecode
+
+	// MetadataScalabilityModeSS is the scalability_mode_idc value that
+	// signals an explicit scalability_structure() in the payload.
+	MetadataScalabilityModeSS = internalobu.ScalabilityModeSS
+)
+
+// Metadata OBU parse errors. ParseMetadataOBU returns these for syntactically
+// invalid Metadata OBU payloads; callers should use errors.Is.
+var (
+	ErrMetadataShortPayload     = internalobu.ErrMetadataShortPayload
+	ErrMetadataMissingTrailing  = internalobu.ErrMetadataMissingTrailing
+	ErrMetadataInvalidTrailing  = internalobu.ErrMetadataInvalidTrailing
+	ErrMetadataMissingCountry   = internalobu.ErrMetadataMissingCountry
+	ErrMetadataMissingCountryEx = internalobu.ErrMetadataMissingCountryEx
+	ErrMetadataInvalidReserved  = internalobu.ErrMetadataInvalidReserved
+)
+
+// ParseMetadataOBU parses the payload of an AV1 Metadata OBU (the bytes after
+// the OBU header and obu_size leb128) per spec section 5.8. The returned
+// Metadata aliases payload when the variant exposes byte slices (ITU-T T.35);
+// parsing performs no allocations.
+func ParseMetadataOBU(payload []byte) (Metadata, error) {
+	return internalobu.ParseMetadata(payload)
+}

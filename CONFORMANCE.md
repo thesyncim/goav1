@@ -224,8 +224,8 @@ ship under `internal/av1/testdata/libaom/`.
 |    | OBU: FrameHeader                 | Yes     | internal/av1/parser/frame.go     | ParseFrameHeaderPrefix + downstream parsers.   |
 |    | OBU: Frame                       | Yes     | internal/av1/parser/frame.go     | Combined header + tile-group dispatch.         |
 |    | OBU: TileGroup                   | Yes     | internal/av1/parser/tile_group.go | ParseTileGroupHeader + span splitting.        |
-|    | OBU: Metadata                    | Partial | internal/av1/decoder/stream.go   | OBU type recognised and emitted as             |
-|    |                                  |         |                                  | EventMetadata; payload not parsed.             |
+|    | OBU: Metadata                    | Yes     | internal/av1/obu/metadata.go     | ParseMetadata; all spec variants (ITU-T T.35,  |
+|    |                                  |         |                                  | HDR-CLL, HDR-MDCV, scalability, timecode).     |
 |    | OBU: RedundantFrameHeader        | Yes     | internal/av1/decoder/stream.go   | Accepted; ignored if a frame header is already |
 |    |                                  |         |                                  | active for the temporal unit.                  |
 |    | OBU: Padding                     | Yes     | internal/av1/decoder/stream.go   | Recognised; emitted as EventPadding.           |
@@ -418,9 +418,10 @@ work items, ordered by how much of the fast suite they would unblock:
    `internal/av1/tile/palette.go` but is not yet exercised by the
    block-loop predictor. Wire it in once a palette-using vector is in
    the dryrun-fast set.
-7. **Tile list OBU and Metadata OBU payloads.** Currently emitted as
-   opaque events; payloads are not parsed. No fast-suite vector
-   requires either today.
+7. **Tile list OBU payloads.** Currently emitted as opaque events;
+   payloads are not parsed. No fast-suite vector requires it today.
+   (Metadata OBU payload parsing landed via `obu.ParseMetadata` and
+   the `Metadata*` public types in the root package.)
 8. **Switch frames.** Parsed but no committed vector exercises the
    switch-frame reset path end-to-end.
 

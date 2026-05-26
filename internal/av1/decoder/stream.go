@@ -53,6 +53,13 @@ type Event struct {
 	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
 	TileGroup           parser.TileGroup
 	ExistingFrame       parser.ReferenceFrame
+
+	// Metadata is populated when Kind == EventMetadata and the Metadata OBU
+	// payload could be parsed per AV1 spec section 5.8. When parsing fails the
+	// stream still emits the EventMetadata event with the parse error captured
+	// in MetadataErr so callers can decide whether to abort or skip.
+	Metadata    obu.Metadata
+	MetadataErr error
 }
 
 type frameState struct {
@@ -342,6 +349,9 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 
 	case obu.TypeMetadata:
 		event.Kind = EventMetadata
+		meta, mErr := obu.ParseMetadata(unit.Payload)
+		event.Metadata = meta
+		event.MetadataErr = mErr
 		return event, nil
 
 	case obu.TypeTileList:

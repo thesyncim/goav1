@@ -453,6 +453,46 @@ func TestStreamFrameOBUParsesImplicitTileGroup(t *testing.T) {
 	}
 }
 
+func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
+	// metadata_type=2 (HDR-CLL), max_cll=1000, max_fall=400, trailing 0x80.
+	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
+
+	var dec Stream
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeMetadata, payload), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Kind != EventMetadata {
+		t.Fatalf("kind=%v want EventMetadata", event.Kind)
+	}
+	if event.MetadataErr != nil {
+		t.Fatalf("MetadataErr=%v", event.MetadataErr)
+	}
+	if event.Metadata.Type != obu.MetadataTypeHDRCLL {
+		t.Fatalf("metadata type=%v", event.Metadata.Type)
+	}
+	if event.Metadata.HDRCLL.MaxCLL != 1000 || event.Metadata.HDRCLL.MaxFALL != 400 {
+		t.Fatalf("cll=%#v", event.Metadata.HDRCLL)
+	}
+}
+
+func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
+	// metadata_type=1 (ITUT_T35) with no country code byte.
+	payload := []byte{0x01}
+
+	var dec Stream
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeMetadata, payload), false)
+	if err != nil {
+		t.Fatalf("PushOBU should not propagate metadata parse error: %v", err)
+	}
+	if event.Kind != EventMetadata {
+		t.Fatalf("kind=%v", event.Kind)
+	}
+	if !errors.Is(event.MetadataErr, obu.ErrMetadataMissingCountry) {
+		t.Fatalf("MetadataErr=%v want ErrMetadataMissingCountry", event.MetadataErr)
+	}
+}
+
 func TestStreamRejectsFrameBeforeSequenceHeader(t *testing.T) {
 	var dec Stream
 	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, []byte{0x80}), false)

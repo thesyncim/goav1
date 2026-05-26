@@ -165,6 +165,46 @@ func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
 	}
 }
 
+func TestPublicParseMetadataOBU(t *testing.T) {
+	// HDR-CLL: type=2, max_cll=1000, max_fall=400, trailing 0x80.
+	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
+	meta, err := av1.ParseMetadataOBU(payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU err=%v", err)
+	}
+	if meta.Type != av1.MetadataTypeHDRCLL {
+		t.Fatalf("type=%v", meta.Type)
+	}
+	if meta.HDRCLL.MaxCLL != 1000 || meta.HDRCLL.MaxFALL != 400 {
+		t.Fatalf("cll=%#v", meta.HDRCLL)
+	}
+
+	if _, err := av1.ParseMetadataOBU(nil); !errors.Is(err, av1.ErrMetadataShortPayload) {
+		t.Fatalf("nil payload err=%v want ErrMetadataShortPayload", err)
+	}
+}
+
+func TestPublicParseMetadataOBUAllocs(t *testing.T) {
+	payload := []byte{0x03,
+		0x12, 0x34, 0x56, 0x78,
+		0x9A, 0xBC, 0xDE, 0xF0,
+		0x11, 0x22, 0x33, 0x44,
+		0x55, 0x66, 0x77, 0x88,
+		0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, 0x07, 0x08,
+		0x80,
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		meta, err := av1.ParseMetadataOBU(payload)
+		if err != nil || meta.Type != av1.MetadataTypeHDRMDCV {
+			t.Fatalf("err=%v type=%v", err, meta.Type)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ParseMetadataOBU allocated: %f", allocs)
+	}
+}
+
 func appendPublicLowOverheadOBU(dst []byte, typ av1.OBUType, payload []byte) []byte {
 	var header [2]byte
 	n, err := av1.PutOBUHeader(header[:], av1.OBUHeader{Type: typ, HasSizeField: true})
