@@ -257,6 +257,61 @@ See the executable
 [Example](https://pkg.go.dev/github.com/thesyncim/goav1#example-package)
 in `example_test.go` for the minimum read-side smoke path.
 
+## CLI tool
+
+The repository ships an end-to-end command-line decoder under
+[`cmd/aom-go-dec`](cmd/aom-go-dec) that drives the same public residual stream
+runner used by `BenchmarkDecodeFullVector`. It is the shortest path from "I
+have an IVF" to "I have raw YUV bytes" and serves as executable documentation
+for callers wiring goav1 into their own pipeline.
+
+### Build and install
+
+```sh
+make build-cmd          # writes ./bin/aom-go-dec
+make install-cmd        # go install into $GOBIN / $GOPATH/bin
+```
+
+`make build-cmd` accepts `CMDBIN=/path/to/binary` to override the output
+path. The CLI is a single Go binary with no CGO and no external dependencies
+beyond the standard library and goav1 itself.
+
+### Usage
+
+```
+aom-go-dec [-o out.yuv] [-workers N] [-quiet] input.ivf
+```
+
+Decode the bundled libaom quantizer-00 vector into a raw I420 file:
+
+```sh
+./bin/aom-go-dec \
+    -o /tmp/quantizer00.yuv \
+    internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf
+```
+
+`-o` defaults to standard output so the binary composes naturally with
+`ffplay`, `ffmpeg`, or any other YUV-aware tool:
+
+```sh
+./bin/aom-go-dec internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf \
+    | ffplay -f rawvideo -pixel_format yuv420p -video_size 352x288 -framerate 30 -
+```
+
+Per-frame timing and aggregate throughput are logged on standard error so
+the YUV stream on standard output stays clean. Use `-quiet` to suppress the
+per-frame log line and `-workers N` to grow the tile worker goroutine pool.
+
+10/12-bit streams are written as little-endian 16-bit samples per the
+canonical `yuv420p10le` / `yuv420p12le` layout. Monochrome streams produce
+I400 (Y plane only). The CLI exits with status 1 on any decode error and
+prints the error text to standard error.
+
+The CLI currently runs residual decode and reconstruction. Loop-filter,
+CDEF, super-res, loop-restoration, and film-grain post-filters are not yet
+wired in - the same configuration used by the throughput benchmarks. See
+`cmd/aom-go-dec/decoder.go` for the exact public-API path.
+
 ## Status
 
 Realtime decode is in active development. The supporting primitives -

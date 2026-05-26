@@ -217,6 +217,25 @@ dryrun-fast:
 
 ci-local: fmt-check vet test alloc
 
+# CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
+# `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
+# either on the command line, e.g. `make build-cmd CMDBIN=/tmp/aom-go-dec`.
+CMDDIR ?= ./cmd/aom-go-dec
+CMDBIN ?= bin/aom-go-dec
+
+# build-cmd compiles the aom-go-dec CLI into ./bin so it is easy to run
+# against arbitrary IVF files without polluting the module cache.
+build-cmd:
+	@mkdir -p $(dir $(CMDBIN))
+	go build -o $(CMDBIN) $(CMDDIR)
+	@echo "built $(CMDBIN)"
+
+# install-cmd installs the aom-go-dec CLI into $GOBIN (or $GOPATH/bin) using
+# the standard `go install` flow so it lands on $PATH for users who have
+# their Go bin directory configured.
+install-cmd:
+	go install $(CMDDIR)
+
 help:
 	@echo "Available targets:"
 	@echo "  test                       go test ./..."
@@ -236,6 +255,8 @@ help:
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"
+	@echo "  build-cmd                  build the aom-go-dec CLI into ./bin"
+	@echo "  install-cmd                go install the aom-go-dec CLI"
 
 sync-upstreams:
 	./scripts/sync_upstreams.sh
