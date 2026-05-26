@@ -140,8 +140,16 @@ func InverseIdentity1DValue(v int32, length int) (int32, error) {
 
 // InverseIdentityBlock writes an AV1 IDTX residual block to dst. The source
 // coefficients are dequantized transform coefficients in AV1 coefficient order:
-// coeff_idx = col * coeffStride + row.
+// coeff_idx = col * coeffStride + row. The 8-bit stage-range clamps are used.
 func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size) error {
+	return inverseIdentityBlockClamped(dst, dstStride, coeff, coeffStride, size, minInt16, maxInt16, minInt16, maxInt16)
+}
+
+// inverseIdentityBlockClamped is the bit-depth-aware variant of
+// InverseIdentityBlock. The clamps mirror clamp_buf() in
+// av1/common/av1_inv_txfm2d.c, which the IDTX path also passes through (it
+// shares inv_txfm2d_add_c with the other inverse transforms).
+func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
 	shift, ok := size.shift()
 	coeffSize := adjustedScanSize(size)
 	if !ok ||
@@ -160,9 +168,12 @@ func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride
 			if size.IsRect2() {
 				v = rect2Scale(v)
 			}
+			v = clipRange(int64(v), rowMin, rowMax)
 			v, _ = identity1DValue(v, size.Width)
 			if shift > 0 {
-				v = clipInt32(roundShift(int64(v), shift))
+				v = clipRange(roundShift(int64(v), shift), colMin, colMax)
+			} else {
+				v = clipRange(int64(v), colMin, colMax)
 			}
 			v, _ = identity1DValue(v, size.Height)
 			dstLine[col] = clipInt16(clipInt32(roundShift(int64(v), 4)))

@@ -89,7 +89,8 @@ func ScratchLenForType(t Type, size Size) (int, error) {
 
 // InverseBlock writes a transform residual block to dst using t. IDTX keeps
 // its zero-scratch direct path; the other supported separable transforms use
-// caller-provided scratch.
+// caller-provided scratch. The 8-bit stage-range clamps are used; high
+// bit-depth callers should use InverseBlockBitDepth.
 func InverseBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type) error {
 	if t == TypeIDTX {
 		return InverseIdentityBlock(dst, dstStride, coeff, coeffStride, size)
@@ -98,4 +99,46 @@ func InverseBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, sc
 		return ErrInvalidTransform
 	}
 	return inverseSeparableBlock(dst, dstStride, coeff, coeffStride, scratch, size, t)
+}
+
+// InverseBlockBitDepth writes a transform residual block to dst using t and
+// the libaom inverse-transform stage-range clamps for the given pixel
+// bitDepth. Supported bitDepth values are 8, 10, and 12. The row-input clamp
+// is bd+8 bits and the column-input clamp is max(bd+6, 16) bits, mirroring
+// clamp_buf() and av1_gen_inv_stage_range() in
+// av1/common/av1_inv_txfm2d.c. Behaviour at bitDepth==8 is identical to
+// InverseBlock.
+func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type, bitDepth uint8) error {
+	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	if t == TypeIDTX {
+		return inverseIdentityBlockClamped(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax)
+	}
+	if !t.Supported(size) {
+		return ErrInvalidTransform
+	}
+	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
+}
+
+// stageRangeBounds returns the libaom inverse-transform stage clamp bounds for
+// bitDepth. The row bound clamps to bd+8 bits; the column bound clamps to
+// max(bd+6, 16) bits.
+func stageRangeBounds(bitDepth uint8) (rowMin int32, rowMax int32, colMin int32, colMax int32, ok bool) {
+	switch bitDepth {
+	case 8, 10, 12:
+	default:
+		return 0, 0, 0, 0, false
+	}
+	rowBits := int(bitDepth) + 8
+	colBits := int(bitDepth) + 6
+	if colBits < 16 {
+		colBits = 16
+	}
+	rowMin = -int32(1) << uint(rowBits-1)
+	rowMax = int32(1)<<uint(rowBits-1) - 1
+	colMin = -int32(1) << uint(colBits-1)
+	colMax = int32(1)<<uint(colBits-1) - 1
+	return rowMin, rowMax, colMin, colMax, true
 }

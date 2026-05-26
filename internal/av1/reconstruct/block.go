@@ -99,7 +99,7 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, coeffSize.Height, cfg.EOB); err != nil {
 			return ErrInvalidBlock
 		}
-	} else if err := transform.InverseBlock(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform); err != nil {
+	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
 		return ErrInvalidBlock
 	}
 	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, residual, width); err != nil {

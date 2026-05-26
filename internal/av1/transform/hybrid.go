@@ -69,6 +69,15 @@ func tx1DSupported(t tx1DType, length int) bool {
 }
 
 func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type) error {
+	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, typ, minInt16, maxInt16, minInt16, maxInt16)
+}
+
+// inverseSeparableBlockClamped is the bit-depth-aware variant of
+// inverseSeparableBlock. (rowMin, rowMax) clamp the row-transform input and
+// stage outputs; (colMin, colMax) clamp the column path. libaom uses bd+8
+// bits for the row clamp and max(bd+6, 16) bits for the column clamp — see
+// clamp_buf() and av1_gen_inv_stage_range() in av1_inv_txfm2d.c.
+func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
 	shift, ok := size.shift()
 	vertical, horizontal, okType := typ.tx1DTypes()
 	coeffSize := adjustedScanSize(size)
@@ -94,28 +103,23 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 			if size.IsRect2() {
 				v = rect2Scale(v)
 			}
-			// libaom clamps the row transform input to bd+8 bits (16 bits for
-			// 8-bit content). Mirror that clamp to keep rounding aligned.
-			tmpLine[col] = clipRange(int64(v), minInt16, maxInt16)
+			tmpLine[col] = clipRange(int64(v), rowMin, rowMax)
 		}
-		inverse1D(tmpLine, 1, size.Width, horizontal, minInt16, maxInt16)
+		inverse1D(tmpLine, 1, size.Width, horizontal, rowMin, rowMax)
 	}
 
 	if shift > 0 {
 		for i := range scratchLen {
-			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), minInt16, maxInt16)
+			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), colMin, colMax)
 		}
 	} else {
-		// libaom also clamps the column transform input to max(bd+6, 16) bits
-		// after applying shift[0]. For 4x4 (shift==0) the round-shift above is
-		// skipped but the clamp still applies.
 		for i := range scratchLen {
-			scratch[i] = clipRange(int64(scratch[i]), minInt16, maxInt16)
+			scratch[i] = clipRange(int64(scratch[i]), colMin, colMax)
 		}
 	}
 
 	for col := 0; col < size.Width; col++ {
-		inverse1D(scratch[col:], size.Width, size.Height, vertical, minInt16, maxInt16)
+		inverse1D(scratch[col:], size.Width, size.Height, vertical, colMin, colMax)
 	}
 
 	for row := 0; row < size.Height; row++ {
