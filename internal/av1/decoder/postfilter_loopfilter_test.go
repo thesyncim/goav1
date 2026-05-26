@@ -607,6 +607,109 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsChromaWidthByPr
 	}
 }
 
+// TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaPreviousLookupHonoursORAnchor
+// covers the 10-bit quantizer 32 chroma deblock regression: when chroma is
+// subsampled (4:2:0) the previous chroma cell's TX size must be read from the
+// libaom OR-anchor (mi_row|=scale, mi_col|=scale) — i.e. the bottom-right luma
+// MI of the previous chroma cluster — not from the cluster's top-left luma
+// MI. The two MIs disagree whenever the previous chroma cluster contains a
+// sub8x8 partition: only the bottom-right MI carries the chroma transform
+// info, the other three luma MIs report HasChromaBlock=false. With the
+// pre-fix top-left lookup the chroma edge was misclassified as a "no-chroma
+// gap" and skipped, leaving the 10-bit quantizer 32 vector ~2000 chroma
+// samples off after the loop filter. The fixed lookup lands on the
+// bottom-right MI and recovers the chroma TX 4x4 -> 4-tap filter expected by
+// libaom's set_one_param_for_line_chroma (av1/common/av1_loopfilter.c).
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaPreviousLookupHonoursORAnchor(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Filler block covers the rest of the frame so every MI cell carries a
+	// valid record. The vertical chroma edge we exercise sits between the
+	// sub8x8 cluster at luma MI (0..1, 0..1) and an 8x8 block at luma MI
+	// (2..3, 0..1).
+	filler := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
+	filler.Block.Size = tile.BlockSize16x16
+	filler.SkipTransform = true
+	// Sub8x8 cluster: four 4x4 luma blocks at (0,0), (1,0), (0,1), (1,1).
+	// Only (1,1) — the bottom-right anchor — carries chroma per libaom's
+	// HasChroma condition. We give it a small chroma TX (4x4) so the edge
+	// filter width depends on the bottom-right MI lookup.
+	subTL := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 1, 1)
+	subTL.SkipTransform = true
+	subTL.Block.Size = tile.BlockSize4x4
+	subTL.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4, HasUV: false}
+	subTR := testFrameWorkLoopFilterPostFilterRecordAt(1, 0, 2, 1)
+	subTR.SkipTransform = true
+	subTR.Block.Size = tile.BlockSize4x4
+	subTR.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4, HasUV: false}
+	subBL := testFrameWorkLoopFilterPostFilterRecordAt(0, 1, 1, 2)
+	subBL.SkipTransform = true
+	subBL.Block.Size = tile.BlockSize4x4
+	subBL.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4, HasUV: false}
+	// Bottom-right anchor block: carries the chroma TX (4x4) that the right
+	// neighbour's previous-side lookup must read via the OR-anchor mapping.
+	subBR := testFrameWorkLoopFilterPostFilterRecordAt(1, 1, 2, 2)
+	subBR.SkipTransform = true
+	subBR.Block.Size = tile.BlockSize4x4
+	subBR.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4, UV: tile.TransformSize4x4, HasUV: true}
+	// Right neighbour: 8x8 luma at MI (2..3, 0..1), chroma TX 4x4. Its
+	// left chroma edge sits at chroma_4x4=1; the previous chroma cell is
+	// the cluster (0..1, 0..1).
+	right := testFrameWorkLoopFilterPostFilterRecordAt(2, 0, 4, 2)
+	right.SkipTransform = true
+	right.Block.Size = tile.BlockSize8x8
+	right.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8, UV: tile.TransformSize4x4, HasUV: true}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, filler, subTL, subTR, subBL, subBR, right)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY: [2]uint8{8, 8},
+				LevelU: 7,
+				LevelV: 5,
+			},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 64)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Locate the U/V vertical edges emitted at chroma_4x4=1 (= luma 2),
+	// the boundary between the sub8x8 cluster and the 8x8 right block.
+	var chromaVerts []FrameWorkLoopFilterPostFilterEdge
+	for i := 0; i < plan.StoredEdges; i++ {
+		e := edges[i]
+		if (e.Plane == loopfilter.PlaneU || e.Plane == loopfilter.PlaneV) &&
+			e.Edge == loopfilter.EdgeVertical && e.X4 == 1 && e.BlockMICol == 2 {
+			chromaVerts = append(chromaVerts, e)
+		}
+	}
+	if len(chromaVerts) != 2 {
+		t.Fatalf("expected 1 U + 1 V vertical chroma edge at the cluster boundary, got %d: %+v", len(chromaVerts), chromaVerts)
+	}
+	for _, e := range chromaVerts {
+		// With the OR-anchor lookup the previous chroma TX is TX_4x4, the
+		// current TX is also TX_4x4, so libaom selects the 4-tap chroma
+		// filter (filter_length = 4) for both U and V.
+		if e.Width != 4 {
+			t.Fatalf("chroma edge=%+v want Width=4 (OR-anchor lookup should read TX_4x4 from sub-block (1,1))", e)
+		}
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDowngradesBoundaryWidths(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          16,

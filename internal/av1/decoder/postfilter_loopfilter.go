@@ -770,8 +770,7 @@ func frameWorkLoopFilterPreviousChromaCellWidth(ctx FrameWorkPostFilterContext, 
 	if err != nil {
 		return 0, false, err
 	}
-	lookupX4, lookupY4 := frameWorkLoopFilterChromaPreviousLookup4(ctx, edge, boundaryX4, boundaryY4)
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, lookupX4, lookupY4, cols, rows)
+	previous, ok, err := frameWorkLoopFilterPreviousChromaRecord(ctx, filterMap, edge, boundaryX4, boundaryY4, cols, rows)
 	if err != nil {
 		return 0, false, err
 	}
@@ -800,8 +799,7 @@ func frameWorkResolveLoopFilterChromaEdgeLevel(ctx FrameWorkPostFilterContext, f
 	if level != 0 {
 		return level, false, nil
 	}
-	prevX4, prevY4 := frameWorkLoopFilterChromaPreviousLookup4(ctx, edge, x4, y4)
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, prevX4, prevY4, cols, rows)
+	previous, ok, err := frameWorkLoopFilterPreviousChromaRecord(ctx, filterMap, edge, x4, y4, cols, rows)
 	if err != nil || !ok {
 		return 0, false, err
 	}
@@ -812,18 +810,52 @@ func frameWorkResolveLoopFilterChromaEdgeLevel(ctx FrameWorkPostFilterContext, f
 	return level, level != 0, nil
 }
 
-func frameWorkLoopFilterChromaPreviousLookup4(ctx FrameWorkPostFilterContext, edge loopfilter.Edge, x4 int, y4 int) (int, int) {
+// frameWorkLoopFilterPreviousChromaRecord resolves the loop-filter record on
+// the previous side of a chroma edge boundary. boundaryX4/boundaryY4 are
+// expressed in chroma 4x4 frame coordinates and identify the leading edge of
+// the current chroma cell.
+//
+// libaom (av1/common/av1_loopfilter.c set_one_param_for_line_chroma) maps each
+// chroma cell to the bottom-right luma MI of the corresponding 2x2 luma
+// cluster (mi_row|=scale_vert, mi_col|=scale_horz) and reads the previous
+// neighbour via mi - mode_step where mode_step is one chroma cell expressed in
+// luma MI units (1 << scale). The OR-anchor matters when chroma is subsampled
+// and the previous-side luma cluster contains sub8x8 luma blocks whose
+// records differ across the even/odd rows or columns: looking up the previous
+// neighbour at the cluster's top-left luma MI returns a different record
+// (and hence a different chroma TX size) than libaom's bottom-right anchor.
+func frameWorkLoopFilterPreviousChromaRecord(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, boundaryX4 int, boundaryY4 int, cols int, rows int) (threading.FrameWorkLoopFilterBlockRecord, bool, error) {
 	color := ctx.Event.SequenceHeader.ColorConfig
 	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
 	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
+	var prevCol, prevRow int
 	switch edge {
 	case loopfilter.EdgeVertical:
-		return x4 << ssX, y4 << ssY
+		prevCol = ((boundaryX4 - 1) << ssX) | ssX
+		prevRow = (boundaryY4 << ssY) | ssY
 	case loopfilter.EdgeHorizontal:
-		return x4 << ssX, y4 << ssY
+		prevCol = (boundaryX4 << ssX) | ssX
+		prevRow = ((boundaryY4 - 1) << ssY) | ssY
 	default:
-		return x4, y4
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, loopfilter.ErrInvalidFilter
 	}
+	if prevCol < 0 || prevRow < 0 {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, nil
+	}
+	if prevCol >= cols || prevRow >= rows || prevRow >= filterMap.Rows || prevCol >= filterMap.Stride {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
+	}
+	record, ok, err := filterMap.RecordAt(uint32(prevCol), uint32(prevRow))
+	if err != nil {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, err
+	}
+	if !ok {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, threading.ErrInvalidBatch
+	}
+	if err := frameWorkValidateLoopFilterRecord(record, prevCol, prevRow, cols, rows); err != nil {
+		return threading.FrameWorkLoopFilterBlockRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 func frameWorkLoopFilterScheduledLumaWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, cols int, rows int) (int, bool, error) {
@@ -926,8 +958,7 @@ func frameWorkLoopFilterPreviousChromaMinWidth(ctx FrameWorkPostFilterContext, f
 		if err != nil {
 			return 0, false, err
 		}
-		lookupX4, lookupY4 := frameWorkLoopFilterChromaPreviousLookup4(ctx, edge, boundaryX4, boundaryY4)
-		previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, lookupX4, lookupY4, cols, rows)
+		previous, ok, err := frameWorkLoopFilterPreviousChromaRecord(ctx, filterMap, edge, boundaryX4, boundaryY4, cols, rows)
 		if err != nil {
 			return 0, false, err
 		}
