@@ -1,7 +1,6 @@
 package tile
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -484,13 +483,14 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		c.extendSingleReferenceMVStack(req, dims, &result.Stack)
 	}
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
-	if req.MICol == 46 && (req.MIRow == 10 || req.MIRow == 11) {
-		entropy.TraceLabel("REFMV_DEBUG mi=(%d,%d) wh=(%d,%d) RowMatches=%d ColumnMatches=%d NearestMatch=%d RefMatchCount=%d StackCount=%d NearestCount=%d",
-			req.MICol, req.MIRow, dims.W4, dims.H4, result.RowMatches, result.ColumnMatches, nearestMatch, refMatchCount,
-			result.Stack.Count, result.NearestCount)
-		for i := 0; i < result.Stack.Count; i++ {
-			entropy.TraceLabel("REFMV_STACK[%d] mi=(%d,%d) mv=(%d,%d) weight=%d", i, req.MICol, req.MIRow, result.Stack.Candidates[i].This.Row, result.Stack.Candidates[i].This.Col, result.Stack.Candidates[i].Weight)
-		}
+	if !req.References.Compound {
+		// Refresh the single-ref MV cache from the post-sort stack so
+		// NEARESTMV/NEARMV decoders read the highest-weighted slot.
+		// libaom's av1_setup_ref_mv_list populates mv_ref_list FROM the
+		// sorted ref_mv_stack; priming SingleRefMVs inside
+		// extendSingleReferenceMVStack let insertion order leak into the
+		// nearest/near cache, e.g. quantizer_00 frame 1 mi=(46,10).
+		result.Stack.setSingleRefMVs(req.GlobalMVs[0])
 	}
 	return result, nil
 }
@@ -1362,7 +1362,10 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequ
 			off += step
 		}
 	}
-	stack.setSingleRefMVs(req.GlobalMVs[0])
+	// SingleRefMVs is seeded by BuildReferenceMVStack after the final stack
+	// sort so the nearest/near cache reflects libaom's mv_ref_list, which
+	// libaom populates from the sorted ref_mv_stack, not the per-helper
+	// insertion order.
 }
 
 func (c *BlockModeContext) extendCompoundReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, stack *ReferenceMVStack) {
