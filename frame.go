@@ -21,6 +21,21 @@ type Frame = internalframe.Frame
 // caller-owned byte slice. Acquire/release operations are allocation-free.
 type FramePool = internalframe.Pool
 
+// FrameLayerPool aggregates several caller-owned FramePool instances keyed
+// by FrameFormat. It is the production replacement for the per-spatial-layer
+// pool glue that SVC and multi-resolution callers previously hand-rolled:
+// layer-0 (e.g. 640x360) and layer-1 (e.g. 1280x720) surfaces coexist behind
+// one set of global surface IDs that route through the right sub-pool.
+type FrameLayerPool = internalframe.LayerPool
+
+// FrameLayerFactory binds a new caller-owned sub-pool on first observation
+// of a given FrameFormat. Implementations supply the backing storage for the
+// new sub-pool and return BindFramePool's Pool value.
+type FrameLayerFactory = internalframe.LayerFactory
+
+// FrameLayerFactoryFunc adapts a plain function to FrameLayerFactory.
+type FrameLayerFactoryFunc = internalframe.LayerFactoryFunc
+
 // FrameSamplePlane is a writable view of one plane stored at uint16
 // resolution. It is the buffer shape used by DSP and prediction helpers.
 type FrameSamplePlane = internalframe.SamplePlane
@@ -39,12 +54,15 @@ type FrameBorderedSamplePlaneLayout = internalframe.BorderedSamplePlaneLayout
 // invalid, the pool index is out of range, or the requested plane does not
 // exist.
 var (
-	ErrFrameInvalidFormat = internalframe.ErrInvalidFormat
-	ErrFrameInvalidPool   = internalframe.ErrInvalidPool
-	ErrFramePoolEmpty     = internalframe.ErrPoolEmpty
-	ErrFrameInvalidSlot   = internalframe.ErrInvalidSlot
-	ErrFrameInvalidPlane  = internalframe.ErrInvalidPlane
-	ErrFrameShortBuffer   = internalframe.ErrShortBuffer
+	ErrFrameInvalidFormat       = internalframe.ErrInvalidFormat
+	ErrFrameInvalidPool         = internalframe.ErrInvalidPool
+	ErrFramePoolEmpty           = internalframe.ErrPoolEmpty
+	ErrFrameInvalidSlot         = internalframe.ErrInvalidSlot
+	ErrFrameInvalidPlane        = internalframe.ErrInvalidPlane
+	ErrFrameShortBuffer         = internalframe.ErrShortBuffer
+	ErrFrameInvalidLayerPool    = internalframe.ErrInvalidLayerPool
+	ErrFrameLayerPoolFull       = internalframe.ErrLayerPoolFull
+	ErrFrameInvalidLayerFactory = internalframe.ErrInvalidLayerFactory
 )
 
 // FrameRequiredSize returns the per-plane and total byte requirements for a
@@ -125,6 +143,21 @@ func BindFrame(buffer []byte, format FrameFormat) (Frame, error) {
 // FramePoolRequiredSize and have len(frames) == len(free) == len(used).
 func BindFramePool(backing []byte, format FrameFormat, frames []Frame, free []int, used []bool) (FramePool, error) {
 	return internalframe.BindPool(backing, format, frames, free, used)
+}
+
+// BindFrameLayerPool wires caller-owned storage for up to len(pools) sub-pools
+// keyed by FrameFormat. stride bounds the maximum local pool index that the
+// global surface ID encoding can carry (256 is a safe default for pools sized
+// up to 256 surfaces). factory binds a new caller-owned sub-pool the first
+// time a previously-unseen FrameFormat is observed.
+//
+// After binding, FrameLayerPool.Acquire and Release are zero-alloc for any
+// FrameFormat that has already been observed; the first Acquire of a new
+// FrameFormat invokes factory exactly once. The same-length rule
+// (len(pools) == len(formats) == len(bound)) lets every sub-pool slot be
+// addressed by index without re-allocating.
+func BindFrameLayerPool(pools []FramePool, formats []FrameFormat, bound []bool, stride int, factory FrameLayerFactory) (FrameLayerPool, error) {
+	return internalframe.BindLayerPool(pools, formats, bound, stride, factory)
 }
 
 // FrameSamplePlaneLen reports the number of uint16 entries required to back a
