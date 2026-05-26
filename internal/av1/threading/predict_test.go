@@ -373,6 +373,97 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 	}
 }
 
+// TestFrameWorkBatchPredictBlockLumaIntraWritesPastVisibleRightEdge pins the
+// MI-aligned past-visible write behaviour locked in by a86e729 on a 34x34
+// frame. An 8x8 DC intra block whose MI footprint covers luma columns 32..39
+// (block at MI col 8) has only the leftmost two columns (32 and 33) inside
+// the coded-frame edge; the remaining six columns (34..39) are past visible
+// but inside the MI-aligned writable extent (mi_cols*MI_SIZE = 40).
+//
+// libaom writes the entire 8x8 transform regardless of where the visible
+// boundary lands; later blocks read the past-visible samples as predictor
+// neighbors. goav1 mirrors that by extending JobOutputPlane's window through
+// the stride padding so the prediction kernel can write all 8 columns. This
+// regression test confirms that the prediction call:
+//
+//  1. Succeeds at the right-edge MI position (cols 32..39 are inside ClipWidth=40).
+//  2. Writes a uniform DC value across columns 32..39 of each row, including
+//     the past-visible columns 34..39 (which previously stayed zero-clipped
+//     under the visible-only write path and caused downstream blocks to see
+//     uninitialised stride padding when fetching above neighbors at row 7+).
+//
+// The frame is allocated with Align=32 (matching the libaom oracle harness's
+// frameFormatFromEvent stride alignment), so Y stride = 64 bytes, leaving 30
+// bytes of past-visible stride padding per row that the write fills.
+func TestFrameWorkBatchPredictBlockLumaIntraWritesPastVisibleRightEdge(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        34,
+		Height:       34,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	testFillFrame(output, 0)
+
+	// Seed the left-neighbor column at x=31 with a fixed value so the
+	// 8x8 DC block at (col 32, row 0) has predictable Above (missing,
+	// filled from dst[31, 0]) and Left (col 31 rows 0..7) neighbors.
+	// DC = (8*seed + 8*seed) / 16 = seed.
+	const seed uint16 = 96
+	for y := 0; y < 8; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 31, y, seed)
+	}
+
+	ctx := testIntraPredictionBatch(output)
+	ctx.Sequence = FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+		ColorConfig: parser.ColorConfig{
+			BitDepth:     output.Format.BitDepth,
+			MonoChrome:   false,
+			SubsamplingX: output.Format.SubsamplingX,
+			SubsamplingY: output.Format.SubsamplingY,
+		},
+	})
+	ctx.FrameSize = parser.FrameSize{CodedWidth: 34, Height: 34}
+	ctx.Jobs = []tile.Job{{SBCols: 1, SBRows: 1}}
+
+	visit := tile.BlockLoopVisit{
+		Block: tile.BlockVisit{
+			MICol: 8, MIRow: 0, MIColEnd: 10, MIRowEnd: 2,
+			X4: 0, Y4: 0, Size: tile.BlockSize8x8, VisibleW4: 2, VisibleH4: 2,
+			HaveTop: false, HaveLeft: true,
+		},
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:    true,
+			Intra:    true,
+			LumaMode: tile.IntraModeDC,
+		},
+	}
+	var scratch FrameWorkIntraPredictionScratch
+	if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
+		t.Fatalf("PredictBlockLumaIntra at right-edge MI col 8: %v", err)
+	}
+
+	// All 8 rows x 8 cols of the block (cols 32..39, rows 0..7) must hold
+	// the DC value, including past-visible cols 34..39. A regression that
+	// re-clips writes to the visible 2-col strip would leave cols 34..39
+	// at their initial 0, breaking downstream blocks that read row 7
+	// cols 32..39 as above neighbors.
+	//
+	// Read raw bytes by stride (not via frameWorkLoadSample which bounds-
+	// checks against plane.Width=34) so we can verify past-visible writes
+	// in the stride padding.
+	for y := 0; y < 8; y++ {
+		row := y * output.Y.Stride
+		for x := 32; x < 40; x++ {
+			got := uint16(output.Y.Pix[row+x])
+			if got != seed {
+				t.Fatalf("Y(%d,%d)=%d want %d (past-visible write missing or wrong)", x, y, got, seed)
+			}
+		}
+	}
+}
+
 // TestFrameWorkPlaneBlockStartsBeyondOutput covers the rounded-up MI grid
 // short-circuit: a 34x34 frame allocates MI cols 0..9 (rounded to a multiple
 // of 8), so partition walks can address blocks starting at MI col 9 (luma
