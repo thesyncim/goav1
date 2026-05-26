@@ -60,6 +60,15 @@ type Event struct {
 	// in MetadataErr so callers can decide whether to abort or skip.
 	Metadata    obu.Metadata
 	MetadataErr error
+
+	// TileList is populated when Kind == EventTileList and the OBU_TILE_LIST
+	// payload could be parsed per AV1 spec section 5.11.1. Entries aliases the
+	// scratch buffer returned by Stream.tileListEntries() (or the caller-owned
+	// PushUnitWithTileListScratch slice). When parsing fails the event is
+	// still emitted with the underlying error in TileListErr so callers can
+	// decide whether to abort or skip.
+	TileList    parser.TileList
+	TileListErr error
 }
 
 type frameState struct {
@@ -93,6 +102,11 @@ type Stream struct {
 
 	references parser.ReferenceState
 	rtp        rtp.Depacketizer
+
+	// tileListScratch is reused between EventTileList emissions to avoid
+	// per-OBU allocations. It grows on demand and shrinks back to length zero
+	// after each parse so the slice header is reset between events.
+	tileListScratch []parser.TileListEntry
 }
 
 func (s *Stream) Reset() {
@@ -356,6 +370,15 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 
 	case obu.TypeTileList:
 		event.Kind = EventTileList
+		list, err := parser.ParseTileListOBU(unit.Payload, s.tileListScratch[:0])
+		if err != nil {
+			event.TileListErr = err
+			return event, nil
+		}
+		// Re-anchor the scratch slice on the buffer the parser returned so a
+		// subsequent EventTileList reuses it without re-allocating.
+		s.tileListScratch = list.Entries[:len(list.Entries):cap(list.Entries)]
+		event.TileList = list
 		return event, nil
 
 	case obu.TypePadding:

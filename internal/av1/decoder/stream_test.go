@@ -476,6 +476,59 @@ func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
 	}
 }
 
+func TestStreamTileListOBUParses(t *testing.T) {
+	// One tile with anchor_frame_idx=0, anchor_tile_row=1, anchor_tile_col=2,
+	// tile_data_size_minus_1=2 followed by 3 bytes of tile data.
+	payload := []byte{
+		0x01,       // output_frame_width_in_tiles_minus_1 = 1
+		0x01,       // output_frame_height_in_tiles_minus_1 = 1
+		0x00, 0x00, // tile_count_minus_1 = 0 (1 tile)
+		0x00, 0x01, 0x02, 0x00, 0x02, // entry header
+		0xaa, 0xbb, 0xcc, // tile data
+	}
+
+	var dec Stream
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeTileList, payload), false)
+	if err != nil {
+		t.Fatalf("PushOBU err=%v", err)
+	}
+	if event.Kind != EventTileList {
+		t.Fatalf("kind=%v want EventTileList", event.Kind)
+	}
+	if event.TileListErr != nil {
+		t.Fatalf("TileListErr=%v", event.TileListErr)
+	}
+	if event.TileList.TileCount() != 1 || event.TileList.OutputFrameWidthInTiles() != 2 ||
+		event.TileList.OutputFrameHeightInTiles() != 2 {
+		t.Fatalf("tile list header=%+v", event.TileList)
+	}
+	if len(event.TileList.Entries) != 1 {
+		t.Fatalf("entries=%d want 1", len(event.TileList.Entries))
+	}
+	e := event.TileList.Entries[0]
+	if e.AnchorFrameIdx != 0 || e.AnchorTileRow != 1 || e.AnchorTileCol != 2 ||
+		e.TileDataSize() != 3 || string(e.TileData) != "\xaa\xbb\xcc" {
+		t.Fatalf("entry=%+v", e)
+	}
+}
+
+func TestStreamTileListOBUCapturesParseError(t *testing.T) {
+	// Truncated tile list payload (header only, claims 1 tile but no entry).
+	payload := []byte{0x00, 0x00, 0x00, 0x00}
+
+	var dec Stream
+	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeTileList, payload), false)
+	if err != nil {
+		t.Fatalf("PushOBU should not propagate tile list parse error: %v", err)
+	}
+	if event.Kind != EventTileList {
+		t.Fatalf("kind=%v want EventTileList", event.Kind)
+	}
+	if !errors.Is(event.TileListErr, parser.ErrTileListShortEntry) {
+		t.Fatalf("TileListErr=%v want ErrTileListShortEntry", event.TileListErr)
+	}
+}
+
 func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
 	// metadata_type=1 (ITUT_T35) with no country code byte.
 	payload := []byte{0x01}

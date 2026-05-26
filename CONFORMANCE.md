@@ -188,8 +188,14 @@ ship under `internal/av1/testdata/libaom/`.
 | 24 | Tile groups: single              | Yes     | internal/av1/parser/tile_group.go | Single-tile group is the default path.        |
 |    | Tile groups: multiple            | Yes     | internal/av1/parser/tile_group.go | ParseTileGroupHeader supports start/end span;  |
 |    |                                  |         | internal/av1/decoder/stream.go   | continuation tile groups re-use frameState.    |
-|    | Tile lists (OBU_TILE_LIST)       | No      | internal/av1/decoder/stream.go   | OBU type recognised and emitted as             |
-|    |                                  |         | internal/av1/obu/types.go        | EventTileList; payload not parsed.             |
+|    | Tile lists (OBU_TILE_LIST)       | Yes     | internal/av1/parser/tile_list.go | ParseTileListOBU parses the                    |
+|    |                                  |         | internal/av1/decoder/stream.go   | tile_list_obu() header and per-tile entries    |
+|    |                                  |         |                                  | (anchor_frame_idx, anchor_tile_row/col,        |
+|    |                                  |         |                                  | tile_data_size, tile data slice); EventTileList|
+|    |                                  |         |                                  | carries the parsed structure plus TileListErr  |
+|    |                                  |         |                                  | for partial payloads. End-to-end tile-list     |
+|    |                                  |         |                                  | decode (anchor-frame reuse + per-tile          |
+|    |                                  |         |                                  | reconstruction blit) is not yet wired.         |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 25 | Frame type: key                  | Yes     | internal/av1/parser/frame.go     | FrameTypeKey; full reference reset path.       |
 |    | Frame type: intra-only           | Yes     | internal/av1/parser/frame.go     | FrameTypeIntraOnly; intra-only refresh.        |
@@ -231,7 +237,10 @@ ship under `internal/av1/testdata/libaom/`.
 |    | OBU: Padding                     | Yes     | internal/av1/decoder/stream.go   | Recognised; emitted as EventPadding.           |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 32 | Annex B framing                  | Yes     | internal/av1/obu/annexb.go       | NewAnnexBIterator; length-prefixed temporal /  |
-|    |                                  |         |                                  | frame / OBU unit iteration; fuzzed.            |
+|    |                                  |         | internal/av1/obu/annexb_encode.go| frame / OBU unit iteration; fuzzed.            |
+|    |                                  |         |                                  | LowOverheadToAnnexB / AnnexBToLowOverhead      |
+|    |                                  |         |                                  | helpers transcode between framing variants     |
+|    |                                  |         |                                  | for container repackaging.                     |
 |    | Low-overhead framing (WebRTC)    | Yes     | internal/av1/obu/unit.go         | NewLowOverheadIterator; size-restoration       |
 |    |                                  |         | internal/av1/obu/normalize.go    | helpers for the AV1 RTP payload format.        |
 |    | Section 5 temporal-unit framing  | Yes     | internal/av1/obu/temporal_unit.go | NewTemporalUnitIterator for .obu conformance  |
@@ -418,10 +427,15 @@ work items, ordered by how much of the fast suite they would unblock:
    `internal/av1/tile/palette.go` but is not yet exercised by the
    block-loop predictor. Wire it in once a palette-using vector is in
    the dryrun-fast set.
-7. **Tile list OBU payloads.** Currently emitted as opaque events;
-   payloads are not parsed. No fast-suite vector requires it today.
-   (Metadata OBU payload parsing landed via `obu.ParseMetadata` and
-   the `Metadata*` public types in the root package.)
+7. **Tile list OBU end-to-end decode.** Tile list OBU parsing now
+   landed via `parser.ParseTileListOBU` and the `TileList*` public
+   types; `EventTileList` carries the parsed structure. The remaining
+   work is end-to-end tile-list playback (anchor-frame reuse,
+   per-tile reconstruction, and the output-frame blit step from
+   libaom's `read_and_decode_one_tile_list`). No fast-suite vector
+   requires it today. (Metadata OBU payload parsing landed via
+   `obu.ParseMetadata` and the `Metadata*` public types in the root
+   package.)
 8. **Switch frames.** Parsed but no committed vector exercises the
    switch-frame reset path end-to-end.
 

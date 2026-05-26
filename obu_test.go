@@ -184,6 +184,99 @@ func TestPublicParseMetadataOBU(t *testing.T) {
 	}
 }
 
+func TestPublicParseTileListOBU(t *testing.T) {
+	// 2 tiles in a 2x1 output layout.
+	tile0 := []byte{0x10, 0x20}
+	tile1 := []byte{0x30}
+	payload := []byte{
+		0x01,       // output_frame_width_in_tiles_minus_1 = 1 (width = 2)
+		0x00,       // output_frame_height_in_tiles_minus_1 = 0 (height = 1)
+		0x00, 0x01, // tile_count_minus_1 = 1 (2 tiles)
+		0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x20, // entry 0: anchor=0, row=0, col=0, size_m1=1, data
+		0x07, 0x00, 0x01, 0x00, 0x00, 0x30, // entry 1
+	}
+
+	var scratch [4]av1.TileListEntry
+	list, err := av1.ParseTileListOBU(payload, scratch[:0])
+	if err != nil {
+		t.Fatalf("ParseTileListOBU err=%v", err)
+	}
+	if list.TileCount() != 2 || list.OutputFrameWidthInTiles() != 2 || list.OutputFrameHeightInTiles() != 1 {
+		t.Fatalf("list header=%+v", list)
+	}
+	if string(list.Entries[0].TileData) != string(tile0) ||
+		string(list.Entries[1].TileData) != string(tile1) {
+		t.Fatalf("tile data mismatch: %x %x", list.Entries[0].TileData, list.Entries[1].TileData)
+	}
+	if list.Entries[1].AnchorFrameIdx != 7 {
+		t.Fatalf("entry1 anchor=%d want 7", list.Entries[1].AnchorFrameIdx)
+	}
+
+	// Round-trip via AppendTileListOBU.
+	encoded := av1.AppendTileListOBU(nil, list)
+	if string(encoded) != string(payload) {
+		t.Fatalf("AppendTileListOBU mismatch\n got=%x\nwant=%x", encoded, payload)
+	}
+
+	if _, err := av1.ParseTileListOBU([]byte{0x00}, nil); !errors.Is(err, av1.ErrTileListShortHeader) {
+		t.Fatalf("short err=%v want ErrTileListShortHeader", err)
+	}
+}
+
+func TestPublicParseTileListOBUAllocs(t *testing.T) {
+	payload := []byte{
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xbb,
+	}
+	scratch := make([]av1.TileListEntry, 1)
+	allocs := testing.AllocsPerRun(1000, func() {
+		list, err := av1.ParseTileListOBU(payload, scratch[:0])
+		if err != nil || len(list.Entries) != 1 {
+			t.Fatalf("err=%v entries=%d", err, len(list.Entries))
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ParseTileListOBU allocated: %f", allocs)
+	}
+}
+
+func TestPublicAnnexBRoundTrip(t *testing.T) {
+	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
+	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0xaa}
+	frame := []byte{byte(av1.OBUFrame) << 3, 0xcc, 0xdd}
+
+	// Build a low-overhead stream first (with obu_size fields).
+	low := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
+	low = appendPublicLowOverheadOBU(low, av1.OBUSequenceHeader, seq[1:])
+	low = appendPublicLowOverheadOBU(low, av1.OBUFrame, frame[1:])
+
+	annexB, err := av1.LowOverheadToAnnexB(nil, low, nil)
+	if err != nil {
+		t.Fatalf("LowOverheadToAnnexB err=%v", err)
+	}
+	if len(annexB) == 0 {
+		t.Fatal("empty annex b output")
+	}
+
+	roundTripped, err := av1.AnnexBToLowOverhead(nil, annexB)
+	if err != nil {
+		t.Fatalf("AnnexBToLowOverhead err=%v", err)
+	}
+	if string(roundTripped) != string(low) {
+		t.Fatalf("round-trip mismatch\n got=%x\nwant=%x", roundTripped, low)
+	}
+
+	// AppendAnnexBTemporalUnit + AnnexBToLowOverhead also lets callers
+	// transcode externally-supplied frame_units into the low-overhead form.
+	tu := av1.AppendAnnexBTemporalUnit(nil, [][][]byte{{td, seq, frame}})
+	if len(tu) == 0 {
+		t.Fatal("empty temporal unit")
+	}
+	if _, err := av1.AnnexBToLowOverhead(nil, tu); err != nil {
+		t.Fatalf("AnnexBToLowOverhead err=%v", err)
+	}
+}
+
 func TestPublicParseMetadataOBUAllocs(t *testing.T) {
 	payload := []byte{0x03,
 		0x12, 0x34, 0x56, 0x78,

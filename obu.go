@@ -1,6 +1,9 @@
 package goav1
 
-import internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+import (
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+)
 
 // OBUType identifies one of the AV1 Open Bitstream Unit types defined in
 // section 5.3.1 of the AV1 specification.
@@ -191,4 +194,109 @@ var (
 // parsing performs no allocations.
 func ParseMetadataOBU(payload []byte) (Metadata, error) {
 	return internalobu.ParseMetadata(payload)
+}
+
+// AnnexBFrameSpan describes one frame_unit boundary inside the source buffer
+// passed to LowOverheadToAnnexB. Exported so callers can pre-allocate the
+// frame-span scratch and avoid auxiliary allocations on the conversion path.
+type AnnexBFrameSpan = internalobu.AnnexBFrameSpan
+
+// AppendAnnexBOBU appends a single OBU element to dst using AV1 Annex B
+// framing (a leb128 obu_unit_size prefix followed by the raw OBU bytes).
+// dst is returned extended in place. Use AppendAnnexBFrameUnit /
+// AppendAnnexBTemporalUnit for nested frame_unit / temporal_unit framing.
+func AppendAnnexBOBU(dst []byte, raw []byte) []byte {
+	return internalobu.AppendAnnexBOBU(dst, raw)
+}
+
+// AppendAnnexBFrameUnit appends one frame_unit to dst (a leb128 frame_unit_size
+// prefix followed by one obu_unit_size-prefixed OBU per element of obus).
+func AppendAnnexBFrameUnit(dst []byte, obus ...[]byte) []byte {
+	return internalobu.AppendAnnexBFrameUnit(dst, obus...)
+}
+
+// AppendAnnexBTemporalUnit appends a temporal_unit (a slice of frame_units,
+// each a slice of OBU raw byte slices) to dst using the Annex B framing per
+// spec section 5.2.
+func AppendAnnexBTemporalUnit(dst []byte, frameUnits [][][]byte) []byte {
+	return internalobu.AppendAnnexBTemporalUnit(dst, frameUnits)
+}
+
+// LowOverheadToAnnexB converts a low-overhead OBU stream (the kind emitted by
+// IVF / Section 5 temporal-unit framing) into Annex B framing per spec section
+// 5.2. scratch is an optional caller-owned slice used for frame-span
+// bookkeeping; when its capacity covers the number of frame_units in src, no
+// auxiliary allocations occur.
+func LowOverheadToAnnexB(dst []byte, src []byte, scratch []AnnexBFrameSpan) ([]byte, error) {
+	return internalobu.LowOverheadToAnnexB(dst, src, scratch)
+}
+
+// AnnexBToLowOverhead converts an Annex B stream into the concatenated
+// low-overhead OBU stream consumable by NewLowOverheadIterator. Each emitted
+// OBU preserves the raw bytes carried in the source stream; only the Annex B
+// size prefixes are stripped.
+func AnnexBToLowOverhead(dst []byte, src []byte) ([]byte, error) {
+	return internalobu.AnnexBToLowOverhead(dst, src)
+}
+
+// TileList OBU public types and constants per AV1 spec section 5.11.1.
+type (
+	// TileList is the parsed OBU_TILE_LIST payload. Entries aliases the
+	// payload bytes supplied to ParseTileListOBU.
+	TileList = internalparser.TileList
+
+	// TileListEntry describes one entry of a tile_list_obu(). TileData
+	// aliases the payload bytes supplied to ParseTileListOBU.
+	TileListEntry = internalparser.TileListEntry
+)
+
+// Tile list OBU constants per AV1 spec section 5.11.1.
+const (
+	// TileListHeaderBytes is the fixed-size tile_list_obu() header preceding
+	// per-tile entries.
+	TileListHeaderBytes = internalparser.TileListHeaderBytes
+
+	// TileListEntryHeaderBytes is the fixed-size per-tile prefix preceding
+	// each tile_list_obu() entry's coded payload.
+	TileListEntryHeaderBytes = internalparser.TileListEntryHeaderBytes
+
+	// TileListMaxExternalReferences mirrors MAX_EXTERNAL_REFERENCES in libaom.
+	TileListMaxExternalReferences = internalparser.TileListMaxExternalReferences
+
+	// TileListMaxTiles mirrors MAX_TILES in libaom and bounds the number of
+	// entries one tile_list_obu() may carry.
+	TileListMaxTiles = internalparser.TileListMaxTiles
+)
+
+// Tile list OBU parse errors. ParseTileListOBU returns these for invalid
+// OBU_TILE_LIST payloads; callers should use errors.Is.
+var (
+	ErrTileListShortHeader        = internalparser.ErrTileListShortHeader
+	ErrTileListShortEntry         = internalparser.ErrTileListShortEntry
+	ErrTileListShortTileData      = internalparser.ErrTileListShortTileData
+	ErrTileListTrailingBytes      = internalparser.ErrTileListTrailingBytes
+	ErrTileListTooManyTiles       = internalparser.ErrTileListTooManyTiles
+	ErrTileListInvalidTileCount   = internalparser.ErrTileListInvalidTileCount
+	ErrTileListInvalidAnchorIndex = internalparser.ErrTileListInvalidAnchorIndex
+)
+
+// ParseTileListOBU parses an OBU_TILE_LIST payload per AV1 spec section
+// 5.11.1. payload is the slice carried in OBUUnit.Payload (the OBU header and
+// obu_size prefix already stripped).
+//
+// entries is a caller-provided scratch slice used to materialise the per-tile
+// entries. If its capacity covers tile_count_minus_1+1, parsing is
+// zero-allocation; otherwise ParseTileListOBU allocates the result slice. The
+// returned TileList.Entries aliases entries (or the allocated slice); the
+// TileData fields alias payload.
+func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error) {
+	return internalparser.ParseTileListOBU(payload, entries)
+}
+
+// AppendTileListOBU serialises list into dst as the bytes that would appear
+// in the OBU_TILE_LIST payload (the obu_size prefix is not emitted). It is
+// the inverse of ParseTileListOBU and the standard helper callers use when
+// constructing a tile_list_obu() from a fan-out of decoded tiles.
+func AppendTileListOBU(dst []byte, list TileList) []byte {
+	return internalparser.AppendTileListOBU(dst, list)
 }
