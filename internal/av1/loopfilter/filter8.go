@@ -1,3 +1,9 @@
+// Ported from libaom: aom_dsp/loopfilter.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package loopfilter
 
 import "github.com/thesyncim/goav1/internal/av1/frame"

@@ -1,3 +1,9 @@
+// Ported from libaom: av1/decoder/grain_synthesis.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package filmgrain
 
 // gaussianSequence is AV1's normative 11-bit-indexed film grain Gaussian sequence.

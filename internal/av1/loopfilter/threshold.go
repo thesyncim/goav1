@@ -1,3 +1,9 @@
+// Ported from libaom: av1/common/av1_loopfilter.c
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
 package loopfilter
 
 // Thresholds contains the scalar limits consumed by AV1 deblocking filters.
