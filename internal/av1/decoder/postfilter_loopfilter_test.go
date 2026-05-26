@@ -2048,3 +2048,198 @@ func benchmarkFillLoopFilterFrame(output *frame.Frame) {
 	testFillFrameWorkLoopFilterPattern(output.U)
 	testFillFrameWorkLoopFilterPattern(output.V)
 }
+
+// TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolution
+// pins loop-filter dispatch to the per-event frame size by exercising a
+// 1280x720 frame end-to-end. SVC enhancement layers decode at their own
+// resolution, so the loop filter must not assume a global frame size: plane
+// sizes, the MI grid, edge fit checks, and chroma subsampling must all derive
+// from the current event's FrameSize/SequenceHeader, not any stream-wide
+// maximum.
+func TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolution(t *testing.T) {
+	const width = 1280
+	const height = 720
+	const miBlock = 16 // BlockSize64x64 covers a 16x16 MI superblock.
+
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols != 320 || rows != 180 {
+		t.Fatalf("frameWorkLoopFilterMapGrid(1280x720)=(%d,%d) want (320,180)", cols, rows)
+	}
+
+	records := make([]threading.FrameWorkLoopFilterBlockRecord, 0, 256)
+	for row := 0; row < rows; row += miBlock {
+		blockRows := miBlock
+		if row+blockRows > rows {
+			blockRows = rows - row
+		}
+		for col := 0; col < cols; col += miBlock {
+			blockCols := miBlock
+			if col+blockCols > cols {
+				blockCols = cols - col
+			}
+			records = append(records, testFrameWorkLoopFilterEnhancementLayerRecord(col, row, blockCols, blockRows))
+		}
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, records...)
+
+	output := testFrameWorkCDEFFrame(t, frame.Format{
+		Width:        width,
+		Height:       height,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	testFillFrameWorkLoopFilterPattern(output.Y)
+	testFillFrameWorkLoopFilterPattern(output.U)
+	testFillFrameWorkLoopFilterPattern(output.V)
+	beforeY := append([]byte(nil), output.Y.Pix...)
+	beforeU := append([]byte(nil), output.U.Pix...)
+	beforeV := append([]byte(nil), output.V.Pix...)
+
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY:    [2]uint8{32, 32},
+				LevelU:    20,
+				LevelV:    20,
+				Sharpness: 1,
+			},
+		},
+		Output:        output,
+		LoopFilterMap: &filterMap,
+	}
+
+	scratch, err := ctx.LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{Map: filterMap})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scratch.Edges == 0 {
+		t.Fatalf("scratch=%+v want nonzero", scratch)
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, scratch.Edges)
+
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{Map: filterMap, Edges: edges})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Active || plan.MICols != cols || plan.MIRows != rows {
+		t.Fatalf("plan=%+v want active grid %dx%d", plan, cols, rows)
+	}
+	if plan.Cells != cols*rows {
+		t.Fatalf("plan.Cells=%d want %d", plan.Cells, cols*rows)
+	}
+	if plan.Blocks != len(records) {
+		t.Fatalf("plan.Blocks=%d want %d", plan.Blocks, len(records))
+	}
+	if plan.Missing != 0 {
+		t.Fatalf("plan.Missing=%d want 0", plan.Missing)
+	}
+	if plan.DroppedEdges != 0 || plan.StoredEdges != plan.EdgeCandidates {
+		t.Fatalf("plan storage=%+v want all stored", plan)
+	}
+	if plan.PlaneEdgeCandidates[loopfilter.PlaneY] == 0 ||
+		plan.PlaneEdgeCandidates[loopfilter.PlaneU] == 0 ||
+		plan.PlaneEdgeCandidates[loopfilter.PlaneV] == 0 {
+		t.Fatalf("plan PlaneEdgeCandidates=%v want all planes nonzero", plan.PlaneEdgeCandidates)
+	}
+
+	// Verify the bottom-right edge candidates use the per-event frame size:
+	// at least one stored vertical luma edge sits beyond MICol=128 (X=512
+	// luma) and at least one horizontal edge sits beyond MIRow=128 (Y=512
+	// luma). Without per-event sizing, edges in the >512 region could not
+	// resolve a valid width and would be skipped or rejected.
+	farLumaVertical := false
+	farLumaHorizontal := false
+	farChromaVertical := false
+	for _, e := range edges[:plan.StoredEdges] {
+		if e.Plane == loopfilter.PlaneY && e.Edge == loopfilter.EdgeVertical && e.X4 >= 128 {
+			farLumaVertical = true
+		}
+		if e.Plane == loopfilter.PlaneY && e.Edge == loopfilter.EdgeHorizontal && e.Y4 >= 128 {
+			farLumaHorizontal = true
+		}
+		if (e.Plane == loopfilter.PlaneU || e.Plane == loopfilter.PlaneV) &&
+			e.Edge == loopfilter.EdgeVertical && e.X4 >= 64 {
+			farChromaVertical = true
+		}
+	}
+	if !farLumaVertical {
+		t.Fatal("no luma vertical edge stored past MICol=128 (X=512 luma)")
+	}
+	if !farLumaHorizontal {
+		t.Fatal("no luma horizontal edge stored past MIRow=128 (Y=512 luma)")
+	}
+	if !farChromaVertical {
+		t.Fatal("no chroma vertical edge stored past chroma X4=64")
+	}
+
+	wantFrame := testCloneFrameWorkLoopFilterFrame(output)
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+
+	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Active || result.Applied == 0 || result.Plan.StoredEdges != plan.StoredEdges {
+		t.Fatalf("result=%+v", result)
+	}
+	if bytes.Equal(output.Y.Pix, beforeY) {
+		t.Fatal("1280x720 loop filter did not change luma samples")
+	}
+	if bytes.Equal(output.U.Pix, beforeU) || bytes.Equal(output.V.Pix, beforeV) {
+		t.Fatal("1280x720 loop filter did not change chroma samples")
+	}
+	if !bytes.Equal(output.Y.Pix, wantFrame.Y.Pix) ||
+		!bytes.Equal(output.U.Pix, wantFrame.U.Pix) ||
+		!bytes.Equal(output.V.Pix, wantFrame.V.Pix) {
+		t.Fatal("1280x720 loop filter bridge output did not match direct edge application")
+	}
+}
+
+// testFrameWorkLoopFilterEnhancementLayerRecord builds a loop-filter block
+// record at a frame-relative MI position. Unlike the small-fixture helpers, X4
+// and Y4 are pinned to the block's local superblock origin (0,0) so the
+// transform-tree validator's MaxBlockModeSlots check passes regardless of how
+// far into the frame the block sits. Each block is one SkipTransform
+// superblock so the test exercises whole-block luma and chroma edges without
+// recursing into variable transform splits.
+func testFrameWorkLoopFilterEnhancementLayerRecord(miCol int, miRow int, miCols int, miRows int) threading.FrameWorkLoopFilterBlockRecord {
+	return threading.FrameWorkLoopFilterBlockRecord{
+		Valid: true,
+		Block: tile.BlockVisit{
+			MICol:     uint32(miCol),
+			MIRow:     uint32(miRow),
+			MIColEnd:  uint32(miCol + miCols),
+			MIRowEnd:  uint32(miRow + miRows),
+			X4:        0,
+			Y4:        0,
+			Size:      tile.BlockSize64x64,
+			VisibleW4: uint8(miCols),
+			VisibleH4: uint8(miRows),
+		},
+		TransformTree: tile.TransformTreeResult{
+			Y:     tile.TransformSize32x32,
+			UV:    tile.TransformSize16x16,
+			HasUV: true,
+		},
+		SkipTransform: true,
+		SegmentID:     0,
+		RefFrame:      0,
+		Mode:          loopfilter.ModeDeltaClassZero,
+	}
+}
