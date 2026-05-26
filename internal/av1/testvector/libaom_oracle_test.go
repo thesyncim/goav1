@@ -185,11 +185,14 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 // one MD5 per temporal unit at the highest-spatial-layer output. The
 // dry-run mirrors that:
 //
-//   - Each spatial layer gets its own frame pool, reference state, and
-//     motion store. SVC streams with mixed-size spatial layers (e.g. L2T1
-//     base 640x360 + enhancement 1280x720) cannot share one frame.Pool
-//     because Pool.AcquireFormat is strict about width/height, and
-//     reference slots are independent per spatial layer.
+//   - Each spatial layer gets its own frame pool and motion store. SVC
+//     streams with mixed-size spatial layers (e.g. L2T1 base 640x360 +
+//     enhancement 1280x720) cannot share one frame.Pool because
+//     Pool.AcquireFormat is strict about width/height. Reference slots are
+//     stream-global per the AV1 spec, so a single shared SurfaceReferences
+//     spans all layers; the decoder's external-references path routes
+//     cross-pool reference frames and temporal-MV metadata through the
+//     layer aggregator's FrameSurface and TemporalMotionReference providers.
 //
 //   - Within an IVF frame, per-completed-frame MD5s are buffered. After
 //     all events in the IVF frame have been processed, MD5 emission
@@ -286,7 +289,9 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 				postRan          bool
 				currentMVSurface = -1
 			)
-			result, err := layer.state.RunEventWithContextAndSideDataAndPostFilterRunners(&layer.refs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
+			spatialID := event.SpatialID
+			globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
+			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -310,7 +315,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 						return err
 					}
 					ctx.TemporalMVs = &temporalMVs
-					resolved, err := decoder.ResolveTemporalMotionReferences(referenceSurfaces[:len(ctx.References)], layer.mvStore, ctx.ReferenceMVs[:])
+					resolved, err := decoder.ResolveTemporalMotionReferencesWithProvider(layers, referenceSurfaces[:len(ctx.References)], ctx.ReferenceMVs[:])
 					if err != nil {
 						return err
 					}
@@ -567,20 +572,21 @@ type libaomFrameWorkStats struct {
 	temporalMotionProjections int
 }
 
-// libaomSpatialLayerState owns the dry-run frame pool, reference state, and
+// libaomSpatialLayerState owns the dry-run frame pool, frame-work state, and
 // motion store for one spatial layer (SpatialID). SVC streams with mixed
 // spatial-layer dimensions (e.g. L2T1/L2T2: 640x360 + 1280x720) require a
 // per-layer pool because frame.Pool stores a single Format and rejects
 // AcquireFormat calls whose dimensions differ from the bound format.
-// Reference state is also independent per layer because each spatial layer
-// resolves its own reference slots.
+// Reference slots are stream-global per the AV1 spec and live on the
+// containing libaomSpatialLayers' sharedRefs; cross-layer reference frame
+// and temporal-MV resolution route through the layers FrameSurface and
+// TemporalMotionReference providers.
 type libaomSpatialLayerState struct {
 	spatialID uint8
 	format    frame.Format
 
 	pool                 frame.Pool
 	state                decoder.FrameWorkState
-	refs                 decoder.SurfaceReferences
 	backing              []byte
 	frameSlots           []frame.Frame
 	free                 []int
@@ -594,12 +600,97 @@ type libaomSpatialLayerState struct {
 
 // libaomSpatialLayers indexes per-spatial-layer dry-run state by SpatialID.
 // The zero value is ready to use; layers are bound lazily on first use.
+//
+// Reference slots are stream-global per the AV1 spec, so sharedRefs maps the
+// AV1 slot index to a caller-owned "global surface ID" that encodes
+// (layerID, local pool index). SVC enhancement-layer frames reference
+// surfaces in lower-spatial-layer pools through this shared map, with the
+// decoder consulting FrameSurface (and ReleaseFrameSurfaces) to route by
+// layer.
 type libaomSpatialLayers struct {
-	byID map[uint8]*libaomSpatialLayerState
+	byID       map[uint8]*libaomSpatialLayerState
+	sharedRefs decoder.SurfaceReferences
+}
+
+// libaomGlobalSurfaceStride bounds the per-layer pool index range in the
+// shared global surface ID namespace. Pools are sized to 16 slots (see
+// bindLibaomVectorFramePool), so 256 is more than enough headroom.
+const libaomGlobalSurfaceStride = 256
+
+func libaomGlobalSurfaceID(spatialID uint8, local int) int {
+	if local < 0 {
+		return -1
+	}
+	return int(spatialID)*libaomGlobalSurfaceStride + local
+}
+
+func libaomDecodeGlobalSurfaceID(id int) (uint8, int, bool) {
+	if id < 0 {
+		return 0, 0, false
+	}
+	return uint8(id / libaomGlobalSurfaceStride), id % libaomGlobalSurfaceStride, true
 }
 
 func newLibaomSpatialLayers() *libaomSpatialLayers {
 	return &libaomSpatialLayers{byID: make(map[uint8]*libaomSpatialLayerState)}
+}
+
+// FrameSurface implements decoder.FrameSurfaceProvider. The shared refs map
+// stores global surface IDs encoding (spatialID, local pool index); this
+// method decodes the ID and pulls the *frame.Frame from the right layer's
+// pool.
+func (s *libaomSpatialLayers) FrameSurface(id int) (*frame.Frame, error) {
+	spatialID, local, ok := libaomDecodeGlobalSurfaceID(id)
+	if !ok {
+		return nil, decoder.ErrInvalidSurfaceReference
+	}
+	layer, ok := s.byID[spatialID]
+	if !ok || layer == nil {
+		return nil, decoder.ErrInvalidSurfaceReference
+	}
+	return layer.pool.Frame(local)
+}
+
+// ReleaseFrameSurfaces implements decoder.FrameSurfaceReleaser. Releases are
+// dispatched to the pool that owns the released surface, matching the global
+// ID encoding.
+func (s *libaomSpatialLayers) ReleaseFrameSurfaces(ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		spatialID, local, ok := libaomDecodeGlobalSurfaceID(id)
+		if !ok {
+			return decoder.ErrInvalidSurfaceReference
+		}
+		layer, ok := s.byID[spatialID]
+		if !ok || layer == nil {
+			return decoder.ErrInvalidSurfaceReference
+		}
+		if err := layer.pool.Release(local); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TemporalMotionReference implements decoder.TemporalMotionReferenceProvider.
+// SVC enhancement-layer frames reference surfaces in lower-spatial-layer
+// pools, whose temporal motion metadata lives in those layers' mvStore
+// arrays; routing by global ID picks the right mvStore.
+func (s *libaomSpatialLayers) TemporalMotionReference(id int) (tile.TemporalMotionReferenceFrame, error) {
+	spatialID, local, ok := libaomDecodeGlobalSurfaceID(id)
+	if !ok {
+		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
+	}
+	layer, ok := s.byID[spatialID]
+	if !ok || layer == nil {
+		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
+	}
+	if local < 0 || local >= len(layer.mvStore) {
+		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
+	}
+	return layer.mvStore[local], nil
 }
 
 // layer returns the per-spatial-layer state for event.SpatialID, binding it
