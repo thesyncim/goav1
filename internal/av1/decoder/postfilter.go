@@ -639,6 +639,8 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		}
 	}
 	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		cdefDebugLogChromaPreLR(ctx.Output)
+		cdefDebugLogLRRecords(req.Restoration.Records)
 		restorationResult, err := ctx.ApplyLoopRestorationPostFilter(req.Restoration)
 		if err != nil {
 			return ctx, result, err
