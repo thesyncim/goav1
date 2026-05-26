@@ -1179,3 +1179,113 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 		t.Fatalf("expected no candidate without HaveLeft, count=%d", stack.Count)
 	}
 }
+
+// TestBuildReferenceMVStackSingleRefMVsReflectFinalSort verifies that
+// SingleRefMVs[] mirrors the final sorted stack order, not the insertion
+// order produced by extendSingleReferenceMVStack. libaom's
+// av1_find_best_ref_mvs reads from av1_setup_ref_mv_list's mv_ref_list,
+// which is populated FROM the post-sort ref_mv_stack. Without the sort
+// before setSingleRefMVs, NEARESTMV/NEARMV decoded the unsorted stack[0]
+// candidate instead of the highest-weighted entry libaom selects.
+// Mirrors quantizer_00 frame 1 mi=(46,10) where outer_blk[-1,-1] inserted
+// a (-1,-8) candidate weight=4 first and outer_col[-3]+outer_col[-5]
+// later merged a gm-substituted (-1,-7) candidate to weight=8; libaom
+// moved (-1,-7) to slot 0 via the post-extend stack sort and decoded
+// NEARESTMV from there while goav1 (pre-fix) saw stack[0]=(-1,-8) via
+// the stale single-ref cache, shifting reconstruction at (46,10) by one
+// column pixel and chain-corrupting downstream ref-MV stacks.
+func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	// Direct path: build a stack with insertion order != weight order.
+	stack := ReferenceMVStack{}
+	light := motion.Vector{Row: -1, Col: -8}
+	heavy := motion.Vector{Row: -1, Col: -7}
+	stack.Candidates[0] = ReferenceMVCandidate{This: light, Weight: 2}
+	stack.Candidates[1] = ReferenceMVCandidate{This: heavy, Weight: 8}
+	stack.Count = 2
+	sortReferenceMVStack(&stack, 0, stack.Count)
+	stack.setSingleRefMVs(motion.Vector{})
+	if stack.Candidates[0].This != heavy {
+		t.Fatalf("post-sort stack[0]=%+v want heavy=%+v", stack.Candidates[0].This, heavy)
+	}
+	if stack.SingleRefMVs[0] != heavy {
+		t.Fatalf("SingleRefMVs[0]=%+v want heavy=%+v (pre-sort order leaked into single-ref cache)",
+			stack.SingleRefMVs[0], heavy)
+	}
+
+	// Integration path: mirror libaom's quantizer_00 mi=(46,10). The
+	// outer_blk[-1,-1] cell carries a NEARESTMV candidate with mv=(-1,-8)
+	// inserted first at idx 0 weight=4. outer_col[-3] adds a GLOBALMV
+	// candidate whose stored mv is the same but gm-substitution rewrites
+	// it to gm0=(-1,-7), appending at idx 1 weight=4. outer_col[-5] adds
+	// a NEARESTMV cell with mv=(-1,-7) that merges into idx 1, doubling
+	// its weight to 8. The post-extend sort then promotes the (-1,-7)
+	// slot to idx 0. Pre-fix SingleRefMVs[0] stays at the insertion-order
+	// (-1,-8); post-fix it mirrors the sorted slot.
+	near := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: -1, Col: -8}},
+	}
+	gm := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeGlobalMV},
+		MV:         [2]motion.Vector{{Row: -1, Col: -8}},
+	}
+	merge := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{{Row: -1, Col: -7}},
+	}
+	for _, cell := range []struct {
+		x, y int
+		mr   InterMotionResult
+		size BlockSize
+	}{
+		{x: 5, y: 9, mr: near, size: BlockSize8x8},
+		{x: 3, y: 11, mr: gm, size: BlockSize8x16},
+		{x: 1, y: 11, mr: merge, size: BlockSize8x16},
+	} {
+		ctx.GridInterMotion[cell.y][cell.x] = cell.mr
+		ctx.GridMotionValid[cell.y][cell.x] = 1
+		ctx.GridBlockSize[cell.y][cell.x] = cell.size
+		ctx.GridBlockSizeVisited[cell.y][cell.x] = 1
+	}
+	for i := 0; i < 8; i++ {
+		ctx.AboveBlockSize[i+6] = BlockSize8x8
+		ctx.AboveIntra[i+6] = 1
+		ctx.GridBlockSizeVisited[9][i+6] = 1
+		ctx.GridBlockSize[9][i+6] = BlockSize8x8
+		ctx.LeftBlockSize[i+10] = BlockSize8x8
+		ctx.LeftIntra[i+10] = 1
+	}
+	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
+		Size:           BlockSize16x8,
+		References:     target,
+		X4:             6,
+		Y4:             10,
+		MIRow:          10,
+		MICol:          46,
+		TileMIColStart: 0,
+		TileMIColEnd:   88,
+		TileMIRowStart: 0,
+		TileMIRowEnd:   72,
+		HaveTop:        true,
+		HaveLeft:       true,
+		GlobalMVs:      [2]motion.Vector{{Row: -1, Col: -7}},
+		GlobalMotionType: [2]parser.GlobalMotionType{
+			0: parser.GlobalMotionRotZoom,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Stack.SingleRefValid {
+		t.Fatal("SingleRefValid=false after BuildReferenceMVStack")
+	}
+	if result.Stack.Count >= 1 && result.Stack.SingleRefMVs[0] != result.Stack.Candidates[0].This {
+		t.Fatalf("SingleRefMVs[0]=%+v want stack[0]=%+v after BuildReferenceMVStack (pre-sort cache leak)",
+			result.Stack.SingleRefMVs[0], result.Stack.Candidates[0].This)
+	}
+}
