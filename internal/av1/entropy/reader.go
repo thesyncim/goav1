@@ -103,6 +103,7 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 		bit = 0
 	}
 
+	traceBoolRead(prob, r.dif, r.rng, r.BitsRead())
 	r.normalize(dif, nextRange)
 	return bit, nil
 }
@@ -252,6 +253,7 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 		return 0, ErrInvalidCDF
 	}
 
+	traceCDFRead(cdf[0], symbols, r.dif, r.rng, r.BitsRead())
 	r.normalize(r.dif-(lower<<(ecWindow-16)), upper-lower)
 	if r.allowCDFUpdate {
 		updateCDF(cdf, symbols, symbol)
