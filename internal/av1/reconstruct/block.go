@@ -87,11 +87,11 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		return ErrInvalidBlock
 	}
 	if cfg.InverseQMatrix != nil {
-		if err := quantize.DequantizeBlockScaledQMatrix(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix); err != nil {
+		if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else {
-		if err := quantize.DequantizeBlockScaled(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale); err != nil {
+		if err := quantize.DequantizeBlockScaledBitDepth(dequant, coeffSize.Height, quantized, quantizedStride, coeffSize.Width, coeffSize.Height, cfg.Quantizer, txScale, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	}

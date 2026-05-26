@@ -117,15 +117,36 @@ func TransformScale(width int, height int) (uint8, error) {
 
 // DequantizeBlockScaled is DequantizeBlock with libaom's transform scale
 // applied after the DC/AC dequant multiply. The scale is the value returned by
-// TransformScale for the coded transform size.
+// TransformScale for the coded transform size. The 8-bit dq_coeff clamp is
+// used; high bit-depth callers should use DequantizeBlockScaledBitDepth.
 func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
-	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil)
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil, 8)
+}
+
+// DequantizeBlockScaledBitDepth is DequantizeBlockScaled with the bit-depth-
+// dependent post-shift clamp libaom applies in decode_coefs():
+// |dq_coeff| <= (1 << (7 + bd)) - 1, with the symmetric negative bound
+// extending one further. See av1/decoder/decodetxb.c:312 in libaom.
+func DequantizeBlockScaledBitDepth(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) error {
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil, bitDepth)
 }
 
 // DequantizeBlockScaledQMatrix applies libaom's inverse quantization matrix
 // weighting before the transform-size dequant shift. iqMatrix is indexed by
 // libaom's row-major coefficient position and must cover width*height entries.
+// The 8-bit dq_coeff clamp is used; high bit-depth callers should use
+// DequantizeBlockScaledQMatrixBitDepth.
 func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
+	return dequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, 8)
+}
+
+// DequantizeBlockScaledQMatrixBitDepth is DequantizeBlockScaledQMatrix with
+// the bit-depth-dependent post-shift clamp libaom applies in decode_coefs().
+func DequantizeBlockScaledQMatrixBitDepth(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
+	return dequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth)
+}
+
+func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if width <= 0 || height <= 0 {
 		return ErrInvalidQuantizer
 	}
@@ -135,10 +156,10 @@ func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coe
 	if !ok || len(iqMatrix) < samples {
 		return ErrInvalidQuantizer
 	}
-	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix)
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth)
 }
 
-func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
+func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if q.DC <= 0 || q.AC <= 0 ||
 		txScale > 2 ||
 		width <= 0 ||
@@ -149,6 +170,10 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 	}
 	if !coeffBlockFits(len(dst), dstStride, width, height) ||
 		!coeffBlockFits(len(coeff), coeffStride, width, height) {
+		return ErrInvalidQuantizer
+	}
+	dqMin, dqMax, ok := dqCoeffBounds(bitDepth)
+	if !ok {
 		return ErrInvalidQuantizer
 	}
 
@@ -176,10 +201,34 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			if negative {
 				level = -level
 			}
+			// libaom decode_coefs() (av1/decoder/decodetxb.c:312) clamps the
+			// dequantized coefficient to ±(1<<(7+bd)) — 16 bits for 8-bit, 18
+			// bits for 10-bit, 20 bits for 12-bit. Without this clamp the
+			// inverse transform sees values libaom's tran_low_t never carries.
+			if level < dqMin {
+				level = dqMin
+			} else if level > dqMax {
+				level = dqMax
+			}
 			dstCol[row] = level
 		}
 	}
 	return nil
+}
+
+// dqCoeffBounds returns the post-shift dequantized-coefficient clamp range that
+// libaom applies in decode_coefs() for the given bitDepth. Supported bitDepth
+// values are 8, 10, and 12.
+func dqCoeffBounds(bitDepth uint8) (min int32, max int32, ok bool) {
+	switch bitDepth {
+	case 8, 10, 12:
+	default:
+		return 0, 0, false
+	}
+	bits := uint(7 + bitDepth)
+	max = int32(1)<<bits - 1
+	min = -int32(1) << bits
+	return min, max, true
 }
 
 func bitDepthTable(bitDepth uint8) (int, error) {

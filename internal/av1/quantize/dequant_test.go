@@ -450,13 +450,25 @@ func FuzzDequantizeBlock(f *testing.F) {
 		if err := DequantizeBlock(dst, dstStride, coeff, coeffStride, width, height, q); err != nil {
 			t.Fatalf("DequantizeBlock err=%v", err)
 		}
+		// DequantizeBlock defaults to the 8-bit dq_coeff clamp libaom applies
+		// in decode_coefs() (av1/decoder/decodetxb.c:312):
+		// |dq_coeff| <= (1 << (7 + bd)) - 1. The fuzz expected value is the
+		// raw product (no mask, no shift), then clipped to that bound.
+		dqMax := int32(1)<<15 - 1
+		dqMin := -int32(1) << 15
 		for row := range height {
 			for col := range width {
 				scale := ac
 				if row == 0 && col == 0 {
 					scale = dc
 				}
-				want := int32(coeff[col*coeffStride+row]) * scale
+				product := int32(coeff[col*coeffStride+row]) * scale
+				want := product
+				if want < dqMin {
+					want = dqMin
+				} else if want > dqMax {
+					want = dqMax
+				}
 				got := dst[col*dstStride+row]
 				if got != want {
 					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)
