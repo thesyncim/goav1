@@ -2394,6 +2394,136 @@ func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
 	}
 }
 
+// TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation
+// anchors the libaom behavior described in av1_combine_interintra() and
+// av1_make_inter_predictor() (av1/common/reconinter.c): inter-intra blocks
+// stage the inter side into a block-sized scratch buffer, and when the
+// reference is scaled the scaled 8-tap convolver runs there. The Q14
+// reference scale factors come from xd->block_ref_scale_factors, which are
+// derived per-frame from the *output frame size*, not from the staging
+// buffer. The blend mask and intra side are independent of scaling.
+//
+// Concretely: the inter-intra luma output for a scaled-reference block must
+// equal the same per-sample mask blend of (a) the scaled translational
+// predictor on the block MV anchored to the output frame, and (b) the intra
+// predictor for the configured mode. This test pins that equivalence
+// sample-for-sample on a deterministic 32x32 -> 64x64 reference. If the
+// staging path were to derive scale factors from the scratch buffer (16x16)
+// instead of the output frame (64x64) the resulting samples would diverge
+// from the libaom reference.
+func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
+	output := testBatchFrame(t, format)
+	want := testBatchFrame(t, format)
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, MonoChrome: true, Align: 64})
+	// Deterministic pseudo-random reference so the scaled convolver does
+	// real work and any drift between the geom-anchored and (buggy)
+	// scratch-anchored scale factors surfaces sample-for-sample.
+	for y := 0; y < reference.Y.Height; y++ {
+		for x := 0; x < reference.Y.Width; x++ {
+			setFrameWorkTestSample(reference.Y, reference.Layout.BytesPerSample, x, y, uint16((y*29+x*19+11)&0xff))
+		}
+	}
+	// Seed the intra-side neighbors at the block boundary so the smooth
+	// intra predictor produces a non-trivial signal that the mask must
+	// actually blend (otherwise inter and intra branches could coincide
+	// and hide the scaled-vs-scratch dimension bug).
+	for x := 16; x < 32; x++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 200)
+		setFrameWorkTestSample(want.Y, want.Layout.BytesPerSample, x, 15, 200)
+	}
+	for y := 16; y < 32; y++ {
+		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 40)
+		setFrameWorkTestSample(want.Y, want.Layout.BytesPerSample, 15, y, 40)
+	}
+	setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, 15, 120)
+	setFrameWorkTestSample(want.Y, want.Layout.BytesPerSample, 15, 15, 120)
+
+	mv := motion.Vector{Row: 4, Col: -6}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterIntraPredictionVisit(tile.InterIntraModeSmooth, false)
+	visit.Prediction.InterMotion.MV[0] = mv
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatalf("PredictBlockInterWithFilters err=%v", err)
+	}
+
+	// Build the libaom reference: scaled translational predictor anchored
+	// to the output frame size, blended with the configured intra mode via
+	// the same per-sample mask. This drives the same internal helpers as
+	// the inter-intra dispatch except for the (geom-anchored) scale factor
+	// derivation, which is the new path under test.
+	wantCtx := testInterPredictionBatch(want, reference)
+	geom, ok, err := wantCtx.blockPredictionPlaneGeometry(0, visit.Block, FrameWorkPlaneY)
+	if err != nil || !ok {
+		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
+	}
+	var interBuf, intraBuf FrameWorkInterPredictionScratch
+	inter, err := frameWorkInterScratchPlane(interBuf.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		t.Fatalf("inter scratch err=%v", err)
+	}
+	intra, err := frameWorkInterScratchPlane(intraBuf.Second[:], geom.BytesPerSample, geom.Width, geom.Height)
+	if err != nil {
+		t.Fatalf("intra scratch err=%v", err)
+	}
+	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
+	if err := frameWorkPredictScaledReferencePlaneToBuffer(inter, refPlane, geom, want.Format.BitDepth,
+		0, 0, geom.X, geom.Y, mv, filters); err != nil {
+		t.Fatalf("scaled-ref to buffer err=%v", err)
+	}
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	var intraScratch FrameWorkIntraPredictionScratch
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &intraScratch, true)
+	if err != nil {
+		t.Fatalf("intra edges err=%v", err)
+	}
+	if err := prediction.PredictIntraPlaneBlock(intra, geom.BytesPerSample, want.Format.BitDepth, 0, 0, geom.Width, geom.Height, prediction.IntraModeSmooth, edges); err != nil {
+		t.Fatalf("intra predict err=%v", err)
+	}
+	var mask [frameWorkInterPredictionMaxMaskSamples]byte
+	if err := frameWorkBuildInterIntraMask(mask[:], geom.Width, geom.Width, geom.Height, tile.InterIntraModeSmooth); err != nil {
+		t.Fatalf("build mask err=%v", err)
+	}
+	if err := frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.BytesPerSample, want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask[:], geom.Width, false, false); err != nil {
+		t.Fatalf("blend err=%v", err)
+	}
+
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+}
+
+// TestFrameWorkBatchPredictBlockInterIntraScaledAllocs locks the steady-state
+// allocation profile for the inter-intra+scaled fallback path so the SVC
+// vectors stay zero-alloc per visit (the inter-intra branch stages into the
+// caller-owned scratch and the scaled convolver writes directly into it).
+func TestFrameWorkBatchPredictBlockInterIntraScaledAllocs(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
+	output := testBatchFrame(t, format)
+	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, MonoChrome: true, Align: 64})
+	fillFrameWorkInterReference(reference, 0xff)
+	ctx := testInterPredictionBatch(output, reference)
+	visit := testInterIntraPredictionVisit(tile.InterIntraModeSmooth, false)
+	visit.Prediction.InterMotion.MV[0] = motion.Vector{Row: 3, Col: -2}
+	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
+	var scratch FrameWorkInterPredictionScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ctx.PredictBlockInterWithFilters(0, visit, &scratch, filters); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("inter-intra+scaled fallback allocated: %f", allocs)
+	}
+}
+
 func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMutation(t *testing.T) {
 	if frameWorkScaledRefEnabled() {
 		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")

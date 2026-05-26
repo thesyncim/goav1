@@ -1398,8 +1398,14 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlane(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			0, 0, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
+		// libaom: av1_make_inter_predictor() in av1/common/reconinter.c
+		// looks up scale factors via xd->block_ref_scale_factors, which
+		// are derived per-frame by av1_setup_scale_factors_for_frame()
+		// from the output frame size — not from the staging buffer used
+		// for inter-intra / masked compound. The scratch plane here is
+		// block-sized, so we anchor the Q14 ratios to geom.Output.
+		return frameWorkPredictScaledReferencePlaneToBuffer(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
+			0, 0, geom.X, geom.Y, mv, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
