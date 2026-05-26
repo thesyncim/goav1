@@ -61,7 +61,7 @@ func (s *ReferenceState) UpdateWithDecodeState(prefix FrameHeaderPrefix, size Fr
 		GlobalMotion:     globalMotion,
 		FilmGrain:        filmGrain,
 	}
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		if (size.RefreshFrameFlags & (1 << uint(i))) != 0 {
 			s.Frames[i] = ref
 		}

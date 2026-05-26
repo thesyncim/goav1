@@ -16,7 +16,7 @@ func TestParseGlobalMotionParamsIntraReadsNoBits(t *testing.T) {
 	if params.BitsRead != 0 {
 		t.Fatalf("global motion bits=%d", params.BitsRead)
 	}
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if params.Ref[i] != DefaultWarpedMotionParams() {
 			t.Fatalf("ref[%d]=%+v", i, params.Ref[i])
 		}
@@ -26,7 +26,7 @@ func TestParseGlobalMotionParamsIntraReadsNoBits(t *testing.T) {
 func TestParseGlobalMotionParamsInterIdentity(t *testing.T) {
 	var w testBitWriter
 	w.writeBits(0b101010, 6)
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBool(false)
 	}
 
@@ -44,7 +44,7 @@ func TestParseGlobalMotionParamsInterIdentity(t *testing.T) {
 	if params.BitsRead != w.bit {
 		t.Fatalf("BitsRead=%d want %d", params.BitsRead, w.bit)
 	}
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if params.Ref[i].Type != GlobalMotionIdentity || params.Ref[i] != DefaultWarpedMotionParams() {
 			t.Fatalf("ref[%d]=%+v", i, params.Ref[i])
 		}
@@ -56,7 +56,7 @@ func TestParseGlobalMotionParamsTranslationConsumesParams(t *testing.T) {
 	w.writeBool(true)  // is_global
 	w.writeBool(false) // is_rot_zoom
 	w.writeBool(true)  // is_translation
-	for i := 0; i < 14; i++ {
+	for range 14 {
 		w.writeBool(false)
 	}
 	for i := 1; i < InterRefsPerFrame; i++ {
@@ -85,7 +85,7 @@ func TestParseGlobalMotionParamsTranslationConsumesParams(t *testing.T) {
 func TestParseGlobalMotionParamsAllocs(t *testing.T) {
 	var w testBitWriter
 	w.writeBits(0b101010, 6)
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBool(false)
 	}
 	payload := w.bytes()
@@ -107,7 +107,7 @@ func TestParseGlobalMotionParamsAllocs(t *testing.T) {
 func BenchmarkParseGlobalMotionParams(b *testing.B) {
 	var w testBitWriter
 	w.writeBits(0b101010, 6)
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBool(false)
 	}
 	payload := w.bytes()
@@ -116,7 +116,7 @@ func BenchmarkParseGlobalMotionParams(b *testing.B) {
 	frameMode := FrameModeParams{BitsRead: 6}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseGlobalMotionParams(payload, prefix, size, TileInfo{}, &refs, frameMode)
 	}
 }
@@ -125,7 +125,7 @@ func globalMotionRefs() (FrameSize, ReferenceState) {
 	var size FrameSize
 	var refs ReferenceState
 	defaultGlobal := DefaultGlobalMotionParams()
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		size.RefFrameIdx[i] = uint8(i)
 		refs.Frames[i] = ReferenceFrame{
 			Valid:        true,

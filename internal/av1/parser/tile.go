@@ -191,10 +191,7 @@ func parseUniformTileLayout(r *bitstream.Reader, sbCols int, sbRows int, tiles *
 	tiles.Cols = uint8(cols)
 	tiles.ColStartSB[cols] = uint16(sbCols)
 
-	minRows := int(tiles.MinLog2Tiles) - int(tiles.Log2Cols)
-	if minRows < 0 {
-		minRows = 0
-	}
+	minRows := max(int(tiles.MinLog2Tiles)-int(tiles.Log2Cols), 0)
 	tiles.MinLog2Rows = uint8(minRows)
 	log2Rows := tiles.MinLog2Rows
 	for log2Rows < tiles.MaxLog2Rows {

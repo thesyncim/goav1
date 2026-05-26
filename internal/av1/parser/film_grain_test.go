@@ -165,7 +165,7 @@ func BenchmarkParseFilmGrainParams(b *testing.B) {
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeKey, ShowFrame: true}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseFilmGrainParams(payload, seq, prefix, FrameSize{}, nil, GlobalMotionParams{})
 	}
 }

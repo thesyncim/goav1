@@ -96,7 +96,7 @@ func ParseLoopFilterParams(payload []byte, seq SequenceHeader, prefix FrameHeade
 }
 
 func readLoopFilterDeltaUpdates(r *bitstream.Reader, deltas *LoopFilterDeltas) error {
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		update, err := r.ReadBool()
 		if err != nil {
 			return err
@@ -110,7 +110,7 @@ func readLoopFilterDeltaUpdates(r *bitstream.Reader, deltas *LoopFilterDeltas) e
 		}
 		deltas.Ref[i] = int8(v)
 	}
-	for i := 0; i < LoopFilterModeDeltas; i++ {
+	for i := range LoopFilterModeDeltas {
 		update, err := r.ReadBool()
 		if err != nil {
 			return err

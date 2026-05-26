@@ -30,7 +30,7 @@ func (w *testBitWriter) writeBool(value bool) {
 }
 
 func (w *testBitWriter) writeBitsFrom(src []byte, n int) {
-	for i := 0; i < n; i++ {
+	for i := range n {
 		bit := (src[i>>3] >> uint(7-(i&7))) & 1
 		w.writeBits(uint64(bit), 1)
 	}
@@ -134,7 +134,7 @@ func TestValidSequenceLevelIndexMatchesLibaom(t *testing.T) {
 			t.Fatalf("ValidSequenceLevelIndex(%d)=false", level)
 		}
 	}
-	for level := uint8(0); level < 32; level++ {
+	for level := range uint8(32) {
 		seenValid := false
 		for _, validLevel := range valid {
 			if level == validLevel {
@@ -238,7 +238,7 @@ func TestSequenceHeaderAllocs(t *testing.T) {
 func BenchmarkParseSequenceHeader(b *testing.B) {
 	payload := realtimeSequenceHeader()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseSequenceHeader(payload)
 	}
 }

@@ -87,7 +87,7 @@ func TestParseIntraFrameSizeHiddenKeyReadsRefreshAndOrderHints(t *testing.T) {
 	}
 
 	w.writeBits(0x01, 8) // refresh_frame_flags
-	for i := 0; i < refFrames; i++ {
+	for i := range refFrames {
 		w.writeBits(uint64(i), seq.OrderHintBits)
 	}
 	w.writeBool(false) // use_superres
@@ -100,7 +100,7 @@ func TestParseIntraFrameSizeHiddenKeyReadsRefreshAndOrderHints(t *testing.T) {
 	if size.RefreshFrameFlags != 0x01 {
 		t.Fatalf("RefreshFrameFlags=%02x", size.RefreshFrameFlags)
 	}
-	for i := 0; i < refFrames; i++ {
+	for i := range refFrames {
 		if size.RefOrderHints[i] != uint32(i) {
 			t.Fatalf("RefOrderHints[%d]=%d", i, size.RefOrderHints[i])
 		}
@@ -191,7 +191,7 @@ func TestParseFrameSizeDirectInterFrame(t *testing.T) {
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x02, 8) // refresh_frame_flags
 	w.writeBool(false)   // frame_refs_short_signaling
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // use_superres
@@ -204,7 +204,7 @@ func TestParseFrameSizeDirectInterFrame(t *testing.T) {
 	if size.RefreshFrameFlags != 0x02 {
 		t.Fatalf("RefreshFrameFlags=%02x", size.RefreshFrameFlags)
 	}
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if size.RefFrameIdx[i] != 0 {
 			t.Fatalf("RefFrameIdx[%d]=%d", i, size.RefFrameIdx[i])
 		}
@@ -229,7 +229,7 @@ func TestParseFrameSizeUsesReferenceDimensions(t *testing.T) {
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x01, 8) // refresh_frame_flags
 	w.writeBool(false)   // frame_refs_short_signaling
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3)
 	}
 	w.writeBool(true)  // use_ref_frame_size[0]
@@ -259,7 +259,7 @@ func TestParseFrameSizeRejectsMissingReference(t *testing.T) {
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x01, 8)
 	w.writeBool(false)
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3)
 	}
 
@@ -325,7 +325,7 @@ func BenchmarkParseIntraFrameSize(b *testing.B) {
 	payload = w.bytes()
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseIntraFrameSize(payload, seq, prefix, 0, 0)
 	}
 }
@@ -339,7 +339,7 @@ func BenchmarkParseFrameSizeInter(b *testing.B) {
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x02, 8)
 	w.writeBool(false)
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3)
 	}
 	w.writeBool(false)
@@ -347,7 +347,7 @@ func BenchmarkParseFrameSizeInter(b *testing.B) {
 	payload = w.bytes()
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseFrameSize(payload, seq, prefix, &refs, 0, 0)
 	}
 }
@@ -367,7 +367,7 @@ func TestParseFrameSizeInterAllocs(t *testing.T) {
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x02, 8) // refresh_frame_flags
 	w.writeBool(false)   // frame_refs_short_signaling
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // use_superres

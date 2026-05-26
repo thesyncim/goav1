@@ -112,7 +112,7 @@ func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []Til
 	}
 	offset := group.DataOffset
 	remaining := len(payload) - offset
-	for i := 0; i < count; i++ {
+	for i := range count {
 		tile := group.StartTile + uint16(i)
 		size := remaining
 		if i != count-1 {

@@ -47,7 +47,7 @@ func deriveSkipModeRefs(seq SequenceHeader, prefix FrameHeaderPrefix, size Frame
 	beforeDiff := 0
 	afterDiff := 0
 
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		slot := size.RefFrameIdx[i]
 		if slot >= RefFrames {
 			return false, ErrInvalidFrameHeader
@@ -80,7 +80,7 @@ func deriveSkipModeRefs(seq SequenceHeader, prefix FrameHeaderPrefix, size Frame
 
 	before2Idx := -1
 	before2Diff := 0
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		ref := refs.Frames[size.RefFrameIdx[i]]
 		diff := relativeOrderHint(seq.OrderHintBits, ref.OrderHint, prefix.OrderHint)
 		if diff >= beforeDiff {

@@ -87,7 +87,7 @@ func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant Qua
 
 func readSegmentationData(r *bitstream.Reader, data *SegmentationData) error {
 	*data = SegmentationData{LastActiveID: -1}
-	for i := 0; i < MaxSegments; i++ {
+	for i := range MaxSegments {
 		seg := &data.Segments[i]
 		seg.RefFrame = -1
 
@@ -177,7 +177,7 @@ func readSegmentSignedFeature(r *bitstream.Reader, bits uint8, dst *int16) (bool
 
 func clearSegmentationRefs(data *SegmentationData) {
 	*data = SegmentationData{LastActiveID: -1}
-	for i := 0; i < MaxSegments; i++ {
+	for i := range MaxSegments {
 		data.Segments[i].RefFrame = -1
 	}
 }
@@ -186,7 +186,7 @@ func deriveSegmentationQIndex(seg *SegmentationParams, quant QuantizationParams)
 	deltaLossless := quant.YDCDelta == 0 && quant.UDCDelta == 0 &&
 		quant.UACDelta == 0 && quant.VDCDelta == 0 && quant.VACDelta == 0
 	seg.AllLossless = true
-	for i := 0; i < MaxSegments; i++ {
+	for i := range MaxSegments {
 		q := int(quant.BaseQIdx)
 		if seg.Enabled {
 			q += int(seg.Data.Segments[i].DeltaQ)

@@ -159,7 +159,7 @@ func BenchmarkParseTileGroupHeader(b *testing.B) {
 	payload = append(payload, 0x00, 0xaa, 0xbb)
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		group, _ := ParseTileGroupHeader(payload, tiles, 0, 0, false)
 		var spans [2]TileSpan
 		_, _ = SplitTileGroup(payload, tiles, group, spans[:])

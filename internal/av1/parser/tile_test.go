@@ -172,7 +172,7 @@ func BenchmarkParseTileInfo(b *testing.B) {
 	payload := w.bytes()
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseTileInfo(payload, seq, prefix, size)
 	}
 }
@@ -212,7 +212,7 @@ func buildInterFrameSize(t *testing.T, seq SequenceHeader, refs *ReferenceState)
 	w.writeBitsFrom(payload, prefix.BitsRead)
 	w.writeBits(0x02, 8) // refresh_frame_flags
 	w.writeBool(false)   // frame_refs_short_signaling
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for range InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // use_superres

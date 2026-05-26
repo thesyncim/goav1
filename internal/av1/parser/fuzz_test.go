@@ -93,7 +93,7 @@ func FuzzParseFrameSize(f *testing.F) {
 		f.Fatal(err)
 	}
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -147,7 +147,7 @@ func FuzzParseTileInfo(f *testing.F) {
 	f.Add([]byte{0x12, 0x00, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -242,7 +242,7 @@ func FuzzParseTileGroupHeader(f *testing.F) {
 		if n != int(group.TileCount) {
 			t.Fatalf("span count=%d group=%+v", n, group)
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			span := spans[i]
 			if span.Tile != uint16(i) || span.Row >= tiles.Rows || span.Col >= tiles.Cols {
 				t.Fatalf("span[%d]=%+v group=%+v", i, span, group)
@@ -279,7 +279,7 @@ func FuzzParseQuantizationParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -351,7 +351,7 @@ func FuzzParseSegmentationParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -395,7 +395,7 @@ func FuzzParseSegmentationParams(f *testing.F) {
 		if !seg.Enabled && (seg.UpdateMap || seg.UpdateData || seg.TemporalUpdate) {
 			t.Fatalf("disabled segmentation has update flags=%+v", seg)
 		}
-		for i := 0; i < MaxSegments; i++ {
+		for i := range MaxSegments {
 			if seg.Lossless[i] && seg.QIndex[i] != 0 {
 				t.Fatalf("lossless segment has qindex=%+v", seg)
 			}
@@ -435,7 +435,7 @@ func FuzzParseDeltaParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -520,7 +520,7 @@ func FuzzParseLoopFilterParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -616,7 +616,7 @@ func FuzzParseCDEFParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -726,7 +726,7 @@ func FuzzParseRestorationParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -837,7 +837,7 @@ func FuzzParseTransformReferenceParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -947,7 +947,7 @@ func FuzzParseSkipModeParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -1069,7 +1069,7 @@ func FuzzParseFrameModeParams(f *testing.F) {
 	f.Add([]byte{0x10, 0x00, 0x00, 0x00})
 
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
 			OrderHint: uint32(i),
@@ -1191,7 +1191,7 @@ func FuzzParseGlobalMotionParams(f *testing.F) {
 
 	defaultGlobal := DefaultGlobalMotionParams()
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:        true,
 			OrderHint:    uint32(i),
@@ -1269,7 +1269,7 @@ func FuzzParseGlobalMotionParams(f *testing.F) {
 		if !frameTypeIsInterOrSwitch(prefix.FrameType) && globalMotion.BitsRead != frameMode.BitsRead {
 			t.Fatalf("intra global motion=%+v frame bits=%d", globalMotion, frameMode.BitsRead)
 		}
-		for i := 0; i < InterRefsPerFrame; i++ {
+		for i := range InterRefsPerFrame {
 			if globalMotion.Ref[i].Type > GlobalMotionAffine {
 				t.Fatalf("global motion ref[%d]=%+v", i, globalMotion.Ref[i])
 			}
@@ -1324,7 +1324,7 @@ func FuzzParseFilmGrainParams(f *testing.F) {
 		BitDepth:      seq.ColorConfig.BitDepth,
 	}
 	var refs ReferenceState
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:        true,
 			OrderHint:    uint32(i),

@@ -50,7 +50,7 @@ func DefaultWarpedMotionParams() WarpedMotionParams {
 func DefaultGlobalMotionParams() GlobalMotionParams {
 	var params GlobalMotionParams
 	defaultWarp := DefaultWarpedMotionParams()
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		params.Ref[i] = defaultWarp
 	}
 	return params
@@ -68,7 +68,7 @@ func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size Fram
 		return params, nil
 	}
 
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		refParams, err := globalMotionReferenceParams(prefix, size, refs, i)
 		if err != nil {
 			return GlobalMotionParams{}, err

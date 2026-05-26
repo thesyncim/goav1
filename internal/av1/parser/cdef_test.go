@@ -21,7 +21,7 @@ func TestParseCDEFParamsStrengths(t *testing.T) {
 	w, size, seg, lf := buildShownKeyFrameLoopFilter(t, seq, 40)
 	w.writeBits(2, 2) // cdef_damping_minus_3
 	w.writeBits(2, 2) // cdef_bits
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		w.writeBits(uint64(10+i), 6)
 		w.writeBits(uint64(20+i), 6)
 	}
@@ -108,7 +108,7 @@ func BenchmarkParseCDEFParams(b *testing.B) {
 	payload := w.bytes()
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseCDEFParams(payload, seq, size, seg, lf)
 	}
 }

@@ -87,7 +87,7 @@ func BenchmarkParseFrameModeParams(b *testing.B) {
 	skip := SkipModeParams{BitsRead: 6}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseFrameModeParams(payload, seq, prefix, skip)
 	}
 }

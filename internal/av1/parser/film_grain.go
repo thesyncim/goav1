@@ -104,7 +104,7 @@ func parseFilmGrainReference(r *bitstream.Reader, seq SequenceHeader, size Frame
 	}
 	refIdx := uint8(v)
 	found := false
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if size.RefFrameIdx[i] == refIdx {
 			found = true
 			break
@@ -246,7 +246,7 @@ func parseFilmGrainUpdate(r *bitstream.Reader, seq SequenceHeader, params *FilmG
 
 func readFilmGrainYPoints(r *bitstream.Reader, count uint8, points *[MaxFilmGrainYPoints][2]uint8) error {
 	var previous uint8
-	for i := uint8(0); i < count; i++ {
+	for i := range count {
 		x, err := r.ReadBits(8)
 		if err != nil {
 			return err
@@ -267,7 +267,7 @@ func readFilmGrainYPoints(r *bitstream.Reader, count uint8, points *[MaxFilmGrai
 
 func readFilmGrainUVPoints(r *bitstream.Reader, count uint8, points *[MaxFilmGrainUVPoints][2]uint8) error {
 	var previous uint8
-	for i := uint8(0); i < count; i++ {
+	for i := range count {
 		x, err := r.ReadBits(8)
 		if err != nil {
 			return err
@@ -287,7 +287,7 @@ func readFilmGrainUVPoints(r *bitstream.Reader, count uint8, points *[MaxFilmGra
 }
 
 func readFilmGrainCoeffs(r *bitstream.Reader, count int, dst []int8) error {
-	for i := 0; i < count; i++ {
+	for i := range count {
 		v, err := r.ReadBits(8)
 		if err != nil {
 			return err

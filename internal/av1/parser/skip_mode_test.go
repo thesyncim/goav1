@@ -104,7 +104,7 @@ func BenchmarkParseSkipModeParams(b *testing.B) {
 	transformRef := TransformReferenceParams{ReferenceMode: ReferenceModeSelect, BitsRead: 6}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseSkipModeParams(payload, seq, prefix, size, &refs, transformRef)
 	}
 }
@@ -112,7 +112,7 @@ func BenchmarkParseSkipModeParams(b *testing.B) {
 func skipModeRefs(seq SequenceHeader, orderHints [InterRefsPerFrame]uint32) (FrameSize, ReferenceState) {
 	var size FrameSize
 	var refs ReferenceState
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		size.RefFrameIdx[i] = uint8(i)
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,

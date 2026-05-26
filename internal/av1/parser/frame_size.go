@@ -157,7 +157,7 @@ func parseRefreshFrameFlags(r *bitstream.Reader, seq SequenceHeader, prefix Fram
 	readOrderHints := prefix.ErrorResilientMode && seq.EnableOrderHint &&
 		(frameTypeIsInterOrSwitch(prefix.FrameType) || size.RefreshFrameFlags != 0xff)
 	if readOrderHints {
-		for i := 0; i < refFrames; i++ {
+		for i := range refFrames {
 			v, err := r.ReadBits(seq.OrderHintBits)
 			if err != nil {
 				return err
@@ -182,7 +182,7 @@ func parseInterReferences(r *bitstream.Reader, seq SequenceHeader, prefix FrameH
 		}
 	}
 
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if !size.FrameRefsShortSignaling {
 			v, err := r.ReadBits(3)
 			if err != nil {
@@ -235,7 +235,7 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 	info := [RefFrames]shortRefInfo{}
 	lastSortIdx := -1
 	goldenSortIdx := -1
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		info[i] = shortRefInfo{mapIdx: i, sortIdx: -1}
 		ref := refs.Frames[i]
 		if !ref.Valid {
@@ -257,7 +257,7 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 	sortShortRefInfo(info[:])
 	fwdStart := 0
 	fwdEnd := RefFrames - 1
-	for i := 0; i < RefFrames; i++ {
+	for i := range RefFrames {
 		if info[i].sortIdx == -1 {
 			fwdStart++
 			continue
@@ -321,7 +321,7 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 		}
 		assignRef(size, &set, slot, info[fwdStart].mapIdx)
 	}
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		if !set[i] {
 			return ErrInvalidFrameHeader
 		}
@@ -434,7 +434,7 @@ func parseSuperRes(r *bitstream.Reader, seq SequenceHeader, size *FrameSize) err
 }
 
 func parseFrameDimensionsWithRefs(r *bitstream.Reader, seq SequenceHeader, prefix FrameHeaderPrefix, refs *ReferenceState, size *FrameSize) error {
-	for i := 0; i < InterRefsPerFrame; i++ {
+	for i := range InterRefsPerFrame {
 		use, err := r.ReadBool()
 		if err != nil {
 			return err
@@ -465,10 +465,7 @@ func parseFrameDimensionsWithRefs(r *bitstream.Reader, seq SequenceHeader, prefi
 
 func superResCodedWidth(upscaledWidth uint32, denominator uint8) uint32 {
 	w := (upscaledWidth*8 + uint32(denominator>>1)) / uint32(denominator)
-	minWidth := upscaledWidth
-	if minWidth > 16 {
-		minWidth = 16
-	}
+	minWidth := min(upscaledWidth, 16)
 	if w < minWidth {
 		return minWidth
 	}

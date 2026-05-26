@@ -17,7 +17,7 @@ func TestParseSegmentationParamsDisabledLossless(t *testing.T) {
 	if seg.Enabled || !seg.AllLossless {
 		t.Fatalf("segmentation=%+v", seg)
 	}
-	for i := 0; i < MaxSegments; i++ {
+	for i := range MaxSegments {
 		if seg.Data.Segments[i].RefFrame != -1 || seg.QIndex[i] != 0 || !seg.Lossless[i] {
 			t.Fatalf("segment[%d]=%+v q=%d lossless=%v", i, seg.Data.Segments[i], seg.QIndex[i], seg.Lossless[i])
 		}
@@ -140,7 +140,7 @@ func BenchmarkParseSegmentationParams(b *testing.B) {
 	payload := w.bytes()
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseSegmentationParams(payload, prefix, quant, nil)
 	}
 }

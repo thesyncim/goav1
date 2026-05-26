@@ -114,7 +114,7 @@ func BenchmarkParseTransformReferenceParams(b *testing.B) {
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseTransformReferenceParams(payload, prefix, seg, restoration)
 	}
 }
