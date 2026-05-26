@@ -276,6 +276,45 @@ func TestTemporalMotionFieldSetupDisabledMatchesLibaomEarlyReturn(t *testing.T) 
 	}
 }
 
+// TestMotionFieldBlockOffsetMatchesLibaomGetBlockPosition guards the exact
+// rounding direction of the get_block_position offset formula in
+// /tmp/libaom-v3.13.1/av1/common/mvref_common.c (lines 886-890):
+//
+//	row_offset = (mv.row >= 0) ? (mv.row >> (4+MI_SIZE_LOG2))
+//	                           : -((-mv.row) >> (4+MI_SIZE_LOG2));
+//
+// Positive values floor toward zero; negative values also floor toward zero
+// (i.e. ceil toward zero in magnitude terms). The libaom MI_SIZE_LOG2=2 so the
+// shift is by 6.
+func TestMotionFieldBlockOffsetMatchesLibaomGetBlockPosition(t *testing.T) {
+	cases := []struct {
+		name string
+		v    int32
+		want int
+	}{
+		{"zero", 0, 0},
+		{"plus_one_floors_to_zero", 1, 0},
+		{"minus_one_floors_to_zero", -1, 0},
+		{"plus_63_floors_to_zero", 63, 0},
+		{"minus_63_floors_to_zero", -63, 0},
+		{"plus_64_one_block", 64, 1},
+		{"minus_64_one_block", -64, -1},
+		{"plus_65_one_block", 65, 1},
+		{"minus_65_one_block", -65, -1},
+		{"plus_128_two_blocks", 128, 2},
+		{"minus_128_two_blocks", -128, -2},
+		{"large_positive", 16383, 16383 >> 6},
+		{"large_negative", -16383, -(16383 >> 6)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := motionFieldBlockOffset(tc.v); got != tc.want {
+				t.Fatalf("motionFieldBlockOffset(%d)=%d want %d", tc.v, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 	start := newReferenceMVFrameForTest(t, 16, 16)
 	start.Entries[4*start.Stride+4] = ReferenceMVEntry{
