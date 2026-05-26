@@ -14,17 +14,18 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
+    name: build (${{ matrix.os }}, go${{ matrix.go }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.25.x', '1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: ${{ matrix.go }}
           check-latest: true
           cache: true
       - name: go env
@@ -35,18 +36,19 @@ jobs:
         run: go vet ./...
 
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, go${{ matrix.go }})
     needs: build
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.25.x', '1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: ${{ matrix.go }}
           check-latest: true
           cache: true
       - name: cache libaom example fixtures
@@ -144,3 +146,35 @@ jobs:
         run: make fuzz-smoke
         env:
           FUZZTIME: 50000x
+
+  cli-smoke:
+    name: cli smoke (aom-go-dec)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: cache libaom example fixtures
+        uses: actions/cache@v4
+        with:
+          path: internal/av1/testdata/libaom
+          key: libaom-example-${{ hashFiles('internal/av1/testvector/libaom_manifest.go') }}
+          restore-keys: |
+            libaom-example-
+      - name: fetch example fixture
+        run: |
+          set -e
+          mkdir -p internal/av1/testdata/libaom
+          fixture="internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
+          if [ ! -f "$fixture" ]; then
+            curl -fsSL -o "$fixture" \
+              "https://storage.googleapis.com/aom-test-data/av1-1-b8-00-quantizer-00.ivf"
+          fi
+      - name: build aom-go-dec
+        run: make build-cmd
+      - name: cli smoke test
+        run: go test ./cmd/aom-go-dec -count=1

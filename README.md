@@ -326,10 +326,14 @@ conformance vectors is partial:
   oracle-tagged libaom frame-MD5 checks. It runs in CI on every push and is
   expected to stay green.
 - `make dryrun-fast` runs the in-progress framework dry-run against the
-  eight `SuiteLevelFast` libaom vectors. Six of the eight currently pass the
-  lenient first-frame MD5 gate; the other two still hit known mismatches
-  in later frames. Set `GOAV1_STRICT_MD5=1` to upgrade the check to every
-  frame for diagnostic snapshots.
+  eight `SuiteLevelFast` libaom vectors. Seven of the eight currently pass
+  the lenient first-frame MD5 gate (`quantizer_00`, `16x16_size`,
+  `all-intra`, `cdf_update`, `mv`, `mfmv`, `monochrome`); the remaining
+  vector (`intra-only_intrabc_extreme_dv`) still hits a known mismatch in
+  later frames. The `testvectors` workflow asserts the seven-vector pass
+  set as a regression gate and emits an informational `strict-md5` group
+  (which only `16x16_size` currently clears) for diagnostic snapshots.
+  Set `GOAV1_STRICT_MD5=1` locally to upgrade the check to every frame.
 - `make testvectors-full` will download and execute the full libaom remote
   suite. It is not part of the default CI gate and is intended for local
   parity sweeps.

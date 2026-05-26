@@ -58,15 +58,15 @@ jobs:
           GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN: '1'
         run: |
           set -o pipefail
-          # Two sub-vectors are known to fail; the remaining six MUST keep passing.
+          # One sub-vector is known to fail; the remaining seven MUST keep passing.
           # Capture the full verbose log, then assert that the documented passing
           # set still passes. The job fails when any known-passing vector regresses.
           go test -tags goav1_oracle ./internal/av1/testvector \
             -run 'TestLibaomFastFrameWorkDryRun' \
             -count=1 -timeout 600s -v 2>&1 | tee dryrun.log || true
 
-          expected_passes="libaom_av1_8-bit_quantizer_00 libaom_av1_8-bit_16x16_size libaom_av1_8-bit_all-intra libaom_av1_8-bit_cdf_update libaom_av1_8-bit_mfmv libaom_av1_8-bit_monochrome"
-          known_failing="libaom_av1_8-bit_mv libaom_av1_8-bit_intra-only_intrabc_extreme_dv"
+          expected_passes="libaom_av1_8-bit_quantizer_00 libaom_av1_8-bit_16x16_size libaom_av1_8-bit_all-intra libaom_av1_8-bit_cdf_update libaom_av1_8-bit_mv libaom_av1_8-bit_mfmv libaom_av1_8-bit_monochrome"
+          known_failing="libaom_av1_8-bit_intra-only_intrabc_extreme_dv"
 
           status=0
           for vector in $expected_passes; do
@@ -89,11 +89,31 @@ jobs:
           echo "::endgroup::"
 
           exit "$status"
+      - name: strict-md5 informational sweep
+        if: always()
+        env:
+          GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN: '1'
+          GOAV1_STRICT_MD5: '1'
+        run: |
+          # Strict MD5 mode upgrades the lenient first-frame check to every
+          # frame. Only `16x16_size` currently passes this stricter gate;
+          # the rest are tracked for diagnostic purposes and this step never
+          # fails the job. The summary is wrapped in a collapsible group so
+          # the broader run log stays readable.
+          echo "::group::strict-md5 (informational, not gating)"
+          go test -tags goav1_oracle ./internal/av1/testvector \
+            -run 'TestLibaomFastFrameWorkDryRun' \
+            -count=1 -timeout 600s -v 2>&1 | tee dryrun-strict.log || true
+          echo "--- per-vector summary (strict-md5) ---"
+          grep -E "^\s*--- (PASS|FAIL): TestLibaomFastFrameWorkDryRun/" dryrun-strict.log || true
+          echo "::endgroup::"
       - name: upload dry-run log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: framework-dryrun-log
-          path: dryrun.log
+          path: |
+            dryrun.log
+            dryrun-strict.log
           if-no-files-found: ignore
           retention-days: 14
