@@ -346,6 +346,59 @@ informational and only `16x16_size` currently clears it.
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 ```
 
+### SVC vector coverage
+
+The SVC vectors are not part of `SuiteLevelFast` and are gated by
+`GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1` (`make dryrun-extended`)
+or `GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1` against
+`SuiteLevelRelevant`. Three SVC vectors ship under
+`internal/av1/testdata/libaom/`; the integrator-facing usage is
+documented in [docs/svc.md](docs/svc.md).
+
+```
++---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
+| # | Vector                                            | Layout | Lenient | Strict | Notes                                       |
++---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
+| 1 | av1-1-b8-22-svc-L1T2.ivf                          | L1T2   | PARTIAL | FAIL   | Single spatial layer (640x360), two         |
+|   | (libaom av1 8-bit svc L1T2)                       |        |         |        | temporal layers. Frame 0 (T0 base) PASS;    |
+|   |                                                   |        |         |        | frame 1 currently errors                    |
+|   |                                                   |        |         |        | `threading: invalid batch` on the inter-    |
+|   |                                                   |        |         |        | layer reference path. Single-pool friendly. |
++---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
+| 2 | av1-1-b8-22-svc-L2T1.ivf                          | L2T1   | FAIL    | FAIL   | Two spatial layers (640x360 + 1280x720).    |
+|   | (libaom av1 8-bit svc L2T1)                       |        |         |        | Requires the multi-pool surface routing     |
+|   |                                                   |        |         |        | path (`FrameSurfaceProvider` /              |
+|   |                                                   |        |         |        | `FrameSurfaceReleaser`); higher-layer       |
+|   |                                                   |        |         |        | frame 0 mismatches the libaom reference.    |
++---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
+| 3 | av1-1-b8-22-svc-L2T2.ivf                          | L2T2   | FAIL    | FAIL   | Two spatial + two temporal layers           |
+|   | (libaom av1 8-bit svc L2T2)                       |        |         |        | (640x360 + 1280x720). Multi-pool path.      |
+|   |                                                   |        |         |        | Higher-layer frame 0 mismatches.            |
++---+---------------------------------------------------+--------+---------+--------+--------------------------------------------+
+```
+
+Run the SVC dry-run with:
+
+```sh
+GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 \
+GOAV1_SCALED_PRED=1 \
+    go test -tags goav1_oracle ./internal/av1/testvector \
+    -run TestLibaomExtendedFrameWorkDryRun -count=1 -timeout 1800s -v
+```
+
+Each subtest emits the standard `vector=NAME frames=N md5_matches=M
+first_mismatch=F` summary line. The `GOAV1_SCALED_PRED=1` env var
+opts the scaled-inter-prediction path in for L2T1 / L2T2; without it
+mismatched-size references fail with `threading: invalid batch`. See
+[docs/svc.md](../docs/svc.md) for the integrator-facing guide and the
+list of supported / unsupported SVC features.
+
+The SVC vectors are *not* in the CI gate today. The reference
+multi-pool harness is `libaomSpatialLayers` in
+`internal/av1/testvector/libaom_oracle_test.go`; it is the canonical
+SVC integration shape to mirror when wiring SVC into production
+callers.
+
 ### How to reproduce
 
 Lenient gate (the default `make dryrun-fast`):
@@ -454,11 +507,17 @@ work items, ordered by how much of the fast suite they would unblock:
    suspected to live elsewhere in reconstruction rather than in the
    transform/dequant inputs.
 5. **Scalable video coding (SVC).** Per-spatial-layer dry-run frame
-   state (`ea6ad77`) and inter-layer reference resolution
-   (`51de381`) work end-to-end; the next gate is **scaled inter
-   prediction between spatial layers**. The extended L2T1 / L2T2
-   cohort vectors still mismatch on frame 0 of the higher spatial
-   layer.
+   state (`ea6ad77`), inter-layer reference resolution
+   (`51de381`), and scaled inter prediction (`34375a5`) plus the
+   warp+scaled fallback (`cba7b3e`) are wired end-to-end. The
+   scaled-prediction dispatcher is gated behind `GOAV1_SCALED_PRED=1`
+   (runtime) and the `goav1_scaled_pred` build tag. L1T2 still
+   mismatches at frame 1 and L2T1 / L2T2 still mismatch on the
+   higher-spatial-layer frame 0; the multi-pool surface routing
+   (`FrameSurfaceProvider` / `FrameSurfaceReleaser`) is implemented
+   in `internal/av1/decoder/svc.go` but not yet re-exported at the
+   root package. See [docs/svc.md](docs/svc.md) and the SVC vector
+   coverage table in section 2.
 6. **Palette wiring.** Palette mode decode is implemented in
    `internal/av1/tile/palette.go` but is not yet exercised by the
    block-loop predictor. Wire it in once a palette-using vector is in

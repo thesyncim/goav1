@@ -12,9 +12,13 @@ public API surface, threading model, testing strategy, and known limitations
 should start there. For the spec-level feature inventory (which AV1 syntax,
 prediction, transform, and post-filter rows are implemented, partial, or
 missing) and the libaom fast-suite vector pass/fail table, see
-[CONFORMANCE.md](CONFORMANCE.md). For upstream pinning policy, see
-[UPSTREAM.md](UPSTREAM.md). For the threat model, reporting process, and
-supported versions, see [SECURITY.md](SECURITY.md).
+[CONFORMANCE.md](CONFORMANCE.md). For an integrator-facing guide to AV1
+scalable video coding (SVC) with goav1 - operating points, OBU extension
+headers, the multi-pool surface routing pattern, and the
+`GOAV1_SCALED_PRED=1` runtime flag - see [docs/svc.md](docs/svc.md). For
+upstream pinning policy, see [UPSTREAM.md](UPSTREAM.md). For the threat
+model, reporting process, and supported versions, see
+[SECURITY.md](SECURITY.md).
 
 This repository is intentionally built from the transport and bitstream edge
 inward:
@@ -316,6 +320,26 @@ The CLI currently runs residual decode and reconstruction. Loop-filter,
 CDEF, super-res, loop-restoration, and film-grain post-filters are not yet
 wired in - the same configuration used by the throughput benchmarks. See
 `cmd/aom-go-dec/decoder.go` for the exact public-API path.
+
+A second example program under
+[`cmd/dump_svc`](cmd/dump_svc) targets AV1 scalable video coding
+streams: it inspects the parsed sequence header's operating-points
+list, logs the per-(temporal, spatial) OBU fan-out, and dumps the
+highest-spatial-layer YUV per temporal unit (libaom
+`output_all_layers=0` behavior). Use `-svc-info` to print the SVC
+structure without decoding pixels:
+
+```sh
+go build -o ./bin/dump_svc ./cmd/dump_svc
+./bin/dump_svc -svc-info \
+    internal/av1/testdata/libaom/av1-1-b8-22-svc-L2T2.ivf
+```
+
+See [docs/svc.md](docs/svc.md) for the integrator-facing SVC guide
+and the current support snapshot. SVC decode is in active
+development; the L1T2 vector currently passes frame 0 lenient MD5
+but mismatches later frames, and L2T1 / L2T2 require the multi-pool
+surface routing path described in `docs/svc.md`.
 
 ## Status
 

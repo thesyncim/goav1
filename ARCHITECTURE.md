@@ -32,8 +32,9 @@ and orchestration, and the root package exports the caller-facing API only.
 8. [Threading Model](#threading-model)
 9. [Testing Strategy](#testing-strategy)
 10. [Build Tags and Environment Variables](#build-tags-and-environment-variables)
-11. [Known Limitations and Roadmap](#known-limitations-and-roadmap)
-12. [Upstream References](#upstream-references)
+11. [Scalable Video Coding (SVC)](#scalable-video-coding-svc)
+12. [Known Limitations and Roadmap](#known-limitations-and-roadmap)
+13. [Upstream References](#upstream-references)
     - [Licensing](#licensing)
 
 ---
@@ -964,7 +965,10 @@ mismatches.
 | Tag/Variable                       | Effect                                                                                                    |
 |------------------------------------|-----------------------------------------------------------------------------------------------------------|
 | `goav1_oracle` (build tag)         | Compiles in the byte-comparing oracle and remote vector helpers. Default off.                             |
+| `goav1_scaled_pred` (build tag)    | Pins the SVC scaled-inter-prediction dispatcher live for the entire process. Compile-time twin of `GOAV1_SCALED_PRED=1`. Default off (same-size reference path stays bit-exact). |
 | `GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1` | Enables `TestLibaomFastFrameWorkDryRun` (fast subset of libaom vectors through the full pipeline).     |
+| `GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1` | Enables `TestLibaomExtendedFrameWorkDryRun` (10-bit q-sweep, larger sizes, SVC L2T1/L2T2; opt-in, never CI). |
+| `GOAV1_SCALED_PRED=1`              | Runtime opt-in for the SVC scaled-inter-prediction path. Without it, mismatched-size references fail with `threading: invalid batch`. Required for L2T1 / L2T2 multi-resolution SVC. |
 | `GOAV1_STRICT_MD5=1`               | Requires every frame's MD5 to match the libaom reference in the framework dry-run. Default is lenient.    |
 | `GOAV1_FULL_LIBAOM_VECTORS=1`      | Allows `TestLibaomRemoteSuiteFullDownloads` to download and run the entire libaom remote manifest.        |
 | `GOAV1_FULL_LIBAOM_CONVOLVE=1`     | Enables the full libaom convolve conformance sweep in `make test-motion-conformance`.                     |
@@ -973,6 +977,100 @@ The `Oracle` type and `OracleEnabled` constant collapse to no-ops in
 default builds. Code paths that gate on `OracleEnabled` are eliminated by
 the compiler in the absence of the `goav1_oracle` tag, so they cost
 nothing in production builds.
+
+---
+
+## Scalable Video Coding (SVC)
+
+The decoder parses every AV1 SVC bitstream feature and routes spatial /
+temporal layer information through to callers, but the end-to-end
+multi-spatial decode path is still in active development. This section
+is the architectural summary; see [docs/svc.md](docs/svc.md) for the
+integrator-facing guide and `cmd/dump_svc` for an executable example.
+
+### How SVC is signalled
+
+Two pieces of bitstream syntax carry layer information:
+
+- **OBU extension header.** A 1-byte optional extension after the OBU
+  header encodes `temporal_id` (3 bits) and `spatial_id` (2 bits) for
+  the payload. Parsed into `obu.Header.TemporalID` /
+  `obu.Header.SpatialID` and propagated to every `DecoderEvent` as
+  `event.TemporalID` / `event.SpatialID`.
+- **Sequence-header operating points.**
+  `SequenceHeader.OperatingPoints[]` lists up to 32 operating-point
+  descriptors. Each `OperatingPoint.IDC` is a 16-bit
+  `operating_point_idc` whose low 8 bits select temporal layers and
+  bits 8..11 select spatial layers. The optional scalability metadata
+  OBU (`MetadataTypeScalability`, parsed into
+  `Metadata.Scalability`) carries longer-form per-layer description.
+
+### How SVC threads through the pipeline
+
+1. **Stream layer.** `decoder.Stream` parses every OBU it sees,
+   independent of layer. The (T, S) pair lands on every emitted
+   `Event` so callers can drop or route by layer.
+2. **Per-spatial-layer state.** Each spatial layer needs its own
+   `DecoderFrameWorkState` because frame-level CDF retention is
+   per-layer. Per-layer states co-exist behind a single
+   `DecoderSurfaceReferences` (the seven AV1 reference slots are
+   stream-global per the spec).
+3. **Multi-pool surface routing.** Different spatial layers may have
+   different `CodedWidth x Height` (L2T1: 640x360 + 1280x720).
+   `frame.LayerPool` (root: `FrameLayerPool`) aggregates per-format
+   `FramePool` instances behind a single global-surface-ID namespace.
+4. **Cross-pool reference resolution.** When a layer-1 frame
+   references a layer-0 surface, the lookup goes through a
+   caller-supplied `decoder.FrameSurfaceProvider` (and a matching
+   `FrameSurfaceReleaser` for refresh-time deallocation). The
+   `decoder.FrameLayerPool` adapter satisfies both interfaces directly
+   when using `FrameLayerPool`.
+5. **Scaled inter prediction.** When an enhancement-layer frame
+   references a smaller base-layer surface, the decoder must apply
+   the AV1 8-tap convolve at the appropriate scale factor
+   (`internal/av1/motion/scaled.go`). The threading dispatcher gates
+   the scaled path behind the `goav1_scaled_pred` build tag and the
+   `GOAV1_SCALED_PRED=1` runtime environment variable; both routes
+   exist so the path can be enabled without recompilation while still
+   letting developer workflows pin it on.
+
+### Where the code lives
+
+- `internal/av1/decoder/svc.go` — `FrameSurfaceProvider`,
+  `FrameSurfaceReleaser`, `TemporalMotionReferenceProvider`,
+  `RunEventWithContextAndExternalReferences`. These are the SVC
+  entry-points; root-package re-exports are pending.
+- `internal/av1/decoder/svc_layer_pool.go` — `FrameLayerPool`
+  adapter that satisfies the provider/releaser pair against a
+  `*frame.LayerPool`.
+- `internal/av1/frame/layer_pool.go` — `LayerPool` aggregator and
+  `LayerFactory` interface. Exported at root as `FrameLayerPool` and
+  `FrameLayerFactory`.
+- `internal/av1/motion/scaled.go` — scaled 8-tap convolve and
+  `NewScaleFactors` (libaom-derived `av1_setup_scale_factors_for_frame`
+  parity).
+- `internal/av1/threading/predict_scaled.go`,
+  `predict_scaled_tag.go`, `predict_scaled_notag.go` — the
+  dispatcher gate that decides when to route through the scaled
+  convolver.
+- `internal/av1/testvector/libaom_oracle_test.go` —
+  `libaomSpatialLayers` is the reference SVC harness, the canonical
+  implementation to copy when wiring multi-pool SVC into production
+  code today.
+
+### Limitations today
+
+- The `RunEventWithContextAndExternalReferences` entry point and the
+  `FrameSurfaceProvider` interface live in the internal decoder
+  package; the root-package re-export is on the roadmap. Callers
+  needing the multi-pool path today either vendor the interface
+  contract or import the internal package directly.
+- L1T2 (single-pool friendly) currently passes lenient first-frame
+  MD5 only; later frames fail at `threading: invalid batch` on the
+  same-size inter-layer reference path.
+- L2T1 / L2T2 require the multi-pool path; higher spatial-layer
+  frame 0 still mismatches the libaom reference. Tracked in
+  CONFORMANCE.md.
 
 ---
 
@@ -1041,7 +1139,7 @@ roll-up.
 | Show-existing-frame                   | Complete (lifecycle, reference reset, release).  |
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
 | Annex B / IVF / RTP intake            | Complete.                                        |
-| SVC streams                           | Parsed; bit-exact decode partial.                |
+| SVC streams                           | Parsed (per-OBU IDs, operating points, scalability metadata); multi-pool surface routing wired internally; scaled inter prediction behind `GOAV1_SCALED_PRED=1`. See [docs/svc.md](docs/svc.md). |
 
 ### Not yet implemented
 
