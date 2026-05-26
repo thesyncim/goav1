@@ -75,11 +75,13 @@ type SelectedTransformRequest struct {
 // TransformPartitionRequest describes one inter transform partition split
 // decision.
 type TransformPartitionRequest struct {
-	Size  BlockSize
-	From  TransformSize
-	Depth int
-	X4    int
-	Y4    int
+	Size     BlockSize
+	From     TransformSize
+	Depth    int
+	X4       int
+	Y4       int
+	HaveTop  bool
+	HaveLeft bool
 }
 
 var transformDimensions = [transformSizeCount]TransformDimensions{
@@ -344,12 +346,18 @@ func (c *BlockModeContext) TransformPartitionContext(req TransformPartitionReque
 	if category < 0 || category >= TransformPartitionCats {
 		return 0, 0, ErrInvalidDecodeState
 	}
+	// libaom seeds the above/left txfm context arrays with
+	// tx_size_wide[TX_SIZES_LARGEST] at frame/tile edges, so the
+	// txfm_partition_context() bare dereference reports above=0 (and left=0)
+	// when no real neighbor exists. goav1's BlockModeContext leaves those
+	// slots zero across blocks, so the "<txw" check would erroneously fire at
+	// edges; gate the comparisons on neighbor availability to match libaom.
 	above := 0
-	if c.AboveTx[req.X4] < dims.Log2W {
+	if req.HaveTop && c.AboveTx[req.X4] < dims.Log2W {
 		above = 1
 	}
 	left := 0
-	if c.LeftTx[req.Y4] < dims.Log2H {
+	if req.HaveLeft && c.LeftTx[req.Y4] < dims.Log2H {
 		left = 1
 	}
 	return category, above + left, nil

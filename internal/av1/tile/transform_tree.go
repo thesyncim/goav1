@@ -90,7 +90,14 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 		maxDims, _ := maxY.Dimensions()
 		for y := 0; y < int(req.VisibleH4); y += int(maxDims.H4) {
 			for x := 0; x < int(req.VisibleW4); x += int(maxDims.W4) {
-				if err := walker.read(maxY, 0, req.X4+x, req.Y4+y, x/int(maxDims.W4), y/int(maxDims.H4)); err != nil {
+				// Within a block, the top/left availability for a maxY-sized
+				// root subblock is shared with the enclosing inter block at
+				// (x=0,y=0); once the loop advances past the first row/column
+				// the prior maxY sibling has marked above/left contexts so
+				// the next iteration sees a real neighbor.
+				haveTop := req.HaveTop || y > 0
+				haveLeft := req.HaveLeft || x > 0
+				if err := walker.read(maxY, 0, req.X4+x, req.Y4+y, x/int(maxDims.W4), y/int(maxDims.H4), haveTop, haveLeft); err != nil {
 					return TransformTreeResult{}, err
 				}
 			}
@@ -165,17 +172,19 @@ type transformTreeDecoder struct {
 	result *TransformTreeResult
 }
 
-func (d *transformTreeDecoder) read(from TransformSize, depth int, x4 int, y4 int, xOff int, yOff int) error {
+func (d *transformTreeDecoder) read(from TransformSize, depth int, x4 int, y4 int, xOff int, yOff int, haveTop bool, haveLeft bool) error {
 	dims, ok := from.Dimensions()
 	if !ok {
 		return ErrInvalidDecodeState
 	}
 	split, err := d.state.ReadTransformPartitionSplit(d.cdfs, d.ctx, TransformPartitionRequest{
-		Size:  d.req.Size,
-		From:  from,
-		Depth: depth,
-		X4:    x4,
-		Y4:    y4,
+		Size:     d.req.Size,
+		From:     from,
+		Depth:    depth,
+		X4:       x4,
+		Y4:       y4,
+		HaveTop:  haveTop,
+		HaveLeft: haveLeft,
 	})
 	if err != nil {
 		return err
@@ -189,20 +198,24 @@ func (d *transformTreeDecoder) read(from TransformSize, depth int, x4 int, y4 in
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := d.read(sub, depth+1, x4, y4, xOff*2, yOff*2); err != nil {
+		if err := d.read(sub, depth+1, x4, y4, xOff*2, yOff*2, haveTop, haveLeft); err != nil {
 			return err
 		}
 		if dims.Log2W >= dims.Log2H && transformChildVisible(d.req, x4+int(subDims.W4), y4) {
-			if err := d.read(sub, depth+1, x4+int(subDims.W4), y4, xOff*2+1, yOff*2); err != nil {
+			// Right child shares the parent's top availability but always has
+			// the within-parent left subblock as its left neighbor.
+			if err := d.read(sub, depth+1, x4+int(subDims.W4), y4, xOff*2+1, yOff*2, haveTop, true); err != nil {
 				return err
 			}
 		}
 		if dims.Log2H >= dims.Log2W && transformChildVisible(d.req, x4, y4+int(subDims.H4)) {
-			if err := d.read(sub, depth+1, x4, y4+int(subDims.H4), xOff*2, yOff*2+1); err != nil {
+			// Bottom child shares the parent's left availability but always
+			// has the within-parent top subblock as its top neighbor.
+			if err := d.read(sub, depth+1, x4, y4+int(subDims.H4), xOff*2, yOff*2+1, true, haveLeft); err != nil {
 				return err
 			}
 			if dims.Log2W >= dims.Log2H && transformChildVisible(d.req, x4+int(subDims.W4), y4+int(subDims.H4)) {
-				if err := d.read(sub, depth+1, x4+int(subDims.W4), y4+int(subDims.H4), xOff*2+1, yOff*2+1); err != nil {
+				if err := d.read(sub, depth+1, x4+int(subDims.W4), y4+int(subDims.H4), xOff*2+1, yOff*2+1, true, true); err != nil {
 					return err
 				}
 			}

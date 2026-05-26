@@ -122,9 +122,11 @@ func TestTransformContextsAndMarkMatchDav1d(t *testing.T) {
 	ctx.AboveTx[0] = 0
 	ctx.LeftTx[0] = 0
 	category, context, err := ctx.TransformPartitionContext(TransformPartitionRequest{
-		Size:  BlockSize16x16,
-		From:  TransformSize16x16,
-		Depth: 0,
+		Size:     BlockSize16x16,
+		From:     TransformSize16x16,
+		Depth:    0,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,9 +136,11 @@ func TestTransformContextsAndMarkMatchDav1d(t *testing.T) {
 	}
 
 	category, context, err = ctx.TransformPartitionContext(TransformPartitionRequest{
-		Size:  BlockSize32x32,
-		From:  TransformSize32x32,
-		Depth: 1,
+		Size:     BlockSize32x32,
+		From:     TransformSize32x32,
+		Depth:    1,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -213,9 +217,11 @@ func TestReadTransformPartitionSplit(t *testing.T) {
 	}
 
 	split, err := state.ReadTransformPartitionSplit(&cdfs, &ctx, TransformPartitionRequest{
-		Size:  BlockSize16x16,
-		From:  TransformSize16x16,
-		Depth: 0,
+		Size:     BlockSize16x16,
+		From:     TransformSize16x16,
+		Depth:    0,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -229,9 +235,11 @@ func TestReadTransformPartitionSplit(t *testing.T) {
 
 	before := cdfs.TxPartition[4][2]
 	split, err = state.ReadTransformPartitionSplit(&cdfs, &ctx, TransformPartitionRequest{
-		Size:  BlockSize16x16,
-		From:  TransformSize16x16,
-		Depth: 2,
+		Size:     BlockSize16x16,
+		From:     TransformSize16x16,
+		Depth:    2,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
