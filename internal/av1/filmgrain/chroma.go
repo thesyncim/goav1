@@ -35,8 +35,8 @@ func GenerateChromaGrain(dst []int16, luma []int16, params ChromaGrainParams) er
 	}
 	width, height := chromaGrainDimensions(params.SubsamplingX, params.SubsamplingY)
 	gaussianShift := int(12 - params.BitDepth + params.GrainScaleShift)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			index, err := rng.Number(GaussianBits)
 			if err != nil {
 				return err

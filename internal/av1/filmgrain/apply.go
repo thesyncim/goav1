@@ -79,17 +79,11 @@ func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, pa
 
 		yStart := 0
 		if params.Overlap && params.Row > 0 {
-			yStart = LumaOverlapSamples
-			if params.Height < yStart {
-				yStart = params.Height
-			}
+			yStart = min(params.Height, LumaOverlapSamples)
 		}
 		xStart := 0
 		if params.Overlap && blockX > 0 {
-			xStart = LumaOverlapSamples
-			if blockWidth < xStart {
-				xStart = blockWidth
-			}
+			xStart = min(blockWidth, LumaOverlapSamples)
 		}
 
 		applyLumaBlock(dst, src, grain, scaling, params, offsets, blockX, blockWidth, xStart, yStart)
@@ -138,17 +132,11 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 
 		yStart := 0
 		if params.Overlap && params.Row > 0 {
-			yStart = LumaOverlapSamples >> shiftY
-			if params.Height < yStart {
-				yStart = params.Height
-			}
+			yStart = min(params.Height, LumaOverlapSamples>>shiftY)
 		}
 		xStart := 0
 		if params.Overlap && blockX > 0 {
-			xStart = LumaOverlapSamples >> shiftX
-			if blockWidth < xStart {
-				xStart = blockWidth
-			}
+			xStart = min(blockWidth, LumaOverlapSamples>>shiftX)
 		}
 
 		applyChromaBlock(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
@@ -162,7 +150,7 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 			g := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
 			applyLumaRowSample(dst, src, scaling, params, blockX+x, y, g)
 		}
-		for x := 0; x < xStart; x++ {
+		for x := range xStart {
 			current := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
 			left := lumaGrainSample(grain, offsets[1][0], 1, 0, x, y)
 			g := blendLumaOverlap(left, current, x, params.BitDepth)
@@ -170,14 +158,14 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 		}
 	}
 
-	for y := 0; y < yStart; y++ {
+	for y := range yStart {
 		for x := xStart; x < blockWidth; x++ {
 			current := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
 			top := lumaGrainSample(grain, offsets[0][1], 0, 1, x, y)
 			g := blendLumaOverlap(top, current, y, params.BitDepth)
 			applyLumaRowSample(dst, src, scaling, params, blockX+x, y, g)
 		}
-		for x := 0; x < xStart; x++ {
+		for x := range xStart {
 			top := lumaGrainSample(grain, offsets[0][1], 0, 1, x, y)
 			topLeft := lumaGrainSample(grain, offsets[1][1], 1, 1, x, y)
 			top = blendLumaOverlap(topLeft, top, x, params.BitDepth)
@@ -198,7 +186,7 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 			g := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
 			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
 		}
-		for x := 0; x < xStart; x++ {
+		for x := range xStart {
 			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
 			left := chromaGrainSample(grain, offsets[1][0], shiftX, shiftY, 1, 0, x, y)
 			g := blendChromaOverlap(left, current, x, shiftX, params.BitDepth)
@@ -206,14 +194,14 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 		}
 	}
 
-	for y := 0; y < yStart; y++ {
+	for y := range yStart {
 		for x := xStart; x < blockWidth; x++ {
 			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
 			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
 			g := blendChromaOverlap(top, current, y, shiftY, params.BitDepth)
 			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
 		}
-		for x := 0; x < xStart; x++ {
+		for x := range xStart {
 			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
 			topLeft := chromaGrainSample(grain, offsets[1][1], shiftX, shiftY, 1, 1, x, y)
 			top = blendChromaOverlap(topLeft, top, x, shiftX, params.BitDepth)

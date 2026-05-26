@@ -69,7 +69,7 @@ func TestGaussianSequenceRange(t *testing.T) {
 func TestGaussianAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		var sum int16
-		for i := uint16(0); i < 256; i++ {
+		for i := range uint16(256) {
 			sum += Gaussian(i)
 		}
 		if sum == 0 {

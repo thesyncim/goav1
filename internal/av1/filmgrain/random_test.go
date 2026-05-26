@@ -76,7 +76,7 @@ func TestRandomRejectsInvalidInputs(t *testing.T) {
 func TestRandomAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		rng := NewRandom(0x1234)
-		for i := 0; i < 64; i++ {
+		for range 64 {
 			if _, err := rng.Number(11); err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestRandomAllocs(t *testing.T) {
 func BenchmarkRandomNumber(b *testing.B) {
 	rng := NewRandom(0x1234)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = rng.Number(11)
 	}
 }

@@ -34,7 +34,7 @@ func BuildScalingLUT(dst []uint8, points []ScalingPoint) error {
 		deltaY := int(right.Scaling) - int(left.Scaling)
 		deltaX := int(right.Value) - int(left.Value)
 		delta := int64(deltaY) * int64((65536+(deltaX>>1))/deltaX)
-		for x := 0; x < deltaX; x++ {
+		for x := range deltaX {
 			v := int(left.Scaling) + int((int64(x)*delta+32768)>>16)
 			dst[int(left.Value)+x] = uint8(v)
 		}

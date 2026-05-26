@@ -553,7 +553,7 @@ func BenchmarkApplyLumaRow(b *testing.B) {
 		Overlap:      true,
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := ApplyLumaRow(dst, src, grain, lut[:], params); err != nil {
 			b.Fatal(err)
 		}
@@ -589,7 +589,7 @@ func BenchmarkApplyChromaRow(b *testing.B) {
 		ChromaScalingFromLuma: true,
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := ApplyChromaRow(dst, src, luma, grain, lut[:], params); err != nil {
 			b.Fatal(err)
 		}
@@ -602,8 +602,8 @@ func BenchmarkApplyChromaRow(b *testing.B) {
 func testLumaRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
 	dst := make([]uint16, stride*height)
 	src := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			src[y*stride+x] = value
 		}
 	}
@@ -613,8 +613,8 @@ func testLumaRowBuffers(width int, height int, stride int, value uint16) ([]uint
 func testChromaRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
 	dst := make([]uint16, stride*height)
 	src := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			src[y*stride+x] = value
 		}
 	}
@@ -626,7 +626,7 @@ func testChromaRowLuma(width int, height int, stride int, subsamplingX bool, sub
 	shiftY := chromaSubsamplingShift(subsamplingY)
 	rows := ((height - 1) << shiftY) + 1
 	samples := make([]uint16, stride*rows)
-	for y := 0; y < rows; y++ {
+	for y := range rows {
 		for x := 0; x < ((width-1)<<shiftX)+1+shiftX; x++ {
 			samples[y*stride+x] = value
 		}
@@ -644,8 +644,8 @@ func testLumaRowScaling(value uint8) [ScalingLUTSize]uint8 {
 
 func testPatternLumaRowGrain() []int16 {
 	grain := make([]int16, LumaGrainSamples)
-	for y := 0; y < LumaGrainHeight; y++ {
-		for x := 0; x < LumaGrainWidth; x++ {
+	for y := range LumaGrainHeight {
+		for x := range LumaGrainWidth {
 			grain[y*LumaGrainWidth+x] = int16((x+y)%64 - 32)
 		}
 	}
@@ -654,8 +654,8 @@ func testPatternLumaRowGrain() []int16 {
 
 func testPatternChromaRowGrain() []int16 {
 	grain := make([]int16, ChromaGrainSamples)
-	for y := 0; y < ChromaGrainHeight; y++ {
-		for x := 0; x < ChromaGrainWidth; x++ {
+	for y := range ChromaGrainHeight {
+		for x := range ChromaGrainWidth {
 			grain[y*ChromaGrainWidth+x] = int16((x+y)%64 - 32)
 		}
 	}
@@ -800,8 +800,8 @@ func FuzzApplyLumaRow(f *testing.F) {
 		} else if bitDepth == 12 {
 			baseSrc = 1024
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				src[y*stride+x] = baseSrc
 			}
 		}
@@ -826,7 +826,7 @@ func FuzzApplyLumaRow(f *testing.F) {
 		if err != nil {
 			return
 		}
-		for y := 0; y < height; y++ {
+		for y := range height {
 			for x := width; x < stride; x++ {
 				if dst[y*stride+x] != 0 {
 					t.Fatalf("dst(%d,%d)=%d expected outside-region zero", x, y, dst[y*stride+x])
@@ -834,8 +834,8 @@ func FuzzApplyLumaRow(f *testing.F) {
 			}
 		}
 		maxSample := uint16((1 << bitDepth) - 1)
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				if dst[y*stride+x] > maxSample {
 					t.Fatalf("dst(%d,%d)=%d exceeds bit-depth max %d", x, y, dst[y*stride+x], maxSample)
 				}
@@ -869,10 +869,7 @@ func FuzzApplyChromaRow(f *testing.F) {
 		if stride <= 0 {
 			stride = 1
 		}
-		lumaStride := ((width - 1) << shiftX) + 1 + shiftX + int((flags>>5)&3)
-		if lumaStride < 1 {
-			lumaStride = 1
-		}
+		lumaStride := max(((width-1)<<shiftX)+1+shiftX+int((flags>>5)&3), 1)
 
 		bitDepth := uint8(8)
 		switch rawBitDepth % 3 {
@@ -885,10 +882,7 @@ func FuzzApplyChromaRow(f *testing.F) {
 		row := int(rawRow)
 
 		dstLen := stride * height
-		lumaRows := ((height - 1) << shiftY) + 1
-		if lumaRows < 0 {
-			lumaRows = 0
-		}
+		lumaRows := max(((height-1)<<shiftY)+1, 0)
 		lumaLen := lumaStride * lumaRows
 		if dstLen < 0 || lumaLen < 0 {
 			return
@@ -910,13 +904,13 @@ func FuzzApplyChromaRow(f *testing.F) {
 			baseSrc = 1024
 			baseLuma = 800
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				src[y*stride+x] = baseSrc
 			}
 		}
-		for y := 0; y < lumaRows; y++ {
-			for x := 0; x < lumaStride; x++ {
+		for y := range lumaRows {
+			for x := range lumaStride {
 				luma[y*lumaStride+x] = baseLuma
 			}
 		}
@@ -949,7 +943,7 @@ func FuzzApplyChromaRow(f *testing.F) {
 		if err != nil {
 			return
 		}
-		for y := 0; y < height; y++ {
+		for y := range height {
 			for x := width; x < stride; x++ {
 				if dst[y*stride+x] != 0 {
 					t.Fatalf("dst(%d,%d)=%d expected outside-region zero", x, y, dst[y*stride+x])
@@ -957,8 +951,8 @@ func FuzzApplyChromaRow(f *testing.F) {
 			}
 		}
 		maxSample := uint16((1 << bitDepth) - 1)
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				if dst[y*stride+x] > maxSample {
 					t.Fatalf("dst(%d,%d)=%d exceeds bit-depth max %d", x, y, dst[y*stride+x], maxSample)
 				}

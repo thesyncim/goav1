@@ -188,7 +188,7 @@ func BenchmarkBuildScalingLUT(b *testing.B) {
 	points := [...]ScalingPoint{{Value: 3, Scaling: 7}, {Value: 8, Scaling: 11}, {Value: 20, Scaling: 2}}
 	var lut [ScalingLUTSize]uint8
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = BuildScalingLUT(lut[:], points[:])
 	}
 }

@@ -165,7 +165,7 @@ func BenchmarkGenerateChromaGrain(b *testing.B) {
 	params.ARCoeffs[3] = 64
 	params.ARCoeffs[4] = 32
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := GenerateChromaGrain(grain, luma, params); err != nil {
 			b.Fatal(err)
 		}

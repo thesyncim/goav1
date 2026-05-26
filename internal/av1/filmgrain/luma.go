@@ -29,8 +29,8 @@ func GenerateLumaGrain(dst []int16, params LumaGrainParams) error {
 
 	rng := NewRandom(params.Seed)
 	gaussianShift := int(12 - params.BitDepth + params.GrainScaleShift)
-	for y := 0; y < LumaGrainHeight; y++ {
-		for x := 0; x < LumaGrainWidth; x++ {
+	for y := range LumaGrainHeight {
+		for x := range LumaGrainWidth {
 			index, err := rng.Number(GaussianBits)
 			if err != nil {
 				return err
