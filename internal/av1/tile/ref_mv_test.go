@@ -984,6 +984,7 @@ func TestScanOuterBlockReferenceMVUsesSBLeftHistory(t *testing.T) {
 	ctx.SBLeftInterMotionGrid[0][29] = candidate
 	ctx.SBLeftMotionValidGrid[0][29] = 1
 	ctx.SBLeftBlockSizeGrid[0][29] = BlockSize8x8
+	ctx.SBLeftBlockSizeVisitedGrid[0][29] = 1
 
 	var matches, newMatches int
 	stack := ReferenceMVStack{}
@@ -1020,6 +1021,7 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	}
 	ctx.SBLeftMotionValidGrid[0][29] = 1
 	ctx.SBLeftBlockSizeGrid[0][29] = BlockSize8x8
+	ctx.SBLeftBlockSizeVisitedGrid[0][29] = 1
 
 	var matches, newMatches int
 	stack := ReferenceMVStack{}
@@ -1055,9 +1057,11 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal(t *testing.T) {
 	ctx.SBTopInterMotionGrid[0][15] = mv
 	ctx.SBTopMotionValidGrid[0][15] = 1
 	ctx.SBTopBlockSizeGrid[0][15] = BlockSize8x8
+	ctx.SBTopBlockSizeVisitedGrid[0][15] = 1
 	ctx.SBDiagonalInterMotionGrid[0][0] = mv
 	ctx.SBDiagonalMotionValidGrid[0][0] = 1
 	ctx.SBDiagonalBlockSizeGrid[0][0] = BlockSize8x8
+	ctx.SBDiagonalBlockSizeVisitedGrid[0][0] = 1
 
 	// y4<0 case: block at (X4=16, Y4=0), offset (-1, -1) -> (x=15, y=-1).
 	var matches, newMatches int
@@ -1116,6 +1120,7 @@ func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
 	ctx.SBLeftInterMotionGrid[0][11] = candidate
 	ctx.SBLeftMotionValidGrid[0][11] = 1
 	ctx.SBLeftBlockSizeGrid[0][11] = BlockSize16x8
+	ctx.SBLeftBlockSizeVisitedGrid[0][11] = 1
 
 	processedCols := 4
 	var matches, newMatches int
@@ -1156,6 +1161,7 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	}
 	ctx.SBLeftMotionValidGrid[0][11] = 1
 	ctx.SBLeftBlockSizeGrid[0][11] = BlockSize16x8
+	ctx.SBLeftBlockSizeVisitedGrid[0][11] = 1
 
 	processedCols := 4
 	var matches, newMatches int
@@ -1177,6 +1183,68 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
 	if stack.Count != 0 {
 		t.Fatalf("expected no candidate without HaveLeft, count=%d", stack.Count)
+	}
+}
+
+// TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB pins the bug
+// where the outer column ref-MV scan skipped only one mi past an intra
+// neighbor that lives in the prior SB (cross-SB lookup with x4<0), letting
+// the scan re-enter cells the intra neighbor already covered and pick up a
+// stray inter MV one row deeper. libaom's scan_col_mbmi always advances
+// i += AOMMIN(xd->height, mi_size_high[candidate->bsize]) regardless of
+// whether the candidate is inter or intra; the cross-SB snapshot must
+// expose the intra neighbor's block size to match that stride. Mirrors
+// mfmv frame 1 block mi=(64,18) outer_col[-5] where libaom visits (19,59)
+// (intra bsize=BLOCK_16X8, len=2) and exits with col_match=0 but goav1
+// previously stepped to (20,59) (inter, mv=(-4,23)) and inflated
+// col_match to 1, pushing modeContext from 59 (case 1, ref_match=1) to
+// 75 (case 1, ref_match=2) and steering refmv_cdf one cell off libaom.
+func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	deeperMV := motion.Vector{Row: -4, Col: 23}
+	// depth=4 (x4=-5, depth = -x4-1 = 4): cell five columns into the prior
+	// SB. Seed the row immediately past where libaom's len=2 step would
+	// land with a stray inter candidate to verify goav1 does NOT visit it.
+	ctx.SBLeftInterMotionGrid[4][20] = InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNewMV},
+		MV:         [2]motion.Vector{deeperMV},
+	}
+	ctx.SBLeftMotionValidGrid[4][20] = 1
+	ctx.SBLeftBlockSizeGrid[4][20] = BlockSize32x32
+	ctx.SBLeftBlockSizeVisitedGrid[4][20] = 1
+	// The intra neighbor at depth=4 y=19 has MotionValid=0 (intra clears
+	// it) but BlockSizeVisited=1 with the intra block's size recorded by
+	// clearGridInterMotion. The outer scan must respect that block's
+	// mi_size step and skip the cell at y=20 entirely.
+	ctx.SBLeftMotionValidGrid[4][19] = 0
+	ctx.SBLeftBlockSizeGrid[4][19] = BlockSize16x8
+	ctx.SBLeftBlockSizeVisitedGrid[4][19] = 1
+
+	processedCols := 6
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	dims, ok := BlockSize16x8.Dimensions()
+	if !ok {
+		t.Fatal("dims lookup failed")
+	}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize16x8,
+		References: target,
+		X4:         0,
+		Y4:         18,
+		MIRow:      18,
+		MICol:      64,
+		HaveTop:    true,
+		HaveLeft:   true,
+	}
+	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	if stack.Count != 0 {
+		t.Fatalf("expected outer col[-5] scan to step past intra neighbor at y=19 without entering y=20; got stack count=%d", stack.Count)
+	}
+	if matches != 0 {
+		t.Fatalf("expected matches=0 when only an intra neighbor sits at the col offset; got matches=%d", matches)
 	}
 }
 

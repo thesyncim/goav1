@@ -49,9 +49,10 @@ type BlockLoopContextCarrier struct {
 }
 
 type diagonalCornerSlot struct {
-	InterMotion [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
-	MotionValid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
-	BlockSize   [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
+	InterMotion      [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
+	MotionValid      [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
+	BlockSize        [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
+	BlockSizeVisited [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
 }
 
 type BlockLoopRootAboveContext struct {
@@ -93,9 +94,10 @@ type blockModeAboveContext struct {
 	// prior SB (= row immediately above the current SB), depth d is d+1 rows
 	// above. Mirrors what libaom's frame-wide mi grid would expose for the IBC
 	// outer mv-ref row scan reaching back into the prior SB.
-	InterMotionHistory [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
-	MotionValidHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
-	BlockSizeHistory   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	InterMotionHistory      [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	MotionValidHistory      [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	BlockSizeHistory        [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	BlockSizeVisitedHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 }
 
 type blockModeLeftContext struct {
@@ -125,9 +127,10 @@ type blockModeLeftContext struct {
 	// column immediately to the left of the current SB), depth d is d+1
 	// columns to the left. Mirrors libaom's frame mi grid for the IBC outer
 	// mv-ref column scan reaching back into the prior SB.
-	InterMotionHistory [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
-	MotionValidHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
-	BlockSizeHistory   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	InterMotionHistory      [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	MotionValidHistory      [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	BlockSizeHistory        [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	BlockSizeVisitedHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 }
 
 // BlockLoopRequest carries frame and tile state needed by the syntax loop.
@@ -459,6 +462,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBTopInterMotionGrid = above.mode.InterMotionHistory
 		scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
 		scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
+		scratch.Mode.SBTopBlockSizeVisitedGrid = above.mode.BlockSizeVisitedHistory
 		scratch.Mode.AboveInterp = above.mode.Interp
 		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
@@ -498,6 +502,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBLeftInterMotionGrid = left.mode.InterMotionHistory
 		scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
 		scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
+		scratch.Mode.SBLeftBlockSizeVisitedGrid = left.mode.BlockSizeVisitedHistory
 		scratch.Mode.LeftInterp = left.mode.Interp
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
@@ -511,6 +516,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBDiagonalInterMotionGrid = carrier.Diagonal[rootColIndex].InterMotion
 		scratch.Mode.SBDiagonalMotionValidGrid = carrier.Diagonal[rootColIndex].MotionValid
 		scratch.Mode.SBDiagonalBlockSizeGrid = carrier.Diagonal[rootColIndex].BlockSize
+		scratch.Mode.SBDiagonalBlockSizeVisitedGrid = carrier.Diagonal[rootColIndex].BlockSizeVisited
 	}
 	return nil
 }
@@ -653,6 +659,7 @@ func captureDiagonalCornerToPending(carrier *BlockLoopContextCarrier, nextColInd
 			dst.InterMotion[d][e] = mode.GridInterMotion[row][col]
 			dst.MotionValid[d][e] = mode.GridMotionValid[row][col]
 			dst.BlockSize[d][e] = mode.GridBlockSize[row][col]
+			dst.BlockSizeVisited[d][e] = mode.GridBlockSizeVisited[row][col]
 		}
 	}
 }
@@ -732,6 +739,7 @@ func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeConte
 	dst.InterMotionHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult{}
 	dst.MotionValidHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
 	dst.BlockSizeHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize{}
+	dst.BlockSizeVisitedHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
 	if sbSizeMIB == 0 {
 		return
 	}
@@ -750,6 +758,7 @@ func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeConte
 		dst.InterMotionHistory[d] = mode.GridInterMotion[row]
 		dst.MotionValidHistory[d] = mode.GridMotionValid[row]
 		dst.BlockSizeHistory[d] = mode.GridBlockSize[row]
+		dst.BlockSizeVisitedHistory[d] = mode.GridBlockSizeVisited[row]
 	}
 }
 
@@ -766,6 +775,7 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 	dst.InterMotionHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult{}
 	dst.MotionValidHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
 	dst.BlockSizeHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize{}
+	dst.BlockSizeVisitedHistory = [intrabcCrossSBHistory][MaxBlockModeSlots]uint8{}
 	if sbSizeMIB == 0 {
 		return
 	}
@@ -785,6 +795,7 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 			dst.InterMotionHistory[d][y] = mode.GridInterMotion[y][col]
 			dst.MotionValidHistory[d][y] = mode.GridMotionValid[y][col]
 			dst.BlockSizeHistory[d][y] = mode.GridBlockSize[y][col]
+			dst.BlockSizeVisitedHistory[d][y] = mode.GridBlockSizeVisited[y][col]
 		}
 	}
 }

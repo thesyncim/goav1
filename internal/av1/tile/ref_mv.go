@@ -1,7 +1,6 @@
 package tile
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -607,9 +606,6 @@ func (req ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int
 		different = different || temporalMVDifferent(second, req.GlobalMVs[1])
 	}
 	stack.addOrWeight(candidate, 2)
-	if req.MICol == 64 && req.MIRow == 18 {
-		entropy.TraceLabel("TPL_MV mi=(%d,%d) blkRC=(%d,%d) sampleRC=(%d,%d) origMV=(%d,%d) projMV=(%d,%d) different=%v", req.MICol, req.MIRow, blkRow, blkCol, sampleRow, sampleCol, sample.MV.Row, sample.MV.Col, candidate.This.Row, candidate.This.Col, different)
-	}
 	return true, different, nil
 }
 
@@ -674,13 +670,8 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-			if req.MICol == 64 && req.MIRow == 18 {
-				entropy.TraceLabel("ABOVE mi=(%d,%d) slot=%d off=%d step=%d weight=%d candMV0=(%d,%d) candRef=[%d,%d] size=%d m=%d n=%d", req.MICol, req.MIRow, slot, off, step, weight, c.AboveInterMotion[slot].MV[0].Row, c.AboveInterMotion[slot].MV[0].Col, int(c.AboveInterMotion[slot].References.Ref[0]), int(c.AboveInterMotion[slot].References.Ref[1]), int(c.AboveBlockSize[slot]), matches, newMatches)
-			}
 			result.RowMatches += matches
 			result.NewMVMatches += newMatches
-		} else if req.MICol == 64 && req.MIRow == 18 {
-			entropy.TraceLabel("ABOVE_SKIP mi=(%d,%d) slot=%d off=%d step=%d aboveIntra=%d motionValid=%d size=%d", req.MICol, req.MIRow, slot, off, step, int(c.AboveIntra[slot]), int(c.AboveMotionValid[slot]), int(c.AboveBlockSize[slot]))
 		}
 		off += step
 	}
@@ -715,13 +706,8 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-			if req.MICol == 64 && req.MIRow == 18 {
-				entropy.TraceLabel("LEFT mi=(%d,%d) slot=%d off=%d step=%d weight=%d candMV0=(%d,%d) candRef=[%d,%d] size=%d m=%d n=%d", req.MICol, req.MIRow, slot, off, step, weight, c.LeftInterMotion[slot].MV[0].Row, c.LeftInterMotion[slot].MV[0].Col, int(c.LeftInterMotion[slot].References.Ref[0]), int(c.LeftInterMotion[slot].References.Ref[1]), int(c.LeftBlockSize[slot]), matches, newMatches)
-			}
 			result.ColumnMatches += matches
 			result.NewMVMatches += newMatches
-		} else if req.MICol == 64 && req.MIRow == 18 {
-			entropy.TraceLabel("LEFT_SKIP mi=(%d,%d) slot=%d off=%d step=%d leftIntra=%d motionValid=%d size=%d", req.MICol, req.MIRow, slot, off, step, int(c.LeftIntra[slot]), int(c.LeftMotionValid[slot]), int(c.LeftBlockSize[slot]))
 		}
 		off += step
 	}
@@ -1225,7 +1211,19 @@ func (c *BlockModeContext) crossSBGridNeighborBlockSize(req ReferenceMVStackRequ
 		if d < 0 || d >= intrabcCrossSBHistory || e < 0 || e >= intrabcCrossSBHistory {
 			return 0, false
 		}
-		if c.SBDiagonalMotionValidGrid[d][e] == 0 {
+		// Use BlockSizeVisited (not MotionValid) so intra neighbors in the
+		// prior SB still consume their mi_size when the outer scan steps
+		// across them. libaom's scan_row/col_mbmi advances i += len based
+		// on the candidate's bsize regardless of whether the candidate is
+		// inter or intra; if we gated the lookup on MotionValid here the
+		// intra cell looked "unknown" and the scan fell back to a single-
+		// mi step, then re-entered cells the intra neighbor already covered
+		// and may pick up a stray inter MV one row deeper. mfmv frame 1
+		// block mi=(64,18) outer_col[-5] hit this: libaom visits (19,59)
+		// (intra bsize=BLOCK_16X8, len=2) and exits with col_match=0, while
+		// goav1 stepped to (20,59) (inter, mv=(-4,23)) and inflated
+		// col_match to 1.
+		if c.SBDiagonalBlockSizeVisitedGrid[d][e] == 0 {
 			return 0, false
 		}
 		return c.SBDiagonalBlockSizeGrid[d][e], true
@@ -1237,7 +1235,7 @@ func (c *BlockModeContext) crossSBGridNeighborBlockSize(req ReferenceMVStackRequ
 		depth := -y4 - 1
 		if depth < 0 || depth >= intrabcCrossSBHistory ||
 			x4 < 0 || x4 >= MaxBlockModeSlots ||
-			c.SBTopMotionValidGrid[depth][x4] == 0 {
+			c.SBTopBlockSizeVisitedGrid[depth][x4] == 0 {
 			return 0, false
 		}
 		return c.SBTopBlockSizeGrid[depth][x4], true
@@ -1249,7 +1247,7 @@ func (c *BlockModeContext) crossSBGridNeighborBlockSize(req ReferenceMVStackRequ
 		depth := -x4 - 1
 		if depth < 0 || depth >= intrabcCrossSBHistory ||
 			y4 < 0 || y4 >= MaxBlockModeSlots ||
-			c.SBLeftMotionValidGrid[depth][y4] == 0 {
+			c.SBLeftBlockSizeVisitedGrid[depth][y4] == 0 {
 			return 0, false
 		}
 		return c.SBLeftBlockSizeGrid[depth][y4], true

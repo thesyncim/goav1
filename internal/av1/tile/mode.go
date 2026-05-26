@@ -84,9 +84,10 @@ type BlockModeContext struct {
 	// for libaom's outer mv-ref row scan (offsets -3 and -5) which would
 	// otherwise read into the prior SB's interior. Cells outside the prior
 	// SB's actual content keep MotionValid==0.
-	SBTopInterMotionGrid [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
-	SBTopMotionValidGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
-	SBTopBlockSizeGrid   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	SBTopInterMotionGrid      [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	SBTopMotionValidGrid      [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	SBTopBlockSizeGrid        [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	SBTopBlockSizeVisitedGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 
 	// SBLeftInterMotion is the SB-row-equivalent snapshot of the column
 	// immediately to the left of the current superblock. LeftInterMotion is
@@ -101,9 +102,10 @@ type BlockModeContext struct {
 	// column immediately to the left (mirrors SBLeftInterMotion) and deeper
 	// indices correspond to progressively earlier mi columns inside the prior
 	// SB. Carrier for libaom's outer mv-ref column scan (offsets -3 and -5).
-	SBLeftInterMotionGrid [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
-	SBLeftMotionValidGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
-	SBLeftBlockSizeGrid   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	SBLeftInterMotionGrid      [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
+	SBLeftMotionValidGrid      [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
+	SBLeftBlockSizeGrid        [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+	SBLeftBlockSizeVisitedGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 
 	// SBDiagonalInterMotionGrid snapshots the bottom-right corner of the SB
 	// diagonally up-left of the current SB. Indexed [rowDepth][colDepth]:
@@ -111,9 +113,10 @@ type BlockModeContext struct {
 	// Used by the IBC outer block scan at (-1, -1) when both x4<0 and y4<0
 	// (the diagonal cell is in the SB above the SB to the left, which the
 	// carrier's same-row Left store would otherwise have clobbered).
-	SBDiagonalInterMotionGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
-	SBDiagonalMotionValidGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
-	SBDiagonalBlockSizeGrid   [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
+	SBDiagonalInterMotionGrid      [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
+	SBDiagonalMotionValidGrid      [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
+	SBDiagonalBlockSizeGrid        [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
+	SBDiagonalBlockSizeVisitedGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
 
 	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
 	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
