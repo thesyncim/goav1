@@ -1,17 +1,28 @@
-.PHONY: test bench bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast ci-local help
+.PHONY: test bench bench-all bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
 FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
+BENCHTIME ?= 3s
 
 test:
 	go test ./...
 
+# bench runs the end-to-end decoder throughput benchmarks at the repo root:
+# frames/sec, MB/sec, ns/op, and the steady-state allocation guardrail.
+# Pass BENCHTIME=10s (or larger) for stable numbers; the default 3s is
+# enough for smoke testing.
 bench:
-	go test -run '^$$' -bench=. -benchmem ./...
+	go test -run '^$$' -bench='^BenchmarkDecode' -benchmem -benchtime=$(BENCHTIME) .
+
+# bench-all runs every Go testing benchmark in the repository: the
+# end-to-end decoder benchmarks above plus all per-stage micro-benchmarks
+# (transform, cdef, restoration, motion, prediction, public API, etc.).
+bench-all:
+	go test -run '^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
 
 bench-public:
-	go test -run '^$$' -bench='BenchmarkPublic' -benchmem .
+	go test -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
@@ -209,7 +220,8 @@ ci-local: fmt-check vet test alloc
 help:
 	@echo "Available targets:"
 	@echo "  test                       go test ./..."
-	@echo "  bench                      go test -bench=. -benchmem ./..."
+	@echo "  bench                      end-to-end frames/sec + MB/sec on bundled libaom IVF"
+	@echo "  bench-all                  full microbenchmark sweep across every package"
 	@echo "  bench-public               run public benchmarks"
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  vet                        go vet ./..."

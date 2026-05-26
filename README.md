@@ -292,6 +292,67 @@ not implemented yet.
 - libaom realtime encoder behavior.
 - libwebrtc AV1 RTP behavior.
 
+## Performance
+
+The repository ships an end-to-end decoder throughput benchmark and a wide
+catalogue of per-stage micro-benchmarks. Both classes are pure Go testing
+benchmarks driven through the public API, so they reflect what production
+callers will measure when they wire the decoder into their own code.
+
+### Quick start
+
+```sh
+make bench                 # end-to-end frames/sec + MB/sec on the bundled libaom IVF
+make bench-all             # full micro-benchmark sweep across every package
+make bench-public          # public-API hot-path micro-benchmarks
+```
+
+`make bench` runs the three top-level decoder benchmarks defined in
+`bench_test.go`:
+
+- `BenchmarkDecodeFullVector` decodes every frame of the bundled
+  `internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf` vector through
+  the public residual stream runner, reporting ns/op, MB/sec of decoded
+  bitstream, `frames/op`, and `frames/s`.
+- `BenchmarkDecodeFirstFrameOnly` isolates the keyframe decode latency so
+  the first-frame cost is visible separately from the steady-state per-frame
+  number.
+- `BenchmarkDecodeFullVectorAllocs` is a zero-allocation guardrail: it
+  decodes the same vector and asserts that the steady-state hot path
+  allocates zero bytes per iteration. New contributors should re-run it
+  after any decoder change.
+
+Example output on an Apple M4 Max with Go 1.23:
+
+```
+BenchmarkDecodeFullVector-16          87  37268384 ns/op    3.46 MB/s    2.000 frames/op    53.66 frames/s    0 B/op    0 allocs/op
+BenchmarkDecodeFirstFrameOnly-16      67  17721317 ns/op    4.20 MB/s                                        0 B/op    0 allocs/op
+BenchmarkDecodeFullVectorAllocs-16    32  37482921 ns/op                                                     0 B/op    0 allocs/op
+```
+
+The `MB/s` column is computed from the IVF bitstream byte count; the
+`frames/s` metric is added via `b.ReportMetric` and is the most useful
+single number for capacity planning.
+
+### Per-stage micro-benchmarks
+
+The most expensive decode stages each have benchmarks in their own
+packages. Run them individually when profiling a regression:
+
+```sh
+go test -bench=BenchmarkInverseDCTBlock        -benchmem ./internal/av1/transform
+go test -bench=BenchmarkFilterFrameBlocks      -benchmem ./internal/av1/cdef
+go test -bench=BenchmarkApplyWienerRestoration -benchmem ./internal/av1/restoration
+go test -bench=BenchmarkApplySelfguidedRestoration -benchmem ./internal/av1/restoration
+go test -bench=BenchmarkPredictInterPlaneBlock -benchmem ./internal/av1/motion
+go test -bench=BenchmarkPublic                 -benchmem .
+```
+
+`make bench-all` chains all of these together. For a meaningful
+benchmark run, pass `-benchtime=3s` (or larger) so each benchmark has
+time to amortise its bound scratch and reach steady state. The default
+`-benchtime=1s` is enough for smoke-testing.
+
 ## Development
 
 ```sh
@@ -299,7 +360,8 @@ make test                 # unit tests across all packages
 make testvectors          # committed test-vector suite (with oracle)
 make testvectors-fast     # fast slice including oracle MD5 checks
 make dryrun-fast          # in-progress framework dry-run against fast vectors
-make bench                # microbenchmarks
+make bench                # end-to-end frames/sec + MB/sec
+make bench-all            # full microbenchmark sweep across every package
 make bench-public         # public-API benchmarks
 make alloc                # zero-allocation regression coverage
 make fuzz-smoke           # short fuzz harness sweep
