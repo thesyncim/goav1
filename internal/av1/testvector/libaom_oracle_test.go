@@ -164,8 +164,30 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 	}
 }
 
+// runLibaomFrameWorkDryRun executes the libaom framework dry-run for a single
+// vector. It supports two MD5 verification modes:
+//
+//   - Lenient mode (default): only frame 0's MD5 must match the official digest;
+//     subsequent frames merely log a per-frame progress line indicating whether
+//     they match. This is the behaviour required by `make testvectors-fast` and
+//     the `dryrun-fast` CI workflow, which gate on the six currently-passing
+//     vectors. A vector with correct frame 0 but broken later frames still
+//     "passes" in this mode — the per-frame log makes the silent mismatch
+//     visible without failing CI.
+//
+//   - Strict mode (GOAV1_STRICT_MD5=1): every frame's MD5 must match the
+//     official digest. Any mismatch fails the subtest. This mode is intended
+//     for diagnostic snapshots — it surfaces vectors whose later frames are
+//     silently wrong while frame 0 happens to be correct.
+//
+// In both modes, a trailing summary line is logged:
+//
+//	vector=NAME frames=N md5_matches=M first_mismatch=F
+//
+// where first_mismatch is -1 if every frame matched.
 func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	t.Helper()
+	strictMD5 := os.Getenv("GOAV1_STRICT_MD5") == "1"
 	ivfData := readLibaomRemoteFile(t, vector.Stream)
 	md5Data := readLibaomRemoteFile(t, vector.MD5)
 	digests := parseLibaomMD5Digests(t, vector.Tag, md5Data)
@@ -206,6 +228,8 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 
 	frameCount := 0
 	completed := 0
+	md5Matches := 0
+	firstMismatch := -1
 	tileJobs := 0
 	retainedContexts := 0
 	partitionReads := 0
@@ -404,6 +428,9 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 				if ivfFrame.Index == 0 && got != digests[digestIndex].MD5 {
 					return fmt.Errorf("frame 0 md5 got=%x official=%x", got, digests[digestIndex].MD5)
 				}
+				if strictMD5 && got != digests[digestIndex].MD5 {
+					return fmt.Errorf("frame %d md5 got=%x official=%x (strict mode)", ivfFrame.Index, got, digests[digestIndex].MD5)
+				}
 				postMD5 = got
 				postRan = true
 				return nil
@@ -419,6 +446,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 				if digestIndex >= len(digests) {
 					t.Fatalf("frame %d missing official digest", ivfFrame.Index)
 				}
+				if postMD5 == digests[digestIndex].MD5 {
+					md5Matches++
+				} else if firstMismatch < 0 {
+					firstMismatch = int(ivfFrame.Index)
+				}
 				t.Logf("frame %d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d mfmv_refs=%d mfmv_projections=%d",
 					ivfFrame.Index, postMD5, digests[digestIndex].MD5, residualTXBs, residuals, cdefUnitsRead, temporalReferenceResolves, temporalMotionProjections)
 				completed++
@@ -426,6 +458,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 		}
 		frameCount++
 	}
+	t.Logf("vector=%s frames=%d md5_matches=%d first_mismatch=%d", vector.Name, completed, md5Matches, firstMismatch)
 	if frameCount != len(digests) || completed != len(digests) {
 		t.Fatalf("frames=%d completed=%d want %d", frameCount, completed, len(digests))
 	}
