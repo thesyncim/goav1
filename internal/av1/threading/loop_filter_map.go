@@ -257,22 +257,27 @@ func frameWorkLoopFilterRefMode(visit tile.BlockLoopVisit) (int, loopfilter.Mode
 	if !ref.Valid() {
 		return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
 	}
+	// libaom (av1/common/av1_loopfilter.c mode_lf_lut) classifies every inter
+	// mode as ModeDeltaClassMotion (1) except GLOBALMV (single) and
+	// GLOBAL_GLOBALMV (compound), which use ModeDeltaClassZero. Restricting
+	// Motion to NEW_MV alone (the previous behaviour) under-applied the
+	// loop-filter mode delta for NEAREST_MV / NEAR_MV / NEAR_NEAR and the
+	// other non-GLOBAL compound modes.
 	mode := loopfilter.ModeDeltaClassZero
 	if visit.Prediction.InterModeValid {
 		interMode := visit.Prediction.InterMode
 		if interMode.Compound {
-			components, err := interMode.CompoundMode.Components()
-			if err != nil {
+			if !interMode.CompoundMode.Valid() {
 				return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
 			}
-			if components.First == tile.InterModeNewMV || components.Second == tile.InterModeNewMV {
+			if interMode.CompoundMode != tile.CompoundInterModeGlobalGlobal {
 				mode = loopfilter.ModeDeltaClassMotion
 			}
 		} else {
 			if !interMode.Mode.Valid() {
 				return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
 			}
-			if interMode.Mode == tile.InterModeNewMV {
+			if interMode.Mode != tile.InterModeGlobalMV {
 				mode = loopfilter.ModeDeltaClassMotion
 			}
 		}

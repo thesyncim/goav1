@@ -404,24 +404,8 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if verticalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y, plan.MICols, plan.MIRows)
-				if err != nil {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, filterMap, record, plan, edges, loopfilter.EdgeVertical, int(block.MICol), int(block.MIRow), int(block.VisibleH4), record.TransformTree.Y, verticalLevel, fromPrevious); err != nil {
 					return err
-				}
-				if ok {
-					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-						Plane:             loopfilter.PlaneY,
-						Edge:              loopfilter.EdgeVertical,
-						X4:                int(block.MICol),
-						Y4:                int(block.MIRow),
-						Length4:           int(block.VisibleH4),
-						Level:             verticalLevel,
-						Transform:         record.TransformTree.Y,
-						Width:             width,
-						LevelFromPrevious: fromPrevious,
-						BlockMICol:        block.MICol,
-						BlockMIRow:        block.MIRow,
-					})
 				}
 			}
 		}
@@ -431,24 +415,8 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if horizontalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y, plan.MICols, plan.MIRows)
-				if err != nil {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, filterMap, record, plan, edges, loopfilter.EdgeHorizontal, int(block.MICol), int(block.MIRow), int(block.VisibleW4), record.TransformTree.Y, horizontalLevel, fromPrevious); err != nil {
 					return err
-				}
-				if ok {
-					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-						Plane:             loopfilter.PlaneY,
-						Edge:              loopfilter.EdgeHorizontal,
-						X4:                int(block.MICol),
-						Y4:                int(block.MIRow),
-						Length4:           int(block.VisibleW4),
-						Level:             horizontalLevel,
-						Transform:         record.TransformTree.Y,
-						Width:             width,
-						LevelFromPrevious: fromPrevious,
-						BlockMICol:        block.MICol,
-						BlockMIRow:        block.MIRow,
-					})
 				}
 			}
 		}
@@ -469,24 +437,8 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if verticalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, plan.MICols, plan.MIRows)
-				if err != nil {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, filterMap, record, plan, edges, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, verticalLevel, fromPrevious); err != nil {
 					return err
-				}
-				if ok {
-					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-						Plane:             loopfilter.PlaneY,
-						Edge:              loopfilter.EdgeVertical,
-						X4:                frameX4,
-						Y4:                frameY4,
-						Length4:           int(tx.VisibleH4),
-						Level:             verticalLevel,
-						Transform:         tx.Size,
-						Width:             width,
-						LevelFromPrevious: fromPrevious,
-						BlockMICol:        block.MICol,
-						BlockMIRow:        block.MIRow,
-					})
 				}
 			}
 		}
@@ -496,29 +448,113 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMa
 				return err
 			}
 			if horizontalLevel != 0 {
-				width, ok, err := frameWorkLoopFilterScheduledLumaWidth(ctx, filterMap, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, plan.MICols, plan.MIRows)
-				if err != nil {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, filterMap, record, plan, edges, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, horizontalLevel, fromPrevious); err != nil {
 					return err
-				}
-				if ok {
-					frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-						Plane:             loopfilter.PlaneY,
-						Edge:              loopfilter.EdgeHorizontal,
-						X4:                frameX4,
-						Y4:                frameY4,
-						Length4:           int(tx.VisibleW4),
-						Level:             horizontalLevel,
-						Transform:         tx.Size,
-						Width:             width,
-						LevelFromPrevious: fromPrevious,
-						BlockMICol:        block.MICol,
-						BlockMIRow:        block.MIRow,
-					})
 				}
 			}
 		}
 		return nil
 	})
+}
+
+// frameWorkAppendLoopFilterLumaEdgeSegments splits one TX-block-aligned luma
+// edge into per-MI-cell segments and emits one edge per maximal contiguous run
+// of MI cells that share the same resolved filter width. libaom's deblocker
+// resolves filter_length per (mi_col, mi_row) using the local current and
+// previous transform sizes (set_one_param_for_line_luma), so a single TX edge
+// can need different filter widths along its length when the previous-side
+// TX subdivision varies. Emitting one edge with min(width) (the old behaviour)
+// applied the narrower filter beyond the cells that actually saw the narrower
+// previous TX, e.g. the 10-bit quantizer 32 horizontal edge at MI(40, 2) where
+// libaom uses flen=8 at col 40 (prev TX_4X8) and flen=4 at col 41 (prev
+// TX_4X4); our previous code took min(8, 4) = 4 across the whole TX edge and
+// applied filter4 at col 40 too, producing the q32 LF divergence.
+func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, level uint8, levelFromPrevious bool) error {
+	if length4 <= 0 {
+		return nil
+	}
+	currentWidth, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
+	if err != nil {
+		return err
+	}
+	segStart := 0
+	segWidth := 0
+	emit := func(start, end int) error {
+		if segWidth == 0 || end <= start {
+			return nil
+		}
+		segX4 := x4
+		segY4 := y4
+		if edge == loopfilter.EdgeHorizontal {
+			segX4 = x4 + start
+		} else {
+			segY4 = y4 + start
+		}
+		w, ok, err := frameWorkLoopFilterScheduledWidth(ctx, loopfilter.PlaneY, edge, segX4, segY4, end-start, segWidth)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+			Plane:             loopfilter.PlaneY,
+			Edge:              edge,
+			X4:                segX4,
+			Y4:                segY4,
+			Length4:           end - start,
+			Level:             level,
+			Transform:         tx,
+			Width:             w,
+			LevelFromPrevious: levelFromPrevious,
+			BlockMICol:        record.Block.MICol,
+			BlockMIRow:        record.Block.MIRow,
+		})
+		return nil
+	}
+	for offset := 0; offset < length4; offset++ {
+		previousWidth, err := frameWorkLoopFilterPreviousLumaCellWidth(ctx, filterMap, edge, x4, y4, offset, plan.MICols, plan.MIRows)
+		if err != nil {
+			return err
+		}
+		width := currentWidth
+		if previousWidth < width {
+			width = previousWidth
+		}
+		if width != segWidth {
+			if err := emit(segStart, offset); err != nil {
+				return err
+			}
+			segStart = offset
+			segWidth = width
+		}
+	}
+	return emit(segStart, length4)
+}
+
+// frameWorkLoopFilterPreviousLumaCellWidth returns the previous-side luma
+// filter width for a single MI cell on the edge.
+func frameWorkLoopFilterPreviousLumaCellWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int) (int, error) {
+	boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
+	targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
+	if err != nil {
+		return 0, err
+	}
+	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, loopfilter.ErrInvalidFilter
+	}
+	tx, ok, err := frameWorkLoopFilterLumaTransformAt(ctx, previous, targetX4, targetY4)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, threading.ErrInvalidBatch
+	}
+	return frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
 }
 
 func frameWorkResolveLoopFilterLumaEdgeLevel(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, edge loopfilter.Edge, x4 int, y4 int, cols int, rows int) (uint8, bool, error) {
@@ -612,24 +648,8 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, fil
 			return err
 		}
 		if verticalLevel != 0 {
-			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, filterMap, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, plan.MICols, plan.MIRows)
-			if err != nil {
+			if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, verticalLevel, fromPrevious); err != nil {
 				return err
-			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:             plane,
-					Edge:              loopfilter.EdgeVertical,
-					X4:                frameX4,
-					Y4:                frameY4,
-					Length4:           int(tx.VisibleH4),
-					Level:             verticalLevel,
-					Transform:         tx.Size,
-					Width:             width,
-					LevelFromPrevious: fromPrevious,
-					BlockMICol:        record.Block.MICol,
-					BlockMIRow:        record.Block.MIRow,
-				})
 			}
 		}
 	}
@@ -639,28 +659,137 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, fil
 			return err
 		}
 		if horizontalLevel != 0 {
-			width, ok, err := frameWorkLoopFilterScheduledChromaWidth(ctx, filterMap, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, plan.MICols, plan.MIRows)
-			if err != nil {
+			if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, horizontalLevel, fromPrevious); err != nil {
 				return err
-			}
-			if ok {
-				frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-					Plane:             plane,
-					Edge:              loopfilter.EdgeHorizontal,
-					X4:                frameX4,
-					Y4:                frameY4,
-					Length4:           int(tx.VisibleW4),
-					Level:             horizontalLevel,
-					Transform:         tx.Size,
-					Width:             width,
-					LevelFromPrevious: fromPrevious,
-					BlockMICol:        record.Block.MICol,
-					BlockMIRow:        record.Block.MIRow,
-				})
 			}
 		}
 	}
 	return nil
+}
+
+// frameWorkAppendLoopFilterChromaEdgeSegments mirrors
+// frameWorkAppendLoopFilterLumaEdgeSegments for chroma. libaom's chroma
+// deblock equally resolves filter_length per chroma cell from the local
+// current/previous transform sizes (set_one_param_for_line_chroma); without
+// per-cell splitting the chroma plane reproduced the same q32 10-bit
+// divergence the luma fix already covered.
+func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, level uint8, levelFromPrevious bool) error {
+	if length4 <= 0 {
+		return nil
+	}
+	currentWidth, err := frameWorkLoopFilterWidth(plane, edge, tx)
+	if err != nil {
+		return err
+	}
+	segStart := 0
+	segWidth := 0
+	emit := func(start, end int) error {
+		if segWidth == 0 || end <= start {
+			return nil
+		}
+		segX4 := x4
+		segY4 := y4
+		if edge == loopfilter.EdgeHorizontal {
+			segX4 = x4 + start
+		} else {
+			segY4 = y4 + start
+		}
+		w, ok, err := frameWorkLoopFilterScheduledWidth(ctx, plane, edge, segX4, segY4, end-start, segWidth)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
+			Plane:             plane,
+			Edge:              edge,
+			X4:                segX4,
+			Y4:                segY4,
+			Length4:           end - start,
+			Level:             level,
+			Transform:         tx,
+			Width:             w,
+			LevelFromPrevious: levelFromPrevious,
+			BlockMICol:        record.Block.MICol,
+			BlockMIRow:        record.Block.MIRow,
+		})
+		return nil
+	}
+	// Like the luma path we want to emit one edge per maximal run of MI
+	// cells that share the same filter width. Chroma adds a wrinkle: at some
+	// offsets the previous-side luma record co-locates with the current
+	// chroma block, so there is no chroma boundary there (the old behaviour
+	// returned hasChroma=false for the entire TX edge in that case). libaom
+	// processes the chroma edge per cell regardless, so when the per-cell
+	// lookup returns "no chroma at this offset" we treat that as a no-op
+	// gap and continue with the prevailing width from the surrounding cells.
+	hadAny := false
+	lastWidth := 0
+	for offset := 0; offset < length4; offset++ {
+		previousWidth, hasChroma, err := frameWorkLoopFilterPreviousChromaCellWidth(ctx, filterMap, plane, edge, x4, y4, offset, plan.MICols, plan.MIRows)
+		if err != nil {
+			return err
+		}
+		var width int
+		if hasChroma {
+			width = currentWidth
+			if previousWidth < width {
+				width = previousWidth
+			}
+			hadAny = true
+			lastWidth = width
+		} else {
+			// Carry the prevailing width so the per-offset filter still runs
+			// at this cell (matches libaom's per-MI-cell processing) when
+			// surrounding cells share the same width. Cells that never see a
+			// chroma neighbour stay no-ops once segWidth=0 falls through.
+			width = lastWidth
+		}
+		if width != segWidth {
+			if err := emit(segStart, offset); err != nil {
+				return err
+			}
+			segStart = offset
+			segWidth = width
+		}
+	}
+	if !hadAny {
+		return nil
+	}
+	return emit(segStart, length4)
+}
+
+// frameWorkLoopFilterPreviousChromaCellWidth resolves one MI cell's
+// previous-side chroma filter width, returning hasChroma=false when the
+// previous-side luma record co-locates with the current chroma block (so no
+// chroma boundary exists there).
+func frameWorkLoopFilterPreviousChromaCellWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int) (int, bool, error) {
+	boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
+	targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
+	if err != nil {
+		return 0, false, err
+	}
+	lookupX4, lookupY4 := frameWorkLoopFilterChromaPreviousLookup4(ctx, edge, boundaryX4, boundaryY4)
+	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, lookupX4, lookupY4, cols, rows)
+	if err != nil {
+		return 0, false, err
+	}
+	if !ok {
+		return 0, false, loopfilter.ErrInvalidFilter
+	}
+	tx, ok, err := frameWorkLoopFilterChromaTransformAt(ctx, previous, targetX4, targetY4)
+	if err != nil {
+		return 0, false, err
+	}
+	if !ok {
+		return 0, false, nil
+	}
+	w, err := frameWorkLoopFilterWidth(plane, edge, tx)
+	if err != nil {
+		return 0, false, err
+	}
+	return w, true, nil
 }
 
 func frameWorkResolveLoopFilterChromaEdgeLevel(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, cols int, rows int) (uint8, bool, error) {

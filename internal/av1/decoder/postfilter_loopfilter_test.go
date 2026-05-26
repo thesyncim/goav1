@@ -419,6 +419,82 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSchedulesLumaEdgeWidt
 	}
 }
 
+// TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSplitsLumaEdgeByPerCellWidth
+// covers the 10-bit quantizer 32 LF regression: when a single luma transform
+// edge spans multiple MI cells, each MI cell's filter width must come from the
+// (current, previous) transform pair at THAT cell, matching libaom's
+// set_one_param_for_line_luma. The previous implementation collapsed the edge
+// down to min(previousWidth) across the whole length, applying the narrower
+// filter at cells that should have used the wider one. The bottom 8x8 TX
+// block here straddles two top-side TXs (TX_8X8 vs TX_4X4) and must emit two
+// per-MI-cell width-8 / width-4 horizontal edges instead of one width-4 edge.
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSplitsLumaEdgeByPerCellWidth(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filler := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
+	filler.Block.Size = tile.BlockSize16x16
+	filler.SkipTransform = true
+	// Top row: two side-by-side 1-MI-tall TX blocks with different sizes.
+	// Top-left has TX_8X8 (filter width=8 for horizontal); top-right has
+	// TX_4X4 (filter width=4). They share the y=4 horizontal boundary with
+	// the bottom block below.
+	topLeft := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 2, 1)
+	topLeft.SkipTransform = true
+	topLeft.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8}
+	topRight := testFrameWorkLoopFilterPostFilterRecordAt(2, 0, 4, 1)
+	topRight.SkipTransform = true
+	topRight.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize4x4}
+	// Bottom block spans cols 0..3, rows 1..3 with TX_8X8 (width=8 horiz).
+	bottom := testFrameWorkLoopFilterPostFilterRecordAt(0, 1, 4, 4)
+	bottom.SkipTransform = true
+	bottom.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, filler, topLeft, topRight, bottom)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8, 8}},
+		},
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, 16)
+	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Find plane-Y horizontal edges at y=4 (Y4=1) emitted by `bottom`. The
+	// fixed code splits the horizontal edge between cols 0..3 into two
+	// segments: cols 0..1 (prev TX_8X8 -> width 8) and cols 2..3 (prev
+	// TX_4X4 -> width 4). The old behaviour emitted a single length=4
+	// width=4 edge.
+	var horizY []FrameWorkLoopFilterPostFilterEdge
+	for i := 0; i < plan.StoredEdges; i++ {
+		e := edges[i]
+		if e.Plane == loopfilter.PlaneY && e.Edge == loopfilter.EdgeHorizontal && e.Y4 == 1 {
+			horizY = append(horizY, e)
+		}
+	}
+	if len(horizY) != 2 {
+		t.Fatalf("expected 2 per-MI-cell width segments, got %d: %+v plan=%+v", len(horizY), horizY, plan)
+	}
+	if horizY[0].X4 != 0 || horizY[0].Length4 != 2 || horizY[0].Width != 8 {
+		t.Fatalf("edge[0]=%+v want X4=0 Length4=2 Width=8", horizY[0])
+	}
+	if horizY[1].X4 != 2 || horizY[1].Length4 != 2 || horizY[1].Width != 4 {
+		t.Fatalf("edge[1]=%+v want X4=2 Length4=2 Width=4", horizY[1])
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsHorizontalLumaWidthByPreviousTransform(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          16,
