@@ -869,7 +869,7 @@ func FuzzApplyChromaRow(f *testing.F) {
 		if stride <= 0 {
 			stride = 1
 		}
-		lumaStride := ((width-1)<<shiftX)+1+shiftX + int((flags>>5)&3)
+		lumaStride := ((width - 1) << shiftX) + 1 + shiftX + int((flags>>5)&3)
 		if lumaStride < 1 {
 			lumaStride = 1
 		}

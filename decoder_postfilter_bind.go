@@ -648,8 +648,7 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
 
-	int32Scratch := scratch.Int32Scratch
-	buffers.RestorationSGRProjScratch, int32Scratch, err = decoderFrameWorkPostFilterTakeScratch(int32Scratch, size.Restoration.Apply.Unit.SGRProj)
+	buffers.RestorationSGRProjScratch, _, err = decoderFrameWorkPostFilterTakeScratch(scratch.Int32Scratch, size.Restoration.Apply.Unit.SGRProj)
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}

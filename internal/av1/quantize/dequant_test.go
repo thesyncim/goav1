@@ -265,8 +265,8 @@ func TestDequantizeBlockScaledQMatrixRejectsOverflowSize(t *testing.T) {
 	q := Quantizer{DC: 4, AC: 8}
 	const maxInt = int(^uint(0) >> 1)
 	cases := []struct {
-		name           string
-		width, height  int
+		name          string
+		width, height int
 	}{
 		{"zero-width", 0, 4},
 		{"negative-width", -1, 4},
