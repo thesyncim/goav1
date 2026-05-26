@@ -1,7 +1,31 @@
 package goav1
 
+// This file exposes the caller-owned post-filter scratch-binding helpers used
+// by the decoder frame-work pipeline.
+//
+// The helpers fall into four categories:
+//
+//   - Shape helpers (DecoderFrameWork*Shape, *ScratchLen,
+//     *SideDataScratchLen): report the caller-owned slice lengths required
+//     to back each post-filter map or scratch. They never allocate.
+//   - Bind helpers (BindDecoderFrameWork*): wire caller-owned slices into
+//     typed map/scratch/request views.
+//   - Reset/Mark helpers (Reset*, Mark*): prepare a bound map for use during
+//     one frame, or record per-block updates from inside the block-loop
+//     visitor.
+//   - Runner helpers (DecoderFrameWork{Supported,Caller}PostFilterScratch
+//     Runner and SetDecoderFrameWorkSideData): the convenience wrappers
+//     that run the full post-filter chain from a single Apply call.
+//
+// The naming follows the pattern Shape -> Bind -> Reset -> Mark -> Bind
+// Request -> Apply for each of the five post-filter stages (loop filter,
+// CDEF, super-res, restoration, film grain) so callers can scan the file
+// for the stage they want.
+
 import internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 
+// DecoderFrameWorkCDEFIndexMapShape reports the column count, row count, and
+// total entry count required to back the CDEF index map for (sequence, size).
 func DecoderFrameWorkCDEFIndexMapShape(sequence SequenceHeader, size FrameSize) (cols int, rows int, length int, err error) {
 	batch := decoderFrameWorkCDEFIndexBatch(sequence, size, CDEFParams{})
 	return batch.CDEFIndexMapShape()
