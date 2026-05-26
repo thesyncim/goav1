@@ -21,10 +21,12 @@ func TestMotionModeCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 		want []uint16
 	}{
 		{name: "motion 8x8", cdf: &cdfs.MotionMode[BlockSize8x8], want: []uint16{25117, 8008, 0, 0}},
-		{name: "motion 32x8", cdf: &cdfs.MotionMode[BlockSize32x8], want: []uint16{3969, 1378, 0, 0}},
+		{name: "motion 32x8", cdf: &cdfs.MotionMode[BlockSize32x8], want: []uint16{6337, 1994, 0, 0}},
+		{name: "motion 8x32", cdf: &cdfs.MotionMode[BlockSize8x32], want: []uint16{3969, 1378, 0, 0}},
 		{name: "motion 128x128", cdf: &cdfs.MotionMode[BlockSize128x128], want: []uint16{261, 210, 0, 0}},
 		{name: "obmc 8x8", cdf: &cdfs.OBMC[BlockSize8x8], want: []uint16{22331, 0, 0}},
-		{name: "obmc 32x8", cdf: &cdfs.OBMC[BlockSize32x8], want: []uint16{9104, 0, 0}},
+		{name: "obmc 32x8", cdf: &cdfs.OBMC[BlockSize32x8], want: []uint16{11867, 0, 0}},
+		{name: "obmc 8x32", cdf: &cdfs.OBMC[BlockSize8x32], want: []uint16{9104, 0, 0}},
 		{name: "obmc 128x128", cdf: &cdfs.OBMC[BlockSize128x128], want: []uint16{130, 0, 0}},
 	}
 	for _, tt := range tests {
