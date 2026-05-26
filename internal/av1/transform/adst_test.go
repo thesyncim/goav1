@@ -129,3 +129,99 @@ func getMaxBit(x int) int {
 	}
 	return maxBit
 }
+
+// FuzzInverseADSTBlock exercises the inverse ADST/FlipADST paths through
+// InverseBlock across all square and rectangular sizes that ADST supports,
+// including hybrid combinations with DCT and the vertical/horizontal-only
+// variants. Coefficient magnitudes are pushed near int16 limits to stress the
+// internal clipRange clamps in inverseADST8/16.
+func FuzzInverseADSTBlock(f *testing.F) {
+	f.Add(uint8(0), uint8(0), int16(0), int16(0), int16(0))
+	f.Add(uint8(1), uint8(0), int16(64), int16(-21), int16(13))
+	f.Add(uint8(2), uint8(3), int16(-128), int16(32), int16(-17))
+	f.Add(uint8(3), uint8(4), int16(255), int16(-127), int16(63))
+	f.Add(uint8(5), uint8(6), int16(1024), int16(-512), int16(256))
+	f.Add(uint8(7), uint8(1), int16(32767), int16(-32768), int16(16384))
+	f.Add(uint8(8), uint8(7), int16(-32768), int16(32767), int16(-16384))
+
+	sizes := []Size{
+		{Width: 4, Height: 4},
+		{Width: 4, Height: 8},
+		{Width: 4, Height: 16},
+		{Width: 8, Height: 4},
+		{Width: 8, Height: 8},
+		{Width: 8, Height: 16},
+		{Width: 16, Height: 4},
+		{Width: 16, Height: 8},
+		{Width: 16, Height: 16},
+	}
+	types := []Type{
+		TypeADSTDCT,
+		TypeDCTADST,
+		TypeADSTADST,
+		TypeFlipADSTDCT,
+		TypeDCTFlipADST,
+		TypeFlipADSTFlipADST,
+		TypeADSTFlipADST,
+		TypeFlipADSTADST,
+		TypeVADST,
+		TypeHADST,
+		TypeVFlipADST,
+		TypeHFlipADST,
+	}
+
+	f.Fuzz(func(t *testing.T, rawSize uint8, rawType uint8, c0 int16, c1 int16, c2 int16) {
+		size := sizes[int(rawSize)%len(sizes)]
+		typ := types[int(rawType)%len(types)]
+		if !typ.Supported(size) {
+			return
+		}
+
+		coeffStride := size.Height + 2
+		dstStride := size.Width + 3
+		coeff := make([]int32, coeffStride*size.Width)
+		dst := make([]int16, dstStride*size.Height)
+		scratchLen, err := ScratchLenForType(typ, size)
+		if err != nil {
+			t.Fatalf("ScratchLenForType err=%v", err)
+		}
+		scratch := make([]int32, scratchLen+3)
+
+		seeds := [3]int16{c0, c1, c2}
+		for row := 0; row < size.Height; row++ {
+			for col := 0; col < size.Width; col++ {
+				base := int32(seeds[(row+col)%3])
+				if (row^col)&1 != 0 {
+					base = -base
+				}
+				coeff[col*coeffStride+row] = base
+			}
+		}
+
+		const sentinel = int16(0x6c6c)
+		for row := 0; row < size.Height; row++ {
+			for col := size.Width; col < dstStride; col++ {
+				dst[row*dstStride+col] = sentinel
+			}
+		}
+		for i := scratchLen; i < len(scratch); i++ {
+			scratch[i] = 0x5b5b5b5b
+		}
+
+		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, typ); err != nil {
+			t.Fatalf("InverseBlock size=%dx%d type=%d err=%v", size.Width, size.Height, typ, err)
+		}
+		for row := 0; row < size.Height; row++ {
+			for col := size.Width; col < dstStride; col++ {
+				if got := dst[row*dstStride+col]; got != sentinel {
+					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
+				}
+			}
+		}
+		for i := scratchLen; i < len(scratch); i++ {
+			if scratch[i] != 0x5b5b5b5b {
+				t.Fatalf("scratch padding[%d]=%d want sentinel", i, scratch[i])
+			}
+		}
+	})
+}

@@ -697,3 +697,220 @@ func withChromaRowScalingShift(params ChromaRowParams, shift uint8) ChromaRowPar
 	params.ScalingShift = shift
 	return params
 }
+
+// FuzzApplyLumaRow exercises ApplyLumaRow with random widths, heights,
+// strides, row indices, bit depths, scaling shifts, and overlap flags. The
+// function must either return ErrInvalidParams without panicking or complete
+// successfully without writing outside the configured row region.
+func FuzzApplyLumaRow(f *testing.F) {
+	f.Add(uint8(0), uint8(4), uint8(2), uint8(0), uint8(8), uint8(8), int16(0))
+	f.Add(uint8(0xff), uint8(34), uint8(LumaBlockSize), uint8(3), uint8(10), uint8(11), int16(64))
+	f.Add(uint8(0x55), uint8(LumaBlockSize+2), uint8(LumaBlockSize), uint8(7), uint8(8), uint8(9), int16(-32))
+	f.Add(uint8(0xaa), uint8(1), uint8(1), uint8(0), uint8(12), uint8(10), int16(127))
+
+	f.Fuzz(func(t *testing.T, flags uint8, rawWidth uint8, rawHeight uint8, rawRow uint8, rawBitDepth uint8, rawShift uint8, grainValue int16) {
+		width := int(rawWidth)
+		height := int(rawHeight)
+		stride := width + int(flags&7)
+		if stride <= 0 {
+			stride = 1
+		}
+		if width > 0 && stride < width {
+			stride = width
+		}
+
+		bitDepth := uint8(8)
+		switch rawBitDepth % 3 {
+		case 1:
+			bitDepth = 10
+		case 2:
+			bitDepth = 12
+		}
+		shift := uint8(8) + rawShift%4
+		row := int(rawRow)
+		if flags&0x80 != 0 {
+			row = -1
+		}
+
+		dstLen := stride * height
+		if dstLen < 0 {
+			return
+		}
+		const maxSamples = 1 << 16
+		if dstLen > maxSamples {
+			return
+		}
+		dst := make([]uint16, dstLen)
+		src := make([]uint16, dstLen)
+		baseSrc := uint16(100)
+		if bitDepth == 10 {
+			baseSrc = 400
+		} else if bitDepth == 12 {
+			baseSrc = 1024
+		}
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				src[y*stride+x] = baseSrc
+			}
+		}
+		grain := make([]int16, LumaGrainSamples)
+		for i := range grain {
+			grain[i] = grainValue
+		}
+		lut := testLumaRowScaling(64)
+
+		params := LumaRowParams{
+			Seed:                  uint16(flags) << 8,
+			Width:                 width,
+			Height:                height,
+			Stride:                stride,
+			Row:                   row,
+			BitDepth:              bitDepth,
+			ScalingShift:          shift,
+			Overlap:               flags&0x10 != 0,
+			ClipToRestrictedRange: flags&0x20 != 0,
+		}
+		err := ApplyLumaRow(dst, src, grain, lut[:], params)
+		if err != nil {
+			return
+		}
+		for y := 0; y < height; y++ {
+			for x := width; x < stride; x++ {
+				if dst[y*stride+x] != 0 {
+					t.Fatalf("dst(%d,%d)=%d expected outside-region zero", x, y, dst[y*stride+x])
+				}
+			}
+		}
+		maxSample := uint16((1 << bitDepth) - 1)
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				if dst[y*stride+x] > maxSample {
+					t.Fatalf("dst(%d,%d)=%d exceeds bit-depth max %d", x, y, dst[y*stride+x], maxSample)
+				}
+			}
+		}
+	})
+}
+
+// FuzzApplyChromaRow exercises ApplyChromaRow with random subsampling, scaling
+// modes, and row geometries. As with the luma fuzz, the function must either
+// reject the input cleanly or complete without panicking or scribbling past
+// the destination row band.
+func FuzzApplyChromaRow(f *testing.F) {
+	f.Add(uint8(0), uint8(4), uint8(2), uint8(0), uint8(8), uint8(8), int16(0))
+	f.Add(uint8(0x3f), uint8(17), uint8(LumaBlockSize), uint8(1), uint8(8), uint8(11), int16(-64))
+	f.Add(uint8(0x7f), uint8(16), uint8(LumaBlockSize/2), uint8(2), uint8(10), uint8(8), int16(96))
+	f.Add(uint8(0xff), uint8(2), uint8(2), uint8(0), uint8(12), uint8(9), int16(-128))
+
+	f.Fuzz(func(t *testing.T, flags uint8, rawWidth uint8, rawHeight uint8, rawRow uint8, rawBitDepth uint8, rawShift uint8, grainValue int16) {
+		subsamplingX := flags&1 != 0
+		subsamplingY := flags&2 != 0
+		shiftX := chromaSubsamplingShift(subsamplingX)
+		shiftY := chromaSubsamplingShift(subsamplingY)
+
+		width := int(rawWidth)
+		height := int(rawHeight)
+		stride := width + int((flags>>2)&7)
+		if width > 0 && stride < width {
+			stride = width
+		}
+		if stride <= 0 {
+			stride = 1
+		}
+		lumaStride := ((width-1)<<shiftX)+1+shiftX + int((flags>>5)&3)
+		if lumaStride < 1 {
+			lumaStride = 1
+		}
+
+		bitDepth := uint8(8)
+		switch rawBitDepth % 3 {
+		case 1:
+			bitDepth = 10
+		case 2:
+			bitDepth = 12
+		}
+		shift := uint8(8) + rawShift%4
+		row := int(rawRow)
+
+		dstLen := stride * height
+		lumaRows := ((height - 1) << shiftY) + 1
+		if lumaRows < 0 {
+			lumaRows = 0
+		}
+		lumaLen := lumaStride * lumaRows
+		if dstLen < 0 || lumaLen < 0 {
+			return
+		}
+		const maxSamples = 1 << 16
+		if dstLen > maxSamples || lumaLen > maxSamples {
+			return
+		}
+
+		dst := make([]uint16, dstLen)
+		src := make([]uint16, dstLen)
+		luma := make([]uint16, lumaLen)
+		baseSrc := uint16(100)
+		baseLuma := uint16(80)
+		if bitDepth == 10 {
+			baseSrc = 400
+			baseLuma = 320
+		} else if bitDepth == 12 {
+			baseSrc = 1024
+			baseLuma = 800
+		}
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				src[y*stride+x] = baseSrc
+			}
+		}
+		for y := 0; y < lumaRows; y++ {
+			for x := 0; x < lumaStride; x++ {
+				luma[y*lumaStride+x] = baseLuma
+			}
+		}
+		grain := make([]int16, ChromaGrainSamples)
+		for i := range grain {
+			grain[i] = grainValue
+		}
+		lut := testLumaRowScaling(64)
+
+		params := ChromaRowParams{
+			Seed:                  uint16(flags) << 4,
+			Width:                 width,
+			Height:                height,
+			Stride:                stride,
+			LumaStride:            lumaStride,
+			Row:                   row,
+			BitDepth:              bitDepth,
+			ScalingShift:          shift,
+			SubsamplingX:          subsamplingX,
+			SubsamplingY:          subsamplingY,
+			Overlap:               flags&0x04 != 0,
+			ClipToRestrictedRange: flags&0x08 != 0,
+			MatrixIdentity:        flags&0x10 != 0,
+			ChromaScalingFromLuma: flags&0x80 != 0,
+			ChromaMult:            uint8(grainValue & 0x7f),
+			ChromaLumaMult:        uint8((grainValue >> 7) & 0x7f),
+			ChromaOffset:          uint16(rawBitDepth) << 1,
+		}
+		err := ApplyChromaRow(dst, src, luma, grain, lut[:], params)
+		if err != nil {
+			return
+		}
+		for y := 0; y < height; y++ {
+			for x := width; x < stride; x++ {
+				if dst[y*stride+x] != 0 {
+					t.Fatalf("dst(%d,%d)=%d expected outside-region zero", x, y, dst[y*stride+x])
+				}
+			}
+		}
+		maxSample := uint16((1 << bitDepth) - 1)
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				if dst[y*stride+x] > maxSample {
+					t.Fatalf("dst(%d,%d)=%d exceeds bit-depth max %d", x, y, dst[y*stride+x], maxSample)
+				}
+			}
+		}
+	})
+}

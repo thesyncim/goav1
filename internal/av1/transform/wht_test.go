@@ -82,3 +82,58 @@ func TestInverseWHT4x4BlockAllocs(t *testing.T) {
 		t.Fatalf("InverseWHT4x4Block allocated: %f", allocs)
 	}
 }
+
+// FuzzInverseWHT4x4Block stresses the 4x4 inverse Walsh-Hadamard with random
+// coefficient values, strides, and EOB choices. The transform must complete
+// without panicking and must not write outside the requested block.
+func FuzzInverseWHT4x4Block(f *testing.F) {
+	f.Add(uint8(0), int16(0), int16(0), int16(0), int16(0), int16(0))
+	f.Add(uint8(1), int16(16), int16(0), int16(0), int16(0), int16(0))
+	f.Add(uint8(2), int16(64), int16(-32), int16(16), int16(-8), int16(4))
+	f.Add(uint8(3), int16(-256), int16(128), int16(-64), int16(32), int16(-16))
+	f.Add(uint8(0xff), int16(32767), int16(-32768), int16(32767), int16(-32768), int16(0))
+	f.Add(uint8(7), int16(1024), int16(-1024), int16(0), int16(255), int16(-255))
+
+	f.Fuzz(func(t *testing.T, rawMode uint8, c0 int16, c1 int16, c2 int16, c3 int16, c4 int16) {
+		coeffStride := 4 + int(rawMode&3)
+		dstStride := 4 + int((rawMode>>2)&3)
+		eob := 1
+		if rawMode&0x80 != 0 {
+			eob = 16
+		} else if rawMode&0x40 != 0 {
+			eob = 2
+		}
+
+		coeff := make([]int32, coeffStride*4+1)
+		dst := make([]int16, dstStride*4+1)
+		seeds := [5]int16{c0, c1, c2, c3, c4}
+		for col := 0; col < 4; col++ {
+			for row := 0; row < 4; row++ {
+				idx := col*coeffStride + row
+				coeff[idx] = int32(seeds[(col+row)%5]) + int32(col)*3 - int32(row)
+			}
+		}
+
+		const sentinel = int16(0x5a5a)
+		dst[len(dst)-1] = sentinel
+		for row := 0; row < 4; row++ {
+			for col := 4; col < dstStride; col++ {
+				dst[row*dstStride+col] = sentinel
+			}
+		}
+
+		if err := InverseWHT4x4Block(dst, dstStride, coeff, coeffStride, eob); err != nil {
+			t.Fatalf("InverseWHT4x4Block err=%v", err)
+		}
+		if got := dst[len(dst)-1]; got != sentinel {
+			t.Fatalf("tail sentinel overwritten: got %d want %d", got, sentinel)
+		}
+		for row := 0; row < 4; row++ {
+			for col := 4; col < dstStride; col++ {
+				if got := dst[row*dstStride+col]; got != sentinel {
+					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
+				}
+			}
+		}
+	})
+}
