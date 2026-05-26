@@ -181,6 +181,34 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 //     later outputs are silently wrong while the first happens to be
 //     correct.
 //
+// Frame-emit ordering. libaom's aomdec with output_all_layers=0 emits one
+// MD5 line per *visible* output frame, in IVF/temporal order. A frame is
+// visible when either:
+//
+//   - The frame OBU has show_frame=1 (regular shown frame), or
+//   - A show_existing_frame OBU re-displays a previously-decoded retained
+//     reference (typically an ALTREF backup that was decoded with
+//     show_frame=0 / showable_frame=1).
+//
+// Hidden frames (show_frame=0, showable_frame=1) are decoded for reference
+// but produce *no* MD5 line in libaom's manifest. They are emitted later
+// via a show_existing_frame event whose MD5 matches the pixel content of
+// the hidden frame at the time it was first decoded.
+//
+// The dry-run mirrors this by:
+//
+//   - Running the postfilter for every completed frame (regardless of
+//     show_frame) and recording its MD5 keyed by the layer-local frame
+//     surface index. This gives us a per-surface MD5 cache.
+//   - For each completion event with FrameHeader.ShowFrame=true, recording
+//     a per-IVF-frame "emit" for that frame's MD5.
+//   - For each EventExistingFrame (show_existing_frame), recording an
+//     "emit" using the cached MD5 of the referenced surface (read from
+//     result.Step.ShowExisting.Surface).
+//   - SVC handling preserved: if multiple spatial layers are observed
+//     within one IVF frame, only the emit at the highest SpatialID is
+//     surfaced (matching aomdec's output_all_layers=0 default).
+//
 // SVC handling: libaom's aomdec with the default output_all_layers=0 emits
 // one MD5 per temporal unit at the highest-spatial-layer output. The
 // dry-run mirrors that:
@@ -193,21 +221,6 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 //     spans all layers; the decoder's external-references path routes
 //     cross-pool reference frames and temporal-MV metadata through the
 //     layer aggregator's FrameSurface and TemporalMotionReference providers.
-//
-//   - Within an IVF frame, per-completed-frame MD5s are buffered. After
-//     all events in the IVF frame have been processed, MD5 emission
-//     depends on whether multiple spatial layers were observed:
-//
-//   - Non-SVC (max SpatialID == 0): emit one MD5 per completed frame in
-//     order. This preserves the original per-CompletedFrame counting that
-//     the existing fast 7-vector gate relies on (streams with multiple
-//     frames packed into one IVF frame — ALTREF backup + shown frame —
-//     emit one MD5 per completion).
-//
-//   - SVC (max SpatialID > 0): emit ONE MD5 for the LAST completed frame
-//     at the highest SpatialID. Lower-spatial-layer frames are decoded
-//     for reference but not emitted, matching aomdec's
-//     output_all_layers=0 default.
 //
 // In both modes, a trailing summary line is logged:
 //
@@ -261,20 +274,24 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			t.Fatalf("ivf frame %d PushLowOverhead: %v", ivfFrame.Index, err)
 		}
 
-		// Per-IVF-frame (temporal-unit) postfilter tracking. aomdec with the
-		// default output_all_layers=0 emits one MD5 per highest-spatial-layer
-		// output for each temporal unit. Within a single IVF frame the
-		// stream may complete several frames (e.g. an ALTREF backup decode
-		// plus a shown frame in non-SVC streams), each carrying its own
-		// shown/no-show flag. We retain the postfilter output and SpatialID
-		// for every completed frame and, after all events have run, emit
-		// digest checks according to whether the IVF frame contains a
-		// single spatial layer (non-SVC: one digest per completed frame —
-		// the original behaviour) or multiple spatial layers (SVC: only the
-		// LAST completed frame at the highest SpatialID).
-		var ivfPostMD5s [32]MD5
-		var ivfPostSpatial [32]int
-		ivfPostCount := 0
+		// Per-IVF-frame (temporal-unit) emit tracking. aomdec with the
+		// default output_all_layers=0 emits one MD5 line per *visible*
+		// output frame. Hidden frames (show_frame=0, showable_frame=1)
+		// are decoded for reference but produce no MD5; they are
+		// emitted later via a show_existing_frame event that re-displays
+		// the retained reference surface.
+		//
+		// Within one IVF frame the stream may contain (a) several
+		// decoded frames where only some have show_frame=1, and/or (b)
+		// a show_existing_frame OBU that re-displays a previously
+		// decoded retained reference. Each show_frame=true completion
+		// and each show_existing_frame event contributes one entry to
+		// ivfEmit. After all events are processed, if multiple spatial
+		// layers were observed (SVC) we surface only the emit at the
+		// highest SpatialID (matching aomdec output_all_layers=0).
+		var ivfEmitMD5s [32]MD5
+		var ivfEmitSpatial [32]int
+		ivfEmitCount := 0
 		maxSpatial := uint8(0)
 
 		for i := 0; i < count; i++ {
@@ -445,50 +462,83 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			if err != nil {
 				t.Fatalf("ivf frame %d spatial=%d RunEventWithContextAndSideDataAndPostFilterRunners: %v", ivfFrame.Index, event.SpatialID, err)
 			}
+			if event.SpatialID > maxSpatial {
+				maxSpatial = event.SpatialID
+			}
 			if result.Run.CompletedFrame {
 				if !postRan {
 					t.Fatalf("ivf frame %d spatial=%d completed without postfilter", ivfFrame.Index, event.SpatialID)
 				}
-				if ivfPostCount >= len(ivfPostMD5s) {
-					t.Fatalf("ivf frame %d completed-frame buffer overflow (cap=%d)", ivfFrame.Index, len(ivfPostMD5s))
+				// Cache the postfilter MD5 keyed by the layer-local
+				// pool surface index. This lets a subsequent
+				// show_existing_frame event recover the MD5 of the
+				// retained reference surface even when the original
+				// frame was hidden (show_frame=0).
+				surface := -1
+				switch result.Step.Kind {
+				case decoder.FrameWorkStepBegin:
+					surface = result.Step.Begin.Surface
+				case decoder.FrameWorkStepTile:
+					surface = result.Step.Tile.Surface
 				}
-				ivfPostMD5s[ivfPostCount] = postMD5
-				ivfPostSpatial[ivfPostCount] = int(event.SpatialID)
-				ivfPostCount++
-				if event.SpatialID > maxSpatial {
-					maxSpatial = event.SpatialID
+				if surface >= 0 && surface < len(layer.md5BySurface) {
+					layer.md5BySurface[surface] = postMD5
+					layer.md5Valid[surface] = true
 				}
+				// Only show_frame=true completions appear as MD5
+				// lines in aomdec's manifest. Hidden frames are
+				// emitted later via show_existing_frame.
+				if event.FrameHeader.ShowFrame {
+					if ivfEmitCount >= len(ivfEmitMD5s) {
+						t.Fatalf("ivf frame %d emit buffer overflow (cap=%d)", ivfFrame.Index, len(ivfEmitMD5s))
+					}
+					ivfEmitMD5s[ivfEmitCount] = postMD5
+					ivfEmitSpatial[ivfEmitCount] = int(event.SpatialID)
+					ivfEmitCount++
+				}
+			} else if event.Kind == decoder.EventExistingFrame && result.Step.Kind == decoder.FrameWorkStepShowExisting {
+				// show_existing_frame re-displays a retained
+				// reference surface. Look up its cached MD5 from
+				// when the frame was originally decoded.
+				surface := result.Step.ShowExisting.Surface
+				if surface < 0 || surface >= len(layer.md5BySurface) || !layer.md5Valid[surface] {
+					t.Fatalf("ivf frame %d show_existing_frame surface=%d has no cached md5 (spatial=%d)", ivfFrame.Index, surface, event.SpatialID)
+				}
+				if ivfEmitCount >= len(ivfEmitMD5s) {
+					t.Fatalf("ivf frame %d emit buffer overflow (cap=%d)", ivfFrame.Index, len(ivfEmitMD5s))
+				}
+				ivfEmitMD5s[ivfEmitCount] = layer.md5BySurface[surface]
+				ivfEmitSpatial[ivfEmitCount] = int(event.SpatialID)
+				ivfEmitCount++
 			}
 		}
 
 		// Emit digest checks for this IVF frame. Non-SVC (maxSpatial==0):
-		// one digest per completed frame in order, matching the original
-		// per-CompletedFrame counting that the fast 7-vector gate relies on.
-		// SVC (maxSpatial>0): one digest per IVF frame at the LAST
-		// completed frame whose SpatialID == maxSpatial — i.e. the
-		// highest-spatial-layer output for that temporal unit. This
-		// mirrors libaom aomdec with output_all_layers=0.
+		// one digest per visible emit (show_frame=true completion or
+		// show_existing_frame event) in source order. SVC (maxSpatial>0):
+		// surface only the emit at the highest SpatialID, matching libaom
+		// aomdec with output_all_layers=0.
 		var emitMD5s [32]MD5
 		var emitSpatial [32]int
 		emitCount := 0
-		if ivfPostCount > 0 {
+		if ivfEmitCount > 0 {
 			if maxSpatial == 0 {
-				for i := 0; i < ivfPostCount; i++ {
-					emitMD5s[emitCount] = ivfPostMD5s[i]
-					emitSpatial[emitCount] = ivfPostSpatial[i]
+				for i := 0; i < ivfEmitCount; i++ {
+					emitMD5s[emitCount] = ivfEmitMD5s[i]
+					emitSpatial[emitCount] = ivfEmitSpatial[i]
 					emitCount++
 				}
 			} else {
-				// Find the LAST completed frame at the highest spatial layer.
+				// Find the LAST emit at the highest spatial layer.
 				lastIdx := -1
-				for i := 0; i < ivfPostCount; i++ {
-					if uint8(ivfPostSpatial[i]) == maxSpatial {
+				for i := 0; i < ivfEmitCount; i++ {
+					if uint8(ivfEmitSpatial[i]) == maxSpatial {
 						lastIdx = i
 					}
 				}
 				if lastIdx >= 0 {
-					emitMD5s[emitCount] = ivfPostMD5s[lastIdx]
-					emitSpatial[emitCount] = ivfPostSpatial[lastIdx]
+					emitMD5s[emitCount] = ivfEmitMD5s[lastIdx]
+					emitSpatial[emitCount] = ivfEmitSpatial[lastIdx]
 					emitCount++
 				}
 			}
@@ -596,6 +646,15 @@ type libaomSpatialLayerState struct {
 	mvFrames             []tile.ReferenceMVFrame
 	mvStore              []tile.TemporalMotionReferenceFrame
 	mvLength             int
+
+	// md5BySurface caches the postfilter MD5 of every completed frame
+	// keyed by its layer-local pool surface index. It is updated when a
+	// frame is first decoded (whether show=true or hidden) and consulted
+	// by show_existing_frame events to recover the MD5 of the retained
+	// reference surface they re-display. md5Valid[surface] tracks whether
+	// the cached MD5 is meaningful.
+	md5BySurface []MD5
+	md5Valid     []bool
 }
 
 // libaomSpatialLayers indexes per-spatial-layer dry-run state by SpatialID.
@@ -706,6 +765,8 @@ func (s *libaomSpatialLayers) layer(t *testing.T, event decoder.Event) *libaomSp
 		layer = &libaomSpatialLayerState{spatialID: id}
 		layer.pool, layer.format, layer.backing, layer.frameSlots, layer.free, layer.used = bindLibaomVectorFramePool(t, event, 16)
 		layer.mvEntryBacking, layer.temporalEntryBacking, layer.mvFrames, layer.mvStore, layer.mvLength = bindLibaomVectorMotionStore(t, event, len(layer.frameSlots))
+		layer.md5BySurface = make([]MD5, len(layer.frameSlots))
+		layer.md5Valid = make([]bool, len(layer.frameSlots))
 		s.byID[id] = layer
 		return layer
 	}
