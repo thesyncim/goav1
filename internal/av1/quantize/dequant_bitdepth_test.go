@@ -73,6 +73,35 @@ func TestDequantizeBlockScaledBitDepthClamps(t *testing.T) {
 	}
 }
 
+// TestDequantizeBlockScaledBitDepthInt64Multiply pins the int64 widening of
+// libaom's `(int64)level * dqv & 0xffffff` formula. The Go input is already
+// int16, so for legal AV1 streams the multiply fits in int32; this test
+// constructs an out-of-range product that would wrap to a different value
+// under a 32-bit multiply, to guard against future regressions where the
+// quantized buffer widens to int32 (e.g. for a more libaom-faithful pipeline).
+// The 10-bit q32/q63 cohort exposed this divergence as +4 residual deltas at
+// the first sample of frame 0; widening to int64 keeps the bit pattern of
+// libaom's tran_low_t multiply exactly.
+func TestDequantizeBlockScaledBitDepthInt64Multiply(t *testing.T) {
+	// Pre-fill dequant output and dequantize a single nonzero level. Drive
+	// `level * scale` into a value > 2^23 so the &0xffffff mask actually
+	// strips bits; this verifies the mask is applied after the int64 widen.
+	width, height := 4, 4
+	q := Quantizer{DC: 16777216 - 100, AC: 16777216 - 100} // 24-bit-ish scale
+	coeff := make([]int16, width*height)
+	coeff[0] = 2
+	dst := make([]int32, width*height)
+	if err := DequantizeBlockScaledBitDepth(dst, height, coeff, height, width, height, q, 0, 12); err != nil {
+		t.Fatalf("12-bit dequant: %v", err)
+	}
+	// product = 2 * (1<<24 - 100) = (1<<25 - 200). After &0xffffff: low
+	// 24 bits = (1<<25 - 200) mod (1<<24) = (1<<24 - 200). The 12-bit dq
+	// clamp at ±(1<<19) caps this at 524287.
+	if dst[0] != 524287 {
+		t.Fatalf("dst[0]=%d want 524287 (12-bit dq clamp ceiling)", dst[0])
+	}
+}
+
 // TestDequantizeBlockScaledBitDepth8Equivalent confirms the BitDepth(8) entry
 // point reproduces the legacy unscaled-bd path.
 func TestDequantizeBlockScaledBitDepth8Equivalent(t *testing.T) {

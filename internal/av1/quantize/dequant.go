@@ -195,8 +195,12 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			}
 			// libaom: dq_coeff = (int32)((int64)level * dqv & 0xffffff). The 24-bit
 			// mask saturates the product before the txScale shift to match
-			// libaom's tran_low_t bitwidth assumption.
-			product := (level * scale) & 0xffffff
+			// libaom's tran_low_t bitwidth assumption. The multiply is widened
+			// to int64 to mirror libaom; for 12-bit content with high qindex
+			// the level*scale product can exceed int32 range before the mask
+			// narrows it to 24 bits, so a plain 32-bit multiply would wrap
+			// around and feed a different residual to the inverse transform.
+			product := int32((int64(level) * int64(scale)) & 0xffffff)
 			level = product >> txScale
 			if negative {
 				level = -level
