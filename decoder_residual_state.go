@@ -635,6 +635,12 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 			if err != nil {
 				return total, err
 			}
+			// Preserve already-allocated diagonal-corner scratch slices
+			// across binds so the per-frame loop does not re-allocate
+			// them. The carrier returned by Bind has Diagonal/PendingDiagonal
+			// nil; reuse the persistent scratch from scratch.LoopContext.
+			carrier.Diagonal = scratch.LoopContext.Diagonal
+			carrier.PendingDiagonal = scratch.LoopContext.PendingDiagonal
 			scratch.LoopContext = carrier
 			loopReq.ContextCarrier = &scratch.LoopContext
 		}

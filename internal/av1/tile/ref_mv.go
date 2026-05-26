@@ -1042,12 +1042,14 @@ func (c *BlockModeContext) scanGridBlockIntrabcDV(req ReferenceMVStackRequest, r
 	x := req.X4 + colOffset
 	y := req.Y4 + rowOffset
 	if y < 0 && x < 0 {
-		// Diagonal across both SB borders: corresponds to libaom's mi grid
-		// cell at (mi_col-1, mi_row-1). Both prior SB column's top row and
-		// prior SB row's left column converge there; the SBTop snapshot's
-		// slot 0 represents (mi_col-?, mi_row-1) when HaveTop; treat it as
-		// the diagonal candidate when available. If unavailable (no top
-		// neighbor) we cannot recover that cell from the carrier.
+		// Diagonal cell across both SB borders: libaom's mi grid cell at
+		// (mi_col-1-e, mi_row-1-d). Recovered via SBDiagonalInterMotionGrid
+		// snapshotted from the SB diagonally up-left of the current SB.
+		candidate, _, ok := c.crossSBIntrabcGridInterMotion(req, x, y)
+		if !ok {
+			return
+		}
+		stack.addOrWeight(ReferenceMVCandidate{This: candidate.MV[0]}, weight)
 		return
 	}
 	if y < 0 {
@@ -1097,25 +1099,24 @@ func (c *BlockModeContext) crossSBIntrabcGridInterMotion(req ReferenceMVStackReq
 		return InterMotionResult{}, 0, false
 	}
 	if y4 < 0 && x4 < 0 {
-		// Diagonal (mi_col-1, mi_row-1). Only recoverable through the top
-		// snapshot when HaveTop is set; otherwise unavailable.
-		if !req.HaveTop {
+		// Diagonal cell at frame position (mi_col-1-e, mi_row-1-d) inside
+		// the SB up-and-to-the-left. Recovered from SBDiagonalInterMotionGrid,
+		// loaded from the carrier's Diagonal slot for the current root column.
+		// Requires both HaveTop and HaveLeft because the diagonal SB shares
+		// one row with the above SB and one column with the left SB; without
+		// either the (-1,-1) cell falls outside the tile.
+		if !req.HaveTop || !req.HaveLeft {
 			return InterMotionResult{}, 0, false
 		}
-		depth := -y4 - 1
-		col := x4
-		if depth < 0 || depth >= intrabcCrossSBHistory {
+		d := -y4 - 1
+		e := -x4 - 1
+		if d < 0 || d >= intrabcCrossSBHistory || e < 0 || e >= intrabcCrossSBHistory {
 			return InterMotionResult{}, 0, false
 		}
-		// The (-1,-1) cell is the top-right corner of the prior SB to the
-		// upper-left. The SBTopInterMotionGrid snapshot covers the prior SB
-		// above the current one; cells with negative x within that snapshot
-		// live in the diagonal SB. We have no separate snapshot for it, so
-		// only the single (-1,-1) diagonal slot is reachable when HaveLeft is
-		// set, via SBLeft depth-0 column. Return unavailable here so the
-		// caller falls back to other scans for true diagonal lookups.
-		_ = col
-		return InterMotionResult{}, 0, false
+		if c.SBDiagonalMotionValidGrid[d][e] == 0 {
+			return InterMotionResult{}, 0, false
+		}
+		return c.SBDiagonalInterMotionGrid[d][e], c.SBDiagonalBlockSizeGrid[d][e], true
 	}
 	if y4 < 0 {
 		if !req.HaveTop {

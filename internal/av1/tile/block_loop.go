@@ -3,6 +3,7 @@ package tile
 import (
 	"fmt"
 
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -41,8 +42,16 @@ type BlockLoopScratch struct {
 // column in the request; Left carries the previous root in the current root row.
 // Keeping this carrier optional preserves the single-root zero-value path.
 type BlockLoopContextCarrier struct {
-	Above []BlockLoopRootAboveContext
-	Left  BlockLoopRootLeftContext
+	Above           []BlockLoopRootAboveContext
+	Left            BlockLoopRootLeftContext
+	Diagonal        []diagonalCornerSlot
+	PendingDiagonal []diagonalCornerSlot
+}
+
+type diagonalCornerSlot struct {
+	InterMotion [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
+	MotionValid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
+	BlockSize   [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
 }
 
 type BlockLoopRootAboveContext struct {
@@ -302,7 +311,9 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 
 	var stats BlockLoopStats
 	rootSize := uint32(req.Walk.Root.Size4x4())
+	ensureIntrabcDiagonalCarriers(req.ContextCarrier)
 	for miRow := req.Walk.MIRowStart; miRow < req.Walk.MIRowEnd; miRow += rootSize {
+		promotePendingDiagonalCarriers(req.ContextCarrier)
 		for miCol := req.Walk.MIColStart; miCol < req.Walk.MIColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - req.Walk.MIColStart) / rootSize)
 			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > req.Walk.neighborMIRowStart(), miCol > req.Walk.neighborMIColStart(), req.SBSizeMIB); err != nil {
@@ -407,6 +418,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB); err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
+			captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 		}
 	}
 	return stats, nil
@@ -495,6 +507,11 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
 	}
+	if haveTop && haveLeft && carrier != nil && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
+		scratch.Mode.SBDiagonalInterMotionGrid = carrier.Diagonal[rootColIndex].InterMotion
+		scratch.Mode.SBDiagonalMotionValidGrid = carrier.Diagonal[rootColIndex].MotionValid
+		scratch.Mode.SBDiagonalBlockSizeGrid = carrier.Diagonal[rootColIndex].BlockSize
+	}
 	return nil
 }
 
@@ -559,6 +576,85 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
 	return nil
+}
+
+// ensureIntrabcDiagonalCarriers lazily allocates Diagonal/PendingDiagonal so
+// callers may leave them nil. Allocation matches len(Above).
+func ensureIntrabcDiagonalCarriers(carrier *BlockLoopContextCarrier) {
+	if carrier == nil {
+		return
+	}
+	n := len(carrier.Above)
+	if n == 0 {
+		return
+	}
+	if len(carrier.Diagonal) < n {
+		carrier.Diagonal = make([]diagonalCornerSlot, n)
+	}
+	if len(carrier.PendingDiagonal) < n {
+		carrier.PendingDiagonal = make([]diagonalCornerSlot, n)
+	}
+}
+
+// promotePendingDiagonalCarriers swaps the previous row's PendingDiagonal
+// entries into the live Diagonal slots consumed at root-col load time. Called
+// at the start of each root row so the diagonal-up-left corner stored by the
+// row that just finished is the one each new-row SB reads.
+func promotePendingDiagonalCarriers(carrier *BlockLoopContextCarrier) {
+	if carrier == nil {
+		return
+	}
+	n := len(carrier.PendingDiagonal)
+	if n == 0 {
+		return
+	}
+	if len(carrier.Diagonal) < n {
+		carrier.Diagonal = make([]diagonalCornerSlot, n)
+	}
+	for i := 0; i < n; i++ {
+		carrier.Diagonal[i] = carrier.PendingDiagonal[i]
+		carrier.PendingDiagonal[i] = diagonalCornerSlot{}
+	}
+}
+
+// captureDiagonalCornerToPending snapshots the just-finished SB's bottom-right
+// corner cells into PendingDiagonal[nextColIndex]. The next row's SB at that
+// column will read this as its diagonal-up-left corner after the row-boundary
+// promotion. Writing to nextColIndex (not the current column) avoids
+// clobbering the live Diagonal slot the current row's right-neighbor still
+// needs to consume.
+func captureDiagonalCornerToPending(carrier *BlockLoopContextCarrier, nextColIndex int, mode *BlockModeContext, sbSizeMIB uint8) {
+	if carrier == nil || mode == nil || sbSizeMIB == 0 {
+		return
+	}
+	if nextColIndex < 0 || nextColIndex >= len(carrier.PendingDiagonal) {
+		return
+	}
+	dst := &carrier.PendingDiagonal[nextColIndex]
+	*dst = diagonalCornerSlot{}
+	right := int(sbSizeMIB) - 1
+	bottom := int(sbSizeMIB) - 1
+	if right >= MaxBlockModeSlots {
+		right = MaxBlockModeSlots - 1
+	}
+	if bottom >= MaxBlockModeSlots {
+		bottom = MaxBlockModeSlots - 1
+	}
+	for d := 0; d < intrabcCrossSBHistory; d++ {
+		row := bottom - d
+		if row < 0 {
+			break
+		}
+		for e := 0; e < intrabcCrossSBHistory; e++ {
+			col := right - e
+			if col < 0 {
+				break
+			}
+			dst.InterMotion[d][e] = mode.GridInterMotion[row][col]
+			dst.MotionValid[d][e] = mode.GridMotionValid[row][col]
+			dst.BlockSize[d][e] = mode.GridBlockSize[row][col]
+		}
+	}
 }
 
 // extendAboveContextFromRightCarrier fills the per-SB AboveInterMotion and
@@ -694,6 +790,7 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
+	entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
 	ctx := &scratch.Mode
 	cdef := &scratch.CDEF
 	segmentID := uint8(0)

@@ -104,6 +104,17 @@ type BlockModeContext struct {
 	SBLeftInterMotionGrid [intrabcCrossSBHistory][MaxBlockModeSlots]InterMotionResult
 	SBLeftMotionValidGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 	SBLeftBlockSizeGrid   [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
+
+	// SBDiagonalInterMotionGrid snapshots the bottom-right corner of the SB
+	// diagonally up-left of the current SB. Indexed [rowDepth][colDepth]:
+	// depth (d, e) carries libaom's mi grid cell at (mi_col-1-e, mi_row-1-d).
+	// Used by the IBC outer block scan at (-1, -1) when both x4<0 and y4<0
+	// (the diagonal cell is in the SB above the SB to the left, which the
+	// carrier's same-row Left store would otherwise have clobbered).
+	SBDiagonalInterMotionGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]InterMotionResult
+	SBDiagonalMotionValidGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
+	SBDiagonalBlockSizeGrid   [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
+
 	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
 	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
 	AboveInterpValid [MaxBlockModeSlots]uint8

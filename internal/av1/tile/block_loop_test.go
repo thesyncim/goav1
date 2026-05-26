@@ -974,6 +974,104 @@ func TestIntrabcPredictedMVUsesOuterGridBeforeFallback(t *testing.T) {
 	}
 }
 
+// TestIntrabcDiagonalCornerCarriesAcrossSBRow verifies that the diagonal SB
+// up-and-to-the-left of an intrabc block contributes its bottom-right corner
+// MV via the carrier's PendingDiagonal/Diagonal double-buffer. This is the
+// (mi_col-1, mi_row-1) cell libaom's setup_ref_mv_list reads when handling
+// libaom_av1_8-bit_intra-only_intrabc_extreme_dv at MI(240,240): the only
+// scan position covering the 8x16 neighbor at MI(238,236) is the outer
+// block lookup at (X4-1, Y4-1), which falls in the SB diagonally up-left.
+// Without the diagonal carrier the SB-row-left store overwrites that cell
+// and the predicted DV falls back to (-512, 0), producing wrong pixels.
+func TestIntrabcDiagonalCornerCarriesAcrossSBRow(t *testing.T) {
+	dvWant := motion.Vector{Row: -1408, Col: 2112}
+	carrier := &BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
+	ensureIntrabcDiagonalCarriers(carrier)
+	// Prepare a synthetic prior-SB grid with a non-zero MV at the
+	// bottom-right cell (the (sbSize-1, sbSize-1) slot) and capture it
+	// into PendingDiagonal[1] (the slot the next-row SB at column 1
+	// will consume after promotion).
+	var sbMode BlockModeContext
+	sbDims, ok := BlockSize8x16.Dimensions()
+	if !ok {
+		t.Fatal("bad block size")
+	}
+	sbMode.markGridInterMotion(BlockSize8x16, 14, 12, InterMotionResult{
+		Mode: InterModeResult{Mode: InterModeNewMV},
+		MV:   [2]motion.Vector{dvWant},
+	}, sbDims)
+	captureDiagonalCornerToPending(carrier, 1, &sbMode, 16)
+	promotePendingDiagonalCarriers(carrier)
+
+	// Now load into a scratch context as the next-row SB at column 1
+	// would do, and run the diagonal lookup at (x=-1, y=-1).
+	var scratch BlockLoopScratch
+	if err := blockLoopLoadRootContext(&scratch, carrier, 1, true, true, 16); err != nil {
+		t.Fatal(err)
+	}
+	got, _, ok := scratch.Mode.crossSBIntrabcGridInterMotion(ReferenceMVStackRequest{
+		HaveTop:  true,
+		HaveLeft: true,
+	}, -1, -1)
+	if !ok {
+		t.Fatalf("diagonal lookup failed: SBDiagonalMotionValidGrid empty")
+	}
+	if got.MV[0] != dvWant {
+		t.Fatalf("diagonal MV got=%+v want=%+v", got.MV[0], dvWant)
+	}
+}
+
+// TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback covers the full
+// intrabcPredictedMV path: when the only intrabc candidate is at the cell
+// diagonally up-left of the current SB, IntrabcReferenceDVStack's outer
+// (-1, -1) block scan must reach it and intrabcPredictedMV must return it
+// instead of falling through to the SB-fallback heuristic. Mirrors the
+// libaom_av1_8-bit_intra-only_intrabc_extreme_dv block at MI(240,240) whose
+// diagonal up-left 8x16 intrabc neighbor at MI(238,236) yielded the
+// libaom-computed dv_ref=(-1408, 2112).
+func TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback(t *testing.T) {
+	dvWant := motion.Vector{Row: -1408, Col: 2112}
+	const cols = 16
+	carrier := &BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, cols)}
+	ensureIntrabcDiagonalCarriers(carrier)
+	var sbMode BlockModeContext
+	if err := sbMode.MarkIntrabcMotion(BlockSize8x16, 14, 12, InterMotionResult{
+		Mode: InterModeResult{Mode: InterModeNewMV},
+		MV:   [2]motion.Vector{dvWant},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Stage the corner into PendingDiagonal[15] then promote (mirrors the
+	// row boundary between the prior SB row (containing SB col 14, the
+	// diagonal SB) and the current row).
+	captureDiagonalCornerToPending(carrier, 15, &sbMode, 16)
+	promotePendingDiagonalCarriers(carrier)
+
+	var scratch BlockLoopScratch
+	if err := blockLoopLoadRootContext(&scratch, carrier, 15, true, true, 16); err != nil {
+		t.Fatal(err)
+	}
+	got, err := intrabcPredictedMV(&scratch.Mode, BlockLoopRequest{
+		Walk: BlockWalkRequest{
+			MIColEnd: 512, MIRowEnd: 512,
+		},
+		SBSizeMIB:  16,
+		Monochrome: true,
+	}, BlockVisit{
+		MICol: 240, MIRow: 240,
+		X4: 0, Y4: 0,
+		Size:     BlockSize16x8,
+		HaveTop:  true,
+		HaveLeft: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dvWant {
+		t.Fatalf("predicted intrabc mv=%+v want diagonal corner %+v", got, dvWant)
+	}
+}
+
 func TestIntrabcDVValidMatchesLibaomTileAndWavefrontGuards(t *testing.T) {
 	req := BlockLoopRequest{
 		Walk: BlockWalkRequest{
