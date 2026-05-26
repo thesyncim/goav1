@@ -9,9 +9,12 @@ Pure Go AV1 implementation focused on realtime/WebRTC decoding first.
 For an end-to-end map of the decoder - package layout, per-frame pipeline,
 public API surface, threading model, testing strategy, and known limitations
 - see [ARCHITECTURE.md](ARCHITECTURE.md). New contributors and integrators
-should start there. For upstream pinning policy, see [UPSTREAM.md](UPSTREAM.md).
-For the threat model, reporting process, and supported versions, see
-[SECURITY.md](SECURITY.md).
+should start there. For the spec-level feature inventory (which AV1 syntax,
+prediction, transform, and post-filter rows are implemented, partial, or
+missing) and the libaom fast-suite vector pass/fail table, see
+[CONFORMANCE.md](CONFORMANCE.md). For upstream pinning policy, see
+[UPSTREAM.md](UPSTREAM.md). For the threat model, reporting process, and
+supported versions, see [SECURITY.md](SECURITY.md).
 
 This repository is intentionally built from the transport and bitstream edge
 inward:

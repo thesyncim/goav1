@@ -1012,6 +1012,12 @@ Reported state from the README:
 
 ### Feature coverage status
 
+For the full spec-level inventory (per-mode intra prediction, per-mode inter
+prediction, per-transform type, per-restoration type, OBU type coverage,
+container coverage, plus the libaom fast-suite vector pass/fail table), see
+[CONFORMANCE.md](CONFORMANCE.md). The summary below is the high-level
+roll-up.
+
 | Area                                  | State                                            |
 |---------------------------------------|--------------------------------------------------|
 | OBU framing (low-overhead, AnnexB, TU)| Complete, zero-allocation, fuzzed.               |
