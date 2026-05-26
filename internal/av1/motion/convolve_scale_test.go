@@ -5,6 +5,7 @@
 package motion
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -297,6 +298,232 @@ func TestConvolveScale2DHighBDMatchesLibaomReference(t *testing.T) {
 		libaomConvolveScale2DHighBDRef(want, src, bd, refX0, refY0, 0, 0, w, h,
 			subpelX, step, subpelY, step, xTable, yTable, round0Bits, round1Bits)
 		comparePlanes(t, "hb_step", got, want, w, h, 2)
+	}
+}
+
+// TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FrameTopLeft pins the
+// scaled 8-tap convolver against libaom for the exact SVC L2T1 spatial=1
+// frame-top-left block: a 1280x720 enhancement layer references the 640x360
+// base, so the start position is libaom's biased (-224, -224) Q10 and the
+// step is exactly 0.5 sample per output pel. The leftmost / topmost taps
+// fall outside the source plane and must be edge-replicated, exercising the
+// Clamped variant against a libaom-shape padded reference. Locks the bias
+// (3d13790) + clamping behaviour against silent SVC L2T1 spatial=1 drift.
+func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FrameTopLeft(t *testing.T) {
+	const blockW, blockH = 16, 16
+	const srcW, srcH = 64, 64
+	src := scaledTestSourcePlane(srcW, srcH, 1, 0x5717)
+
+	sf, err := NewScaleFactors(640, 360, 1280, 720)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(0, 0, Vector{}, false, false)
+	if err != nil {
+		t.Fatalf("ScaledBlockOrigin: %v", err)
+	}
+	if startX >= 0 || startY >= 0 {
+		t.Fatalf("expected biased negative startX/startY, got startX=%d startY=%d", startX, startY)
+	}
+
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, blockW)
+	if err != nil {
+		t.Fatalf("xTable: %v", err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, blockH)
+	if err != nil {
+		t.Fatalf("yTable: %v", err)
+	}
+
+	got, _ := testPlane(blockW, blockH, 1, blockW)
+	if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+		t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+	}
+
+	const pad = 16
+	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
+	for y := 0; y < srcH+2*pad; y++ {
+		sy := y - pad
+		if sy < 0 {
+			sy = 0
+		} else if sy >= srcH {
+			sy = srcH - 1
+		}
+		for x := 0; x < srcW+2*pad; x++ {
+			sx := x - pad
+			if sx < 0 {
+				sx = 0
+			} else if sx >= srcW {
+				sx = srcW - 1
+			}
+			padded.Pix[y*padded.Stride+x] = src.Pix[sy*src.Stride+sx]
+		}
+	}
+	intX := int(startX >> ScaleSubpelBits)
+	intY := int(startY >> ScaleSubpelBits)
+	subpelX := int(startX & ScaleSubpelMask)
+	subpelY := int(startY & ScaleSubpelMask)
+
+	want, _ := testPlane(blockW, blockH, 1, blockW)
+	libaomConvolveScale2DRef(want, padded, pad+intX, pad+intY, 0, 0, blockW, blockH,
+		subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
+
+	comparePlanes(t, "svc_l2t1_top_left", got, want, blockW, blockH, 1)
+}
+
+// TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1RightEdge pins the analogous
+// right-edge case: the last column block of an SVC L2T1 spatial=1 frame
+// references the rightmost columns of the base plane, with several taps
+// overhanging the source plane and replicated.
+func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1RightEdge(t *testing.T) {
+	const blockW, blockH = 16, 16
+	const srcW, srcH = 64, 64
+	src := scaledTestSourcePlane(srcW, srcH, 1, 0x9b0a)
+
+	sf, err := NewScaleFactors(640, 360, 1280, 720)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	dstX := 2*srcW - blockW
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(dstX, 0, Vector{}, false, false)
+	if err != nil {
+		t.Fatalf("ScaledBlockOrigin: %v", err)
+	}
+
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, blockW)
+	if err != nil {
+		t.Fatalf("xTable: %v", err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapSmooth, blockH)
+	if err != nil {
+		t.Fatalf("yTable: %v", err)
+	}
+
+	got, _ := testPlane(blockW, blockH, 1, blockW)
+	if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+		t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+	}
+
+	const pad = 24
+	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
+	for y := 0; y < srcH+2*pad; y++ {
+		sy := y - pad
+		if sy < 0 {
+			sy = 0
+		} else if sy >= srcH {
+			sy = srcH - 1
+		}
+		for x := 0; x < srcW+2*pad; x++ {
+			sx := x - pad
+			if sx < 0 {
+				sx = 0
+			} else if sx >= srcW {
+				sx = srcW - 1
+			}
+			padded.Pix[y*padded.Stride+x] = src.Pix[sy*src.Stride+sx]
+		}
+	}
+	intX := int(startX >> ScaleSubpelBits)
+	intY := int(startY >> ScaleSubpelBits)
+	subpelX := int(startX & ScaleSubpelMask)
+	subpelY := int(startY & ScaleSubpelMask)
+
+	want, _ := testPlane(blockW, blockH, 1, blockW)
+	libaomConvolveScale2DRef(want, padded, pad+intX, pad+intY, 0, 0, blockW, blockH,
+		subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
+
+	comparePlanes(t, "svc_l2t1_right_edge", got, want, blockW, blockH, 1)
+}
+
+// TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid sweeps the L2T1
+// scaled convolver across a coarse grid of destination positions, motion
+// vectors, and filter combinations, comparing every pixel against the
+// libaom-faithful reference implementation. Any drift in the dispatched
+// scale-factor / sub-pel split / kernel-table lookup would manifest as a
+// non-matching sample here.
+func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid(t *testing.T) {
+	const srcW, srcH = 96, 96
+	src := scaledTestSourcePlane(srcW, srcH, 1, 0xa5a5)
+	sf, err := NewScaleFactors(640, 360, 1280, 720)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	const blockW, blockH = 16, 16
+
+	const pad = 32
+	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
+	for y := 0; y < srcH+2*pad; y++ {
+		sy := y - pad
+		if sy < 0 {
+			sy = 0
+		} else if sy >= srcH {
+			sy = srcH - 1
+		}
+		for x := 0; x < srcW+2*pad; x++ {
+			sx := x - pad
+			if sx < 0 {
+				sx = 0
+			} else if sx >= srcW {
+				sx = srcW - 1
+			}
+			padded.Pix[y*padded.Stride+x] = src.Pix[sy*src.Stride+sx]
+		}
+	}
+
+	dstPositions := []struct{ x, y int }{
+		{0, 0},
+		{16, 0},
+		{0, 16},
+		{32, 32},
+		{2*srcW - blockW, 0},
+		{0, 2*srcH - blockH},
+		{2*srcW - blockW, 2*srcH - blockH},
+	}
+	mvs := []Vector{
+		{Row: 0, Col: 0},
+		{Row: 4, Col: 4},
+		{Row: -3, Col: 5},
+		{Row: -8, Col: 0},
+	}
+	filters := []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpMultiTapSharp, InterpBilinear}
+
+	for _, dst := range dstPositions {
+		dst := dst
+		for _, mv := range mvs {
+			mv := mv
+			for _, fX := range filters {
+				for _, fY := range filters {
+					fX, fY := fX, fY
+					name := fmt.Sprintf("dst%dx%d_mv(%d,%d)_%s/%s", dst.x, dst.y, mv.Row, mv.Col, filterName(fX), filterName(fY))
+					t.Run(name, func(t *testing.T) {
+						startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(dst.x, dst.y, mv, false, false)
+						if err != nil {
+							t.Fatalf("ScaledBlockOrigin: %v", err)
+						}
+						xTable, err := SubpelKernelTableFor(fX, blockW)
+						if err != nil {
+							t.Fatalf("xTable: %v", err)
+						}
+						yTable, err := SubpelKernelTableFor(fY, blockH)
+						if err != nil {
+							t.Fatalf("yTable: %v", err)
+						}
+						got, _ := testPlane(blockW, blockH, 1, blockW)
+						if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+							t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+						}
+						intX := int(startX >> ScaleSubpelBits)
+						intY := int(startY >> ScaleSubpelBits)
+						subpelX := int(startX & ScaleSubpelMask)
+						subpelY := int(startY & ScaleSubpelMask)
+						want, _ := testPlane(blockW, blockH, 1, blockW)
+						libaomConvolveScale2DRef(want, padded, pad+intX, pad+intY, 0, 0, blockW, blockH,
+							subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
+						comparePlanes(t, name, got, want, blockW, blockH, 1)
+					})
+				}
+			}
+		}
 	}
 }
 
