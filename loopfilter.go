@@ -21,18 +21,26 @@ type LoopFilterDeltaState = internalloopfilter.DeltaState
 
 // LoopFilterEdgeRequest carries the geometry and per-edge state required to
 // invoke ApplyLoopFilter6/8/14BlockEdge.
+//
+// See also: LoopFilterResult.
 type LoopFilterEdgeRequest = internalloopfilter.FilterEdgeRequest
 
 // LoopFilter4Request is the LoopFilterEdgeRequest specialization for 4-tap
 // edges (chroma at 4:2:0 and small block boundaries).
+//
+// See also: LoopFilterResult, ApplyLoopFilter4BlockEdge.
 type LoopFilter4Request = internalloopfilter.Filter4Request
 
 // LoopFilterBlockRequest carries the per-block parameters for the dispatched
 // ApplyLoopFilterBlockEdge entry point.
+//
+// See also: LoopFilterResult, ApplyLoopFilterBlockEdge.
 type LoopFilterBlockRequest = internalloopfilter.FilterBlockRequest
 
 // LoopFilterResult reports whether a loop-filter edge was applied and at
 // what effective level.
+//
+// See also: LoopFilterEdgeRequest, LoopFilterBlockRequest.
 type LoopFilterResult = internalloopfilter.FilterResult
 
 // Loop-filter constants.
