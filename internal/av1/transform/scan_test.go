@@ -11,7 +11,7 @@ func TestScanOrderDependencyMatchesLibaom(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ScanSize(%+v): %v", size, err)
 		}
-		for txType := 0; txType < int(TypeCount); txType++ {
+		for txType := range int(TypeCount) {
 			if !libaomTxSizeTypeValid(txSize, txType) {
 				continue
 			}
@@ -171,9 +171,9 @@ func assertLibaomScanOrder(t *testing.T, scan []int16, inverse []int16, width in
 	}
 	switch mode {
 	case ScanModeZigZag:
-		for i := 0; i < dim; i++ {
+		for i := range dim {
 			if i%2 == 0 {
-				for col := 0; col < width; col++ {
+				for col := range width {
 					row := i - col
 					if row >= 0 && row < height {
 						check(row, col)
@@ -181,7 +181,7 @@ func assertLibaomScanOrder(t *testing.T, scan []int16, inverse []int16, width in
 				}
 				continue
 			}
-			for row := 0; row < height; row++ {
+			for row := range height {
 				col := i - row
 				if col >= 0 && col < width {
 					check(row, col)
@@ -189,8 +189,8 @@ func assertLibaomScanOrder(t *testing.T, scan []int16, inverse []int16, width in
 			}
 		}
 	case ScanModeColDiag:
-		for i := 0; i < dim; i++ {
-			for col := 0; col < width; col++ {
+		for i := range dim {
+			for col := range width {
 				row := i - col
 				if row >= 0 && row < height {
 					check(row, col)
@@ -198,8 +198,8 @@ func assertLibaomScanOrder(t *testing.T, scan []int16, inverse []int16, width in
 			}
 		}
 	case ScanModeRowDiag:
-		for i := 0; i < dim; i++ {
-			for row := 0; row < height; row++ {
+		for i := range dim {
+			for row := range height {
 				col := i - row
 				if col >= 0 && col < width {
 					check(row, col)
@@ -207,14 +207,14 @@ func assertLibaomScanOrder(t *testing.T, scan []int16, inverse []int16, width in
 			}
 		}
 	case ScanModeRow1D:
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				check(row, col)
 			}
 		}
 	case ScanModeCol1D:
-		for col := 0; col < width; col++ {
-			for row := 0; row < height; row++ {
+		for col := range width {
+			for row := range height {
 				check(row, col)
 			}
 		}

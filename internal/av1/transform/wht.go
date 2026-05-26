@@ -24,7 +24,7 @@ func InverseWHT4x4Block(dst []int16, dstStride int, coeff []int32, coeffStride i
 
 func inverseWHT4x4EOB16(dst []int16, dstStride int, coeff []int32, coeffStride int) {
 	var output [16]int32
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		a1 := coeff[0*coeffStride+i] >> unitQuantShift
 		c1 := coeff[1*coeffStride+i] >> unitQuantShift
 		d1 := coeff[2*coeffStride+i] >> unitQuantShift
@@ -44,7 +44,7 @@ func inverseWHT4x4EOB16(dst []int16, dstStride int, coeff []int32, coeffStride i
 		output[3*4+i] = d1
 	}
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		a1 := output[i*4+0]
 		c1 := output[i*4+1]
 		d1 := output[i*4+2]
@@ -70,7 +70,7 @@ func inverseWHT4x4EOB1(dst []int16, dstStride int, coeff []int32, coeffStride in
 	e1 := a1 >> 1
 	a1 -= e1
 	tmp := [4]int32{a1, e1, e1, e1}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		e1 = tmp[i] >> 1
 		a1 = tmp[i] - e1
 		dst[0*dstStride+i] = clipInt16(a1)

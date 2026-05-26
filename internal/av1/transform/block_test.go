@@ -300,7 +300,7 @@ func BenchmarkInverseBlockDCT8x8(b *testing.B) {
 	dst := make([]int16, 8*8)
 	scratch := make([]int32, 8*8)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InverseBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}, TypeDCTDCT)
 	}
 }
@@ -309,7 +309,7 @@ func BenchmarkInverseBlockIDTX16x16(b *testing.B) {
 	coeff := make([]int32, 16*16)
 	dst := make([]int16, 16*16)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InverseBlock(dst, 16, coeff, 16, nil, Size{Width: 16, Height: 16}, TypeIDTX)
 	}
 }

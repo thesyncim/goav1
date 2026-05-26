@@ -96,14 +96,14 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 	}
 
 	if shift > 0 {
-		for i := 0; i < scratchLen; i++ {
+		for i := range scratchLen {
 			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), minInt16, maxInt16)
 		}
 	} else {
 		// libaom also clamps the column transform input to max(bd+6, 16) bits
 		// after applying shift[0]. For 4x4 (shift==0) the round-shift above is
 		// skipped but the clamp still applies.
-		for i := 0; i < scratchLen; i++ {
+		for i := range scratchLen {
 			scratch[i] = clipRange(int64(scratch[i]), minInt16, maxInt16)
 		}
 	}
@@ -136,7 +136,7 @@ func inverse1D(c []int32, stride int, length int, typ tx1DType, min int32, max i
 }
 
 func inverseIdentity1D(c []int32, stride int, length int) {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		c[i*stride], _ = identity1DValue(c[i*stride], length)
 	}
 }

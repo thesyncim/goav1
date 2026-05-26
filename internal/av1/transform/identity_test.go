@@ -110,7 +110,7 @@ func TestRoundShiftArrayMatchesLibaomBitSweep(t *testing.T) {
 				t.Fatalf("RoundShiftArray width=%d bit=%d: %v", width, bit, err)
 			}
 			referenceRoundShiftArray(want[:width], bit)
-			for i := 0; i < width; i++ {
+			for i := range width {
 				if got[i] != want[i] {
 					t.Fatalf("RoundShiftArray width=%d bit=%d index=%d got=%d want %d", width, bit, i, got[i], want[i])
 				}
@@ -375,7 +375,7 @@ func BenchmarkInverseIdentityBlock(b *testing.B) {
 		coeff[i] = int32(i%17) - 8
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InverseIdentityBlock(dst, 32, coeff, 32, Size{Width: 32, Height: 32})
 	}
 }

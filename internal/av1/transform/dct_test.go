@@ -232,7 +232,7 @@ func TestInverseDCTBlock4x4Strides(t *testing.T) {
 	if err := InverseDCTBlock(dst, 6, coeff, 6, scratch, Size{Width: 4, Height: 4}); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < 4; row++ {
+	for row := range 4 {
 		for col := 4; col < 6; col++ {
 			if got := dst[row*6+col]; got != 0 {
 				t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
@@ -378,7 +378,7 @@ func BenchmarkInverseDCTBlock4x4(b *testing.B) {
 		coeff[i] = int32(i%9) - 4
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InverseDCTBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4})
 	}
 }
@@ -391,7 +391,7 @@ func BenchmarkInverseDCTBlock8x8(b *testing.B) {
 		coeff[i] = int32(i%17) - 8
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8})
 	}
 }
@@ -400,9 +400,9 @@ func referenceIDCT1DInt(input []int32) []int32 {
 	size := len(input)
 	out := make([]int32, size)
 	invSqrt2 := 1 / math.Sqrt2
-	for k := 0; k < size; k++ {
+	for k := range size {
 		sum := 0.0
-		for n := 0; n < size; n++ {
+		for n := range size {
 			scale := 1.0
 			if n == 0 {
 				scale = invSqrt2
@@ -417,8 +417,8 @@ func referenceIDCT1DInt(input []int32) []int32 {
 
 func av1CoeffOrder(rowMajor []int32, width int, height int) []int32 {
 	out := make([]int32, width*height)
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			out[col*height+row] = rowMajor[row*width+col]
 		}
 	}

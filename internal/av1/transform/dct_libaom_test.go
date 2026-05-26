@@ -344,7 +344,7 @@ func libaomIDCT16(input []int32, output []int32) {
 
 func TestInverseDCT4BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	for trial := 0; trial < 5000; trial++ {
+	for trial := range 5000 {
 		var input [4]int32
 		for i := range input {
 			input[i] = int32(rng.Intn(65536) - 32768)
@@ -363,7 +363,7 @@ func TestInverseDCT4BitExactLibaom(t *testing.T) {
 
 func TestInverseDCT8BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
-	for trial := 0; trial < 5000; trial++ {
+	for trial := range 5000 {
 		var input [8]int32
 		for i := range input {
 			input[i] = int32(rng.Intn(65536) - 32768)
@@ -382,7 +382,7 @@ func TestInverseDCT8BitExactLibaom(t *testing.T) {
 
 func TestInverseDCT16BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
-	for trial := 0; trial < 5000; trial++ {
+	for trial := range 5000 {
 		var input [16]int32
 		for i := range input {
 			input[i] = int32(rng.Intn(65536) - 32768)
@@ -401,7 +401,7 @@ func TestInverseDCT16BitExactLibaom(t *testing.T) {
 
 func TestInverseADST8BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(99))
-	for trial := 0; trial < 5000; trial++ {
+	for trial := range 5000 {
 		var input [8]int32
 		for i := range input {
 			input[i] = int32(rng.Intn(65536) - 32768)

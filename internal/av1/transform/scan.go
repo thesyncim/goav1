@@ -110,7 +110,7 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 	dim := size.Width + size.Height - 1
 	switch mode {
 	case ScanModeZigZag:
-		for i := 0; i < dim; i++ {
+		for i := range dim {
 			if i%2 == 0 {
 				for col := 0; col < size.Width; col++ {
 					row := i - col
@@ -128,7 +128,7 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 			}
 		}
 	case ScanModeColDiag:
-		for i := 0; i < dim; i++ {
+		for i := range dim {
 			for col := 0; col < size.Width; col++ {
 				row := i - col
 				if row >= 0 && row < size.Height {
@@ -137,7 +137,7 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 			}
 		}
 	case ScanModeRowDiag:
-		for i := 0; i < dim; i++ {
+		for i := range dim {
 			for row := 0; row < size.Height; row++ {
 				col := i - row
 				if col >= 0 && col < size.Width {

@@ -28,7 +28,7 @@ func benchmarkInverseDCTBlockSquare(b *testing.B, side int) {
 	b.SetBytes(int64(side*side) * 6)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := InverseDCTBlock(dst, side, coeff, side, scratch, size); err != nil {
 			b.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func BenchmarkInverseBlockHybrid16x16(b *testing.B) {
 	b.SetBytes(int64(side*side) * 6)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := InverseBlock(dst, side, coeff, side, scratch, size, TypeADSTADST); err != nil {
 			b.Fatal(err)
 		}

@@ -30,7 +30,7 @@ func TestInverseADST1DStrided(t *testing.T) {
 
 	values := []int32{100, 99, -20, 99, 30, 99, 7}
 	inverseADST1D(values, 2, 4, minInt16, maxInt16)
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if values[i*2] != want[i] {
 			t.Fatalf("values[%d]=%d want %d", i*2, values[i*2], want[i])
 		}
@@ -52,7 +52,7 @@ func TestInverseFlipADST1DReversesADST(t *testing.T) {
 		flip := append([]int32(nil), input...)
 		inverseADST1D(adst, 1, length, minInt16, maxInt16)
 		inverseFlipADST1D(flip, 1, length, minInt16, maxInt16)
-		for i := 0; i < length; i++ {
+		for i := range length {
 			if flip[i] != adst[length-1-i] {
 				t.Fatalf("length=%d flip[%d]=%d want ADST[%d]=%d", length, i, flip[i], length-1-i, adst[length-1-i])
 			}
@@ -74,9 +74,9 @@ func referenceADST1DInt(input []int32) []int32 {
 		return referenceFADST4New(input)
 	}
 	out := make([]int32, size)
-	for k := 0; k < size; k++ {
+	for k := range size {
 		sum := 0.0
-		for n := 0; n < size; n++ {
+		for n := range size {
 			angle := math.Pi * float64((2*n+1)*(2*k+1)) / float64(4*size)
 			sum += float64(input[n]) * math.Sin(angle)
 		}

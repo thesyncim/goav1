@@ -33,8 +33,8 @@ func TestInverseWHT4x4BlockEOB16(t *testing.T) {
 		0, 0, 0, 0,
 		0, 0, 0, 0,
 	}
-	for row := 0; row < 4; row++ {
-		for col := 0; col < 4; col++ {
+	for row := range 4 {
+		for col := range 4 {
 			if got := dst[row*6+col]; got != want[row*4+col] {
 				t.Fatalf("dst(%d,%d)=%d want %d", col, row, got, want[row*4+col])
 			}
@@ -107,8 +107,8 @@ func FuzzInverseWHT4x4Block(f *testing.F) {
 		coeff := make([]int32, coeffStride*4+1)
 		dst := make([]int16, dstStride*4+1)
 		seeds := [5]int16{c0, c1, c2, c3, c4}
-		for col := 0; col < 4; col++ {
-			for row := 0; row < 4; row++ {
+		for col := range 4 {
+			for row := range 4 {
 				idx := col*coeffStride + row
 				coeff[idx] = int32(seeds[(col+row)%5]) + int32(col)*3 - int32(row)
 			}
@@ -116,7 +116,7 @@ func FuzzInverseWHT4x4Block(f *testing.F) {
 
 		const sentinel = int16(0x5a5a)
 		dst[len(dst)-1] = sentinel
-		for row := 0; row < 4; row++ {
+		for row := range 4 {
 			for col := 4; col < dstStride; col++ {
 				dst[row*dstStride+col] = sentinel
 			}
@@ -128,7 +128,7 @@ func FuzzInverseWHT4x4Block(f *testing.F) {
 		if got := dst[len(dst)-1]; got != sentinel {
 			t.Fatalf("tail sentinel overwritten: got %d want %d", got, sentinel)
 		}
-		for row := 0; row < 4; row++ {
+		for row := range 4 {
 			for col := 4; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != sentinel {
 					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
