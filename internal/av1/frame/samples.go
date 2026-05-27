@@ -91,6 +91,49 @@ func LoadSamplePlane(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, 
 	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, nil
 }
 
+// LoadSamplePlaneFull behaves like LoadSamplePlane but also loads the
+// past-visible row-stride padding columns (samples [Width, Stride/bytesPerSample))
+// for each visible row directly from src.Pix. The returned SamplePlane keeps
+// Width=src.Width so the visible region is reported unchanged; the second
+// return value reports the number of valid columns (in samples) loaded into
+// dst.
+//
+// This variant exists for postfilter passes such as CDEF whose superblock-edge
+// reads extend past the visible plane width into the row-stride padding bytes
+// written by the reconstruction stage (libaom's cdef_prepare_fb central read
+// fetches hsize+HBORDER columns from the YV12 buffer past the visible crop).
+// The default LoadSamplePlane keeps the past-visible columns at whatever value
+// dst already holds, which leaves them at zero for fresh scratch and diverges
+// from libaom.
+//
+// src.Pix must be at least Height*Stride bytes long so the past-visible columns
+// of the final visible row remain in-bounds; this is the normal layout produced
+// by Bind.
+func LoadSamplePlaneFull(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, int, error) {
+	strideSamples, need, err := samplePlaneLayout(src, bytesPerSample, true)
+	if err != nil {
+		return SamplePlane{}, 0, err
+	}
+	if len(dst) < need {
+		return SamplePlane{}, 0, ErrShortBuffer
+	}
+	if src.Width == 0 || src.Height == 0 {
+		return SamplePlane{Pix: dst[:need], Stride: strideSamples, Width: src.Width, Height: src.Height}, 0, nil
+	}
+	fullBytes, ok := checkedMul(src.Height, src.Stride)
+	if !ok || len(src.Pix) < fullBytes {
+		return SamplePlane{}, 0, ErrInvalidPlane
+	}
+	samples := dst[:need]
+	loadedWidth := strideSamples
+	for y := 0; y < src.Height; y++ {
+		srcLine := src.Pix[y*src.Stride : y*src.Stride+loadedWidth*bytesPerSample]
+		dstLine := samples[y*strideSamples : y*strideSamples+loadedWidth]
+		loadSampleLine(dstLine, srcLine, bytesPerSample)
+	}
+	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, loadedWidth, nil
+}
+
 // LoadBorderedSamplePlane expands an 8-bit or little-endian 16-bit byte plane
 // into caller-owned bordered uint16 sample storage. Border samples are left
 // unchanged for callers such as loop restoration to fill with their normal

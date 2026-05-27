@@ -163,7 +163,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		if !ok || !processPlane {
 			continue
 		}
-		src, err := frame.LoadSamplePlane(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
+		src, _, err := frame.LoadSamplePlaneFull(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -326,9 +326,31 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 }
 
 func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, unitY int, unitW int, unitH int) error {
+	// Extend the read past the visible plane width into the row-stride padding
+	// columns when src.Stride supplies them. libaom's cdef_prepare_fb reads
+	// hsize+HBORDER cols from the YV12 buffer where hsize is rounded up to
+	// MI_SIZE_LOG2*2 (8-pixel) alignment, not the visible crop, so the
+	// past-visible MI-padding pixels written by the reconstruction stage
+	// participate in the kernel's secondary taps for the visible cols.
+	//
+	// Cap the read width to the MI*2-aligned visible width (matching libaom's
+	// mi_cols * MI_SIZE alignment) so we don't pull in row-stride padding past
+	// the MI grid, which would be stale (no reconstruction wrote there). The
+	// production call site loads the plane with LoadSamplePlaneFull so those
+	// past-visible MI-pad columns are valid; the unit-test call sites use
+	// src.Stride == src.Width, which leaves readWidth at src.Width and matches
+	// the legacy visible-only behaviour.
+	readWidth := src.Width
+	if src.Stride > src.Width {
+		miAlignedWidth := (src.Width + 7) &^ 7
+		readWidth = miAlignedWidth
+		if readWidth > src.Stride {
+			readWidth = src.Stride
+		}
+	}
 	srcX0 := maxInt(unitX-cdef.HorizontalBorder, 0)
 	srcY0 := maxInt(unitY-cdef.VerticalBorder, 0)
-	srcX1 := minInt(unitX+unitW+cdef.HorizontalBorder, src.Width)
+	srcX1 := minInt(unitX+unitW+cdef.HorizontalBorder, readWidth)
 	srcY1 := minInt(unitY+unitH+cdef.VerticalBorder, src.Height)
 	copyW := srcX1 - srcX0
 	copyH := srcY1 - srcY0
