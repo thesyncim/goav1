@@ -269,7 +269,12 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 			}
 			z := min(roundPowerOfTwoUnsigned(p*uint32(params.S[radiusIndex]), SGRProjMTableBits), 255)
 			aBuf[k] = xByXPlus1Value(z)
-			bBuf[k] = int32(roundPowerOfTwoUnsigned(uint32(SGRProjSgr-int(aBuf[k]))*b*uint32(oneByX[n-1]), SGRProjRecipBits))
+			// libaom uses the raw (unshifted) B[k] in the post-update, NOT the
+			// bit-depth-scaled local `b`. Using the scaled b mistakenly scales
+			// the SGR smoothed image by an extra 1<<(bit_depth-8) factor for
+			// 10/12-bit input, producing the q63 first-frame divergence in flt
+			// even when reconstruction and CDEF are byte-exact.
+			bBuf[k] = int32(roundPowerOfTwoUnsigned(uint32(SGRProjSgr-int(aBuf[k]))*uint32(bBuf[k])*uint32(oneByX[n-1]), SGRProjRecipBits))
 		}
 	}
 }
