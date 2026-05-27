@@ -20,6 +20,19 @@ func TestQuantLookupMatchesAV1Tables(t *testing.T) {
 		{name: "8 bit max", bitDepth: 8, qIndex: 255, wantDC: 1336, wantAC: 1828},
 		{name: "10 bit max", bitDepth: 10, qIndex: 255, wantDC: 5347, wantAC: 7312},
 		{name: "12 bit max", bitDepth: 12, qIndex: 255, wantDC: 21387, wantAC: 29247},
+		// libaom av1-1-b8-05-mv.ivf frame 0 keyframe: BaseQIdx=37, all deltas 0.
+		// libaom decodetxb dump records dequant[0]=38 dequant[1]=44 for every
+		// block. q=37 -> dc_qlookup_QTX[37]=38, ac_qlookup_QTX[37]=44. Pinning
+		// this rules out an off-by-one in the 8-bit lookup table when the
+		// shared frame-1 regression fires.
+		{name: "8 bit mv keyframe q37", bitDepth: 8, qIndex: 37, wantDC: 38, wantAC: 44},
+		// libaom av1-1-b8-05-mv.ivf frame 1 displayed inter frame:
+		// BaseQIdx=81, all deltas 0, no segmentation, no qmatrix. libaom
+		// decodetxb dump shows dequant[0]=74 dequant[1]=88 for every block.
+		// q=81 -> dc_qlookup_QTX[81]=74, ac_qlookup_QTX[81]=88. If a future
+		// refactor breaks this, the MV strict-MD5 vector will fail and this
+		// pin will surface a quantize-table-level regression.
+		{name: "8 bit mv inter q81", bitDepth: 8, qIndex: 81, wantDC: 74, wantAC: 88},
 	}
 	for _, tt := range tests {
 		dc, err := DCQuant(tt.qIndex, 0, tt.bitDepth)
@@ -85,6 +98,43 @@ func TestPlaneQuantizer(t *testing.T) {
 	}
 	if v != (Quantizer{DC: 93, AC: 114}) {
 		t.Fatalf("v=%+v want dc=93 ac=114", v)
+	}
+}
+
+// TestPlaneQuantizerMatchesLibaomMVFrame1 pins the libaom-extracted dq_dc/dq_ac
+// values for av1-1-b8-05-mv.ivf frame 1 (BaseQIdx=81, no deltas, no
+// segmentation, no qmatrix). libaom's decodetxb dumps dequant[0]=74
+// dequant[1]=88 for every block of that frame across Y, U, and V planes; this
+// test pins the same values for PlaneY/U/V so any regression in the qindex ->
+// dequant table chain surfaces here before reaching the MD5 oracle.
+func TestPlaneQuantizerMatchesLibaomMVFrame1(t *testing.T) {
+	params := parser.QuantizationParams{BaseQIdx: 81}
+	for _, plane := range []Plane{PlaneY, PlaneU, PlaneV} {
+		got, err := PlaneQuantizer(params, params.BaseQIdx, 8, plane)
+		if err != nil {
+			t.Fatalf("plane=%d PlaneQuantizer err=%v", plane, err)
+		}
+		if got != (Quantizer{DC: 74, AC: 88}) {
+			t.Fatalf("plane=%d quantizer=%+v want {DC:74 AC:88}", plane, got)
+		}
+	}
+}
+
+// TestPlaneQuantizerMatchesLibaomMVKeyframe pins the libaom-extracted
+// dq_dc/dq_ac values for av1-1-b8-05-mv.ivf frame 0 keyframe (BaseQIdx=37, no
+// deltas). libaom dumps dequant[0]=38 dequant[1]=44 for every block of frame
+// 0. Pairing this with the frame-1 pin documents the qindex range over which
+// the MV vector exercises the dequant chain.
+func TestPlaneQuantizerMatchesLibaomMVKeyframe(t *testing.T) {
+	params := parser.QuantizationParams{BaseQIdx: 37}
+	for _, plane := range []Plane{PlaneY, PlaneU, PlaneV} {
+		got, err := PlaneQuantizer(params, params.BaseQIdx, 8, plane)
+		if err != nil {
+			t.Fatalf("plane=%d PlaneQuantizer err=%v", plane, err)
+		}
+		if got != (Quantizer{DC: 38, AC: 44}) {
+			t.Fatalf("plane=%d quantizer=%+v want {DC:38 AC:44}", plane, got)
+		}
 	}
 }
 
