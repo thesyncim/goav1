@@ -640,6 +640,117 @@ func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
 	}
 }
 
+// TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1 pins the entropy-decode
+// context invariants for the canonical inter-frame eob=1 single-DC TX_64X64
+// block. libaom's mv test vector at frame 1 mi=(0,0) plane=0 produces a
+// 64x64 luma TXB with tx_class=2D, eob=1, level=3 (sign=neg), dq_dc=74 →
+// dq=-55 after the 64x64 av1_get_tx_scale shift. The decode reads:
+//   - TXBSkip CDF at txs_ctx=4 (CoeffTransformSizeContext for TX_64X64).
+//   - EOB CDF1024 at plane=Y eob_multi_ctx=0 (2D class) → eob=1.
+//   - LowerLevelsCtxEOB(scanSize=32x32, c=0) → 0 (DC of last-coeff branch).
+//   - CoeffBaseEOB CDF at txs_ctx=4, plane=Y, ctx=0 → level=3 (base=3
+//     forces the BR loop).
+//   - CoeffBRContextEOB(TX_64X64, Class2D, pos=0) → 0 (DC of BR branch).
+//   - CoeffBR CDF at AOMMIN(txs_ctx, TX_32X32)=3, plane=Y, ctx=0 (read at
+//     least once, but for level=3 yields k=0 which terminates the loop and
+//     leaves level at 3 unchanged).
+//   - DCSign CDF at plane=Y, dc_sign_ctx=DCSignContext → sign=neg.
+//
+// Pinning these context values guards against regressions in the
+// rectangular-bias rework, the CoeffBR txs-clamp, or the EOB-branch
+// context functions that would silently mis-route the entropy reads for
+// a single-coefficient 64x64 block.
+func TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1(t *testing.T) {
+	txsCtx, err := CoeffTransformSizeContext(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if txsCtx != 4 {
+		t.Fatalf("CoeffTransformSizeContext(TX_64X64)=%d want 4", txsCtx)
+	}
+
+	eobMultiSize, err := EOBMultiSize(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eobMultiSize != 6 {
+		t.Fatalf("EOBMultiSize(TX_64X64)=%d want 6 (eob_flag_cdf1024)", eobMultiSize)
+	}
+
+	scanSize, err := transform.ScanSize(transform.Size{Width: 64, Height: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanSize.Width != 32 || scanSize.Height != 32 {
+		t.Fatalf("ScanSize(TX_64X64)=%+v want 32x32 (av1_get_adjusted_tx_size)", scanSize)
+	}
+
+	if got, err := transform.LowerLevelsCtxEOB(scanSize, 0); err != nil || got != 0 {
+		t.Fatalf("LowerLevelsCtxEOB(32x32, c=0)=%d err=%v want 0", got, err)
+	}
+
+	if got, err := CoeffBRContextEOB(TransformSize64x64, transform.Class2D, 0); err != nil || got != 0 {
+		t.Fatalf("CoeffBRContextEOB(TX_64X64, 2D, pos=0)=%d err=%v want 0", got, err)
+	}
+
+	// CoeffBR CDF is clamped to TX_32X32 (txs_ctx=3) for tx sizes >= 32x32;
+	// verify the CDF lookup does the AOMMIN clamp documented in libaom's
+	// read_coeffs_txb (coeff_br_cdf[AOMMIN(txs_ctx, TX_32X32)]).
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(81); err != nil {
+		t.Fatal(err)
+	}
+	brCDF, err := cdfs.CoeffBRCDF(TransformSize64x64, CoeffPlaneY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brCDF32, err := cdfs.CoeffBRCDF(TransformSize32x32, CoeffPlaneY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cdfValuesEqual(brCDF.Values(), brCDF32.Values()) {
+		t.Fatalf("CoeffBRCDF(TX_64X64) diverges from TX_32X32 clamp: got=%v want=%v",
+			brCDF.Values(), brCDF32.Values())
+	}
+
+	// qindex=81 lives in q-context 2 (60 < q <= 120). A regression in the
+	// q-context selection would silently swap the CDF cohort the mv vector
+	// reads coefficients with for every frame past the keyframe.
+	if got := CoeffQContext(81); got != 2 {
+		t.Fatalf("CoeffQContext(81)=%d want 2 (mv vector inter-frame qctx)", got)
+	}
+
+	// The eob=1 decode path stores level into levels[get_padded_idx(0, bhl)],
+	// which for TX_64X64 (height=32, bhl=5) is just index 0 (since
+	// (0 >> 5) << TX_PAD_HOR_LOG2 = 0). A regression where pos=0 lands on
+	// a padded index would silently corrupt subsequent CoeffLowerLevelsContext
+	// reads when a non-eob-only block coexists with the DC entry.
+	scratchLen, err := CoeffLevelsScratchLen(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := make([]uint8, scratchLen)
+	if err := setCoeffLevel(levels, TransformSize64x64, 0, 3); err != nil {
+		t.Fatal(err)
+	}
+	if levels[0] != 3 {
+		t.Fatalf("setCoeffLevel(TX_64X64, pos=0, 3) stored level at padded idx %d want 0",
+			indexOfNonZero(levels))
+	}
+	if got, err := coeffLevel(levels, TransformSize64x64, 0); err != nil || got != 3 {
+		t.Fatalf("coeffLevel(TX_64X64, 0)=%d err=%v want 3", got, err)
+	}
+}
+
+func indexOfNonZero(levels []uint8) int {
+	for i, v := range levels {
+		if v != 0 {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestCoeffTraceStubIsNoOp guards the goav1_coeff_trace build tag's no-op
 // stub. The trace helpers are wired into ReadCoefficientsTXB hot paths to
 // capture (c, pos, base, golomb, level, sign) tuples for cross-validation
