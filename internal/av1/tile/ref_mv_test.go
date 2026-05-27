@@ -1039,12 +1039,13 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	}
 }
 
-// TestScanOuterBlockReferenceMVSkipsSBTop verifies that the fallback does
-// NOT engage for the SB-strictly-above direction (x >= 0, y < 0). The
-// SB-above snapshot is populated for IBC outer scans only and engaging it
-// for the regular MV path destabilises downstream inter MV / coefficient
-// decode on libaom_av1_8-bit_mv.
-func TestScanOuterBlockReferenceMVSkipsSBTop(t *testing.T) {
+// TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary verifies the SBTop
+// fallback in scanGridBlockReferenceMV gates on the candidate cell's mi_row
+// staying within the tile. When the block sits in the topmost SB row of its
+// tile, the (-1, -1) lookup at (x>=0, y<0) crosses the tile boundary and the
+// fallback must return without adding a candidate, mirroring libaom's
+// scan_blk_mbmi() is_inside() check.
+func TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary(t *testing.T) {
 	var ctx BlockModeContext
 	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
 	mv := InterMotionResult{
@@ -1052,28 +1053,114 @@ func TestScanOuterBlockReferenceMVSkipsSBTop(t *testing.T) {
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
 		MV:         [2]motion.Vector{{Row: 1, Col: 2}},
 	}
-	// Populate top snapshot that the fallback must NOT use for the
-	// (x >= 0, y < 0) case where the candidate sits strictly above the
-	// current SB (and not on the diagonal up-and-left corner).
 	ctx.SBTopInterMotionGrid[0][15] = mv
 	ctx.SBTopMotionValidGrid[0][15] = 1
 	ctx.SBTopBlockSizeGrid[0][15] = BlockSize8x8
 	ctx.SBTopBlockSizeVisitedGrid[0][15] = 1
 
-	// y4<0 case: block at (X4=16, Y4=0), offset (-1, -1) -> (x=15, y=-1).
+	// y4<0 case: block at (X4=16, Y4=0) inside topmost SB row of tile.
+	// mi_row=0, tile_row_start=0, so the (-1, -1) lookup at y=-1 crosses
+	// the tile boundary (mi_row + y = -1 < tile_row_start=0).
 	var matches, newMatches int
 	stack := ReferenceMVStack{}
 	reqTop := ReferenceMVStackRequest{
-		Size:       BlockSize8x8,
-		References: target,
-		X4:         16,
-		Y4:         0,
-		HaveTop:    true,
-		HaveLeft:   true,
+		Size:           BlockSize8x8,
+		References:     target,
+		X4:             16,
+		Y4:             0,
+		MIRow:          0,
+		MICol:          16,
+		TileMIRowStart: 0,
+		TileMIRowEnd:   72,
+		TileMIColStart: 0,
+		TileMIColEnd:   88,
+		HaveTop:        true,
+		HaveLeft:       true,
 	}
 	ctx.scanGridBlockReferenceMV(reqTop, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
-		t.Fatalf("expected no candidates from SBTop fallback, matches=%d stack.Count=%d", matches, stack.Count)
+		t.Fatalf("expected no candidates across tile boundary, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+}
+
+// TestScanOuterBlockReferenceMVUsesSBTopCorner verifies that the
+// scanGridBlockReferenceMV(-1, -1) outer scan picks up the cell directly
+// above the current block when that cell sits in the SB-row above the
+// current SB (x4>=0, y4<0) and the tile-row check passes. libaom's
+// scan_blk_mbmi accesses xd->mi[(-1)*stride + (-1)] which translates to the
+// frame mi cell (mi_row-1, mi_col-1). goav1 stages the prior SB-row's
+// bottom-most grid row in SBTopInterMotionGrid[0][col] so the scan can
+// reach across the SB boundary.
+//
+// This is the missing entry that desyncs cdf_update frame 1 mi=(64,2):
+// libaom's stack[1] becomes (9,-71) (the ABOVE entry) after the
+// (-1, -1) corner scan finds the SB-above bottom cell (block (62,0)
+// mv=(7,21)) and bumps the LEFT entry's weight, pushing the LEFT entry
+// out of stack[1] via the post-scan sort. Without this fallback goav1's
+// stack[1] stays (7,21) and the NEARMV decode picks the wrong MV,
+// cascading into the (68,0) seq=228966 DRL/joint divergence.
+func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	cornerMV := motion.Vector{Row: 7, Col: 21}
+	candidate := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{cornerMV},
+	}
+	// Block (mi_row=64, mi_col=2) inside SB(2, 0) at X4=2 Y4=0. The
+	// (-1, -1) corner maps to (x=1, y=-1), which translates to frame
+	// (mi_row=63, mi_col=1). That cell lives in SB(1, 0) and is staged
+	// in SBTopInterMotionGrid[0][1] (depth 0 = SB-above's bottom row).
+	ctx.SBTopInterMotionGrid[0][1] = candidate
+	ctx.SBTopMotionValidGrid[0][1] = 1
+	ctx.SBTopBlockSizeGrid[0][1] = BlockSize8x8
+	ctx.SBTopBlockSizeVisitedGrid[0][1] = 1
+
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	req := ReferenceMVStackRequest{
+		Size:           BlockSize8x16,
+		References:     target,
+		X4:             2,
+		Y4:             0,
+		MIRow:          64,
+		MICol:          2,
+		TileMIRowStart: 0,
+		TileMIRowEnd:   72,
+		TileMIColStart: 0,
+		TileMIColEnd:   88,
+		HaveTop:        true,
+		HaveLeft:       true,
+	}
+	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	if matches != 1 || stack.Count != 1 {
+		t.Fatalf("expected SBTop corner match, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+	if stack.Candidates[0].This != cornerMV {
+		t.Fatalf("stack[0].This=%+v want %+v", stack.Candidates[0].This, cornerMV)
+	}
+
+	// Sanity: gating on HaveTop. When the current SB is the topmost SB row
+	// of its tile, HaveTop=false and the lookup must return without adding
+	// a candidate (the cell is outside the tile).
+	matches, newMatches = 0, 0
+	stack = ReferenceMVStack{}
+	reqNoTop := req
+	reqNoTop.HaveTop = false
+	ctx.scanGridBlockReferenceMV(reqNoTop, -1, -1, &matches, &newMatches, &stack)
+	if matches != 0 || stack.Count != 0 {
+		t.Fatalf("expected no match without HaveTop, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+
+	// Sanity: when SBTopMotionValidGrid[0][1]=0 (snapshot empty for that
+	// column), the lookup must return without adding a candidate.
+	ctx.SBTopMotionValidGrid[0][1] = 0
+	matches, newMatches = 0, 0
+	stack = ReferenceMVStack{}
+	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	if matches != 0 || stack.Count != 0 {
+		t.Fatalf("expected no match when SBTopMotionValidGrid empty, matches=%d stack.Count=%d", matches, stack.Count)
 	}
 }
 

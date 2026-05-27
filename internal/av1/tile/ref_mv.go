@@ -1132,32 +1132,55 @@ func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest,
 	y := req.Y4 + rowOffset
 	candidate, size, ok := c.gridInterMotion(x, y)
 	if !ok {
-		// Fall back to the cross-SB snapshots only for cells in the SB to the
-		// LEFT of the current one (x < 0, y >= 0) or the SB diagonally
-		// up-and-to-the-left (x < 0, y < 0). libaom's frame-level mi grid
-		// covers these neighbors without an SB boundary; without the fallback
-		// goav1 silently drops them, undercounting RowMatches for the outer
-		// scan at (-1, -1) when the current block sits at the top-left corner
-		// of an SB whose diagonal-up-left neighbor (in the prior SB) is an
-		// inter block matching the current block's reference frame. This
-		// shifts the refmv mode-context and steers refmv_cdf one cell off
-		// libaom, e.g. monochrome frame 3 mi=(16,64) where libaom's top-left
-		// (15,63) corner cell sits inside SB(3,0)'s BLOCK_64X64 with ref0=LAST
-		// matching the request and contributes RowMatches=1; without the
-		// diagonal fallback goav1 reports RowMatches=0 and computes
-		// mode_context=51 (refCtx=3) instead of libaom's 67 (refCtx=4).
+		// Fall back to the cross-SB snapshots when the lookup crosses the
+		// current superblock's boundary. libaom's frame-level mi grid covers
+		// these neighbors via xd->mi[row_offset*stride + col_offset]; goav1
+		// stages the prior-SB cells in SBTop* / SBLeft* / SBDiagonal* at SB
+		// store time, gated by per-snapshot Valid bits.
 		//
-		// Cells in the SB strictly above (y < 0, x >= 0) are intentionally NOT
-		// routed through the cross-SB snapshots here: the IBC top grids carry
-		// inter-motion state captured at SB store time, but the regular inter
-		// MV scan in libaom applies tile/coding bounds the snapshots do not
-		// encode, and engaging that path destabilises the mv vector residual
-		// decode and causes downstream coeff golomb state errors on
-		// libaom_av1_8-bit_mv.
-		if x >= 0 {
-			return
-		}
-		if y < 0 {
+		// The case-by-case fallback handles:
+		//   - y<0, x<0 (top-left diagonal cell) via SBDiagonal: needed for
+		//     monochrome frame 3 mi=(16,64) where the SB(3,0) bottom-right
+		//     corner cell at (15,63) hosts an inter LAST block contributing
+		//     RowMatches=1; without the fallback ctx=51 (refCtx=3) instead of
+		//     libaom's 67 (refCtx=4).
+		//   - y<0, x>=0 (strictly-above cell within the current SB column)
+		//     via SBTop: needed for cdf_update frame 1 mi=(64,2) where the
+		//     outer (-1,-1) scan reads the SB-above bottom row to find a
+		//     duplicate of the LEFT candidate's MV and bump its weight, which
+		//     flips the post-sort NEAR slot from stack[1]=(7,21) (the LEFT
+		//     entry) to stack[1]=(9,-71) (the ABOVE entry). Without the
+		//     fallback the decoded NEAR MV is (7,21) instead of (9,-71),
+		//     which then propagates into subsequent block decisions and
+		//     desyncs the entropy stream starting at the (68,0) seq=228966
+		//     newmv/drl divergence.
+		//   - x<0, y>=0 (strictly-left cell within the current SB row) via
+		//     SBLeft, mirroring the SBTop case for the column dimension.
+		//
+		// The SB-top fallback must be gated on req.HaveTop AND mi_row >
+		// tile_row_start (the cell's mi-row mi_row+y must not cross the tile
+		// boundary). libaom's is_inside() applies the same per-direction
+		// check.
+		if y < 0 && x >= 0 {
+			if !req.HaveTop {
+				return
+			}
+			// Tile-row check: mi_row + y must be >= tile_row_start. The
+			// SB-top snapshot only carries the prior-SB grid contents, but
+			// the candidate at that cell is invalid (across the tile) if the
+			// current block sits at the first SB row of its tile.
+			if int64(req.MIRow)+int64(y) < int64(req.TileMIRowStart) {
+				return
+			}
+			depth := -y - 1
+			if depth < 0 || depth >= intrabcCrossSBHistory ||
+				x >= MaxBlockModeSlots ||
+				c.SBTopMotionValidGrid[depth][x] == 0 {
+				return
+			}
+			candidate = c.SBTopInterMotionGrid[depth][x]
+			size = c.SBTopBlockSizeGrid[depth][x]
+		} else if y < 0 {
 			// Diagonal up-left cell: served from the SBDiagonal carrier
 			// snapshotted from the SB that finished decoding directly
 			// up-and-to-the-left of the current SB. Mirrors the intrabc
