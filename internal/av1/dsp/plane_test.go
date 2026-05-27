@@ -97,6 +97,108 @@ func TestAddResidualPlaneBlockHighBitDepthClips(t *testing.T) {
 	}
 }
 
+// TestAddResidualPlaneBlock10BitHighQRegression pins the 10-bit residual
+// addition path to libaom's highbd_clip_pixel_add semantics for q63-style
+// inputs: a DC predictor at the 10-bit midpoint (512) combined with the
+// large signed residuals produced by high-QP dequant + IDCT for 10-bit
+// content. Specifically:
+//   - predictor=512 (1<<(bd-1)) is the AV1 fallback for first-block intra DC
+//   - residuals span the full int16 range; the result must clip to [0,1023]
+//     not [0,255], and must preserve the high byte of the LE uint16 sample
+//
+// This guards against historical "samples ~4-5x too low" regressions where
+// the high BD residual write path accidentally clipped at 0xff or stored
+// only the low byte of the LE sample.
+func TestAddResidualPlaneBlock10BitHighQRegression(t *testing.T) {
+	const (
+		width   = 8
+		height  = 8
+		bd      = 10
+		predDC  = 1 << (bd - 1) // 512: AV1 default DC predictor for 10-bit
+		bdClip  = (1 << bd) - 1 // 1023
+		strideB = width * 2
+	)
+	plane, _ := testPlane(width, height, 2, strideB)
+	if err := FillPlaneBlock(plane, 2, 0, 0, width, height, predDC); err != nil {
+		t.Fatal(err)
+	}
+	// Residuals chosen to span: small positive, small negative, large positive
+	// (must clip), large negative (must clip), and exact in-range values.
+	// At q63 10-bit, real IDCT residuals can hit ~+/-2048 after the bd+6
+	// column clamp and 4-bit round-shift.
+	residual := make([]int16, width*height)
+	for i := range residual {
+		switch i % 8 {
+		case 0:
+			residual[i] = 0 // identity case
+		case 1:
+			residual[i] = 1 // smallest positive
+		case 2:
+			residual[i] = -1 // smallest negative
+		case 3:
+			residual[i] = 200 // small positive: 512+200=712, in-range
+		case 4:
+			residual[i] = -300 // 512-300=212, in-range
+		case 5:
+			residual[i] = 1000 // 512+1000=1512 -> must clip to 1023
+		case 6:
+			residual[i] = -1000 // 512-1000=-488 -> must clip to 0
+		case 7:
+			residual[i] = 2047 // largest q63-realistic positive -> clip to 1023
+		}
+	}
+	if err := AddResidualPlaneBlock(plane, 2, bd, 0, 0, width, height, residual, width); err != nil {
+		t.Fatal(err)
+	}
+	want := []uint16{predDC, predDC + 1, predDC - 1, predDC + 200, predDC - 300, bdClip, 0, bdClip}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			got := getSample(plane, 2, x, y)
+			expected := want[x%8]
+			if got != expected {
+				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, expected)
+			}
+		}
+	}
+	// Verify the high byte of every sample is the correct upper bits of the
+	// 10-bit value (catches a "store only low byte" regression).
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			off := y*plane.Stride + x*2
+			lo := plane.Pix[off]
+			hi := plane.Pix[off+1]
+			expected := want[x%8]
+			if uint16(lo)|uint16(hi)<<8 != expected {
+				t.Fatalf("sample(%d,%d) LE bytes=(lo=%d,hi=%d) reconstruct=%d want %d",
+					x, y, lo, hi, uint16(lo)|uint16(hi)<<8, expected)
+			}
+		}
+	}
+}
+
+// TestAddResidualPlaneBlock10BitClipBoundary pins that AddResidualPlaneBlock
+// applies the bit-depth-aware clip (1023 for bd=10) and not the byte clip
+// (255). A predictor right at 255 + a residual of 100 must produce 355 in
+// 10-bit, not 255.
+func TestAddResidualPlaneBlock10BitClipBoundary(t *testing.T) {
+	plane, _ := testPlane(4, 1, 2, 8)
+	if err := FillPlaneBlock(plane, 2, 0, 0, 4, 1, 255); err != nil {
+		t.Fatal(err)
+	}
+	residual := []int16{100, 200, 768, 769}
+	if err := AddResidualPlaneBlock(plane, 2, 10, 0, 0, 4, 1, residual, 4); err != nil {
+		t.Fatal(err)
+	}
+	// 255+100=355, 255+200=455, 255+768=1023, 255+769=1024 -> clip to 1023.
+	want := []uint16{355, 455, 1023, 1023}
+	for x := 0; x < 4; x++ {
+		got := getSample(plane, 2, x, 0)
+		if got != want[x] {
+			t.Fatalf("sample(%d,0)=%d want %d", x, got, want[x])
+		}
+	}
+}
+
 func TestPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	plane, _ := testPlane(4, 4, 1, 4)
 	if err := FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, ErrInvalidBlock) {
