@@ -100,6 +100,24 @@ type BlockModeContext struct {
 	SBTopBlockSizeGrid        [intrabcCrossSBHistory][MaxBlockModeSlots]BlockSize
 	SBTopBlockSizeVisitedGrid [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 
+	// SBTopRightInterMotion mirrors the bottom row of the SB that lives above
+	// and to the right of the current superblock. Its sole consumer is the
+	// topright (mi_col+W4, mi_row-1) lookup when X4+W4 == MaxBlockModeSlots
+	// (the block touches the current SB's right edge with sbSizeMIB ==
+	// MaxBlockModeSlots): the cell lives across the right SB boundary, which
+	// AboveInterMotion cannot represent because slot indices saturate at
+	// MaxBlockModeSlots. Slot i holds the cell at frame
+	// mi(mi_row-1, rightSBStartCol + i) where rightSBStartCol is the mi_col
+	// of the SB column immediately right of the current one. libaom's
+	// frame-wide mi grid covers this cell directly via xd->mi[-stride +
+	// xd->width]; goav1 stages it from carrier.Above[rootColIndex+1] at SB
+	// load time.
+	SBTopRightInterMotion [MaxBlockModeSlots]InterMotionResult
+	SBTopRightMotionValid [MaxBlockModeSlots]uint8
+	SBTopRightBlockSize   [MaxBlockModeSlots]BlockSize
+	SBTopRightIntra       [MaxBlockModeSlots]uint8
+	SBTopRightValid       bool
+
 	// SBLeftInterMotion is the SB-row-equivalent snapshot of the column
 	// immediately to the left of the current superblock. LeftInterMotion is
 	// overwritten as in-SB blocks decode, but cross-SB scans need the prior

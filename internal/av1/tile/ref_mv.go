@@ -1425,8 +1425,31 @@ func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims
 		candidate, size, ok := c.gridInterMotion(x, y)
 		return candidate, size, ok
 	}
-	if !req.HaveTop || x < 0 || x >= MaxBlockModeSlots ||
-		c.AboveIntra[x] != 0 || c.AboveMotionValid[x] == 0 {
+	if !req.HaveTop || x < 0 {
+		return InterMotionResult{}, 0, false
+	}
+	if x >= MaxBlockModeSlots {
+		// Block sits at the current SB's right edge with sbSizeMIB ==
+		// MaxBlockModeSlots, so the topright cell at frame
+		// mi(mi_row-1, mi_col+W4) lives in the SB-above-and-to-the-right.
+		// AboveInterMotion cannot represent slot >= MaxBlockModeSlots, so the
+		// SB-above-right snapshot loaded from carrier.Above[rootColIndex+1] at
+		// SB load time supplies the cell. Slot indexed by offset within the
+		// right SB, i.e. x - MaxBlockModeSlots when sbSizeMIB ==
+		// MaxBlockModeSlots. Mirrors libaom xd->mi[-stride + xd->width].
+		if !c.SBTopRightValid {
+			return InterMotionResult{}, 0, false
+		}
+		slot := x - MaxBlockModeSlots
+		if slot < 0 || slot >= MaxBlockModeSlots {
+			return InterMotionResult{}, 0, false
+		}
+		if c.SBTopRightIntra[slot] != 0 || c.SBTopRightMotionValid[slot] == 0 {
+			return InterMotionResult{}, 0, false
+		}
+		return c.SBTopRightInterMotion[slot], c.SBTopRightBlockSize[slot], true
+	}
+	if c.AboveIntra[x] != 0 || c.AboveMotionValid[x] == 0 {
 		return InterMotionResult{}, 0, false
 	}
 	return c.AboveInterMotion[x], c.AboveBlockSize[x], true

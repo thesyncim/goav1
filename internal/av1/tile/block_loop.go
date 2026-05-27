@@ -703,6 +703,22 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 		mode.SBTopMotionValid[dst] = right.mode.MotionValid[off]
 		mode.SBTopBlockSize[dst] = right.mode.BlockSize[off]
 	}
+	// SBTopRight* carries the right-SB-above bottom row indexed by offset
+	// within the right SB. topRightInterMotion consults this when X4+W4 >=
+	// MaxBlockModeSlots — the case sbSizeMIB == MaxBlockModeSlots (SB128x128)
+	// where extendAboveContextFromRightCarrier's [sbSizeMIB..2*sbSizeMIB) write
+	// range is fully out of slot range. Mirrors libaom's frame-wide mi grid
+	// lookup xd->mi[-stride + xd->width] for cells past the current SB's right
+	// edge. Loading the full MaxBlockModeSlots row works for any sbSizeMIB <=
+	// MaxBlockModeSlots since the right-SB-above contexts use the same array
+	// dimensions.
+	for off := 0; off < MaxBlockModeSlots; off++ {
+		mode.SBTopRightInterMotion[off] = right.mode.InterMotion[off]
+		mode.SBTopRightMotionValid[off] = right.mode.MotionValid[off]
+		mode.SBTopRightBlockSize[off] = right.mode.BlockSize[off]
+		mode.SBTopRightIntra[off] = right.mode.Intra[off]
+	}
+	mode.SBTopRightValid = true
 	// Depth-0 of the history grid mirrors SBTopInterMotion (= the bottom row
 	// of the prior SB above us). The deeper history rows come from
 	// right.mode.InterMotionHistory[d-1] et al., which capture the bottom
