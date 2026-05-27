@@ -1039,13 +1039,12 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	}
 }
 
-// TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal verifies that the
-// fallback engages only for the SB-to-the-LEFT direction. The SB-above and
-// diagonal cross-SB snapshots are intentionally NOT routed through the
-// regular inter MV outer scan: their cells are populated for IBC outer
-// scans and engaging them for the regular MV path destabilises downstream
-// inter MV / coefficient decode on libaom_av1_8-bit_mv.
-func TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal(t *testing.T) {
+// TestScanOuterBlockReferenceMVSkipsSBTop verifies that the fallback does
+// NOT engage for the SB-strictly-above direction (x >= 0, y < 0). The
+// SB-above snapshot is populated for IBC outer scans only and engaging it
+// for the regular MV path destabilises downstream inter MV / coefficient
+// decode on libaom_av1_8-bit_mv.
+func TestScanOuterBlockReferenceMVSkipsSBTop(t *testing.T) {
 	var ctx BlockModeContext
 	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
 	mv := InterMotionResult{
@@ -1053,15 +1052,13 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal(t *testing.T) {
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
 		MV:         [2]motion.Vector{{Row: 1, Col: 2}},
 	}
-	// Populate top and diagonal snapshots that the fallback must NOT use.
+	// Populate top snapshot that the fallback must NOT use for the
+	// (x >= 0, y < 0) case where the candidate sits strictly above the
+	// current SB (and not on the diagonal up-and-left corner).
 	ctx.SBTopInterMotionGrid[0][15] = mv
 	ctx.SBTopMotionValidGrid[0][15] = 1
 	ctx.SBTopBlockSizeGrid[0][15] = BlockSize8x8
 	ctx.SBTopBlockSizeVisitedGrid[0][15] = 1
-	ctx.SBDiagonalInterMotionGrid[0][0] = mv
-	ctx.SBDiagonalMotionValidGrid[0][0] = 1
-	ctx.SBDiagonalBlockSizeGrid[0][0] = BlockSize8x8
-	ctx.SBDiagonalBlockSizeVisitedGrid[0][0] = 1
 
 	// y4<0 case: block at (X4=16, Y4=0), offset (-1, -1) -> (x=15, y=-1).
 	var matches, newMatches int
@@ -1078,21 +1075,84 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAndDiagonal(t *testing.T) {
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no candidates from SBTop fallback, matches=%d stack.Count=%d", matches, stack.Count)
 	}
+}
 
-	// Both negative case: block at (X4=0, Y4=0), offset (-1, -1) -> (-1, -1).
-	matches, newMatches = 0, 0
-	stack = ReferenceMVStack{}
-	reqDiag := ReferenceMVStackRequest{
-		Size:       BlockSize8x8,
+// TestScanOuterBlockReferenceMVUsesSBDiagonalCorner verifies the cross-SB
+// diagonal lookup for the outer (-1, -1) block-MV scan when the current
+// block sits at the top-left corner of an SB (X4=0, Y4=0). libaom's
+// frame-wide mi grid covers the diagonally-up-left cell (which lives in
+// the SB up-and-to-the-left of the current one) and contributes a
+// RowMatch when its reference frame matches the request. Without the
+// SBDiagonal fallback goav1 silently dropped this contribution and
+// undercounted RowMatches, e.g. monochrome frame 3 mi=(16,64) where the
+// (15,63) corner cell sits inside SB(3,0)'s BLOCK_64X64 with ref0=LAST
+// matching the request and contributes RowMatches=1. Without the lookup
+// goav1's mode_context was 51 (refCtx=3); with the lookup it now matches
+// libaom's mode_context=67 (refCtx=4) and the refmv_cdf read at the
+// monochrome frame 3 SB(4,1) divergence point lines up with libaom.
+func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
+	var ctx BlockModeContext
+	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	cornerMV := motion.Vector{Row: 4, Col: -6}
+	candidate := InterMotionResult{
+		References: target,
+		Mode:       InterModeResult{Mode: InterModeNearestMV},
+		MV:         [2]motion.Vector{cornerMV},
+	}
+	// Seed depth=0/e=0 of the SB-diagonal snapshot: the cell at frame
+	// position (mi_col-1, mi_row-1) which lives in the SB diagonally
+	// up-and-to-the-left of the current one.
+	ctx.SBDiagonalInterMotionGrid[0][0] = candidate
+	ctx.SBDiagonalMotionValidGrid[0][0] = 1
+	ctx.SBDiagonalBlockSizeGrid[0][0] = BlockSize64x64
+	ctx.SBDiagonalBlockSizeVisitedGrid[0][0] = 1
+
+	var matches, newMatches int
+	stack := ReferenceMVStack{}
+	req := ReferenceMVStackRequest{
+		Size:       BlockSize64x64,
 		References: target,
 		X4:         0,
 		Y4:         0,
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridBlockReferenceMV(reqDiag, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	if matches != 1 || stack.Count != 1 {
+		t.Fatalf("expected diagonal corner match, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+	if stack.Candidates[0].This != cornerMV {
+		t.Fatalf("stack[0].This=%+v want %+v", stack.Candidates[0].This, cornerMV)
+	}
+
+	// Sanity: when either HaveTop or HaveLeft is false the diagonal lookup
+	// must be skipped (the diagonal SB sits outside the tile boundary).
+	matches, newMatches = 0, 0
+	stack = ReferenceMVStack{}
+	reqNoTop := req
+	reqNoTop.HaveTop = false
+	ctx.scanGridBlockReferenceMV(reqNoTop, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
-		t.Fatalf("expected no candidates from SBDiagonal fallback, matches=%d stack.Count=%d", matches, stack.Count)
+		t.Fatalf("expected no match without HaveTop, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+
+	matches, newMatches = 0, 0
+	stack = ReferenceMVStack{}
+	reqNoLeft := req
+	reqNoLeft.HaveLeft = false
+	ctx.scanGridBlockReferenceMV(reqNoLeft, -1, -1, &matches, &newMatches, &stack)
+	if matches != 0 || stack.Count != 0 {
+		t.Fatalf("expected no match without HaveLeft, matches=%d stack.Count=%d", matches, stack.Count)
+	}
+
+	// Sanity: when SBDiagonalMotionValidGrid[0][0]=0 (no captured cell),
+	// the lookup must still be skipped even when HaveTop/HaveLeft hold.
+	ctx.SBDiagonalMotionValidGrid[0][0] = 0
+	matches, newMatches = 0, 0
+	stack = ReferenceMVStack{}
+	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	if matches != 0 || stack.Count != 0 {
+		t.Fatalf("expected no match when SBDiagonalMotionValidGrid empty, matches=%d stack.Count=%d", matches, stack.Count)
 	}
 }
 
