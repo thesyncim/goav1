@@ -2077,3 +2077,98 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		}
 	})
 }
+
+// TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF pins the
+// libaom-aligned behavior for an intra block decoded inside an INTER frame.
+// libaom's read_intra_block_mode_info() reads the Y intra mode using
+// ec_ctx->y_mode_cdf[size_group_lookup[bsize]] — the size-group YMode CDF —
+// NOT the keyframe (above/left mode) CDF used by read_intra_frame_mode_info().
+// Confirms ReadLumaIntraMode adapts the size-group CDF for the inter-frame
+// path and that MarkIntra correctly tags the resulting block as intra (so
+// later neighbor reads on the same SB see AboveIntra=1 / LeftIntra=1 /
+// AboveMode=mode / LeftMode=mode) and clears any inter-reference baggage
+// (AboveRef[0]/[1] = None, AboveCompound=0, AboveMotionValid=0).
+func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset(make([]byte, 8), Job{Offset: 0, Size: 8}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var intraCDFs IntraModeCDFs
+	if err := intraCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	var ctx BlockModeContext
+
+	// The IntraFlag CDF is consulted on inter frames (see
+	// ReadIntraFlagResult); the test's all-zero bitstream resolves to
+	// is_inter=0 here, matching frame 1 (0,0) of the libaom mv vector.
+	// Seed an intra signal at (0, 0) without HaveTop / HaveLeft to mirror
+	// the first SB of frame 1.
+	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
+		FrameType:             parser.FrameTypeInter,
+		DecodePredictionModes: true,
+	}, BlockVisit{
+		Size:     BlockSize64x64,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  false,
+		HaveLeft: false,
+	}, BlockModeResult{}, 0, parser.SegmentData{RefFrame: -1}, &PaletteModeScratch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid || !result.Intra {
+		t.Fatalf("expected intra prediction got=%+v", result)
+	}
+	if result.Intrabc || result.IntrabcValid {
+		t.Fatalf("intrabc should not be active on inter frame without AllowIntrabc: %+v", result)
+	}
+	if !result.ChromaModeValid {
+		t.Fatalf("expected chroma mode read for 64x64 intra block result=%+v", result)
+	}
+	// The inter-frame YMode CDF for size group 3 (= 64x64) is the one
+	// adapted, not the keyframe ymode CDF. Pin both: the size-group CDF
+	// records one read, the keyframe CDF must NOT have been touched.
+	size3 := yModeSizeContext[BlockSize64x64]
+	if got := intraCDFs.YMode[size3].Values()[int(intraModeCount)]; got != 1 {
+		t.Fatalf("ymode size-group %d count=%d want 1", size3, got)
+	}
+	if got := intraCDFs.KeyframeYMode[0][0].Values()[int(intraModeCount)]; got != 0 {
+		t.Fatalf("keyframe ymode must not be adapted on inter frame intra block: count=%d", got)
+	}
+	// MarkIntra writes AboveIntra=1, LeftIntra=1, AboveMode=luma, LeftMode=luma,
+	// and clears AboveRef[0]/AboveCompound/AboveMotionValid so later inter
+	// blocks see the intra neighbor as not-inter. Pin the full neighbor
+	// state at slot 0 for the just-marked intra block.
+	if ctx.AboveIntra[0] != 1 || ctx.LeftIntra[0] != 1 {
+		t.Fatalf("MarkIntra did not set intra flag above=%d left=%d", ctx.AboveIntra[0], ctx.LeftIntra[0])
+	}
+	if ctx.AboveMode[0] != result.LumaMode || ctx.LeftMode[0] != result.LumaMode {
+		t.Fatalf("MarkIntra mode above=%d left=%d want %d", ctx.AboveMode[0], ctx.LeftMode[0], result.LumaMode)
+	}
+	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone {
+		t.Fatalf("MarkIntra ref above=%d left=%d want None", ctx.AboveRef[0][0], ctx.LeftRef[0][0])
+	}
+	if ctx.AboveCompound[0] != 0 || ctx.LeftCompound[0] != 0 ||
+		ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
+		t.Fatalf("MarkIntra did not clear inter baggage above_compound=%d left_compound=%d above_mv=%d left_mv=%d",
+			ctx.AboveCompound[0], ctx.LeftCompound[0], ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
+	}
+	// AboveBlockSize / LeftBlockSize must reflect the current block (64x64)
+	// — libaom's xd->above_mbmi->bsize for the just-decoded block is updated
+	// here. Subsequent neighbor lookups within the same SB will see this.
+	if ctx.AboveBlockSize[0] != BlockSize64x64 || ctx.LeftBlockSize[0] != BlockSize64x64 {
+		t.Fatalf("MarkIntra block size above=%d left=%d want 64x64", ctx.AboveBlockSize[0], ctx.LeftBlockSize[0])
+	}
+	// Chroma neighbor context must also be set (MarkChromaIntra is invoked
+	// when HasChromaBlock is true for the 64x64 block under default color
+	// config; here default ColorConfig has no subsampling so the chroma
+	// reference check trivially holds for 64x64 luma).
+	if !result.ChromaModeValid {
+		t.Fatalf("expected chroma intra mode read result=%+v", result)
+	}
+	if ctx.AboveChromaIntra[0] != 1 || ctx.LeftChromaIntra[0] != 1 {
+		t.Fatalf("MarkChromaIntra did not set chroma intra flag above=%d left=%d",
+			ctx.AboveChromaIntra[0], ctx.LeftChromaIntra[0])
+	}
+}
