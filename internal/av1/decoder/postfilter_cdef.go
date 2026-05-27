@@ -307,6 +307,22 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 			if cdefDebugUnit(plane, unitRow, unitCol) {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
+			// When some 8x8 blocks within the unit are skip-transform, they are
+			// absent from blocks and FilterFrameBlocks will not write their
+			// positions in unitDst. If unitDst is zero or holds stale data from
+			// a previous unit, CopyRect16To16 would later copy those zeros over
+			// the valid reconstructed pixels in dst. Pre-fill unitDst with the
+			// source (reconstructed) pixels for the whole unit so that
+			// FilterFrameBlocks can overwrite the non-skip positions; skipped
+			// positions then already carry the correct values.
+			blockCols := (unitW + blockWidth - 1) / blockWidth
+			blockRows := (unitH + blockHeight - 1) / blockHeight
+			if !directionOnly && len(blocks) < blockCols*blockRows {
+				srcOffset := unitY*src.Stride + unitX
+				if err := cdef.CopyRect16To16(unitDst, cdef.BStride, src.Pix[srcOffset:], src.Stride, unitW, unitH); err != nil {
+					return units, blocksTotal, err
+				}
+			}
 			if err := cdef.FilterFrameBlocks(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
 				return units, blocksTotal, err
 			}
