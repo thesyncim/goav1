@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -320,6 +321,106 @@ func TestReconstructPlaneBlockDCT64x64ReducedCoefficients(t *testing.T) {
 	}
 	if got := getSample(plane, 1, 0, 0); got == 100 {
 		t.Fatal("DCT64 reconstruction left the first sample unchanged")
+	}
+}
+
+// TestReconstructPlaneBlockDCT64x64SparseInterShape pins the reconstruct path
+// for a TX_64X64 DCT_DCT block with the exact sparse-coefficient shape
+// observed in libaom monochrome frame 3 mi=(32,16) (compound NEAREST_NEAREST
+// inter block, EOB=3, three non-zero quantized coefficients at column-major
+// buffer indices 0:5, 1:1, 32:-3). After the IDCT64 column-pass fix
+// (e514b7f), the inverse-transform produces a smooth row+column-monotonic
+// residual; this test pins the full dequant+IDCT+add integration so the
+// glue (scratch slicing, txScale, residual stride) can't regress for
+// sparse 64x64 inter residuals without being caught.
+//
+// The expected values are computed by running the same dequant+IDCT+add
+// pipeline directly through the standalone primitives, then asserted against
+// the ReconstructPlaneBlock output. Any subtle regression of the
+// integration (e.g. wrong residualStride into AddResidualPlaneBlock, wrong
+// dequant region for the 32x32 coded scan inside the 64x64 transform, or a
+// scratch-buffer overlap that corrupts the dequant before IDCT reads it)
+// breaks this pin.
+func TestReconstructPlaneBlockDCT64x64SparseInterShape(t *testing.T) {
+	const W, H = 64, 64
+
+	// Frame-3 mi=(32,16) shape: three non-zero quantized coefficients at
+	// column-major indices 0 (DC), 1 (col=0,row=1), and 32 (col=1,row=0).
+	quantized := make([]int16, 32*32)
+	quantized[0*32+0] = 5
+	quantized[0*32+1] = 1
+	quantized[1*32+0] = -3
+
+	q := quantize.Quantizer{DC: 88, AC: 106}
+	cfg := Block{
+		Size:      transform.Size{Width: W, Height: H},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: q,
+		EOB:       3,
+	}
+
+	// Build the expected output by running the primitives directly: dequant
+	// the 32x32 coded region, run InverseBlockBitDepth into a 64x64 residual,
+	// then add to a flat-116 predictor.
+	const predictor = 116
+	wantPix := make([]byte, W*H)
+	for i := range wantPix {
+		wantPix[i] = predictor
+	}
+	wantPlane := frame.Plane{Pix: wantPix, Stride: W, Width: W, Height: H}
+
+	txScale, err := quantize.TransformScale(W, H)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dq := make([]int32, 32*32)
+	if err := quantize.DequantizeBlockScaledBitDepth(dq, 32, quantized, 32, 32, 32, q, txScale, 8); err != nil {
+		t.Fatal(err)
+	}
+	wantResidual := make([]int16, W*H)
+	idctScratch := make([]int32, W*H)
+	if err := transform.InverseBlockBitDepth(wantResidual, W, dq, 32, idctScratch, transform.Size{Width: W, Height: H}, transform.TypeDCTDCT, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := dsp.AddResidualPlaneBlock(wantPlane, 1, 8, 0, 0, W, H, wantResidual, W); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pin a few characteristic residual samples so any change to the IDCT64
+	// shape (which the prior agent identified as the source of frame-3
+	// monochrome divergence) is caught here too.
+	if wantResidual[0] != 0 {
+		t.Fatalf("residual[0,0] expected 0 (low-DC sparse case) got %d", wantResidual[0])
+	}
+	if wantResidual[63] != 2 {
+		t.Fatalf("residual[0,63] expected 2 (col=1 cosine peak) got %d", wantResidual[63])
+	}
+	if wantResidual[15*W+0] != 0 {
+		t.Fatalf("residual[15,0] expected 0 got %d", wantResidual[15*W+0])
+	}
+
+	// Now run ReconstructPlaneBlock on a flat-116 predictor and assert
+	// byte-exact equality with the directly-composed reference.
+	gotPix := make([]byte, W*H)
+	for i := range gotPix {
+		gotPix[i] = predictor
+	}
+	gotPlane := frame.Plane{Pix: gotPix, Stride: W, Width: W, Height: H}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlock(gotPlane, 1, 8, 0, 0, quantized, 32,
+		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for r := 0; r < H; r++ {
+		for c := 0; c < W; c++ {
+			if gotPix[r*W+c] != wantPix[r*W+c] {
+				t.Fatalf("sparse 64x64 reconstruct mismatch (r=%d c=%d): got=%d want=%d residual=%d",
+					r, c, gotPix[r*W+c], wantPix[r*W+c], wantResidual[r*W+c])
+			}
+		}
 	}
 }
 
