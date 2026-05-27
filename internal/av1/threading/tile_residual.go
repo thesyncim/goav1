@@ -753,8 +753,11 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 	if err != nil {
 		return tile.BlockCoeffRequest{}, err
 	}
-	qIndex := c.state.CurrentBaseQIdx
-	_, lossless, err := c.batch.BlockQIndex(qIndex, visit.SegmentID)
+	// libaom uses xd->qindex[segment_id] (the segment-adjusted qindex) — not
+	// the frame base — when gating tx-type syntax on the qindex==0/lossless
+	// shortcut. Mirror that so segmentation streams whose segment delta drives
+	// the effective qindex to 0 fall through to DCT_DCT identically.
+	segmentQIndex, lossless, err := c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
 	if err != nil {
 		return tile.BlockCoeffRequest{}, err
 	}
@@ -768,10 +771,10 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 			chromaMode = tile.ChromaIntraModeDC
 		}
 		lumaMode := frameWorkIntraTransformMode(visit.Prediction)
-		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, lumaMode, chromaMode)
+		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, lumaMode, chromaMode)
 		transformSelect = &c.scratch.IntraTX
 	} else if transforms.ReadInterTX {
-		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, qIndex, c.batch.Sequence.ColorConfig)
+		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
 	return tile.BlockCoeffRequest{

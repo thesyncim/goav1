@@ -788,6 +788,90 @@ func TestFrameWorkTileResidualCDFStorageRejectsNil(t *testing.T) {
 	}
 }
 
+// TestFrameWorkTileResidualControllerPropagatesSegmentQIndex verifies that the
+// tx-type selector receives the segment-adjusted qindex (xd->qindex[segment_id]
+// in libaom), not the unsegmented frame base. When a segment delta drives the
+// effective qindex to 0, the tx-type syntax must short-circuit to DCT_DCT
+// exactly as libaom does — see SelectBlockCoeffRequest. The mirror case (base
+// qindex 0 with a positive segment delta that lifts the effective qindex
+// above 0) requires the selector to fall through to the entropy-coded tx
+// type instead of the qindex==0 shortcut.
+func TestFrameWorkTileResidualControllerPropagatesSegmentQIndex(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		baseQIdx       uint8
+		segmentDeltaQ  int16
+		wantDCTShortcut bool
+	}{
+		{name: "segment_delta_drives_qindex_to_zero", baseQIdx: 64, segmentDeltaQ: -64, wantDCTShortcut: true},
+		{name: "segment_delta_lifts_qindex_above_zero", baseQIdx: 0, segmentDeltaQ: 32, wantDCTShortcut: false},
+		{name: "segment_delta_keeps_qindex_above_zero", baseQIdx: 64, segmentDeltaQ: 0, wantDCTShortcut: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			segmentation := parser.SegmentationParams{Enabled: true}
+			segmentation.Data.Segments[1].DeltaQ = tt.segmentDeltaQ
+			ctx := FrameWorkBatch{
+				FrameWorkFrameContext: FrameWorkFrameContext{
+					Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+						ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+					}),
+					Quantization: parser.QuantizationParams{BaseQIdx: tt.baseQIdx},
+					Segmentation: segmentation,
+					TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
+				},
+			}
+			var state tile.DecodeState
+			if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: tt.baseQIdx}); err != nil {
+				t.Fatal(err)
+			}
+			cdfs := mustFrameWorkTileResidualCDFs(t, tt.baseQIdx)
+			var scratch FrameWorkTileResidualScratch
+			controller := frameWorkTileResidualLoopController{
+				batch:   ctx,
+				state:   &state,
+				cdfs:    cdfs,
+				scratch: &scratch,
+				req: FrameWorkTileResidualRequest{
+					TransformMode: parser.TransformModeLargest,
+					Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+						return ctx.ReadInterBlockTransforms(&state, visit)
+					},
+				},
+			}
+			visit := tile.BlockLoopVisit{
+				Block:     tile.BlockVisit{Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4},
+				Segment:   parser.SegmentData{RefFrame: -1},
+				SegmentID: 1,
+				Prediction: tile.BlockPredictionModeResult{
+					Valid: true,
+					Intra: false,
+				},
+			}
+			req, err := controller.SelectBlockCoeffRequest(visit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector, ok := req.TransformSelect.(*tile.InterCoeffTransformSelector)
+			if !ok {
+				t.Fatalf("transform select=%T want *tile.InterCoeffTransformSelector", req.TransformSelect)
+			}
+			if !selector.QIndexKnown {
+				t.Fatalf("selector.QIndexKnown=false want true")
+			}
+			wantQIndex := uint8(int(tt.baseQIdx) + int(tt.segmentDeltaQ))
+			if wantQIndex != selector.QIndex {
+				t.Fatalf("selector.QIndex=%d want %d (segment-adjusted, base=%d delta=%d)",
+					selector.QIndex, wantQIndex, tt.baseQIdx, tt.segmentDeltaQ)
+			}
+			shortcut := selector.QIndexKnown && selector.QIndex == 0
+			if shortcut != tt.wantDCTShortcut {
+				t.Fatalf("DCT_DCT shortcut=%v want %v (selector.QIndex=%d)",
+					shortcut, tt.wantDCTShortcut, selector.QIndex)
+			}
+		})
+	}
+}
+
 func TestFrameWorkTileResidualCDFStorageAllocs(t *testing.T) {
 	var storage FrameWorkTileResidualCDFStorage
 	allocs := testing.AllocsPerRun(1000, func() {
