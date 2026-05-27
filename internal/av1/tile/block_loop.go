@@ -1137,6 +1137,21 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("count warp samples: %w", err)
 					}
+					// libaom's av1_findSamples top-left scan reads mi[-mi_stride -
+					// 1], i.e., the bottom-right cell of the superblock diagonally
+					// up-and-left of the current SB. WarpSampleCountWithContext
+					// looks the top-left up in the local per-SB grid, which has
+					// no entries for negative coordinates, so the diagonal cross-
+					// SB neighbor is missed when the current block sits at the
+					// SB top-left corner. Augment the count here using the
+					// already-captured SBDiagonal grid (see
+					// captureDiagonalCornerToPending).
+					if extra := warpSampleDiagonalCorner(block, ctx, refs.Ref[0]); extra > 0 && numProjRef < maxWarpSamples {
+						numProjRef += extra
+						if numProjRef > maxWarpSamples {
+							numProjRef = maxWarpSamples
+						}
+					}
 					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
 						Size:                  block.Size,
 						Mode:                  mode.Mode,
@@ -1969,4 +1984,45 @@ func interModeUsesGlobalOnly(mode InterModeResult) bool {
 		return mode.CompoundMode == CompoundInterModeGlobalGlobal
 	}
 	return mode.Mode == InterModeGlobalMV
+}
+
+// warpSampleDiagonalCorner reports the contribution of the bottom-right cell of
+// the superblock diagonally up-and-left of the current SB to libaom's
+// av1_findSamples top-left scan. WarpSampleCountWithContext addresses the
+// top-left neighbor via the per-SB grid at (block.X4-1, block.Y4-1), which
+// has no valid entry for negative coordinates, so the cross-SB diagonal cell
+// is dropped when the current block is at the SB top-left corner. The
+// caller-owned SBDiagonal* grids carry the snapshot of the prior diagonal
+// superblock's bottom-right corner (see captureDiagonalCornerToPending), so
+// this helper looks the cell up there and returns 1 when it matches libaom's
+// findSamples acceptance test (same ref0, no second reference, no
+// inter-intra, valid motion). Any other block position returns 0 because the
+// existing scan already covers it.
+func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref ReferenceFrame) int {
+	if ctx == nil || !ref.Valid() {
+		return 0
+	}
+	if block.X4 != 0 || block.Y4 != 0 {
+		return 0
+	}
+	if !block.HaveTop || !block.HaveLeft {
+		return 0
+	}
+	if ctx.SBDiagonalMotionValidGrid[0][0] == 0 {
+		return 0
+	}
+	motionResult := ctx.SBDiagonalInterMotionGrid[0][0]
+	if motionResult.References.Compound {
+		return 0
+	}
+	if motionResult.References.Ref[0] != ref {
+		return 0
+	}
+	if motionResult.References.Ref[1] != ReferenceFrameNone {
+		return 0
+	}
+	if motionResult.InterIntra {
+		return 0
+	}
+	return 1
 }

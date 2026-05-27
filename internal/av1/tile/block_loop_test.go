@@ -1949,3 +1949,131 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
 		t.Fatalf("global warped motion should not be populated for 4x4 block: %+v", result.GlobalWarpedMotion)
 	}
 }
+
+// TestWarpSampleDiagonalCornerAddsCrossSBContribution pins the WARP
+// num_proj_ref augmentation that closes the libaom_av1_8-bit_monochrome
+// frame 3 SB-layout divergence. WarpSampleCountWithContext addresses the
+// top-left neighbor via the local per-SB grid at (block.X4-1, block.Y4-1),
+// which has no valid entry for negative coordinates, so for an SB top-left
+// block the diagonal-up-left cell (frame mi (X4-1+rootCol, Y4-1+rootRow))
+// would be missed. libaom's av1_findSamples reads it through mi[-mi_stride
+// - 1], so goav1's motion-mode gate underestimates num_proj_ref by one and
+// switches to the 2-symbol OBMC CDF where libaom keeps the 3-symbol
+// motion-mode CDF, desyncing the entropy stream from frame 3 onwards.
+//
+// The fix in block_loop.go augments numProjRef via the
+// SBDiagonal* grids the carrier already captures (intrabc cross-SB scan).
+// This test seeds those grids by hand and verifies warpSampleDiagonalCorner
+// reports the diagonal contribution exactly when libaom's top-left scan
+// would accept it.
+func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
+	t.Run("matching single ref adds one", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+			},
+		}
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 1 {
+			t.Fatalf("matching diagonal corner got=%d want 1", got)
+		}
+	})
+	t.Run("non-corner block returns zero", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+			},
+		}
+		block := BlockVisit{
+			Size: BlockSize32x32, X4: 4, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("non-corner block got=%d want 0", got)
+		}
+	})
+	t.Run("missing neighbor returns zero", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+			},
+		}
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: false, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("no-top got=%d want 0", got)
+		}
+	})
+	t.Run("compound diagonal rejected", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+				Compound: true,
+			},
+		}
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("compound diagonal got=%d want 0", got)
+		}
+	})
+	t.Run("ref mismatch rejected", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone},
+			},
+		}
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("ref mismatch got=%d want 0", got)
+		}
+	})
+	t.Run("inter intra diagonal rejected", func(t *testing.T) {
+		var ctx BlockModeContext
+		ctx.SBDiagonalMotionValidGrid[0][0] = 1
+		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
+			References: InterReferencesResult{
+				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+			},
+			InterIntra: true,
+		}
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("inter-intra diagonal got=%d want 0", got)
+		}
+	})
+	t.Run("invalid grid returns zero", func(t *testing.T) {
+		var ctx BlockModeContext
+		// SBDiagonalMotionValidGrid[0][0] = 0 → no captured diagonal
+		block := BlockVisit{
+			Size: BlockSize64x64, X4: 0, Y4: 0,
+			HaveTop: true, HaveLeft: true,
+		}
+		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
+			t.Fatalf("invalid diagonal got=%d want 0", got)
+		}
+	})
+}
