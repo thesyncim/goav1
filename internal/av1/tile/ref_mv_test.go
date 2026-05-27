@@ -35,6 +35,72 @@ func TestReferenceMVStackDRLContextMatchesLibaomAndDav1d(t *testing.T) {
 	}
 }
 
+// TestCDFUpdateBlock64x60LibaomWeights pins the libaom-extracted ref_mv weights
+// at frame 1 mi=(64,60) so that future fixes to the topright cross-SB-diagonal
+// path can be validated against this regression. The cdf_update strict-MD5 test
+// vector diverges here because goav1's BlockModeContext (with MaxBlockModeSlots=
+// 32 and SB128x128 sbSizeMIB=32) cannot reach the cell at (mi_row-1,
+// mi_col+W4)=(63, 64) — it lives in the SB-above-and-right, whose bottom row is
+// held by carrier.Above[col_idx+1] but is never copied into the per-SB
+// AboveInterMotion/SBTopInterMotion arrays (extendAboveContextFromRightCarrier
+// writes slots [sbSizeMIB..sbSizeMIB+sbSizeMIB), which is fully out of range
+// when sbSizeMIB equals MaxBlockModeSlots). libaom's frame-wide mi grid covers
+// the cell directly via xd->mi[-stride + xd->width]. Without that candidate
+// goav1's nearest_refmv_count = 2 (vs libaom 3) and the post-sort weights at
+// idx=1,2 = [656, 20] (vs libaom [664, 656]), flipping av1_drl_ctx() at idx=1
+// from 0 to 1 for the NEAR_NEWMV-style decode of the NEARMV iter. The fix
+// requires either adding an SB-above-right snapshot (mode.go) or extending
+// MaxBlockModeSlots past sbSizeMIB so extendAboveContextFromRightCarrier can
+// load slots [sbSizeMIB..2*sbSizeMIB) — neither of which fits inside ref_mv.go.
+func TestCDFUpdateBlock64x60LibaomWeights(t *testing.T) {
+	// Libaom-extracted state for cdf_update.ivf frame 1 mi_row=64 mi_col=60
+	// BLOCK_16X32 mode=NEARMV ref_frame_type=1 (LAST_FRAME single) idx=1.
+	// Capture rationale: aomdec instrumented to dump xd->weight[ref_frame_type]
+	// just before read_drl_idx's aom_read_symbol(drl_cdf[drl_ctx], 2). Reproduce
+	// via the patch in /tmp/libaom-v3.13.1/av1/decoder/decodemv.c (or replay
+	// using the cdfupdate.ivf vector and any libaom v3.13.1 build).
+	const refFrameType = 1
+	const cnt = 4
+	wts := [8]uint16{672, 664, 656, 8, 4, 4, 8, 4}
+	_ = refFrameType
+	stack := ReferenceMVStack{Count: cnt}
+	for i := 0; i < cnt; i++ {
+		stack.Candidates[i].Weight = wts[i]
+	}
+
+	// DRL context as libaom computes it at the NEARMV iter idx=1. libaom only
+	// reads the idx=1 drl bit for this block (it returns once drl_idx=0). The
+	// libaom-reported drl_ctx is 0 because weights[1]=664 and weights[2]=656
+	// both meet/exceed RefMVCategoryLevel.
+	got, err := stack.DRLContext(1)
+	if err != nil {
+		t.Fatalf("DRLContext(1) err=%v", err)
+	}
+	if got != 0 {
+		t.Fatalf("DRLContext(1) = %d, want 0 (libaom-extracted)", got)
+	}
+
+	// Sanity: the bug observed in the cdf_update strict-MD5 run is that
+	// goav1 produces wts=[672, 656, 20, 8, ...] (slot 2 falls below
+	// RefMVCategoryLevel because the topright cell at mi_col+W4=64 cannot be
+	// reached from BlockModeContext for SB128x128). That state computes
+	// DRLContext(1) = 1, which selects drl_cdf[1] instead of drl_cdf[0] at
+	// the NEARMV iter idx=1 -> the entropy stream desyncs here (seq=229715
+	// in goav1_trace_rng).
+	bugStack := ReferenceMVStack{Count: cnt}
+	bugStack.Candidates[0].Weight = 672
+	bugStack.Candidates[1].Weight = 656
+	bugStack.Candidates[2].Weight = 20
+	bugStack.Candidates[3].Weight = 8
+	bugGot, bugErr := bugStack.DRLContext(1)
+	if bugErr != nil {
+		t.Fatal(bugErr)
+	}
+	if bugGot == 0 {
+		t.Fatalf("bug-state DRLContext(1) = 0, expected != 0 (the divergence)")
+	}
+}
+
 func TestReferenceMVStackDRLRequestForMode(t *testing.T) {
 	stack := refMVTestStack()
 	req, err := stack.DRLRequestForMode(InterModeResult{Mode: InterModeNewMV})
