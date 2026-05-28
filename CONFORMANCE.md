@@ -462,12 +462,12 @@ only; none gate CI.
 |                         |         |        | suite).                            |
 | 8-bit 226x226 size      | PASS    | FAIL   | Frame 0 intra matches; frame 1     |
 |                         |         |        | inter diverges.                    |
-| 8-bit 34x34 size        | FAIL    | FAIL   | Frame 0 (intra) already mismatches |
-|                         |         |        | -- sub-8x8 chroma TX-size at the   |
-|                         |         |        | non-multiple-of-8 bottom/right     |
-|                         |         |        | edge. Distinct from the inter gap. |
+| 8-bit 34x34 size        | FAIL    | FAIL   | Frame 0 (intra) mismatches in the  |
+|                         |         |        | deblock at the bottom/right edge   |
+|                         |         |        | (see note below). Distinct from    |
+|                         |         |        | the inter gap.                     |
 | 8-bit 66x66 size        | FAIL    | FAIL   | Frame 0 (intra) mismatches; same   |
-|                         |         |        | non-multiple-of-8 edge class as    |
+|                         |         |        | bottom/right deblock edge class as |
 |                         |         |        | 34x34 (66 = 64 + 2).               |
 | 10-bit quantizer 32     | PASS    | FAIL   | Frame 0 intra byte-exact; frame 1  |
 |                         |         |        | inter diverges.                    |
@@ -481,8 +481,19 @@ sizes (64x64, 208x208, 226x226) plus both 10-bit vectors are already
 byte-exact on the intra frame 0 and only break at the frame-1 inter
 path -- the same gap tracked in the fast-suite table above. The
 non-multiple-of-8 sizes (34x34, 66x66) are the exception: they
-mismatch on the intra frame 0 itself, pointing at edge transform-size
-handling rather than inter prediction.
+mismatch on the intra frame 0 itself.
+
+The 34x34 frame-0 mismatch has been localized against the libaom
+reference (aomdec) at the pixel level: 110 of 1734 bytes differ, all
+within 3 px of the bottom/right frame edge, and reconstruction
+(predict + transform + residual) is byte-exact across the whole frame
+interior. The divergence is in the deblock filter at the bottom/right
+edge, not chroma transform-size selection: the V plane (loop-filter
+level 0) is byte-perfect while the U plane (level 4) diverges only in
+the bottom-right corner, and CDEF -- which applies equally to U and V
+-- is therefore exonerated. Note 226x226 carries the same 2px-partial
+edge yet passes frame 0, so the trigger is a specific edge
+transform/partition combination rather than the partial edge alone.
 
 Run the SVC dry-run with:
 
