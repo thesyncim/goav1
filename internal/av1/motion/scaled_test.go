@@ -61,7 +61,7 @@ func TestNewScaleFactorsSVCEnhancementUpscale(t *testing.T) {
 
 func TestNewScaleFactorsRejectsOutOfRange(t *testing.T) {
 	tests := []struct {
-		name                                       string
+		name                   string
 		refW, refH, curW, curH int
 	}{
 		{"zero width", 0, 360, 640, 360},
@@ -101,8 +101,8 @@ func TestScaledBlockOriginIdentityMatchesSameSize(t *testing.T) {
 		{"zero", Vector{}},
 		{"integer +1 col", Vector{Col: 1 << SubpelBits}},
 		{"integer -2 row", Vector{Row: -2 << SubpelBits}},
-		{"half-pel col", Vector{Col: 4}},          // 4/8 sample
-		{"quarter-pel row", Vector{Row: 2}},       // 2/8 sample
+		{"half-pel col", Vector{Col: 4}},    // 4/8 sample
+		{"quarter-pel row", Vector{Row: 2}}, // 2/8 sample
 		{"eighth-pel both", Vector{Row: 1, Col: 3}},
 	}
 	for _, tc := range cases {

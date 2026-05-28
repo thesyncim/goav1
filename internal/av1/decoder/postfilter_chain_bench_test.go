@@ -388,4 +388,3 @@ func BenchmarkApplyFullPostFilter(b *testing.B) {
 	b.StopTimer()
 	reportPostFilterMetrics(b)
 }
-

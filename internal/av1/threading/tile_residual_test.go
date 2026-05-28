@@ -798,9 +798,9 @@ func TestFrameWorkTileResidualCDFStorageRejectsNil(t *testing.T) {
 // type instead of the qindex==0 shortcut.
 func TestFrameWorkTileResidualControllerPropagatesSegmentQIndex(t *testing.T) {
 	for _, tt := range []struct {
-		name           string
-		baseQIdx       uint8
-		segmentDeltaQ  int16
+		name            string
+		baseQIdx        uint8
+		segmentDeltaQ   int16
 		wantDCTShortcut bool
 	}{
 		{name: "segment_delta_drives_qindex_to_zero", baseQIdx: 64, segmentDeltaQ: -64, wantDCTShortcut: true},

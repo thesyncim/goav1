@@ -14,16 +14,16 @@ func libaomWarpAffineC(pred []byte, predStride int, ref []byte, refStride, refWi
 	subsamplingX, subsamplingY int,
 ) {
 	const (
-		WARPEDMODEL_PREC_BITS = 16
-		WARP_PARAM_REDUCE = 6
-		WARPEDDIFF_PREC_BITS = WARPEDMODEL_PREC_BITS - 6 // = 10
+		WARPEDMODEL_PREC_BITS   = 16
+		WARP_PARAM_REDUCE       = 6
+		WARPEDDIFF_PREC_BITS    = WARPEDMODEL_PREC_BITS - 6 // = 10
 		WARPEDPIXEL_PREC_SHIFTS = 64
-		FILTER_BITS = 7
-		bd = 8
-		reduceBitsHoriz = 3
-		offsetBitsHoriz = bd + FILTER_BITS - 1 // 14
-		reduceBitsVert = 2*FILTER_BITS - reduceBitsHoriz // 11
-		offsetBitsVert = bd + 2*FILTER_BITS - reduceBitsHoriz // 19
+		FILTER_BITS             = 7
+		bd                      = 8
+		reduceBitsHoriz         = 3
+		offsetBitsHoriz         = bd + FILTER_BITS - 1                 // 14
+		reduceBitsVert          = 2*FILTER_BITS - reduceBitsHoriz      // 11
+		offsetBitsVert          = bd + 2*FILTER_BITS - reduceBitsHoriz // 19
 	)
 
 	var tmp [15 * 8]int32
@@ -145,8 +145,8 @@ func TestWarpAffineMatchesLibaomReference(t *testing.T) {
 			pRow := rng.Intn(refH-sz.h+1) &^ 7
 			// Build a representative warp matrix: small perturbation around identity.
 			matrix := [6]int32{
-				int32(rng.Intn(1 << 16)) - (1 << 15), // mat[0]: trans X (Q0 << 16)
-				int32(rng.Intn(1 << 16)) - (1 << 15), // mat[1]: trans Y
+				int32(rng.Intn(1<<16)) - (1 << 15),   // mat[0]: trans X (Q0 << 16)
+				int32(rng.Intn(1<<16)) - (1 << 15),   // mat[1]: trans Y
 				1<<16 + int32(rng.Intn(8192)) - 4096, // mat[2] ≈ 1 + small
 				int32(rng.Intn(8192)) - 4096,         // mat[3]
 				int32(rng.Intn(8192)) - 4096,         // mat[4]

@@ -494,7 +494,7 @@ func (c *TransformTypeCDFs) InitDefault() error {
 }
 
 func (c *TransformTypeCDFs) IntraCDF(index int, square TransformSize, mode IntraMode, symbols int) (*entropy.CDF, error) {
-	if c == nil || index <= 0 || index >= ExtTXSetsIntra || square < 0 || square >= ExtTXSizes || !mode.Valid() {
+	if c == nil || index <= 0 || index >= ExtTXSetsIntra || square >= ExtTXSizes || !mode.Valid() {
 		return nil, entropy.ErrInvalidCDF
 	}
 	cdf := &c.Intra[index][square][mode]
@@ -505,7 +505,7 @@ func (c *TransformTypeCDFs) IntraCDF(index int, square TransformSize, mode Intra
 }
 
 func (c *TransformTypeCDFs) InterCDF(index int, square TransformSize, symbols int) (*entropy.CDF, error) {
-	if c == nil || index <= 0 || index >= ExtTXSetsInter || square < 0 || square >= ExtTXSizes {
+	if c == nil || index <= 0 || index >= ExtTXSetsInter || square >= ExtTXSizes {
 		return nil, entropy.ErrInvalidCDF
 	}
 	cdf := &c.Inter[index][square]

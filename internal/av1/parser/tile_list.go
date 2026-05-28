@@ -181,4 +181,3 @@ func AppendTileListOBU(dst []byte, list TileList) []byte {
 	}
 	return dst
 }
-

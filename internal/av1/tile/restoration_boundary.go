@@ -397,7 +397,6 @@ func saveRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av1fr
 	return nil
 }
 
-
 // SetupRestorationStripeBoundary ports setup_processing_stripe_boundary for
 // sample slices. unitRect is the enclosing restoration-unit rectangle; dataOrigin
 // identifies plane coordinate (0,0) in data.

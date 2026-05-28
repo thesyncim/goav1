@@ -20,8 +20,8 @@ func TestParseTileListOBU(t *testing.T) {
 	tile0 := []byte{0xde, 0xad, 0xbe, 0xef}
 	tile1 := []byte{0x01, 0x02}
 	payload := []byte{
-		0x01, // output_frame_width_in_tiles_minus_1 = 1
-		0x02, // output_frame_height_in_tiles_minus_1 = 2
+		0x01,       // output_frame_width_in_tiles_minus_1 = 1
+		0x02,       // output_frame_height_in_tiles_minus_1 = 2
 		0x00, 0x01, // tile_count_minus_1 = 1
 	}
 	payload = appendTileListEntryRaw(payload, 0x00, 0x01, 0x02, uint16(len(tile0)-1), tile0)

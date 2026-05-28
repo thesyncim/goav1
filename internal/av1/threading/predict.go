@@ -15,7 +15,7 @@ const (
 	// 128x128 directional intra needs origin+width+height samples on each
 	// edge (= 257 for the worst case). Sized to 257 so 128x128 intra blocks
 	// pass the directional edge-filter range check.
-	frameWorkIntraEdgeScratchSamples = 257
+	frameWorkIntraEdgeScratchSamples       = 257
 	frameWorkDirectionalEdgeOrigin         = 128
 	frameWorkDirectionalEdgeSamples        = 512
 	frameWorkMaxMIBSizeLog2                = 5

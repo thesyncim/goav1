@@ -13,9 +13,9 @@ import (
 // av1/decoder/decodetxb.c:312.
 func TestDQCoeffBoundsMatchLibaom(t *testing.T) {
 	cases := []struct {
-		bd       uint8
-		wantMin  int32
-		wantMax  int32
+		bd      uint8
+		wantMin int32
+		wantMax int32
 	}{
 		{bd: 8, wantMin: -32768, wantMax: 32767},
 		{bd: 10, wantMin: -131072, wantMax: 131071},

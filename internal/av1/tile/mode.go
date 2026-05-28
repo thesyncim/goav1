@@ -163,15 +163,15 @@ type BlockModeContext struct {
 	// Go's slot-shared AboveIntra/AboveBlockSize/LeftIntra/LeftBlockSize
 	// would be the current block's just-written flags by the time tx_size
 	// reads them inside DecodeBlockCoefficients.
-	TxNeighborValid     bool
-	TxAboveNeighborIntra uint8
+	TxNeighborValid          bool
+	TxAboveNeighborIntra     uint8
 	TxAboveNeighborBlockSize BlockSize
-	TxLeftNeighborIntra  uint8
-	TxLeftNeighborBlockSize BlockSize
-	AbovePaletteY    [MaxBlockModeSlots]paletteContext
-	LeftPaletteY     [MaxBlockModeSlots]paletteContext
-	AbovePaletteUV   [MaxBlockModeSlots]paletteContext
-	LeftPaletteUV    [MaxBlockModeSlots]paletteContext
+	TxLeftNeighborIntra      uint8
+	TxLeftNeighborBlockSize  BlockSize
+	AbovePaletteY            [MaxBlockModeSlots]paletteContext
+	LeftPaletteY             [MaxBlockModeSlots]paletteContext
+	AbovePaletteUV           [MaxBlockModeSlots]paletteContext
+	LeftPaletteUV            [MaxBlockModeSlots]paletteContext
 
 	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8

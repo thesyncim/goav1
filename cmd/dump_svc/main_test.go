@@ -33,7 +33,7 @@ func TestRunSVCInfoDecodesL2T1(t *testing.T) {
 	}
 	text := stderr.String()
 	for _, want := range []string{
-		"1280x720",                  // L2T1 advertises the full-res frame in the IVF header
+		"1280x720",                    // L2T1 advertises the full-res frame in the IVF header
 		"sequence operating_points=2", // L2T1 declares the spatial-only + base-only ops
 		"operating_point[0] idc=0x0301",
 		"operating_point[1] idc=0x0101",

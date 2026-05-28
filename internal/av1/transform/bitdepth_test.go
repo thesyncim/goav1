@@ -12,9 +12,9 @@ import (
 // to the values libaom's av1_gen_inv_stage_range() derives.
 func TestStageRangeBoundsMatchLibaom(t *testing.T) {
 	cases := []struct {
-		bd                                       uint8
-		wantRowMin, wantRowMax                   int32
-		wantColMin, wantColMax                   int32
+		bd                     uint8
+		wantRowMin, wantRowMax int32
+		wantColMin, wantColMax int32
 	}{
 		{bd: 8, wantRowMin: -32768, wantRowMax: 32767, wantColMin: -32768, wantColMax: 32767},
 		{bd: 10, wantRowMin: -131072, wantRowMax: 131071, wantColMin: -32768, wantColMax: 32767},
