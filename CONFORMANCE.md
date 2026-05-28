@@ -102,7 +102,7 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | implemented; same wiring gap as Y.             |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  9 | IntraBC                          | Yes     | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
-|    |                                  |         | internal/av1/tile/intrabc_debug.go | stack and intra-mode entry implemented;       |
+|    |                                  |         | internal/av1/tile/ref_mv.go      | stack and intra-mode entry implemented;        |
 |    |                                  |         |                                  | entropy stream bit-exact against libaom on    |
 |    |                                  |         |                                  | intrabc frames (tx_size neighbor context       |
 |    |                                  |         |                                  | snapshot, 2bae671); cross-SB DV diagonal-      |
@@ -329,7 +329,12 @@ ship under `internal/av1/testdata/libaom/`.
 last reconstruction-layer divergence on `intrabc_extreme_dv`. The
 `testvectors` CI workflow asserts the full eight-vector pass set
 on every push (`c55be7e`). The strict every-frame gate is still
-informational and only `16x16_size` currently clears it.
+informational; `16x16_size`, `all-intra`, and `intrabc_extreme_dv`
+now clear it (3/8) — the entire intra path is byte-exact end-to-end.
+The remaining five all fail in inter reconstruction: four
+(`quantizer-00`, `cdf_update`, `mv`, `mfmv`) diverge at frame 1, the
+first inter frame, and `monochrome` reaches frame 3 (frames 0-2,
+including an inter frame with mfmv projections, are byte-exact).
 
 ```
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
@@ -341,8 +346,8 @@ informational and only `16x16_size` currently clears it.
 | 2 | av1-1-b8-01-size-16x16.ivf                        | PASS    | PASS   | No mismatch across the 2-frame clip; the   |
 |   | (libaom av1 8-bit 16x16 size)                     |         |        | strict-mode baseline for the suite.        |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
-| 3 | av1-1-b8-02-allintra.ivf                          | PASS    | FAIL   | Frame 3 (intra-only chain divergence       |
-|   | (libaom av1 8-bit all-intra)                      |         |        | after frame 2). 36/39 frames match strict. |
+| 3 | av1-1-b8-02-allintra.ivf                          | PASS    | PASS   | All 39 frames match under strict; the      |
+|   | (libaom av1 8-bit all-intra)                      |         |        | intra chain is byte-exact end-to-end.      |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 | 4 | av1-1-b8-04-cdfupdate.ivf                         | PASS    | FAIL   | Frame 1 (CDF update path on first inter    |
 |   | (libaom av1 8-bit cdf update)                     |         |        | frame).                                    |
@@ -353,15 +358,14 @@ informational and only `16x16_size` currently clears it.
 | 6 | av1-1-b8-06-mfmv.ivf                              | PASS    | FAIL   | Frame 1 (motion-field projection path      |
 |   | (libaom av1 8-bit mfmv)                           |         |        | for the first ref-frame-MVS consumer).     |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
-| 7 | av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf     | PASS    | FAIL   | Frame 0 PASS under the lenient gate after  |
-|   | (libaom av1 8-bit intra-only intrabc extreme dv)  |         |        | the diagonal-corner SB snapshot for the    |
-|   |                                                   |         |        | cross-SB intrabc DV scan (5f88540); pairs  |
-|   |                                                   |         |        | with the tx_size neighbor context snapshot |
-|   |                                                   |         |        | (2bae671). Strict gate still fails on      |
-|   |                                                   |         |        | later frames (diagnostic only).            |
+| 7 | av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf     | PASS    | PASS   | Both frames match under strict after the   |
+|   | (libaom av1 8-bit intra-only intrabc extreme dv)  |         |        | diagonal-corner SB snapshot for the cross- |
+|   |                                                   |         |        | SB intrabc DV scan (5f88540), paired with  |
+|   |                                                   |         |        | the tx_size neighbor context snapshot      |
+|   |                                                   |         |        | (2bae671).                                 |
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
-| 8 | av1-1-b8-24-monochrome.ivf                        | PASS    | FAIL   | Frame 1 (monochrome inter divergence;      |
-|   | (libaom av1 8-bit monochrome)                     |         |        | overlaps with the mv/mfmv mismatch).       |
+| 8 | av1-1-b8-24-monochrome.ivf                        | PASS    | FAIL   | Frame 3 (frames 0-2 match, including a      |
+|   | (libaom av1 8-bit monochrome)                     |         |        | frame-1 inter frame with mfmv projections).|
 +---+---------------------------------------------------+---------+--------+--------------------------------------------+
 ```
 
@@ -418,7 +422,8 @@ selected via
 Frame-0 status on the multi-tile probe set:
 
 - **L1T2 (Cols=3 Rows=1, single spatial layer).** Frame 0 PASS
-  under the lenient gate via `make dryrun-relevant`. The 3-tile-
+  under the lenient gate via the `SuiteLevelRelevant` cohort
+  (`GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1`). The 3-tile-
   column decode and tile-group boundary handling do *not* surface
   an entropy desync or tile-group continuation bug on this vector.
   This is the only multi-tile vector that exercises the tile path

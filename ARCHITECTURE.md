@@ -92,6 +92,9 @@ exported.
 goav1/
 +-- doc.go, decoder.go, tile.go, transform.go, ...   # root package (re-exports)
 +-- example_test.go                                  # canonical caller usage
++-- cmd/                                             # CLI tools
+|   +-- aom-go-dec/    IVF -> decoded-frame CLI (residual-stream runner)
+|   +-- dump_svc/      SVC layer inspection CLI
 +-- README.md                                        # status and current safe point
 +-- UPSTREAM.md                                      # pinning policy
 +-- ARCHITECTURE.md                                  # this file
