@@ -913,16 +913,7 @@ func (b FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.Bl
 	return nil
 }
 
-// predictBlockInterGlobalWarpPlane mirrors libaom's WARP_PRED dispatch for
-// GLOBALMV blocks that meet av1_init_warp_params()'s gating: non-translational
-// frame-level global motion and a block min-side of at least 8 luma samples.
-// The warp parameters are pre-resolved by the tile decoder; this function only
-// drives the warp filter using those params (no neighbor projection).
-func (b FrameWorkBatch) predictBlockInterGlobalWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
-	return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, motion.RegularFilters)
-}
-
-// predictBlockInterGlobalWarpPlaneWithFilters extends predictBlockInterGlobalWarpPlane
+// predictBlockInterGlobalWarpPlaneWithFilters drives libaom's WARP_PRED dispatch
 // with the translational interpolation filters that libaom would use when the
 // scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
 // allow_warp() in av1/common/reconinter.c, which returns 0 whenever
@@ -1135,11 +1126,7 @@ func frameWorkPredictionIsIntrabc(pred tile.BlockPredictionModeResult) bool {
 	return pred.IntrabcValid && pred.Intrabc
 }
 
-func (b FrameWorkBatch) predictBlockInterWarpPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane) error {
-	return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, motion.RegularFilters)
-}
-
-// predictBlockInterWarpPlaneWithFilters extends predictBlockInterWarpPlane with
+// predictBlockInterWarpPlaneWithFilters drives libaom's WARP_PRED dispatch with
 // the translational interpolation filters that libaom would use when the
 // scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
 // allow_warp() in av1/common/reconinter.c, which returns 0 whenever
@@ -1487,13 +1474,6 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		return ErrInvalidBatch
 	}
 	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
-		return ErrInvalidBatch
-	}
-	return nil
-}
-
-func frameWorkValidateSameSizeReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane) error {
-	if ref.Width != geom.Output.Width || ref.Height != geom.Output.Height {
 		return ErrInvalidBatch
 	}
 	return nil

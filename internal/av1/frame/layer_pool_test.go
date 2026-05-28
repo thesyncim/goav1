@@ -16,7 +16,6 @@ type layerPoolFixture struct {
 	framesArenas [][]Frame
 	freeArenas   [][]int
 	usedArenas   [][]bool
-	count        int
 	allocs       int
 }
 

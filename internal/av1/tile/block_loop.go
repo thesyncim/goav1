@@ -1521,22 +1521,6 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 	return id, false, req.Segmentation.Data.Segments[id], nil
 }
 
-func (s *DecodeState) readBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeContext, cdef *CDEFIndexContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
-	result, err := s.readBlockModePrefixSyntax(cdfs, ctx, req, segmentPredicted)
-	if err != nil {
-		return BlockModeResult{}, err
-	}
-	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, cdef, req.Size, req.X4, req.Y4, result.SkipTransform)
-	if err != nil {
-		return BlockModeResult{}, err
-	}
-	result.CDEFIndex = cdefIndex
-	if err := ctx.Mark(req.Size, req.X4, req.Y4, result); err != nil {
-		return BlockModeResult{}, err
-	}
-	return result, nil
-}
-
 func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
 	skipMode, err := s.ReadSkipMode(cdfs, ctx, req)
 	if err != nil {
@@ -1702,7 +1686,6 @@ func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req
 			altMV := motion.Vector{Row: altPred.Row + residual.Diff.Row, Col: altPred.Col + residual.Diff.Col}
 			if motionVectorValid(altMV) && intrabcDVTileValid(altMV, req, block) {
 				mv = altMV
-				pred = altPred
 			}
 		}
 	}

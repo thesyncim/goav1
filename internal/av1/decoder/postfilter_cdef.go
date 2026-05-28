@@ -447,10 +447,6 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 	return nil
 }
 
-func frameWorkCDEFBlockPositions(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int) []cdef.BlockPosition {
-	return frameWorkCDEFBlockPositionsFiltered(storage, unitW, unitH, blockW, blockH, nil, 0, 0)
-}
-
 // frameWorkCDEFBlockPositionsFiltered enumerates 8x8 CDEF blocks inside the
 // current 64x64 unit, skipping those whose luma MI cells all report
 // SkipTransform=true. Block indexing follows libaom: by/bx are luma 8x8

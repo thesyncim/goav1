@@ -259,13 +259,6 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterLumaEdge(edge FrameWorkLoopFilterPostFilterEdge) error {
-	if edge.Plane != loopfilter.PlaneY {
-		return loopfilter.ErrInvalidFilter
-	}
-	return ctx.applyLoopFilterEdge(edge)
-}
-
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdge(edge FrameWorkLoopFilterPostFilterEdge) error {
 	if edge.Length4 <= 0 || edge.Level == 0 || ctx.Output == nil {
 		return loopfilter.ErrInvalidFilter
@@ -858,39 +851,6 @@ func frameWorkLoopFilterPreviousChromaRecord(ctx FrameWorkPostFilterContext, fil
 	return record, true, nil
 }
 
-func frameWorkLoopFilterScheduledLumaWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, cols int, rows int) (int, bool, error) {
-	width, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
-	if err != nil {
-		return 0, false, err
-	}
-	previousWidth, err := frameWorkLoopFilterPreviousLumaMinWidth(ctx, filterMap, edge, x4, y4, length4, cols, rows)
-	if err != nil {
-		return 0, false, err
-	}
-	if previousWidth < width {
-		width = previousWidth
-	}
-	return frameWorkLoopFilterScheduledWidth(ctx, loopfilter.PlaneY, edge, x4, y4, length4, width)
-}
-
-func frameWorkLoopFilterScheduledChromaWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, cols int, rows int) (int, bool, error) {
-	width, err := frameWorkLoopFilterWidth(plane, edge, tx)
-	if err != nil {
-		return 0, false, err
-	}
-	previousWidth, hasChroma, err := frameWorkLoopFilterPreviousChromaMinWidth(ctx, filterMap, plane, edge, x4, y4, length4, cols, rows)
-	if err != nil {
-		return 0, false, err
-	}
-	if !hasChroma {
-		return 0, false, nil
-	}
-	if previousWidth < width {
-		width = previousWidth
-	}
-	return frameWorkLoopFilterScheduledWidth(ctx, plane, edge, x4, y4, length4, width)
-}
-
 func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, width int) (int, bool, error) {
 	x := x4 * 4
 	y := y4 * 4
@@ -906,88 +866,6 @@ func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loo
 		width = frameWorkLoopFilterDowngradeWidth(width)
 	}
 	return 0, false, nil
-}
-
-func frameWorkLoopFilterPreviousLumaMinWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, length4 int, cols int, rows int) (int, error) {
-	minWidth := 0
-	for offset := 0; offset < length4; offset++ {
-		boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
-		targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
-		if err != nil {
-			return 0, err
-		}
-		previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			return 0, loopfilter.ErrInvalidFilter
-		}
-		tx, ok, err := frameWorkLoopFilterLumaTransformAt(ctx, previous, targetX4, targetY4)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			return 0, threading.ErrInvalidBatch
-		}
-		width, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
-		if err != nil {
-			return 0, err
-		}
-		if minWidth == 0 || width < minWidth {
-			minWidth = width
-		}
-	}
-	if minWidth == 0 {
-		return 0, loopfilter.ErrInvalidFilter
-	}
-	return minWidth, nil
-}
-
-// frameWorkLoopFilterPreviousChromaMinWidth returns the minimum chroma filter
-// width across the edge offsets. If every previous-side luma record shares its
-// chroma with the current block (e.g. small blocks below the chroma min-block
-// size), there is no chroma edge to schedule at this position and the function
-// returns hasChroma=false.
-func frameWorkLoopFilterPreviousChromaMinWidth(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, cols int, rows int) (int, bool, error) {
-	minWidth := 0
-	hasChroma := false
-	for offset := 0; offset < length4; offset++ {
-		boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
-		targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
-		if err != nil {
-			return 0, false, err
-		}
-		previous, ok, err := frameWorkLoopFilterPreviousChromaRecord(ctx, filterMap, edge, boundaryX4, boundaryY4, cols, rows)
-		if err != nil {
-			return 0, false, err
-		}
-		if !ok {
-			return 0, false, loopfilter.ErrInvalidFilter
-		}
-		tx, ok, err := frameWorkLoopFilterChromaTransformAt(ctx, previous, targetX4, targetY4)
-		if err != nil {
-			return 0, false, err
-		}
-		if !ok {
-			continue
-		}
-		hasChroma = true
-		width, err := frameWorkLoopFilterWidth(plane, edge, tx)
-		if err != nil {
-			return 0, false, err
-		}
-		if minWidth == 0 || width < minWidth {
-			minWidth = width
-		}
-	}
-	if !hasChroma {
-		return 0, false, nil
-	}
-	if minWidth == 0 {
-		return 0, false, loopfilter.ErrInvalidFilter
-	}
-	return minWidth, true, nil
 }
 
 func frameWorkLoopFilterBoundaryOffset(edge loopfilter.Edge, x4 int, y4 int, offset int) (int, int) {
@@ -1078,10 +956,6 @@ func frameWorkLoopFilterTransformBlockContains(tx tile.TransformBlock, x4 int, y
 	return x4 >= tx.X4 && y4 >= tx.Y4 &&
 		x4 < tx.X4+int(tx.VisibleW4) &&
 		y4 < tx.Y4+int(tx.VisibleH4)
-}
-
-func frameWorkLoopFilterLumaWidth(edge loopfilter.Edge, tx tile.TransformSize) (int, error) {
-	return frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
 }
 
 func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx tile.TransformSize) (int, error) {
