@@ -28,11 +28,13 @@ func TestPublicTileTransformContext(t *testing.T) {
 	}
 
 	category, partitionCtx, err := ctx.TransformPartitionContext(av1.TileTransformPartitionRequest{
-		Size:  av1.TileBlockSize32x32,
-		From:  av1.TileTransformSize32x32,
-		Depth: 0,
-		X4:    0,
-		Y4:    0,
+		Size:     av1.TileBlockSize32x32,
+		From:     av1.TileTransformSize32x32,
+		Depth:    0,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,11 +46,13 @@ func TestPublicTileTransformContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	category, partitionCtx, err = ctx.TransformPartitionContext(av1.TileTransformPartitionRequest{
-		Size:  av1.TileBlockSize32x32,
-		From:  av1.TileTransformSize32x32,
-		Depth: 0,
-		X4:    0,
-		Y4:    0,
+		Size:     av1.TileBlockSize32x32,
+		From:     av1.TileTransformSize32x32,
+		Depth:    0,
+		X4:       0,
+		Y4:       0,
+		HaveTop:  true,
+		HaveLeft: true,
 	})
 	if err != nil {
 		t.Fatal(err)
