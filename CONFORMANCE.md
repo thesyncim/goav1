@@ -48,9 +48,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         | internal/av1/loopfilter/         | superres, restoration, film grain all carry    |
 |    |                                  |         | internal/av1/transform/          | 10-bit code paths; bit-depth clamps now flow   |
 |    |                                  |         | internal/av1/quantize/           | through dequant (403e42b) and inverse          |
-|    |                                  |         |                                  | transforms (42a8b88, 266e8cd); 10-bit q32 and  |
-|    |                                  |         |                                  | q63 extended vectors still mismatch with root  |
-|    |                                  |         |                                  | cause suspected elsewhere in reconstruction.   |
+|    |                                  |         |                                  | transforms (42a8b88, 266e8cd); 10-bit q32/q63  |
+|    |                                  |         |                                  | frame 0 is byte-exact and diverges at frame 1  |
+|    |                                  |         |                                  | (same inter gap as the 8-bit fast suite).      |
 |    | Bit depth 12                     | Partial | internal/av1/frame/              | Same surface as 10-bit; no committed 12-bit    |
 |    |                                  |         | internal/av1/loopfilter/         | vector; only profile-2 gate is exercised.      |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
@@ -443,6 +443,46 @@ multi-tile vector remains absent from the libaom suite; if one
 becomes available upstream it should be added to
 `SuiteLevelExtended` so the tile path can be probed independently
 of SVC.
+
+### Extended size-vector coverage
+
+`SuiteLevelExtended` also carries non-SVC libaom size vectors that
+probe frame dimensions away from the 8-bit fast suite's defaults.
+Status below is from `make dryrun-extended` (lenient first-frame MD5)
+plus `GOAV1_STRICT_MD5=1` for every-frame parity. These are diagnostic
+only; none gate CI.
+
+```
++-------------------------+---------+--------+------------------------------------+
+| Vector                  | Frame 0 | Strict | Notes                              |
++-------------------------+---------+--------+------------------------------------+
+| 8-bit 64x64 size        | PASS    | PASS   | Square SB-aligned; byte-exact.     |
+| 8-bit 208x208 size      | PASS    | FAIL   | Frame 0 intra matches; frame 1     |
+|                         |         |        | inter diverges (same as fast       |
+|                         |         |        | suite).                            |
+| 8-bit 226x226 size      | PASS    | FAIL   | Frame 0 intra matches; frame 1     |
+|                         |         |        | inter diverges.                    |
+| 8-bit 34x34 size        | FAIL    | FAIL   | Frame 0 (intra) already mismatches |
+|                         |         |        | -- sub-8x8 chroma TX-size at the   |
+|                         |         |        | non-multiple-of-8 bottom/right     |
+|                         |         |        | edge. Distinct from the inter gap. |
+| 8-bit 66x66 size        | FAIL    | FAIL   | Frame 0 (intra) mismatches; same   |
+|                         |         |        | non-multiple-of-8 edge class as    |
+|                         |         |        | 34x34 (66 = 64 + 2).               |
+| 10-bit quantizer 32     | PASS    | FAIL   | Frame 0 intra byte-exact; frame 1  |
+|                         |         |        | inter diverges.                    |
+| 10-bit quantizer 63     | PASS    | FAIL   | Frame 0 intra byte-exact; frame 1  |
+|                         |         |        | inter diverges.                    |
++-------------------------+---------+--------+------------------------------------+
+```
+
+Two divergence classes show up here. SB-aligned and "tail = 0 mod 8"
+sizes (64x64, 208x208, 226x226) plus both 10-bit vectors are already
+byte-exact on the intra frame 0 and only break at the frame-1 inter
+path -- the same gap tracked in the fast-suite table above. The
+non-multiple-of-8 sizes (34x34, 66x66) are the exception: they
+mismatch on the intra frame 0 itself, pointing at edge transform-size
+handling rather than inter prediction.
 
 Run the SVC dry-run with:
 
