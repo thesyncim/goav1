@@ -302,7 +302,15 @@ func (c *BlockModeContext) warpSampleLeftAt(slot int, rowOffset4 int) warpSample
 }
 
 func (c *BlockModeContext) warpSampleGrid(block BlockVisit, ref ReferenceFrame, x4 int, y4 int, colOffset4 int, signC int, rowOffset4 int, signR int) (warpSample, bool, error) {
-	motionResult, size, ok := c.gridInterMotion(x4, y4)
+	// libaom's av1_findSamples reads the top-left/top-right corner neighbors via
+	// the frame-wide mi grid (mi[-mi_stride-1] / mi[-mi_stride+width]). goav1's
+	// per-superblock GridInterMotion has no entries for negative SB-relative
+	// coordinates, so a warped block at an SB top/left edge would silently drop
+	// its corner samples and fit a wrong least-squares affine model. Route the
+	// corner lookup through the cross-SB snapshots (SBTop/SBLeft/SBDiagonal) the
+	// inter ref-MV scan already relies on so prior-SB corner neighbors are seen.
+	req := ReferenceMVStackRequest{HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+	motionResult, size, ok := c.crossSBInterGridInterMotion(req, x4, y4)
 	if !ok {
 		return warpSample{}, false, nil
 	}

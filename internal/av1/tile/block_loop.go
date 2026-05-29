@@ -1149,24 +1149,14 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					// undershoots for blocks with many short left neighbors,
 					// which steers ReadMotionMode into the OBMC CDF when libaom
 					// reads the 3-symbol WARP CDF.
+					// WarpSampleCountWithContext now resolves top-left/top-right
+					// corner neighbors across the superblock boundary (via
+					// warpSampleGrid -> crossSBInterGridInterMotion), matching
+					// libaom's frame-wide av1_findSamples scan, so no separate
+					// SB-diagonal corner augmentation is needed here.
 					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0])
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("count warp samples: %w", err)
-					}
-					// libaom's av1_findSamples top-left scan reads mi[-mi_stride -
-					// 1], i.e., the bottom-right cell of the superblock diagonally
-					// up-and-left of the current SB. WarpSampleCountWithContext
-					// looks the top-left up in the local per-SB grid, which has
-					// no entries for negative coordinates, so the diagonal cross-
-					// SB neighbor is missed when the current block sits at the
-					// SB top-left corner. Augment the count here using the
-					// already-captured SBDiagonal grid (see
-					// captureDiagonalCornerToPending).
-					if extra := warpSampleDiagonalCorner(block, ctx, refs.Ref[0]); extra > 0 && numProjRef < maxWarpSamples {
-						numProjRef += extra
-						if numProjRef > maxWarpSamples {
-							numProjRef = maxWarpSamples
-						}
 					}
 					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
 						Size:                  block.Size,
