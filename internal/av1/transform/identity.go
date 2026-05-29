@@ -161,21 +161,24 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 		return ErrInvalidTransform
 	}
 
-	for row := 0; row < size.Height; row++ {
-		dstLine := dst[row*dstStride : row*dstStride+size.Width]
-		for col := 0; col < size.Width; col++ {
+	width := size.Width
+	height := size.Height
+	rect2 := size.IsRect2()
+	for row := 0; row < height; row++ {
+		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
+		for col := range dstLine {
 			v := coeff[col*coeffStride+row]
-			if size.IsRect2() {
+			if rect2 {
 				v = rect2Scale(v)
 			}
 			v = clipRange(int64(v), rowMin, rowMax)
-			v, _ = identity1DValue(v, size.Width)
+			v, _ = identity1DValue(v, width)
 			if shift > 0 {
 				v = clipRange(roundShift(int64(v), shift), colMin, colMax)
 			} else {
 				v = clipRange(int64(v), colMin, colMax)
 			}
-			v, _ = identity1DValue(v, size.Height)
+			v, _ = identity1DValue(v, height)
 			dstLine[col] = clipInt16(clipInt32(roundShift(int64(v), 4)))
 		}
 	}

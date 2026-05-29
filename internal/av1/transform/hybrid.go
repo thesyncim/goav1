@@ -81,52 +81,74 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	shift, ok := size.shift()
 	vertical, horizontal, okType := typ.tx1DTypes()
 	coeffSize := adjustedScanSize(size)
-	scratchLen := size.Width * size.Height
+	width := size.Width
+	height := size.Height
+	scratchLen := width * height
+	// Validate the transform shape without re-running typ.Supported(size),
+	// which would recompute tx1DTypes and the per-axis 1D support checks
+	// already implied by okType and the tx1DSupported() calls below.
 	if !ok ||
 		!okType ||
-		!typ.Supported(size) ||
-		dstStride < size.Width ||
+		typ == TypeIDTX ||
+		!tx1DSupported(horizontal, width) ||
+		!tx1DSupported(vertical, height) ||
+		dstStride < width ||
 		coeffStride < coeffSize.Height ||
 		len(scratch) < scratchLen ||
-		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
+		!blockFits(len(dst), dstStride, width, height) ||
 		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
 		return ErrInvalidTransform
 	}
 
-	for row := 0; row < size.Height; row++ {
-		tmpLine := scratch[row*size.Width : row*size.Width+size.Width]
-		for col := 0; col < size.Width; col++ {
-			v := int32(0)
-			if col < coeffSize.Width && row < coeffSize.Height {
-				v = coeff[col*coeffStride+row]
+	// Reslice scratch to its exact span so the row/column copy loops below
+	// index a provably-bounded buffer.
+	scratch = scratch[:scratchLen]
+	rect2 := size.IsRect2()
+	coeffW := coeffSize.Width
+	coeffH := coeffSize.Height
+
+	for row := 0; row < height; row++ {
+		tmpLine := scratch[row*width : row*width+width : row*width+width]
+		if row < coeffH {
+			for col := range tmpLine {
+				v := int32(0)
+				if col < coeffW {
+					v = coeff[col*coeffStride+row]
+				}
+				if rect2 {
+					v = rect2Scale(v)
+				}
+				tmpLine[col] = clipRange(int64(v), rowMin, rowMax)
 			}
-			if size.IsRect2() {
-				v = rect2Scale(v)
+		} else {
+			// Rows beyond the coded coefficient height contribute no input;
+			// rect2Scale(0)==0 and clipRange(0) keeps zero, so just zero them.
+			for col := range tmpLine {
+				tmpLine[col] = 0
 			}
-			tmpLine[col] = clipRange(int64(v), rowMin, rowMax)
 		}
-		inverse1D(tmpLine, 1, size.Width, horizontal, rowMin, rowMax)
+		inverse1D(tmpLine, 1, width, horizontal, rowMin, rowMax)
 	}
 
 	if shift > 0 {
-		for i := range scratchLen {
+		for i := range scratch {
 			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), colMin, colMax)
 		}
 	} else {
-		for i := range scratchLen {
+		for i := range scratch {
 			scratch[i] = clipRange(int64(scratch[i]), colMin, colMax)
 		}
 	}
 
-	for col := 0; col < size.Width; col++ {
-		inverse1D(scratch[col:], size.Width, size.Height, vertical, colMin, colMax)
+	for col := 0; col < width; col++ {
+		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
-	for row := 0; row < size.Height; row++ {
-		dstLine := dst[row*dstStride : row*dstStride+size.Width]
-		tmpLine := scratch[row*size.Width : row*size.Width+size.Width]
-		for col := 0; col < size.Width; col++ {
-			dstLine[col] = clipInt16(clipInt32(roundShift(int64(tmpLine[col]), 4)))
+	for row := 0; row < height; row++ {
+		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
+		tmpLine := scratch[row*width : row*width+width : row*width+width]
+		for col, v := range tmpLine {
+			dstLine[col] = clipInt16(clipInt32(roundShift(int64(v), 4)))
 		}
 	}
 	return nil
