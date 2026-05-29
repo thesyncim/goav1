@@ -1227,9 +1227,19 @@ func (b FrameWorkBatch) predictBlockInterOBMCPlaneWithFilters(index int, visit t
 		return err
 	}
 	neighbors := visit.Prediction.OverlappableNeighbors
-	for i := 0; i < neighbors.AboveCount; i++ {
-		if err := b.predictAndBlendOBMCAbove(plane, geom, tmp, visit.Block, neighbors.Above[i]); err != nil {
-			return err
+	// libaom av1_skip_u4x4_pred_in_obmc(): the above-row OBMC prediction is
+	// skipped for planes whose (subsampled) block size is 4x4, 8x4 or 4x8.
+	// In 4:2:0 an 8x8 luma OBMC block has a 4x4 chroma plane, so its chroma
+	// above-blend is dropped while the luma above-blend (never <8x8 for OBMC)
+	// is kept. The left column is always predicted (dir==1 is never skipped).
+	skipAbove := (geom.Width == 4 && geom.Height == 4) ||
+		(geom.Width == 8 && geom.Height == 4) ||
+		(geom.Width == 4 && geom.Height == 8)
+	if !skipAbove {
+		for i := 0; i < neighbors.AboveCount; i++ {
+			if err := b.predictAndBlendOBMCAbove(plane, geom, tmp, visit.Block, neighbors.Above[i]); err != nil {
+				return err
+			}
 		}
 	}
 	for i := 0; i < neighbors.LeftCount; i++ {
