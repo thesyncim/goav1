@@ -53,8 +53,8 @@ func TestLibaomRemoteVectorLookupAndLabels(t *testing.T) {
 		t.Fatalf("full vectors=%d want %d", len(full), len(libaomRemoteVectors))
 	}
 	extended := manifest.SelectRemote(SuiteLevelExtended, 0, nil)
-	if len(extended) != 9 {
-		t.Fatalf("extended vectors=%d want 9", len(extended))
+	if len(extended) != 226 {
+		t.Fatalf("extended vectors=%d want 226", len(extended))
 	}
 	// Extended cohort must be opt-in: every extended vector also has
 	// SuiteLevelFull set, but none of them carries SuiteLevelFast or
@@ -68,12 +68,12 @@ func TestLibaomRemoteVectorLookupAndLabels(t *testing.T) {
 		}
 	}
 	extendedHighBitDepth := manifest.SelectRemote(SuiteLevelExtended, VectorLabelHighBitDepth, nil)
-	if len(extendedHighBitDepth) != 2 {
-		t.Fatalf("extended high-bit-depth vectors=%d want 2", len(extendedHighBitDepth))
+	if len(extendedHighBitDepth) != 63 {
+		t.Fatalf("extended high-bit-depth vectors=%d want 63", len(extendedHighBitDepth))
 	}
 	extendedSize := manifest.SelectRemote(SuiteLevelExtended, VectorLabelSize, nil)
-	if len(extendedSize) != 5 {
-		t.Fatalf("extended size vectors=%d want 5", len(extendedSize))
+	if len(extendedSize) != 99 {
+		t.Fatalf("extended size vectors=%d want 99", len(extendedSize))
 	}
 	extendedSVC := manifest.SelectRemote(SuiteLevelExtended, VectorLabelSVC, nil)
 	if len(extendedSVC) != 2 {
