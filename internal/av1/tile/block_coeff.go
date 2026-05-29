@@ -80,7 +80,7 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	}
 	result := BlockCoeffResult{Tree: tree}
 
-	result.Luma, err = s.DecodeLumaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, LumaCoeffTreeRequest{
+	lumaReq := LumaCoeffTreeRequest{
 		TreeRequest:      req.Transform,
 		Tree:             tree,
 		Class:            lumaClass,
@@ -88,7 +88,8 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 		UseTransformType: true,
 		TransformSelect:  req.TransformSelect,
 		EOBMultiContext:  req.EOBMultiContext[0],
-	}, func(block LumaCoeffBlock) error {
+	}
+	lumaVisit := func(block LumaCoeffBlock) error {
 		return visit(BlockCoeffBlock{
 			Plane:     0,
 			Block:     block.Block,
@@ -97,39 +98,104 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 			Coeffs:    block.Coeffs,
 			Scan:      block.Scan,
 		})
-	})
-	if err != nil {
-		return result, fmt.Errorf("decode luma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
 	}
 
-	if req.Transform.Color.MonoChrome || !tree.HasUV {
+	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
+	var chromaReq [2]ChromaCoeffTreeRequest
+	var chromaPrep [2]chromaCoeffPlanePrep
+	chromaVisit := func(block ChromaCoeffBlock) error {
+		return visit(BlockCoeffBlock{
+			Plane:     block.Plane,
+			Block:     block.Block,
+			Transform: block.Transform,
+			Result:    block.Result,
+			Coeffs:    block.Coeffs,
+			Scan:      block.Scan,
+		})
+	}
+	if hasChroma {
+		for plane := 1; plane <= 2; plane++ {
+			chromaReq[plane-1] = ChromaCoeffTreeRequest{
+				TreeRequest:      req.Transform,
+				Tree:             tree,
+				Color:            req.Transform.Color,
+				Plane:            plane,
+				Class:            chromaClass[plane-1],
+				TransformType:    req.ChromaType[plane-1],
+				UseTransformType: true,
+				TransformSelect:  req.TransformSelect,
+				EOBMultiContext:  req.EOBMultiContext[plane],
+			}
+			// prepareChromaCoefficients validates the plane and performs the
+			// once-per-block SkipTransform context reset. The non-skip per-unit
+			// decode below uses the returned geometry.
+			prep, err := s.prepareChromaCoefficients(coeffCtx, chromaReq[plane-1])
+			if err != nil {
+				return result, fmt.Errorf("prepare chroma coeffs plane=%d req=%+v tree=%+v: %w", plane, req.Transform, tree, err)
+			}
+			chromaPrep[plane-1] = prep
+		}
+	}
+
+	// SkipTransform blocks only reset entropy contexts (handled above for chroma
+	// and below for luma); no coefficients are read, so the unit interleaving is
+	// irrelevant. Take the simple single-call path.
+	if req.Transform.SkipTransform {
+		result.Luma, err = s.DecodeLumaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, lumaReq, lumaVisit)
+		if err != nil {
+			return result, fmt.Errorf("decode luma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
+		}
 		return result, nil
 	}
-	for plane := 1; plane <= 2; plane++ {
-		stats, err := s.DecodeChromaCoefficients(cdfs.Coeff, coeffCtx, &scratch.Coeff, ChromaCoeffTreeRequest{
-			TreeRequest:      req.Transform,
-			Tree:             tree,
-			Color:            req.Transform.Color,
-			Plane:            plane,
-			Class:            chromaClass[plane-1],
-			TransformType:    req.ChromaType[plane-1],
-			UseTransformType: true,
-			TransformSelect:  req.TransformSelect,
-			EOBMultiContext:  req.EOBMultiContext[plane],
-		}, func(block ChromaCoeffBlock) error {
-			return visit(BlockCoeffBlock{
-				Plane:     block.Plane,
-				Block:     block.Block,
-				Transform: block.Transform,
-				Result:    block.Result,
-				Coeffs:    block.Coeffs,
-				Scan:      block.Scan,
-			})
-		})
-		if err != nil {
-			return result, fmt.Errorf("decode chroma coeffs plane=%d req=%+v tree=%+v: %w", plane, req.Transform, tree, err)
+
+	// Split the prediction block into BLOCK_64X64 max-units and interleave
+	// luma+U+V coefficient decode per unit, mirroring libaom's residual loop in
+	// av1/decoder/decodeframe.c (decode_token_recon_block) and spec 5.11.34
+	// residual(). For blocks <= 64px there is a single unit, so the resulting
+	// luma-then-chroma call sequence is identical to the unwindowed decode.
+	//
+	// maxUnit4 is BLOCK_64X64 measured in 4x4 luma units; the loop matches
+	// libaom's `for (row; row += mu_blocks_high) for (col; col += mu_blocks_wide)`.
+	const maxUnit4 = 16
+	visW := int(req.Transform.VisibleW4)
+	visH := int(req.Transform.VisibleH4)
+	muW := minInt(maxUnit4, visW)
+	muH := minInt(maxUnit4, visH)
+	for row := 0; row < visH; row += muH {
+		for col := 0; col < visW; col += muW {
+			window := coeffUnitWindow{
+				X4Start: req.Transform.X4 + col,
+				Y4Start: req.Transform.Y4 + row,
+				X4End:   req.Transform.X4 + minInt(col+muW, visW),
+				Y4End:   req.Transform.Y4 + minInt(row+muH, visH),
+			}
+			lumaStats, err := s.decodeLumaCoefficientsInWindow(cdfs.Coeff, coeffCtx, &scratch.Coeff, lumaReq, window, lumaVisit)
+			if err != nil {
+				return result, fmt.Errorf("decode luma coeffs window=%+v req=%+v tree=%+v: %w", window, req.Transform, tree, err)
+			}
+			result.Luma.TXBs += lumaStats.TXBs
+			result.Luma.NonZero += lumaStats.NonZero
+			result.Luma.AllZero += lumaStats.AllZero
+			result.Luma.EOBTotal += lumaStats.EOBTotal
+
+			if !hasChroma {
+				continue
+			}
+			for plane := 1; plane <= 2; plane++ {
+				prep := chromaPrep[plane-1]
+				if !prep.HasChroma {
+					continue
+				}
+				stats, err := s.decodeChromaCoefficientsInWindow(cdfs.Coeff, coeffCtx, &scratch.Coeff, chromaReq[plane-1], window, prep, chromaVisit)
+				if err != nil {
+					return result, fmt.Errorf("decode chroma coeffs plane=%d window=%+v req=%+v tree=%+v: %w", plane, window, req.Transform, tree, err)
+				}
+				result.Chroma[plane-1].TXBs += stats.TXBs
+				result.Chroma[plane-1].NonZero += stats.NonZero
+				result.Chroma[plane-1].AllZero += stats.AllZero
+				result.Chroma[plane-1].EOBTotal += stats.EOBTotal
+			}
 		}
-		result.Chroma[plane-1] = stats
 	}
 	return result, nil
 }

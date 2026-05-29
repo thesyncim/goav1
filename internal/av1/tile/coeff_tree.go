@@ -105,9 +105,16 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 		}
 		return LumaCoeffStats{}, nil
 	}
+	return s.decodeLumaCoefficientsInWindow(cdfs, ctx, scratch, req, fullCoeffUnitWindow(req.TreeRequest), visit)
+}
 
+// decodeLumaCoefficientsInWindow decodes the luma transform blocks of one 64x64
+// max-unit (the window). The per-TXB decode is unchanged; only the set of
+// transform blocks visited is restricted to the window. Callers must validate
+// req and handle the SkipTransform context reset (done once per block).
+func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, window coeffUnitWindow, visit LumaCoeffVisitor) (LumaCoeffStats, error) {
 	var stats LumaCoeffStats
-	err := req.Tree.ForEachLumaTXB(req.TreeRequest, func(block TransformBlock) error {
+	err := req.Tree.forEachLumaTXBInWindow(req.TreeRequest, window, func(block TransformBlock) error {
 		ctxReq := CoeffContextRequest{
 			Plane:      0,
 			PlaneBlock: req.TreeRequest.Size,
@@ -148,23 +155,37 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	return stats, nil
 }
 
-func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
-	if s == nil || cdfs == nil || ctx == nil || scratch == nil || visit == nil ||
-		req.Plane < 1 || req.Plane > 2 || !req.Class.Valid() {
-		return LumaCoeffStats{}, ErrInvalidDecodeState
+// chromaCoeffPlanePrep holds the per-plane chroma geometry derived once from a
+// ChromaCoeffTreeRequest, shared across all 64x64 unit windows of the block.
+type chromaCoeffPlanePrep struct {
+	HasChroma  bool
+	PlaneBlock BlockSize
+	X4         int
+	Y4         int
+	VisibleW4  int
+	VisibleH4  int
+	UVDims     TransformDimensions
+}
+
+// prepareChromaCoefficients validates a chroma plane request, performs the
+// once-per-block SkipTransform context reset, and returns the plane geometry.
+// HasChroma is false when the block has no chroma to decode for this plane.
+func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req ChromaCoeffTreeRequest) (chromaCoeffPlanePrep, error) {
+	if s == nil || ctx == nil || req.Plane < 1 || req.Plane > 2 || !req.Class.Valid() {
+		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
 	}
 	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
-		return LumaCoeffStats{}, err
+		return chromaCoeffPlanePrep{}, err
 	}
 	if !req.Tree.HasUV || !req.Tree.UV.Valid() {
-		return LumaCoeffStats{}, ErrInvalidDecodeState
+		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
 	}
 	if !HasChromaBlock(req.TreeRequest, req.Color) {
-		return LumaCoeffStats{}, nil
+		return chromaCoeffPlanePrep{}, nil
 	}
 	planeBlock, err := PlaneBlockSize(req.TreeRequest.Size, req.Color, req.Plane)
 	if err != nil {
-		return LumaCoeffStats{}, err
+		return chromaCoeffPlanePrep{}, err
 	}
 
 	ssX := int(boolToShift(req.Color.SubsamplingX))
@@ -176,19 +197,71 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 	uvDims, ok := req.Tree.UV.Dimensions()
 	if !ok || visibleW4 <= 0 || visibleH4 <= 0 ||
 		x4+visibleW4 > MaxBlockModeSlots || y4+visibleH4 > MaxBlockModeSlots {
-		return LumaCoeffStats{}, ErrInvalidDecodeState
+		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
 	}
 
 	if req.TreeRequest.SkipTransform {
 		if err := ctx.ResetBlock(req.Plane, planeBlock, x4, y4); err != nil {
-			return LumaCoeffStats{}, err
+			return chromaCoeffPlanePrep{}, err
 		}
-		return LumaCoeffStats{}, nil
+		return chromaCoeffPlanePrep{}, nil
 	}
 
+	return chromaCoeffPlanePrep{
+		HasChroma:  true,
+		PlaneBlock: planeBlock,
+		X4:         x4,
+		Y4:         y4,
+		VisibleW4:  visibleW4,
+		VisibleH4:  visibleH4,
+		UVDims:     uvDims,
+	}, nil
+}
+
+func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
+	if cdfs == nil || scratch == nil || visit == nil {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+	prep, err := s.prepareChromaCoefficients(ctx, req)
+	if err != nil {
+		return LumaCoeffStats{}, err
+	}
+	if !prep.HasChroma {
+		return LumaCoeffStats{}, nil
+	}
+	return s.decodeChromaCoefficientsInWindow(cdfs, ctx, scratch, req, fullCoeffUnitWindow(req.TreeRequest), prep, visit)
+}
+
+// decodeChromaCoefficientsInWindow decodes the chroma transform blocks of one
+// 64x64 luma max-unit (the window) for a single chroma plane. The per-TXB decode
+// matches DecodeChromaCoefficients exactly; only the plane-relative loop bounds
+// are clamped to the window's subsampled extent, mirroring libaom's
+// blk_row/blk_col range [row>>ss, ROUND_POWER_OF_TWO(min(row+mu,max),ss)).
+func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, window coeffUnitWindow, prep chromaCoeffPlanePrep, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
+	planeBlock := prep.PlaneBlock
+	x4, y4 := prep.X4, prep.Y4
+	visibleW4, visibleH4 := prep.VisibleW4, prep.VisibleH4
+	uvDims := prep.UVDims
+
+	ssX := int(boolToShift(req.Color.SubsamplingX))
+	ssY := int(boolToShift(req.Color.SubsamplingY))
+
+	// Convert the luma unit window into plane-relative chroma 4x4 offsets. The
+	// window bounds are absolute superblock-local luma coordinates; subtract the
+	// block origin to get the libaom `row`/`col` luma offsets, then subsample.
+	lumaXStart := maxInt(window.X4Start-req.TreeRequest.X4, 0)
+	lumaYStart := maxInt(window.Y4Start-req.TreeRequest.Y4, 0)
+	lumaXEnd := window.X4End - req.TreeRequest.X4
+	lumaYEnd := window.Y4End - req.TreeRequest.Y4
+
+	cxStart := lumaXStart >> ssX
+	cyStart := lumaYStart >> ssY
+	cxEnd := minInt((lumaXEnd+ssX)>>ssX, visibleW4)
+	cyEnd := minInt((lumaYEnd+ssY)>>ssY, visibleH4)
+
 	var stats LumaCoeffStats
-	for y := 0; y < visibleH4; y += int(uvDims.H4) {
-		for x := 0; x < visibleW4; x += int(uvDims.W4) {
+	for y := cyStart; y < cyEnd; y += int(uvDims.H4) {
+		for x := cxStart; x < cxEnd; x += int(uvDims.W4) {
 			block := TransformBlock{
 				X4:        x4 + x,
 				Y4:        y4 + y,

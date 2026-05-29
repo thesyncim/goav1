@@ -124,6 +124,39 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 // ForEachLumaTXB replays the decoded luma transform tree in coefficient decode
 // order and calls visit for each visible luma transform block.
 func (r TransformTreeResult) ForEachLumaTXB(req TransformTreeRequest, visit TransformBlockVisitor) error {
+	return r.forEachLumaTXBInWindow(req, fullCoeffUnitWindow(req), visit)
+}
+
+// coeffUnitWindow restricts a transform-tree replay to one 64x64 max-unit of a
+// prediction block, expressed in superblock-local luma 4x4 coordinates. libaom
+// (av1/decoder/decodeframe.c decode_token_recon_block) and the spec 5.11.34
+// residual() split prediction blocks larger than 64px into BLOCK_64X64 units and
+// interleave luma+chroma coefficient decode per unit; the window selects one
+// such unit. For blocks <= 64px the window spans the whole block.
+type coeffUnitWindow struct {
+	X4Start int
+	Y4Start int
+	X4End   int
+	Y4End   int
+}
+
+// fullCoeffUnitWindow returns the window spanning the whole prediction block,
+// reproducing the unwindowed transform-tree replay.
+func fullCoeffUnitWindow(req TransformTreeRequest) coeffUnitWindow {
+	return coeffUnitWindow{
+		X4Start: req.X4,
+		Y4Start: req.Y4,
+		X4End:   req.X4 + int(req.VisibleW4),
+		Y4End:   req.Y4 + int(req.VisibleH4),
+	}
+}
+
+// forEachLumaTXBInWindow replays the luma transform tree but only emits
+// transform blocks whose top-left lies inside the given 64x64 unit window. The
+// step and per-block emission are identical to the unwindowed walk; only the
+// loop bounds are clamped to the window, so for a block that is itself a single
+// unit the call sequence matches ForEachLumaTXB exactly.
+func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, window coeffUnitWindow, visit TransformBlockVisitor) error {
 	if visit == nil {
 		return ErrInvalidDecodeState
 	}
@@ -137,12 +170,22 @@ func (r TransformTreeResult) ForEachLumaTXB(req TransformTreeRequest, visit Tran
 		return nil
 	}
 
+	dims, ok := r.Y.Dimensions()
+	if !ok {
+		return ErrInvalidDecodeState
+	}
+	yStart := maxInt(window.Y4Start, req.Y4)
+	yEnd := minInt(window.Y4End, req.Y4+int(req.VisibleH4))
+	xStart := maxInt(window.X4Start, req.X4)
+	xEnd := minInt(window.X4End, req.X4+int(req.VisibleW4))
+
 	if r.Variable {
 		walker := transformTreeReplay{result: r, req: req, visit: visit}
-		dims, _ := r.Y.Dimensions()
-		for y := 0; y < int(req.VisibleH4); y += int(dims.H4) {
-			for x := 0; x < int(req.VisibleW4); x += int(dims.W4) {
-				if err := walker.replay(r.Y, 0, req.X4+x, req.Y4+y, x/int(dims.W4), y/int(dims.H4)); err != nil {
+		for y := yStart; y < yEnd; y += int(dims.H4) {
+			for x := xStart; x < xEnd; x += int(dims.W4) {
+				xOff := (x - req.X4) / int(dims.W4)
+				yOff := (y - req.Y4) / int(dims.H4)
+				if err := walker.replay(r.Y, 0, x, y, xOff, yOff); err != nil {
 					return err
 				}
 			}
@@ -150,13 +193,9 @@ func (r TransformTreeResult) ForEachLumaTXB(req TransformTreeRequest, visit Tran
 		return nil
 	}
 
-	dims, ok := r.Y.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	for y := 0; y < int(req.VisibleH4); y += int(dims.H4) {
-		for x := 0; x < int(req.VisibleW4); x += int(dims.W4) {
-			if err := emitTransformBlock(req, req.X4+x, req.Y4+y, r.Y, visit); err != nil {
+	for y := yStart; y < yEnd; y += int(dims.H4) {
+		for x := xStart; x < xEnd; x += int(dims.W4) {
+			if err := emitTransformBlock(req, x, y, r.Y, visit); err != nil {
 				return err
 			}
 		}
