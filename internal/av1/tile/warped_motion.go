@@ -263,8 +263,11 @@ func (c *BlockModeContext) warpAboveNeighborMatches(slot int, ref ReferenceFrame
 	// libaom's av1_findSamples rejects inter-intra neighbors because they
 	// carry mbmi->ref_frame[1] = INTRA_FRAME != NONE_FRAME. goav1 keeps
 	// Ref[1] = NONE for inter-intra to preserve has_second_ref semantics,
-	// so consult the InterIntra flag explicitly here.
-	if c.AboveInterIntra[slot] != 0 {
+	// so consult the InterIntra flag explicitly here. The AboveInterIntra
+	// context bitmap only covers neighbors inside the current superblock;
+	// for a neighbor staged from a prior SB the bit is unset, so also test
+	// the per-cell InterMotion.InterIntra (populated for cross-SB cells too).
+	if c.AboveInterIntra[slot] != 0 || c.AboveInterMotion[slot].InterIntra {
 		return false
 	}
 	return true
@@ -286,7 +289,10 @@ func (c *BlockModeContext) warpLeftNeighborMatches(slot int, ref ReferenceFrame)
 	if c.LeftRef[1][slot] != ReferenceFrameNone {
 		return false
 	}
-	if c.LeftInterIntra[slot] != 0 {
+	// See warpAboveNeighborMatches: the LeftInterIntra context bitmap is
+	// per-SB, so also consult the per-cell InterMotion.InterIntra to reject
+	// inter-intra neighbors staged from a prior superblock.
+	if c.LeftInterIntra[slot] != 0 || c.LeftInterMotion[slot].InterIntra {
 		return false
 	}
 	return true
