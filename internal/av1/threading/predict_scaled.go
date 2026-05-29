@@ -11,23 +11,27 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
-// frameWorkScaledRefAllowedEnv toggles routing scaled-reference inter blocks
-// through the new scaled 8-tap convolver. When unset, the threading
-// prediction path keeps rejecting size-mismatched references, leaving the
-// 7-vector fast suite (which has no SVC inputs) on its battle-tested
-// same-size path. Set GOAV1_SCALED_PRED=1 to opt in.
-const frameWorkScaledRefAllowedEnv = "GOAV1_SCALED_PRED"
+// frameWorkScaledRefDisabledEnv force-disables routing scaled-reference inter
+// blocks through the scaled 8-tap convolver. Scaled-reference prediction is now
+// on by default (libaom: av1_make_inter_predictor() routes through
+// av1_convolve_2d_scale_c whenever av1_is_scaled(sf)), so a size-mismatched
+// reference - e.g. an SVC enhancement layer (spatial>0) referencing a smaller
+// base-layer frame - is handled instead of crashing with ErrInvalidBatch. Set
+// GOAV1_SCALED_PRED=0 to fall back to the legacy same-size-only reject (used
+// only for debugging / bisecting the scaled path). The same-size fast path is
+// unaffected because frameWorkSameOrScaledReferencePlane short-circuits on
+// equal dimensions before consulting this gate at all.
+const frameWorkScaledRefDisabledEnv = "GOAV1_SCALED_PRED"
 
-// frameWorkScaledRefEnabled returns true when the build was compiled with the
-// goav1_scaled_pred tag or when the runtime environment variable opts in.
-// Both routes exist so the conformance-driven scaled-pred path can be enabled
-// without recompilation while still letting the build tag pin it on for
-// developer workflows that rely on -tags.
+// frameWorkScaledRefEnabled reports whether the scaled-reference convolver is
+// active. It is unconditionally on unless explicitly disabled with
+// GOAV1_SCALED_PRED=0; the goav1_scaled_pred build tag remains a no-op kept for
+// source compatibility.
 func frameWorkScaledRefEnabled() bool {
 	if frameWorkScaledRefBuildEnabled {
 		return true
 	}
-	return os.Getenv(frameWorkScaledRefAllowedEnv) != ""
+	return os.Getenv(frameWorkScaledRefDisabledEnv) != "0"
 }
 
 // frameWorkSameOrScaledReferencePlane validates a reference plane against
