@@ -679,7 +679,15 @@ func uniCompRefContext(ctx *BlockModeContext, req InterReferenceRequest, bit int
 	}
 }
 
-func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result InterReferencesResult) error {
+// MarkInter records an inter block into the top/left mode context. hasChroma
+// gates the chroma-mode context fields: libaom locates the chroma smooth-filter
+// neighbor via the chroma reference grid (set_mi_row_col chroma_above/left_mbmi),
+// so a sub-8x8 luma block that carries no chroma must NOT overwrite the chroma
+// mode context — leaving the covering chroma-reference block's mode in place.
+// Clobbering it (e.g. an even-row 8x4 inter block dropping its parent's
+// SMOOTH_V) flips get_intra_edge_filter_type and corrupts directional chroma
+// prediction (av1-1-b8-00-quantizer-00 frame 1 mi(15,82) D135 chroma).
+func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result InterReferencesResult, hasChroma bool) error {
 	if c == nil {
 		return ErrInvalidDecodeState
 	}
@@ -708,8 +716,10 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	compIndex := uint8(1)
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = 0
-		c.AboveChromaIntra[x4+i] = 0
-		c.AboveChromaMode[x4+i] = ChromaIntraModeDC
+		if hasChroma {
+			c.AboveChromaIntra[x4+i] = 0
+			c.AboveChromaMode[x4+i] = ChromaIntraModeDC
+		}
 		c.AboveRef[0][x4+i] = result.Ref[0]
 		c.AboveRef[1][x4+i] = result.Ref[1]
 		c.AboveCompound[x4+i] = compound
@@ -724,8 +734,10 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
-		c.LeftChromaIntra[y4+i] = 0
-		c.LeftChromaMode[y4+i] = ChromaIntraModeDC
+		if hasChroma {
+			c.LeftChromaIntra[y4+i] = 0
+			c.LeftChromaMode[y4+i] = ChromaIntraModeDC
+		}
 		c.LeftRef[0][y4+i] = result.Ref[0]
 		c.LeftRef[1][y4+i] = result.Ref[1]
 		c.LeftCompound[y4+i] = compound

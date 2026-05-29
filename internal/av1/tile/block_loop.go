@@ -1002,7 +1002,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.InterMotionValid = true
 			result.MVResiduals = motionResult.Residuals
 			result.MVResidualValid = motionResult.ResidualValid
-			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
+			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
 				return BlockPredictionModeResult{}, err
 			}
 		}
@@ -1273,7 +1273,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion); err != nil {
+				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}
 				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
@@ -1299,7 +1299,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				return result, nil
 			}
 		}
-		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs); err != nil {
+		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
 			return BlockPredictionModeResult{}, fmt.Errorf("mark inter references: %w", err)
 		}
 		if result.InterIntraValid && result.InterIntra.Enabled {

@@ -172,7 +172,7 @@ func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
 	}
 
 	var ctx BlockModeContext
-	if err := ctx.MarkInterMotion(BlockSize4x8, 6, 10, inter); err != nil {
+	if err := ctx.MarkInterMotion(BlockSize4x8, 6, 10, inter, true); err != nil {
 		t.Fatal(err)
 	}
 	set, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{

@@ -49,7 +49,7 @@ func TestInterReferenceContextsMatchDav1d(t *testing.T) {
 
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, InterReferencesResult{
 		Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 	req.HaveTop = true
@@ -118,7 +118,7 @@ func TestReadInterReferencesSingleAndForced(t *testing.T) {
 	if got := cdfs.SingleRef[0][1].Values()[2]; got != 1 {
 		t.Fatalf("single p1 cdf count=%d want 1", got)
 	}
-	if err := ctx.MarkInter(BlockSize16x16, 0, 0, result); err != nil {
+	if err := ctx.MarkInter(BlockSize16x16, 0, 0, result, true); err != nil {
 		t.Fatal(err)
 	}
 	if ctx.AboveRef[0][0] != ReferenceFrameLast || ctx.LeftRef[1][0] != ReferenceFrameNone {
@@ -195,7 +195,7 @@ func TestInterReferencesRejectInvalidInputs(t *testing.T) {
 	if _, err := ctx.ReferenceModeContext(InterReferenceRequest{Size: blockSizeCount}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad ctx err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if err := ctx.MarkInter(BlockSize4x4, 0, 0, InterReferencesResult{}); !errors.Is(err, ErrInvalidDecodeState) {
+	if err := ctx.MarkInter(BlockSize4x4, 0, 0, InterReferencesResult{}, true); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad mark err=%v want %v", err, ErrInvalidDecodeState)
 	}
 
@@ -243,7 +243,7 @@ func TestInterReferencesAllocs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := ctx.MarkInter(BlockSize16x16, 0, 0, result); err != nil {
+		if err := ctx.MarkInter(BlockSize16x16, 0, 0, result, true); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -299,7 +299,7 @@ func FuzzReadInterReferences(f *testing.F) {
 		if err != nil {
 			t.Fatalf("ReadInterReferences err=%v size=%d mode=%d", err, size, mode)
 		}
-		if err := ctx.MarkInter(size, x4, y4, result); err != nil {
+		if err := ctx.MarkInter(size, x4, y4, result, true); err != nil {
 			t.Fatalf("MarkInter err=%v result=%+v", err, result)
 		}
 	})

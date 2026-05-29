@@ -1017,7 +1017,7 @@ func TestIntrabcPredictedMVUsesNeighborMotionBeforeFallback(t *testing.T) {
 		Mode: InterModeResult{Mode: InterModeNewMV},
 		MV:   [2]motion.Vector{{Row: -512}},
 	}
-	if err := ctx.MarkIntrabcMotion(BlockSize16x16, 0, 0, neighbor); err != nil {
+	if err := ctx.MarkIntrabcMotion(BlockSize16x16, 0, 0, neighbor, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{
@@ -1127,7 +1127,7 @@ func TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback(t *testing.T) {
 	if err := sbMode.MarkIntrabcMotion(BlockSize8x16, 14, 12, InterMotionResult{
 		Mode: InterModeResult{Mode: InterModeNewMV},
 		MV:   [2]motion.Vector{dvWant},
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 	// Stage the corner into PendingDiagonal[15] then promote (mirrors the

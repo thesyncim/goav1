@@ -497,13 +497,13 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 		Mode:       InterModeResult{Mode: InterModeNewMV},
 		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
 	}
-	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult); err != nil {
+	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult, true); err != nil {
 		t.Fatal(err)
 	}
 	if ctx.AboveMotionValid[0] == 0 || ctx.LeftMotionValid[0] == 0 || ctx.GridMotionValid[0][0] == 0 {
 		t.Fatal("motion was not marked valid")
 	}
-	if err := ctx.MarkInter(BlockSize8x8, 0, 0, motionResult.References); err != nil {
+	if err := ctx.MarkInter(BlockSize8x8, 0, 0, motionResult.References, true); err != nil {
 		t.Fatal(err)
 	}
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
@@ -512,7 +512,7 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if ctx.GridMotionValid[0][0] != 0 {
 		t.Fatal("inter reference mark left stale grid motion valid")
 	}
-	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult); err != nil {
+	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeDC); err != nil {
@@ -533,7 +533,7 @@ func TestBlockModeContextMarkInterMotionFillsGrid(t *testing.T) {
 		Mode:       InterModeResult{Mode: InterModeNearMV},
 		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
 	}
-	if err := ctx.MarkInterMotion(BlockSize8x8, 4, 6, motionResult); err != nil {
+	if err := ctx.MarkInterMotion(BlockSize8x8, 4, 6, motionResult, true); err != nil {
 		t.Fatal(err)
 	}
 	for y := 6; y < 8; y++ {

@@ -236,7 +236,7 @@ func TestMarkCompoundBlend(t *testing.T) {
 		Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
 		Compound: true,
 	}
-	if err := ctx.MarkInter(BlockSize16x16, 2, 3, refs); err != nil {
+	if err := ctx.MarkInter(BlockSize16x16, 2, 3, refs, true); err != nil {
 		t.Fatal(err)
 	}
 	if ctx.AboveCompIndex[2] != 1 || ctx.LeftCompIndex[3] != 1 || ctx.AboveCompGroup[2] != 0 {

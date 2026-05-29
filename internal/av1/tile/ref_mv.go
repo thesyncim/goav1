@@ -329,11 +329,11 @@ func (stack ReferenceMVStack) validate() error {
 }
 
 // MarkInterMotion updates the top/left context once a block's inter MVs are known.
-func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult) error {
+func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, hasChroma bool) error {
 	if err := validateInterMotion(result); err != nil {
 		return err
 	}
-	if err := c.MarkInter(size, x4, y4, result.References); err != nil {
+	if err := c.MarkInter(size, x4, y4, result.References, hasChroma); err != nil {
 		return err
 	}
 	dims, ok := size.Dimensions()
@@ -355,7 +355,7 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 }
 
 // MarkIntrabcMotion updates top/left motion context for intra-block-copy DVs.
-func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, result InterMotionResult) error {
+func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, hasChroma bool) error {
 	if c == nil || !result.Mode.Mode.Valid() {
 		return ErrInvalidDecodeState
 	}
@@ -368,8 +368,10 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveIntra[x4+i] = 0
 		c.AboveMode[x4+i] = IntraModeDC
-		c.AboveChromaIntra[x4+i] = 0
-		c.AboveChromaMode[x4+i] = ChromaIntraModeDC
+		if hasChroma {
+			c.AboveChromaIntra[x4+i] = 0
+			c.AboveChromaMode[x4+i] = ChromaIntraModeDC
+		}
 		c.AboveRef[0][x4+i] = ReferenceFrameNone
 		c.AboveRef[1][x4+i] = ReferenceFrameNone
 		c.AboveCompound[x4+i] = 0
@@ -384,8 +386,10 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftIntra[y4+i] = 0
 		c.LeftMode[y4+i] = IntraModeDC
-		c.LeftChromaIntra[y4+i] = 0
-		c.LeftChromaMode[y4+i] = ChromaIntraModeDC
+		if hasChroma {
+			c.LeftChromaIntra[y4+i] = 0
+			c.LeftChromaMode[y4+i] = ChromaIntraModeDC
+		}
 		c.LeftRef[0][y4+i] = ReferenceFrameNone
 		c.LeftRef[1][y4+i] = ReferenceFrameNone
 		c.LeftCompound[y4+i] = 0

@@ -60,7 +60,7 @@ func TestSwitchableInterpContextMatchesLibaom(t *testing.T) {
 		t.Fatalf("no-neighbor dir1 ctx=%d want 11", got)
 	}
 
-	if err := ctx.MarkInter(BlockSize8x8, 0, 0, refs); err != nil {
+	if err := ctx.MarkInter(BlockSize8x8, 0, 0, refs, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.MarkInterFilters(BlockSize8x8, 0, 0, refs, motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpEightTapRegular}); err != nil {
