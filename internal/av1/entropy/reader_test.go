@@ -509,3 +509,75 @@ func BenchmarkReaderReadSignedDelta(b *testing.B) {
 		_, _ = r.ReadSignedDelta(&cdf, DeltaSmall)
 	}
 }
+
+// benchStream is a pseudo-random payload large enough to keep one Reader busy
+// for many symbols without exhausting the bitstream, so the benchmarks below
+// measure steady-state per-symbol cost rather than NewReader/refill overhead.
+func benchStream() []byte {
+	const n = 1 << 16
+	s := make([]byte, n)
+	x := uint32(0x12345678)
+	for i := range s {
+		x = x*1664525 + 1013904223
+		s[i] = byte(x >> 16)
+	}
+	return s
+}
+
+// benchSymbolsPerOp is the number of symbols decoded per benchmark iteration.
+// A large fresh stream supplies them, so NewReader/refill overhead amortizes
+// and each reported ns/op approximates one steady-state symbol decode.
+const benchSymbolsPerOp = 4096
+
+// BenchmarkReaderSymbolStream decodes a long run of CDF-adapted symbols from a
+// single Reader, isolating ReadSymbol's per-symbol cost (the decoder hot path).
+// CDF state is reset each batch so adaptation stays deterministic.
+func BenchmarkReaderSymbolStream(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		cdf := []uint16{24576, 16384, 8192, 0, 0}
+		for i := 0; i < benchSymbolsPerOp; i++ {
+			if _, err := r.ReadSymbol(cdf, 4); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+// BenchmarkReaderSymbolStreamNoUpdate measures the decode path with CDF
+// adaptation disabled (used for some frame headers / non-adaptive contexts).
+func BenchmarkReaderSymbolStreamNoUpdate(b *testing.B) {
+	src := benchStream()
+	cdf := []uint16{24576, 16384, 8192, 0, 0}
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReaderWithCDFUpdate(src, false)
+		for i := 0; i < benchSymbolsPerOp; i++ {
+			if _, err := r.ReadSymbol(cdf, 4); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+// BenchmarkReaderBoolStream isolates ReadBoolQ15's per-call cost.
+func BenchmarkReaderBoolStream(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		for i := 0; i < benchSymbolsPerOp; i++ {
+			if _, err := r.ReadBoolQ15(CDFProbTop / 2); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}

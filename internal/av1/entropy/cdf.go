@@ -216,3 +216,30 @@ func updateCDF(cdf []uint16, symbols int, symbol int) {
 		cdf[symbols] = count + 1
 	}
 }
+
+// updateCDFWindow is the hot-path CDF adaptation used by ReadSymbol. cdf must be
+// the exact window of length symbols+1 (probability entries followed by the
+// trailing adaptation count), so the compiler eliminates bounds checks. It is
+// behaviorally identical to updateCDF(cdf, len(cdf)-1, symbol).
+func updateCDFWindow(cdf []uint16, symbol int) {
+	symbols := len(cdf) - 1
+	count := cdf[symbols]
+	rate := uint(4 + (count >> 4))
+	if symbols > 3 {
+		rate++
+	}
+
+	// Range over the probability entries (indices [0, symbols-2]); the final
+	// symbols-1 entry is fixed at 0 in inverse-CDF form. Ranging the sub-slice
+	// drops the per-iteration index bounds check on the write-back.
+	for i, v := range cdf[:symbols-1] {
+		if i < symbol {
+			cdf[i] = v + ((uint16(CDFProbTop) - v) >> rate)
+		} else {
+			cdf[i] = v - (v >> rate)
+		}
+	}
+	if count < MaxCDFCount {
+		cdf[symbols] = count + 1
+	}
+}

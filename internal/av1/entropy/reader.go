@@ -231,32 +231,49 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 		return 0, ErrInvalidCDF
 	}
 
+	// Reslice to the exact window so the compiler proves every cdf[...] index
+	// (decode loop and updateCDF) is in bounds: ValidateCDF guarantees
+	// len(cdf) >= symbols+1, the decode loop indexes [0, symbols-1], and
+	// updateCDFWindow indexes the trailing count at cdf[symbols].
+	cdf = cdf[:symbols+1]
+
 	rangeValue := r.rng
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
 	lower := uint32(0)
 	symbol := 0
-	last := symbols - 1
-	for {
-		lower = (((rangeValue >> 8) * uint32(cdf[symbol]>>ecProbShift)) >> (7 - ecProbShift)) +
+	// Derive last from len(cdf) so the compiler relates the loop bound to the
+	// backing array: symbol < last == len(cdf)-2 < len(cdf), proving cdf[symbol]
+	// in bounds (no per-iteration bounds check). last >= 1 (ValidateCDF
+	// guarantees symbols >= 2), so the loop runs at least once and captures the
+	// head probability for tracing without a separate cdf[0] bounds check.
+	last := len(cdf) - 2
+	head := uint16(0)
+	for symbol < last {
+		c := cdf[symbol]
+		if symbol == 0 {
+			head = c
+		}
+		lower = (((rangeValue >> 8) * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) +
 			ecMinProb*uint32(last-symbol)
 		if coded >= lower {
 			break
 		}
 		symbol++
-		if symbol >= symbols {
-			return 0, ErrInvalidCDF
-		}
 		upper = lower
+	}
+	if symbol == last {
+		// Final symbol: cdf[last] == 0 so its split is 0 and coded >= 0 holds.
+		lower = 0
 	}
 	if lower >= upper {
 		return 0, ErrInvalidCDF
 	}
 
-	traceCDFRead(cdf[0], symbols, r.dif, r.rng, r.BitsRead())
+	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
 	r.normalize(r.dif-(lower<<(ecWindow-16)), upper-lower)
 	if r.allowCDFUpdate {
-		updateCDF(cdf, symbols, symbol)
+		updateCDFWindow(cdf, symbol)
 	}
 	return symbol, nil
 }
