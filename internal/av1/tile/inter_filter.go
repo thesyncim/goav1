@@ -284,12 +284,20 @@ func nonTransGlobalMotion(req InterpFilterRequest) bool {
 	if !ok || dims.W4 < 2 || dims.H4 < 2 {
 		return false
 	}
+	// libaom is_nontrans_global_motion() (av1/common/blockd.h): the block is
+	// non-translational global motion when it is GLOBALMV/GLOBAL_GLOBALMV and the
+	// global motion model for every reference is NOT TRANSLATION. This differs
+	// from is_global_mv_block() (warp/ref_mv), which requires wmtype > TRANSLATION:
+	// here an IDENTITY model also counts (wmtype != TRANSLATION), so a GLOBALMV
+	// block over an identity model skips the interp-filter syntax read. Using
+	// > TRANSLATION wrongly read the filter for identity-model GLOBALMV blocks,
+	// desyncing the range coder.
 	if !req.References.Compound {
-		return req.Mode.Mode == InterModeGlobalMV && req.GlobalTypes[0] > parser.GlobalMotionTranslation
+		return req.Mode.Mode == InterModeGlobalMV && req.GlobalTypes[0] != parser.GlobalMotionTranslation
 	}
 	return req.Mode.CompoundMode == CompoundInterModeGlobalGlobal &&
-		req.GlobalTypes[0] > parser.GlobalMotionTranslation &&
-		req.GlobalTypes[1] > parser.GlobalMotionTranslation
+		req.GlobalTypes[0] != parser.GlobalMotionTranslation &&
+		req.GlobalTypes[1] != parser.GlobalMotionTranslation
 }
 
 func fixedMotionFilter(filter parser.InterpolationFilter) (motion.InterpFilter, error) {
