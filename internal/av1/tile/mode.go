@@ -177,6 +177,18 @@ type BlockModeContext struct {
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
 
+	// GridInterp records each inter block's decoded interpolation filter
+	// pair per MI cell, mirroring libaom's per-MB this_mbmi->interp_filters.
+	// The sub8x8 chroma predictor (build_inter_predictors_sub8x8) reads each
+	// covered luma sub-block's own filters, so it consults this grid for the
+	// neighbor cells rather than the collapsed 1D Above/Left filter contexts
+	// (which only retain the last block written to a row/column slot and can
+	// therefore report a different neighbor's filter). Written by
+	// MarkInterFilters alongside GridInterMotion; read under the same
+	// GridMotionValid guard.
+	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
+	GridInterpValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+
 	// GridBlockSizeVisited mirrors GridBlockSize but signals whether the
 	// containing slot was ever recorded by markGridInterMotion or
 	// clearGridInterMotion. Outer ref-MV scans use it to distinguish "slot
