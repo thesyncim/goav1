@@ -86,6 +86,13 @@ type profileClip struct {
 	wantBitDepth     uint8
 	wantSubsamplingX bool
 	wantSubsamplingY bool
+
+	// superRes marks clips that signal frame super-resolution. Super-res
+	// reallocates the displayed surface to a larger (upscaled) width than the
+	// coded reconstruction, so it cannot run through the in-place publication
+	// post-filter runner; these clips use the caller-owned ApplyCallerPostFilters
+	// chain instead, exactly like a display/output consumer.
+	superRes bool
 }
 
 var profileClips = []profileClip{
@@ -164,6 +171,83 @@ var profileClips = []profileClip{
 			"dcd86cbbf80f81d9699eaf6c6e879e72",
 		},
 		wantBitDepth:     12,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Super-res only (no loop restoration, no CDEF). 4:2:0 8-bit, 160x128,
+		// 4 all-keyframes, super-res denom 12 => coded width 107 (not a multiple
+		// of 8), exercising the MI-aligned upscale source span. Guards the
+		// super-res driver's aligned-width source fix.
+		name: "superres-420-8bit-160x128",
+		file: "superres-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"024e5d1f55340eee39893567e8000554",
+			"80c239661f2cd1afe5fce5038ceac76f",
+			"93dc5cde59cb99bd524264b15c70a700",
+			"87887afdc06ba5f0e88b2acbe1ce0ce5",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+		superRes:         true,
+	},
+	{
+		// Super-res + loop restoration. 4:2:0 8-bit, 160x128, 4 all-keyframes,
+		// super-res denom 12. Restoration runs at the upscaled resolution and
+		// consumes deblock boundary rows that are super-res-upscaled on the fly.
+		// Guards the loop-restoration + super-res boundary-save path.
+		name: "superres-restoration-420-8bit-160x128",
+		file: "superres-restoration-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"93533110e2bd60fed6f15b5e65178bc6",
+			"bf83a513a868584aec7f9f05c5187d70",
+			"4e7dc4a0d7ab9cebdbdfdf3ef73b0d1c",
+			"6af9472b0679093facbefa85e973a7f9",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+		superRes:         true,
+	},
+	{
+		name: "profile0-420-8bit-edgemv-130x130",
+		file: "profile0-420-8bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f6c673ec13ccdd994fd10373a1d7f814",
+			"a3b01764f4b3e9c7bcec7c0e7e86be64",
+			"8158c19b78deb9ac6aaab9d411fe268f",
+			"eebdcf491352f1b13a24b614ba137832",
+			"54582e43045ece242c0a50e3f73e7a6b",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		name: "profile2-420-12bit-edgemv-130x130",
+		file: "profile2-420-12bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f85baff9f8f516879ab8da538e582a09",
+			"5dfd30b2a7eb7e2178a06bd7e060bc80",
+			"f14ff5bc1a1504908f1d22b4be5a0ca3",
+			"24e96db2d3644a748e587dd011863a4a",
+			"325a954def1c43d852c980ddc66ba652",
+		},
+		wantBitDepth:     12,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		name: "multitile-2x1-rows-256x256",
+		file: "multitile-2x1-rows-256x256.ivf",
+		frameMD5Hex: []string{
+			"19abff965e7c0b982b779b14ce5d67a9",
+			"d9670540a9ef1cc444eb684dde65928c",
+			"1ece7ab7594b417ad313c395c9bf153c",
+			"6de64107acac0d89ad361dfe615a1c5f",
+		},
+		wantBitDepth:     8,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
@@ -382,6 +466,24 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				}
 				return nil
 			}), postFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
+				if clip.superRes {
+					out, ev, err := applyCallerPostFilters(ctx)
+					if err != nil {
+						return err
+					}
+					if currentMVSurface >= 0 {
+						if err := decoder.PublishTemporalMotionReference(ev, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
+							return err
+						}
+					}
+					got, err := testvector.FrameMD5(*out)
+					if err != nil {
+						return err
+					}
+					postMD5 = got
+					havePost = true
+					return nil
+				}
 				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
 				size, err := supportedPostFilterScratchLen(ctx)
 				if err != nil {
@@ -549,6 +651,63 @@ func sideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWor
 		RestorationRecords: make([]tile.RestorationUnitRecord, maxInt(size.RestorationRecords, 0)),
 		RestorationAbove:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
 		RestorationBelow:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
+	}
+}
+
+// applyCallerPostFilters runs the caller-owned full post-filter chain
+// (ApplyCallerPostFilters) for a super-res frame: loop filter, CDEF, super-res
+// upscale into caller-owned scratch, then loop restoration and film grain at
+// the upscaled resolution. It performs the two-pass super-res scratch sizing
+// (size the upscale output frame first, then re-size for the post-super-res
+// tail) the public caller runner uses, and returns the final display frame.
+func applyCallerPostFilters(ctx decoder.FrameWorkPostFilterContext) (*frame.Frame, decoder.Event, error) {
+	var outputView frame.Frame
+	options := decoder.FrameWorkPostFilterBindOptions{SuperResOutputView: &outputView}
+	if ctx.LoopFilterMap != nil {
+		options.LoopFilterMap = *ctx.LoopFilterMap
+	}
+	if ctx.CDEFIndexMap != nil {
+		options.CDEFIndexMap = *ctx.CDEFIndexMap
+	}
+	if ctx.RestorationFrameBuffers != nil {
+		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+	}
+
+	probe := callerProbeRequest(options)
+	first, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		return nil, decoder.Event{}, err
+	}
+	scratch := postFilterScratchStorage(first)
+	probe = callerProbeRequest(options)
+	probe.SuperRes.OutputFrame = scratch.SuperResOutputFrame
+	probe.SuperRes.OutputView = &outputView
+	full, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		return nil, decoder.Event{}, err
+	}
+	scratch = postFilterScratchStorage(full)
+
+	req, err := full.BindRequest(options, scratch)
+	if err != nil {
+		return nil, decoder.Event{}, err
+	}
+	runner := decoder.FrameWorkCallerPostFilterRunner{Request: req}
+	if err := runner.Apply(ctx); err != nil {
+		return nil, decoder.Event{}, err
+	}
+	if runner.Context.Output == nil {
+		return nil, decoder.Event{}, fmt.Errorf("caller post-filter produced nil output")
+	}
+	return runner.Context.Output, runner.Context.Event, nil
+}
+
+func callerProbeRequest(options decoder.FrameWorkPostFilterBindOptions) decoder.FrameWorkPostFilterRequest {
+	return decoder.FrameWorkPostFilterRequest{
+		LoopFilter:  decoder.FrameWorkLoopFilterPostFilterRequest{Map: options.LoopFilterMap},
+		CDEF:        decoder.FrameWorkCDEFPostFilterRequest{IndexMap: options.CDEFIndexMap},
+		Restoration: decoder.FrameWorkRestorationPostFilterRequest{Records: options.RestorationRecords},
 	}
 }
 
