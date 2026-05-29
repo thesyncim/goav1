@@ -16,6 +16,27 @@ const (
 	round1Bits   = 2*filterBits - round0Bits
 )
 
+// highBDRoundBits ports libaom's get_conv_params_no_round() round-bit selection
+// (av1/common/convolve.h). The single-prediction convolve uses round_0 =
+// ROUND0_BITS (3) and round_1 = 2*FILTER_BITS - round_0 (11) for bd <= 10. At
+// bd == 12 libaom keeps its im_block intermediate inside int16 by raising
+// round_0 (and lowering round_1) by intbufrange - 16, where intbufrange =
+// bd + FILTER_BITS - round_0 + 2. For bd == 12 that yields round_0 = 5,
+// round_1 = 9. The bit-stream semantics for 12-bit inter prediction are
+// therefore defined with these bumped rounds, so goav1 must apply them even
+// though its intermediate is int32 (the staged rounding is not associative, so
+// round_0 = 3 produces a sub-LSB-different final pixel at bd == 12).
+func highBDRoundBits(bitDepth uint8) (round0 int, round1 int) {
+	round0 = round0Bits
+	round1 = 2*filterBits - round0
+	intbufrange := int(bitDepth) + filterBits - round0 + 2
+	if intbufrange > 16 {
+		round0 += intbufrange - 16
+		round1 -= intbufrange - 16
+	}
+	return round0, round1
+}
+
 type InterpFilter uint8
 
 const (

@@ -28,6 +28,21 @@ const (
 	compoundMaxConvSamples = maxBlockSize * maxBlockSize
 )
 
+// compoundRound0 ports get_conv_params_no_round() round_0 selection for the
+// compound (is_compound) convolve. round_0 = ROUND0_BITS (3) for bd <= 10 and
+// is raised to 5 at bd == 12 by the intbufrange adjustment (intbufrange =
+// bd + FILTER_BITS - round_0 + 2 > 16). Unlike the single-prediction path,
+// COMPOUND_ROUND1_BITS is left unchanged for compound (libaom only lowers
+// round_1 when !is_compound), so callers keep compoundRound1Bits.
+func compoundRound0(bitDepth uint8) int {
+	round0 := compoundRound0Bits
+	intbufrange := int(bitDepth) + filterBits - round0 + 2
+	if intbufrange > 16 {
+		round0 += intbufrange - 16
+	}
+	return round0
+}
+
 // CompoundConvBuf holds one reference's un-rounded 16-bit CONV_BUF predictor
 // for compound inter prediction.
 type CompoundConvBuf struct {
@@ -82,7 +97,8 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	}
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
-	offsetBits := bd + 2*filterBits - compoundRound0Bits
+	round0 := compoundRound0(bitDepth)
+	offsetBits := bd + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
 	switch {
 	case subX != 0 && subY != 0:
@@ -95,7 +111,7 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 				for k := 0; k < filterTaps; k++ {
 					sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
 				}
-				im[y*imStride+x] = int32(roundPowerOfTwo(sum, compoundRound0Bits))
+				im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
 			}
 		}
 		for y := 0; y < height; y++ {
@@ -116,14 +132,14 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 				for k := 0; k < filterTaps; k++ {
 					res += int(xKernel[k]) * load(refX+x-foX+k, refY+y)
 				}
-				res = (1 << bits) * roundPowerOfTwo(res, compoundRound0Bits)
+				res = (1 << bits) * roundPowerOfTwo(res, round0)
 				res += roundOffset
 				out[y*width+x] = uint16(res)
 			}
 		}
 	case subY != 0:
 		// av1_dist_wtd_convolve_y: bits = FILTER_BITS - round_0.
-		bits := filterBits - compoundRound0Bits
+		bits := filterBits - round0
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				res := 0
@@ -137,7 +153,7 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 		}
 	default:
 		// av1_dist_wtd_convolve_2d_copy: bits = 2*FILTER_BITS - round_1 - round_0.
-		bits := 2*filterBits - compoundRound1Bits - compoundRound0Bits
+		bits := 2*filterBits - compoundRound1Bits - round0
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				res := load(refX+x, refY+y) << bits
@@ -178,7 +194,10 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 	}
 	bd := int(bitDepth)
 	a, be, g, d := int(alpha), int(beta), int(gamma), int(delta)
-	reduceBitsHoriz := round0Bits
+	// av1_highbd_warp_affine_c with is_compound: reduce_bits_horiz = round_0
+	// (bd-dependent, 5 at bd == 12) and reduce_bits_vert = round_1
+	// (COMPOUND_ROUND1_BITS, unchanged for compound).
+	reduceBitsHoriz := compoundRound0(bitDepth)
 	reduceBitsVert := compoundRound1Bits
 	offsetBitsHoriz := bd + filterBits - 1
 	offsetBitsVert := bd + 2*filterBits - reduceBitsHoriz
@@ -227,9 +246,10 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 		return ErrInvalidMotion
 	}
 	bd := int(bitDepth)
-	offsetBits := bd + 2*filterBits - compoundRound0Bits
+	round0 := compoundRound0(bitDepth)
+	offsetBits := bd + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
-	roundBits := 2*filterBits - compoundRound0Bits - compoundRound1Bits
+	roundBits := 2*filterBits - round0 - compoundRound1Bits
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	store := compoundPixelStorer(dst, bytesPerSample, bitDepth)
@@ -259,9 +279,10 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 		return ErrInvalidMotion
 	}
 	bd := int(bitDepth)
-	offsetBits := bd + 2*filterBits - compoundRound0Bits
+	round0 := compoundRound0(bitDepth)
+	offsetBits := bd + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
-	roundBits := 2*filterBits - compoundRound0Bits - compoundRound1Bits
+	roundBits := 2*filterBits - round0 - compoundRound1Bits
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	store := compoundPixelStorer(dst, bytesPerSample, bitDepth)
@@ -292,7 +313,7 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 		return ErrInvalidMotion
 	}
 	bd := int(bitDepth)
-	round := 2*filterBits - compoundRound0Bits - compoundRound1Bits + (bd - 8)
+	round := 2*filterBits - compoundRound0(bitDepth) - compoundRound1Bits + (bd - 8)
 	const maskBase = 38
 	const diffFactor = 16
 	src0 := buf0.Data[:width*height]

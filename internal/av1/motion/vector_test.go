@@ -944,7 +944,7 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			fillHighBDMotionTestPlane(src, max)
 			t.Run("X", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
-				convolveXHighBD(dst, src, max, 8, 8, 8, 8, 8, 8, identity)
+				convolveXHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity)
 				for row := 0; row < 8; row++ {
 					for col := 0; col < 8; col++ {
 						got := getSample(dst, 2, 8+col, 8+row)
@@ -1077,7 +1077,7 @@ func TestConvolveHighBDQ10OneDimensional(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					convolveXHighBD(got, src, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
+					convolveXHighBD(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
 					libaomVerbatimHighBDXSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
 					for row := 0; row < sz.height; row++ {
 						for col := 0; col < sz.width; col++ {
@@ -1470,25 +1470,27 @@ func libaomHighBDConvolve2DRef(dst frame.Plane, src frame.Plane, bitDepth uint8,
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
+	// get_conv_params_no_round bumps round_0/round_1 at bd == 12.
+	round0, round1 := highBDRoundBits(bitDepth)
 	for y := 0; y < height+filterTaps-1; y++ {
 		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
 			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(getSample(src, 2, refX+x-foX+k, refY-foY+y))
 			}
-			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
+			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0))
 		}
 	}
-	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - round1)) + (1 << (offsetBits - round1 - 1))
+	bits := 2*filterBits - round0 - round1
 	for y := range height {
 		for x := range width {
 			sum := 1 << offsetBits
 			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
-			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
+			res := libaomRoundPowerOfTwo(sum, round1) - roundOffset
 			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, bits), max))
 		}
 	}
@@ -1499,25 +1501,27 @@ func libaomHighBDConvolve2DClampedRef(dst frame.Plane, src frame.Plane, bitDepth
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
+	// get_conv_params_no_round bumps round_0/round_1 at bd == 12.
+	round0, round1 := highBDRoundBits(bitDepth)
 	for y := 0; y < height+filterTaps-1; y++ {
 		for x := range width {
 			sum := 1 << (int(bitDepth) + filterBits - 1)
 			for k := range filterTaps {
 				sum += int(xKernel[k]) * int(getSampleClamped(src, 2, refX+x-foX+k, refY-foY+y))
 			}
-			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0Bits))
+			im[y*imStride+x] = int32(libaomRoundPowerOfTwo(sum, round0))
 		}
 	}
-	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - round1)) + (1 << (offsetBits - round1 - 1))
+	bits := 2*filterBits - round0 - round1
 	for y := range height {
 		for x := range width {
 			sum := 1 << offsetBits
 			for k := range filterTaps {
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
-			res := libaomRoundPowerOfTwo(sum, round1Bits) - roundOffset
+			res := libaomRoundPowerOfTwo(sum, round1) - roundOffset
 			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(res, bits), max))
 		}
 	}
