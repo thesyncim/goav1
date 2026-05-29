@@ -399,7 +399,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlock(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -483,7 +483,7 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlock(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -531,7 +531,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -602,7 +602,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil

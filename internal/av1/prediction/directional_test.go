@@ -684,3 +684,71 @@ func directionalDYLibaomReference(angle int) int {
 	}
 	return 1
 }
+
+// TestPredictDirectionalIntraPlaneBlockExtentBottomEdge guards the
+// partially-visible directional fix: a zone-1 (D45-style) transform block that
+// straddles the bottom frame edge predicts only its visible top rows but must
+// drive its base-index accumulation off the FULL transform extent, exactly as
+// libaom av1_dr_prediction_z1_c. Predicting with the clipped (visible) height
+// shrinks max_base_x and makes the bottom visible rows clamp to the last
+// reference sample early, producing a flat run where libaom keeps
+// interpolating from the extended above-right reference. This test builds a
+// monotonically increasing above edge so a clamp is observable as a flat tail
+// and asserts the WithExtent result equals the top half of a full-height
+// prediction (and differs from the clipped-dimension prediction).
+func TestPredictDirectionalIntraPlaneBlockExtentBottomEdge(t *testing.T) {
+	const (
+		width      = 16
+		visibleH   = 8
+		predHeight = 16
+		angle      = 36 // zone 1, dx > 64 with fractional shift
+		origin     = 8
+	)
+	mkEdges := func() DirectionalEdges {
+		e := DirectionalEdges{
+			Above:       make([]uint16, origin+width+predHeight+8),
+			Left:        make([]uint16, origin+predHeight+8),
+			AboveOrigin: origin,
+			LeftOrigin:  origin,
+		}
+		// Strictly increasing above edge so any early clamp shows up as a flat
+		// tail on the bottom-right of the block.
+		for i := range e.Above {
+			e.Above[i] = uint16(20 + i)
+		}
+		for i := range e.Left {
+			e.Left[i] = uint16(20 + i)
+		}
+		return e
+	}
+
+	// Reference: predict the full 16x16 block, then keep the visible top 8 rows.
+	full, _ := testPlane(width, predHeight, 1, width)
+	if err := PredictDirectionalIntraPlaneBlock(full, 1, 8, 0, 0, width, predHeight, angle, mkEdges()); err != nil {
+		t.Fatal(err)
+	}
+	fullSamples := collectPlaneSamples(full, 1, width, predHeight)
+	wantVisible := fullSamples[:width*visibleH]
+
+	// WithExtent: predict only the visible 8 rows but drive the base math off
+	// the full 16-row extent. Must equal the top 8 rows of the full prediction.
+	ext, _ := testPlane(width, visibleH, 1, width)
+	if err := PredictDirectionalIntraPlaneBlockWithExtent(ext, 1, 8, 0, 0, width, visibleH, width, predHeight, angle, mkEdges()); err != nil {
+		t.Fatal(err)
+	}
+	gotExt := collectPlaneSamples(ext, 1, width, visibleH)
+	if !slices.Equal(gotExt, wantVisible) {
+		t.Fatalf("WithExtent visible rows do not match full-height prediction\n got=%v\nwant=%v", gotExt, wantVisible)
+	}
+
+	// Sanity: the legacy clipped-dimension prediction (extent == visible)
+	// diverges from libaom on the bottom-right because max_base_x shrinks.
+	clip, _ := testPlane(width, visibleH, 1, width)
+	if err := PredictDirectionalIntraPlaneBlockWithExtent(clip, 1, 8, 0, 0, width, visibleH, width, visibleH, angle, mkEdges()); err != nil {
+		t.Fatal(err)
+	}
+	gotClip := collectPlaneSamples(clip, 1, width, visibleH)
+	if slices.Equal(gotClip, wantVisible) {
+		t.Fatalf("clipped-dimension prediction unexpectedly matched the extended reference; test no longer guards the regression")
+	}
+}

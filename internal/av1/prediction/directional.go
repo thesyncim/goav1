@@ -69,6 +69,25 @@ func DirectionalDX(angle int) int {
 // prediction for angles in (0, 270). Angles 90 and 180 use the vertical and
 // horizontal predictors; other angles use the AV1 directional zones.
 func PredictDirectionalIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, edges DirectionalEdges) error {
+	return PredictDirectionalIntraPlaneBlockWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, angle, edges)
+}
+
+// PredictDirectionalIntraPlaneBlockWithExtent predicts a directional intra block
+// whose full transform extent is predWidth x predHeight while only the visible
+// width x height sub-rectangle (top-left aligned) is written to dst. libaom's
+// av1_dr_prediction_z{1,2,3}_c always run their base-index accumulation over the
+// full transform dimensions (txwpx x txhpx) even when the block straddles the
+// right/bottom frame edge; the off-edge samples are simply never stored. Driving
+// the zone predictors with the clipped visible dimensions instead shrinks
+// max_base_x / max_base_y and makes the bottom/right visible rows clamp to the
+// last available reference sample early, producing a flat run where libaom keeps
+// interpolating from the extended above-right / bottom-left reference. Passing
+// the full extent here restores byte parity for partially-visible directional
+// blocks (e.g. a TX_16X16 D45 block on the last superblock row).
+func PredictDirectionalIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, angle int, edges DirectionalEdges) error {
+	if predWidth < width || predHeight < height || width <= 0 || height <= 0 {
+		return ErrInvalidPrediction
+	}
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
 	if err != nil {
 		return err
@@ -97,51 +116,61 @@ func PredictDirectionalIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitD
 		if dx <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ1(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), dx, max)
+		return predictDirectionalZ1(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), dx, max, predWidth, predHeight)
 	case angle < 180:
 		dx := DirectionalDX(angle)
 		dy := DirectionalDY(angle)
 		if dx <= 0 || dy <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ2(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), boolToInt(edges.UpsampleLeft), dx, dy, max)
+		return predictDirectionalZ2(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), boolToInt(edges.UpsampleLeft), dx, dy, max, predWidth, predHeight)
 	default:
 		dy := DirectionalDY(angle)
 		if dy <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ3(block, bytesPerSample, edges, boolToInt(edges.UpsampleLeft), dy, max)
+		return predictDirectionalZ3(block, bytesPerSample, edges, boolToInt(edges.UpsampleLeft), dy, max, predWidth, predHeight)
 	}
 	return nil
 }
 
-func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, dx int, max uint16) error {
-	maxBaseX := (block.width + block.height - 1) << upsampleAbove
+func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, dx int, max uint16, predWidth int, predHeight int) error {
+	// libaom av1_dr_prediction_z1_c keys max_base_x and the per-row base
+	// accumulation off the full transform dimensions (predWidth/predHeight),
+	// iterating r in [0,predHeight) and c in [0,predWidth). Only the visible
+	// block.height x block.width sub-rectangle is stored; the remaining
+	// iterations exist solely to keep max_base_x and the clamp behaviour
+	// identical for partially-visible blocks.
+	maxBaseX := (predWidth + predHeight - 1) << upsampleAbove
 	if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, maxBaseX, max); err != nil {
 		return err
 	}
 	fracBits := 6 - upsampleAbove
 	baseInc := 1 << upsampleAbove
 	x := dx
-	for row := 0; row < block.height; row++ {
+	for row := 0; row < predHeight; row++ {
 		base := x >> fracBits
 		shift := ((x << upsampleAbove) & 0x3f) >> 1
 		if base >= maxBaseX {
-			for ; row < block.height; row++ {
-				for col := 0; col < block.width; col++ {
-					setBlockSample(block, bytesPerSample, row, col, edges.Above[edges.AboveOrigin+maxBaseX])
+			if row < block.height {
+				for r := row; r < block.height; r++ {
+					for col := 0; col < block.width; col++ {
+						setBlockSample(block, bytesPerSample, r, col, edges.Above[edges.AboveOrigin+maxBaseX])
+					}
 				}
 			}
 			return nil
 		}
-		for col := 0; col < block.width; col++ {
-			value := edges.Above[edges.AboveOrigin+maxBaseX]
-			if base < maxBaseX {
-				p0 := int(edges.Above[edges.AboveOrigin+base])
-				p1 := int(edges.Above[edges.AboveOrigin+base+1])
-				value = uint16(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
+		for col := 0; col < predWidth; col++ {
+			if row < block.height && col < block.width {
+				value := edges.Above[edges.AboveOrigin+maxBaseX]
+				if base < maxBaseX {
+					p0 := int(edges.Above[edges.AboveOrigin+base])
+					p1 := int(edges.Above[edges.AboveOrigin+base+1])
+					value = uint16(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
+				}
+				setBlockSample(block, bytesPerSample, row, col, value)
 			}
-			setBlockSample(block, bytesPerSample, row, col, value)
 			base += baseInc
 		}
 		x += dx
@@ -149,7 +178,19 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	return nil
 }
 
-func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, upsampleLeft int, dx int, dy int, max uint16) error {
+func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, upsampleLeft int, dx int, dy int, max uint16, predWidth int, predHeight int) error {
+	// Zone 2 is computed per pixel (no running base/early clamp), so the only
+	// extent dependence is the validated reference span. libaom predicts the
+	// full transform block; the visible sub-rectangle's per-pixel base indices
+	// are unaffected by predWidth/predHeight, so iterating the visible region is
+	// sufficient as long as the reference range is validated over the full
+	// extent (the off-edge rows/cols would never reference samples the visible
+	// region does not already touch for zone 2's wedge of angles, but validate
+	// the full extent for safety/parity).
+	_, _, err := directionalZ2Ranges(predWidth, predHeight, upsampleAbove, upsampleLeft, dx, dy)
+	if err != nil {
+		return err
+	}
 	aboveRange, leftRange, err := directionalZ2Ranges(block.width, block.height, upsampleAbove, upsampleLeft, dx, dy)
 	if err != nil {
 		return err
@@ -189,26 +230,34 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 	return nil
 }
 
-func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleLeft int, dy int, max uint16) error {
-	maxBaseY := (block.width + block.height - 1) << upsampleLeft
+func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleLeft int, dy int, max uint16, predWidth int, predHeight int) error {
+	// Mirror of predictDirectionalZ1 for the left edge: libaom
+	// av1_dr_prediction_z3_c iterates c in [0,predWidth), r in [0,predHeight)
+	// with max_base_y derived from the full transform extent and stores only
+	// the visible sub-rectangle.
+	maxBaseY := (predWidth + predHeight - 1) << upsampleLeft
 	if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, maxBaseY, max); err != nil {
 		return err
 	}
 	fracBits := 6 - upsampleLeft
 	baseInc := 1 << upsampleLeft
 	y := dy
-	for col := 0; col < block.width; col++ {
+	for col := 0; col < predWidth; col++ {
 		base := y >> fracBits
 		shift := ((y << upsampleLeft) & 0x3f) >> 1
-		for row := 0; row < block.height; row++ {
+		for row := 0; row < predHeight; row++ {
 			if base < maxBaseY {
-				p0 := int(edges.Left[edges.LeftOrigin+base])
-				p1 := int(edges.Left[edges.LeftOrigin+base+1])
-				value := uint16(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
-				setBlockSample(block, bytesPerSample, row, col, value)
+				if row < block.height && col < block.width {
+					p0 := int(edges.Left[edges.LeftOrigin+base])
+					p1 := int(edges.Left[edges.LeftOrigin+base+1])
+					value := uint16(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
+					setBlockSample(block, bytesPerSample, row, col, value)
+				}
 			} else {
-				for ; row < block.height; row++ {
-					setBlockSample(block, bytesPerSample, row, col, edges.Left[edges.LeftOrigin+maxBaseY])
+				if col < block.width {
+					for r := row; r < block.height; r++ {
+						setBlockSample(block, bytesPerSample, r, col, edges.Left[edges.LeftOrigin+maxBaseY])
+					}
 				}
 				break
 			}
