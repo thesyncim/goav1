@@ -1739,7 +1739,21 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+	// Select the interpolation-filter kernel from the un-clipped plane block
+	// dimensions, not the frame-edge-clipped output extent. libaom's
+	// av1_get_interp_filter_params_with_block_size() picks the narrow 4-tap
+	// filter only when block_size_wide/high[plane_bsize] (the un-clipped plane
+	// block side) is <= 4. A chroma block straddling the right/bottom frame
+	// edge can have its visible extent shrink to <= 4 while its plane block
+	// stays wider, and libaom keeps the 8-tap filter; clipping the filter
+	// block size to the visible extent would wrongly switch to the 4-tap
+	// filter and diverge by +-1 on the edge chroma samples. For luma and
+	// interior chroma the un-clipped extent equals geom.Width/Height (no-op).
+	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, geom.Width, geom.Height, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

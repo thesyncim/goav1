@@ -202,10 +202,29 @@ func PredictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane
 // PredictInterPlaneBlockFromOriginWithFilter with explicit high-bit-depth
 // clipping.
 func PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
-	return predictInterPlaneBlockFromOriginWithFilter(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, subX, subY, filters)
+	return predictInterPlaneBlockFromOriginWithFilterSize(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, width, height, subX, subY, filters)
+}
+
+// PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize is
+// PredictInterPlaneBlockFromOriginWithFilterBitDepth but selects the
+// interpolation-filter kernel from filterW / filterH instead of the output
+// width / height. libaom's av1_get_interp_filter_params_with_block_size()
+// chooses the narrow 4-tap chroma/luma filter (sub_pel_filters_4 /
+// sub_pel_filters_4smooth) only when the *un-clipped* plane block side is <= 4
+// (block_size_wide[plane_bsize] / block_size_high[plane_bsize]). When a chroma
+// block straddles the right/bottom frame edge its visible extent can shrink to
+// <= 4 while the plane block stays wider, and libaom keeps using the 8-tap
+// filter. Callers that clip the output extent to the visible edge pass the
+// un-clipped plane block dimensions here so the kernel choice matches libaom.
+func PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
+	return predictInterPlaneBlockFromOriginWithFilterSize(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters)
 }
 
 func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+	return predictInterPlaneBlockFromOriginWithFilterSize(dst, ref, bytesPerSample, bitDepth, explicitBitDepth, dstX, dstY, refX, refY, width, height, width, height, subX, subY, filters)
+}
+
+func predictInterPlaneBlockFromOriginWithFilterSize(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
 	}
@@ -224,16 +243,22 @@ func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane
 		}
 		return copyPlaneBlockClamped(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height)
 	}
+	if filterW <= 0 {
+		filterW = width
+	}
+	if filterH <= 0 {
+		filterH = height
+	}
 	if bytesPerSample != 1 {
 		if bytesPerSample == 2 && explicitBitDepth {
-			if err := predictInterPlaneBlockHighBD(dst, ref, bitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
+			if err := predictInterPlaneBlockHighBD(dst, ref, bitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
 				return ErrInvalidMotion
 			}
 			return nil
 		}
 		return ErrInvalidMotion
 	}
-	if err := predictInterPlaneBlock8(dst, ref, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
+	if err := predictInterPlaneBlock8(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidMotion
 	}
 	return nil
@@ -252,7 +277,7 @@ func referenceOriginQ4(dst int, mvQ4 int64) (int, int, error) {
 	return int(ref), int(pos & 15), nil
 }
 
-func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -262,11 +287,11 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
-	xKernel, err := interpKernel(filters.X, width, subX)
+	xKernel, err := interpKernel(filters.X, filterW, subX)
 	if err != nil {
 		return err
 	}
-	yKernel, err := interpKernel(filters.Y, height, subY)
+	yKernel, err := interpKernel(filters.Y, filterH, subY)
 	if err != nil {
 		return err
 	}
@@ -295,7 +320,7 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	return nil
 }
 
-func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -306,11 +331,11 @@ func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uin
 	if !planeRegionFits(ref, 2, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
-	xKernel, err := interpKernel(filters.X, width, subX)
+	xKernel, err := interpKernel(filters.X, filterW, subX)
 	if err != nil {
 		return err
 	}
-	yKernel, err := interpKernel(filters.Y, height, subY)
+	yKernel, err := interpKernel(filters.Y, filterH, subY)
 	if err != nil {
 		return err
 	}
