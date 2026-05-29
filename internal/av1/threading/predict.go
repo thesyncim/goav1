@@ -629,7 +629,16 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if b.Output == nil {
 		return ErrInvalidBatch
 	}
-	luma := b.Output.Y
+	// libaom reconstructs whole transform blocks out to the MI-aligned frame
+	// grid, so the luma samples a CfL block reads exist past the cropped
+	// luma width/height. Extend the luma plane view to its MI-aligned writable
+	// extent (matching frameWorkExtendPlaneToClip for prediction writes) so the
+	// subsample read can address those reconstructed past-crop samples.
+	lumaWindow, err := b.JobOutputPlane(index, FrameWorkPlaneY)
+	if err != nil {
+		return err
+	}
+	luma := frameWorkExtendPlaneToClip(b.Output.Y, lumaWindow, b.Output.Layout.BytesPerSample)
 	lumaX := geom.X
 	lumaY := geom.Y
 	lumaW := geom.Width
@@ -646,10 +655,52 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 		lumaY <<= 1
 		lumaH <<= 1
 	}
+	// libaom's cfl_store_block only stores the reconstructed luma samples inside
+	// the MI-aligned frame grid (max_intra_block_width/height clamp to
+	// max_block_wide/high, which round to the MI grid edge, not the cropped
+	// width), then cfl_pad replicates the last stored chroma column/row out to
+	// the full transform extent. When a CfL block straddles the right/bottom
+	// frame edge, the luma read window above can exceed the reconstructed
+	// region. Clamp the luma read to the available (MI-aligned) luma extent and
+	// record the resulting chroma-domain stored dimensions so PadCFLReconQ3
+	// replicates the missing samples exactly as libaom does.
+	bufWidth := geom.Width
+	bufHeight := geom.Height
+	if lumaX+lumaW > luma.Width {
+		availLumaW := luma.Width - lumaX
+		if geom.SubsamplingX {
+			availLumaW &^= 1
+		}
+		if availLumaW < lumaW {
+			lumaW = availLumaW
+			if geom.SubsamplingX {
+				bufWidth = lumaW >> 1
+			} else {
+				bufWidth = lumaW
+			}
+		}
+	}
+	if lumaY+lumaH > luma.Height {
+		availLumaH := luma.Height - lumaY
+		if geom.SubsamplingY {
+			availLumaH &^= 1
+		}
+		if availLumaH < lumaH {
+			lumaH = availLumaH
+			if geom.SubsamplingY {
+				bufHeight = lumaH >> 1
+			} else {
+				bufHeight = lumaH
+			}
+		}
+	}
+	if lumaW <= 0 || lumaH <= 0 || bufWidth <= 0 || bufHeight <= 0 {
+		return ErrInvalidBatch
+	}
 	if err := frameWorkSubsampleLumaCFLQ3(scratch.ReconQ3[:], luma, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, lumaX, lumaY, lumaW, lumaH, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return err
 	}
-	if _, _, err := prediction.PadCFLReconQ3(scratch.ReconQ3[:], geom.Width, geom.Height, fullWidth, fullHeight); err != nil {
+	if _, _, err := prediction.PadCFLReconQ3(scratch.ReconQ3[:], bufWidth, bufHeight, fullWidth, fullHeight); err != nil {
 		return ErrInvalidBatch
 	}
 	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], fullWidth, fullHeight); err != nil {
