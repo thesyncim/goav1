@@ -678,6 +678,24 @@ func absInt32(v int32) int32 {
 func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, result *ReferenceMVStackResult) {
 	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
 	end = minInt(end, refMVMaxScanBlock4)
+	// libaom's scan_row_mbmi() caps the above-row sweep at
+	// end_mi = AOMMIN(xd->width, mi_cols - mi_col): a block flush against
+	// the frame's right boundary must not fold neighbors that lie past the
+	// last coded MI column into the ref-MV stack. goav1's per-SB neighbor
+	// snapshot still holds right-padding cells for partial superblocks, so
+	// without this clamp a partial right-edge block (e.g. 226x226 frame 1
+	// mi=(16,56) BLOCK_16X32) reads a stale above-right candidate that
+	// libaom never sees, shifting the whole DRL-indexed stack by one.
+	//
+	// The vertical analog (scan_col_mbmi's mi_rows - mi_row cap) is NOT
+	// applied to scanLeftReferenceMVs: goav1's left-column snapshot already
+	// reflects the frame-clamped neighbor block sizes for partial-bottom
+	// superblocks, and adding the cap there regresses the row-unaligned
+	// quantizer_63 stream (mi 160x90, partial bottom SB) which is byte-exact
+	// without it.
+	if req.TileMIColEnd > req.MICol {
+		end = minInt(end, int(req.TileMIColEnd-req.MICol))
+	}
 	for off := 0; off < end; {
 		slot := req.X4 + off
 		size := c.AboveBlockSize[slot]
