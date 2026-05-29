@@ -323,6 +323,19 @@ func (c *BlockModeContext) warpSampleGrid(block BlockVisit, ref ReferenceFrame, 
 	if motionResult.References.Ref[1] != ReferenceFrameNone {
 		return warpSample{}, false, nil
 	}
+	// libaom's av1_findSamples rejects inter-intra neighbors: they carry
+	// ref_frame[1] = INTRA_FRAME != NONE_FRAME, so add_ref_mv_candidate's
+	// single-ref match (ref_frame[1] == NONE) skips them. goav1 stores
+	// inter-intra with Ref[1] = NONE (to preserve has_second_ref semantics) and
+	// tracks the flag separately, so the above/left scans consult
+	// warp{Above,Left}NeighborMatches' InterIntra check. The top-left/top-right
+	// corner path here must apply the same gate or it over-collects a sample
+	// (e.g. av1-1-b8-00-quantizer-00 frame 1 mi=(22,16): the inter-intra TL
+	// neighbor was added, over-determining the affine fit and corrupting the
+	// warp matrix).
+	if motionResult.InterIntra {
+		return warpSample{}, false, nil
+	}
 	w4 := warpNeighborW4(size)
 	h4 := warpNeighborH4(size)
 	return recordWarpSample(motionResult.MV[0], colOffset4, rowOffset4, signC, signR, w4, h4), true, nil
