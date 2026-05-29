@@ -681,19 +681,26 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 	}
 
 	// Clamp the aligned trailing edge to the underlying plane buffer extent.
-	// The buffer is allocated as Stride*Height bytes (Stride is in bytes), so
-	// any (y < Height) row supports writes up to col Stride/BytesPerSample.
-	// MI-aligned widths can exceed the visible plane.Width, but never the
-	// stride extent.
+	// libaom allocates the YV12 buffer at the MI-aligned dimensions, so the
+	// byte buffer spans more than the cropped plane.Width/plane.Height: the
+	// row count is len(Pix)/Stride and each row holds Stride/BytesPerSample
+	// samples. The MI-aligned write extent (xAligned1/yAligned1) lands inside
+	// that allocation; clamp to it (not the cropped plane.Width/plane.Height)
+	// so partial bottom/right superblocks reconstruct into the padding the
+	// way libaom does.
 	strideSamples := plane.Stride / bytesPerSample
 	if strideSamples <= 0 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
+	allocRows := len(plane.Pix) / plane.Stride
+	if allocRows < plane.Height {
+		allocRows = plane.Height
+	}
 	if xAligned1 > uint32(strideSamples) {
 		xAligned1 = uint32(strideSamples)
 	}
-	if yAligned1 > uint32(plane.Height) {
-		yAligned1 = uint32(plane.Height)
+	if yAligned1 > uint32(allocRows) {
+		yAligned1 = uint32(allocRows)
 	}
 	if xAligned1 < x1 || yAligned1 < y1 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch

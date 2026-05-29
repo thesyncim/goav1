@@ -43,13 +43,26 @@ func frameWorkScaledRefEnabled() bool {
 // non-identity scaling is acceptable for the scaled convolver; or an error if
 // the reference dimensions are unusable.
 func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane) (bool, error) {
-	if ref.Width == geom.Output.Width && ref.Height == geom.Output.Height {
+	// Compare against the current frame's CODED (cropped) plane dimensions, not
+	// geom.Output.Width/Height: the predictor's output plane is extended to the
+	// MI-aligned write extent (frameWorkExtendPlaneToClip), which can exceed the
+	// coded dimensions for the bottom/right partial superblock. libaom keys the
+	// reference same-size / scale-factor decision off the coded frame
+	// dimensions (av1_setup_scale_factors_for_frame), so a partial-superblock
+	// block must not be mistaken for a scaled-reference block.
+	curWidth := geom.CodedWidth
+	curHeight := geom.CodedHeight
+	if curWidth <= 0 || curHeight <= 0 {
+		curWidth = geom.Output.Width
+		curHeight = geom.Output.Height
+	}
+	if ref.Width == curWidth && ref.Height == curHeight {
 		return true, nil
 	}
 	if !frameWorkScaledRefEnabled() {
 		return false, ErrInvalidBatch
 	}
-	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, geom.Output.Width, geom.Output.Height); err != nil {
+	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight); err != nil {
 		return false, ErrInvalidBatch
 	}
 	return false, nil

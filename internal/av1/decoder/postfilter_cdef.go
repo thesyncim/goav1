@@ -96,6 +96,8 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 		if !ok {
 			continue
 		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
 		need, err := frame.SamplePlaneLen(planeFrame, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkCDEFPostFilterScratchSize{}, err
@@ -163,6 +165,15 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		if !ok || !processPlane {
 			continue
 		}
+		// libaom's cdef_prepare_fb processes the MI-aligned plane extent
+		// (vsize = nvb << mi_high_l2, hsize = nhb << mi_wide_l2), reading and
+		// writing the bottom/right partial-superblock padding rows/cols that
+		// reconstruction populated. Expand the cropped output plane to that
+		// MI-aligned extent (capped to the allocated buffer) so the final
+		// unit row/col filters with the real padding pixels rather than the
+		// VeryLarge sentinel.
+		xDec0, yDec0 := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec0, yDec0, ctx.Output.Layout.BytesPerSample)
 		src, _, err := frame.LoadSamplePlaneFull(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
@@ -171,7 +182,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
-		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		xDec, yDec := xDec0, yDec0
 		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, skipMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
@@ -228,6 +239,8 @@ func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWor
 		if !ok || !processPlane {
 			continue
 		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
 		need, err := frame.SamplePlaneLen(planeFrame, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return err
@@ -349,21 +362,15 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 	// past-visible MI-padding pixels written by the reconstruction stage
 	// participate in the kernel's secondary taps for the visible cols.
 	//
-	// Cap the read width to the MI*2-aligned visible width (matching libaom's
-	// mi_cols * MI_SIZE alignment) so we don't pull in row-stride padding past
-	// the MI grid, which would be stale (no reconstruction wrote there). The
-	// production call site loads the plane with LoadSamplePlaneFull so those
-	// past-visible MI-pad columns are valid; the unit-test call sites use
-	// src.Stride == src.Width, which leaves readWidth at src.Width and matches
-	// the legacy visible-only behaviour.
+	// Cap the read width to src.Width. The production call site now passes the
+	// MI-aligned plane extent (frameWorkCDEFAlignedPlane), so src.Width already
+	// is mi_cols * MI_SIZE (the extent libaom's cdef_prepare_fb reads); the
+	// reconstruction stage populated those past-crop MI-padding columns. Reading
+	// further into the row-stride alignment padding (cols past the MI grid)
+	// would pull in stale samples that no reconstruction wrote, so we stop at
+	// src.Width and let the synthetic right-border / VeryLarge handling cover
+	// the remainder, matching libaom's frame_boundary fill.
 	readWidth := src.Width
-	if src.Stride > src.Width {
-		miAlignedWidth := (src.Width + 7) &^ 7
-		readWidth = miAlignedWidth
-		if readWidth > src.Stride {
-			readWidth = src.Stride
-		}
-	}
 	srcX0 := maxInt(unitX-cdef.HorizontalBorder, 0)
 	srcY0 := maxInt(unitY-cdef.VerticalBorder, 0)
 	srcX1 := minInt(unitX+unitW+cdef.HorizontalBorder, readWidth)
@@ -580,6 +587,40 @@ func frameWorkCDEFPlane(output frame.Frame, plane int) (frame.Plane, bool) {
 	default:
 		return frame.Plane{}, false
 	}
+}
+
+// frameWorkCDEFAlignedPlane returns a view of plane expanded from its cropped
+// Width/Height to the MI-aligned extent libaom's cdef_prepare_fb operates on
+// (mi_cols * MI_SIZE for luma, shifted by the plane subsampling for chroma).
+// The byte buffer was allocated at the MI-aligned dimensions by
+// frame.RequiredSize, so the expanded view shares the same Pix and Stride; only
+// the reported Width/Height grow. This lets CDEF read and write the
+// bottom/right partial-superblock padding rows/cols. It must return the same
+// dimensions whether plane.Pix is the real allocation or a descriptor-only
+// probe (used by the scratch-sizing pass), so the aligned extent is derived
+// purely from the frame dimensions, not the Pix length.
+func frameWorkCDEFAlignedPlane(plane frame.Plane, size parser.FrameSize, xDec int, yDec int, bytesPerSample int) frame.Plane {
+	if bytesPerSample <= 0 || plane.Stride <= 0 {
+		return plane
+	}
+	alignedLumaW := (int(size.CodedWidth) + 7) &^ 7
+	alignedLumaH := (int(size.Height) + 7) &^ 7
+	alignedW := alignedLumaW >> xDec
+	alignedH := alignedLumaH >> yDec
+	if alignedW < plane.Width {
+		alignedW = plane.Width
+	}
+	if alignedH < plane.Height {
+		alignedH = plane.Height
+	}
+	// The aligned width never exceeds the row stride (frame.RequiredSize aligns
+	// the stride to at least the MI-aligned width).
+	if w := plane.Stride / bytesPerSample; alignedW > w {
+		alignedW = w
+	}
+	plane.Width = alignedW
+	plane.Height = alignedH
+	return plane
 }
 
 func frameWorkCDEFPlaneDecimation(format frame.Format, plane int) (int, int) {

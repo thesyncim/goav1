@@ -1594,6 +1594,15 @@ type frameWorkPredictionPlaneGeometry struct {
 	Width  int
 	Height int
 
+	// CodedWidth / CodedHeight are the current frame's coded (cropped) plane
+	// dimensions. They drive the reference same-size / scale-factor decision
+	// (libaom compares the reference frame's dimensions to the current coded
+	// frame dimensions, not to the MI-aligned write extent). Output.Width /
+	// Output.Height may exceed these because the predictor's writable plane is
+	// extended to the MI-aligned padding (frameWorkExtendPlaneToClip).
+	CodedWidth  int
+	CodedHeight int
+
 	SubsamplingX bool
 	SubsamplingY bool
 
@@ -1861,6 +1870,8 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 	// bounds check (libaom writes whole transform blocks regardless of where
 	// the visible boundary lands; later blocks read those samples as
 	// predictor neighbors).
+	codedWidth := output.Width
+	codedHeight := output.Height
 	output = frameWorkExtendPlaneToClip(output, window, b.Output.Layout.BytesPerSample)
 	return frameWorkPredictionPlaneGeometry{
 		Output:         output,
@@ -1869,6 +1880,8 @@ func (b FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Block
 		Y:              y,
 		Width:          width,
 		Height:         height,
+		CodedWidth:     codedWidth,
+		CodedHeight:    codedHeight,
 		SubsamplingX:   subsamplingX,
 		SubsamplingY:   subsamplingY,
 		BytesPerSample: b.Output.Layout.BytesPerSample,
@@ -3219,7 +3232,25 @@ func frameWorkPlaneBlockStartsBeyondOutput(output *frame.Frame, plane FrameWorkP
 	if !ok {
 		return false
 	}
-	return x >= dst.Width || y >= dst.Height
+	// libaom reconstructs the bottom/right partial superblock into the
+	// MI-aligned padding rows/cols of the YV12 buffer, so a block whose origin
+	// lands past the cropped Width/Height but inside the MI-aligned allocation
+	// is NOT beyond the output: it must still be reconstructed (its samples
+	// feed intra neighbor context and CDEF edges for the visible blocks). The
+	// allocation spans len(Pix)/Stride rows of Stride/BytesPerSample samples;
+	// only origins past that aligned extent are genuinely beyond the frame.
+	bytesPerSample := output.Layout.BytesPerSample
+	allocWidth := dst.Width
+	allocHeight := dst.Height
+	if bytesPerSample > 0 && dst.Stride > 0 {
+		if w := dst.Stride / bytesPerSample; w > allocWidth {
+			allocWidth = w
+		}
+		if h := len(dst.Pix) / dst.Stride; h > allocHeight {
+			allocHeight = h
+		}
+	}
+	return x >= allocWidth || y >= allocHeight
 }
 
 func frameWorkBlockWithinJobRegion(region FrameWorkJobRegion, block tile.BlockVisit) bool {

@@ -706,9 +706,12 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	// the second SB contributes a visible 130-64=66 pixel strip. The
 	// MI-aligned writable extent reaches mi_cols*4 = 34*4 = 136 luma
 	// pixels (mi_cols = ((130+7)>>3)<<1 = 34), so ClipWidth = 136-64 = 72.
+	// The MI-aligned height reaches mi_rows*4 = 18*4 = 72 (mi_rows =
+	// ((65+7)>>3)<<1 = 18), so ClipHeight = 72 (the buffer is allocated at the
+	// MI-aligned 72 rows; the partial bottom superblock reconstructs there).
 	if y.Plane != FrameWorkPlaneY || y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 ||
 		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 ||
-		y.ClipWidth != 72 || y.ClipHeight != 65 || y.ClipRowBytes != 72 {
+		y.ClipWidth != 72 || y.ClipHeight != 72 || y.ClipRowBytes != 72 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
 	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
@@ -724,9 +727,10 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Chroma 4:2:0: visible width 65/2 rounded = 33, MI-aligned (luma 136 -> chroma 68): clip 68-32=36.
+	// MI-aligned chroma height = luma 72 >> 1 = 36, so ClipHeight = 36.
 	if u.Plane != FrameWorkPlaneU || u.X != 32 || u.Y != 0 || u.Width != 33 || u.Height != 33 ||
 		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 ||
-		u.ClipWidth != 36 || u.ClipHeight != 33 || u.ClipRowBytes != 36 {
+		u.ClipWidth != 36 || u.ClipHeight != 36 || u.ClipRowBytes != 36 {
 		t.Fatalf("U plane region=%+v", u)
 	}
 	u.Pix[0] = 0x55
@@ -740,7 +744,7 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	}
 	if v.Plane != FrameWorkPlaneV || v.X != 32 || v.Y != 0 || v.Width != 33 || v.Height != 33 ||
 		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 ||
-		v.ClipWidth != 36 || v.ClipHeight != 33 || v.ClipRowBytes != 36 {
+		v.ClipWidth != 36 || v.ClipHeight != 36 || v.ClipRowBytes != 36 {
 		t.Fatalf("V plane region=%+v", v)
 	}
 	v.Pix[0] = 0x33

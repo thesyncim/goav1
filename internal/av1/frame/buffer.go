@@ -71,12 +71,25 @@ func RequiredSize(format Format) (Layout, error) {
 		bytesPerSample = 2
 	}
 
-	yStride, ok := checkedAlign(format.Width*bytesPerSample, format.Align)
+	// libaom allocates the YV12 buffer at the MI-aligned dimensions
+	// (aligned_width = ROUND_POWER_OF_TWO(width, 3) << 3 etc., see
+	// aom_realloc_frame_buffer in aom_scale/generic/yv12config.c) so the
+	// bottom/right partial superblock can be reconstructed into the padding
+	// rows/cols and used as intra-prediction neighbor context and CDEF
+	// bottom/right-edge input (cdef_prepare_fb vsize = nvb << mi_high_l2).
+	// We mirror that: the byte buffer spans the MI-aligned extent while the
+	// reported plane Width/Height stay at the cropped (visible) extent, which
+	// is the surface MD5/output consumers hash. Downstream reconstruction
+	// derives the aligned writable extent from Stride and the Pix length.
+	alignedWidth := (format.Width + 7) &^ 7
+	alignedHeight := (format.Height + 7) &^ 7
+
+	yStride, ok := checkedAlign(alignedWidth*bytesPerSample, format.Align)
 	if !ok {
 		return Layout{}, ErrInvalidFormat
 	}
 
-	ySize, ok := checkedMul(yStride, format.Height)
+	ySize, ok := checkedMul(yStride, alignedHeight)
 	if !ok {
 		return Layout{}, ErrInvalidFormat
 	}
@@ -84,21 +97,26 @@ func RequiredSize(format Format) (Layout, error) {
 	chromaWidth := 0
 	chromaHeight := 0
 	cStride := 0
+	chromaAlignedHeight := 0
 	if !format.MonoChrome {
 		chromaWidth = format.Width
 		chromaHeight = format.Height
+		alignedChromaWidth := alignedWidth
+		chromaAlignedHeight = alignedHeight
 		if format.SubsamplingX {
 			chromaWidth = (chromaWidth + 1) >> 1
+			alignedChromaWidth >>= 1
 		}
 		if format.SubsamplingY {
 			chromaHeight = (chromaHeight + 1) >> 1
+			chromaAlignedHeight >>= 1
 		}
-		cStride, ok = checkedAlign(chromaWidth*bytesPerSample, format.Align)
+		cStride, ok = checkedAlign(alignedChromaWidth*bytesPerSample, format.Align)
 		if !ok {
 			return Layout{}, ErrInvalidFormat
 		}
 	}
-	uSize, ok := checkedMul(cStride, chromaHeight)
+	uSize, ok := checkedMul(cStride, chromaAlignedHeight)
 	if !ok {
 		return Layout{}, ErrInvalidFormat
 	}
