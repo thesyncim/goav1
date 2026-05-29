@@ -642,16 +642,20 @@ func TestBuildReferenceMVStackIntraNearestAdvancesProcessedRows(t *testing.T) {
 	ctx.markGridInterMotion(BlockSize8x32, 0, 8, outer, dims8x32)
 
 	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
-		Size:         BlockSize8x16,
-		References:   target,
-		X4:           0,
-		Y4:           20,
-		MICol:        0,
-		MIRow:        20,
-		HaveTop:      true,
-		HaveLeft:     false,
-		HaveTopRight: true,
-		GlobalMVs:    [2]motion.Vector{{Row: -4, Col: -70}},
+		Size:           BlockSize8x16,
+		References:     target,
+		X4:             0,
+		Y4:             20,
+		MICol:          0,
+		MIRow:          20,
+		HaveTop:        true,
+		HaveLeft:       false,
+		HaveTopRight:   true,
+		TileMIColEnd:   64,
+		TileMIRowEnd:   64,
+		TileMIColStart: 0,
+		TileMIRowStart: 0,
+		GlobalMVs:      [2]motion.Vector{{Row: -4, Col: -70}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -691,16 +695,20 @@ func TestBuildReferenceMVStackUsesTopRightBeforeNearestCutoff(t *testing.T) {
 	ctx.markGridInterMotion(BlockSize8x8, 8, 6, topRight, dims)
 
 	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
-		Size:         BlockSize8x4,
-		References:   target,
-		X4:           6,
-		Y4:           8,
-		MICol:        6,
-		MIRow:        8,
-		HaveTop:      true,
-		HaveLeft:     true,
-		HaveTopRight: true,
-		GlobalMVs:    [2]motion.Vector{{Row: 0, Col: 0}},
+		Size:           BlockSize8x4,
+		References:     target,
+		X4:             6,
+		Y4:             8,
+		MICol:          6,
+		MIRow:          8,
+		HaveTop:        true,
+		HaveLeft:       true,
+		HaveTopRight:   true,
+		TileMIColEnd:   64,
+		TileMIRowEnd:   64,
+		TileMIColStart: 0,
+		TileMIRowStart: 0,
+		GlobalMVs:      [2]motion.Vector{{Row: 0, Col: 0}},
 	})
 	if err != nil {
 		t.Fatal(err)

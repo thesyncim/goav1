@@ -817,6 +817,18 @@ func (c *BlockModeContext) scanLeftIntrabcDVs(req ReferenceMVStackRequest, dims 
 }
 
 func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
+	// libaom's av1_find_mv_refs gates the top-right scan_blk_mbmi() on
+	// is_inside(tile, mi_col + xd->width, mi_row - 1): the candidate at
+	// (mi_row-1, mi_col+W4) must lie inside the current tile. Blocks on the
+	// tile's right edge (mi_col + W4 == mi_col_end) therefore contribute no
+	// top-right candidate, even when has_top_right() returned 1. Without this
+	// guard goav1 read the SB's right-padding MI grid cell and folded a stale
+	// neighbor into both the ref-MV stack and newmv_count, corrupting the
+	// inter mode_context (e.g. 208x208 frame 1 mi=(32,51): newmv_ctx 4 vs 5).
+	if int(req.MICol)+int(dims.W4) >= int(req.TileMIColEnd) ||
+		int(req.MIRow)-1 < int(req.TileMIRowStart) {
+		return
+	}
 	candidate, size, ok := c.topRightInterMotion(req, dims)
 	if !ok {
 		return
