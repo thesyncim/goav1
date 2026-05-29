@@ -498,9 +498,9 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	sortReferenceMVStack(&result.Stack, 0, result.NearestCount)
 
 	if req.References.Compound {
-		c.extendCompoundReferenceMVStack(req, dims, &result.Stack)
+		c.extendCompoundReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &result.Stack)
 	} else {
-		c.extendSingleReferenceMVStack(req, dims, &result.Stack)
+		c.extendSingleReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &result.Stack)
 	}
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
 	if !req.References.Compound {
@@ -1520,21 +1520,52 @@ func blockSizeHeight4(size BlockSize) int {
 	return int(dims.H4)
 }
 
-func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, stack *ReferenceMVStack) {
-	if req.HaveTop {
-		for off := 0; off < int(dims.W4) && stack.Count < MaxMVRefCandidates; {
+// referenceMVExtensionSize ports libaom's mi_size cap on the single/compound
+// ref-MV extension scans (av1_setup_ref_mv_list, mvref_common.c):
+//
+//	int mi_width  = AOMMIN(mi_size_wide[BLOCK_64X64], xd->width);
+//	mi_width      = AOMMIN(mi_width, mi_cols - mi_col);
+//	int mi_height = AOMMIN(mi_size_high[BLOCK_64X64], xd->height);
+//	mi_height     = AOMMIN(mi_height, mi_rows - mi_row);
+//	const int mi_size = AOMMIN(mi_width, mi_height);
+//
+// The BLOCK_64X64 cap (16 MI) is the key clamp the earlier dims.W4/dims.H4
+// loop bounds were missing: a 128x128 block scanned its full 32-MI edge and
+// folded a second left/above neighbor into the stack that libaom never reads,
+// inflating ref_mv_count and reading a spurious DRL bit (svc L2T1/L2T2
+// frame 1 mi=(0,32) BLOCK_128X128). The frame-edge clamp uses the tile end as
+// the readable-neighbor bound (tiles never extend past the frame, so it equals
+// libaom's mi_cols/mi_rows for the last tile and is dominated by the 16-MI cap
+// for interior blocks).
+func referenceMVExtensionSize(req ReferenceMVStackRequest, dims BlockDimensions) int {
+	const block64MI = 16
+	miWidth := minInt(block64MI, int(dims.W4))
+	if req.TileMIColEnd > req.MICol {
+		miWidth = minInt(miWidth, int(req.TileMIColEnd-req.MICol))
+	}
+	miHeight := minInt(block64MI, int(dims.H4))
+	if req.TileMIRowEnd > req.MIRow {
+		miHeight = minInt(miHeight, int(req.TileMIRowEnd-req.MIRow))
+	}
+	return minInt(miWidth, miHeight)
+}
+
+func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, stack *ReferenceMVStack) {
+	miSize := referenceMVExtensionSize(req, dims)
+	if req.HaveTop && absInt(maxRowOffset) >= 1 {
+		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
 			slot := req.X4 + off
-			step := c.aboveCandidateStep(slot, int(dims.W4)-off)
+			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.AboveInterMotion[slot], req.References.Ref[0], req.RefSignBias)
 			}
 			off += step
 		}
 	}
-	if req.HaveLeft {
-		for off := 0; off < int(dims.H4) && stack.Count < MaxMVRefCandidates; {
+	if req.HaveLeft && absInt(maxColOffset) >= 1 {
+		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
 			slot := req.Y4 + off
-			step := c.leftCandidateStep(slot, int(dims.H4)-off)
+			step := c.leftCandidateStep(slot, miSize-off)
 			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.LeftInterMotion[slot], req.References.Ref[0], req.RefSignBias)
 			}
@@ -1547,12 +1578,12 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequ
 	// insertion order.
 }
 
-func (c *BlockModeContext) extendCompoundReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, stack *ReferenceMVStack) {
+func (c *BlockModeContext) extendCompoundReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, stack *ReferenceMVStack) {
 	if stack.Count >= MaxMVRefCandidates {
 		return
 	}
 	var refs compoundReferenceLists
-	c.collectCompoundReferenceLists(req, dims, &refs)
+	c.collectCompoundReferenceLists(req, dims, maxRowOffset, maxColOffset, &refs)
 	comp := refs.compoundList(req)
 	if stack.Count == 1 {
 		candidate := ReferenceMVCandidate{This: comp[0][0], Compound: comp[0][1], Weight: 2}
@@ -1570,21 +1601,22 @@ func (c *BlockModeContext) extendCompoundReferenceMVStack(req ReferenceMVStackRe
 	}
 }
 
-func (c *BlockModeContext) collectCompoundReferenceLists(req ReferenceMVStackRequest, dims BlockDimensions, lists *compoundReferenceLists) {
-	if req.HaveTop {
-		for off := 0; off < int(dims.W4); {
+func (c *BlockModeContext) collectCompoundReferenceLists(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, lists *compoundReferenceLists) {
+	miSize := referenceMVExtensionSize(req, dims)
+	if req.HaveTop && absInt(maxRowOffset) >= 1 {
+		for off := 0; off < miSize; {
 			slot := req.X4 + off
-			step := c.aboveCandidateStep(slot, int(dims.W4)-off)
+			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				lists.add(c.AboveInterMotion[slot], req.References.Ref, req.RefSignBias)
 			}
 			off += step
 		}
 	}
-	if req.HaveLeft {
-		for off := 0; off < int(dims.H4); {
+	if req.HaveLeft && absInt(maxColOffset) >= 1 {
+		for off := 0; off < miSize; {
 			slot := req.Y4 + off
-			step := c.leftCandidateStep(slot, int(dims.H4)-off)
+			step := c.leftCandidateStep(slot, miSize-off)
 			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				lists.add(c.LeftInterMotion[slot], req.References.Ref, req.RefSignBias)
 			}
