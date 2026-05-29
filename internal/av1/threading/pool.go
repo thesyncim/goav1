@@ -860,6 +860,29 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 		return err
 	}
 
+	// Single-worker fast path: run batches synchronously on the calling
+	// goroutine. This avoids the channel/condvar handoff (task send + result
+	// recv = 2 wakeups per batch) that dominates the profile when workers==1.
+	// Results are identical to dispatching to the lone worker goroutine, which
+	// would itself process the batches sequentially.
+	if len(p.workers) == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		var firstErr error
+		for i := 0; i < len(batches); i++ {
+			batch := batches[i]
+			err := fn(batch, jobs[batch.FirstJob:batch.FirstJob+batch.Count])
+			if firstErr == nil && err != nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -904,6 +927,27 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 	}
 	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
 		return err
+	}
+
+	// Single-worker fast path: run batches inline (see Execute).
+	if len(p.workers) == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		var firstErr error
+		for i := 0; i < len(batches); i++ {
+			batch := batches[i]
+			ctx := base
+			ctx.Batch = batch
+			ctx.Jobs = jobs[batch.FirstJob : batch.FirstJob+batch.Count]
+			if err := fn(ctx); firstErr == nil && err != nil {
+				firstErr = err
+			}
+		}
+		return firstErr
 	}
 
 	p.mu.Lock()
@@ -951,6 +995,27 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	}
 	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
 		return err
+	}
+
+	// Single-worker fast path: run batches inline (see Execute).
+	if len(p.workers) == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		var firstErr error
+		for i := 0; i < len(batches); i++ {
+			batch := batches[i]
+			ctx := base
+			ctx.Batch = batch
+			ctx.Jobs = jobs[batch.FirstJob : batch.FirstJob+batch.Count]
+			if err := runner.Run(ctx); firstErr == nil && err != nil {
+				firstErr = err
+			}
+		}
+		return firstErr
 	}
 
 	p.mu.Lock()
