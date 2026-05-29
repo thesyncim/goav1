@@ -23,8 +23,8 @@ func SizeFromDimensions(width int, height int) (Size, error) {
 
 // Valid reports whether s is one of the transform sizes supported by AV1.
 func (s Size) Valid() bool {
-	_, ok := s.shift()
-	return ok
+	idx := sizeIndex(s)
+	return idx >= 0 && sizeValidTable[idx]
 }
 
 // IsRect2 reports whether s is a 1:2 or 2:1 rectangular transform. AV1 applies
@@ -43,32 +43,11 @@ func (s Size) Shift() (int, error) {
 }
 
 func (s Size) shift() (int, bool) {
-	switch s {
-	case Size{Width: 4, Height: 4},
-		Size{Width: 4, Height: 8},
-		Size{Width: 8, Height: 4}:
-		return 0, true
-	case Size{Width: 4, Height: 16},
-		Size{Width: 8, Height: 8},
-		Size{Width: 8, Height: 16},
-		Size{Width: 16, Height: 4},
-		Size{Width: 16, Height: 8},
-		Size{Width: 16, Height: 32},
-		Size{Width: 32, Height: 16},
-		Size{Width: 32, Height: 64},
-		Size{Width: 64, Height: 32}:
-		return 1, true
-	case Size{Width: 8, Height: 32},
-		Size{Width: 16, Height: 16},
-		Size{Width: 16, Height: 64},
-		Size{Width: 32, Height: 8},
-		Size{Width: 32, Height: 32},
-		Size{Width: 64, Height: 16},
-		Size{Width: 64, Height: 64}:
-		return 2, true
-	default:
+	idx := sizeIndex(s)
+	if idx < 0 || !sizeValidTable[idx] {
 		return 0, false
 	}
+	return int(sizeShiftTable[idx]), true
 }
 
 func identityBlockSupported(size Size) bool {

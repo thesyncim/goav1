@@ -96,6 +96,10 @@ func FillDefaultScan(scan []int16, inverse []int16, size Size, class Class) erro
 
 // FillScanOrder writes the scan and inverse-scan order for size and mode into
 // caller-provided buffers. Indices use AV1's coefficient raster order.
+//
+// The scan orders depend only on (size x mode) and are precomputed once at
+// package init, so this copies from the immutable table instead of regenerating
+// the order. Behaviour is byte-identical to the historical generator.
 func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) error {
 	if !size.Valid() || !mode.Valid() {
 		return ErrInvalidTransform
@@ -104,7 +108,19 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 	if len(scan) < total || len(inverse) < total {
 		return ErrInvalidTransform
 	}
+	if pair := scanTables[sizeIndex(size)][mode]; pair.scan != nil {
+		copy(scan[:total], pair.scan)
+		copy(inverse[:total], pair.inverse)
+		return nil
+	}
+	// Fallback for any size reachable here but not pretabulated (none in the
+	// supported set); keeps behaviour identical to the original generator.
+	return fillScanOrderCompute(scan, inverse, size, mode)
+}
 
+// fillScanOrderCompute is the canonical scan-order generator. It is invoked at
+// init to seed the precomputed tables and serves as a defensive fallback.
+func fillScanOrderCompute(scan []int16, inverse []int16, size Size, mode ScanMode) error {
 	si := 0
 	put := func(row int, col int) {
 		coeff := col*size.Height + row
@@ -169,17 +185,13 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 	return nil
 }
 
+// adjustedScanSize returns the coefficient scan dimensions for a valid size via
+// the precomputed table. Callers guard with size.Valid() before reaching here;
+// for any non-pretabulated input it falls back to the canonical computation.
 func adjustedScanSize(size Size) Size {
-	switch size {
-	case Size{Width: 64, Height: 64},
-		Size{Width: 64, Height: 32},
-		Size{Width: 32, Height: 64}:
-		return Size{Width: 32, Height: 32}
-	case Size{Width: 64, Height: 16}:
-		return Size{Width: 32, Height: 16}
-	case Size{Width: 16, Height: 64}:
-		return Size{Width: 16, Height: 32}
-	default:
-		return size
+	idx := sizeIndex(size)
+	if idx >= 0 && sizeValidTable[idx] {
+		return adjustedScanSizeTable[idx]
 	}
+	return computeAdjustedScanSize(size)
 }
