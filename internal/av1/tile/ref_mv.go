@@ -576,7 +576,22 @@ func (req ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, st
 			{voffset, hoffset},
 			{voffset - 2, hoffset},
 		}
+		// libaom gates each extension temporal sample on check_sb_border: the
+		// offset position must stay inside the current 64x64 superblock
+		// (sb_mi_size = mi_size_wide[BLOCK_64X64] = 16). Without this, a block
+		// at an SB left/top edge samples a position in the neighbouring SB,
+		// re-adding a temporal candidate that libaom skips and inflating its
+		// ref_mv weight (e.g. av1-1-b8-05-mv coded frame 2 mi=(0,48): the
+		// (voffset,-2) sample crosses the SB-left border, double-counting a
+		// candidate to weight 4 and flipping the NEW_NEWMV drl selection).
+		const sbMISize = 16
+		sbRow := int(req.MIRow) & (sbMISize - 1)
+		sbCol := int(req.MICol) & (sbMISize - 1)
 		for _, pos := range positions {
+			if sbRow+pos[0] < 0 || sbRow+pos[0] >= sbMISize ||
+				sbCol+pos[1] < 0 || sbCol+pos[1] >= sbMISize {
+				continue
+			}
 			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack); err != nil {
 				return temporalReferenceMVResult{}, err
 			}
