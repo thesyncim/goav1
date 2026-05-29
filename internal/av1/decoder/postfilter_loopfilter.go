@@ -466,6 +466,13 @@ func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, f
 	if length4 <= 0 {
 		return nil
 	}
+	length4, err := frameWorkLoopFilterClampEdgeLength(ctx, loopfilter.PlaneY, edge, x4, y4, length4)
+	if err != nil {
+		return err
+	}
+	if length4 <= 0 {
+		return nil
+	}
 	currentWidth, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
 	if err != nil {
 		return err
@@ -670,6 +677,13 @@ func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext,
 	if length4 <= 0 {
 		return nil
 	}
+	length4, err := frameWorkLoopFilterClampEdgeLength(ctx, plane, edge, x4, y4, length4)
+	if err != nil {
+		return err
+	}
+	if length4 <= 0 {
+		return nil
+	}
 	currentWidth, err := frameWorkLoopFilterWidth(plane, edge, tx)
 	if err != nil {
 		return err
@@ -849,6 +863,44 @@ func frameWorkLoopFilterPreviousChromaRecord(ctx FrameWorkPostFilterContext, fil
 		return threading.FrameWorkLoopFilterBlockRecord{}, false, err
 	}
 	return record, true, nil
+}
+
+// frameWorkLoopFilterClampEdgeLength clips a deblocking edge's run length to the
+// visible plane extent. libaom's deblocker (av1_filter_block_plane_vert/_horz
+// and the _opt variants) bounds the per-line filter loop by
+// y_range/x_range = AOMMIN(plane_mi_dim - mi_coord, MAX_MIB_SIZE) where
+// plane_mi_dim = CEIL_POWER_OF_TWO(dst.{height,width}, MI_SIZE_LOG2) is derived
+// from the CROPPED frame dimension, not the (8-aligned) MI grid. When a frame's
+// height is not a multiple of 8 the MI grid is one MI row taller than the
+// cropped plane (e.g. 180px -> 45 cropped MI rows but a 46-row grid), so a
+// transform block in the bottom partial superblock yields a vertical edge whose
+// TX-derived length spills one MI row past the frame. Without this clamp that
+// vertical edge fails frameWorkLoopFilterEdgeFits (y > frameHeight-length) and
+// is dropped entirely, leaving the bottom superblock undeblocked — the
+// 8-bit-monochrome frame-9 divergence. We clamp the run direction (rows for a
+// vertical edge, cols for a horizontal edge) to the cropped plane MI extent so
+// the edge spans only the visible samples, matching libaom's y_range/x_range.
+func frameWorkLoopFilterClampEdgeLength(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int) (int, error) {
+	frameWidth, frameHeight, err := frameWorkLoopFilterPlaneSize(ctx, plane)
+	if err != nil {
+		return 0, err
+	}
+	var limit int
+	switch edge {
+	case loopfilter.EdgeVertical:
+		limit = (frameHeight+3)>>2 - y4
+	case loopfilter.EdgeHorizontal:
+		limit = (frameWidth+3)>>2 - x4
+	default:
+		return 0, loopfilter.ErrInvalidFilter
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if length4 > limit {
+		length4 = limit
+	}
+	return length4, nil
 }
 
 func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, width int) (int, bool, error) {
