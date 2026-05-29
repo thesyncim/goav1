@@ -415,6 +415,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 	if err != nil {
 		return tile.BlockLoopRequest{}, err
 	}
+	scaledReferences := b.frameWorkBlockLoopScaledReferences()
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
@@ -442,6 +443,7 @@ func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8
 		GlobalMotionTypes:           globalTypes,
 		RefSignBias:                 refSignBias,
 		RefFrameSide:                refFrameSide,
+		ScaledReferences:            scaledReferences,
 		ReferenceOrderHints:         b.ReferenceOrderHints,
 		InterpolationFilter:         b.TileInfo.InterpolationFilter,
 		EnableDualFilter:            b.Sequence.EnableDualFilter,
@@ -523,6 +525,55 @@ func frameWorkBlockLoopRefFrameSide(enabled bool, bits uint8, current uint32, re
 		}
 	}
 	return side, nil
+}
+
+// refNoScaleFP is libaom's REF_NO_SCALE: the Q14 (1 << REF_SCALE_SHIFT) value a
+// per-axis scale factor takes when the reference and current frame share that
+// axis's dimension. av1_is_scaled() reports a scaled reference when either axis
+// differs from this.
+const refNoScaleFP int32 = 1 << motion.RefScaleShift
+
+// frameWorkBlockLoopScaledReferences mirrors libaom's per-frame
+// av1_setup_scale_factors_for_frame + av1_is_scaled() result for each inter
+// reference slot. The decoder needs this during block syntax (not just
+// prediction): motion_mode_allowed() reads the 2-symbol OBMC CDF instead of the
+// 3-symbol WARP CDF when av1_is_scaled(block_ref_scale_factors[0]) is true (see
+// av1/common/blockd.h motion_mode_allowed). A missing scaled flag selects the
+// wrong CDF and desyncs the range decoder even though the decoded symbol value
+// matches, as observed on the SVC L2T1/L2T2 spatial=1 enhancement layer whose
+// references are the 2x-upscaled base layer.
+//
+// Dimensions follow libaom: the reference's y_crop_width/height versus the
+// current frame's coded width/height (cm->width / cm->height).
+func (b FrameWorkBatch) frameWorkBlockLoopScaledReferences() [parser.InterRefsPerFrame]bool {
+	var scaled [parser.InterRefsPerFrame]bool
+	curWidth := int(b.FrameSize.CodedWidth)
+	curHeight := int(b.FrameSize.Height)
+	if curWidth <= 0 || curHeight <= 0 {
+		return scaled
+	}
+	for i := 0; i < parser.InterRefsPerFrame && i < len(b.References); i++ {
+		ref := b.References[i]
+		if ref == nil {
+			continue
+		}
+		refWidth := ref.Format.Width
+		refHeight := ref.Format.Height
+		if refWidth <= 0 || refHeight <= 0 {
+			continue
+		}
+		if refWidth == curWidth && refHeight == curHeight {
+			continue
+		}
+		sf, err := motion.NewScaleFactors(refWidth, refHeight, curWidth, curHeight)
+		if err != nil {
+			// An invalid scale ratio cannot drive the warped-motion path;
+			// libaom would reject the frame earlier. Leave the slot unscaled.
+			continue
+		}
+		scaled[i] = sf.XScaleFP != refNoScaleFP || sf.YScaleFP != refNoScaleFP
+	}
+	return scaled
 }
 
 // JobBlockLoopContextRootColumns returns the number of caller-owned above-edge
