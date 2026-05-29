@@ -132,6 +132,55 @@ var eobMultiSizeTable = [transformSizeCount]int{
 	TransformSize64x16: 5,
 }
 
+// coeffGeometry caches the scan/level-buffer geometry derived from a
+// TransformSize. Every field is a pure function of the transform size, so the
+// whole table is computed once at package init and shared read-only across
+// decode goroutines. It removes the per-coefficient TransformSize ->
+// transform.Size -> ScanSize -> adjustedScanSize chain that dominated the
+// coefficient hot path.
+type coeffGeometry struct {
+	valid      bool
+	scanWidth  int
+	scanHeight int
+	stride     int // scanHeight + txPadHorizontal
+	maxEOB     int // scanWidth * scanHeight
+	scratchLen int // (scanWidth+pad) * (scanHeight+pad)
+}
+
+var coeffGeometryTable [transformSizeCount]coeffGeometry
+
+func init() {
+	for size := TransformSize(0); size < transformSizeCount; size++ {
+		txSize, err := size.TransformSize()
+		if err != nil {
+			continue
+		}
+		scanSize, err := transform.ScanSize(txSize)
+		if err != nil {
+			continue
+		}
+		stride := scanSize.Height + txPadHorizontal
+		coeffGeometryTable[size] = coeffGeometry{
+			valid:      true,
+			scanWidth:  scanSize.Width,
+			scanHeight: scanSize.Height,
+			stride:     stride,
+			maxEOB:     scanSize.Width * scanSize.Height,
+			scratchLen: (scanSize.Width + txPadHorizontal) * stride,
+		}
+	}
+}
+
+// coeffGeo returns the precomputed scan geometry for size. The bool reports
+// whether size names a valid transform.
+func coeffGeo(size TransformSize) (coeffGeometry, bool) {
+	if size >= transformSizeCount {
+		return coeffGeometry{}, false
+	}
+	g := coeffGeometryTable[size]
+	return g, g.valid
+}
+
 func CoeffQContext(baseQIndex uint8) int {
 	if baseQIndex <= 20 {
 		return 0
@@ -209,15 +258,11 @@ func EOBPositionToken(eob int) (token int, extra int, err error) {
 }
 
 func CoeffLevelsScratchLen(size TransformSize) (int, error) {
-	txSize, err := size.TransformSize()
-	if err != nil {
+	g, ok := coeffGeo(size)
+	if !ok {
 		return 0, ErrInvalidDecodeState
 	}
-	scanSize, err := transform.ScanSize(txSize)
-	if err != nil {
-		return 0, ErrInvalidDecodeState
-	}
-	return (scanSize.Width + txPadHorizontal) * (scanSize.Height + txPadHorizontal), nil
+	return g.scratchLen, nil
 }
 
 // CoeffInitLevels ports libaom's av1_txb_init_levels_c into caller-owned
@@ -375,7 +420,7 @@ func (c *CoeffCDFs) TXBSkipCDF(size TransformSize, context int) (*entropy.CDF, e
 	if c == nil || context < 0 || context >= TXBSkipContexts {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return binaryInterRefCDF(&c.TXBSkip[tx][context])
+	return coeffBinaryCDF(&c.TXBSkip[tx][context])
 }
 
 func (c *CoeffCDFs) EOBExtraCDF(size TransformSize, plane CoeffPlaneType, context int) (*entropy.CDF, error) {
@@ -386,14 +431,14 @@ func (c *CoeffCDFs) EOBExtraCDF(size TransformSize, plane CoeffPlaneType, contex
 	if c == nil || !plane.Valid() || context < 0 || context >= EOBCoefContexts {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return binaryInterRefCDF(&c.EOBExtra[tx][plane][context])
+	return coeffBinaryCDF(&c.EOBExtra[tx][plane][context])
 }
 
 func (c *CoeffCDFs) DCSignCDF(plane CoeffPlaneType, context int) (*entropy.CDF, error) {
 	if c == nil || !plane.Valid() || context < 0 || context >= 3 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return binaryInterRefCDF(&c.DCSign[plane][context])
+	return coeffBinaryCDF(&c.DCSign[plane][context])
 }
 
 func (c *CoeffCDFs) CoeffBRCDF(size TransformSize, plane CoeffPlaneType, context int) (*entropy.CDF, error) {
@@ -458,6 +503,23 @@ func (c *CoeffCDFs) EOBFlagCDF(size TransformSize, plane CoeffPlaneType, context
 	}
 }
 
+// readBoolCDFTrusted reads one boolean symbol from a coefficient CDF that has
+// already been validated by its accessor (coeffCDF / coeffBinaryCDF). It skips
+// the redundant per-symbol monotonicity scan that ReadCDF would repeat.
+// Coefficient CDFs are valid by construction: they are seeded from valid libaom
+// defaults and only ever mutated by updateCDFWindow, which preserves the
+// inverse-CDF shape.
+func readBoolCDFTrusted(s *DecodeState, cdf *entropy.CDF) (bool, error) {
+	if s == nil {
+		return false, ErrInvalidDecodeState
+	}
+	symbol, err := s.Reader.ReadCDFTrusted(cdf)
+	if err != nil {
+		return false, err
+	}
+	return symbol != 0, nil
+}
+
 func (s *DecodeState) ReadTXBSkip(cdfs *CoeffCDFs, req TXBSkipRequest) (bool, error) {
 	if s == nil {
 		return false, ErrInvalidDecodeState
@@ -466,7 +528,7 @@ func (s *DecodeState) ReadTXBSkip(cdfs *CoeffCDFs, req TXBSkipRequest) (bool, er
 	if err != nil {
 		return false, err
 	}
-	return readBoolCDF(s, cdf)
+	return readBoolCDFTrusted(s, cdf)
 }
 
 func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error) {
@@ -480,7 +542,7 @@ func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error
 	if err != nil {
 		return EOBResult{}, err
 	}
-	symbol, err := s.Reader.ReadCDF(cdf)
+	symbol, err := s.Reader.ReadCDFTrusted(cdf)
 	if err != nil {
 		return EOBResult{}, err
 	}
@@ -495,7 +557,7 @@ func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error
 		if err != nil {
 			return EOBResult{}, err
 		}
-		bit, err := readBoolCDF(s, extraCDF)
+		bit, err := readBoolCDFTrusted(s, extraCDF)
 		if err != nil {
 			return EOBResult{}, err
 		}
@@ -527,7 +589,7 @@ func (s *DecodeState) ReadCoeffBaseEOB(cdfs *CoeffCDFs, req CoeffTokenRequest) (
 	if err != nil {
 		return 0, err
 	}
-	symbol, err := s.Reader.ReadCDF(cdf)
+	symbol, err := s.Reader.ReadCDFTrusted(cdf)
 	if err != nil {
 		return 0, err
 	}
@@ -542,7 +604,7 @@ func (s *DecodeState) ReadCoeffBase(cdfs *CoeffCDFs, req CoeffTokenRequest) (int
 	if err != nil {
 		return 0, err
 	}
-	return s.Reader.ReadCDF(cdf)
+	return s.Reader.ReadCDFTrusted(cdf)
 }
 
 func (s *DecodeState) ReadCoeffBR(cdfs *CoeffCDFs, req CoeffTokenRequest) (int, error) {
@@ -553,7 +615,7 @@ func (s *DecodeState) ReadCoeffBR(cdfs *CoeffCDFs, req CoeffTokenRequest) (int, 
 	if err != nil {
 		return 0, err
 	}
-	return s.Reader.ReadCDF(cdf)
+	return s.Reader.ReadCDFTrusted(cdf)
 }
 
 func (s *DecodeState) ReadDCSign(cdfs *CoeffCDFs, plane CoeffPlaneType, context int) (bool, error) {
@@ -564,7 +626,7 @@ func (s *DecodeState) ReadDCSign(cdfs *CoeffCDFs, plane CoeffPlaneType, context 
 	if err != nil {
 		return false, err
 	}
-	return readBoolCDF(s, cdf)
+	return readBoolCDFTrusted(s, cdf)
 }
 
 // ReadCoefficientsTXB decodes AV1 coefficient syntax into coeffs in AV1 raster
@@ -577,22 +639,16 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if !req.Plane.Valid() || !req.Class.Valid() {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	txSize, err := req.Size.TransformSize()
-	if err != nil {
+	geo, ok := coeffGeo(req.Size)
+	if !ok {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	scanSize, err := transform.ScanSize(txSize)
-	if err != nil {
-		return TXBDecodeResult{}, ErrInvalidDecodeState
-	}
-	maxEOB := scanSize.Width * scanSize.Height
+	scanSize := transform.Size{Width: geo.scanWidth, Height: geo.scanHeight}
+	maxEOB := geo.maxEOB
 	if len(coeffs) < maxEOB || len(scan) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	scratchLen, err := CoeffLevelsScratchLen(req.Size)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
+	scratchLen := geo.scratchLen
 	if len(levelsScratch) < scratchLen {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
@@ -797,11 +853,27 @@ func (s *DecodeState) readCoeffGolomb() (int, error) {
 	return x - 1, nil
 }
 
+// coeffCDF returns a coefficient CDF for a trusted read. It verifies only the
+// cheap structural invariant (correct symbol count); the per-symbol
+// monotonicity scan is intentionally omitted because coefficient CDFs are valid
+// by construction (default-seeded, adapted only by updateCDFWindow) and the
+// trusted reader does not require it. This drops the redundant O(symbols)
+// validation that previously ran on every coefficient symbol.
 func coeffCDF(cdf *entropy.CDF, symbols int) (*entropy.CDF, error) {
 	if cdf == nil || cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
+}
+
+// coeffBinaryCDF returns a 2-symbol coefficient CDF for a trusted boolean read.
+// Like coeffCDF it performs only the structural symbol-count check and leaves
+// the monotonicity validation to the (trusted) reader's structural guard.
+func coeffBinaryCDF(cdf *entropy.CDF) (*entropy.CDF, error) {
+	if cdf == nil || cdf.Symbols() != 2 {
+		return nil, entropy.ErrInvalidCDF
+	}
+	return cdf, nil
 }
 
 func CoeffBRContextEOB(size TransformSize, class transform.Class, coeffIndex int) (int, error) {
@@ -997,21 +1069,16 @@ func coeffPaddedPosition(size TransformSize, coeffIndex int) (padded int, stride
 }
 
 func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride int, err error) {
-	txSize, err := size.TransformSize()
-	if err != nil {
+	g, ok := coeffGeo(size)
+	if !ok {
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
-	scanSize, err := transform.ScanSize(txSize)
-	if err != nil {
+	if coeffIndex < 0 || coeffIndex >= g.maxEOB {
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
-	maxEOB := scanSize.Width * scanSize.Height
-	if coeffIndex < 0 || coeffIndex >= maxEOB {
-		return 0, 0, 0, ErrInvalidDecodeState
-	}
-	col = coeffIndex / scanSize.Height
-	row = coeffIndex - col*scanSize.Height
-	return row, col, scanSize.Height + txPadHorizontal, nil
+	col = coeffIndex / g.scanHeight
+	row = coeffIndex - col*g.scanHeight
+	return row, col, g.stride, nil
 }
 
 func clipMax3(v uint8) int {

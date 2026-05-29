@@ -286,6 +286,82 @@ func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	return r.ReadSymbol(cdf.Values(), cdf.Symbols())
 }
 
+// readSymbolTrusted is the validation-free core of ReadSymbol. It assumes the
+// caller has already proven that cdf is a well-formed AV1 inverse CDF of exactly
+// symbols entries (monotone non-increasing, terminated by cdf[symbols-1] == 0,
+// with the adaptation count at cdf[symbols] <= MaxCDFCount) and that r != nil.
+// These invariants hold for the coefficient CDFs, which are seeded from valid
+// libaom defaults and only ever mutated by updateCDFWindow, which preserves
+// them. Skipping the per-symbol monotonicity scan in ValidateCDF is the only
+// behavioral difference; the decode math is byte-for-byte identical to
+// ReadSymbol.
+func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
+	// Reslice to the exact window so the compiler proves every cdf[...] index
+	// is in bounds, exactly as ReadSymbol does.
+	cdf = cdf[:symbols+1]
+
+	rangeValue := r.rng
+	coded := r.dif >> (ecWindow - 16)
+	upper := rangeValue
+	lower := uint32(0)
+	symbol := 0
+	last := len(cdf) - 2
+	head := uint16(0)
+	for symbol < last {
+		c := cdf[symbol]
+		if symbol == 0 {
+			head = c
+		}
+		lower = (((rangeValue >> 8) * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) +
+			ecMinProb*uint32(last-symbol)
+		if coded >= lower {
+			break
+		}
+		symbol++
+		upper = lower
+	}
+	if symbol == last {
+		lower = 0
+	}
+	if lower >= upper {
+		return 0, ErrInvalidCDF
+	}
+
+	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+	r.normalize(r.dif-(lower<<(ecWindow-16)), upper-lower)
+	if r.allowCDFUpdate {
+		updateCDFWindow(cdf, symbol)
+	}
+	return symbol, nil
+}
+
+// ReadSymbolTrusted decodes one AV1 inverse-CDF-coded symbol while skipping the
+// O(symbols) ValidateCDF monotonicity scan that ReadSymbol performs on every
+// call. It is intended only for the proven-hot coefficient reads, whose CDFs are
+// valid by construction (default-seeded and adapted in place). It still performs
+// the cheap structural guard (nil reader, symbol range) so a corrupt symbols
+// argument cannot read out of bounds. Use ReadSymbol everywhere validation is
+// required.
+func (r *Reader) ReadSymbolTrusted(cdf []uint16, symbols int) (int, error) {
+	if symbols < 2 || symbols > MaxSymbols || len(cdf) < symbols+1 {
+		return 0, ErrInvalidCDF
+	}
+	if r == nil {
+		return 0, ErrInvalidCDF
+	}
+	return r.readSymbolTrusted(cdf, symbols)
+}
+
+// ReadCDFTrusted decodes one symbol from caller-owned CDF state without the
+// per-call monotonicity validation. The CDF must be valid by construction; see
+// ReadSymbolTrusted.
+func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
+	if cdf == nil {
+		return 0, ErrInvalidCDF
+	}
+	return r.ReadSymbolTrusted(cdf.Values(), cdf.Symbols())
+}
+
 // ReadSignedDelta decodes the AV1 CDF-coded signed delta core used by
 // delta_qindex and delta_lflevel tile syntax.
 func (r *Reader) ReadSignedDelta(cdf *CDF, small int) (int, error) {
