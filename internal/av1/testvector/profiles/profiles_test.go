@@ -22,14 +22,18 @@
 // directly through the exported API by the conformance package
 // (conformance/publicpath_test.go).
 //
-// The clips are 64x64 all-intra (kf-max-dist=1) 3-frame profile-conformance
-// bitstreams committed to git under internal/av1/testvector/testdata/profiles/.
-// libaom's published AV1 test-data ships no 4:4:4 (profile 1), 4:2:2
-// (profile 2) or 12-bit (profile 2) vectors, so these clips guard those intra
-// decode paths.
+// The all-intra clips are 64x64 (kf-max-dist=1) 3-frame profile-conformance
+// bitstreams; the inter clips are 64x64 8-frame bitstreams (1 keyframe + 7
+// inter, kf-max-dist=30) encoded from a moving synthetic source so that inter
+// prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma subsampling
+// (4:4:4 and 4:2:2) are exercised. All are committed under
+// internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
+// ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
+// so these clips guard those decode paths.
 //
-// Regen recipe (run from a libaom build tree, e.g. /tmp/aom-build):
+// Regen recipe (run from a libaom v3.14.0 build tree, e.g. /tmp/aom-build):
 //
+//	# --- all-intra (kf-max-dist=1, 3 frames) ---
 //	# 4:4:4 8-bit:
 //	aomenc --i444 --width=64 --height=64 --limit=3 --ivf --profile=1 \
 //	  --cpu-used=1 --end-usage=q --cq-level=32 --kf-max-dist=1 \
@@ -39,8 +43,19 @@
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
+//
+//	# --- inter (kf-max-dist=30, 8 frames, moving synthetic source) ---
+//	# 4:4:4 8-bit inter:
+//	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=30 \
+//	  --lag-in-frames=0 -o profile1-444-8bit-inter-64x64.ivf src444.yuv
+//	# 4:2:2 8-bit inter:
+//	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
+//
 //	# Golden per-frame MD5s come from `aomdec --rawvideo` (libaom
-//	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces).
+//	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces): split the
+//	# raw output into per-frame chunks (W*H*3 for 4:4:4, W*H + 2*(W/2*H) for
+//	# 4:2:2) and md5 each chunk.
 package profiles
 
 import (
@@ -95,6 +110,45 @@ var profileClips = []profileClip{
 			"dabd492413632a810adeaf4e5d0c6d97",
 			"eb6cf8d1d4d644686cf03c513acd5978",
 			"84983e98afeef6692448e98fc5980431",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit INTER. 8 frames (1 keyframe + 7 inter,
+		// kf-max-dist=30) from a moving synthetic source, so inter prediction,
+		// MV scaling, OBMC and compound on non-4:2:0 chroma are exercised.
+		name: "profile1-444-8bit-inter-64x64",
+		file: "profile1-444-8bit-inter-64x64.ivf",
+		frameMD5Hex: []string{
+			"11d7f1cc66c0e0484ad4d7566d66df35",
+			"0e590539ec2f2e33419f1de467ab9a18",
+			"d829dfffec65fcd80746b20f1c22b21b",
+			"2fdb71b5156533455f031e37a96b2a4d",
+			"23f8e6ee901994b9cbd2cfb91e181eeb",
+			"b69530f8be1ca111af9e9b4c29c3c984",
+			"cc93559f8904df46c9a6f3223a3c1f30",
+			"fafc19265b25a4380c50ae5a40e4eb27",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 2: 4:2:2 8-bit INTER. 8 frames (1 keyframe + 7 inter,
+		// kf-max-dist=30) from a moving synthetic source.
+		name: "profile2-422-8bit-inter-64x64",
+		file: "profile2-422-8bit-inter-64x64.ivf",
+		frameMD5Hex: []string{
+			"e10a47c64fa7318c45ce0762bea3f0ce",
+			"393c471479eff858fe4901cee94b6e57",
+			"6251e9f45b4733552ba2b687b4c38154",
+			"43fbaf637130f61feaaed7e8844c5d4b",
+			"7ae17990bf39d7b507a441095ebe1ecb",
+			"275861a447790a60e26cf3f574cab809",
+			"61013488539b1b1a169f1e372d96d180",
+			"0eca225d9dd9f6f768ab49a216511304",
 		},
 		wantBitDepth:     8,
 		wantSubsamplingX: true,

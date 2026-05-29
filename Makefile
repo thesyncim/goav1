@@ -228,7 +228,8 @@ dryrun-fast:
 	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
 
 # dryrun-profiles decodes the vendored profile-conformance clips (4:4:4 / 4:2:2
-# / 12-bit) and asserts byte-exact per-frame MD5 against their libaom goldens.
+# / 12-bit, both all-intra and inter) and asserts byte-exact per-frame MD5
+# against their libaom goldens.
 # The test lives in its own package (internal/av1/testvector/profiles) so it
 # compiles into a separate test binary from the oracle suite and cannot share
 # process state with the fast/extended dry-runs.
