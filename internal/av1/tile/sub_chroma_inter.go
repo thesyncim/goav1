@@ -111,6 +111,22 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 			if !cell.References.Ref[0].Valid() {
 				return SubChromaInterResult{}, false
 			}
+			// libaom's build_inter_predictors_sub8x8 predicts each cell with
+			// that cell's own this_mbmi->interp_filters, not the anchor's. The
+			// neighbor cell at (nx, ny) lies left of (col<0, including the
+			// diagonal) or directly above (col==0, row<0) the anchor, so its
+			// filter is still in the left/above 1D filter context at this point
+			// (CollectSubChromaInterCells runs before the anchor's
+			// MarkInterFilters overwrites them). Fall back to the anchor filters
+			// only when the context slot is not a valid inter filter.
+			cellFilters := filters
+			if col < 0 {
+				if c.LeftInterpValid[ny] != 0 {
+					cellFilters = c.LeftInterp[ny]
+				}
+			} else if c.AboveInterpValid[nx] != 0 {
+				cellFilters = c.AboveInterp[nx]
+			}
 			result.Cells[result.Count] = SubChromaInterCell{
 				OffsetX:       (col - colStart) * cellW,
 				OffsetY:       (row - rowStart) * cellH,
@@ -118,7 +134,7 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				Height:        cellH,
 				MV:            cell.MV[0],
 				Reference:     cell.References.Ref[0],
-				InterpFilters: filters,
+				InterpFilters: cellFilters,
 			}
 			result.Count++
 		}
