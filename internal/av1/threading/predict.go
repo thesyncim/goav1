@@ -376,7 +376,8 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 		if !ok {
 			return ErrInvalidBatch
 		}
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, visit.Block, scratch, true)
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, true)
 		if err != nil {
 			return err
 		}
@@ -387,8 +388,9 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(visit.Block, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, window.Width, window.Height)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
@@ -402,7 +404,8 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, visit.Block, scratch, mode != prediction.IntraModeDC)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -457,7 +460,8 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 		if !ok {
 			return ErrInvalidBatch
 		}
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, edgeBlock, scratch, true)
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, true)
 		if err != nil {
 			return err
 		}
@@ -468,8 +472,9 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, window.Width, window.Height)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
@@ -483,7 +488,8 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, window.Width, window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -513,9 +519,10 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 		}
 		return nil
 	}
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, geom.SubsamplingX, geom.SubsamplingY)
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
@@ -528,7 +535,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -583,9 +590,10 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 		return nil
 	}
 
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
 		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, region.MIColEnd, region.MIRowEnd, geom.X, geom.Y, absX, absY, predWidth, predHeight, geom.SubsamplingX, geom.SubsamplingY)
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
@@ -598,7 +606,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -643,7 +651,8 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 		return ErrInvalidBatch
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, &scratch.Intra, false)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, readBoundX, readBoundY, edgeBlock, &scratch.Intra, false)
 	if err != nil {
 		return err
 	}
@@ -1096,7 +1105,8 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 		return ErrInvalidBatch
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, geom.Window.X+geom.Window.Width, geom.Window.Y+geom.Window.Height, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
@@ -3306,6 +3316,40 @@ func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.Transfor
 
 func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
 	return frameWorkIntraPredictionEdgesWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, 0, 0, block, scratch, fillMissing)
+}
+
+// frameWorkWindowEdgeReadBound returns the past-end neighbor-read bound (in the
+// window-local coordinate system used by dst) that matches libaom's intra
+// predictor n_top_px / n_left_px truncation. libaom caps real neighbor samples
+// at xr = (mb_to_right_edge >> 3) + ... and yd = (mb_to_bottom_edge >> 3) + ...,
+// both of which are derived from xd->mi_params.mi_{cols,rows} * MI_SIZE — the
+// MI-aligned decode-buffer extent, NOT the cropped display dimension. The MI-
+// aligned writable extent is window.ClipWidth / window.ClipHeight (zero means
+// "visible == aligned", i.e. an SB-aligned plane where Width already equals the
+// MI grid). Returning the aligned extent lets a block in the bottom/right
+// partial superblock read the in-grid reconstructed neighbor samples libaom
+// reads (e.g. a 34px-wide frame has a 40px MI-grid width, so an 8x8 transform
+// at x=32 sees n_top_px=8, not the cropped n_top_px=2).
+func frameWorkWindowEdgeReadBound(window FrameWorkPlaneRegion) (int, int) {
+	w := window.ClipWidth
+	if w <= 0 {
+		w = window.Width
+	}
+	h := window.ClipHeight
+	if h <= 0 {
+		h = window.Height
+	}
+	return w, h
+}
+
+// frameWorkWindowEdgeReadBoundAbsolute returns the same MI-aligned neighbor-read
+// past-end as frameWorkWindowEdgeReadBound but in absolute plane coordinates
+// (for geom-absolute callers that index geom.Output directly). The aligned
+// trailing edge is window.X + ClipWidth (window.Y + ClipHeight), matching
+// libaom's xr / yd derived from xd->mi_params.mi_{cols,rows} * MI_SIZE.
+func frameWorkWindowEdgeReadBoundAbsolute(window FrameWorkPlaneRegion) (int, int) {
+	w, h := frameWorkWindowEdgeReadBound(window)
+	return window.X + w, window.Y + h
 }
 
 // frameWorkIntraPredictionEdgesWithExtent builds the top/left/top-left intra
