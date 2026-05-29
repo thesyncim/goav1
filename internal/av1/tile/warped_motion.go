@@ -103,12 +103,19 @@ func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref Refer
 		}
 		if block.HaveTop && c.warpHasTopRight(block, int(dims.W4), int(dims.H4)) {
 			// libaom: record_samples(mbmi, pts, pts_inref, 0, -1, xd->width, 1)
-			// args: row_offset=0, sign_r=-1, col_offset=W4, sign_c=1.
-			if sample, ok, err := c.warpSampleGrid(block, ref, block.X4+int(dims.W4), block.Y4-1, int(dims.W4), 1, 0, -1); err != nil {
-				return WarpedMotionModel{}, false, err
-			} else if ok {
-				samples[count] = sample
-				count++
+			// args: row_offset=0, sign_r=-1, col_offset=W4, sign_c=1. The
+			// top-right cell at mi(mi_row-1, mi_col+W4) can fall one column past
+			// the current superblock's right edge (X4+W4 >= MaxBlockModeSlots on
+			// 128x128 SBs), which crossSBInterGridInterMotion cannot reach — it
+			// only snapshots the SB directly above. topRightInterMotion resolves
+			// the SB-above-and-to-the-right via the SBTopRight snapshot, matching
+			// libaom's frame-wide xd->mi[-stride + xd->width] read.
+			trReq := ReferenceMVStackRequest{X4: block.X4, Y4: block.Y4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+			if motionResult, size, ok := c.topRightInterMotion(trReq, dims); ok {
+				if sample, sok := warpSampleFromMotion(motionResult, size, ref, int(dims.W4), 1, 0, -1); sok {
+					samples[count] = sample
+					count++
+				}
 			}
 		}
 	}
@@ -314,31 +321,36 @@ func (c *BlockModeContext) warpSampleGrid(block BlockVisit, ref ReferenceFrame, 
 	if !ok {
 		return warpSample{}, false, nil
 	}
+	sample, ok := warpSampleFromMotion(motionResult, size, ref, colOffset4, signC, rowOffset4, signR)
+	return sample, ok, nil
+}
+
+// warpSampleFromMotion applies libaom av1_findSamples' single-ref gates to a
+// neighbor's stored motion and, when accepted, records the warp sample. The
+// neighbor must be single-ref to the same reference: compound, mismatched ref,
+// any second ref (Ref[1] != NONE), and inter-intra neighbors are all rejected.
+// libaom's av1_findSamples rejects inter-intra neighbors because they carry
+// ref_frame[1] = INTRA_FRAME != NONE_FRAME, so add_ref_mv_candidate's single-ref
+// match (ref_frame[1] == NONE) skips them; goav1 stores inter-intra with
+// Ref[1] = NONE and a separate InterIntra flag, so the flag is checked here (e.g.
+// av1-1-b8-00-quantizer-00 frame 1 mi(22,16): an inter-intra TL neighbor was
+// over-collected, corrupting the affine fit).
+func warpSampleFromMotion(motionResult InterMotionResult, size BlockSize, ref ReferenceFrame, colOffset4, signC, rowOffset4, signR int) (warpSample, bool) {
 	if motionResult.References.Compound {
-		return warpSample{}, false, nil
+		return warpSample{}, false
 	}
 	if motionResult.References.Ref[0] != ref {
-		return warpSample{}, false, nil
+		return warpSample{}, false
 	}
 	if motionResult.References.Ref[1] != ReferenceFrameNone {
-		return warpSample{}, false, nil
+		return warpSample{}, false
 	}
-	// libaom's av1_findSamples rejects inter-intra neighbors: they carry
-	// ref_frame[1] = INTRA_FRAME != NONE_FRAME, so add_ref_mv_candidate's
-	// single-ref match (ref_frame[1] == NONE) skips them. goav1 stores
-	// inter-intra with Ref[1] = NONE (to preserve has_second_ref semantics) and
-	// tracks the flag separately, so the above/left scans consult
-	// warp{Above,Left}NeighborMatches' InterIntra check. The top-left/top-right
-	// corner path here must apply the same gate or it over-collects a sample
-	// (e.g. av1-1-b8-00-quantizer-00 frame 1 mi=(22,16): the inter-intra TL
-	// neighbor was added, over-determining the affine fit and corrupting the
-	// warp matrix).
 	if motionResult.InterIntra {
-		return warpSample{}, false, nil
+		return warpSample{}, false
 	}
 	w4 := warpNeighborW4(size)
 	h4 := warpNeighborH4(size)
-	return recordWarpSample(motionResult.MV[0], colOffset4, rowOffset4, signC, signR, w4, h4), true, nil
+	return recordWarpSample(motionResult.MV[0], colOffset4, rowOffset4, signC, signR, w4, h4), true
 }
 
 func (c *BlockModeContext) warpHasTopRight(block BlockVisit, w4, h4 int) bool {
