@@ -166,6 +166,14 @@ type FrameWorkState struct {
 	loopFilterMapValid            bool
 	restorationFrameBuffers       threading.FrameWorkRestorationFrameBuffers
 	restorationFrameBuffersValid  bool
+	// sideDataBound records whether this frame's CDEF/loop-filter/restoration
+	// maps have already been bound (and reset). Binding resets the maps, so it
+	// must happen exactly once per frame -- on the first tile group -- even when
+	// the frame's tiles arrive across several tile-group OBUs (multi-tile or SVC
+	// streams where Begin carries no tiles and every tile group is a
+	// continuation step). Without this guard a later tile group would rebind and
+	// Reset() the maps, discarding the marks accumulated by earlier tiles.
+	sideDataBound bool
 
 	active bool
 }
@@ -224,6 +232,7 @@ func (s *FrameWorkState) resetActive() {
 	s.loopFilterMapValid = false
 	s.restorationFrameBuffers = threading.FrameWorkRestorationFrameBuffers{}
 	s.restorationFrameBuffersValid = false
+	s.sideDataBound = false
 	s.active = false
 }
 
@@ -1053,6 +1062,22 @@ func (s *FrameWorkState) bindFrameWorkEventSideData(event Event, step FrameWorkS
 	if side == nil {
 		return nil
 	}
+	// Side-data maps (CDEF index, loop-filter records, restoration units) are
+	// frame-level: they accumulate decoded per-block state across every tile of
+	// the frame and are consumed once, by the postfilter on the final tile
+	// group. Binding a runner's caller-owned storage resets the maps, so it must
+	// happen exactly once per frame -- on the first tile group. For continuation
+	// tile groups (multi-tile frames split across several tile-group OBUs, e.g.
+	// tile_cols>1, or SVC streams where the Begin step carries no tiles and every
+	// tile group is a continuation step) the already-bound maps stay attached and
+	// keep accumulating; rebinding here would Reset() and discard the marks from
+	// earlier tiles, leaving the postfilter with only the last tile group's
+	// state. The sideDataBound flag (cleared per frame in resetActive) guards
+	// against rebinding regardless of whether the first tile group arrives as a
+	// Begin or a continuation Tile step.
+	if s.sideDataBound {
+		return nil
+	}
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return err
@@ -1074,7 +1099,11 @@ func (s *FrameWorkState) bindFrameWorkEventSideData(event Event, step FrameWorkS
 		FrameWorkFrameContext: frameWorkFrameContext(event, s.sequenceContext()),
 		DisableCDFUpdate:      event.FrameHeader.DisableCDFUpdate,
 	}
-	return side.BindFrameWorkSideData(s, ctx)
+	if err := side.BindFrameWorkSideData(s, ctx); err != nil {
+		return err
+	}
+	s.sideDataBound = true
+	return nil
 }
 
 func frameWorkPostFilterOutput(event Event, pool *frame.Pool, step FrameWorkStep, post FrameWorkPostFilterFunc) (*frame.Frame, error) {
