@@ -85,23 +85,37 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 
 	switch bytesPerSample {
 	case 1:
+		maxInt := int(max)
 		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			resLine := residual[row*residualStride : row*residualStride+width]
-			for col := range width {
-				line[col] = byte(clipSample(int(line[col])+int(resLine[col]), max))
+			line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
+			resLine := residual[row*residualStride : row*residualStride+width : row*residualStride+width]
+			line = line[:len(resLine)]
+			for col, r := range resLine {
+				v := int(line[col]) + int(r)
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[col] = byte(v)
 			}
 		}
 	case 2:
+		maxInt := int(max)
 		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			resLine := residual[row*residualStride : row*residualStride+width]
-			for col := range width {
-				i := col * 2
-				sample := int(uint16(line[i]) | uint16(line[i+1])<<8)
-				out := clipSample(sample+int(resLine[col]), max)
-				line[i] = byte(out)
-				line[i+1] = byte(out >> 8)
+			line := block.pix[row*block.stride : row*block.stride+2*width : row*block.stride+2*width]
+			resLine := residual[row*residualStride : row*residualStride+width : row*residualStride+width]
+			line = line[:2*len(resLine)]
+			for col, r := range resLine {
+				pair := line[col*2 : col*2+2 : col*2+2]
+				v := int(uint16(pair[0])|uint16(pair[1])<<8) + int(r)
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				pair[0] = byte(v)
+				pair[1] = byte(v >> 8)
 			}
 		}
 	default:

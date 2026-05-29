@@ -77,79 +77,142 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 	clippingRequired := enablePrimary && enableSecondary
 	priTaps := cdefPrimaryTaps[(params.PrimaryStrength>>params.CoeffShift)&1]
 
+	// Hoist the per-call invariants out of the per-pixel loop: direction
+	// offsets, primary taps, and the constrain() shift amounts (which depend
+	// only on threshold/damping). This keeps the inner loop free of repeated
+	// table lookups and bits.Len calls.
+	pri0 := cdefDirections[params.Direction+2][0]
+	pri1 := cdefDirections[params.Direction+2][1]
+	sec0a := cdefDirections[params.Direction+4][0]
+	sec0b := cdefDirections[params.Direction+4][1]
+	sec1a := cdefDirections[params.Direction][0]
+	sec1b := cdefDirections[params.Direction][1]
+	priTap0 := priTaps[0]
+	priTap1 := priTaps[1]
+	secTap0 := cdefSecondaryTaps[0]
+	secTap1 := cdefSecondaryTaps[1]
+	priStrength := params.PrimaryStrength
+	secStrength := params.SecondaryStrength
+	priShift := constrainShift(priStrength, params.PrimaryDamping)
+	secShift := constrainShift(secStrength, params.SecondaryDamping)
+
 	for row := 0; row < params.Height; row++ {
+		rowBase := inputOrigin + row*BStride
+		dstRow := dstOrigin + row*dstStride
 		for col := 0; col < params.Width; col++ {
-			base := inputOrigin + row*BStride + col
+			base := rowBase + col
 			sum := 0
 			x := int(input[base])
 			maxSample := x
 			minSample := x
-			for k := range 2 {
-				if enablePrimary {
-					p0 := int(input[base+cdefDirections[params.Direction+2][k]])
-					p1 := int(input[base-cdefDirections[params.Direction+2][k]])
-					sum += priTaps[k] * constrain(p0-x, params.PrimaryStrength, params.PrimaryDamping)
-					sum += priTaps[k] * constrain(p1-x, params.PrimaryStrength, params.PrimaryDamping)
-					if clippingRequired {
-						if p0 != VeryLarge && p0 > maxSample {
-							maxSample = p0
-						}
-						if p1 != VeryLarge && p1 > maxSample {
-							maxSample = p1
-						}
-						if p0 < minSample {
-							minSample = p0
-						}
-						if p1 < minSample {
-							minSample = p1
-						}
-					}
+			if enablePrimary {
+				p0 := int(input[base+pri0])
+				p1 := int(input[base-pri0])
+				p2 := int(input[base+pri1])
+				p3 := int(input[base-pri1])
+				sum += priTap0 * constrainShifted(p0-x, priStrength, priShift)
+				sum += priTap0 * constrainShifted(p1-x, priStrength, priShift)
+				sum += priTap1 * constrainShifted(p2-x, priStrength, priShift)
+				sum += priTap1 * constrainShifted(p3-x, priStrength, priShift)
+				if clippingRequired {
+					maxSample = maxClip(maxSample, p0, p1, p2, p3)
+					minSample = min4(minSample, p0, p1, p2, p3)
 				}
-				if enableSecondary {
-					s0 := int(input[base+cdefDirections[params.Direction+4][k]])
-					s1 := int(input[base-cdefDirections[params.Direction+4][k]])
-					s2 := int(input[base+cdefDirections[params.Direction][k]])
-					s3 := int(input[base-cdefDirections[params.Direction][k]])
-					if clippingRequired {
-						if s0 != VeryLarge && s0 > maxSample {
-							maxSample = s0
-						}
-						if s1 != VeryLarge && s1 > maxSample {
-							maxSample = s1
-						}
-						if s2 != VeryLarge && s2 > maxSample {
-							maxSample = s2
-						}
-						if s3 != VeryLarge && s3 > maxSample {
-							maxSample = s3
-						}
-						if s0 < minSample {
-							minSample = s0
-						}
-						if s1 < minSample {
-							minSample = s1
-						}
-						if s2 < minSample {
-							minSample = s2
-						}
-						if s3 < minSample {
-							minSample = s3
-						}
-					}
-					sum += cdefSecondaryTaps[k] * constrain(s0-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += cdefSecondaryTaps[k] * constrain(s1-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += cdefSecondaryTaps[k] * constrain(s2-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += cdefSecondaryTaps[k] * constrain(s3-x, params.SecondaryStrength, params.SecondaryDamping)
+			}
+			if enableSecondary {
+				s0 := int(input[base+sec0a])
+				s1 := int(input[base-sec0a])
+				s2 := int(input[base+sec1a])
+				s3 := int(input[base-sec1a])
+				s4 := int(input[base+sec0b])
+				s5 := int(input[base-sec0b])
+				s6 := int(input[base+sec1b])
+				s7 := int(input[base-sec1b])
+				if clippingRequired {
+					maxSample = maxClip(maxSample, s0, s1, s2, s3)
+					maxSample = maxClip(maxSample, s4, s5, s6, s7)
+					minSample = min4(minSample, s0, s1, s2, s3)
+					minSample = min4(minSample, s4, s5, s6, s7)
 				}
+				sum += secTap0 * constrainShifted(s0-x, secStrength, secShift)
+				sum += secTap0 * constrainShifted(s1-x, secStrength, secShift)
+				sum += secTap0 * constrainShifted(s2-x, secStrength, secShift)
+				sum += secTap0 * constrainShifted(s3-x, secStrength, secShift)
+				sum += secTap1 * constrainShifted(s4-x, secStrength, secShift)
+				sum += secTap1 * constrainShifted(s5-x, secStrength, secShift)
+				sum += secTap1 * constrainShifted(s6-x, secStrength, secShift)
+				sum += secTap1 * constrainShifted(s7-x, secStrength, secShift)
 			}
 			y := x + ((8 + sum - boolToInt(sum < 0)) >> 4)
 			if clippingRequired {
 				y = clampInt(y, minSample, maxSample)
 			}
-			dst[dstOrigin+row*dstStride+col] = uint16(y)
+			dst[dstRow+col] = uint16(y)
 		}
 	}
 	return nil
+}
+
+// constrainShift computes the per-call shift amount used by constrain. It is
+// invariant across all pixels for a given strength/damping pair.
+func constrainShift(threshold int, damping int) int {
+	if threshold == 0 {
+		return 0
+	}
+	return max(damping-(bits.Len(uint(threshold))-1), 0)
+}
+
+// constrainShifted is constrain with the shift precomputed by constrainShift.
+func constrainShifted(diff int, threshold int, shift int) int {
+	if threshold == 0 {
+		return 0
+	}
+	a := absInt(diff)
+	limit := threshold - (a >> shift)
+	if limit < 0 {
+		limit = 0
+	} else if limit > a {
+		limit = a
+	}
+	if diff < 0 {
+		return -limit
+	}
+	return limit
+}
+
+// maxClip folds four CDEF tap samples into the running max, skipping the
+// VeryLarge sentinel exactly as libaom does.
+func maxClip(cur, a, b, c, d int) int {
+	if a != VeryLarge && a > cur {
+		cur = a
+	}
+	if b != VeryLarge && b > cur {
+		cur = b
+	}
+	if c != VeryLarge && c > cur {
+		cur = c
+	}
+	if d != VeryLarge && d > cur {
+		cur = d
+	}
+	return cur
+}
+
+// min4 folds four CDEF tap samples into the running min.
+func min4(cur, a, b, c, d int) int {
+	if a < cur {
+		cur = a
+	}
+	if b < cur {
+		cur = b
+	}
+	if c < cur {
+		cur = c
+	}
+	if d < cur {
+		cur = d
+	}
+	return cur
 }
 
 // FilterFrameBlocks ports libaom's av1_cdef_filter_fb decode path for 16-bit
@@ -277,27 +340,39 @@ func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 	}
 	enablePrimary := params.PrimaryStrength != 0
 	enableSecondary := params.SecondaryStrength != 0
-	for row := 0; row < params.Height; row++ {
-		for col := 0; col < params.Width; col++ {
-			base := origin + row*BStride + col
-			if base < 0 || base >= length {
-				return false
-			}
-			for k := range 2 {
-				if enablePrimary && (!indexFits(length, base+cdefDirections[params.Direction+2][k]) || !indexFits(length, base-cdefDirections[params.Direction+2][k])) {
-					return false
-				}
-				if enableSecondary &&
-					(!indexFits(length, base+cdefDirections[params.Direction+4][k]) ||
-						!indexFits(length, base-cdefDirections[params.Direction+4][k]) ||
-						!indexFits(length, base+cdefDirections[params.Direction][k]) ||
-						!indexFits(length, base-cdefDirections[params.Direction][k])) {
-					return false
-				}
-			}
-		}
+
+	// The block touches input[base+off] and input[base-off] for a fixed set of
+	// direction offsets, where base ranges linearly over
+	// [origin, origin+(Height-1)*BStride+(Width-1)]. Because every access uses
+	// both +off and -off, the lowest accessed index is loBase-maxOff and the
+	// highest is hiBase+maxOff. Checking just those two extremes is exact and
+	// equivalent to walking every pixel, but O(1) instead of O(Width*Height).
+	loBase := origin
+	hiBase := origin + (params.Height-1)*BStride + (params.Width - 1)
+
+	maxOff := 0
+	if enablePrimary {
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+2][0])
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+2][1])
 	}
-	return true
+	if enableSecondary {
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+4][0])
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+4][1])
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction][0])
+		maxOff = maxAbs(maxOff, cdefDirections[params.Direction][1])
+	}
+
+	return indexFits(length, loBase-maxOff) && indexFits(length, hiBase+maxOff)
+}
+
+func maxAbs(cur int, off int) int {
+	if off < 0 {
+		off = -off
+	}
+	if off > cur {
+		return off
+	}
+	return cur
 }
 
 func indexFits(length int, index int) bool {
