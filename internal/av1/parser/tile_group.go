@@ -49,6 +49,16 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 		return TileGroup{}, ErrInvalidTileGroup
 	}
 
+	// In an OBU_FRAME, frame_obu() performs a byte_alignment() between
+	// frame_header_obu() and tile_group_obu() (spec 5.10.1). startBits is the
+	// raw frame-header bit count, which is not necessarily byte aligned (e.g.
+	// asymmetric tile layouts), so round it up to the next byte boundary before
+	// the tile group begins. Standalone OBU_TILE_GROUP payloads always start
+	// byte aligned (startBits == 0) so this is a no-op there.
+	if frameOBU {
+		startBits = (startBits + 7) &^ 7
+	}
+
 	r := bitstream.NewReader(payload)
 	if err := r.SkipBits(startBits); err != nil {
 		return TileGroup{}, err
