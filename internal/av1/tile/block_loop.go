@@ -81,6 +81,13 @@ type blockModeAboveContext struct {
 	Compound    [MaxBlockModeSlots]uint8
 	CompGroup   [MaxBlockModeSlots]uint8
 	CompIndex   [MaxBlockModeSlots]uint8
+	// InterIntra carries the per-MI inter-intra status across superblock rows
+	// so a warped-motion block at an SB top edge sees the SB-above neighbor's
+	// inter-intra flag. libaom's frame-wide mi grid exposes ref_frame[1] =
+	// INTRA_FRAME there, which av1_findSamples rejects as a warp sample source;
+	// without this field the restored above context defaulted to 0 and goav1
+	// over-collected the neighbor.
+	InterIntra  [MaxBlockModeSlots]uint8
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
 	Interp      [MaxBlockModeSlots]motion.InterpFilters
@@ -114,6 +121,9 @@ type blockModeLeftContext struct {
 	Compound    [MaxBlockModeSlots]uint8
 	CompGroup   [MaxBlockModeSlots]uint8
 	CompIndex   [MaxBlockModeSlots]uint8
+	// InterIntra carries the per-MI inter-intra status across superblock columns
+	// (see blockModeAboveContext.InterIntra for the rationale).
+	InterIntra  [MaxBlockModeSlots]uint8
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
 	Interp      [MaxBlockModeSlots]motion.InterpFilters
@@ -454,6 +464,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveCompound = above.mode.Compound
 		scratch.Mode.AboveCompGroup = above.mode.CompGroup
 		scratch.Mode.AboveCompIndex = above.mode.CompIndex
+		scratch.Mode.AboveInterIntra = above.mode.InterIntra
 		scratch.Mode.AboveInterMotion = above.mode.InterMotion
 		scratch.Mode.AboveMotionValid = above.mode.MotionValid
 		scratch.Mode.SBTopInterMotion = above.mode.InterMotion
@@ -494,6 +505,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftCompound = left.mode.Compound
 		scratch.Mode.LeftCompGroup = left.mode.CompGroup
 		scratch.Mode.LeftCompIndex = left.mode.CompIndex
+		scratch.Mode.LeftInterIntra = left.mode.InterIntra
 		scratch.Mode.LeftInterMotion = left.mode.InterMotion
 		scratch.Mode.LeftMotionValid = left.mode.MotionValid
 		scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
@@ -543,6 +555,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.Compound = scratch.Mode.AboveCompound
 	above.mode.CompGroup = scratch.Mode.AboveCompGroup
 	above.mode.CompIndex = scratch.Mode.AboveCompIndex
+	above.mode.InterIntra = scratch.Mode.AboveInterIntra
 	above.mode.InterMotion = scratch.Mode.AboveInterMotion
 	above.mode.MotionValid = scratch.Mode.AboveMotionValid
 	above.mode.Interp = scratch.Mode.AboveInterp
@@ -570,6 +583,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.Compound = scratch.Mode.LeftCompound
 	left.mode.CompGroup = scratch.Mode.LeftCompGroup
 	left.mode.CompIndex = scratch.Mode.LeftCompIndex
+	left.mode.InterIntra = scratch.Mode.LeftInterIntra
 	left.mode.InterMotion = scratch.Mode.LeftInterMotion
 	left.mode.MotionValid = scratch.Mode.LeftMotionValid
 	left.mode.Interp = scratch.Mode.LeftInterp
@@ -699,6 +713,7 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 		mode.AboveCompound[dst] = right.mode.Compound[off]
 		mode.AboveCompGroup[dst] = right.mode.CompGroup[off]
 		mode.AboveCompIndex[dst] = right.mode.CompIndex[off]
+		mode.AboveInterIntra[dst] = right.mode.InterIntra[off]
 		mode.SBTopInterMotion[dst] = right.mode.InterMotion[off]
 		mode.SBTopMotionValid[dst] = right.mode.MotionValid[off]
 		mode.SBTopBlockSize[dst] = right.mode.BlockSize[off]
