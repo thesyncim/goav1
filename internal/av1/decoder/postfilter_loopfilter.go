@@ -267,6 +267,18 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdge(edge FrameWorkLoopFilt
 	if !ok {
 		return loopfilter.ErrInvalidFilter
 	}
+	// libaom's loop filter taps read/write the bottom/right partial-superblock
+	// padding the reconstruction stage populated. The byte buffer is allocated at
+	// the 8-aligned MI grid (frame.RequiredSize / frameWorkLoopFilterBufferSize),
+	// so expand the cropped plane view to that extent before filtering; otherwise
+	// near-boundary edges whose taps reach into the padding (e.g. a width-14
+	// filter at the 226x226 right edge) would exceed the cropped Width/Height and
+	// be rejected.
+	planeW, planeH, err := frameWorkLoopFilterBufferSize(ctx, edge.Plane)
+	if err != nil {
+		return err
+	}
+	dst = frameWorkLoopFilterAlignedPlane(dst, planeW, planeH, ctx.Output.Layout.BytesPerSample)
 	thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
 	if err != nil {
 		return err
@@ -295,6 +307,35 @@ func frameWorkLoopFilterOutputPlane(output frame.Frame, plane loopfilter.Plane) 
 	default:
 		return frame.Plane{}, false
 	}
+}
+
+// frameWorkLoopFilterAlignedPlane expands a cropped plane view to the MI-aligned
+// deblock extent (planeW x planeH from frameWorkLoopFilterPlaneSize). The byte
+// buffer was allocated at the MI-aligned dimensions by frame.RequiredSize, so
+// the expanded view shares Pix and Stride; only Width/Height grow, capped to the
+// row stride and the allocated row count. This mirrors frameWorkCDEFAlignedPlane
+// for the loop-filter stage.
+func frameWorkLoopFilterAlignedPlane(plane frame.Plane, planeW int, planeH int, bytesPerSample int) frame.Plane {
+	if bytesPerSample <= 0 || plane.Stride <= 0 {
+		return plane
+	}
+	if planeW > plane.Width {
+		if w := plane.Stride / bytesPerSample; planeW > w {
+			planeW = w
+		}
+		if planeW > plane.Width {
+			plane.Width = planeW
+		}
+	}
+	if planeH > plane.Height {
+		if h := len(plane.Pix) / plane.Stride; planeH > h {
+			planeH = h
+		}
+		if planeH > plane.Height {
+			plane.Height = planeH
+		}
+	}
+	return plane
 }
 
 func frameWorkCountAppliedLoopFilterEdge(result *FrameWorkLoopFilterPostFilterApplyResult, edge FrameWorkLoopFilterPostFilterEdge) {
@@ -907,7 +948,33 @@ func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loo
 	x := x4 * 4
 	y := y4 * 4
 	length := length4 * 4
-	frameWidth, frameHeight, err := frameWorkLoopFilterPlaneSize(ctx, plane)
+	// Edge position bound (MI(4)-aligned crop): libaom emits no internal deblock
+	// edge inside the single-transform partial-superblock padding, i.e. past the
+	// crop dimension rounded up to MI_SIZE. Suppress any edge whose perpendicular
+	// position lands in that padding (e.g. a phantom vertical edge at x=36 for a
+	// 34x34 frame, or a horizontal edge at y in the same gap), which goav1's
+	// TX-edge enumeration can produce but libaom never filters.
+	posWidth, posHeight, err := frameWorkLoopFilterPlaneSize(ctx, plane)
+	if err != nil {
+		return 0, false, err
+	}
+	switch edge {
+	case loopfilter.EdgeVertical:
+		if x >= posWidth {
+			return 0, false, nil
+		}
+	case loopfilter.EdgeHorizontal:
+		if y >= posHeight {
+			return 0, false, nil
+		}
+	}
+	// Filter-tap fit bound (MI(8)-aligned = the allocated buffer extent): libaom
+	// applies the TX-derived filter width without clamping the taps to the crop;
+	// the taps read/write the partial-superblock padding the reconstruction stage
+	// populated. The byte buffer spans the 8-aligned extent (frame.RequiredSize),
+	// so a wide filter (e.g. width-14) on a near-boundary edge such as the
+	// 226x226 vertical edge at x=224 fits and must not be downgraded.
+	frameWidth, frameHeight, err := frameWorkLoopFilterBufferSize(ctx, plane)
 	if err != nil {
 		return 0, false, err
 	}
@@ -918,6 +985,40 @@ func frameWorkLoopFilterScheduledWidth(ctx FrameWorkPostFilterContext, plane loo
 		width = frameWorkLoopFilterDowngradeWidth(width)
 	}
 	return 0, false, nil
+}
+
+// frameWorkLoopFilterBufferSize returns the per-plane allocated buffer extent in
+// pixels (frame dimensions rounded up to a whole 8-luma-pixel MI grid, derived
+// per plane via the subsampling, matching frame.RequiredSize). The deblock
+// filter taps may read/write up to this extent (the partial-superblock padding),
+// so frameWorkLoopFilterEdgeFits must not downgrade filters whose taps stay
+// within it even when they pass the cropped surface.
+func frameWorkLoopFilterBufferSize(ctx FrameWorkPostFilterContext, plane loopfilter.Plane) (int, int, error) {
+	width := int(ctx.Event.FrameSize.CodedWidth)
+	height := int(ctx.Event.FrameSize.Height)
+	if width <= 0 || height <= 0 {
+		return 0, 0, threading.ErrInvalidBatch
+	}
+	alignedW := (width + 7) &^ 7
+	alignedH := (height + 7) &^ 7
+	switch plane {
+	case loopfilter.PlaneY:
+		return alignedW, alignedH, nil
+	case loopfilter.PlaneU, loopfilter.PlaneV:
+		if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
+			return 0, 0, threading.ErrInvalidBatch
+		}
+		color := ctx.Event.SequenceHeader.ColorConfig
+		if color.SubsamplingX {
+			alignedW >>= 1
+		}
+		if color.SubsamplingY {
+			alignedH >>= 1
+		}
+		return alignedW, alignedH, nil
+	default:
+		return 0, 0, threading.ErrInvalidBatch
+	}
 }
 
 func frameWorkLoopFilterBoundaryOffset(edge loopfilter.Edge, x4 int, y4 int, offset int) (int, int) {
@@ -1040,6 +1141,27 @@ func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx t
 	}
 }
 
+// frameWorkLoopFilterPlaneSize returns the per-plane deblock extent in pixels.
+//
+// libaom's decoder loop filter iterates the MI grid up to plane_mi_{cols,rows}
+// (= ROUND_POWER_OF_TWO(mi_cols/mi_rows, subsampling); mi_cols = ROUND_UP(width,
+// 8) / MI_SIZE), so the bottom/right partial-superblock padding the
+// reconstruction stage populated participates in filtering. However, the
+// rightmost/bottommost transform block of the partial superblock extends across
+// the whole [crop .. MI-aligned] padding as a single transform, so libaom emits
+// no internal deblock edge inside that padding past the crop dimension rounded
+// up to a whole MI_SIZE (4-pixel) cell: every real edge it filters lands at or
+// before CEIL(crop, MI_SIZE). The visible right/bottom edges whose taps reach
+// just into that 4-pixel-aligned padding (e.g. the 34x34 vertical edge at x=32,
+// the 226x226 right edges) must still be applied with the full filter width.
+//
+// We therefore size the deblock extent at the crop dimension rounded up to
+// MI_SIZE: large enough that frameWorkLoopFilterEdgeFits / ScheduledWidth no
+// longer downgrade those near-boundary edges (the padding the taps read is real
+// reconstruction output, not the cropped surface), yet not so large that the
+// per-cell edge enumeration would emit a spurious edge in the single-transform
+// padding past the MI cell, which libaom never filters. The byte buffer is
+// allocated at the MI(8)-aligned size, so the taps always have backing samples.
 func frameWorkLoopFilterPlaneSize(ctx FrameWorkPostFilterContext, plane loopfilter.Plane) (int, int, error) {
 	width := int(ctx.Event.FrameSize.CodedWidth)
 	height := int(ctx.Event.FrameSize.Height)
@@ -1048,17 +1170,23 @@ func frameWorkLoopFilterPlaneSize(ctx FrameWorkPostFilterContext, plane loopfilt
 	}
 	switch plane {
 	case loopfilter.PlaneY:
-		return width, height, nil
+		return frameWorkLoopFilterMIAlignedLength(width), frameWorkLoopFilterMIAlignedLength(height), nil
 	case loopfilter.PlaneU, loopfilter.PlaneV:
 		if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
 			return 0, 0, threading.ErrInvalidBatch
 		}
 		color := ctx.Event.SequenceHeader.ColorConfig
-		return frameWorkLoopFilterSubsampledLength(width, color.SubsamplingX),
-			frameWorkLoopFilterSubsampledLength(height, color.SubsamplingY), nil
+		return frameWorkLoopFilterMIAlignedLength(frameWorkLoopFilterSubsampledLength(width, color.SubsamplingX)),
+			frameWorkLoopFilterMIAlignedLength(frameWorkLoopFilterSubsampledLength(height, color.SubsamplingY)), nil
 	default:
 		return 0, 0, threading.ErrInvalidBatch
 	}
+}
+
+// frameWorkLoopFilterMIAlignedLength rounds a plane crop dimension up to a whole
+// MI_SIZE (4-pixel) cell.
+func frameWorkLoopFilterMIAlignedLength(length int) int {
+	return (length + 3) &^ 3
 }
 
 func frameWorkLoopFilterSubsampledLength(length int, subsampled bool) int {
