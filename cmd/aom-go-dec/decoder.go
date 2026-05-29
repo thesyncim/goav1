@@ -30,6 +30,8 @@ type decoder struct {
 	scratch av1.DecoderFrameWorkResidualStreamScratch
 	runner  av1.DecoderFrameWorkResidualStreamRunner
 
+	postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+
 	payloads [][]byte
 	format   av1.FrameFormat
 }
@@ -157,7 +159,7 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 	for i, payload := range d.payloads {
 		start := time.Now()
 		result = av1.DecoderFrameWorkResidualStreamResult{}
-		if err := d.runner.RunLowOverheadInto(&result, payload, nil); err != nil {
+		if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &d.postFilter); err != nil {
 			return totalBytes, completed, fmt.Errorf("frame %d: %w", i, err)
 		}
 		elapsed := time.Since(start)

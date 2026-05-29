@@ -17,9 +17,10 @@
 // reconstruction + the full supported post-filter chain, with the per-block
 // loop request configured to read intra/inter modes, motion vectors, motion
 // modes, inter-intra, and compound blend. This is the path proven byte-exact
-// against libaom. (The throughput-oriented public stream-runner path used by
-// cmd/aom-go-dec is NOT yet byte-exact and is unsuitable for a conformance
-// gate.)
+// against libaom. The public stream-runner path used by cmd/aom-go-dec now
+// also reconstructs and post-filters byte-exact for these clips; it is guarded
+// directly through the exported API by the conformance package
+// (conformance/publicpath_test.go).
 //
 // The clips are 64x64 all-intra (kf-max-dist=1) 3-frame profile-conformance
 // bitstreams committed to git under internal/av1/testvector/testdata/profiles/.

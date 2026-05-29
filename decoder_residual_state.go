@@ -161,6 +161,19 @@ func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int,
 		return TileBlockLoopRequest{}, err
 	}
 	req.ContextCarrier = carrier
+	// Decode the full block-mode syntax for every block. block_loop.go gates
+	// the inter-only reads on whether a block is actually inter-coded, so
+	// enabling all of these on an intra frame is harmless; without them the
+	// block loop walks blocks with zero-valued prediction state, which
+	// produces wrong reconstruction pixels (and a wrong frame MD5) for both
+	// intra and inter frames. This mirrors the byte-exact framework dry-run
+	// harness, which sets the same flags before DecodeAndReconstructJobResiduals.
+	req.DecodePredictionModes = true
+	req.DecodeInterModes = true
+	req.DecodeMotionVectors = true
+	req.DecodeInterIntra = true
+	req.DecodeMotionModes = true
+	req.DecodeCompoundBlend = true
 	return req, nil
 }
 

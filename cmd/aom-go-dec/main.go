@@ -17,11 +17,11 @@
 // so the YUV stream on stdout stays clean and can be piped into ffplay etc.
 //
 // The CLI uses only the public goav1 API surface; no internal packages are
-// imported. Limitations: the current pipeline runs residual decode and
-// reconstruction but does not apply the optional loop-filter / CDEF / super-res
-// / loop-restoration / film-grain post-filter chain. That matches the
-// throughput-oriented configuration used by BenchmarkDecodeFullVector. The
-// reported width/height/bit depth come from the parsed sequence header.
+// imported. It runs residual decode plus reconstruction and applies the
+// supported loop-filter / CDEF / super-res / loop-restoration / film-grain
+// post-filter chain via DecoderFrameWorkReusableSupportedPostFilterRunner, so
+// decoded frames match libaom byte-for-byte. The reported width/height/bit
+// depth come from the parsed sequence header.
 package main
 
 import (
