@@ -1078,7 +1078,17 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 	if err != nil {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToScratch(inter, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
+	// libaom applies global warp to the inter part of an inter-intra block when
+	// is_global_mv_block holds (GLOBALMV + non-translational frame model + luma
+	// min-side >= 8); inter-intra forces SIMPLE_TRANSLATION motion_mode but does
+	// not disable the global-warp predictor. Stage the warp in the inter scratch,
+	// matching the non-inter-intra global-warp path; chroma planes < 8 and scaled
+	// references fall back to the translational predictor as libaom does.
+	if visit.Prediction.GlobalWarpedMotionValid && geom.Width >= 8 && geom.Height >= 8 {
+		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotion, motionResult.MV[0], geom, filters); err != nil {
+			return err
+		}
+	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
 		return err
 	}
 	mode, ok := frameWorkInterIntraPredictionMode(visit.Prediction.InterIntra.Mode)
@@ -1477,6 +1487,38 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+// predictBlockInterGlobalWarpToScratch stages a global-warp inter prediction in
+// a block-sized scratch plane (for inter-intra / masked blending). It mirrors
+// predictBlockInterGlobalWarpPlaneWithFilters but samples into dst at (0,0);
+// scaled references fall back to the translational predictor as libaom does
+// (av1_is_scaled makes allow_warp() return 0).
+func (b FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, model tile.WarpedMotionModel, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters) error {
+	reference, ok := frameWorkReferenceFromTile(refFrame)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	refWindow, err := b.ReferencePlane(reference, plane)
+	if err != nil {
+		return err
+	}
+	ref := frame.Plane{
+		Pix:    refWindow.Pix,
+		Stride: refWindow.Stride,
+		Width:  refWindow.Width,
+		Height: refWindow.Height,
+	}
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	if err != nil {
+		return err
+	}
+	if !sameSize {
+		return frameWorkPredictScaledReferencePlaneToBuffer(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
+			0, 0, geom.X, geom.Y, mv, filters)
+	}
+	return motion.PredictWarpedPlaneBlockToScratchBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY)
 }
 
 func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor) error {
