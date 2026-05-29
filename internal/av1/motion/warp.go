@@ -164,8 +164,12 @@ func warpAffineHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint
 // from the affine sampling origin (see warpAffine8Offset).
 func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, matX int, matY int, writeX int, writeY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
-	reduceBitsHoriz := round0Bits
-	reduceBitsVert := 2*filterBits - reduceBitsHoriz
+	// av1_highbd_warp_affine_c (single prediction): reduce_bits_horiz =
+	// conv_params->round_0 and reduce_bits_vert = 2*FILTER_BITS -
+	// reduce_bits_horiz, where round_0 follows get_conv_params_no_round (3 for
+	// bd <= 10, 5 at bd == 12). highBDRoundBits returns exactly that round_0
+	// and the matching 2*FILTER_BITS - round_0 vertical reduce.
+	reduceBitsHoriz, reduceBitsVert := highBDRoundBits(bitDepth)
 	offsetBitsHoriz := int(bitDepth) + filterBits - 1
 	offsetBitsVert := int(bitDepth) + 2*filterBits - reduceBitsHoriz
 	colShift := writeX - matX
