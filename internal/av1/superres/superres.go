@@ -25,13 +25,40 @@ const (
 
 // UpscalePlane horizontally upscales src into dst using AV1's normative
 // superres filter. The caller supplies already-decimated luma or chroma planes.
+//
+// The whole src plane (src.Width columns) is treated as both the coded
+// (downscaled_plane_width) span used to derive the convolution step/phase and
+// the physical sampling extent. For libaom's MI-aligned super-res source span
+// (where downscaled_plane_width < the physical aligned width), use
+// UpscalePlaneCoded.
 func UpscalePlane(src frame.SamplePlane, dst frame.SamplePlane, bitDepth uint8) error {
-	if err := validatePlanes(src, dst, bitDepth); err != nil {
+	return UpscalePlaneCoded(src, dst, src.Width, bitDepth)
+}
+
+// UpscalePlaneCoded ports av1_upscale_normative_rows for a single-tile-column
+// frame plane (av1/common/resize.c). It derives the convolution step (x_step_qn)
+// and initial subpel phase (x0_qn) from codedWidth — libaom's
+// downscaled_plane_width = ROUND_POWER_OF_TWO(cm->width, ss_x) — while sampling
+// from the physical src.Width columns, which libaom sets to the MI-aligned tile
+// span src_width = (mi_col_end - mi_col_start) << (MI_SIZE_LOG2 - ss_x).
+//
+// libaom's av1_superres_upscale (resize.c ~line 1317) upscales from a copy of
+// the frame allocated at aligned_width = ALIGN_POWER_OF_TWO(cm->width, 3), whose
+// columns in [codedWidth, src.Width) hold the genuine MI-aligned reconstructed /
+// border-extended pixels carried by the coded frame buffer — NOT a clamped copy
+// of the last coded column. The per-tile-column right pad in
+// upscale_normative_rect then replicates src column src.Width-1 beyond the span,
+// which the srcLast clamp below reproduces.
+func UpscalePlaneCoded(src frame.SamplePlane, dst frame.SamplePlane, codedWidth int, bitDepth uint8) error {
+	if err := validatePlanesCoded(src, dst, codedWidth, bitDepth); err != nil {
 		return err
 	}
-	stepX := ((src.Width << ScaleBits) + (dst.Width / 2)) / dst.Width
-	err := (dst.Width * stepX) - (src.Width << ScaleBits)
-	initialSubpelX := ((-((dst.Width - src.Width) << (ScaleBits - 1))) + dst.Width/2) / dst.Width
+	// x_step_qn / x0_qn are derived from the coded (downscaled) plane width, not
+	// the physical aligned source extent, matching av1_get_upscale_convolve_step
+	// and get_upscale_convolve_x0.
+	stepX := ((codedWidth << ScaleBits) + (dst.Width / 2)) / dst.Width
+	err := (dst.Width * stepX) - (codedWidth << ScaleBits)
+	initialSubpelX := ((-((dst.Width - codedWidth) << (ScaleBits - 1))) + dst.Width/2) / dst.Width
 	initialSubpelX += (1 << (ExtraBits - 1)) - err/2
 	initialSubpelX &= ScaleMask
 
@@ -76,11 +103,13 @@ func UpscalePlane(src frame.SamplePlane, dst frame.SamplePlane, bitDepth uint8) 
 	return nil
 }
 
-func validatePlanes(src frame.SamplePlane, dst frame.SamplePlane, bitDepth uint8) error {
+func validatePlanesCoded(src frame.SamplePlane, dst frame.SamplePlane, codedWidth int, bitDepth uint8) error {
 	if bitDepth < 8 || bitDepth > 12 ||
 		!samplePlaneFits(src) || !samplePlaneFits(dst) ||
 		dst.Height != src.Height ||
-		dst.Width <= src.Width ||
+		codedWidth <= 0 ||
+		codedWidth > src.Width ||
+		dst.Width <= codedWidth ||
 		src.Width > int(^uint(0)>>1)>>ScaleBits {
 		return frame.ErrInvalidPlane
 	}

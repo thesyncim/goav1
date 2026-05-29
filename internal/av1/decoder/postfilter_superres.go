@@ -171,6 +171,13 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkS
 			continue
 		}
 		bytesPerSample := frameWorkSuperResBytesPerSample(plan.CodedFormat)
+		// Match ApplySuperResPostFilter: the upscale sources from the MI-aligned
+		// coded span (libaom's aligned_width copy buffer), so the coded scratch
+		// must hold the aligned-width samples, not just the cropped coded width.
+		codedHeight := srcPlane.Height
+		xDec, yDec := frameWorkCDEFPlaneDecimation(plan.CodedFormat, plane)
+		srcPlane = frameWorkCDEFAlignedPlane(srcPlane, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		srcPlane.Height = codedHeight
 		codedSamples, err := frame.SamplePlaneLen(srcPlane, bytesPerSample)
 		if err != nil {
 			return FrameWorkSuperResPostFilterScratchSize{}, err
@@ -241,6 +248,21 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		if !ok {
 			continue
 		}
+		// libaom's av1_superres_upscale (resize.c ~line 1329) upscales from a
+		// copy of the coded frame allocated at aligned_width =
+		// ALIGN_POWER_OF_TWO(cm->width, 3): the columns in [codedWidth,
+		// alignedWidth) hold the genuine MI-aligned reconstructed/border pixels
+		// the coded buffer already carries, not a clamp of the last coded column.
+		// Expand the coded source span to that MI-aligned extent (the same view
+		// CDEF reads) and feed UpscalePlaneCoded the cropped coded width for the
+		// scale step/phase math.
+		codedWidth := srcPlane.Width
+		codedHeight := srcPlane.Height
+		xDec, yDec := frameWorkCDEFPlaneDecimation(plan.CodedFormat, plane)
+		srcPlane = frameWorkCDEFAlignedPlane(srcPlane, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		// Super-res only changes width; libaom upscales crop_heights rows, so keep
+		// the coded crop height (frameWorkCDEFAlignedPlane also MI-aligns height).
+		srcPlane.Height = codedHeight
 		srcSamples, err := frame.LoadSamplePlane(req.CodedScratch[plane], srcPlane, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres coded scratch plane %d: %w", plane, err)
@@ -249,7 +271,7 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		if err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres output scratch plane %d: %w", plane, err)
 		}
-		if err := superres.UpscalePlane(srcSamples, dstSamples, plan.OutputFormat.BitDepth); err != nil {
+		if err := superres.UpscalePlaneCoded(srcSamples, dstSamples, codedWidth, plan.OutputFormat.BitDepth); err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres upscale plane %d: %w", plane, err)
 		}
 		if err := frame.StoreSamplePlane(dstPlane, output.Layout.BytesPerSample, dstSamples); err != nil {

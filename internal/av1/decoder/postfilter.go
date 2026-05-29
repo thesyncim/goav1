@@ -3,6 +3,7 @@ package decoder
 import (
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -686,7 +687,66 @@ func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req Fr
 	if bytesPerSample == 0 {
 		bytesPerSample = 1
 	}
+	// When super-res is active the pre-CDEF (deblock) boundary save runs on the
+	// coded (downscaled) surface, but loop restoration consumes boundary rows at
+	// the upscaled width. Mirror libaom's save_deblock_boundary_lines by
+	// upscaling each saved row on the fly (av1/common/restoration.c ~line 1381).
+	// The post-CDEF (afterCDEF=true) save runs after the surface is already
+	// upscaled and uses the plain path.
+	if !afterCDEF && ctx.superResActiveForRestorationSave() {
+		return ctx.saveRestorationDeblockBoundariesSuperRes(plan, boundaries, bytesPerSample)
+	}
 	return tile.SaveRestorationFrameBoundaryLinesFromFrame(plan, *ctx.Output, bytesPerSample, boundaries, afterCDEF)
+}
+
+// superResActiveForRestorationSave reports whether the current output surface is
+// still the coded (pre-super-res) surface and super-res will upscale it, so the
+// pre-CDEF restoration boundary save must upscale its rows on the fly.
+func (ctx FrameWorkPostFilterContext) superResActiveForRestorationSave() bool {
+	if ctx.detachedPostFilterOutput {
+		// Output already points at the upscaled super-res surface.
+		return false
+	}
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		return false
+	}
+	size := ctx.Event.FrameSize
+	return size.SuperResEnabled && size.UpscaledWidth > size.CodedWidth &&
+		size.SuperResDenominator >= 9 && size.SuperResDenominator <= 16
+}
+
+// saveRestorationDeblockBoundariesSuperRes performs the pre-CDEF restoration
+// boundary save against the MI-aligned coded surface, upscaling each saved row
+// to the upscaled plane width. It ports libaom's super-res deblock save branch.
+func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(plan tile.RestorationFramePlan, boundaries [3]tile.RestorationStripeBoundaries, bytesPerSample int) error {
+	codedFormat, err := codedFrameFormatFromHeaders(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Output.Format.Align)
+	if err != nil {
+		return err
+	}
+	var codedPlanes [3]frame.Plane
+	upscale := tile.RestorationSuperResDeblockUpscale{BitDepth: ctx.Output.Format.BitDepth}
+	if upscale.BitDepth == 0 {
+		upscale.BitDepth = 8
+	}
+	maxAlignedWidth := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		if plan.Grids[plane].Type == parser.RestorationNone {
+			continue
+		}
+		srcPlane, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		if !ok {
+			continue
+		}
+		upscale.CodedWidth[plane] = srcPlane.Width
+		xDec, yDec := frameWorkCDEFPlaneDecimation(codedFormat, plane)
+		srcPlane = frameWorkCDEFAlignedPlane(srcPlane, ctx.Event.FrameSize, xDec, yDec, bytesPerSample)
+		codedPlanes[plane] = srcPlane
+		if srcPlane.Width > maxAlignedWidth {
+			maxAlignedWidth = srcPlane.Width
+		}
+	}
+	upscale.RowScratch = make([]uint16, maxAlignedWidth)
+	return tile.SaveRestorationFrameBoundaryLinesFromFrameSuperRes(plan, codedPlanes, bytesPerSample, upscale, boundaries)
 }
 
 // ApplyCallerPostFilters runs all active postfilters in AV1 order. Unlike the

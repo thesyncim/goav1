@@ -4,6 +4,7 @@ import (
 	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+	"github.com/thesyncim/goav1/internal/av1/superres"
 )
 
 const (
@@ -301,6 +302,172 @@ func SaveRestorationBoundaryLinesFromFramePlane(grid RestorationPlaneGrid, plane
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// RestorationSuperResDeblockUpscale carries the super-res geometry needed to
+// upscale pre-CDEF (deblock) boundary rows on the fly. libaom's
+// save_deblock_boundary_lines (av1/common/restoration.c ~line 1381) runs the
+// deblock boundary save on the coded (downscaled) surface and, when super-res
+// is active, super-res-upscales each saved row to the upscaled plane width via
+// av1_upscale_normative_rows before storing it into the boundary buffer; loop
+// restoration then runs at the upscaled resolution. The CDEF boundary save
+// (afterCDEF=true) runs after the surface is already upscaled and needs no
+// upscaling, so this only applies to the deblock pass.
+type RestorationSuperResDeblockUpscale struct {
+	// BitDepth is the output sample bit depth used by the normative upscale.
+	BitDepth uint8
+	// CodedWidth is the per-plane coded (downscaled) plane width that is the
+	// source span for the upscale. The MI-aligned source extent is taken from
+	// the supplied byte plane's Width (which must be the aligned coded width).
+	CodedWidth [3]int
+	// RowScratch is caller-owned uint16 scratch sized to hold one MI-aligned
+	// coded source row (plane.Width samples). It is reused per saved row.
+	RowScratch []uint16
+}
+
+// SaveRestorationBoundaryLinesFromFramePlaneSuperRes saves pre-CDEF (deblock)
+// stripe boundary rows from a coded (downscaled) byte-backed frame plane,
+// super-res-upscaling each saved row to the upscaled plane width
+// (grid.PlaneWidth) on the fly. It ports the super-res branch of libaom's
+// save_deblock_boundary_lines. afterCDEF must be false; the post-CDEF save runs
+// on the already-upscaled surface through SaveRestorationBoundaryLinesFromFramePlane.
+//
+// plane is the coded surface: plane.Width is the MI-aligned coded plane width
+// (>= codedWidth) and plane.Height equals grid.PlaneHeight (super-res does not
+// change height). codedWidth derives the upscale convolution step/phase; the
+// columns in [codedWidth, plane.Width) hold the genuine MI-aligned reconstructed
+// pixels, matching av1_superres_upscale's aligned_width copy buffer.
+func SaveRestorationBoundaryLinesFromFramePlaneSuperRes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, codedWidth int, bitDepth uint8, rowScratch []uint16, boundaries RestorationStripeBoundaries) error {
+	if !grid.validGeometry() || plane.Stride <= 0 || plane.Width <= 0 || plane.Height <= 0 {
+		return ErrInvalidPlan
+	}
+	if bytesPerSample != 1 && bytesPerSample != 2 {
+		return ErrInvalidPlan
+	}
+	// The boundary buffer is sized for the upscaled width; the source plane
+	// carries the coded (downscaled) width, expanded to its MI-aligned extent.
+	if codedWidth <= 0 || codedWidth > plane.Width ||
+		plane.Width > int(grid.PlaneWidth) ||
+		plane.Height != int(grid.PlaneHeight) ||
+		len(rowScratch) < plane.Width {
+		return ErrInvalidPlan
+	}
+	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+		return err
+	}
+	planeHeight := int(grid.PlaneHeight)
+	stripeHeight := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	stripeOff := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	if stripeHeight <= 0 {
+		return ErrInvalidPlan
+	}
+	for tileStripe := 0; ; tileStripe++ {
+		relY0 := maxInt(0, tileStripe*stripeHeight-stripeOff)
+		if relY0 >= planeHeight {
+			break
+		}
+		relY1 := minInt((tileStripe+1)*stripeHeight-stripeOff, planeHeight)
+		useDeblockAbove := tileStripe > 0
+		useDeblockBelow := relY1 < planeHeight
+		if useDeblockAbove {
+			if err := saveRestorationDeblockBoundaryLinesFromBytesSuperRes(grid, plane, bytesPerSample, codedWidth, bitDepth, rowScratch, relY0-restorationCtxVert, tileStripe, true, boundaries); err != nil {
+				return err
+			}
+		}
+		if useDeblockBelow {
+			if err := saveRestorationDeblockBoundaryLinesFromBytesSuperRes(grid, plane, bytesPerSample, codedWidth, bitDepth, rowScratch, relY1, tileStripe, false, boundaries); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func saveRestorationDeblockBoundaryLinesFromBytesSuperRes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, codedWidth int, bitDepth uint8, rowScratch []uint16, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
+	planeHeight := int(grid.PlaneHeight)
+	linesToSave := minInt(restorationCtxVert, planeHeight-row)
+	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
+		return ErrInvalidPlan
+	}
+	for i := 0; i < linesToSave; i++ {
+		if err := upscaleRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, codedWidth, bitDepth, rowScratch, row+i, stripe, i, above, boundaries); err != nil {
+			return err
+		}
+	}
+	if linesToSave == 1 {
+		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(dst, srcLine)
+	}
+	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+}
+
+// upscaleRestorationBoundaryLineFromBytes reads one MI-aligned coded source row
+// out of the byte plane and super-res-upscales it directly into the upscaled-
+// width boundary line, mirroring the av1_upscale_normative_rows call inside
+// libaom's save_deblock_boundary_lines.
+func upscaleRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, codedWidth int, bitDepth uint8, rowScratch []uint16, srcRow int, stripe int, ctxRow int, above bool, boundaries RestorationStripeBoundaries) error {
+	upscaledWidth := int(grid.PlaneWidth)
+	if srcRow < 0 || srcRow >= plane.Height || len(rowScratch) < plane.Width {
+		return ErrInvalidPlan
+	}
+	rowOffset := srcRow * plane.Stride
+	src := rowScratch[:plane.Width]
+	switch bytesPerSample {
+	case 1:
+		pix := plane.Pix[rowOffset : rowOffset+plane.Width]
+		for i := 0; i < plane.Width; i++ {
+			src[i] = uint16(pix[i])
+		}
+	case 2:
+		pix := plane.Pix[rowOffset : rowOffset+plane.Width*2]
+		for i := 0; i < plane.Width; i++ {
+			src[i] = uint16(pix[2*i]) | uint16(pix[2*i+1])<<8
+		}
+	default:
+		return ErrInvalidPlan
+	}
+	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, upscaledWidth)
+	if !ok {
+		return ErrInvalidPlan
+	}
+	out := dst[restorationExtraHorz : restorationExtraHorz+upscaledWidth]
+	srcPlane := av1frame.SamplePlane{Pix: src, Width: plane.Width, Height: 1, Stride: plane.Width}
+	dstPlane := av1frame.SamplePlane{Pix: out, Width: upscaledWidth, Height: 1, Stride: upscaledWidth}
+	return superres.UpscalePlaneCoded(srcPlane, dstPlane, codedWidth, bitDepth)
+}
+
+// SaveRestorationFrameBoundaryLinesFromFrameSuperRes ports the super-res branch
+// of av1_loop_restoration_save_boundary_lines for the pre-CDEF (deblock) save:
+// it upscales each saved boundary row from the coded (downscaled) surface to the
+// upscaled plane width on the fly. codedPlanes carries the MI-aligned coded
+// planes (Width = aligned coded width), and upscale.CodedWidth[plane] is the
+// per-plane coded crop width. Only the deblock pass uses this path; the CDEF
+// pass runs after upscaling through SaveRestorationFrameBoundaryLinesFromFrame.
+func SaveRestorationFrameBoundaryLinesFromFrameSuperRes(plan RestorationFramePlan, codedPlanes [3]av1frame.Plane, bytesPerSample int, upscale RestorationSuperResDeblockUpscale, boundaries [3]RestorationStripeBoundaries) error {
+	if err := validateRestorationFramePlan(plan); err != nil {
+		return err
+	}
+	planeCount := int(plan.Planes)
+	if planeCount != 1 && planeCount != 3 {
+		return ErrInvalidPlan
+	}
+	for plane := 0; plane < planeCount; plane++ {
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		if err := SaveRestorationBoundaryLinesFromFramePlaneSuperRes(grid, codedPlanes[plane], bytesPerSample, upscale.CodedWidth[plane], upscale.BitDepth, upscale.RowScratch, boundaries[plane]); err != nil {
+			return err
 		}
 	}
 	return nil
