@@ -1804,6 +1804,15 @@ func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fram
 	if err != nil {
 		return err
 	}
+	// Select the OBMC mask from the full overlap height (libaom
+	// av1_get_obmc_mask), then clip the blend write to the plane extent.
+	mask, ok := frameWorkOBMCMask(height)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	if height > geom.Height {
+		height = geom.Height
+	}
 	if width > geom.Width-relX {
 		width = geom.Width - relX
 	}
@@ -1812,10 +1821,6 @@ func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fram
 	}
 	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, relX, 0, geom.X+relX, geom.Y, width, height); err != nil {
 		return err
-	}
-	mask, ok := frameWorkOBMCMask(height)
-	if !ok {
-		return ErrInvalidBatch
 	}
 	return frameWorkBlendOBMCV(geom.Output, tmp, geom.BytesPerSample, geom.X+relX, geom.Y, relX, 0, width, height, mask)
 }
@@ -1836,6 +1841,15 @@ func (b FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frame
 	if err != nil {
 		return err
 	}
+	// Select the OBMC mask from the full overlap width, then clip the blend
+	// write to the plane extent.
+	mask, ok := frameWorkOBMCMask(width)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	if width > geom.Width {
+		width = geom.Width
+	}
 	if height > geom.Height-relY {
 		height = geom.Height - relY
 	}
@@ -1844,10 +1858,6 @@ func (b FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frame
 	}
 	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, 0, relY, geom.X, geom.Y+relY, width, height); err != nil {
 		return err
-	}
-	mask, ok := frameWorkOBMCMask(width)
-	if !ok {
-		return ErrInvalidBatch
 	}
 	return frameWorkBlendOBMCH(geom.Output, tmp, geom.BytesPerSample, geom.X, geom.Y+relY, 0, relY, width, height, mask)
 }
@@ -2630,9 +2640,8 @@ func frameWorkOBMCAboveHeight(size tile.BlockSize, geom frameWorkPredictionPlane
 	if overlap < 1 {
 		overlap = 1
 	}
-	if overlap > geom.Height {
-		overlap = geom.Height
-	}
+	// Return the full overlap (libaom min(block,64)>>ss>>1): it drives OBMC
+	// mask selection; the blend write is clipped to the plane by the caller.
 	return overlap, nil
 }
 
@@ -2652,9 +2661,8 @@ func frameWorkOBMCLeftWidth(size tile.BlockSize, geom frameWorkPredictionPlaneGe
 	if overlap < 1 {
 		overlap = 1
 	}
-	if overlap > geom.Width {
-		overlap = geom.Width
-	}
+	// Full overlap drives OBMC mask selection; the blend write is clipped to
+	// the plane by the caller.
 	return overlap, nil
 }
 
