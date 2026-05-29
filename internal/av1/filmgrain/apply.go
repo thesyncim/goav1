@@ -244,8 +244,13 @@ func chromaScalingIndex(src uint16, luma []uint16, params ChromaRowParams, shift
 	if params.ChromaScalingFromLuma {
 		return avg
 	}
-	combined := avg*int(params.ChromaLumaMult) + int(src)*int(params.ChromaMult)
-	v := (combined >> 6) + int(params.ChromaOffset)*(1<<int(params.BitDepth-8))
+	// libaom add_noise_to_block: cb_mult/cb_luma_mult carry a fixed +128 bias
+	// and cb_offset a +256 bias (scaled to bit depth as (offset<<(bd-8))-(1<<bd)).
+	lumaMult := int(params.ChromaLumaMult) - 128
+	chromaMult := int(params.ChromaMult) - 128
+	offset := (int(params.ChromaOffset) << (params.BitDepth - 8)) - (1 << params.BitDepth)
+	combined := avg*lumaMult + int(src)*chromaMult
+	v := (combined >> 6) + offset
 	return clipInt(v, 0, (1<<params.BitDepth)-1)
 }
 

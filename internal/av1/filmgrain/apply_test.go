@@ -183,6 +183,10 @@ func TestApplyChromaRowUsesChromaScalingFormula(t *testing.T) {
 	lut[100] = 128
 	setTestChromaRowGrain(t, grain, 0xd9, false, false, 0, 0, 0, 0, 32)
 
+	// libaom add_noise_to_block applies the +128 bias on the mults and the
+	// +256 bias on the offset (cb_mult-128, cb_luma_mult-128, cb_offset-256).
+	// With raw cb_luma_mult=208 (=>+80), cb_mult=128 (=>0), cb_offset=256 (=>0)
+	// and average_luma=80 the scaling index resolves to (80*80)>>6 = 100.
 	params := ChromaRowParams{
 		Seed:           0,
 		Width:          width,
@@ -191,9 +195,9 @@ func TestApplyChromaRowUsesChromaScalingFormula(t *testing.T) {
 		LumaStride:     lumaStride,
 		BitDepth:       8,
 		ScalingShift:   8,
-		ChromaMult:     32,
-		ChromaLumaMult: 32,
-		ChromaOffset:   10,
+		ChromaMult:     128,
+		ChromaLumaMult: 208,
+		ChromaOffset:   256,
 	}
 	if err := ApplyChromaRow(dst, src, luma, grain, lut[:], params); err != nil {
 		t.Fatal(err)
