@@ -44,7 +44,7 @@ func (s OverlappableNeighborSet) WarpProjection(block BlockVisit, ref ReferenceF
 // the block-mode context for up to LEAST_SQUARES_SAMPLES_MAX (=8) matching
 // neighbor samples, ignoring the OBMC neighbor cap that
 // OverlappableNeighborSet.WarpSampleCount inherits.
-func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref ReferenceFrame) (int, error) {
+func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref ReferenceFrame, sbSizeMIB uint8) (int, error) {
 	var samples [maxWarpSamples]warpSample
 	count, doTL, doTR, err := c.collectWarpSamplesAboveLeft(block, ref, &samples)
 	if err != nil {
@@ -62,7 +62,7 @@ func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref Refe
 		if !ok {
 			return 0, ErrInvalidDecodeState
 		}
-		if block.HaveTop && c.warpHasTopRight(block, int(dims.W4), int(dims.H4)) {
+		if block.HaveTop && c.warpHasTopRight(block, sbSizeMIB) {
 			if _, ok, err := c.warpSampleGrid(block, ref, block.X4+int(dims.W4), block.Y4-1, int(dims.W4), 1, 0, -1); err != nil {
 				return 0, err
 			} else if ok {
@@ -80,7 +80,7 @@ func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref Refe
 // neighbor cap. The OBMC neighbor cap for BLOCK_8X16 is 2 left + 1 above, but a
 // 4-MI-tall block scanning 1-MI-tall left neighbors should pick up 4 left
 // samples per the warp spec (find_warp_samples).
-func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref ReferenceFrame, mv motion.Vector) (WarpedMotionModel, bool, error) {
+func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref ReferenceFrame, mv motion.Vector, sbSizeMIB uint8) (WarpedMotionModel, bool, error) {
 	var samples [maxWarpSamples]warpSample
 	count, doTL, doTR, err := c.collectWarpSamplesAboveLeft(block, ref, &samples)
 	if err != nil {
@@ -101,7 +101,7 @@ func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref Refer
 		if !ok {
 			return WarpedMotionModel{}, false, ErrInvalidDecodeState
 		}
-		if block.HaveTop && c.warpHasTopRight(block, int(dims.W4), int(dims.H4)) {
+		if block.HaveTop && c.warpHasTopRight(block, sbSizeMIB) {
 			// libaom: record_samples(mbmi, pts, pts_inref, 0, -1, xd->width, 1)
 			// args: row_offset=0, sign_r=-1, col_offset=W4, sign_c=1. The
 			// top-right cell at mi(mi_row-1, mi_col+W4) can fall one column past
@@ -359,19 +359,18 @@ func warpSampleFromMotion(motionResult InterMotionResult, size BlockSize, ref Re
 	return recordWarpSample(motionResult.MV[0], colOffset4, rowOffset4, signC, signR, w4, h4), true
 }
 
-func (c *BlockModeContext) warpHasTopRight(block BlockVisit, w4, h4 int) bool {
-	// has_top_right is checked by libaom against AOMMAX(xd->width, xd->height).
-	// goav1 already provides blockHasTopRight in block_loop.go but it's
-	// SB-shape based; for warp samples libaom uses the same has_top_right gate
-	// that the OBMC scan does (HaveTopRight on the visit was computed already).
-	// We re-evaluate using the larger dimension here to match
-	// has_top_right(..., AOMMAX(width, height)).
+func (c *BlockModeContext) warpHasTopRight(block BlockVisit, sbSizeMIB uint8) bool {
+	// libaom av1_findSamples gates the top-right warp sample on
+	// has_top_right(cm, xd, mi_row, mi_col, AOMMAX(xd->width, xd->height))
+	// (av1/common/mvref_common.c). The bs argument is the block's larger MI
+	// dimension, so a block taller (or wider) than BLOCK_64X64 returns 0 from
+	// has_top_right's `bs > mi_size_wide[BLOCK_64X64]` guard. blockHasTopRight
+	// implements that exact gate (including the SB-position mask) against the
+	// max(w4, h4) bs, so reuse it instead of unconditionally returning true.
 	if !block.HaveTop {
 		return false
 	}
-	// Conservative: trust the existing HaveTopRight flag. blockHasTopRight in
-	// goav1 already encodes the SB partition-tree gate.
-	return true
+	return blockHasTopRight(sbSizeMIB, block)
 }
 
 func findWarpProjection(samples []warpSample, block BlockVisit, mv motion.Vector) (WarpedMotionModel, bool, error) {

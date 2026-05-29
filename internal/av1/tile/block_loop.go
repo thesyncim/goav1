@@ -1169,7 +1169,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					// warpSampleGrid -> crossSBInterGridInterMotion), matching
 					// libaom's frame-wide av1_findSamples scan, so no separate
 					// SB-diagonal corner augmentation is needed here.
-					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0])
+					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("count warp samples: %w", err)
 					}
@@ -1193,7 +1193,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
 					if motionMode == MotionModeWarp {
-						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], motionResult.Motion.MV[0])
+						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], motionResult.Motion.MV[0], req.SBSizeMIB)
 						if err != nil {
 							return BlockPredictionModeResult{}, fmt.Errorf("project warped motion: %w", err)
 						}
