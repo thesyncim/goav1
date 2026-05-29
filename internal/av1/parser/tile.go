@@ -134,9 +134,9 @@ func parseTileLayout(r *bitstream.Reader, seq SequenceHeader, size FrameSize, ti
 	tiles.SBCols = uint16(sbCols)
 	tiles.SBRows = uint16(sbRows)
 	tiles.MinLog2Cols = uint8(tileLog2(maxTileWidthSB, int(sbCols)))
-	tiles.MaxLog2Cols = uint8(tileLog2(1, minInt(int(sbCols), MaxTileCols)))
-	tiles.MaxLog2Rows = uint8(tileLog2(1, minInt(int(sbRows), MaxTileRows)))
-	tiles.MinLog2Tiles = uint8(maxInt(tileLog2(maxTileAreaSB, int(sbCols*sbRows)), int(tiles.MinLog2Cols)))
+	tiles.MaxLog2Cols = uint8(tileLog2(1, min(int(sbCols), MaxTileCols)))
+	tiles.MaxLog2Rows = uint8(tileLog2(1, min(int(sbRows), MaxTileRows)))
+	tiles.MinLog2Tiles = uint8(max(tileLog2(maxTileAreaSB, int(sbCols*sbRows)), int(tiles.MinLog2Cols)))
 
 	uniform, err := r.ReadBool()
 	if err != nil {
@@ -230,7 +230,7 @@ func parseExplicitTileLayout(r *bitstream.Reader, sbCols int, sbRows int, maxTil
 	widestTile := 0
 	sbx := 0
 	for sbx < sbCols && cols < MaxTileCols {
-		tileWidthLimit := minInt(sbCols-sbx, maxTileWidthSB)
+		tileWidthLimit := min(sbCols-sbx, maxTileWidthSB)
 		tileW := 1
 		if tileWidthLimit > 1 {
 			v, err := readUniform(r, uint32(tileWidthLimit))
@@ -256,11 +256,11 @@ func parseExplicitTileLayout(r *bitstream.Reader, sbCols int, sbRows int, maxTil
 	if tiles.MinLog2Tiles != 0 {
 		maxTileAreaSB >>= tiles.MinLog2Tiles + 1
 	}
-	maxTileHeightSB := maxInt(maxTileAreaSB/widestTile, 1)
+	maxTileHeightSB := max(maxTileAreaSB/widestTile, 1)
 	rows := 0
 	sby := 0
 	for sby < sbRows && rows < MaxTileRows {
-		tileHeightLimit := minInt(sbRows-sby, maxTileHeightSB)
+		tileHeightLimit := min(sbRows-sby, maxTileHeightSB)
 		tileH := 1
 		if tileHeightLimit > 1 {
 			v, err := readUniform(r, uint32(tileHeightLimit))
@@ -316,18 +316,4 @@ func tileLog2(sz int, target int) int {
 		k++
 	}
 	return k
-}
-
-func minInt(a int, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

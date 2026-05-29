@@ -26,7 +26,7 @@ var (
 // performs no allocation and returns the number of bytes consumed on success.
 func ReadLEB128(src []byte) (value uint32, n int, err error) {
 	var v uint64
-	for i := 0; i < MaxLEB128Bytes; i++ {
+	for i := range MaxLEB128Bytes {
 		if i >= len(src) {
 			return 0, 0, ErrShortLEB128
 		}
