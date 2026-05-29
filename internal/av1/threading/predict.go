@@ -1288,10 +1288,22 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 	if err != nil {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToScratch(first, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
+	// libaom warps each reference of a compound GLOBAL_GLOBALMV block with its
+	// own global motion params (av1_init_warp_params per ref); chroma planes
+	// below 8x8 and scaled refs fall back to translation, matching the
+	// single-ref dispatch and av1_init_warp_params' block_width/height < 8 gate.
+	if visit.Prediction.GlobalWarpedMotionCompoundValid[0] && geom.Width >= 8 && geom.Height >= 8 {
+		if err := b.predictBlockInterGlobalWarpToScratch(first, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotionCompound[0], motionResult.MV[0], geom, filters); err != nil {
+			return err
+		}
+	} else if err := b.predictBlockInterReferencePlaneToScratch(first, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToScratch(second, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
+	if visit.Prediction.GlobalWarpedMotionCompoundValid[1] && geom.Width >= 8 && geom.Height >= 8 {
+		if err := b.predictBlockInterGlobalWarpToScratch(second, plane, motionResult.References.Ref[1], visit.Prediction.GlobalWarpedMotionCompound[1], motionResult.MV[1], geom, filters); err != nil {
+			return err
+		}
+	} else if err := b.predictBlockInterReferencePlaneToScratch(second, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
 		return err
 	}
 	switch blend.Type {

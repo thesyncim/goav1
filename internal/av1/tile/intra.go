@@ -227,6 +227,15 @@ type BlockPredictionModeResult struct {
 	GlobalWarpedMotion      WarpedMotionModel
 	GlobalWarpedMotionValid bool
 
+	// GlobalWarpedMotionCompound mirrors GlobalWarpedMotion for COMPOUND
+	// GLOBAL_GLOBALMV blocks: libaom's av1_init_warp_params promotes each
+	// reference independently to WARP_PRED using that reference's global
+	// motion params (allow_warp keys off is_global_mv_block per ref), so a
+	// compound block warps ref0 with gm[ref0] and ref1 with gm[ref1]. Index
+	// 0/1 follow InterMotion.References.Ref[0/1].
+	GlobalWarpedMotionCompound      [2]WarpedMotionModel
+	GlobalWarpedMotionCompoundValid [2]bool
+
 	OverlappableNeighbors      OverlappableNeighborSet
 	OverlappableNeighborsValid bool
 

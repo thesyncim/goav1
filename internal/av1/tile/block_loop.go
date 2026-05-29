@@ -1211,6 +1211,26 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 							result.GlobalWarpedMotionValid = true
 						}
 					}
+					// COMPOUND GLOBAL_GLOBALMV: libaom warps each reference
+					// independently via its own global motion params. Mirror the
+					// single-ref promotion above for both refs.
+					if motionMode == MotionModeTranslation &&
+						refs.Compound &&
+						!blockReferenceScaled(refs, req.ScaledReferences) {
+						for r := 0; r < 2; r++ {
+							if !refs.Ref[r].Valid() {
+								continue
+							}
+							if !isGlobalMVBlock(mode, block.Size, req.GlobalMotionTypes[refs.Ref[r]]) {
+								continue
+							}
+							params := req.GlobalMotion[refs.Ref[r]]
+							if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
+								result.GlobalWarpedMotionCompound[r] = model
+								result.GlobalWarpedMotionCompoundValid[r] = true
+							}
+						}
+					}
 				}
 				if req.DecodeCompoundBlend && refs.Compound {
 					blend, err := s.ReadCompoundBlend(cdfs.Blend, ctx, CompoundBlendRequest{
