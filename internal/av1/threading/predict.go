@@ -802,15 +802,28 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeWarp && !visit.Prediction.WarpedMotionInvalid {
-		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		_, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 		if err != nil {
 			return err
 		}
-		if ok && geom.Width >= 8 && geom.Height >= 8 {
-			return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, filters)
-		}
 		if !ok {
 			return nil
+		}
+		// libaom's av1_init_warp_params() gates WARP_PRED on the *full* plane
+		// block dimensions (xd->plane[plane].width/height), not the
+		// frame-edge-clipped visible extent: a chroma block whose visible
+		// height shrinks below 8 at the bottom partial superblock still warps
+		// when its un-clipped plane block is >= 8 on both sides. Using the
+		// clipped geom here instead falls back to TRANSLATION_PRED and diverges
+		// from libaom on the bottom partial-SB chroma rows. The plane-present
+		// (!ok) check stays above this call: the plane-block-size lookup errors
+		// for absent planes (monochrome chroma), which must short-circuit to nil.
+		warpable, err := frameWorkBlockPlaneWarpAllowed(visit.Block, b.Sequence.ColorConfig, plane)
+		if err != nil {
+			return err
+		}
+		if warpable {
+			return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, filters)
 		}
 		return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters)
 	}
@@ -828,15 +841,22 @@ func (b FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.
 	// WARP_PRED through av1_init_warp_params(). The block-level motion_mode
 	// stays SIMPLE_TRANSLATION; the warp uses the frame-level params.
 	if visit.Prediction.GlobalWarpedMotionValid {
-		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		_, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 		if err != nil {
 			return err
 		}
-		if ok && geom.Width >= 8 && geom.Height >= 8 {
-			return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, filters)
-		}
 		if !ok {
 			return nil
+		}
+		// As with local warp, libaom gates the global-warp WARP_PRED promotion
+		// on the un-clipped plane block dimensions, not the visible extent. The
+		// plane-present (!ok) check stays above this call (monochrome chroma).
+		warpable, err := frameWorkBlockPlaneWarpAllowed(visit.Block, b.Sequence.ColorConfig, plane)
+		if err != nil {
+			return err
+		}
+		if warpable {
+			return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, filters)
 		}
 	}
 	// libaom's build_inter_predictors_sub8x8 splits the chroma block of an
@@ -3328,6 +3348,20 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 	}
 	return x, y, width, height, color.SubsamplingX, color.SubsamplingY, true, nil
+}
+
+// frameWorkBlockPlaneWarpAllowed reports whether warped motion is permitted for
+// the given plane of a block, mirroring libaom's av1_init_warp_params() guard
+// "if (inter_pred_params->block_height < 8 || block_width < 8) return;". The
+// block_width/block_height there are xd->plane[plane].width/height, i.e. the
+// full (un-clipped) plane block dimensions, so this uses the prediction extent
+// rather than the frame-edge-clipped visible extent.
+func frameWorkBlockPlaneWarpAllowed(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (bool, error) {
+	width, height, err := frameWorkBlockPlanePredictionExtentPixels(block, color, plane)
+	if err != nil {
+		return false, err
+	}
+	return width >= 8 && height >= 8, nil
 }
 
 func frameWorkBlockPlanePredictionExtentPixels(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (int, int, error) {
