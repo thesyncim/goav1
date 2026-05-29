@@ -168,8 +168,21 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 				count++
 			}
 		} else {
-			// "current block width > above block width" branch.
-			for i := 0; i < blockW4 && count < maxWarpSamples; {
+			// "current block width > above block width" branch. libaom's
+			// av1_findSamples caps this scan at AOMMIN(xd->width, mi_cols-mi_col)
+			// (mvref_common.c): the block width clamped to the frame's right
+			// edge. Without the clamp, a right partial-superblock block scans
+			// past the frame edge and over-collects a spurious above sample,
+			// corrupting the affine fit. MIColEnd is the tile (== frame for the
+			// rightmost tile) MI end; the guard leaves synthetic fixtures that
+			// omit MIColEnd unaffected.
+			scanW4 := blockW4
+			if block.MIColEnd > block.MICol {
+				if rem := int(block.MIColEnd - block.MICol); rem < scanW4 {
+					scanW4 = rem
+				}
+			}
+			for i := 0; i < scanW4 && count < maxWarpSamples; {
 				slot := startSlot + i
 				if slot >= MaxBlockModeSlots {
 					break
@@ -206,7 +219,19 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 				count++
 			}
 		} else {
-			for i := 0; i < blockH4 && count < maxWarpSamples; {
+			// libaom caps the left scan at AOMMIN(xd->height, mi_rows-mi_row):
+			// the block height clamped to the frame's bottom edge (see the
+			// matching above-row comment). This is the svc L2T1/L2T2 bottom
+			// partial-superblock warp fix: an unclamped 64-tall block in a
+			// 90-MI-row frame folded a spurious left sample beyond row 90 into
+			// the affine fit.
+			scanH4 := blockH4
+			if block.MIRowEnd > block.MIRow {
+				if rem := int(block.MIRowEnd - block.MIRow); rem < scanH4 {
+					scanH4 = rem
+				}
+			}
+			for i := 0; i < scanH4 && count < maxWarpSamples; {
 				slot := startSlot + i
 				if slot >= MaxBlockModeSlots {
 					break
