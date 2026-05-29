@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended dryrun-profiles ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -235,6 +235,14 @@ dryrun-fast:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
+# dryrun-profiles runs the vendored profile-conformance clips (4:4:4 8-bit /
+# profile 1, 4:2:2 8-bit / profile 2, and 4:2:0 12-bit / profile 2). Unlike
+# dryrun-fast/extended these clips are committed to git under
+# internal/av1/testvector/testdata/profiles, so the target runs fully offline
+# and gates byte-exact on every frame against the libaom aomdec goldens.
+dryrun-profiles:
+	go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomProfileVendoredClips' -count=1 -timeout 600s -v
+
 ci-local: fmt-check vet test alloc
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
@@ -274,6 +282,7 @@ help:
 	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
 	@echo "  dryrun-fast                fast libaom framework dry-run (verbose)"
 	@echo "  dryrun-extended            opt-in extended libaom framework dry-run (10-bit q-sweep, larger sizes, extra SVC)"
+	@echo "  dryrun-profiles            vendored profile-conformance clips (4:4:4, 4:2:2, 12-bit), byte-exact offline"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"
