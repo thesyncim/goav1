@@ -1180,13 +1180,24 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	// libaom av1_build_intra_predictors_for_interintra() builds the intra part at
+	// the full plane-block dimensions (pd->width/height, plane_bsize). When the
+	// block straddles the right/bottom frame edge the visible extent
+	// (geom.Width/Height) is not a valid intra block size, so the smooth/DC
+	// weight tables and edge lengths must be selected from the full plane-block
+	// extent while only the visible sub-rectangle is written into the intra
+	// scratch (the blend below combines just that visible extent).
+	predWidth, predHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlock(intra, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, geom.Width, geom.Height, mode, edges); err != nil {
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	if err != nil {
+		return err
+	}
+	if err := prediction.PredictIntraPlaneBlockWithExtent(intra, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, geom.Width, geom.Height, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	mask := scratch.Mask[:]
@@ -1194,9 +1205,16 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 	maskSubX := false
 	maskSubY := false
 	if visit.Prediction.InterIntra.UseWedge {
-		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
-		if !ok {
-			return ErrInvalidBatch
+		// libaom combine_interintra() builds the wedge mask at the full luma
+		// block resolution and blends with mask_stride = block_size_wide[bsize]
+		// (the full luma block width), sub-sampling the mask for chroma. The
+		// blend then runs over the (clamped-to-visible) plane extent. Using the
+		// full luma width as the stride -- rather than the visible width -- keeps
+		// the mask addressable when the block straddles the right/bottom frame
+		// edge (visible < full block).
+		lumaWidth, lumaHeight, err := frameWorkBlockLumaPredictionExtentPixels(visit.Block)
+		if err != nil {
+			return err
 		}
 		maskStride = lumaWidth
 		maskSubX = geom.SubsamplingX
@@ -1205,8 +1223,18 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 			return err
 		}
 		mask = mask[:lumaWidth*lumaHeight]
-	} else if err := frameWorkBuildInterIntraMask(mask, maskStride, geom.Width, geom.Height, visit.Prediction.InterIntra.Mode); err != nil {
-		return err
+	} else {
+		// libaom combine_interintra() builds the smooth/DC inter-intra mask at the
+		// full plane-block dimensions (build_smooth_interintra_mask over bw x bh)
+		// with mask_stride = bw and no sub-sampling. The mask weights depend on the
+		// full plane-block size, so build at predWidth x predHeight (with stride
+		// predWidth) and blend over the visible sub-rectangle. This keeps the mask
+		// addressable and bit-exact when the block straddles the frame edge.
+		maskStride = predWidth
+		if err := frameWorkBuildInterIntraMask(mask, maskStride, predWidth, predHeight, visit.Prediction.InterIntra.Mode); err != nil {
+			return err
+		}
+		mask = mask[:predWidth*predHeight]
 	}
 	return frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask, maskStride, maskSubX, maskSubY)
 }
