@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -23,6 +23,18 @@ bench-all:
 
 bench-public:
 	go test -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
+
+# bench-cross is a PERF-TRACKING tool (not a conformance gate). It times
+# goav1's full decode + post-filter chain (reusing the MD5-verifying oracle
+# harness) against the reference C decoders found on PATH: libaom's aomdec,
+# dav1d, and SVT-AV1's SvtAv1DecApp if present. Missing decoders are skipped,
+# never a hard failure. goav1 is timed in-process while the C decoders run as
+# subprocesses, so on the tiny bundled clips the raw numbers are startup-
+# dominated; the report prints both raw and startup-adjusted estimates with
+# the caveats made impossible to miss. Needs the goav1_oracle build tag so it
+# can reach the oracle decode helper.
+bench-cross:
+	GOAV1_CROSS_BENCH=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
@@ -250,6 +262,7 @@ help:
 	@echo "  bench                      end-to-end frames/sec + MB/sec on bundled libaom IVF"
 	@echo "  bench-all                  full microbenchmark sweep across every package"
 	@echo "  bench-public               run public benchmarks"
+	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  vet                        go vet ./..."
 	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
