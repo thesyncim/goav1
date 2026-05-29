@@ -709,12 +709,15 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 		// libaom already covered and prematurely promote processedRows on a
 		// duplicate candidate, hiding the row=-5 outer sample that libaom
 		// adds to the ref-MV stack.
+		//
+		// As in scanLeftReferenceMVs, libaom computes len = AOMMIN(xd->width,
+		// n4_w) and uses len*weight without clamping len to end_mi (the cap
+		// only gates loop termination). A neighbor wider than the remaining
+		// budget must keep its full-len weight, so step is bounded only by the
+		// neighbor's own block width (sizeW4).
 		step := minInt(int(dims.W4), sizeW4)
 		if dims.W4 >= refMVMaxScanBlock4 {
 			step = maxInt(step, 4)
-		}
-		if step > end-off {
-			step = end - off
 		}
 		if step <= 0 {
 			step = 1
@@ -737,7 +740,33 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, result *ReferenceMVStackResult) {
 	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
 	end = minInt(end, refMVMaxScanBlock4)
-	for off := 0; off < end; {
+	// libaom's scan_col_mbmi() caps the left-column sweep at
+	// end_mi = AOMMIN(xd->height, mi_rows - mi_row): a block flush against the
+	// frame's bottom boundary must not fold neighbors below the last coded MI
+	// row into the ref-MV stack. This is the vertical analog of the
+	// scan_row_mbmi cap in scanAboveReferenceMVs. Without it, a block at the
+	// bottom edge of a partial superblock (e.g. svc_L2T2 frame 1 mi=(88,96)
+	// BLOCK_32X16 in a 90-MI-row enhancement frame, where mi_rows - mi_row = 2
+	// caps end_mi to 2) reads its left-column snapshot past the frame bottom
+	// and folds a spurious (0,0) neighbor into the nearest scan, inflating its
+	// weight by REF_CAT_LEVEL (652) and displacing libaom's outer candidates so
+	// the 5-entry stack collapses to 4 and the DRL context/sort desyncs the
+	// arithmetic decoder for the rest of the frame.
+	//
+	// The cap only bounds the LOOP TERMINATION (libaom checks i < end_mi at the
+	// top of the loop), NOT the per-candidate step/weight. libaom computes
+	// len = AOMMIN(xd->height, mi_size_high[bsize]) for the candidate it reads
+	// and advances i += len, using len*weight without clamping len to end_mi.
+	// Clamping the step to the capped end would shrink the first candidate's
+	// weight (e.g. quantizer_63 frame 1 mi=(80,16): first left neighbor has
+	// len=16 but end_mi=10, so the weight must stay 16*w, not 10*w), which
+	// would re-sort the stack and desync. So loopEnd gates termination while
+	// step is clamped only by the snapshot bound (end), matching libaom.
+	loopEnd := end
+	if req.TileMIRowEnd > req.MIRow {
+		loopEnd = minInt(loopEnd, int(req.TileMIRowEnd-req.MIRow))
+	}
+	for off := 0; off < loopEnd; {
 		slot := req.Y4 + off
 		size := c.LeftBlockSize[slot]
 		sizeW4 := blockSizeWidth4(size)
@@ -745,12 +774,21 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 		// See scanAboveReferenceMVs: the iteration stride and processedCols
 		// update from the neighbor's block size regardless of inter/intra so
 		// the outer column scan respects libaom's processed_cols stride.
+		//
+		// libaom's scan_col_mbmi computes len = AOMMIN(xd->height, n4_h)
+		// (capped to mi_size_high[BLOCK_64X64]=16 via the use_step_16 branch),
+		// uses len*weight as the candidate weight, and advances i += len. len
+		// is NOT clamped to end_mi: when the neighbor is taller than the
+		// remaining loop budget (e.g. svc_L2T1 frame 5 mi=(0,64) ref GOLDEN: a
+		// 32-MI-tall left neighbor against end_mi=16 keeps len=32 → weight
+		// 192+REF_CAT=832), the candidate keeps its full-len weight and the
+		// loop simply terminates on the next i < end_mi check. Clamping step to
+		// end-off here shrank the weight (96+REF_CAT=736), re-sorting the stack
+		// and desyncing the arithmetic decoder. So step is bounded only by the
+		// neighbor's own block size (sizeH4), matching libaom's len.
 		step := minInt(int(dims.H4), sizeH4)
 		if dims.H4 >= refMVMaxScanBlock4 {
 			step = maxInt(step, 4)
-		}
-		if step > end-off {
-			step = end - off
 		}
 		if step <= 0 {
 			step = 1
