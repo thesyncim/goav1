@@ -149,13 +149,17 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 	clearInt32s(bBuf)
 
 	dgdOrigin := SGRProjBorderVert*dgdStride + SGRProjBorderHorz
+	extWidth := width + 2*SGRProjBorderHorz
 	for row := -SGRProjBorderVert; row < height+SGRProjBorderVert; row++ {
-		for col := -SGRProjBorderHorz; col < width+SGRProjBorderHorz; col++ {
-			sample := src[srcOrigin+row*srcStride+col]
+		srcStart := srcOrigin + row*srcStride - SGRProjBorderHorz
+		dgdStart := dgdOrigin + row*dgdStride - SGRProjBorderHorz
+		srcRow := src[srcStart : srcStart+extWidth]
+		dgdRow := dgd[dgdStart : dgdStart+extWidth]
+		for col, sample := range srcRow {
 			if sample > max {
 				return ErrInvalidRestoration
 			}
-			dgd[dgdOrigin+row*dgdStride+col] = int32(sample)
+			dgdRow[col] = int32(sample)
 		}
 	}
 
@@ -171,17 +175,24 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 	}
 
 	xq := DecodeSGRXQ(xqd, params)
-	for row := range height {
-		for col := range width {
-			k := row*width + col
-			pre := int32(src[srcOrigin+row*srcStride+col])
-			u := pre << SGRProjRstBits
+	xq0 := int32(xq[0])
+	xq1 := int32(xq[1])
+	use0 := params.Radius[0] > 0
+	use1 := params.Radius[1] > 0
+	maxI := int32(max)
+	for row := 0; row < height; row++ {
+		srcRow := src[srcOrigin+row*srcStride : srcOrigin+row*srcStride+width]
+		dstRow := dst[row*dstStride : row*dstStride+width]
+		f0Row := flt0[row*width : row*width+width]
+		f1Row := flt1[row*width : row*width+width]
+		for col, s := range srcRow {
+			u := int32(s) << SGRProjRstBits
 			v := u << SGRProjPrjBits
-			if params.Radius[0] > 0 {
-				v += int32(xq[0]) * (flt0[k] - u)
+			if use0 {
+				v += xq0 * (f0Row[col] - u)
 			}
-			if params.Radius[1] > 0 {
-				v += int32(xq[1]) * (flt1[k] - u)
+			if use1 {
+				v += xq1 * (f1Row[col] - u)
 			}
 			// libaom casts the rounded projection to int16_t before clipping,
 			// so a value beyond [-32768, 32767] wraps modulo 2^16 and is then
@@ -191,7 +202,7 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 			// values.
 			rounded := roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)
 			w := int32(int16(rounded))
-			dst[row*dstStride+col] = uint16(clampInt32(w, 0, int32(max)))
+			dstRow[col] = uint16(clampInt32(w, 0, maxI))
 		}
 	}
 	return nil
@@ -200,27 +211,34 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
 	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 1, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
-	for row := range height {
+	const shiftEven = SGRProjSgrBits + 5 - SGRProjRstBits
+	const shiftOdd = SGRProjSgrBits + 4 - SGRProjRstBits
+	for row := 0; row < height; row++ {
+		k0 := aOrigin + row*bufStride
+		dgdRow := dgd[dgdOrigin+row*dgdStride : dgdOrigin+row*dgdStride+width]
+		dstRow := dst[row*dstStride : row*dstStride+width]
 		if row&1 == 0 {
-			for col := range width {
-				k := aOrigin + row*bufStride + col
-				l := dgdOrigin + row*dgdStride + col
-				nb := 5
-				a := (aBuf[k-bufStride]+aBuf[k+bufStride])*6 +
-					(aBuf[k-1-bufStride]+aBuf[k-1+bufStride]+aBuf[k+1-bufStride]+aBuf[k+1+bufStride])*5
-				b := (bBuf[k-bufStride]+bBuf[k+bufStride])*6 +
-					(bBuf[k-1-bufStride]+bBuf[k-1+bufStride]+bBuf[k+1-bufStride]+bBuf[k+1+bufStride])*5
-				dst[row*dstStride+col] = roundPowerOfTwo(a*dgd[l]+b, SGRProjSgrBits+nb-SGRProjRstBits)
+			aPrev := aBuf[k0-bufStride-1 : k0-bufStride+width+1]
+			aNext := aBuf[k0+bufStride-1 : k0+bufStride+width+1]
+			bPrev := bBuf[k0-bufStride-1 : k0-bufStride+width+1]
+			bNext := bBuf[k0+bufStride-1 : k0+bufStride+width+1]
+			for col := 0; col < width; col++ {
+				j := col + 1
+				a := (aPrev[j]+aNext[j])*6 +
+					(aPrev[j-1]+aPrev[j+1]+aNext[j-1]+aNext[j+1])*5
+				b := (bPrev[j]+bNext[j])*6 +
+					(bPrev[j-1]+bPrev[j+1]+bNext[j-1]+bNext[j+1])*5
+				dstRow[col] = roundPowerOfTwo(a*dgdRow[col]+b, shiftEven)
 			}
 			continue
 		}
-		for col := range width {
-			k := aOrigin + row*bufStride + col
-			l := dgdOrigin + row*dgdStride + col
-			nb := 4
-			a := aBuf[k]*6 + (aBuf[k-1]+aBuf[k+1])*5
-			b := bBuf[k]*6 + (bBuf[k-1]+bBuf[k+1])*5
-			dst[row*dstStride+col] = roundPowerOfTwo(a*dgd[l]+b, SGRProjSgrBits+nb-SGRProjRstBits)
+		aCur := aBuf[k0-1 : k0+width+1]
+		bCur := bBuf[k0-1 : k0+width+1]
+		for col := 0; col < width; col++ {
+			j := col + 1
+			a := aCur[j]*6 + (aCur[j-1]+aCur[j+1])*5
+			b := bCur[j]*6 + (bCur[j-1]+bCur[j+1])*5
+			dstRow[col] = roundPowerOfTwo(a*dgdRow[col]+b, shiftOdd)
 		}
 	}
 }
@@ -228,16 +246,27 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 func selfguided(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
 	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 0, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
-	for row := range height {
-		for col := range width {
-			k := aOrigin + row*bufStride + col
-			l := dgdOrigin + row*dgdStride + col
-			nb := 5
-			a := (aBuf[k]+aBuf[k-1]+aBuf[k+1]+aBuf[k-bufStride]+aBuf[k+bufStride])*4 +
-				(aBuf[k-1-bufStride]+aBuf[k-1+bufStride]+aBuf[k+1-bufStride]+aBuf[k+1+bufStride])*3
-			b := (bBuf[k]+bBuf[k-1]+bBuf[k+1]+bBuf[k-bufStride]+bBuf[k+bufStride])*4 +
-				(bBuf[k-1-bufStride]+bBuf[k-1+bufStride]+bBuf[k+1-bufStride]+bBuf[k+1+bufStride])*3
-			dst[row*dstStride+col] = roundPowerOfTwo(a*dgd[l]+b, SGRProjSgrBits+nb-SGRProjRstBits)
+	const nb = 5
+	const shift = SGRProjSgrBits + nb - SGRProjRstBits
+	for row := 0; row < height; row++ {
+		k0 := aOrigin + row*bufStride
+		// Reslice the three stencil rows so that index j maps to column j and
+		// j-1/j+1 stay in bounds; the windows start one column left of k0.
+		aPrev := aBuf[k0-bufStride-1 : k0-bufStride+width+1]
+		aCur := aBuf[k0-1 : k0+width+1]
+		aNext := aBuf[k0+bufStride-1 : k0+bufStride+width+1]
+		bPrev := bBuf[k0-bufStride-1 : k0-bufStride+width+1]
+		bCur := bBuf[k0-1 : k0+width+1]
+		bNext := bBuf[k0+bufStride-1 : k0+bufStride+width+1]
+		dgdRow := dgd[dgdOrigin+row*dgdStride : dgdOrigin+row*dgdStride+width]
+		dstRow := dst[row*dstStride : row*dstStride+width]
+		for col := 0; col < width; col++ {
+			j := col + 1 // center index inside the +1-padded windows
+			a := (aCur[j]+aCur[j-1]+aCur[j+1]+aPrev[j]+aNext[j])*4 +
+				(aPrev[j-1]+aNext[j-1]+aPrev[j+1]+aNext[j+1])*3
+			b := (bCur[j]+bCur[j-1]+bCur[j+1]+bPrev[j]+bNext[j])*4 +
+				(bPrev[j-1]+bNext[j-1]+bPrev[j+1]+bNext[j+1])*3
+			dstRow[col] = roundPowerOfTwo(a*dgdRow[col]+b, shift)
 		}
 	}
 }
@@ -280,24 +309,32 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 }
 
 func boxsum(src []int32, srcOrigin int, width int, height int, srcStride int, radius int, squared bool, dst []int32, dstStride int) {
-	for row := range height {
-		for col := range width {
+	for row := 0; row < height; row++ {
+		y0 := maxInt(0, row-radius)
+		y1 := minInt(height-1, row+radius)
+		dstRow := dst[row*dstStride : row*dstStride+width]
+		for col := 0; col < width; col++ {
 			sum := int32(0)
-			y0 := maxInt(0, row-radius)
-			y1 := minInt(height-1, row+radius)
 			x0 := maxInt(0, col-radius)
 			x1 := minInt(width-1, col+radius)
-			for y := y0; y <= y1; y++ {
-				for x := x0; x <= x1; x++ {
-					v := src[srcOrigin+y*srcStride+x]
-					if squared {
+			if squared {
+				for y := y0; y <= y1; y++ {
+					base := srcOrigin + y*srcStride
+					srcRow := src[base+x0 : base+x1+1]
+					for _, v := range srcRow {
 						sum += v * v
-					} else {
+					}
+				}
+			} else {
+				for y := y0; y <= y1; y++ {
+					base := srcOrigin + y*srcStride
+					srcRow := src[base+x0 : base+x1+1]
+					for _, v := range srcRow {
 						sum += v
 					}
 				}
 			}
-			dst[row*dstStride+col] = sum
+			dstRow[col] = sum
 		}
 	}
 }

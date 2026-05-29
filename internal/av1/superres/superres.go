@@ -36,18 +36,39 @@ func UpscalePlane(src frame.SamplePlane, dst frame.SamplePlane, bitDepth uint8) 
 	initialSubpelX &= ScaleMask
 
 	maxValue := (1 << bitDepth) - 1
+	srcWidth := src.Width
+	dstWidth := dst.Width
+	srcLast := srcWidth - 1
 	for y := 0; y < src.Height; y++ {
-		srcRow := src.Pix[y*src.Stride:]
-		dstRow := dst.Pix[y*dst.Stride:]
-		for x := 0; x < dst.Width; x++ {
+		// Reslice each row to its exact extent so the compiler can drop
+		// per-tap bounds checks on the source read and the destination write.
+		srcRow := src.Pix[y*src.Stride : y*src.Stride+srcWidth : y*src.Stride+srcWidth]
+		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+dstWidth : y*dst.Stride+dstWidth]
+		for x := 0; x < dstWidth; x++ {
 			srcX := -(1 << ScaleBits) + initialSubpelX + x*stepX
 			srcXPx := srcX >> ScaleBits
 			srcXSubpel := (srcX & ScaleMask) >> ExtraBits
-			filter := upscaleFilter[srcXSubpel]
-			sum := 0
-			for k := 0; k < FilterTaps; k++ {
-				sampleX := clipInt(srcXPx+k-FilterOffset, 0, src.Width-1)
-				sum += int(srcRow[sampleX]) * int(filter[k])
+			filter := &upscaleFilter[srcXSubpel]
+			base := srcXPx - FilterOffset
+			var sum int
+			if base >= 0 && base+FilterTaps-1 <= srcLast {
+				// Central case: the whole 8-tap window is in bounds, so no
+				// per-tap clamping is needed. Reslice to a fixed-size window
+				// to eliminate bounds checks on the unrolled taps.
+				w := srcRow[base : base+FilterTaps : base+FilterTaps]
+				sum = int(w[0])*int(filter[0]) +
+					int(w[1])*int(filter[1]) +
+					int(w[2])*int(filter[2]) +
+					int(w[3])*int(filter[3]) +
+					int(w[4])*int(filter[4]) +
+					int(w[5])*int(filter[5]) +
+					int(w[6])*int(filter[6]) +
+					int(w[7])*int(filter[7])
+			} else {
+				for k := 0; k < FilterTaps; k++ {
+					sampleX := clipInt(base+k, 0, srcLast)
+					sum += int(srcRow[sampleX]) * int(filter[k])
+				}
 			}
 			dstRow[x] = uint16(clipInt(roundPowerOfTwo(sum, filterRoundBits), 0, maxValue))
 		}

@@ -26,22 +26,45 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		center: 128 * scale,
 	}
 
-	for i := range length {
-		q0, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, i)
-		p2 := readSample(dst.Pix, bytesPerSample, q0-3*step)
-		p1 := readSample(dst.Pix, bytesPerSample, q0-2*step)
-		p0 := readSample(dst.Pix, bytesPerSample, q0-step)
-		q0Sample := readSample(dst.Pix, bytesPerSample, q0)
-		q1 := readSample(dst.Pix, bytesPerSample, q0+step)
-		q2 := readSample(dst.Pix, bytesPerSample, q0+2*step)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
+	outer := edgeOuterStride(dst, bytesPerSample, edge)
+	pix := dst.Pix
+	if bytesPerSample == 1 {
+		for i := 0; i < length; i++ {
+			q0 := q0Base + i*outer
+			p2 := int(pix[q0-3*step])
+			p1 := int(pix[q0-2*step])
+			p0 := int(pix[q0-step])
+			q0Sample := int(pix[q0])
+			q1 := int(pix[q0+step])
+			q2 := int(pix[q0+2*step])
+			if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
+				continue
+			}
+			p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
+			pix[q0-2*step] = byte(p1)
+			pix[q0-step] = byte(p0)
+			pix[q0] = byte(q0Sample)
+			pix[q0+step] = byte(q1)
+		}
+		return nil
+	}
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p2 := readSample(pix, bytesPerSample, q0-3*step)
+		p1 := readSample(pix, bytesPerSample, q0-2*step)
+		p0 := readSample(pix, bytesPerSample, q0-step)
+		q0Sample := readSample(pix, bytesPerSample, q0)
+		q1 := readSample(pix, bytesPerSample, q0+step)
+		q2 := readSample(pix, bytesPerSample, q0+2*step)
 		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
 			continue
 		}
 		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
-		writeSample(dst.Pix, bytesPerSample, q0-2*step, p1)
-		writeSample(dst.Pix, bytesPerSample, q0-step, p0)
-		writeSample(dst.Pix, bytesPerSample, q0, q0Sample)
-		writeSample(dst.Pix, bytesPerSample, q0+step, q1)
+		writeSample(pix, bytesPerSample, q0-2*step, p1)
+		writeSample(pix, bytesPerSample, q0-step, p0)
+		writeSample(pix, bytesPerSample, q0, q0Sample)
+		writeSample(pix, bytesPerSample, q0+step, q1)
 	}
 	return nil
 }

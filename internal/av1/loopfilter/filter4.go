@@ -26,20 +26,41 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		center: 128 * scale,
 	}
 
-	for i := range length {
-		q0, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, i)
-		p1 := readSample(dst.Pix, bytesPerSample, q0-2*step)
-		p0 := readSample(dst.Pix, bytesPerSample, q0-step)
-		q0Sample := readSample(dst.Pix, bytesPerSample, q0)
-		q1 := readSample(dst.Pix, bytesPerSample, q0+step)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
+	outer := edgeOuterStride(dst, bytesPerSample, edge)
+	pix := dst.Pix
+	if bytesPerSample == 1 {
+		for i := 0; i < length; i++ {
+			q0 := q0Base + i*outer
+			p1 := int(pix[q0-2*step])
+			p0 := int(pix[q0-step])
+			q0Sample := int(pix[q0])
+			q1 := int(pix[q0+step])
+			if !needsFilter4(p1, p0, q0Sample, q1, params) {
+				continue
+			}
+			p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
+			pix[q0-2*step] = byte(p1)
+			pix[q0-step] = byte(p0)
+			pix[q0] = byte(q0Sample)
+			pix[q0+step] = byte(q1)
+		}
+		return nil
+	}
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p1 := readSample(pix, bytesPerSample, q0-2*step)
+		p0 := readSample(pix, bytesPerSample, q0-step)
+		q0Sample := readSample(pix, bytesPerSample, q0)
+		q1 := readSample(pix, bytesPerSample, q0+step)
 		if !needsFilter4(p1, p0, q0Sample, q1, params) {
 			continue
 		}
 		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
-		writeSample(dst.Pix, bytesPerSample, q0-2*step, p1)
-		writeSample(dst.Pix, bytesPerSample, q0-step, p0)
-		writeSample(dst.Pix, bytesPerSample, q0, q0Sample)
-		writeSample(dst.Pix, bytesPerSample, q0+step, q1)
+		writeSample(pix, bytesPerSample, q0-2*step, p1)
+		writeSample(pix, bytesPerSample, q0-step, p0)
+		writeSample(pix, bytesPerSample, q0, q0Sample)
+		writeSample(pix, bytesPerSample, q0+step, q1)
 	}
 	return nil
 }
@@ -103,6 +124,15 @@ func filter4SampleOffset(dst frame.Plane, bytesPerSample int, edge Edge, x int, 
 		return y*dst.Stride + (x+i)*bytesPerSample, dst.Stride
 	}
 	return (y+i)*dst.Stride + x*bytesPerSample, bytesPerSample
+}
+
+// edgeOuterStride returns the byte distance between successive samples along an
+// edge as the loop index advances (perpendicular to the per-sample step).
+func edgeOuterStride(dst frame.Plane, bytesPerSample int, edge Edge) int {
+	if edge == EdgeHorizontal {
+		return bytesPerSample
+	}
+	return dst.Stride
 }
 
 func needsFilter4(p1 int, p0 int, q0 int, q1 int, params filter4Params) bool {

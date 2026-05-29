@@ -26,26 +26,53 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		center: 128 * scale,
 	}
 
-	for i := range length {
-		q0, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, i)
-		p3 := readSample(dst.Pix, bytesPerSample, q0-4*step)
-		p2 := readSample(dst.Pix, bytesPerSample, q0-3*step)
-		p1 := readSample(dst.Pix, bytesPerSample, q0-2*step)
-		p0 := readSample(dst.Pix, bytesPerSample, q0-step)
-		q0Sample := readSample(dst.Pix, bytesPerSample, q0)
-		q1 := readSample(dst.Pix, bytesPerSample, q0+step)
-		q2 := readSample(dst.Pix, bytesPerSample, q0+2*step)
-		q3 := readSample(dst.Pix, bytesPerSample, q0+3*step)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
+	outer := edgeOuterStride(dst, bytesPerSample, edge)
+	pix := dst.Pix
+	if bytesPerSample == 1 {
+		for i := 0; i < length; i++ {
+			q0 := q0Base + i*outer
+			p3 := int(pix[q0-4*step])
+			p2 := int(pix[q0-3*step])
+			p1 := int(pix[q0-2*step])
+			p0 := int(pix[q0-step])
+			q0Sample := int(pix[q0])
+			q1 := int(pix[q0+step])
+			q2 := int(pix[q0+2*step])
+			q3 := int(pix[q0+3*step])
+			if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
+				continue
+			}
+			p2, p1, p0, q0Sample, q1, q2 = filter8Samples(p3, p2, p1, p0, q0Sample, q1, q2, q3, scale, params)
+			pix[q0-3*step] = byte(p2)
+			pix[q0-2*step] = byte(p1)
+			pix[q0-step] = byte(p0)
+			pix[q0] = byte(q0Sample)
+			pix[q0+step] = byte(q1)
+			pix[q0+2*step] = byte(q2)
+		}
+		return nil
+	}
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p3 := readSample(pix, bytesPerSample, q0-4*step)
+		p2 := readSample(pix, bytesPerSample, q0-3*step)
+		p1 := readSample(pix, bytesPerSample, q0-2*step)
+		p0 := readSample(pix, bytesPerSample, q0-step)
+		q0Sample := readSample(pix, bytesPerSample, q0)
+		q1 := readSample(pix, bytesPerSample, q0+step)
+		q2 := readSample(pix, bytesPerSample, q0+2*step)
+		q3 := readSample(pix, bytesPerSample, q0+3*step)
 		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
 			continue
 		}
 		p2, p1, p0, q0Sample, q1, q2 = filter8Samples(p3, p2, p1, p0, q0Sample, q1, q2, q3, scale, params)
-		writeSample(dst.Pix, bytesPerSample, q0-3*step, p2)
-		writeSample(dst.Pix, bytesPerSample, q0-2*step, p1)
-		writeSample(dst.Pix, bytesPerSample, q0-step, p0)
-		writeSample(dst.Pix, bytesPerSample, q0, q0Sample)
-		writeSample(dst.Pix, bytesPerSample, q0+step, q1)
-		writeSample(dst.Pix, bytesPerSample, q0+2*step, q2)
+		writeSample(pix, bytesPerSample, q0-3*step, p2)
+		writeSample(pix, bytesPerSample, q0-2*step, p1)
+		writeSample(pix, bytesPerSample, q0-step, p0)
+		writeSample(pix, bytesPerSample, q0, q0Sample)
+		writeSample(pix, bytesPerSample, q0+step, q1)
+		writeSample(pix, bytesPerSample, q0+2*step, q2)
 	}
 	return nil
 }
