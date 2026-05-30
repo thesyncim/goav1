@@ -2,19 +2,22 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64
+//go:build amd64 && !purego
 
 package superres
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the architecture-best super-res row kernel on amd64.
-//
-// TODO: add an SSE4.1 / AVX2 polyphase variant (per-output-pixel 8-tap dot
-// product with PMADDWD and a rounding shift). Until then the pure-Go reference
-// is used. Any future variant must stay bit-exact with upscaleRowPureGo and be
-// gated on the matching cpu.Detected flag.
+// init binds the architecture-best super-res row kernel on amd64. When the CPU
+// advertises AVX2 (and the toolchain emits valid AVX2 — see cpu.Detected) the
+// AVX2 polyphase kernel handles the in-bounds central span; otherwise the
+// pure-Go reference is used. Both paths are bit-identical to upscaleRowPureGo;
+// the AVX2 path falls back to the pure-Go reference for boundary-clamped edge
+// pixels and degenerate shapes.
 func init() {
-	_ = cpu.Detected // ensure cpu package init runs before this point
-	upscaleRowImpl = upscaleRowPureGo
+	if cpu.Detected.AVX2 {
+		upscaleRowImpl = upscaleRowAVX2
+	} else {
+		upscaleRowImpl = upscaleRowPureGo
+	}
 }
