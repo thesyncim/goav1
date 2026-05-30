@@ -80,6 +80,19 @@ var oneByX = [25]int32{
 	293, 273, 256, 241, 228, 216, 205, 195, 186, 178, 171, 164,
 }
 
+// boxsumImpl, selfguidedImpl and selfguidedFastImpl are the dispatch slots for
+// the three SIMD-eligible SGR kernels. They are resolved once, at package init
+// (see selfguided_dispatch_*.go), so the per-call cost is a single indirect
+// call with no feature-detection branches. boxsum, selfguided and
+// selfguidedFast below are the canonical bit-exact references; every tuned
+// variant MUST match them sample for sample. The data-dependent LUT gather in
+// calculateIntermediate (xByXPlus1 / oneByX) stays scalar in every build.
+var (
+	boxsumImpl         = boxsum
+	selfguidedImpl     = selfguided
+	selfguidedFastImpl = selfguidedFast
+)
+
 // SelfguidedScratchLen returns the int32 scratch length required by
 // ApplySelfguidedRestoration for one processing unit.
 func SelfguidedScratchLen(width int, height int) (int, error) {
@@ -168,10 +181,10 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 		return ErrInvalidRestoration
 	}
 	if params.Radius[0] > 0 {
-		selfguidedFast(dgd, dgdOrigin, width, height, dgdStride, flt0, width, int(bitDepth), paramsIndex, 0, aBuf, bBuf, bufStride)
+		selfguidedFastImpl(dgd, dgdOrigin, width, height, dgdStride, flt0, width, int(bitDepth), paramsIndex, 0, aBuf, bBuf, bufStride)
 	}
 	if params.Radius[1] > 0 {
-		selfguided(dgd, dgdOrigin, width, height, dgdStride, flt1, width, int(bitDepth), paramsIndex, 1, aBuf, bBuf, bufStride)
+		selfguidedImpl(dgd, dgdOrigin, width, height, dgdStride, flt1, width, int(bitDepth), paramsIndex, 1, aBuf, bBuf, bufStride)
 	}
 
 	xq := DecodeSGRXQ(xqd, params)
@@ -279,8 +292,8 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 	widthExt := width + 2*SGRProjBorderHorz
 	heightExt := height + 2*SGRProjBorderVert
 	srcOrigin := dgdOrigin - SGRProjBorderVert*dgdStride - SGRProjBorderHorz
-	boxsum(dgd, srcOrigin, widthExt, heightExt, dgdStride, r, false, bBuf, bufStride)
-	boxsum(dgd, srcOrigin, widthExt, heightExt, dgdStride, r, true, aBuf, bufStride)
+	boxsumImpl(dgd, srcOrigin, widthExt, heightExt, dgdStride, r, false, bBuf, bufStride)
+	boxsumImpl(dgd, srcOrigin, widthExt, heightExt, dgdStride, r, true, aBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
 	step := 1
 	if pass != 0 {
