@@ -295,11 +295,20 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 }
 
 // ReadCDF decodes one symbol from caller-owned CDF state.
+//
+// *CDF state is valid by construction: its only mutators (Init, InitUniform,
+// Update, CopyFrom) validate the inverse-CDF shape before storing, and the
+// in-place adaptation in updateCDFWindow preserves it. ReadCDF therefore routes
+// to the validation-free trusted core instead of re-running the O(symbols)
+// ValidateCDF monotonicity scan on every symbol. ReadSymbolTrusted still applies
+// the cheap structural guard (nil reader, symbol-count range, slice length), so
+// a zero-valued CDF still reports ErrInvalidCDF. Slice callers that need the
+// full per-call monotonicity check continue to use ReadSymbol directly.
 func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	if cdf == nil {
 		return 0, ErrInvalidCDF
 	}
-	return r.ReadSymbol(cdf.Values(), cdf.Symbols())
+	return r.ReadSymbolTrusted(cdf.Values(), cdf.Symbols())
 }
 
 // readSymbolTrusted is the validation-free core of ReadSymbol. It assumes the

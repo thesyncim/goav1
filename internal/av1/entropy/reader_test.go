@@ -566,6 +566,79 @@ func BenchmarkReaderSymbolStreamNoUpdate(b *testing.B) {
 	}
 }
 
+// BenchmarkReaderCDFStream decodes a long run of CDF-adapted symbols through the
+// *CDF entry point (ReadCDF), the exact path the tile decoder uses for mode, MV,
+// and coefficient syntax. It isolates ReadCDF's steady-state per-symbol cost,
+// including the routing through the validation-free trusted core. Compare against
+// BenchmarkReaderSymbolStream (slice path, full per-call ValidateCDF scan) to see
+// the cost of the monotonicity validation that ReadCDF skips.
+func BenchmarkReaderCDFStream(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		var cdf CDF
+		if err := cdf.Init([]uint16{8192, 16384, 24576}); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			if _, err := r.ReadCDF(&cdf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+// BenchmarkReaderCDFStream16 decodes through ReadCDF with a 16-symbol CDF, the
+// AV1 maximum. The per-call ValidateCDF monotonicity scan is O(symbols), so this
+// is where skipping it (ReadCDF routes to the trusted core) saves the most. The
+// 16-entry CDFs are exercised in real streams by the larger mode and partition
+// alphabets.
+func BenchmarkReaderCDFStream16(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		var cdf CDF
+		if err := cdf.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			if _, err := r.ReadCDF(&cdf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+// BenchmarkReaderSymbolStream16 is the slice-path (full ValidateCDF scan)
+// counterpart to BenchmarkReaderCDFStream16, decoding a 16-symbol CDF via
+// ReadSymbol. The delta between the two benchmarks at 16 symbols is the
+// per-symbol cost of the monotonicity validation that the trusted path elides.
+func BenchmarkReaderSymbolStream16(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		var cdf CDF
+		if err := cdf.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		values := cdf.Values()
+		r := NewReader(src)
+		for range benchSymbolsPerOp {
+			if _, err := r.ReadSymbol(values, 16); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
 // BenchmarkReaderBoolStream isolates ReadBoolQ15's per-call cost.
 func BenchmarkReaderBoolStream(b *testing.B) {
 	src := benchStream()
