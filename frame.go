@@ -119,6 +119,14 @@ func frameFormatFromHeaderWidth(sequence SequenceHeader, width uint32, height ui
 	if uint64(width) > maxInt || uint64(height) > maxInt {
 		return FrameFormat{}, ErrFrameInvalidFormat
 	}
+	// The buffer is allocated superblock-aligned so partial bottom/right
+	// superblocks reconstruct their full transform extent into the padding;
+	// the alignment must match the sequence's superblock size or the pool
+	// surfaces will not match the format the decoder reconstructs into.
+	sbSizeLog2 := uint8(6)
+	if sequence.Use128x128Superblock {
+		sbSizeLog2 = 7
+	}
 	return FrameFormat{
 		Width:        int(width),
 		Height:       int(height),
@@ -126,6 +134,7 @@ func frameFormatFromHeaderWidth(sequence SequenceHeader, width uint32, height ui
 		MonoChrome:   sequence.ColorConfig.MonoChrome,
 		SubsamplingX: sequence.ColorConfig.SubsamplingX,
 		SubsamplingY: sequence.ColorConfig.SubsamplingY,
+		SBSizeLog2:   sbSizeLog2,
 		Align:        align,
 	}, nil
 }

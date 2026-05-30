@@ -182,17 +182,12 @@ func decodeClipPublicData(t *testing.T, ivfData []byte) [][16]byte {
 		t.Fatal("stream plan did not identify a bind event")
 	}
 
-	format := av1.FrameFormat{
-		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
-		Height:       int(plan.Bind.Event.FrameSize.Height),
-		BitDepth:     plan.Bind.Sequence.ColorConfig.BitDepth,
-		MonoChrome:   plan.Bind.Sequence.ColorConfig.MonoChrome,
-		SubsamplingX: plan.Bind.Sequence.ColorConfig.SubsamplingX,
-		SubsamplingY: plan.Bind.Sequence.ColorConfig.SubsamplingY,
-		Align:        64,
-	}
-	if format.BitDepth == 0 {
-		format.BitDepth = 8
+	// Build the pool format the way a production caller should: from the bound
+	// sequence/frame headers via the public helper, so the superblock alignment
+	// (64 vs 128) is derived from the stream rather than guessed.
+	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
+		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}
 
 	const surfaceCount = av1.RefFrames + 1

@@ -73,21 +73,12 @@ func newDecoder(frames []av1.IVFFrame, workers int) (*decoder, error) {
 		return nil, errors.New("stream plan did not identify a bind event")
 	}
 
-	format := av1.FrameFormat{
-		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
-		Height:       int(plan.Bind.Event.FrameSize.Height),
-		BitDepth:     plan.Bind.Sequence.ColorConfig.BitDepth,
-		MonoChrome:   plan.Bind.Sequence.ColorConfig.MonoChrome,
-		SubsamplingX: plan.Bind.Sequence.ColorConfig.SubsamplingX,
-		SubsamplingY: plan.Bind.Sequence.ColorConfig.SubsamplingY,
-		Align:        64,
-	}
-	if format.BitDepth == 0 {
-		format.BitDepth = 8
-	}
-	if format.Width <= 0 || format.Height <= 0 {
+	// Derive the pool format from the bound headers so the superblock alignment
+	// (64 vs 128) matches the surface the decoder reconstructs into.
+	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
 		workerPool.Close()
-		return nil, fmt.Errorf("invalid frame format from stream plan: %dx%d", format.Width, format.Height)
+		return nil, fmt.Errorf("frame format from stream plan: %w", err)
 	}
 
 	const surfaceCount = av1.RefFrames + 1

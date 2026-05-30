@@ -74,7 +74,11 @@ func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !format.MonoChrome || layout.ChromaWidth != 0 || layout.Size != layout.YStride*format.Height {
+	// Monochrome allocates no chroma planes: the U and V planes are zero-length,
+	// so both their offsets sit at the end of the (superblock-aligned) luma
+	// plane and the total size equals the luma plane size.
+	if !format.MonoChrome || layout.ChromaWidth != 0 ||
+		layout.UOffset != layout.Size || layout.VOffset != layout.Size {
 		t.Fatalf("format=%+v layout=%+v", format, layout)
 	}
 }
