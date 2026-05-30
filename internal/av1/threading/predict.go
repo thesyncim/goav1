@@ -1212,7 +1212,7 @@ func (b FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit 
 		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotion, motionResult.MV[0], geom, filters); err != nil {
 			return err
 		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
+	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
 		return err
 	}
 	mode, ok := frameWorkInterIntraPredictionMode(visit.Prediction.InterIntra.Mode)
@@ -1470,14 +1470,14 @@ func (b FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vis
 		if err := b.predictBlockInterGlobalWarpToScratch(first, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotionCompound[0], motionResult.MV[0], geom, filters); err != nil {
 			return err
 		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(first, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
+	} else if err := b.predictBlockInterReferencePlaneToScratch(first, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
 		return err
 	}
 	if usesWarp1 {
 		if err := b.predictBlockInterGlobalWarpToScratch(second, plane, motionResult.References.Ref[1], visit.Prediction.GlobalWarpedMotionCompound[1], motionResult.MV[1], geom, filters); err != nil {
 			return err
 		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(second, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
+	} else if err := b.predictBlockInterReferencePlaneToScratch(second, visit.Block, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
 		return err
 	}
 	switch blend.Type {
@@ -1798,7 +1798,7 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block
 	return nil
 }
 
-func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters) error {
+func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters) error {
 	reference, ok := frameWorkReferenceFromTile(refFrame)
 	if !ok {
 		return ErrInvalidBatch
@@ -1831,7 +1831,21 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plane
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+	// Select the interpolation-filter kernel from the un-clipped plane block
+	// dimensions, not the frame-edge-clipped visible extent — identical to the
+	// predictBlockInterReferencePlaneToOutput path. libaom builds the inter part
+	// of an inter-intra / masked-compound block over the full plane block
+	// (pd->width/height) and av1_get_interp_filter_params_with_block_size()
+	// keeps the 8-tap filter as long as the un-clipped plane side is > 4. A
+	// chroma block straddling the bottom/right frame edge whose visible extent
+	// shrinks to <= 4 must still use the wide filter, or the staged inter
+	// predictor diverges by +-1 on the edge chroma samples (the surviving
+	// Class-B 10-bit reconstruction gap).
+	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
