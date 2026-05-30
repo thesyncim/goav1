@@ -309,8 +309,16 @@ func PaletteAllowed(allowScreenContentTools bool, size BlockSize) (bool, error) 
 	if !ok {
 		return false, ErrInvalidDecodeState
 	}
+	// libaom's av1_allow_palette() gates on `sb_type >= BLOCK_8X8` (spec
+	// "MiSize >= BLOCK_8X8"), which in the area-plus-extended block ordering
+	// admits the narrow rectangular sizes 4x16/16x4/8x32/32x8/16x64/64x16 and
+	// rejects only 4x4/4x8/8x4. That lower bound is `W4 + H4 >= 4` (equivalently
+	// dav1d's `bw4 + bh4 >= 4`), not `W4 >= 2 && H4 >= 2`: the latter wrongly
+	// excludes the narrow blocks (e.g. 4x16 has W4=1), dropping their
+	// has_palette_y syntax element and desyncing the entropy stream. The upper
+	// bound stays max(W4, H4) <= 16 (both dimensions <= 64 px).
 	return allowScreenContentTools &&
-		dims.W4 >= 2 && dims.H4 >= 2 &&
+		int(dims.W4)+int(dims.H4) >= 4 &&
 		int(dims.W4)*4 <= 64 &&
 		int(dims.H4)*4 <= 64, nil
 }

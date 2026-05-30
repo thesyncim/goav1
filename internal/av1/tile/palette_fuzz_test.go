@@ -9,11 +9,15 @@ import (
 
 // palettePaletteCapableSizes enumerates the block sizes that PaletteAllowed
 // accepts. Restricting fuzz inputs to these keeps the input space focused on
-// paths that actually exercise palette decode.
+// paths that actually exercise palette decode. It includes the narrow
+// rectangular sizes (4x16/16x4/8x32/32x8/16x64/64x16) that libaom's
+// `sb_type >= BLOCK_8X8` gate admits.
 var palettePaletteCapableSizes = [...]BlockSize{
 	BlockSize8x8, BlockSize8x16, BlockSize16x8, BlockSize16x16,
 	BlockSize16x32, BlockSize32x16, BlockSize32x32, BlockSize32x64,
 	BlockSize64x32, BlockSize64x64,
+	BlockSize4x16, BlockSize16x4, BlockSize8x32, BlockSize32x8,
+	BlockSize16x64, BlockSize64x16,
 }
 
 // FuzzReadPaletteMode drives the full palette mode symbol decode path. The
