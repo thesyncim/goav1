@@ -659,6 +659,37 @@ func (s *DecodeState) ReadCoeffBR(cdfs *CoeffCDFs, req CoeffTokenRequest) (int, 
 	return s.Reader.ReadCDFTrusted(cdf)
 }
 
+// readCoeffBaseFromArr reads one CoeffBase symbol from a CDF array that was
+// already selected for the transform/plane (cdfs.CoeffBase[tx][plane]) outside
+// the per-coefficient loop. It is byte-identical to ReadCoeffBase -> CoeffBaseCDF
+// for the same (size, plane, context) but skips re-deriving the loop-invariant
+// transform-size context (and its Dimensions() lookup) and the plane validation
+// on every coefficient.
+func (s *DecodeState) readCoeffBaseFromArr(arr *[CoeffBaseContexts]entropy.CDF, context int) (int, error) {
+	if context < 0 || context >= CoeffBaseContexts {
+		return 0, entropy.ErrInvalidCDF
+	}
+	cdf, err := coeffCDF(&arr[context], NumBaseLevels+2)
+	if err != nil {
+		return 0, err
+	}
+	return s.Reader.ReadCDFTrusted(cdf)
+}
+
+// readCoeffBRFromArr is the hoisted-array counterpart of ReadCoeffBR ->
+// CoeffBRCDF. arr must be cdfs.CoeffBR[txBR][plane] with txBR already clamped to
+// TransformSize32x32, matching CoeffBRCDF. Byte-identical for the same context.
+func (s *DecodeState) readCoeffBRFromArr(arr *[CoeffBRContexts]entropy.CDF, context int) (int, error) {
+	if context < 0 || context >= CoeffBRContexts {
+		return 0, entropy.ErrInvalidCDF
+	}
+	cdf, err := coeffCDF(&arr[context], BRCDFSize)
+	if err != nil {
+		return 0, err
+	}
+	return s.Reader.ReadCDFTrusted(cdf)
+}
+
 func (s *DecodeState) ReadDCSign(cdfs *CoeffCDFs, plane CoeffPlaneType, context int) (bool, error) {
 	if s == nil {
 		return false, ErrInvalidDecodeState
@@ -734,16 +765,53 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	// per-coefficient loops. The context derivation and level get/set below all
 	// index coeffPosTable[req.Size]/coeffGeometryTable[req.Size] by position, so
 	// fetching them once removes the repeated outer-table indexing (and its
-	// bounds checks) from every coefficient.
+	// bounds checks) from every coefficient. coeffGeo already validated req.Size
+	// above; restating the bound here is dead on valid input but lets the prover
+	// drop the table-index checks.
+	if req.Size >= transformSizeCount {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
 	geoPtr := &coeffGeometryTable[req.Size]
 	posSlice := coeffPosTable[req.Size]
+	// Hoist the CoeffBase/CoeffBR CDF-array selection out of the per-coefficient
+	// loop. CoeffBaseCDF/CoeffBRCDF re-derive the transform-size context (a
+	// Dimensions() lookup) and re-validate the plane on every symbol read; here
+	// it is loop-invariant. txBR matches CoeffBRCDF's clamp to TransformSize32x32.
+	// req.Plane was validated above; the bounds restated here are dead on valid
+	// input but keep these one-time array indexes check-free.
+	txCtx, err := CoeffTransformSizeContext(req.Size)
+	if err != nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	txBR := txCtx
+	if txBR > int(TransformSize32x32) {
+		txBR = int(TransformSize32x32)
+	}
+	if txCtx < 0 || txCtx >= CoeffTxSizeContexts || txBR < 0 || txBR >= CoeffTxSizeContexts ||
+		!req.Plane.Valid() || cdfs == nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	baseArr := &cdfs.CoeffBase[txCtx][req.Plane]
+	brArr := &cdfs.CoeffBR[txBR][req.Plane]
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
+		if pos < 0 || pos >= len(posSlice) {
+			return TXBDecodeResult{}, fmt.Errorf("lower levels ctx c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+		}
+		// pos is now proven in range, so this posSlice read and the matching
+		// levelsScratch store below drop their bounds checks. padded is fetched
+		// once and reused for the store (coeffLowerLevelsCtxFast/coeffBRContextFast
+		// re-derive it internally, but hoisting it here removes the second
+		// posSlice index from the hot store path).
+		padded := int(posSlice[pos].padded)
+		if padded < 0 || padded >= len(levelsScratch) {
+			return TXBDecodeResult{}, fmt.Errorf("set coeff level c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+		}
 		ctx, err := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, req.Class, pos)
 		if err != nil {
 			return TXBDecodeResult{}, fmt.Errorf("lower levels ctx c=%d pos=%d: %w", c, pos, err)
 		}
-		level, err := s.ReadCoeffBase(cdfs, CoeffTokenRequest{Size: req.Size, Plane: req.Plane, Context: ctx})
+		level, err := s.readCoeffBaseFromArr(baseArr, ctx)
 		if err != nil {
 			return TXBDecodeResult{}, fmt.Errorf("read coeff base c=%d pos=%d ctx=%d: %w", c, pos, ctx, err)
 		}
@@ -752,7 +820,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			if err != nil {
 				return TXBDecodeResult{}, fmt.Errorf("br ctx c=%d pos=%d level=%d: %w", c, pos, level, err)
 			}
-			extra, err := s.readBaseRange(cdfs, req.Size, req.Plane, brCtx)
+			extra, err := s.readBaseRangeFromArr(brArr, brCtx)
 			if err != nil {
 				return TXBDecodeResult{}, fmt.Errorf("read base range c=%d pos=%d level=%d brCtx=%d: %w", c, pos, level, brCtx, err)
 			}
@@ -761,17 +829,25 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if level < 0 || level > 255 {
 			return TXBDecodeResult{}, fmt.Errorf("set coeff level c=%d pos=%d level=%d: %w", c, pos, level, ErrInvalidDecodeState)
 		}
-		levelsScratch[int(posSlice[pos].padded)] = uint8(level)
+		levelsScratch[padded] = uint8(level)
 	}
 
 	coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eob.Position)
 	maxScanLine := 0
 	for c := 0; c < eob.Position; c++ {
 		pos := int(scan[c])
-		if pos < 0 || pos >= len(posSlice) {
+		// Bound pos against both posSlice and coeffs here. len(posSlice)==maxEOB
+		// and len(coeffs)>=maxEOB (checked above), so on valid input pos<len(coeffs)
+		// whenever pos<len(posSlice); the extra disjunct never fires but lets the
+		// prover drop the bounds check on the coeffs[pos] store below.
+		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
 			return TXBDecodeResult{}, fmt.Errorf("read stored coeff c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
 		}
-		level := int(levelsScratch[int(posSlice[pos].padded)])
+		padded := int(posSlice[pos].padded)
+		if padded < 0 || padded >= len(levelsScratch) {
+			return TXBDecodeResult{}, fmt.Errorf("read stored coeff c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+		}
+		level := int(levelsScratch[padded])
 		if level == 0 {
 			continue
 		}
@@ -837,6 +913,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 func (s *DecodeState) readLastCoeffLevel(cdfs *CoeffCDFs, req TXBDecodeRequest, eob int, scan []int16, levels []uint8, scanSize transform.Size) error {
 	c := eob - 1
+	// The caller validates eob in (0, maxEOB] and len(scan) >= maxEOB, so c is
+	// always a valid scan index; restating it lets the prover drop this check.
+	if c < 0 || c >= len(scan) {
+		return ErrInvalidDecodeState
+	}
 	pos := int(scan[c])
 	ctx, err := transform.LowerLevelsCtxEOB(scanSize, c)
 	if err != nil {
@@ -864,6 +945,27 @@ func (s *DecodeState) readBaseRange(cdfs *CoeffCDFs, size TransformSize, plane C
 	level := 0
 	for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 		k, err := s.ReadCoeffBR(cdfs, CoeffTokenRequest{Size: size, Plane: plane, Context: context})
+		if err != nil {
+			return 0, err
+		}
+		level += k
+		if k < BRCDFSize-1 {
+			break
+		}
+	}
+	return level, nil
+}
+
+// readBaseRangeFromArr mirrors readBaseRange but reads from the pre-selected
+// CoeffBR CDF array (cdfs.CoeffBR[txBR][plane]). The original re-derived the
+// transform-size context inside the inner loop on every iteration (up to four
+// reads per coefficient); hoisting the array selection out makes the per-symbol
+// work a single context-bounded array index. Byte-identical for the same
+// context.
+func (s *DecodeState) readBaseRangeFromArr(arr *[CoeffBRContexts]entropy.CDF, context int) (int, error) {
+	level := 0
+	for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+		k, err := s.readCoeffBRFromArr(arr, context)
 		if err != nil {
 			return 0, err
 		}
@@ -1145,11 +1247,29 @@ func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coef
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := geo.stride
-	// stride > 0 always holds for a valid transform geometry; asserting it lets
-	// the bounds-check elimination pass prove every padded+k*stride access below
-	// is covered by the padded+4*stride guard (k in 1..4), removing the per-access
-	// checks in the hot context loop. The guard never fires on valid input.
-	if stride <= 0 || padded < 0 || padded+4 >= len(levels) || padded+4*stride >= len(levels) || padded+stride+1 >= len(levels) {
+	// Build the neighbour offsets as additive induction chains and feed the
+	// bounds-check elimination pass the monotonicity facts directly. The stride
+	// neighbours form the chain padded < s1 < s1p1 < s2 < s3 < s4 (each is the
+	// previous offset plus a non-negative stride/1) and the constant neighbours
+	// the chain padded < p1 < p2 < p3 < p4. Guarding the chain maxima (s4 and p4)
+	// against len(levels) together with the explicit "< prev" ordering disjuncts
+	// lets the prover deduce every intermediate read is in range, eliminating the
+	// per-access checks that multiplicative padded+k*stride indexing left behind.
+	// On valid transform geometry stride >= 1 and the offsets stay small, so the
+	// ordering disjuncts only ever catch overflow/inversion and never fire; the
+	// observable result is identical to the prior multiplicative form.
+	s1 := padded + stride // padded + stride
+	s1p1 := s1 + 1        // padded + stride + 1
+	s2 := s1 + stride     // padded + 2*stride
+	s3 := s2 + stride     // padded + 3*stride
+	s4 := s3 + stride     // padded + 4*stride
+	p1 := padded + 1
+	p2 := padded + 2
+	p3 := padded + 3
+	p4 := padded + 4
+	if stride <= 0 || padded < 0 || s4 >= len(levels) || p4 >= len(levels) ||
+		s1 < padded || s1p1 < s1 || s2 < s1p1 || s3 < s2 || s4 < s3 ||
+		p1 < padded || p2 < p1 || p3 < p2 || p4 < p3 {
 		return 0, ErrInvalidDecodeState
 	}
 	if class == transform.Class2D && pos == 0 {
@@ -1158,20 +1278,20 @@ func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coef
 	row := int(p.row)
 	col := int(p.col)
 
-	mag := clipMax3(levels[padded+stride]) + clipMax3(levels[padded+1])
+	mag := clipMax3(levels[s1]) + clipMax3(levels[p1])
 	switch class {
 	case transform.Class2D:
-		mag += clipMax3(levels[padded+stride+1])
-		mag += clipMax3(levels[padded+(stride<<1)])
-		mag += clipMax3(levels[padded+2])
+		mag += clipMax3(levels[s1p1])
+		mag += clipMax3(levels[s2])
+		mag += clipMax3(levels[p2])
 	case transform.ClassVert:
-		mag += clipMax3(levels[padded+2])
-		mag += clipMax3(levels[padded+3])
-		mag += clipMax3(levels[padded+4])
+		mag += clipMax3(levels[p2])
+		mag += clipMax3(levels[p3])
+		mag += clipMax3(levels[p4])
 	case transform.ClassHoriz:
-		mag += clipMax3(levels[padded+(stride<<1)])
-		mag += clipMax3(levels[padded+3*stride])
-		mag += clipMax3(levels[padded+4*stride])
+		mag += clipMax3(levels[s2])
+		mag += clipMax3(levels[s3])
+		mag += clipMax3(levels[s4])
 	}
 	ctx := minInt((mag+1)>>1, 4)
 
@@ -1208,18 +1328,32 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := geo.stride
-	// stride > 0 lets BCE prove the padded+k*stride accesses (k in 1..2) are
-	// covered by the padded+2*stride+2 guard, removing per-access checks. The
-	// guard never fires on valid transform geometry.
-	if stride <= 0 || padded < 0 || padded+2*stride+2 >= len(levels) || padded+4 >= len(levels) {
+	// Same chained-induction BCE as coeffLowerLevelsCtxFast. The stride
+	// neighbours form padded < s1 < s1p1 < s2 (< s2p2) and the constant
+	// neighbours padded < p1 < p2 (< p4). The len-comparisons keep the original
+	// thresholds exactly (s2p2 == padded+2*stride+2, p4 == padded+4), so the set
+	// of inputs that error is unchanged; the added "< prev" ordering disjuncts
+	// only catch overflow/inversion (impossible for valid geometry, stride >= 1)
+	// and supply the prover the monotonicity it needs to drop the per-access
+	// checks the multiplicative padded+k*stride indexing left behind.
+	s1 := padded + stride // padded + stride
+	s1p1 := s1 + 1        // padded + stride + 1
+	s2 := s1 + stride     // padded + 2*stride
+	s2p2 := s2 + 2        // padded + 2*stride + 2
+	p1 := padded + 1
+	p2 := padded + 2
+	p4 := padded + 4
+	if stride <= 0 || padded < 0 || s2p2 >= len(levels) || p4 >= len(levels) ||
+		s1 < padded || s1p1 < s1 || s2 < s1p1 || s2p2 < s2 ||
+		p1 < padded || p2 < p1 || p4 < p2 {
 		return 0, ErrInvalidDecodeState
 	}
 	row := int(p.row)
 	col := int(p.col)
 	if class == transform.Class2D && pos != 0 {
-		mag := minInt(int(levels[padded+1]), MaxBaseBRRange) +
-			minInt(int(levels[padded+stride]), MaxBaseBRRange) +
-			minInt(int(levels[padded+stride+1]), MaxBaseBRRange)
+		mag := minInt(int(levels[p1]), MaxBaseBRRange) +
+			minInt(int(levels[s1]), MaxBaseBRRange) +
+			minInt(int(levels[s1p1]), MaxBaseBRRange)
 		mag = minInt((mag+1)>>1, 6)
 		if row < 2 && col < 2 {
 			return mag + 7, nil
@@ -1227,14 +1361,14 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 		return mag + 14, nil
 	}
 
-	mag := int(levels[padded+1]) + int(levels[padded+stride])
+	mag := int(levels[p1]) + int(levels[s1])
 	switch class {
 	case transform.Class2D:
-		mag += int(levels[padded+stride+1])
+		mag += int(levels[s1p1])
 	case transform.ClassHoriz:
-		mag += int(levels[padded+(stride<<1)])
+		mag += int(levels[s2])
 	case transform.ClassVert:
-		mag += int(levels[padded+2])
+		mag += int(levels[p2])
 	}
 	mag = minInt((mag+1)>>1, 6)
 	if pos == 0 {
