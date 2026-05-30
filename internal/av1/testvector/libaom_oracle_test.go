@@ -425,6 +425,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					if decodeState.RetainFrameContext {
 						stats.retainedContexts++
 					}
+					if updates, err := ctx.JobUpdatesFrameContext(j); err != nil {
+						return err
+					} else if updates {
+						stats.contextUpdateTiles++
+					}
 				}
 				if ctx.CDEFIndexMap != nil {
 					for _, read := range ctx.CDEFIndexMap.Read {
@@ -574,8 +579,15 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	if stats.tileJobs == 0 {
 		t.Fatal("no tile jobs ran")
 	}
-	if stats.retainedContexts == 0 {
-		t.Fatal("no context-update tile was retained")
+	// A retained frame context requires the stream to (a) designate a
+	// context_update_tile_id whose adapted CDFs refresh the frame context and
+	// (b) leave CDF end-update enabled for that frame. Low-latency SVC encodes
+	// (e.g. av1-1-b8-22-svc-L2T1) disable the frame-end CDF update on every
+	// frame, so no tile is ever retained even though decoding is byte-exact.
+	// Only assert the retain path ran when the stream actually requested a
+	// frame-context refresh.
+	if stats.contextUpdateTiles > 0 && stats.retainedContexts == 0 {
+		t.Fatal("a context-update tile was requested but none was retained")
 	}
 	if stats.partitionReads == 0 {
 		t.Fatal("no partition syntax was read")
@@ -609,6 +621,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 type libaomFrameWorkStats struct {
 	tileJobs                  int
 	retainedContexts          int
+	contextUpdateTiles        int
 	partitionReads            int
 	blockPrefixReads          int
 	blockDeltaPaths           int

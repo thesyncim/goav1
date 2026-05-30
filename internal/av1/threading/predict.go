@@ -1020,7 +1020,7 @@ func (b FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.Bl
 			return err
 		}
 		if !sameSize {
-			if err := frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			if err := frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 				cellX, cellY, cellX, cellY, width, height, cell.MV, geom.SubsamplingX, geom.SubsamplingY, cell.InterpFilters); err != nil {
 				return err
 			}
@@ -1086,7 +1086,7 @@ func (b FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFilters(index int, v
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the global warp matrix.
-		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.GlobalWarpedMotion
@@ -1338,7 +1338,7 @@ func (b FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit t
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the local warp matrix.
-		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.WarpedMotion
@@ -1771,7 +1771,7 @@ func (b FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlane(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
@@ -2026,7 +2026,8 @@ func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plan
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, geom.Output.Width, geom.Output.Height,
+		curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+		return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, curWidth, curHeight,
 			geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, absX, absY, width, height, mv,
 			geom.SubsamplingX, geom.SubsamplingY, filters)
 	}

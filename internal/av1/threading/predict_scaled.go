@@ -69,26 +69,48 @@ func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, 
 }
 
 // frameWorkPredictScaledReferencePlane writes one plane block from a smaller
-// or larger reference into dst at (dstX, dstY). It is used only when the
+// or larger reference into geom.Output at (dstX, dstY). It is used only when the
 // scaled-prediction path is enabled and the reference dimensions differ from
-// the output dimensions (verified by frameWorkSameOrScaledReferencePlane).
-// dst is expected to be the output plane, so its Width / Height supply the
-// curWidth / curHeight used for the Q14 reference scale factors. Callers
-// staging into a block-sized scratch buffer (inter-intra, masked compound)
-// must use frameWorkPredictScaledReferencePlaneToBuffer so the scale factors
-// stay anchored to the output frame (libaom's xd->block_ref_scale_factors).
-func frameWorkPredictScaledReferencePlane(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+// the current coded frame dimensions (verified by
+// frameWorkSameOrScaledReferencePlane). The Q14 reference scale factors are
+// anchored to the current frame's CODED (cropped) plane dimensions
+// (geom.CodedWidth / geom.CodedHeight), mirroring libaom's
+// av1_setup_scale_factors_for_frame(): the scale factors are derived from the
+// coded frame size, never from the MI/SB-aligned write extent that
+// geom.Output.Width / Height span. Using the extended Output height here would
+// shrink y_scale_fp / y_step (e.g. 720 -> 768 on the SVC L2T1 enhancement
+// layer) and walk the vertical reference taps off by a growing per-row offset.
+// Callers staging into a block-sized scratch buffer (inter-intra, masked
+// compound) must use frameWorkPredictScaledReferencePlaneToBuffer.
+func frameWorkPredictScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
-	return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, dst.Width, dst.Height, bytesPerSample, bitDepth,
+	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	return frameWorkPredictScaledReferencePlaneWithDims(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
 		dstX, dstY, blockX, blockY, width, height, mv, subsamplingX, subsamplingY, filters)
+}
+
+// frameWorkScaledReferenceCurrentDims returns the current frame's coded
+// (cropped) plane dimensions used to derive the Q14 reference scale factors,
+// falling back to the Output plane dimensions only when the coded extent was
+// not recorded. It mirrors frameWorkSameOrScaledReferencePlane's curWidth /
+// curHeight selection so the same-size / scaled decision and the scale-factor
+// computation stay consistent.
+func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) (int, int) {
+	curWidth := geom.CodedWidth
+	curHeight := geom.CodedHeight
+	if curWidth <= 0 || curHeight <= 0 {
+		curWidth = geom.Output.Width
+		curHeight = geom.Output.Height
+	}
+	return curWidth, curHeight
 }
 
 // frameWorkPredictScaledReferencePlaneToBuffer is the inter-intra / masked
 // compound staging form of the scaled-reference dispatch. The dst plane is a
-// block-sized scratch buffer, so its Width / Height are not the output frame
-// dimensions; the helper lifts the actual output plane size out of geom
-// (geom.Output.Width / Height) before computing libaom's Q14 scale factors.
+// block-sized scratch buffer, so its Width / Height are not the current frame
+// dimensions; the helper lifts the current frame's coded plane size out of geom
+// (geom.CodedWidth / CodedHeight) before computing libaom's Q14 scale factors.
 //
 // libaom mirror: av1_make_inter_predictor() in av1/common/reconinter.c picks
 // up scale factors from xd->block_ref_scale_factors, which are set per-frame
@@ -97,7 +119,8 @@ func frameWorkPredictScaledReferencePlane(dst frame.Plane, ref frame.Plane, byte
 func frameWorkPredictScaledReferencePlaneToBuffer(dst frame.Plane, ref frame.Plane,
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, mv motion.Vector, filters motion.InterpFilters) error {
-	return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, geom.Output.Width, geom.Output.Height,
+	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, curWidth, curHeight,
 		geom.BytesPerSample, bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height, mv,
 		geom.SubsamplingX, geom.SubsamplingY, filters)
 }

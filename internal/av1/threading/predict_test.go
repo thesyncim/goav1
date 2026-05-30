@@ -2813,7 +2813,7 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -2866,7 +2866,7 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -2945,7 +2945,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom.Output, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("base scaled-ref err=%v", err)
 	}
