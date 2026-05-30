@@ -106,6 +106,39 @@ func BenchmarkConvolve2D8Clamped_16(b *testing.B) {
 	})
 }
 
+// Clamped 2D, 16x16 block straddling the right frame edge on a larger plane:
+// most columns are resident (fast interior) and only the rightmost few taps
+// fall off the frame. This is the common edge-block shape the optimized
+// clamped path targets, unlike the fully-cornered Clamped_16 bench above.
+func BenchmarkConvolve2D8ClampedEdge_16(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	// refX places the right edge of the tap window just past the frame.
+	refX := plane - 13
+	refY := 20
+	runConvolveBench(b, 16, 16, func() {
+		convolve2D8ClampedImpl(dst, ref, 0, 0, refX, refY, 16, 16, xk, yk)
+	})
+}
+
+// Clamped 2D width-4 edge block (the small inter block that the NEON path
+// always routes to pure-Go).
+func BenchmarkConvolve2D8ClampedEdge_4x4(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(4, 4, 1, 4)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 4, 4, func() {
+		convolve2D8ClampedImpl(dst, ref, 0, 0, 0, 0, 4, 4, xk, yk)
+	})
+}
+
 // High-BD 2D, 32x32 at bd=10.
 func BenchmarkConvolve2DHighBD_32(b *testing.B) {
 	dst, ref := benchPlanes(32, 10)

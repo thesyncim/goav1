@@ -420,31 +420,77 @@ func convolveX8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	firstTap := refX - fo
+	xLo, xHi := clampedXInterior(firstTap, filterTaps, ref.Width, width)
 	for y := range height {
-		sy := refY + y
+		cy := clampInt(refY+y, 0, ref.Height-1)
+		rowBase := cy * ref.Stride
 		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
 		if fourTap {
-			for x := range width {
-				sx := refX + x - fo
-				sum := k2*int(loadSample8Clamped(ref, sx+2, sy)) +
-					k3*int(loadSample8Clamped(ref, sx+3, sy)) +
-					k4*int(loadSample8Clamped(ref, sx+4, sy)) +
-					k5*int(loadSample8Clamped(ref, sx+5, sy))
+			for x := 0; x < xLo; x++ {
+				sx := firstTap + x
+				sum := k2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				res := roundPowerOfTwo(sum, round0Bits)
+				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+			}
+			if xHi > xLo {
+				srcRow := ref.Pix[rowBase+firstTap+xLo:]
+				for x := xLo; x < xHi; x++ {
+					i := x - xLo
+					s := srcRow[i : i+filterTaps]
+					sum := k2*int(s[2]) + k3*int(s[3]) + k4*int(s[4]) + k5*int(s[5])
+					res := roundPowerOfTwo(sum, round0Bits)
+					dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+				}
+			}
+			for x := xHi; x < width; x++ {
+				sx := firstTap + x
+				sum := k2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
 				res := roundPowerOfTwo(sum, round0Bits)
 				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
 			}
 			continue
 		}
-		for x := range width {
-			sx := refX + x - fo
-			sum := k0*int(loadSample8Clamped(ref, sx, sy)) +
-				k1*int(loadSample8Clamped(ref, sx+1, sy)) +
-				k2*int(loadSample8Clamped(ref, sx+2, sy)) +
-				k3*int(loadSample8Clamped(ref, sx+3, sy)) +
-				k4*int(loadSample8Clamped(ref, sx+4, sy)) +
-				k5*int(loadSample8Clamped(ref, sx+5, sy)) +
-				k6*int(loadSample8Clamped(ref, sx+6, sy)) +
-				k7*int(loadSample8Clamped(ref, sx+7, sy))
+		for x := 0; x < xLo; x++ {
+			sx := firstTap + x
+			sum := k0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				k1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				k2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
+			res := roundPowerOfTwo(sum, round0Bits)
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+		}
+		if xHi > xLo {
+			srcRow := ref.Pix[rowBase+firstTap+xLo:]
+			for x := xLo; x < xHi; x++ {
+				i := x - xLo
+				s := srcRow[i : i+filterTaps]
+				sum := k0*int(s[0]) + k1*int(s[1]) + k2*int(s[2]) + k3*int(s[3]) +
+					k4*int(s[4]) + k5*int(s[5]) + k6*int(s[6]) + k7*int(s[7])
+				res := roundPowerOfTwo(sum, round0Bits)
+				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+			}
+		}
+		for x := xHi; x < width; x++ {
+			sx := firstTap + x
+			sum := k0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				k1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				k2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
 			res := roundPowerOfTwo(sum, round0Bits)
 			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
 		}
@@ -481,35 +527,75 @@ func convolveY8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 
 func convolveY8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
+	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	// Interior output-column range where the horizontal coordinate refX+x lies
+	// within [0, Width-1] for every column, so the per-column x-clamp is a no-op.
+	xLo, xHi := clampedXInterior(refX, 1, ref.Width, width)
 	for y := range height {
 		sy := refY + y - fo
 		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
-		if fourTap {
-			for x := range width {
-				sx := refX + x
-				sum := k2*int(loadSample8Clamped(ref, sx, sy+2)) +
-					k3*int(loadSample8Clamped(ref, sx, sy+3)) +
-					k4*int(loadSample8Clamped(ref, sx, sy+4)) +
-					k5*int(loadSample8Clamped(ref, sx, sy+5))
-				dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+		// When the whole vertical tap window is resident the y-clamp is a no-op
+		// and we can walk the column with contiguous strided loads. Inside the
+		// resident-x interior the x-clamp is a no-op too, so that span matches
+		// the non-clamped reference bit-for-bit.
+		yResident := sy >= 0 && sy+filterTaps-1 <= ref.Height-1
+		if yResident && xHi > xLo {
+			if fourTap {
+				col := ref.Pix[(sy+2)*stride+refX+xLo:]
+				for x := xLo; x < xHi; x++ {
+					i := x - xLo
+					sum := k2*int(col[i]) + k3*int(col[i+stride]) +
+						k4*int(col[i+2*stride]) + k5*int(col[i+3*stride])
+					dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+				}
+			} else {
+				col := ref.Pix[sy*stride+refX+xLo:]
+				for x := xLo; x < xHi; x++ {
+					i := x - xLo
+					sum := k0*int(col[i]) + k1*int(col[i+stride]) + k2*int(col[i+2*stride]) +
+						k3*int(col[i+3*stride]) + k4*int(col[i+4*stride]) + k5*int(col[i+5*stride]) +
+						k6*int(col[i+6*stride]) + k7*int(col[i+7*stride])
+					dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+				}
+			}
+			// Edge columns (x in [0,xLo) and [xHi,width)) still need x-clamping.
+			for x := 0; x < xLo; x++ {
+				dstRow[x] = convolveY8ClampedColumn(ref, refX+x, sy, fourTap, k0, k1, k2, k3, k4, k5, k6, k7)
+			}
+			for x := xHi; x < width; x++ {
+				dstRow[x] = convolveY8ClampedColumn(ref, refX+x, sy, fourTap, k0, k1, k2, k3, k4, k5, k6, k7)
 			}
 			continue
 		}
 		for x := range width {
-			sx := refX + x
-			sum := k0*int(loadSample8Clamped(ref, sx, sy)) +
-				k1*int(loadSample8Clamped(ref, sx, sy+1)) +
-				k2*int(loadSample8Clamped(ref, sx, sy+2)) +
-				k3*int(loadSample8Clamped(ref, sx, sy+3)) +
-				k4*int(loadSample8Clamped(ref, sx, sy+4)) +
-				k5*int(loadSample8Clamped(ref, sx, sy+5)) +
-				k6*int(loadSample8Clamped(ref, sx, sy+6)) +
-				k7*int(loadSample8Clamped(ref, sx, sy+7))
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+			dstRow[x] = convolveY8ClampedColumn(ref, refX+x, sy, fourTap, k0, k1, k2, k3, k4, k5, k6, k7)
 		}
 	}
+}
+
+// convolveY8ClampedColumn computes one vertical-convolve output sample at
+// source column sx and tap base row sy, clamping both coordinates per tap. It
+// is the per-column fallback for off-frame tap windows and is bit-identical to
+// the inline loadSample8Clamped form it replaces.
+func convolveY8ClampedColumn(ref frame.Plane, sx int, sy int, fourTap bool, k0, k1, k2, k3, k4, k5, k6, k7 int) byte {
+	if fourTap {
+		sum := k2*int(loadSample8Clamped(ref, sx, sy+2)) +
+			k3*int(loadSample8Clamped(ref, sx, sy+3)) +
+			k4*int(loadSample8Clamped(ref, sx, sy+4)) +
+			k5*int(loadSample8Clamped(ref, sx, sy+5))
+		return byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+	}
+	sum := k0*int(loadSample8Clamped(ref, sx, sy)) +
+		k1*int(loadSample8Clamped(ref, sx, sy+1)) +
+		k2*int(loadSample8Clamped(ref, sx, sy+2)) +
+		k3*int(loadSample8Clamped(ref, sx, sy+3)) +
+		k4*int(loadSample8Clamped(ref, sx, sy+4)) +
+		k5*int(loadSample8Clamped(ref, sx, sy+5)) +
+		k6*int(loadSample8Clamped(ref, sx, sy+6)) +
+		k7*int(loadSample8Clamped(ref, sx, sy+7))
+	return byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
 }
 
 func convolve2D8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
@@ -583,32 +669,78 @@ func convolve2D8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY i
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
 	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	firstTap := refX - foX
+	xLo, xHi := clampedXInterior(firstTap, filterTaps, ref.Width, width)
 	for y := range imH {
-		sy := refY - foY + y
+		// The vertical coordinate is constant across the row, so clamp it once
+		// instead of re-clamping it on every tap load.
+		cy := clampInt(refY-foY+y, 0, ref.Height-1)
+		rowBase := cy * ref.Stride
 		imRow := im[y*imStride:]
 		if xFourTap {
-			for x := range width {
-				sx := refX + x - foX
+			for x := 0; x < xLo; x++ {
+				sx := firstTap + x
 				sum := xBias +
-					xk2*int(loadSample8Clamped(ref, sx+2, sy)) +
-					xk3*int(loadSample8Clamped(ref, sx+3, sy)) +
-					xk4*int(loadSample8Clamped(ref, sx+4, sy)) +
-					xk5*int(loadSample8Clamped(ref, sx+5, sy))
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+			if xHi > xLo {
+				srcRow := ref.Pix[rowBase+firstTap+xLo:]
+				for x := xLo; x < xHi; x++ {
+					i := x - xLo
+					s := srcRow[i : i+filterTaps]
+					sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
+					imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+				}
+			}
+			for x := xHi; x < width; x++ {
+				sx := firstTap + x
+				sum := xBias +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
 				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
 			}
 			continue
 		}
-		for x := range width {
-			sx := refX + x - foX
+		for x := 0; x < xLo; x++ {
+			sx := firstTap + x
 			sum := xBias +
-				xk0*int(loadSample8Clamped(ref, sx, sy)) +
-				xk1*int(loadSample8Clamped(ref, sx+1, sy)) +
-				xk2*int(loadSample8Clamped(ref, sx+2, sy)) +
-				xk3*int(loadSample8Clamped(ref, sx+3, sy)) +
-				xk4*int(loadSample8Clamped(ref, sx+4, sy)) +
-				xk5*int(loadSample8Clamped(ref, sx+5, sy)) +
-				xk6*int(loadSample8Clamped(ref, sx+6, sy)) +
-				xk7*int(loadSample8Clamped(ref, sx+7, sy))
+				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		}
+		if xHi > xLo {
+			srcRow := ref.Pix[rowBase+firstTap+xLo:]
+			for x := xLo; x < xHi; x++ {
+				i := x - xLo
+				s := srcRow[i : i+filterTaps]
+				sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
+					xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+		}
+		for x := xHi; x < width; x++ {
+			sx := firstTap + x
+			sum := xBias +
+				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
 			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
 		}
 	}
@@ -934,6 +1066,42 @@ func loadSample8Clamped(plane frame.Plane, x int, y int) byte {
 	x = clampInt(x, 0, plane.Width-1)
 	y = clampInt(y, 0, plane.Height-1)
 	return plane.Pix[y*plane.Stride+x]
+}
+
+// loadSample8ClampedRow loads a sample whose row offset (clamped y times
+// stride) is already resolved, clamping only the horizontal coordinate. It is
+// bit-identical to loadSample8Clamped(plane, x, y) when rowBase ==
+// clampInt(y,0,Height-1)*Stride.
+func loadSample8ClampedRow(plane frame.Plane, x int, rowBase int) byte {
+	x = clampInt(x, 0, plane.Width-1)
+	return plane.Pix[rowBase+x]
+}
+
+// clampedXInterior returns the half-open output-column range [lo, hi) for a
+// horizontal tap window of tapsWide samples whose leftmost tap for output
+// column x is at source column firstTap+x. Inside [lo, hi) every tap source
+// column lies within [0, width-1], so the per-tap horizontal clamp is a no-op
+// and a contiguous slice load is bit-identical to loadSample8Clamped. Columns
+// outside the range still need per-tap clamping. lo<=hi is always returned
+// (an empty range when the whole row needs clamping).
+func clampedXInterior(firstTap int, tapsWide int, planeWidth int, width int) (lo int, hi int) {
+	// firstTap+x >= 0  -> x >= -firstTap
+	lo = -firstTap
+	if lo < 0 {
+		lo = 0
+	}
+	if lo > width {
+		lo = width
+	}
+	// firstTap+x+tapsWide-1 <= planeWidth-1 -> x <= planeWidth-tapsWide-firstTap
+	hi = planeWidth - tapsWide - firstTap + 1
+	if hi > width {
+		hi = width
+	}
+	if hi < lo {
+		hi = lo
+	}
+	return lo, hi
 }
 
 func loadHighBDSample(plane frame.Plane, x int, y int) uint16 {
