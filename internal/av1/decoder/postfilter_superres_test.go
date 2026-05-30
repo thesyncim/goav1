@@ -51,7 +51,9 @@ func TestFrameWorkPostFilterContextSuperResPostFilterPlanReportsOutputGeometry(t
 	if !plan.Active || plan.Denominator != 16 || plan.CodedFormat.Width != 16 || plan.OutputFormat.Width != 32 {
 		t.Fatalf("plan=%+v", plan)
 	}
-	if plan.Planes[0] != (FrameWorkSuperResPostFilterPlanePlan{CodedWidth: 16, OutputWidth: 32, Height: 16, WidthDelta: 16, BytesPerRow: 32, OutputStride: 32}) {
+	// The coded/output frames are allocated at the superblock-aligned extent
+	// (16/32 -> 64), so OutputStride is align(64, Align=32) = 64.
+	if plan.Planes[0] != (FrameWorkSuperResPostFilterPlanePlan{CodedWidth: 16, OutputWidth: 32, Height: 16, WidthDelta: 16, BytesPerRow: 32, OutputStride: 64}) {
 		t.Fatalf("luma plane=%+v", plan.Planes[0])
 	}
 	if plan.Planes[1].CodedWidth != 8 || plan.Planes[1].OutputWidth != 16 || plan.Planes[1].Height != 8 || plan.Planes[1].WidthDelta != 8 {

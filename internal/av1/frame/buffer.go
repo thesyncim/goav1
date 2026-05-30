@@ -25,6 +25,14 @@ type Format struct {
 	SubsamplingX bool
 	SubsamplingY bool
 
+	// SBSizeLog2 is the superblock size in log2 luma pixels (6 for 64x64, 7
+	// for 128x128). Zero defaults to 6. The byte buffer is allocated to the
+	// superblock-aligned extent so the bottom/right partial superblock can
+	// reconstruct the full transform of any in-grid block into the padding,
+	// mirroring libaom writing whole transform blocks into the YV12 border
+	// (see RequiredSize).
+	SBSizeLog2 uint8
+
 	Align int
 }
 
@@ -73,16 +81,31 @@ func RequiredSize(format Format) (Layout, error) {
 
 	// libaom allocates the YV12 buffer at the MI-aligned dimensions
 	// (aligned_width = ROUND_POWER_OF_TWO(width, 3) << 3 etc., see
-	// aom_realloc_frame_buffer in aom_scale/generic/yv12config.c) so the
-	// bottom/right partial superblock can be reconstructed into the padding
-	// rows/cols and used as intra-prediction neighbor context and CDEF
-	// bottom/right-edge input (cdef_prepare_fb vsize = nvb << mi_high_l2).
-	// We mirror that: the byte buffer spans the MI-aligned extent while the
-	// reported plane Width/Height stay at the cropped (visible) extent, which
-	// is the surface MD5/output consumers hash. Downstream reconstruction
-	// derives the aligned writable extent from Stride and the Pix length.
-	alignedWidth := (format.Width + 7) &^ 7
-	alignedHeight := (format.Height + 7) &^ 7
+	// aom_realloc_frame_buffer in aom_scale/generic/yv12config.c) plus a pixel
+	// border (AOM_BORDER_IN_PIXELS). The bottom/right partial superblock
+	// reconstructs the FULL transform of every in-grid block (libaom's
+	// av1_inverse_transform_block writes the whole tx_size and only skips a
+	// transform when its blk_row/blk_col origin reaches max_blocks_high/wide,
+	// the MI grid edge); a transform whose origin is inside the MI grid but
+	// whose extent crosses the cropped edge spills its trailing rows/cols into
+	// that border. cfl_store_tx then subsamples the full reconstructed
+	// transform with no boundary clamp, and right/bottom-edge chroma reads
+	// those genuinely-reconstructed past-crop samples.
+	//
+	// We mirror that by allocating the byte buffer to the SUPERBLOCK-aligned
+	// extent: any transform whose origin is inside the MI grid lies within a
+	// superblock, so its full extent fits inside the superblock-aligned
+	// allocation. The reported plane Width/Height stay at the cropped (visible)
+	// extent, which is the surface MD5/output consumers hash. Downstream
+	// reconstruction derives the writable extent from Stride and the Pix
+	// length.
+	sbSizeLog2 := uint(format.SBSizeLog2)
+	if sbSizeLog2 == 0 {
+		sbSizeLog2 = 6
+	}
+	sbSize := 1 << sbSizeLog2
+	alignedWidth := (format.Width + sbSize - 1) &^ (sbSize - 1)
+	alignedHeight := (format.Height + sbSize - 1) &^ (sbSize - 1)
 
 	yStride, ok := checkedAlign(alignedWidth*bytesPerSample, format.Align)
 	if !ok {
@@ -190,6 +213,12 @@ func normalizeFormat(format Format) (Format, error) {
 		format.BitDepth = 8
 	}
 	if format.BitDepth != 8 && format.BitDepth != 10 && format.BitDepth != 12 {
+		return Format{}, ErrInvalidFormat
+	}
+	if format.SBSizeLog2 == 0 {
+		format.SBSizeLog2 = 6
+	}
+	if format.SBSizeLog2 != 6 && format.SBSizeLog2 != 7 {
 		return Format{}, ErrInvalidFormat
 	}
 	if format.Align <= 0 {

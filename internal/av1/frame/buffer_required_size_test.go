@@ -2,17 +2,22 @@ package frame
 
 import "testing"
 
-// TestRequiredSizeMIAlignment verifies the MI-aligned byte-buffer extent that
-// RequiredSize computes (mirroring libaom aom_realloc_frame_buffer in
-// aom_scale/generic/yv12config.c: aligned_width = ROUND_POWER_OF_TWO(width, 3)
-// << 3, i.e. round up to a multiple of 8). The reported plane Width/Height stay
-// at the cropped (visible) extent while the buffer spans the aligned extent so
-// the bottom/right partial superblock can be reconstructed into the padding.
+// TestRequiredSizeMIAlignment verifies the superblock-aligned byte-buffer
+// extent that RequiredSize computes. libaom allocates the YV12 buffer at the
+// MI-aligned dimensions plus a pixel border (aom_realloc_frame_buffer in
+// aom_scale/generic/yv12config.c); the bottom/right partial superblock then
+// reconstructs the FULL transform of every in-grid block, whose trailing
+// rows/cols spill into that border (av1_inverse_transform_block writes the
+// whole tx_size; cfl_store_tx subsamples the full reconstructed transform). We
+// mirror that by allocating the byte buffer at the superblock-aligned extent so
+// any in-grid transform's full extent fits inside the allocation. The reported
+// plane Width/Height stay at the cropped (visible) extent.
 //
-// Expected values are computed by hand: alignedW = (W+7)&^7,
-// alignedH = (H+7)&^7, YStride = align(alignedW*bps, Align),
-// ySize = YStride*alignedH; chroma mirrors with subsampling applied to the
-// aligned extent for the buffer span and to the visible extent for ChromaW/H.
+// Expected values are computed by hand: sb = 1<<SBSizeLog2 (default 64),
+// alignedW = (W+sb-1)&^(sb-1), alignedH = (H+sb-1)&^(sb-1),
+// YStride = align(alignedW*bps, Align), ySize = YStride*alignedH; chroma
+// mirrors with subsampling applied to the aligned extent for the buffer span
+// and to the visible extent for ChromaW/H.
 func TestRequiredSizeMIAlignment(t *testing.T) {
 	cases := []struct {
 		name                     string
@@ -23,22 +28,22 @@ func TestRequiredSizeMIAlignment(t *testing.T) {
 	}{
 		{
 			// 34x34 4:2:0 8-bit (libaom conformance vector size). Both dims
-			// round 34 -> 40. Chroma visible = (34+1)>>1 = 17; chroma aligned
-			// extent = 40>>1 = 20 -> stride align(20,32)=32.
+			// round 34 -> 64 (SB64). Chroma visible = (34+1)>>1 = 17; chroma
+			// aligned extent = 64>>1 = 32 -> stride align(32,32)=32.
 			name:        "34x34-420-8bit",
 			format:      Format{Width: 34, Height: 34, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32},
 			wantYStride: 64, wantCStride: 32,
 			wantChromaWidth: 17, wantCH: 17,
-			wantSize: 64*40 + 32*20*2,
+			wantSize: 64*64 + 32*32*2,
 		},
 		{
-			// 66x66 4:2:0 8-bit. Both dims round 66 -> 72. YStride =
-			// align(72,32)=96; chroma aligned 36 -> align(36,32)=64.
+			// 66x66 4:2:0 8-bit. Both dims round 66 -> 128 (SB64). YStride =
+			// align(128,32)=128; chroma aligned 64 -> align(64,32)=64.
 			name:        "66x66-420-8bit",
 			format:      Format{Width: 66, Height: 66, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32},
-			wantYStride: 96, wantCStride: 64,
+			wantYStride: 128, wantCStride: 64,
 			wantChromaWidth: 33, wantCH: 33,
-			wantSize: 96*72 + 64*36*2,
+			wantSize: 128*128 + 64*64*2,
 		},
 		{
 			// 64x64 4:4:4 8-bit (profile 1). No subsampling: chroma planes are
@@ -88,9 +93,10 @@ func TestRequiredSizeMIAlignment(t *testing.T) {
 			}
 			// The U/V plane offsets must partition the buffer exactly:
 			// YOffset=0, UOffset=ySize, VOffset=ySize+uSize, Size=ySize+2*uSize.
-			ySize := tc.wantYStride * ((tc.format.Height + 7) &^ 7)
+			sb := 1 << 6
+			ySize := tc.wantYStride * ((tc.format.Height + sb - 1) &^ (sb - 1))
 			if layout.UOffset != ySize {
-				t.Errorf("UOffset=%d want %d (MI-aligned ySize)", layout.UOffset, ySize)
+				t.Errorf("UOffset=%d want %d (SB-aligned ySize)", layout.UOffset, ySize)
 			}
 			uSize := layout.VOffset - layout.UOffset
 			if layout.Size != layout.VOffset+uSize {

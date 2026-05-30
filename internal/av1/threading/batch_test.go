@@ -703,15 +703,18 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 130x65 frame, SBX=1 col, SBCols=2. The visible coded width is 130 so
-	// the second SB contributes a visible 130-64=66 pixel strip. The
-	// MI-aligned writable extent reaches mi_cols*4 = 34*4 = 136 luma
-	// pixels (mi_cols = ((130+7)>>3)<<1 = 34), so ClipWidth = 136-64 = 72.
-	// The MI-aligned height reaches mi_rows*4 = 18*4 = 72 (mi_rows =
-	// ((65+7)>>3)<<1 = 18), so ClipHeight = 72 (the buffer is allocated at the
-	// MI-aligned 72 rows; the partial bottom superblock reconstructs there).
+	// the second SB contributes a visible 130-64=66 pixel strip (Width=66).
+	// ReadWidth caps neighbor reads at the MI-aligned extent mi_cols*4 = 34*4 =
+	// 136 luma pixels (mi_cols = ((130+7)>>3)<<1 = 34), so ReadWidth = 136-64 =
+	// 72. ClipWidth is the writable extent at the superblock-aligned edge
+	// (SBX+SBCols)*64 = 192, clamped to the allocation (YStride/bps = 192), so
+	// ClipWidth = 192-64 = 128. ReadHeight caps at mi_rows*4 = 18*4 = 72
+	// (mi_rows = ((65+7)>>3)<<1 = 18); ClipHeight is the SB-aligned writable
+	// edge (SBRows*64 = 128, clamped to the SB-aligned allocation 128), = 128.
 	if y.Plane != FrameWorkPlaneY || y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 ||
 		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 ||
-		y.ClipWidth != 72 || y.ClipHeight != 72 || y.ClipRowBytes != 72 {
+		y.ReadWidth != 72 || y.ReadHeight != 72 ||
+		y.ClipWidth != 128 || y.ClipHeight != 128 || y.ClipRowBytes != 128 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
 	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
@@ -726,11 +729,14 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Chroma 4:2:0: visible width 65/2 rounded = 33, MI-aligned (luma 136 -> chroma 68): clip 68-32=36.
-	// MI-aligned chroma height = luma 72 >> 1 = 36, so ClipHeight = 36.
+	// Chroma 4:2:0: visible width 130/2 = 65 -> strip 65-32 = 33 (Width=33).
+	// ReadWidth = MI-aligned (luma 136 -> chroma 68): 68-32 = 36. ClipWidth =
+	// SB-aligned (luma 192 -> chroma 96): 96-32 = 64. ReadHeight = luma 72 >> 1
+	// = 36; ClipHeight = luma 128 >> 1 = 64.
 	if u.Plane != FrameWorkPlaneU || u.X != 32 || u.Y != 0 || u.Width != 33 || u.Height != 33 ||
 		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 ||
-		u.ClipWidth != 36 || u.ClipHeight != 36 || u.ClipRowBytes != 36 {
+		u.ReadWidth != 36 || u.ReadHeight != 36 ||
+		u.ClipWidth != 64 || u.ClipHeight != 64 || u.ClipRowBytes != 64 {
 		t.Fatalf("U plane region=%+v", u)
 	}
 	u.Pix[0] = 0x55
@@ -744,7 +750,8 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	}
 	if v.Plane != FrameWorkPlaneV || v.X != 32 || v.Y != 0 || v.Width != 33 || v.Height != 33 ||
 		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 ||
-		v.ClipWidth != 36 || v.ClipHeight != 36 || v.ClipRowBytes != 36 {
+		v.ReadWidth != 36 || v.ReadHeight != 36 ||
+		v.ClipWidth != 64 || v.ClipHeight != 64 || v.ClipRowBytes != 64 {
 		t.Fatalf("V plane region=%+v", v)
 	}
 	v.Pix[0] = 0x33

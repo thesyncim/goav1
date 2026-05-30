@@ -960,6 +960,10 @@ func libaomVectorMIExtent(pixels uint32) uint32 {
 }
 
 func frameFormatFromEvent(event decoder.Event) frame.Format {
+	sbSizeLog2 := uint8(6)
+	if event.SequenceHeader.Use128x128Superblock {
+		sbSizeLog2 = 7
+	}
 	return frame.Format{
 		Width:        int(event.FrameSize.CodedWidth),
 		Height:       int(event.FrameSize.Height),
@@ -967,6 +971,7 @@ func frameFormatFromEvent(event decoder.Event) frame.Format {
 		MonoChrome:   event.SequenceHeader.ColorConfig.MonoChrome,
 		SubsamplingX: event.SequenceHeader.ColorConfig.SubsamplingX,
 		SubsamplingY: event.SequenceHeader.ColorConfig.SubsamplingY,
+		SBSizeLog2:   sbSizeLog2,
 		Align:        32,
 	}
 }

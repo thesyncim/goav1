@@ -155,12 +155,19 @@ type FrameWorkPlaneRegion struct {
 	Height         int
 	BytesPerSample int
 	RowBytes       int
-	// ClipWidth / ClipHeight are the MI-aligned writable extent in plane
-	// samples. Zero defaults to Width / Height (i.e., visible == aligned).
-	// ClipRowBytes is ClipWidth * BytesPerSample.
+	// ClipWidth / ClipHeight are the superblock-aligned writable extent in plane
+	// samples (full-transform write extent for partial bottom/right superblock
+	// blocks, clamped to the allocation). Zero defaults to Width / Height (i.e.,
+	// visible == aligned). ClipRowBytes is ClipWidth * BytesPerSample.
 	ClipWidth    int
 	ClipHeight   int
 	ClipRowBytes int
+	// ReadWidth / ReadHeight are the MI-aligned neighbor-read extent in plane
+	// samples (libaom's n_top_px/n_left_px cap from mi_{cols,rows} * MI_SIZE and
+	// the TX-origin reject bound). They satisfy Width <= ReadWidth <= ClipWidth.
+	// Zero defaults to ClipWidth / ClipHeight (then to Width / Height).
+	ReadWidth  int
+	ReadHeight int
 }
 
 // FrameWorkLoopRestorationPlan carries the frame-level post-filter decisions
@@ -475,26 +482,49 @@ func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWo
 	x0, x1 := frameWorkPlaneRange(region.PixelX, region.PixelX+region.PixelWidth, subsamplingX)
 	y0, y1 := frameWorkPlaneRange(region.PixelY, region.PixelY+region.PixelHeight, subsamplingY)
 
-	// Compute the MI-aligned writable extent. region.MIColEnd/MIRowEnd are in
-	// 4x4 luma MI units, capped to the frame's mi_cols/mi_rows. The aligned
-	// luma extent is miColEnd*4; chroma uses the same range plus the plane's
-	// subsampling shift, matching libaom's xd->mi_params.mi_cols * MI_SIZE.
-	lumaXAligned := region.MIColEnd * 4
-	lumaYAligned := region.MIRowEnd * 4
-	xAligned0, xAligned1 := frameWorkPlaneRange(region.MIColStart*4, lumaXAligned, subsamplingX)
-	yAligned0, yAligned1 := frameWorkPlaneRange(region.MIRowStart*4, lumaYAligned, subsamplingY)
+	// Compute two trailing extents.
+	//
+	// ReadWidth/ReadHeight is the MI-aligned extent (region.MIColEnd/MIRowEnd in
+	// 4x4 luma MI units, capped to mi_cols/mi_rows). It bounds intra-predictor
+	// neighbor reads (libaom's n_top_px/n_left_px cap, derived from
+	// xd->mi_params.mi_{cols,rows} * MI_SIZE) and the TX-origin reject (a
+	// transform is skipped only when its origin reaches the MI grid edge).
+	//
+	// ClipWidth/ClipHeight is the writable extent. libaom's
+	// av1_inverse_transform_block writes the WHOLE tx_size and cfl_store_tx
+	// subsamples the full reconstructed transform with no boundary clamp; a
+	// transform whose origin is inside the MI grid but whose extent crosses the
+	// cropped edge spills into the YV12 border. Since a transform never crosses
+	// a superblock boundary, that spill stays inside this job's superblock
+	// extent, so we expand the writable trailing edge to the superblock pixel
+	// extent. frameWorkPlaneWindow then clamps to the underlying allocation
+	// (which RequiredSize sizes to the superblock-aligned extent).
+	readLumaX := region.MIColEnd * 4
+	readLumaY := region.MIRowEnd * 4
+	clipLumaX := uint32(region.SBX+region.SBCols) << b.Sequence.SBSizeLog2
+	clipLumaY := uint32(region.SBY+region.SBRows) << b.Sequence.SBSizeLog2
+	xRead0, xRead1 := frameWorkPlaneRange(region.MIColStart*4, readLumaX, subsamplingX)
+	yRead0, yRead1 := frameWorkPlaneRange(region.MIRowStart*4, readLumaY, subsamplingY)
+	xAligned0, xAligned1 := frameWorkPlaneRange(region.MIColStart*4, clipLumaX, subsamplingX)
+	yAligned0, yAligned1 := frameWorkPlaneRange(region.MIRowStart*4, clipLumaY, subsamplingY)
 	// The window's pixel-space origin must remain aligned with the visible
-	// origin; only the trailing edge expands to cover the MI-aligned write.
-	if xAligned0 != x0 || yAligned0 != y0 {
+	// origin; only the trailing edge expands.
+	if xAligned0 != x0 || yAligned0 != y0 || xRead0 != x0 || yRead0 != y0 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
-	if xAligned1 < x1 {
-		xAligned1 = x1
+	if xRead1 < x1 {
+		xRead1 = x1
 	}
-	if yAligned1 < y1 {
-		yAligned1 = y1
+	if yRead1 < y1 {
+		yRead1 = y1
 	}
-	return frameWorkPlaneWindow(plane, outputPlane, bytesPerSample, x0, y0, x1, y1, xAligned1, yAligned1)
+	if xAligned1 < xRead1 {
+		xAligned1 = xRead1
+	}
+	if yAligned1 < yRead1 {
+		yAligned1 = yRead1
+	}
+	return frameWorkPlaneWindow(plane, outputPlane, bytesPerSample, x0, y0, x1, y1, xRead1, yRead1, xAligned1, yAligned1)
 }
 
 // ReferenceFrame returns the resolved frame for one AV1 inter-reference slot.
@@ -523,7 +553,9 @@ func (b FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane Frame
 		uint64(refPlane.Height) > uint64(^uint32(0)) {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
-	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, 0, 0, uint32(refPlane.Width), uint32(refPlane.Height), uint32(refPlane.Width), uint32(refPlane.Height))
+	w := uint32(refPlane.Width)
+	h := uint32(refPlane.Height)
+	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, 0, 0, w, h, w, h, w, h)
 }
 
 // JobReferencePlane returns the reference-plane window matching Jobs[index]'s
@@ -564,7 +596,7 @@ func (b FrameWorkBatch) JobReferencePlaneWindow(index int, reference FrameWorkRe
 	if !ok {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
-	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, x0, y0, x1, y1, x1, y1)
+	return frameWorkPlaneWindow(plane, refPlane, bytesPerSample, x0, y0, x1, y1, x1, y1, x1, y1)
 }
 
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
@@ -659,12 +691,13 @@ func frameWorkExpandPlaneRange(start uint32, end uint32, limit int, margin uint3
 }
 
 // frameWorkPlaneWindow builds a window over a plane. x0/x1/y0/y1 bound the
-// visible (coded-frame) extent that consumers MD5 and emit. xAligned1/yAligned1
-// bound the writable extent (MI-aligned end coordinates >= x1/y1); the window's
-// Pix slice covers samples through (yAligned1-1, xAligned1-1) so prediction
-// and residual writes can land in the past-visible MI-aligned padding without
-// running off the underlying plane buffer.
-func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSample int, x0 uint32, y0 uint32, x1 uint32, y1 uint32, xAligned1 uint32, yAligned1 uint32) (FrameWorkPlaneRegion, error) {
+// visible (coded-frame) extent that consumers MD5 and emit. xRead1/yRead1 bound
+// the MI-aligned neighbor-read extent (>= x1/y1); xAligned1/yAligned1 bound the
+// superblock-aligned writable extent (>= xRead1/yRead1). The window's Pix slice
+// covers samples through (yAligned1-1, xAligned1-1) so prediction and residual
+// writes can land in the past-visible padding without running off the
+// underlying plane buffer.
+func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSample int, x0 uint32, y0 uint32, x1 uint32, y1 uint32, xRead1 uint32, yRead1 uint32, xAligned1 uint32, yAligned1 uint32) (FrameWorkPlaneRegion, error) {
 	if bytesPerSample <= 0 ||
 		plane.Stride <= 0 ||
 		plane.Width <= 0 ||
@@ -675,8 +708,10 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 		y1 <= y0 ||
 		x1 > uint32(plane.Width) ||
 		y1 > uint32(plane.Height) ||
-		xAligned1 < x1 ||
-		yAligned1 < y1 {
+		xRead1 < x1 ||
+		yRead1 < y1 ||
+		xAligned1 < xRead1 ||
+		yAligned1 < yRead1 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
 
@@ -702,7 +737,17 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 	if yAligned1 > uint32(allocRows) {
 		yAligned1 = uint32(allocRows)
 	}
-	if xAligned1 < x1 || yAligned1 < y1 {
+	// The neighbor-read extent never exceeds the writable extent; clamp it down
+	// if the allocation clamp pulled the writable edge in (the read extent is
+	// MI-aligned and always lands inside the SB-aligned allocation, but keep the
+	// invariant Width <= ReadWidth <= ClipWidth defensively).
+	if xRead1 > xAligned1 {
+		xRead1 = xAligned1
+	}
+	if yRead1 > yAligned1 {
+		yRead1 = yAligned1
+	}
+	if xAligned1 < x1 || yAligned1 < y1 || xRead1 < x1 || yRead1 < y1 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
 
@@ -712,6 +757,8 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 	height := int(y1 - y0)
 	clipWidth := int(xAligned1 - x0)
 	clipHeight := int(yAligned1 - y0)
+	readWidth := int(xRead1 - x0)
+	readHeight := int(yRead1 - y0)
 	rowBytes, ok := frameWorkCheckedMul(width, bytesPerSample)
 	if !ok || rowBytes <= 0 || rowBytes > plane.Stride {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
@@ -761,6 +808,8 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 		ClipWidth:      clipWidth,
 		ClipHeight:     clipHeight,
 		ClipRowBytes:   clipRowBytes,
+		ReadWidth:      readWidth,
+		ReadHeight:     readHeight,
 	}, nil
 }
 

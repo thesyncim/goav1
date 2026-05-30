@@ -314,14 +314,17 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// ReadWidth/ReadHeight cap neighbor reads at the MI-aligned 40x40 extent
+	// (mi_cols = mi_rows = ((34+7)>>3)<<1 = 10 -> 40 luma px). ClipWidth/Height
+	// are the superblock-aligned writable extent (SBCols*64 = 64), clamped to
+	// the SB-aligned allocation (frame.RequiredSize rounds 34 -> 64). The
+	// partial bottom/right superblock reconstructs the full transform into that
+	// padding the way libaom writes into the YV12 border.
 	if y.X != 0 || y.Y != 0 || y.Width != 34 || y.Height != 34 ||
-		y.ClipWidth != 40 || y.ClipHeight != 40 || y.ClipRowBytes != 40 {
+		y.ReadWidth != 40 || y.ReadHeight != 40 ||
+		y.ClipWidth != 64 || y.ClipHeight != 64 || y.ClipRowBytes != 64 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
-	// The buffer is allocated at the MI-aligned 40x40 (frame.RequiredSize), so
-	// ClipHeight reaches the MI-aligned 40 rows; the partial bottom superblock
-	// reconstructs into those padding rows. Past-visible writes within a row
-	// land in the stride padding (Stride bytes per row).
 	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
 		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
 	}
@@ -334,7 +337,8 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if u.X != 0 || u.Y != 0 || u.Width != 17 || u.Height != 17 ||
-		u.ClipWidth != 20 || u.ClipHeight != 20 || u.ClipRowBytes != 20 {
+		u.ReadWidth != 20 || u.ReadHeight != 20 ||
+		u.ClipWidth != 32 || u.ClipHeight != 32 || u.ClipRowBytes != 32 {
 		t.Fatalf("U plane region=%+v", u)
 	}
 	if len(u.Pix) != (u.ClipHeight-1)*u.Stride+u.ClipRowBytes {
@@ -345,32 +349,34 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v.X != 0 || v.Y != 0 || v.Width != 17 || v.Height != 17 ||
-		v.ClipWidth != 20 || v.ClipHeight != 20 || v.ClipRowBytes != 20 {
+		v.ReadWidth != 20 || v.ReadHeight != 20 ||
+		v.ClipWidth != 32 || v.ClipHeight != 32 || v.ClipRowBytes != 32 {
 		t.Fatalf("V plane region=%+v", v)
 	}
-	// Verify the clip helper accepts past-visible writes: a 4x4 luma block at
-	// MI col 8 (luma pixel 32) of a 34-wide frame returns the full 4x4
-	// (writable past visible) instead of clipping to (2,4).
+	// The clip helper accepts past-visible writes up to the superblock-aligned
+	// writable extent (ClipWidth=64): a 4x4 luma block at MI col 8 (luma pixel
+	// 32) and MI col 9 (luma pixel 36) of a 34-wide frame both return the full
+	// 4x4, and so does a block deeper in the SB padding (col 56).
 	if w, h, ok := frameWorkClipVisiblePixelsToWindow(y, 32, 0, 4, 4); !ok || w != 4 || h != 4 {
 		t.Fatalf("luma MI col 8 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
 	}
-	// And a 4x4 luma block at MI col 9 (luma pixel 36) returns (4,4) instead
-	// of failing (its origin is within the aligned write extent of 40).
 	if w, h, ok := frameWorkClipVisiblePixelsToWindow(y, 36, 0, 4, 4); !ok || w != 4 || h != 4 {
 		t.Fatalf("luma MI col 9 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
 	}
-	// A block past the aligned extent still fails.
-	if _, _, ok := frameWorkClipVisiblePixelsToWindow(y, 40, 0, 4, 4); ok {
-		t.Fatalf("luma at aligned boundary should reject")
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(y, 56, 0, 4, 4); !ok || w != 4 || h != 4 {
+		t.Fatalf("luma SB-padding 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
 	}
-	// Chroma equivalents: 2x2 block at chroma MI col 8 (chroma pixel 16) and
-	// MI col 9 (chroma pixel 18) both stay inside the aligned chroma extent
-	// of 20.
+	// A block past the superblock-aligned writable extent (64) still fails.
+	if _, _, ok := frameWorkClipVisiblePixelsToWindow(y, 64, 0, 4, 4); ok {
+		t.Fatalf("luma at SB-aligned boundary should reject")
+	}
+	// Chroma equivalents: blocks inside the aligned chroma extent (ClipWidth=32)
+	// succeed; one at chroma pixel 30 clips its width to the writable edge.
 	if w, h, ok := frameWorkClipVisiblePixelsToWindow(u, 16, 0, 4, 4); !ok || w != 4 || h != 4 {
 		t.Fatalf("chroma MI col 8 4x4 clip=(%d,%d,%v) want (4,4,true)", w, h, ok)
 	}
-	if w, h, ok := frameWorkClipVisiblePixelsToWindow(u, 18, 0, 2, 4); !ok || w != 2 || h != 4 {
-		t.Fatalf("chroma MI col 9 2x4 clip=(%d,%d,%v) want (2,4,true)", w, h, ok)
+	if w, h, ok := frameWorkClipVisiblePixelsToWindow(u, 30, 0, 4, 4); !ok || w != 2 || h != 4 {
+		t.Fatalf("chroma near edge 4x4 clip=(%d,%d,%v) want (2,4,true)", w, h, ok)
 	}
 }
 
@@ -475,9 +481,10 @@ func TestFrameWorkBatchPredictBlockLumaIntraWritesPastVisibleRightEdge(t *testin
 // cropped Width/Height. Negative coordinates are rejected so callers hit the
 // invalid-batch path instead.
 func TestFrameWorkPlaneBlockStartsBeyondOutput(t *testing.T) {
-	// 34x34 4:2:0, Align 64: luma alloc = 40 rows of stride 64 (64 samples/row);
-	// chroma alloc = 20 rows of stride 64. So luma origins with x<64 and y<40
-	// are within the allocation; chroma with x<64 and y<20 likewise.
+	// 34x34 4:2:0, Align 64: the buffer is superblock-aligned, so luma alloc =
+	// 64 rows of stride 64 (64 samples/row); chroma alloc = 32 rows of stride
+	// 32. Luma origins with x<64 and y<64 are within the allocation; chroma with
+	// x<32 and y<32 likewise.
 	output := testBatchFrame(t, frame.Format{Width: 34, Height: 34, BitDepth: 8, Align: 64, SubsamplingX: true, SubsamplingY: true})
 	tests := []struct {
 		name  string
@@ -491,7 +498,8 @@ func TestFrameWorkPlaneBlockStartsBeyondOutput(t *testing.T) {
 		{"luma bottom padding (0, 34) within alloc", FrameWorkPlaneY, 0, 34, false},
 		{"luma MI col 9 (36, 8) within alloc", FrameWorkPlaneY, 36, 8, false},
 		{"luma MI row 9 (8, 36) within alloc", FrameWorkPlaneY, 8, 36, false},
-		{"luma past alloc height (0, 40)", FrameWorkPlaneY, 0, 40, true},
+		{"luma SB padding (0, 40) within alloc", FrameWorkPlaneY, 0, 40, false},
+		{"luma past alloc height (0, 64)", FrameWorkPlaneY, 0, 64, true},
 		{"luma past alloc width (64, 0)", FrameWorkPlaneY, 64, 0, true},
 		{"luma negative x rejected (not beyond)", FrameWorkPlaneY, -1, 0, false},
 		{"luma negative y rejected (not beyond)", FrameWorkPlaneY, 0, -1, false},
@@ -499,10 +507,11 @@ func TestFrameWorkPlaneBlockStartsBeyondOutput(t *testing.T) {
 		{"chroma U last visible (16, 16)", FrameWorkPlaneU, 16, 16, false},
 		{"chroma U right padding (17, 0) within alloc", FrameWorkPlaneU, 17, 0, false},
 		{"chroma U MI col 9 (18, 4) within alloc", FrameWorkPlaneU, 18, 4, false},
-		{"chroma U past alloc height (0, 20)", FrameWorkPlaneU, 0, 20, true},
+		{"chroma U SB padding (0, 20) within alloc", FrameWorkPlaneU, 0, 20, false},
+		{"chroma U past alloc height (0, 32)", FrameWorkPlaneU, 0, 32, true},
 		{"chroma V last visible (16, 16)", FrameWorkPlaneV, 16, 16, false},
 		{"chroma V bottom padding (8, 17) within alloc", FrameWorkPlaneV, 8, 17, false},
-		{"chroma V past alloc height (8, 20)", FrameWorkPlaneV, 8, 20, true},
+		{"chroma V past alloc height (8, 32)", FrameWorkPlaneV, 8, 32, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

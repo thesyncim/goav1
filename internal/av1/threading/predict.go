@@ -421,7 +421,7 @@ func (b FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVis
 }
 
 func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
-	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
+	_, _, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
 	if err != nil {
 		return err
 	}
@@ -437,7 +437,14 @@ func (b FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Blo
 	if err != nil {
 		return err
 	}
-	width, height, ok := frameWorkClipVisiblePixelsToWindow(window, absX, absY, width, height)
+	// libaom predicts the WHOLE transform (predWidth x predHeight) into the
+	// frame buffer and adds the full-transform residual; the trailing
+	// past-cropped-edge rows/cols spill into the superblock-aligned padding and
+	// are read by later blocks (e.g. CfL luma subsample). Write the full
+	// transform extent clamped to the window's writable (superblock-aligned,
+	// allocation-bounded) extent. The predWidth/predHeight passed to the
+	// predictor math below stay un-clipped so edge weighting matches libaom.
+	width, height, ok := frameWorkClipVisiblePixelsToWindow(window, absX, absY, predWidth, predHeight)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, FrameWorkPlaneY, absX, absY) {
 			return nil
@@ -517,6 +524,16 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if err != nil {
 		return err
 	}
+	// libaom predicts the whole block (predWidth x predHeight) into the frame
+	// buffer; for a block straddling the cropped edge the trailing rows/cols
+	// spill into the superblock-aligned padding and feed later reads (CfL luma
+	// subsample, CDEF/restoration bottom-edge input). Write the full extent
+	// clamped to the window's writable extent rather than the cropped-visible
+	// geom.Width/Height. predWidth/predHeight stay un-clipped for edge weighting.
+	writeWidth, writeHeight, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, geom.X, geom.Y, predWidth, predHeight)
+	if !ok {
+		writeWidth, writeHeight = geom.Width, geom.Height
+	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if visit.Prediction.Palette.UVSize > 0 {
 		if err := frameWorkPredictChromaPalette(geom.Output, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, 0, 0); err != nil {
@@ -540,11 +557,11 @@ func (b FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Block
 	if !ok {
 		return ErrInvalidBatch
 	}
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -562,7 +579,7 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	if !frameWorkBlockWithinJobRegion(region, visit.Block) {
 		return ErrInvalidBatch
 	}
-	width, height, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
+	_, _, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
 	if err != nil {
 		return err
 	}
@@ -575,7 +592,11 @@ func (b FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.B
 	}
 	absX := geom.X + offX4*4
 	absY := geom.Y + offY4*4
-	width, height, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, absX, absY, width, height)
+	// Write the full transform extent (clamped to the superblock-aligned
+	// writable window), matching libaom predicting the whole tx_size into the
+	// frame buffer; the predWidth/predHeight passed to the predictor stay
+	// un-clipped for libaom-faithful edge weighting.
+	width, height, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, absX, absY, predWidth, predHeight)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, absX, absY) {
 			return nil
@@ -641,12 +662,22 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	luma := frameWorkExtendPlaneToClip(b.Output.Y, lumaWindow, b.Output.Layout.BytesPerSample)
 	lumaX := geom.X
 	lumaY := geom.Y
-	lumaW := geom.Width
-	lumaH := geom.Height
 	fullWidth, fullHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
 	if err != nil {
 		return err
 	}
+	// libaom's cfl_store_tx subsamples the FULL reconstructed transform of the
+	// luma block (it has no boundary clamp; the trailing rows/cols of a
+	// transform crossing the cropped edge were genuinely reconstructed into the
+	// superblock-aligned padding). Subsample the full chroma extent
+	// (fullWidth x fullHeight) rather than the cropped-visible geom.Width/Height
+	// so the CfL AC matches libaom exactly. cfl_pad (PadCFLReconQ3) only
+	// replicates when a stored dimension is short of the full extent, which now
+	// happens solely on genuine overrun past the underlying allocation.
+	lumaW := fullWidth
+	lumaH := fullHeight
+	bufWidth := fullWidth
+	bufHeight := fullHeight
 	if geom.SubsamplingX {
 		lumaX <<= 1
 		lumaW <<= 1
@@ -655,17 +686,11 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 		lumaY <<= 1
 		lumaH <<= 1
 	}
-	// libaom's cfl_store_block only stores the reconstructed luma samples inside
-	// the MI-aligned frame grid (max_intra_block_width/height clamp to
-	// max_block_wide/high, which round to the MI grid edge, not the cropped
-	// width), then cfl_pad replicates the last stored chroma column/row out to
-	// the full transform extent. When a CfL block straddles the right/bottom
-	// frame edge, the luma read window above can exceed the reconstructed
-	// region. Clamp the luma read to the available (MI-aligned) luma extent and
-	// record the resulting chroma-domain stored dimensions so PadCFLReconQ3
-	// replicates the missing samples exactly as libaom does.
-	bufWidth := geom.Width
-	bufHeight := geom.Height
+	// Clamp the luma read to the available (superblock-aligned, allocation-
+	// bounded) luma extent. Only a transform that overruns the actual
+	// allocation (never, for an in-grid block, since the allocation is
+	// superblock-aligned) falls back to cfl_pad replication for the missing
+	// chroma column/row.
 	if lumaX+lumaW > luma.Width {
 		availLumaW := luma.Width - lumaX
 		if geom.SubsamplingX {
@@ -3652,11 +3677,22 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth
 // reads (e.g. a 34px-wide frame has a 40px MI-grid width, so an 8x8 transform
 // at x=32 sees n_top_px=8, not the cropped n_top_px=2).
 func frameWorkWindowEdgeReadBound(window FrameWorkPlaneRegion) (int, int) {
-	w := window.ClipWidth
+	// Neighbor reads cap at the MI-aligned extent (libaom's n_top_px/n_left_px
+	// from mi_{cols,rows} * MI_SIZE), NOT the superblock-aligned writable extent.
+	// Reading to the wider writable edge would let blocks straddling the MI grid
+	// edge see past-MI samples libaom never reads, corrupting interior edge
+	// blocks.
+	w := window.ReadWidth
+	if w <= 0 {
+		w = window.ClipWidth
+	}
 	if w <= 0 {
 		w = window.Width
 	}
-	h := window.ClipHeight
+	h := window.ReadHeight
+	if h <= 0 {
+		h = window.ClipHeight
+	}
 	if h <= 0 {
 		h = window.Height
 	}

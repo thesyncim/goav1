@@ -83,6 +83,10 @@ func frameFormatFromHeaderWidth(sequence parser.SequenceHeader, width uint32, he
 	if uint64(width) > maxInt || uint64(height) > maxInt {
 		return frame.Format{}, frame.ErrInvalidFormat
 	}
+	sbSizeLog2 := uint8(6)
+	if sequence.Use128x128Superblock {
+		sbSizeLog2 = 7
+	}
 	return frame.Format{
 		Width:        int(width),
 		Height:       int(height),
@@ -90,6 +94,7 @@ func frameFormatFromHeaderWidth(sequence parser.SequenceHeader, width uint32, he
 		MonoChrome:   sequence.ColorConfig.MonoChrome,
 		SubsamplingX: sequence.ColorConfig.SubsamplingX,
 		SubsamplingY: sequence.ColorConfig.SubsamplingY,
+		SBSizeLog2:   sbSizeLog2,
 		Align:        align,
 	}, nil
 }

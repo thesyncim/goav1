@@ -145,11 +145,19 @@ func (b FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, blo
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	visibleWidth, visibleHeight, err := frameWorkBlockCoeffVisibleSize(block.Block, size)
-	if err != nil {
+	// libaom's av1_inverse_transform_block adds the residual of the WHOLE
+	// tx_size to the predicted block; it never trims to the cropped visible
+	// rectangle (trailing rows/cols of a transform crossing the cropped edge
+	// spill into the YV12 border). A transform is skipped only when its
+	// blk_row/blk_col origin reaches the MI grid edge (the
+	// frameWorkPlaneBlockStartsBeyondOutput case below). Mirror that by writing
+	// the full transform size clamped to the window's superblock-aligned
+	// writable extent rather than block.VisibleW4/H4. (The visible-size check is
+	// retained for input validation.)
+	if _, _, err := frameWorkBlockCoeffVisibleSize(block.Block, size); err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, visibleWidth, visibleHeight)
+	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, size.Width, size.Height)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
 			if plane == FrameWorkPlaneY {

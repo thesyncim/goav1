@@ -108,8 +108,10 @@ func TestLayerPoolTwoSpatialLayers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layer0 := Format{Width: 640, Height: 360, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
-	layer1 := Format{Width: 1280, Height: 720, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	// SBSizeLog2 defaults to 6 after normalization; set it here so the stored
+	// (normalized) format compares equal below.
+	layer0 := Format{Width: 640, Height: 360, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, SBSizeLog2: 6, Align: 64}
+	layer1 := Format{Width: 1280, Height: 720, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, SBSizeLog2: 6, Align: 64}
 
 	id0, frame0, err := pool.Acquire(layer0)
 	if err != nil {

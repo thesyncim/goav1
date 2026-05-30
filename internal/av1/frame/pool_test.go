@@ -116,7 +116,9 @@ func TestFramePoolFrame(t *testing.T) {
 }
 
 func TestFramePoolFormatAndLayout(t *testing.T) {
-	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	// SBSizeLog2 defaults to 6 (64x64) after normalization; the pool stores the
+	// normalized format, so the comparison below uses the normalized value.
+	format := Format{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, SBSizeLog2: 6, Align: 32}
 	layout, err := RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)

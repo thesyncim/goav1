@@ -24,9 +24,10 @@ func TestRequiredSize420Aligned(t *testing.T) {
 	if layout.ChromaWidth != 8 || layout.ChromaHeight != 5 {
 		t.Fatalf("chroma: %dx%d", layout.ChromaWidth, layout.ChromaHeight)
 	}
-	// The byte buffer spans the MI-aligned extent (height 9 -> 16, chroma
-	// height 5 -> 8) while ChromaWidth/Height report the cropped extent.
-	if layout.Size != 64*16+64*8*2 {
+	// The byte buffer spans the superblock-aligned extent (width 16 -> 64,
+	// height 9 -> 64; chroma 32x32) while ChromaWidth/Height report the cropped
+	// extent.
+	if layout.Size != 64*64+64*32*2 {
 		t.Fatalf("size=%d", layout.Size)
 	}
 }
@@ -75,8 +76,8 @@ func TestRequiredSizeMonochrome(t *testing.T) {
 	if layout.ChromaWidth != 0 || layout.ChromaHeight != 0 {
 		t.Fatalf("chroma: %dx%d", layout.ChromaWidth, layout.ChromaHeight)
 	}
-	// MI-aligned allocation rounds height 9 -> 16.
-	if layout.UOffset != 64*16 || layout.VOffset != 64*16 || layout.Size != 64*16 {
+	// Superblock-aligned allocation rounds width 16 -> 64 and height 9 -> 64.
+	if layout.UOffset != 64*64 || layout.VOffset != 64*64 || layout.Size != 64*64 {
 		t.Fatalf("layout=%+v", layout)
 	}
 
