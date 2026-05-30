@@ -884,11 +884,22 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		return BlockLoopVisit{}, err
 	}
 
+	// libaom's read_delta_qindex / read_delta_lf gate the delta read on
+	// (bsize != sb_size || !skip), where bsize is the block's *coded* size
+	// (mbmi->bsize) — never the frame-edge-clipped visible extent. A skip block
+	// whose coded size equals the superblock but whose visible W4/H4 shrinks at
+	// the bottom/right frame edge must still be treated as a full superblock, or
+	// the delta_q/delta_lf symbol is read when libaom skips it, advancing the
+	// entropy decoder by an extra symbol and desyncing every subsequent block.
+	fullSuperblock := false
+	if dims, ok := block.Size.Dimensions(); ok {
+		fullSuperblock = dims.W4 == req.SBSizeMIB && dims.H4 == req.SBSizeMIB
+	}
 	delta := BlockDeltaContext{
 		MICol:          block.MICol,
 		MIRow:          block.MIRow,
 		SBSizeMIB:      req.SBSizeMIB,
-		FullSuperblock: block.VisibleW4 == req.SBSizeMIB && block.VisibleH4 == req.SBSizeMIB,
+		FullSuperblock: fullSuperblock,
 		SkipTransform:  prefix.SkipTransform,
 		Monochrome:     req.Monochrome,
 	}
