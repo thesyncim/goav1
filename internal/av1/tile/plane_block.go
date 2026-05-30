@@ -47,15 +47,21 @@ func PlaneBlockSize(block BlockSize, color parser.ColorConfig, plane int) (Block
 }
 
 func HasChromaBlock(req TransformTreeRequest, color parser.ColorConfig) bool {
-	if color.MonoChrome {
+	return hasChromaForBlock(req.Size, req.X4, req.Y4, color)
+}
+
+// hasChromaForBlock is the small, inlinable core of HasChromaBlock. It takes
+// the three fields the chroma-presence test actually depends on (block size
+// and the block's 4x4 origin) by value rather than a TransformTreeRequest, so
+// hot per-block call sites avoid copying the full request struct and the
+// compiler can inline the check into the block loop.
+func hasChromaForBlock(size BlockSize, x4, y4 int, color parser.ColorConfig) bool {
+	if color.MonoChrome || size >= blockSizeCount {
 		return false
 	}
-	dims, ok := req.Size.Dimensions()
-	if !ok {
-		return false
-	}
+	dims := &blockDimensions[size]
 	ssX := int(boolToShift(color.SubsamplingX))
 	ssY := int(boolToShift(color.SubsamplingY))
-	return (int(dims.W4) > ssX || req.X4&1 != 0) &&
-		(int(dims.H4) > ssY || req.Y4&1 != 0)
+	return (int(dims.W4) > ssX || x4&1 != 0) &&
+		(int(dims.H4) > ssY || y4&1 != 0)
 }

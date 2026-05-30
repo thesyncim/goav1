@@ -1017,7 +1017,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.InterMotionValid = true
 			result.MVResiduals = motionResult.Residuals
 			result.MVResidualValid = motionResult.ResidualValid
-			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
+			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
 				return BlockPredictionModeResult{}, err
 			}
 		}
@@ -1298,7 +1298,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				// the anchor cell with the just-decoded filters and the
 				// caller-supplied anchor MV/reference (the neighbor
 				// cells come straight off the grid).
-				if hasChroma := HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color); hasChroma {
+				if hasChroma := hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color); hasChroma {
 					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, block.X4, block.Y4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
 						selfCell := &sub.Cells[sub.Count-1]
 						selfCell.MV = result.InterMotion.MV[0]
@@ -1308,7 +1308,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
+				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}
 				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
@@ -1334,7 +1334,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				return result, nil
 			}
 		}
-		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs, HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)); err != nil {
+		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
 			return BlockPredictionModeResult{}, fmt.Errorf("mark inter references: %w", err)
 		}
 		if result.InterIntraValid && result.InterIntra.Enabled {
@@ -1371,7 +1371,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		return BlockPredictionModeResult{}, err
 	}
 	result.LumaAngleDelta = lumaAngleDelta
-	hasChroma := HasChromaBlock(TransformTreeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}, req.Color)
+	hasChroma := hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)
 	if hasChroma {
 		lossless := req.Lossless || req.Segmentation.Lossless[segmentID]
 		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, lossless)

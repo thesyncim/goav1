@@ -30,10 +30,17 @@ const (
 )
 
 // InterMotionResult is the decoded inter mode plus its final motion vectors.
+//
+// Field order is chosen to minimize padding: the 4-byte-aligned MV pair comes
+// first, then the byte-granular sub-structs and flag pack into the trailing
+// 8 bytes with no interior gap (24 bytes total vs 28 for the naive ordering).
+// This struct lives in large [MaxBlockModeSlots] and
+// [MaxBlockModeSlots][MaxBlockModeSlots] grids inside BlockModeContext, so the
+// 4-byte shrink removes several KiB from that hot context.
 type InterMotionResult struct {
+	MV         [2]motion.Vector
 	References InterReferencesResult
 	Mode       InterModeResult
-	MV         [2]motion.Vector
 	InterIntra bool
 }
 
