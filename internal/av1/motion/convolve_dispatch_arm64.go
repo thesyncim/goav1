@@ -14,16 +14,16 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // they keep the pure-Go reference. The assignment happens once, before any
 // decoder goroutine starts, so the steady-state cost is a single indirect call.
 //
-// The NEON wrappers themselves fall back to pure-Go for width-4 and 4-tap
-// blocks, so the only blocks the asm handles are the common width>=8 8-tap
-// shapes that dominate decode time.
+// The NEON wrappers handle width-4 (dedicated 4-lane kernels) and every
+// width>=8 8-tap shape; 1D X/Y still fall back to pure-Go only for width>=8
+// 4-tap kernels and non-multiple-of-8 widths that are not 4.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
 		convolveX8Impl = convolveX8NEON
 		convolveY8Impl = convolveY8NEON
-		// The 2D NEON kernel handles the common width>=8 8-tap shapes; its Go
-		// wrapper falls back to pure-Go for width-4 and 4-tap blocks.
+		// The 2D NEON kernel handles width-4 and every width>=8 8-tap shape; its
+		// Go wrapper falls back to pure-Go only for non-multiple-of-8 widths != 4.
 		convolve2D8Impl = convolve2D8NEON
 
 		// Edge-clamped 8-bit: the wrappers route to the fast NEON path when the

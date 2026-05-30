@@ -12,9 +12,10 @@ import (
 
 // NEON-accelerated 8-bit convolve kernels. The .s file implements the inner
 // per-block loops for widths that are a multiple of 8 (i.e. every AV1 block
-// width >= 8). The Go wrappers below resolve base pointers and route narrow
-// (width 4) or 4-tap blocks to the pure-Go reference, which keeps the asm
-// simple and the byte-exactness contract easy to audit.
+// width >= 8) plus dedicated 4-lane kernels for width-4 blocks (4xN luma and
+// every 4:2:0 chroma block of an 8x8 luma block). The Go wrappers below resolve
+// base pointers and route any remaining narrow / 4-tap shapes the asm does not
+// cover to the pure-Go reference, keeping the byte-exactness contract auditable.
 //
 // The asm matches the pure-Go reference bit-for-bit: NEON SRSHR performs
 // (v + (1<<(shift-1))) >> shift with a signed shift, identical to
@@ -44,12 +45,33 @@ func convolveY8NEONAsm(ctx *convolveNEONCtx)
 //go:noescape
 func convolve2D8NEONAsm(ctx *convolveNEONCtx)
 
+// Width-4 variants for AV1's narrowest inter blocks (4xN luma and every 4:2:0
+// chroma block of an 8x8 luma block). They compute 4 output pixels per row with
+// the low halves of the NEON registers and are bit-exact with the pure-Go
+// reference. width is implicitly 4; the asm ignores the width field.
+
+//go:noescape
+func convolveX8NEONAsmW4(ctx *convolveNEONCtx)
+
+//go:noescape
+func convolveY8NEONAsmW4(ctx *convolveNEONCtx)
+
+//go:noescape
+func convolve2D8NEONAsmW4(ctx *convolveNEONCtx)
+
 func isFourTap(k [filterTaps]int16) bool {
 	return k[0] == 0 && k[1] == 0 && k[6] == 0 && k[7] == 0
 }
 
 func convolveX8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
-	if width < 8 || width%8 != 0 || isFourTap(kernel) {
+	// width==4 uses the dedicated 4-lane kernel (it runs the full 8-tap MAC, so
+	// 4-tap kernels are handled directly). Other narrow / non-multiple-of-8
+	// widths fall back to pure-Go.
+	if !(width == 4 || (width >= 8 && width%8 == 0)) {
+		convolveX8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	if width >= 8 && isFourTap(kernel) {
 		convolveX8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
@@ -64,11 +86,19 @@ func convolveX8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX i
 		width:  uintptr(width),
 		height: uintptr(height),
 	}
+	if width == 4 {
+		convolveX8NEONAsmW4(&ctx)
+		return
+	}
 	convolveX8NEONAsm(&ctx)
 }
 
 func convolveY8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
-	if width < 8 || width%8 != 0 || isFourTap(kernel) {
+	if !(width == 4 || (width >= 8 && width%8 == 0)) {
+		convolveY8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	if width >= 8 && isFourTap(kernel) {
 		convolveY8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
@@ -82,6 +112,10 @@ func convolveY8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX i
 		refStr: uintptr(ref.Stride),
 		width:  uintptr(width),
 		height: uintptr(height),
+	}
+	if width == 4 {
+		convolveY8NEONAsmW4(&ctx)
+		return
 	}
 	convolveY8NEONAsm(&ctx)
 }
@@ -100,14 +134,35 @@ const convolve2DNEONIMStride = maxBlockSize
 // so 4-tap kernels (which merely zero the end taps) are handled directly and
 // stay bit-exact because the zeroed taps contribute nothing to the sum.
 func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
-	if width < 8 || width%8 != 0 {
-		convolve2D8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
-		return
-	}
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	xk := xKernel
 	yk := yKernel
+	if width == 4 {
+		// Width-4 uses a tightly-sized intermediate (stride 4) so the per-call
+		// zeroing of the scratch is ~1KB rather than the full 135KB the width>=8
+		// path needs. The asm walks the rows at imStr int16 elements.
+		const w4Stride = 4
+		var im [(maxBlockSize + filterTaps - 1) * w4Stride]int16
+		ctx := convolveNEONCtx{
+			dst:    &dst.Pix[dstY*dst.Stride+dstX],
+			ref:    &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+			kernel: &yk[0],
+			xKern:  &xk[0],
+			dstStr: uintptr(dst.Stride),
+			refStr: uintptr(ref.Stride),
+			width:  uintptr(width),
+			height: uintptr(height),
+			im:     &im[0],
+			imStr:  uintptr(w4Stride),
+		}
+		convolve2D8NEONAsmW4(&ctx)
+		return
+	}
+	if !(width >= 8 && width%8 == 0) {
+		convolve2D8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		return
+	}
 	// Intermediate buffer: (height+filterTaps-1) rows of imStride int16. The
 	// array is the same size as convolve2D8PureGo's stack im and does not escape.
 	var im [(maxBlockSize + filterTaps - 1) * convolve2DNEONIMStride]int16
@@ -136,8 +191,16 @@ func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 
 func convolveX8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	if width >= 8 && width%8 == 0 && !isFourTap(kernel) &&
-		planeRegionFits(ref, 1, refX-fo, refY, width+filterTaps-1, height) {
+	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
+	// The width-4 horizontal kernel reads one byte past the resident tap window
+	// (it loads bytes 8..11 to fill the slide register), so widen the fit check
+	// by 1 sample for width 4 to keep that load resident.
+	haloW := width + filterTaps - 1
+	if width == 4 {
+		haloW++
+	}
+	if neonWidth && !(width >= 8 && isFourTap(kernel)) &&
+		planeRegionFits(ref, 1, refX-fo, refY, haloW, height) {
 		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
@@ -146,7 +209,8 @@ func convolveX8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 
 func convolveY8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
-	if width >= 8 && width%8 == 0 && !isFourTap(kernel) &&
+	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
+	if neonWidth && !(width >= 8 && isFourTap(kernel)) &&
 		planeRegionFits(ref, 1, refX, refY-fo, width, height+filterTaps-1) {
 		convolveY8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
@@ -157,8 +221,15 @@ func convolveY8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 func convolve2D8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
-	if width >= 8 && width%8 == 0 &&
-		planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
+	// The width-4 horizontal pass reads one byte past the resident window; widen
+	// the column halo by 1 sample for width 4 so that load stays resident.
+	haloW := width + filterTaps - 1
+	if width == 4 {
+		haloW++
+	}
+	if neonWidth &&
+		planeRegionFits(ref, 1, refX-foX, refY-foY, haloW, height+filterTaps-1) {
 		convolve2D8NEON(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		return
 	}
