@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64
+//go:build amd64 && !purego
 
 package dsp
 
@@ -12,12 +12,16 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 //
 // The function-pointer assignment happens exactly once, before any decoder
 // goroutine starts work, so the steady-state cost of the dispatch is a
-// single indirect call.
+// single indirect call. The AVX2 variant (VPMINUB/VPMAXUB byte lanes, and
+// VPMINUW/VPMAXUW word lanes) is selected when the CPU advertises AVX2; the
+// pure-Go reference is the fallback.
 //
-// TODO: add SSE4.1 (PSADBW + PMINUB/PMAXUB) and AVX2 (VPSADBW + VPMINUB /
-// VPMAXUB) variants. Each would be a Go-assembly stub gated by the
-// matching cpu.Detected flag below.
+// TODO: add an SSE4.1 (PSADBW + PMINUB/PMAXUB) intermediate tier between AVX2
+// and pure Go for hosts without AVX2.
 func init() {
-	_ = cpu.Detected // ensure cpu package init runs before this point
+	if cpu.Detected.AVX2 {
+		minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8AVX2
+		return
+	}
 	minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8PureGo
 }
