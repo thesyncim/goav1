@@ -81,7 +81,13 @@ func newDecoder(frames []av1.IVFFrame, workers int) (*decoder, error) {
 		return nil, fmt.Errorf("frame format from stream plan: %w", err)
 	}
 
-	const surfaceCount = av1.RefFrames + 1
+	// The decoder can hold all RefFrames (8) reference slots live at once while
+	// also reconstructing the current frame and retaining frames decoded out of
+	// display order for later show_existing_frame output. RefFrames+1 is too few
+	// for deep alt-ref pyramids (frames are coded ahead of display and held as
+	// references), which exhausts the pool mid-stream. Size to RefFrames*2 to
+	// match the conformance harness, which decodes the full vector set.
+	const surfaceCount = av1.RefFrames * 2
 	pool, err := bindFramePool(format, surfaceCount)
 	if err != nil {
 		workerPool.Close()
