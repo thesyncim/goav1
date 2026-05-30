@@ -1066,13 +1066,7 @@ func absInt32(v int32) int32 {
 }
 
 func clampInt(v int, lo int, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 func checkedAdd(a int, b int) (int, bool) {

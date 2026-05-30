@@ -93,13 +93,7 @@ func roundPowerOfTwo(v int32, bits uint8) int32 {
 }
 
 func clampInt64(v int64, lo int64, hi int64) int64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 const (

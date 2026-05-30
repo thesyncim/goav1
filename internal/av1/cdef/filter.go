@@ -444,13 +444,7 @@ func blockFitsAt(length int, origin int, stride int, width int, height int) bool
 }
 
 func clampInt(v int, lo int, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 func signInt(v int) int {

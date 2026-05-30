@@ -50,13 +50,7 @@ func QMLevelAllIntra(qIndex int, first int, last int) int {
 }
 
 func clampInt(v int, lo int, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 // InverseQMatrix returns libaom's inverse quantization matrix for a decoded

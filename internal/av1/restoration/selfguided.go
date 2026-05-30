@@ -454,13 +454,7 @@ func roundPowerOfTwoUnsigned(v uint32, bits int) uint32 {
 }
 
 func clampInt32(v int32, lo int32, hi int32) int32 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
 
 func clearInt32s(values []int32) {

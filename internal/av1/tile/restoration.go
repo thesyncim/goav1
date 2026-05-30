@@ -282,11 +282,5 @@ func validDecodedWienerFilter(filter av1restoration.WienerFilter) bool {
 }
 
 func clampInt(v int, lo int, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
 }
