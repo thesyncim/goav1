@@ -78,9 +78,18 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 // bits for the row clamp and max(bd+6, 16) bits for the column clamp — see
 // clamp_buf() and av1_gen_inv_stage_range() in av1_inv_txfm2d.c.
 func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
-	shift, ok := size.shift()
+	// Resolve every per-size datum from a single compact index instead of
+	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
+	// each of which would recompute sizeIndex on this hot path.
+	idx := sizeIndex(size)
+	ok := idx >= 0 && sizeValidTable[idx]
+	shift := 0
+	var coeffSize Size
+	if ok {
+		shift = int(sizeShiftTable[idx])
+		coeffSize = adjustedScanSizeTable[idx]
+	}
 	vertical, horizontal, okType := typ.tx1DTypes()
-	coeffSize := adjustedScanSize(size)
 	width := size.Width
 	height := size.Height
 	scratchLen := width * height
@@ -173,7 +182,10 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		for col, v := range tmpLine {
-			dstLine[col] = clipInt16(clipInt32(roundShift(int64(v), 4)))
+			// roundShift(int64(v), 4) is in [-2^27, 2^27), so it always fits an
+			// int32 and the surrounding clipInt32 is a no-op; cast directly and
+			// clamp once to int16, matching libaom's clip_pixel exactly.
+			dstLine[col] = clipInt16(int32(roundShift(int64(v), 4)))
 		}
 	}
 	return nil

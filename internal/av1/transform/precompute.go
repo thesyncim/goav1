@@ -14,31 +14,42 @@
 
 package transform
 
-// dimLog2 maps a transform dimension (4,8,16,32,64) to a compact 0..4 index, or
-// -1 when the dimension is not an AV1 transform extent. The map is indexed by
-// the raw pixel dimension; out-of-range dimensions are handled by sizeIndex.
+// A transform dimension (4,8,16,32,64) maps to a compact 0..4 slot, or -1 when
+// the dimension is not an AV1 transform extent. dimSlotTable performs this map
+// indexed by the raw pixel dimension; out-of-range dimensions are handled by
+// dimSlot/sizeIndex.
 const (
 	numDimSlots  = 5  // {4,8,16,32,64}
 	numSizeSlots = 25 // numDimSlots * numDimSlots
 	invalidSize  = -1
 )
 
+// dimSlotTable maps a raw transform dimension (0..64) to its compact 0..4 slot,
+// or invalidSize for any value that is not an AV1 transform extent. Indexing a
+// fixed array avoids the per-call branch ladder of a switch on this hot path.
+// It is fully specified at initialisation (no reliance on init ordering) so it
+// is safe for the package-level metadata init to consult via sizeIndex.
+var dimSlotTable = buildDimSlotTable()
+
+func buildDimSlotTable() [65]int8 {
+	var t [65]int8
+	for i := range t {
+		t[i] = invalidSize
+	}
+	t[4] = 0
+	t[8] = 1
+	t[16] = 2
+	t[32] = 3
+	t[64] = 4
+	return t
+}
+
 // dimSlot returns the compact 0..4 slot for an AV1 transform dimension, or -1.
 func dimSlot(d int) int {
-	switch d {
-	case 4:
-		return 0
-	case 8:
-		return 1
-	case 16:
-		return 2
-	case 32:
-		return 3
-	case 64:
-		return 4
-	default:
+	if uint(d) >= uint(len(dimSlotTable)) {
 		return invalidSize
 	}
+	return int(dimSlotTable[d])
 }
 
 // sizeIndex returns a compact 0..24 index for s, or -1 when either dimension is

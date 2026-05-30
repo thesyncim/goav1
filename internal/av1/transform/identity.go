@@ -129,8 +129,16 @@ func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride
 // av1/common/av1_inv_txfm2d.c, which the IDTX path also passes through (it
 // shares inv_txfm2d_add_c with the other inverse transforms).
 func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
-	shift, ok := size.shift()
-	coeffSize := adjustedScanSize(size)
+	// Resolve shift and coeffSize from one compact index instead of calling
+	// size.shift() and adjustedScanSize() separately (each recomputes sizeIndex).
+	idx := sizeIndex(size)
+	ok := idx >= 0 && sizeValidTable[idx]
+	shift := 0
+	var coeffSize Size
+	if ok {
+		shift = int(sizeShiftTable[idx])
+		coeffSize = adjustedScanSizeTable[idx]
+	}
 	if !ok ||
 		!identityBlockSupported(size) ||
 		dstStride < size.Width ||
@@ -158,7 +166,9 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 				v = clipRange(int64(v), colMin, colMax)
 			}
 			v, _ = identity1DValue(v, height)
-			dstLine[col] = clipInt16(clipInt32(roundShift(int64(v), 4)))
+			// roundShift(int64(v), 4) fits an int32, so clipInt32 is a no-op;
+			// cast directly and clamp once to int16 (matches libaom clip_pixel).
+			dstLine[col] = clipInt16(int32(roundShift(int64(v), 4)))
 		}
 	}
 	return nil
