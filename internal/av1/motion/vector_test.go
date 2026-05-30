@@ -944,7 +944,7 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			fillHighBDMotionTestPlane(src, max)
 			t.Run("X", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
-				convolveXHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity)
+				convolveXHighBDImpl(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity)
 				for row := range 8 {
 					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
@@ -957,7 +957,7 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			})
 			t.Run("Y", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
-				convolveYHighBD(dst, src, max, 8, 8, 8, 8, 8, 8, identity)
+				convolveYHighBDImpl(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity)
 				for row := range 8 {
 					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
@@ -970,7 +970,7 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			})
 			t.Run("2D", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
-				convolve2DHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity, identity)
+				convolve2DHighBDImpl(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity, identity)
 				for row := range 8 {
 					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
@@ -1025,7 +1025,7 @@ func TestConvolveHighBDQ10ClampedPath(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						convolve2DHighBDClamped(got, src, bd, max, 0, 0, 0, 0, sz.width, sz.height, xKernel, yKernel)
+						convolve2DHighBDClampedImpl(got, src, bd, max, 0, 0, 0, 0, sz.width, sz.height, xKernel, yKernel)
 						libaomVerbatimHighBD2DSRClamped(want, src, bd, max, 0, 0, 0, 0, sz.width, sz.height, xKernel, yKernel)
 						for row := 0; row < sz.height; row++ {
 							for col := 0; col < sz.width; col++ {
@@ -1077,7 +1077,7 @@ func TestConvolveHighBDQ10OneDimensional(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					convolveXHighBD(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
+					convolveXHighBDImpl(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
 					libaomVerbatimHighBDXSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel)
 					for row := 0; row < sz.height; row++ {
 						for col := 0; col < sz.width; col++ {
@@ -1096,7 +1096,7 @@ func TestConvolveHighBDQ10OneDimensional(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					convolveYHighBD(got, src, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, yKernel)
+					convolveYHighBDImpl(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, yKernel)
 					libaomVerbatimHighBDYSR(want, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, yKernel)
 					for row := 0; row < sz.height; row++ {
 						for col := 0; col < sz.width; col++ {
@@ -1226,7 +1226,7 @@ func TestConvolveHighBDLibaomQ10MatchesAlgorithm(t *testing.T) {
 						// Production call (anchored at the input
 						// origin so the convolve halo lies inside
 						// the padded source plane).
-						convolve2DHighBD(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel, yKernel)
+						convolve2DHighBDImpl(got, src, bd, max, 0, 0, libaomInputOrigin, libaomInputOrigin, sz.width, sz.height, xKernel, yKernel)
 						// Independent libaom-shaped reference,
 						// rewritten verbatim from libaom-v3.13.1
 						// av1/common/convolve.c

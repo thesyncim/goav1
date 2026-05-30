@@ -125,3 +125,42 @@ func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 	}
 	convolve2D8NEONAsm(&ctx)
 }
+
+// The *ClampedNEON wrappers handle the edge-block convolves. When the whole tap
+// window happens to lie inside the reference plane the clamp is a no-op and the
+// result is bit-identical to the non-clamped fast path, so we route to the NEON
+// asm. Otherwise (a tap coordinate genuinely falls off the frame) we fall back
+// to the pure-Go clamped reference, which clamps each tap coordinate. This keeps
+// the asm free of per-tap coordinate clamping while still accelerating the
+// common case where an "edge" block's halo is actually resident.
+
+func convolveX8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	if width >= 8 && width%8 == 0 && !isFourTap(kernel) &&
+		planeRegionFits(ref, 1, refX-fo, refY, width+filterTaps-1, height) {
+		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	convolveX8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
+func convolveY8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	if width >= 8 && width%8 == 0 && !isFourTap(kernel) &&
+		planeRegionFits(ref, 1, refX, refY-fo, width, height+filterTaps-1) {
+		convolveY8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	convolveY8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
+func convolve2D8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	if width >= 8 && width%8 == 0 &&
+		planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+		convolve2D8NEON(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		return
+	}
+	convolve2D8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}

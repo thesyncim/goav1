@@ -102,7 +102,7 @@ func BenchmarkConvolve2D8Clamped_16(b *testing.B) {
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 16, 16, func() {
-		convolve2D8Clamped(dst, ref, 0, 0, 0, 0, 16, 16, xk, yk)
+		convolve2D8ClampedImpl(dst, ref, 0, 0, 0, 0, 16, 16, xk, yk)
 	})
 }
 
@@ -112,7 +112,7 @@ func BenchmarkConvolve2DHighBD_32(b *testing.B) {
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 32, 32, func() {
-		convolve2DHighBD(dst, ref, 10, (1<<10)-1, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
+		convolve2DHighBDImpl(dst, ref, 10, (1<<10)-1, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
 	})
 }
 
@@ -121,6 +121,15 @@ func BenchmarkConvolveXHighBD_32(b *testing.B) {
 	dst, ref := benchPlanes(32, 10)
 	xk := subpelFilters8[3]
 	runConvolveBench(b, 32, 32, func() {
-		convolveXHighBD(dst, ref, 10, (1<<10)-1, 0, 0, filterTaps, filterTaps, 32, 32, xk)
+		convolveXHighBDImpl(dst, ref, 10, (1<<10)-1, 0, 0, filterTaps, filterTaps, 32, 32, xk)
+	})
+}
+
+// High-BD Y 1D, 32x32 at bd=10.
+func BenchmarkConvolveYHighBD_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 10)
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveYHighBDImpl(dst, ref, 10, (1<<10)-1, 0, 0, filterTaps, filterTaps, 32, 32, yk)
 	})
 }

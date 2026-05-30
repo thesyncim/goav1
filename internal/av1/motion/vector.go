@@ -302,19 +302,19 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 		if planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 			convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		} else {
-			convolve2D8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		}
 	case subX != 0:
 		if planeRegionFits(ref, 1, refX-foX, refY, width+filterTaps-1, height) {
 			convolveX8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
 		} else {
-			convolveX8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
+			convolveX8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
 		}
 	case subY != 0:
 		if planeRegionFits(ref, 1, refX, refY-foY, width, height+filterTaps-1) {
 			convolveY8Impl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
 		} else {
-			convolveY8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
+			convolveY8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
 		}
 	}
 	return nil
@@ -344,21 +344,21 @@ func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uin
 	switch {
 	case subX != 0 && subY != 0:
 		if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-			convolve2DHighBD(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2DHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		} else {
-			convolve2DHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2DHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		}
 	case subX != 0:
 		if planeRegionFits(ref, 2, refX-foX, refY, width+filterTaps-1, height) {
-			convolveXHighBD(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
+			convolveXHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
 		} else {
-			convolveXHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
+			convolveXHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
 		}
 	case subY != 0:
 		if planeRegionFits(ref, 2, refX, refY-foY, width, height+filterTaps-1) {
-			convolveYHighBD(dst, ref, max, dstX, dstY, refX, refY, width, height, yKernel)
+			convolveYHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, yKernel)
 		} else {
-			convolveYHighBDClamped(dst, ref, max, dstX, dstY, refX, refY, width, height, yKernel)
+			convolveYHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, yKernel)
 		}
 	}
 	return nil
@@ -416,7 +416,7 @@ func convolveX8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 	}
 }
 
-func convolveX8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveX8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
@@ -479,7 +479,7 @@ func convolveY8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 	}
 }
 
-func convolveY8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveY8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
@@ -573,7 +573,7 @@ func convolve2D8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 	}
 }
 
-func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+func convolve2D8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
 	foX := filterTaps/2 - 1
@@ -642,7 +642,7 @@ func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, re
 	}
 }
 
-func convolveXHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveXHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	// av1_highbd_convolve_x_sr_c: round_0 then bits = FILTER_BITS - round_0.
 	// round_0 is bd-dependent (5 at bd == 12), matching get_conv_params_no_round.
@@ -683,7 +683,7 @@ func convolveXHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint1
 	}
 }
 
-func convolveXHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveXHighBDClampedPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	round0, _ := highBDRoundBits(bitDepth)
 	bits := filterBits - round0
@@ -719,7 +719,8 @@ func convolveXHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 	}
 }
 
-func convolveYHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveYHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	_ = bitDepth
 	fo := filterTaps/2 - 1
 	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
@@ -755,7 +756,8 @@ func convolveYHighBD(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dst
 	}
 }
 
-func convolveYHighBDClamped(dst frame.Plane, ref frame.Plane, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveYHighBDClampedPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	_ = bitDepth
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
@@ -787,7 +789,7 @@ func convolveYHighBDClamped(dst frame.Plane, ref frame.Plane, max uint16, dstX i
 	}
 }
 
-func convolve2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+func convolve2DHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 	foX := filterTaps/2 - 1
@@ -859,7 +861,7 @@ func convolve2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint
 	}
 }
 
-func convolve2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+func convolve2DHighBDClampedPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 	foX := filterTaps/2 - 1
