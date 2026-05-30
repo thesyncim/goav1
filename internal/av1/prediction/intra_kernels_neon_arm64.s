@@ -141,3 +141,83 @@ diRow:
 	SUB  $8, R12, R12
 	CBNZ R12, diRow
 	RET
+
+// func dirAboveRun8NEONAsm(dst *byte, ref *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
+//
+// Fills n (multiple of 8) destination bytes for the zone-2 "above" branch with
+//   roundPowerOfTwo(ref[i]*(32-shift) + ref[i+1]*shift, 5)
+// where the source index advances by one per output (a forward, contiguous run
+// over the pre-validated edge span, so ref[i] and ref[i+1] are always valid and
+// there is no clamp). weight32 = 32-shift, weightShift = shift. Same arithmetic
+// as dirRowInterp8NEONAsm.
+TEXT ·dirAboveRun8NEONAsm(SB), NOSPLIT, $0-40
+	MOVD dst+0(FP), R11
+	MOVD ref+8(FP), R10
+	MOVD weight32+16(FP), R8
+	MOVD weightShift+24(FP), R9
+	MOVD n+32(FP), R12
+
+	WORD $0x4e020d00 // dup v0.8h, w8   (32-shift)
+	WORD $0x4e020d21 // dup v1.8h, w9   (shift)
+arRow:
+	WORD $0x4c407542 // ld1 {v2.8h}, [x10]      (p0 = ref[i..i+7])
+	WORD $0x3cc02143 // ldur q3, [x10, #2]       (p1 = ref[i+1..i+8])
+	WORD $0x2e60c044 // umull  v4.4s, v2.4h, v0.4h
+	WORD $0x6e60c045 // umull2 v5.4s, v2.8h, v0.8h
+	WORD $0x2e618064 // umlal  v4.4s, v3.4h, v1.4h
+	WORD $0x6e618065 // umlal2 v5.4s, v3.8h, v1.8h
+	WORD $0x6f3b2484 // urshr v4.4s, v4.4s, #5
+	WORD $0x6f3b24a5 // urshr v5.4s, v5.4s, #5
+	WORD $0x0e612886 // xtn  v6.4h, v4.4s
+	WORD $0x4e6128a6 // xtn2 v6.8h, v5.4s
+	WORD $0x0e2128c7 // xtn v7.8b, v6.8h
+	WORD $0x0c9f7167 // st1 {v7.8b}, [x11], #8
+	ADD  $16, R10, R10
+	SUB  $8, R12, R12
+	CBNZ R12, arRow
+	RET
+
+// func dirLeftCol8NEONAsm(dst *byte, stride uintptr, ref *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
+//
+// Fills n (multiple of 8) destination samples down a single zone-3 column with
+//   roundPowerOfTwo(ref[i]*(32-shift) + ref[i+1]*shift, 5)
+// where the source index advances by one per row (a forward, contiguous run
+// over the pre-validated left edge, so no clamp). The 8 interpolated bytes per
+// iteration are scattered into the column with strided single-lane stores; the
+// store base stays in R11 and the per-row byte stride stays in R1 (the lane
+// store encodings post-index by Rm = x1). weight32 = 32-shift, weightShift =
+// shift. Same arithmetic as dirAboveRun8NEONAsm.
+TEXT ·dirLeftCol8NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R11
+	MOVD stride+8(FP), R1
+	MOVD ref+16(FP), R10
+	MOVD weight32+24(FP), R8
+	MOVD weightShift+32(FP), R9
+	MOVD n+40(FP), R12
+
+	WORD $0x4e020d00 // dup v0.8h, w8   (32-shift)
+	WORD $0x4e020d21 // dup v1.8h, w9   (shift)
+lcRow:
+	WORD $0x4c407542 // ld1 {v2.8h}, [x10]      (p0 = ref[i..i+7])
+	WORD $0x3cc02143 // ldur q3, [x10, #2]       (p1 = ref[i+1..i+8])
+	WORD $0x2e60c044 // umull  v4.4s, v2.4h, v0.4h
+	WORD $0x6e60c045 // umull2 v5.4s, v2.8h, v0.8h
+	WORD $0x2e618064 // umlal  v4.4s, v3.4h, v1.4h
+	WORD $0x6e618065 // umlal2 v5.4s, v3.8h, v1.8h
+	WORD $0x6f3b2484 // urshr v4.4s, v4.4s, #5
+	WORD $0x6f3b24a5 // urshr v5.4s, v5.4s, #5
+	WORD $0x0e612886 // xtn  v6.4h, v4.4s
+	WORD $0x4e6128a6 // xtn2 v6.8h, v5.4s
+	WORD $0x0e2128c7 // xtn v7.8b, v6.8h
+	WORD $0x0d810167 // st1 {v7.b}[0], [x11], x1
+	WORD $0x0d810567 // st1 {v7.b}[1], [x11], x1
+	WORD $0x0d810967 // st1 {v7.b}[2], [x11], x1
+	WORD $0x0d810d67 // st1 {v7.b}[3], [x11], x1
+	WORD $0x0d811167 // st1 {v7.b}[4], [x11], x1
+	WORD $0x0d811567 // st1 {v7.b}[5], [x11], x1
+	WORD $0x0d811967 // st1 {v7.b}[6], [x11], x1
+	WORD $0x0d811d67 // st1 {v7.b}[7], [x11], x1
+	ADD  $16, R10, R10
+	SUB  $8, R12, R12
+	CBNZ R12, lcRow
+	RET

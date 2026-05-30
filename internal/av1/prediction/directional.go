@@ -231,13 +231,64 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 
 	fracBitsX := 6 - upsampleAbove
 	fracBitsY := 6 - upsampleLeft
+	minBaseX := -(1 << upsampleAbove)
+	// Fast path: 8-bit, non-upsampled blocks whose visible width is a multiple
+	// of 8 route the contiguous "above" segment of each row through the
+	// dispatched dirAboveRun8Impl (NEON where available, else pure-Go). Within a
+	// row the per-column base advances by one (baseInc==1) and the fractional
+	// shift is invariant (x changes by 64 per column), so once a column reaches
+	// the above branch (baseX >= -1) every remaining column reads a forward,
+	// contiguous neighbour pair from above[] with the same shift. The leading
+	// left-branch columns (baseX < -1) keep the exact per-pixel scalar path.
+	fastAbove := bytesPerSample == 1 && upsampleAbove == 0 && upsampleLeft == 0 && block.width%8 == 0
+	if fastAbove {
+		for row := 0; row < block.height; row++ {
+			y := row + 1
+			line := block.pix[row*block.stride:]
+			col := 0
+			// Leading columns whose baseX is still left of the above edge.
+			for ; col < block.width; col++ {
+				x := (col << 6) - y*dx
+				if x>>fracBitsX >= minBaseX {
+					break
+				}
+				xx := col + 1
+				yy := (row << 6) - xx*dy
+				baseY := yy >> fracBitsY
+				shiftY := (yy & 0x3f) >> 1
+				p0 := int(edges.Left[edges.LeftOrigin+baseY])
+				p1 := int(edges.Left[edges.LeftOrigin+baseY+1])
+				line[col] = byte(roundPowerOfTwo(p0*(32-shiftY)+p1*shiftY, 5))
+			}
+			if col < block.width {
+				xStart := (col << 6) - y*dx
+				baseX := xStart >> fracBitsX
+				shiftX := (xStart & 0x3f) >> 1
+				runLen := block.width - col
+				if runLen >= 8 {
+					ref := edges.Above[edges.AboveOrigin+baseX:]
+					dirAboveRun8Impl(line[col:block.width], ref, shiftX, runLen)
+				} else {
+					// Above-run too short to amortise the vectorised call;
+					// finish the row with the inline scalar two-tap.
+					for ; col < block.width; col++ {
+						p0 := int(edges.Above[edges.AboveOrigin+baseX])
+						p1 := int(edges.Above[edges.AboveOrigin+baseX+1])
+						line[col] = byte(roundPowerOfTwo(p0*(32-shiftX)+p1*shiftX, 5))
+						baseX++
+					}
+				}
+			}
+		}
+		return nil
+	}
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
 			y := row + 1
 			x := (col << 6) - y*dx
 			baseX := x >> fracBitsX
 			var value uint16
-			if baseX >= -(1 << upsampleAbove) {
+			if baseX >= minBaseX {
 				shift := ((x * (1 << upsampleAbove)) & 0x3f) >> 1
 				p0 := int(edges.Above[edges.AboveOrigin+baseX])
 				p1 := int(edges.Above[edges.AboveOrigin+baseX+1])
@@ -268,6 +319,38 @@ func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges Directiona
 	}
 	fracBits := 6 - upsampleLeft
 	baseInc := 1 << upsampleLeft
+	// Fast path: 8-bit, non-upsampled blocks compute each visible column's
+	// in-range rows through the dispatched dirLeftCol8Impl (NEON where
+	// available, else pure-Go). Within a column the base advances by one
+	// (baseInc==1) with a constant fractional shift, so the rows strictly inside
+	// [base, maxBaseY) read a forward, contiguous neighbour pair from left[];
+	// only those rows are vectorised. Rows at or past maxBaseY clamp to
+	// left[maxBaseY] exactly as the scalar reference. The off-edge predWidth
+	// columns never store, so the visible columns suffice (each column's base is
+	// (col+1)*dy, independent of the others).
+	if bytesPerSample == 1 && upsampleLeft == 0 {
+		clamp := byte(edges.Left[edges.LeftOrigin+maxBaseY])
+		for col := 0; col < block.width; col++ {
+			y := (col + 1) * dy
+			base := y >> fracBits
+			shift := (y & 0x3f) >> 1
+			rowsInRange := maxBaseY - base
+			if rowsInRange < 0 {
+				rowsInRange = 0
+			}
+			if rowsInRange > block.height {
+				rowsInRange = block.height
+			}
+			if rowsInRange > 0 {
+				ref := edges.Left[edges.LeftOrigin+base:]
+				dirLeftCol8Impl(block.pix[col:], block.stride, ref, shift, rowsInRange)
+			}
+			for row := rowsInRange; row < block.height; row++ {
+				block.pix[row*block.stride+col] = clamp
+			}
+		}
+		return nil
+	}
 	y := dy
 	for col := range predWidth {
 		base := y >> fracBits

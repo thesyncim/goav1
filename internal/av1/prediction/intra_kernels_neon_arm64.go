@@ -38,6 +38,12 @@ func applyCFLRowNEONAsm(dst *byte, ac *int16, alpha uintptr, n uintptr)
 //go:noescape
 func dirRowInterp8NEONAsm(dst *byte, above *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
 
+//go:noescape
+func dirAboveRun8NEONAsm(dst *byte, ref *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
+
+//go:noescape
+func dirLeftCol8NEONAsm(dst *byte, stride uintptr, ref *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
+
 func sumSamplesNEON(samples []uint16) int {
 	n := len(samples)
 	chunks := n &^ 7
@@ -125,4 +131,28 @@ func dirRowInterp8NEON(dst []byte, above []uint16, base int, shift int, maxBase 
 		return
 	}
 	dirRowInterp8NEONAsm(&dst[0], &above[base], uintptr(32-shift), uintptr(shift), uintptr(width))
+}
+
+func dirAboveRun8NEON(dst []byte, ref []uint16, shift int, count int) {
+	// Process 8 contiguous outputs per asm call; the (0..7) tail uses the
+	// scalar reference. ref[0..count] are all valid (pre-validated span), so the
+	// asm's ref[i]/ref[i+1] loads never read past the slice.
+	chunks := count &^ 7
+	if chunks > 0 {
+		dirAboveRun8NEONAsm(&dst[0], &ref[0], uintptr(32-shift), uintptr(shift), uintptr(chunks))
+	}
+	if chunks < count {
+		dirAboveRun8PureGo(dst[chunks:], ref[chunks:], shift, count-chunks)
+	}
+}
+
+func dirLeftCol8NEON(dst []byte, stride int, ref []uint16, shift int, count int) {
+	// Process 8 rows per asm call (strided byte stores), tail rows via scalar.
+	chunks := count &^ 7
+	if chunks > 0 {
+		dirLeftCol8NEONAsm(&dst[0], uintptr(stride), &ref[0], uintptr(32-shift), uintptr(shift), uintptr(chunks))
+	}
+	if chunks < count {
+		dirLeftCol8PureGo(dst[chunks*stride:], stride, ref[chunks:], shift, count-chunks)
+	}
 }

@@ -28,6 +28,8 @@ func init() {
 		applyCFLImpl = applyCFLNEON
 		subsampleLuma8Impl = subsampleLuma8NEON
 		dirRowInterp8Impl = dirRowInterp8NEON
+		dirAboveRun8Impl = dirAboveRun8NEON
+		dirLeftCol8Impl = dirLeftCol8NEON
 		return
 	}
 	predictPaethImpl = predictPaethPureGo
@@ -38,4 +40,6 @@ func init() {
 	applyCFLImpl = applyCFLPureGo
 	subsampleLuma8Impl = subsampleLuma8PureGo
 	dirRowInterp8Impl = dirRowInterp8PureGo
+	dirAboveRun8Impl = dirAboveRun8PureGo
+	dirLeftCol8Impl = dirLeftCol8PureGo
 }

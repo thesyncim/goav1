@@ -87,3 +87,33 @@ func dirRowInterp8PureGo(dst []byte, above []uint16, base int, shift int, maxBas
 		base++
 	}
 }
+
+// dirAboveRun8PureGo fills count contiguous 8-bit destination bytes for the
+// zone-2 "above" branch and the unclamped portion of any forward edge run. ref
+// is the edge slice positioned at the first source index (so ref[0] and ref[1]
+// are the first pixel's neighbour pair); the source index advances by one per
+// output. No clamp: callers (zone 2, validated reference span) only invoke this
+// for runs fully inside the reference. The interpolation is identical to
+// roundPowerOfTwo(ref[i]*(32-shift)+ref[i+1]*shift, 5).
+func dirAboveRun8PureGo(dst []byte, ref []uint16, shift int, count int) {
+	for i := 0; i < count; i++ {
+		p0 := int(ref[i])
+		p1 := int(ref[i+1])
+		dst[i] = byte(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
+	}
+}
+
+// dirLeftCol8PureGo fills count 8-bit destination samples down a single column
+// of the zone-3 predictor. ref is the left edge positioned at the first source
+// index (ref[0]/ref[1] are the first row's neighbour pair); the source index
+// advances by one per row. dst holds the column's top sample and stride is the
+// per-row byte step. No clamp: callers only invoke this for the run of rows
+// strictly inside [base, maxBase). The interpolation matches
+// roundPowerOfTwo(ref[i]*(32-shift)+ref[i+1]*shift, 5).
+func dirLeftCol8PureGo(dst []byte, stride int, ref []uint16, shift int, count int) {
+	for i := 0; i < count; i++ {
+		p0 := int(ref[i])
+		p1 := int(ref[i+1])
+		dst[i*stride] = byte(roundPowerOfTwo(p0*(32-shift)+p1*shift, 5))
+	}
+}

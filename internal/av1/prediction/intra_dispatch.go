@@ -49,6 +49,22 @@ type subsampleLuma8Func func(outputQ3 []uint16, input []uint8, inputStride int, 
 // roundPowerOfTwo(p0*(32-shift)+p1*shift,5) bit-for-bit.
 type dirRowInterp8Func func(dst []byte, above []uint16, base int, shift int, maxBase int, width int)
 
+// dirAboveRun8Func fills count contiguous 8-bit destination bytes for the
+// zone-2 "above" branch: ref is positioned at the first source index, shift is
+// the constant per-row fractional phase in [0,31], and the source index
+// advances by 1 per output. There is no clamp (the reference span is
+// pre-validated). SIMD variants must match
+// roundPowerOfTwo(ref[i]*(32-shift)+ref[i+1]*shift,5) bit-for-bit.
+type dirAboveRun8Func func(dst []byte, ref []uint16, shift int, count int)
+
+// dirLeftCol8Func fills count 8-bit destination samples down a single zone-3
+// column. ref is positioned at the first source index (advancing by 1 per row),
+// shift is the constant per-column fractional phase, dst is the column's top
+// sample and stride is the per-row byte step. No clamp (callers only pass the
+// in-range row run). SIMD variants must match
+// roundPowerOfTwo(ref[i]*(32-shift)+ref[i+1]*shift,5) bit-for-bit.
+type dirLeftCol8Func func(dst []byte, stride int, ref []uint16, shift int, count int)
+
 var (
 	predictPaethImpl            predictPaethFunc            = predictPaethPureGo
 	predictSmoothImpl           predictSmoothFunc           = predictSmoothPureGo
@@ -59,4 +75,6 @@ var (
 	applyCFLImpl       applyCFLFunc       = applyCFLPureGo
 	subsampleLuma8Impl subsampleLuma8Func = subsampleLuma8PureGo
 	dirRowInterp8Impl  dirRowInterp8Func  = dirRowInterp8PureGo
+	dirAboveRun8Impl   dirAboveRun8Func   = dirAboveRun8PureGo
+	dirLeftCol8Impl    dirLeftCol8Func    = dirLeftCol8PureGo
 )
