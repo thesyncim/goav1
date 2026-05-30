@@ -127,7 +127,7 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 				tmpLine[col] = 0
 			}
 		}
-		inverse1D(tmpLine, 1, width, horizontal, rowMin, rowMax)
+		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
 
 	if shift > 0 {
