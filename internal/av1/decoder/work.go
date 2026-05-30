@@ -207,11 +207,18 @@ func EventCompletesFrameWork(event Event) bool {
 	return (event.Kind == EventFrame || event.Kind == EventTileGroup) && event.TileGroup.Final
 }
 
-// EventOutputsFrame reports whether event can produce a display frame. Unlike
+// EventOutputsFrame reports whether event produces a display frame. A coded
+// frame is output only when its header sets show_frame; not-shown frames (such
+// as alt-ref frames) are decoded to update reference buffers but never emitted,
+// surfacing later through a show_existing_frame event. Unlike
 // EventCompletesFrameWork, this includes show-existing-frame events that output
-// a retained reference without running tile work.
+// a retained reference without running tile work, and excludes completed coded
+// frames whose show_frame is unset.
 func EventOutputsFrame(event Event) bool {
-	return EventCompletesFrameWork(event) || event.Kind == EventExistingFrame
+	if event.Kind == EventExistingFrame {
+		return true
+	}
+	return EventCompletesFrameWork(event) && event.FrameHeader.ShowFrame
 }
 
 // Active reports whether a frame has begun and not yet been finished, aborted,

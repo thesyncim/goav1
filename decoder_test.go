@@ -222,8 +222,11 @@ func TestDecoderEventCompletesFrameWork(t *testing.T) {
 }
 
 func TestDecoderEventOutputsFrame(t *testing.T) {
-	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
-		t.Fatal("final frame did not output frame")
+	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, FrameHeader: FrameHeaderPrefix{ShowFrame: true}, TileGroup: TileGroup{Final: true}}) {
+		t.Fatal("shown final frame did not output frame")
+	}
+	if DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+		t.Fatal("not-shown final frame output frame")
 	}
 	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventExistingFrame}) {
 		t.Fatal("show existing frame did not output frame")

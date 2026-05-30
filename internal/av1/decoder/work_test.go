@@ -303,9 +303,14 @@ func TestEventOutputsFrame(t *testing.T) {
 		want  bool
 	}{
 		{
-			name:  "final frame",
-			event: Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}},
+			name:  "final frame shown",
+			event: Event{Kind: EventFrame, FrameHeader: parser.FrameHeaderPrefix{ShowFrame: true}, TileGroup: parser.TileGroup{Final: true}},
 			want:  true,
+		},
+		{
+			name:  "final frame not shown",
+			event: Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}},
+			want:  false,
 		},
 		{
 			name:  "show existing",

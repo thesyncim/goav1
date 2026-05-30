@@ -454,7 +454,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		if step.Run.ExecutedTileWork {
 			result.ExecutedTileWork++
 		}
-		if decoderFrameWorkResidualResultOutputsFrame(step) {
+		if decoderFrameWorkResidualResultOutputsFrame(events[i], step) {
 			if r.Outputs != nil {
 				if result.OutputCount >= len(r.Outputs) {
 					return result, ErrFrameShortBuffer
@@ -611,8 +611,19 @@ func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRu
 	return runner.TotalStats()
 }
 
-func decoderFrameWorkResidualResultOutputsFrame(result DecoderFrameWorkEventResult) bool {
-	return result.Output != nil && (result.Run.CompletedFrame || result.Step.Kind == DecoderFrameWorkStepShowExisting)
+func decoderFrameWorkResidualResultOutputsFrame(event DecoderEvent, result DecoderFrameWorkEventResult) bool {
+	if result.Output == nil {
+		return false
+	}
+	if result.Step.Kind == DecoderFrameWorkStepShowExisting {
+		return true
+	}
+	// A completed coded frame is only emitted to the output stream when its
+	// header sets show_frame. Not-shown frames (e.g. alt-ref) are decoded for
+	// their reference-buffer side effects but surface later via
+	// show_existing_frame, so they must stay out of Outputs. DecoderEventOutputsFrame
+	// also gates the per-event output-slot sizing, keeping the two in lockstep.
+	return result.Run.CompletedFrame && DecoderEventOutputsFrame(event)
 }
 
 func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWorkStepResult, post DecoderFrameWorkPostFilterRunner) *Frame {

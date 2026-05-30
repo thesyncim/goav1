@@ -5310,6 +5310,7 @@ func publicDecoderResidualRunnerFrameEvent() av1.DecoderEvent {
 		Unit: av1.OBUUnit{Payload: payload},
 		FrameHeader: av1.FrameHeaderPrefix{
 			FrameType: av1.FrameTypeKey,
+			ShowFrame: true,
 		},
 		FrameSize: av1.FrameSize{
 			CodedWidth:          128,
