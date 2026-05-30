@@ -110,6 +110,86 @@ func TestFilter4DispatchMatchesPureGoForcedPureGo(t *testing.T) {
 	}
 }
 
+// filter4Dispatch16ParamsCorpus mirrors filter4DispatchParamsCorpus but at
+// 10- and 12-bit scale, exercising the centre/clamp constants the 16-bit kernel
+// reads from its context.
+func filter4Dispatch16ParamsCorpus() []filter4Params {
+	var out []filter4Params
+	for _, shift := range []int{2, 4} { // 10-bit, 12-bit
+		scale := 1 << shift
+		mk := func(limit, blimit, hev int) filter4Params {
+			return filter4Params{
+				limit:  limit * scale,
+				blimit: blimit * scale,
+				hev:    hev * scale,
+				min:    -128 * scale,
+				max:    128*scale - 1,
+				center: 128 * scale,
+			}
+		}
+		out = append(out,
+			mk(0, 0, 0),
+			mk(2, 5, 1),
+			mk(16, 40, 8),
+			mk(63, 128, 32),
+			mk(255, 510, 0),
+			mk(255, 510, 255),
+		)
+	}
+	return out
+}
+
+// runFilter4Kernel16 materialises a two-byte plane buffer, runs both the
+// reference and the dispatched 16-bit kernel on independent copies, and reports
+// the first mismatching byte. outer == 2 (contiguous two-byte positions) and
+// step == stride so the four taps live on separate rows.
+func runFilter4Kernel16(t *testing.T, seed int64, length int, params filter4Params) {
+	t.Helper()
+	const strideSamples = 64
+	const stride = strideSamples * 2
+	const rows = 8
+	rng := rand.New(rand.NewSource(seed))
+	base := make([]byte, stride*rows)
+	maxVal := params.center*2 - 1
+	for i := 0; i+1 < len(base); i += 2 {
+		v := rng.Intn(maxVal + 1)
+		base[i] = byte(v)
+		base[i+1] = byte(v >> 8)
+	}
+	step := stride
+	outer := 2
+	q0Base := 3*stride + 0
+
+	want := append([]byte(nil), base...)
+	got := append([]byte(nil), base...)
+
+	filter4Edge16PureGo(want, q0Base, step, outer, length, params)
+	filter4Edge16Impl(got, q0Base, step, outer, length, params)
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("seed=%d len=%d params=%+v idx=%d got=%d want=%d",
+				seed, length, params, i, got[i], want[i])
+		}
+	}
+}
+
+// TestFilter4Dispatch16MatchesPureGo is the bit-exactness guard for the
+// dispatched 10/12-bit narrow kernel (NEON asm on arm64) against the pure-Go
+// reference over a spread of edge lengths and scaled threshold configurations.
+func TestFilter4Dispatch16MatchesPureGo(t *testing.T) {
+	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 63}
+	var seed int64 = 5000
+	for _, params := range filter4Dispatch16ParamsCorpus() {
+		for _, length := range lengths {
+			for rep := 0; rep < 4; rep++ {
+				runFilter4Kernel16(t, seed, length, params)
+				seed++
+			}
+		}
+	}
+}
+
 // TestFilter4DispatchIsZeroAlloc protects the hot-path contract that the
 // dispatched filter does not allocate per edge.
 func TestFilter4DispatchIsZeroAlloc(t *testing.T) {

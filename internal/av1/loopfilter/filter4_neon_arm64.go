@@ -44,6 +44,57 @@ type filter4NEONCtx struct {
 //go:noescape
 func filter4EdgeNEONAsm(ctx *filter4NEONCtx)
 
+// filter4Edge16NEONCtx is the asm calling context for the two-byte (10/12-bit)
+// narrow kernel. Field order and sizes are part of the ABI shared with
+// filter4_neon_arm64.s; do not reorder. The centre and clamp bounds are passed
+// in (rather than fixed at the 8-bit values) so the same lane arithmetic serves
+// both 10- and 12-bit planes.
+type filter4Edge16NEONCtx struct {
+	p1     *byte // pointer to first p1 sample (q0Base - 2*step)
+	p0     *byte
+	q0     *byte
+	q1     *byte
+	count  uintptr // number of 8-position groups to process
+	limit  int64
+	blimit int64
+	hev    int64
+	center int64
+	min    int64
+	max    int64
+}
+
+//go:noescape
+func filter4Edge16NEONAsm(ctx *filter4Edge16NEONCtx)
+
+// filter4Edge16NEON accelerates the 10/12-bit narrow filter for horizontal
+// edges (contiguous two-byte taps). Vertical edges (strided taps) and any tail
+// shorter than eight positions route through the pure-Go reference.
+func filter4Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	groups := length / 8
+	if outer != 2 || groups == 0 {
+		filter4Edge16PureGo(pix, q0Base, step, outer, length, params)
+		return
+	}
+	ctx := filter4Edge16NEONCtx{
+		p1:     &pix[q0Base-2*step],
+		p0:     &pix[q0Base-step],
+		q0:     &pix[q0Base],
+		q1:     &pix[q0Base+step],
+		count:  uintptr(groups),
+		limit:  int64(params.limit),
+		blimit: int64(params.blimit),
+		hev:    int64(params.hev),
+		center: int64(params.center),
+		min:    int64(params.min),
+		max:    int64(params.max),
+	}
+	filter4Edge16NEONAsm(&ctx)
+
+	if rem := length - groups*8; rem > 0 {
+		filter4Edge16PureGo(pix, q0Base+groups*8*outer, step, outer, rem, params)
+	}
+}
+
 func filter4EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
 	// The NEON path handles horizontal edges only: there the per-position
 	// stride (outer) is one byte, so eight positions form contiguous loads.

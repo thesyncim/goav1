@@ -30,23 +30,7 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		for i := range length {
-			q0 := q0Base + i*outer
-			p2 := int(pix[q0-3*step])
-			p1 := int(pix[q0-2*step])
-			p0 := int(pix[q0-step])
-			q0Sample := int(pix[q0])
-			q1 := int(pix[q0+step])
-			q2 := int(pix[q0+2*step])
-			if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
-				continue
-			}
-			p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
-			pix[q0-2*step] = byte(p1)
-			pix[q0-step] = byte(p0)
-			pix[q0] = byte(q0Sample)
-			pix[q0+step] = byte(q1)
-		}
+		filter6EdgeImpl(pix, q0Base, step, outer, length, scale, params)
 		return nil
 	}
 	for i := range length {
@@ -67,6 +51,36 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		writeSample(pix, bytesPerSample, q0+step, q1)
 	}
 	return nil
+}
+
+// filter6EdgeImpl is the dispatch slot for the 8-bit six-sample deblocking
+// kernel. It is resolved once at package init (see filter_wide_dispatch_*.go);
+// filter6EdgePureGo is the canonical bit-exact reference every tuned variant
+// must match.
+var filter6EdgeImpl = filter6EdgePureGo
+
+// filter6EdgePureGo applies the 8-bit six-sample filter to length sample
+// positions along an edge. q0Base is the byte offset of the first q0 sample,
+// step is the byte stride between adjacent taps, and outer is the byte stride
+// between successive positions along the edge.
+func filter6EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p2 := int(pix[q0-3*step])
+		p1 := int(pix[q0-2*step])
+		p0 := int(pix[q0-step])
+		q0Sample := int(pix[q0])
+		q1 := int(pix[q0+step])
+		q2 := int(pix[q0+2*step])
+		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
+			continue
+		}
+		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
+		pix[q0-2*step] = byte(p1)
+		pix[q0-step] = byte(p0)
+		pix[q0] = byte(q0Sample)
+		pix[q0+step] = byte(q1)
+	}
 }
 
 func validateFilter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int) error {

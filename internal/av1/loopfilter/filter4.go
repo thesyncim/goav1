@@ -33,21 +33,7 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		filter4EdgeImpl(pix, q0Base, step, outer, length, params)
 		return nil
 	}
-	for i := range length {
-		q0 := q0Base + i*outer
-		p1 := readSample(pix, bytesPerSample, q0-2*step)
-		p0 := readSample(pix, bytesPerSample, q0-step)
-		q0Sample := readSample(pix, bytesPerSample, q0)
-		q1 := readSample(pix, bytesPerSample, q0+step)
-		if !needsFilter4(p1, p0, q0Sample, q1, params) {
-			continue
-		}
-		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
-		writeSample(pix, bytesPerSample, q0-2*step, p1)
-		writeSample(pix, bytesPerSample, q0-step, p0)
-		writeSample(pix, bytesPerSample, q0, q0Sample)
-		writeSample(pix, bytesPerSample, q0+step, q1)
-	}
+	filter4Edge16Impl(pix, q0Base, step, outer, length, params)
 	return nil
 }
 
@@ -147,6 +133,34 @@ func filter4EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, 
 		pix[q0-step] = byte(p0)
 		pix[q0] = byte(q0Sample)
 		pix[q0+step] = byte(q1)
+	}
+}
+
+// filter4Edge16Impl is the dispatch slot for the 10/12-bit (two-byte sample)
+// narrow four-sample deblocking kernel. It is resolved once at package init
+// (see filter4_dispatch_*.go); filter4Edge16PureGo is the canonical bit-exact
+// reference every tuned variant must match.
+var filter4Edge16Impl = filter4Edge16PureGo
+
+// filter4Edge16PureGo applies the narrow filter to length sample positions on a
+// two-byte (10/12-bit) plane. q0Base is the byte offset of the first q0 sample,
+// step is the byte stride between adjacent taps, and outer is the byte stride
+// between successive positions along the edge.
+func filter4Edge16PureGo(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p1 := readSample(pix, 2, q0-2*step)
+		p0 := readSample(pix, 2, q0-step)
+		q0Sample := readSample(pix, 2, q0)
+		q1 := readSample(pix, 2, q0+step)
+		if !needsFilter4(p1, p0, q0Sample, q1, params) {
+			continue
+		}
+		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
+		writeSample(pix, 2, q0-2*step, p1)
+		writeSample(pix, 2, q0-step, p0)
+		writeSample(pix, 2, q0, q0Sample)
+		writeSample(pix, 2, q0+step, q1)
 	}
 }
 

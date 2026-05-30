@@ -30,27 +30,7 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		for i := range length {
-			q0 := q0Base + i*outer
-			p3 := int(pix[q0-4*step])
-			p2 := int(pix[q0-3*step])
-			p1 := int(pix[q0-2*step])
-			p0 := int(pix[q0-step])
-			q0Sample := int(pix[q0])
-			q1 := int(pix[q0+step])
-			q2 := int(pix[q0+2*step])
-			q3 := int(pix[q0+3*step])
-			if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
-				continue
-			}
-			p2, p1, p0, q0Sample, q1, q2 = filter8Samples(p3, p2, p1, p0, q0Sample, q1, q2, q3, scale, params)
-			pix[q0-3*step] = byte(p2)
-			pix[q0-2*step] = byte(p1)
-			pix[q0-step] = byte(p0)
-			pix[q0] = byte(q0Sample)
-			pix[q0+step] = byte(q1)
-			pix[q0+2*step] = byte(q2)
-		}
+		filter8EdgeImpl(pix, q0Base, step, outer, length, scale, params)
 		return nil
 	}
 	for i := range length {
@@ -75,6 +55,40 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		writeSample(pix, bytesPerSample, q0+2*step, q2)
 	}
 	return nil
+}
+
+// filter8EdgeImpl is the dispatch slot for the 8-bit eight-sample deblocking
+// kernel. It is resolved once at package init (see filter_wide_dispatch_*.go);
+// filter8EdgePureGo is the canonical bit-exact reference every tuned variant
+// must match.
+var filter8EdgeImpl = filter8EdgePureGo
+
+// filter8EdgePureGo applies the 8-bit eight-sample filter to length sample
+// positions along an edge. q0Base is the byte offset of the first q0 sample,
+// step is the byte stride between adjacent taps, and outer is the byte stride
+// between successive positions along the edge.
+func filter8EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p3 := int(pix[q0-4*step])
+		p2 := int(pix[q0-3*step])
+		p1 := int(pix[q0-2*step])
+		p0 := int(pix[q0-step])
+		q0Sample := int(pix[q0])
+		q1 := int(pix[q0+step])
+		q2 := int(pix[q0+2*step])
+		q3 := int(pix[q0+3*step])
+		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
+			continue
+		}
+		p2, p1, p0, q0Sample, q1, q2 = filter8Samples(p3, p2, p1, p0, q0Sample, q1, q2, q3, scale, params)
+		pix[q0-3*step] = byte(p2)
+		pix[q0-2*step] = byte(p1)
+		pix[q0-step] = byte(p0)
+		pix[q0] = byte(q0Sample)
+		pix[q0+step] = byte(q1)
+		pix[q0+2*step] = byte(q2)
+	}
 }
 
 func validateFilter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int) error {

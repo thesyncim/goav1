@@ -22,7 +22,9 @@ func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
 		filter4EdgeImpl = filter4EdgeNEON
+		filter4Edge16Impl = filter4Edge16NEON
 		return
 	}
 	filter4EdgeImpl = filter4EdgePureGo
+	filter4Edge16Impl = filter4Edge16PureGo
 }

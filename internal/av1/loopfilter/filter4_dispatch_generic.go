@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build (!amd64 && !arm64) || (arm64 && purego)
+//go:build (!amd64 && !arm64) || (arm64 && purego) || (amd64 && purego)
 
 package loopfilter
 
@@ -12,4 +12,5 @@ package loopfilter
 // across builds.
 func init() {
 	filter4EdgeImpl = filter4EdgePureGo
+	filter4Edge16Impl = filter4Edge16PureGo
 }
