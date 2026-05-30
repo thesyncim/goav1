@@ -24,10 +24,18 @@ func init() {
 		predictSmoothImpl = predictSmoothNEON
 		predictSmoothVerticalImpl = predictSmoothVerticalNEON
 		predictSmoothHorizontalImpl = predictSmoothHorizontalNEON
+		sumSamplesImpl = sumSamplesNEON
+		applyCFLImpl = applyCFLNEON
+		subsampleLuma8Impl = subsampleLuma8NEON
+		dirRowInterp8Impl = dirRowInterp8NEON
 		return
 	}
 	predictPaethImpl = predictPaethPureGo
 	predictSmoothImpl = predictSmoothPureGo
 	predictSmoothVerticalImpl = predictSmoothVerticalPureGo
 	predictSmoothHorizontalImpl = predictSmoothHorizontalPureGo
+	sumSamplesImpl = sumSamplesPureGo
+	applyCFLImpl = applyCFLPureGo
+	subsampleLuma8Impl = subsampleLuma8PureGo
+	dirRowInterp8Impl = dirRowInterp8PureGo
 }

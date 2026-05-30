@@ -147,6 +147,33 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	}
 	fracBits := 6 - upsampleAbove
 	baseInc := 1 << upsampleAbove
+	// Fast path: 8-bit, non-upsampled blocks route each visible row through the
+	// dispatched dirRowInterp8Impl (NEON/AVX2 where available, else pure-Go).
+	// The running base for the visible columns is base+col, identical to the
+	// generic loop, and per-column clamping to above[maxBaseX] reproduces both
+	// the inner clamp and the whole-row early-exit branch.
+	if bytesPerSample == 1 && upsampleAbove == 0 {
+		aboveSlice := edges.Above[edges.AboveOrigin:]
+		x := dx
+		for row := 0; row < block.height; row++ {
+			base := x >> fracBits
+			shift := ((x << upsampleAbove) & 0x3f) >> 1
+			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
+			if base >= maxBaseX {
+				clamp := byte(edges.Above[edges.AboveOrigin+maxBaseX])
+				for r := row; r < block.height; r++ {
+					rl := block.pix[r*block.stride : r*block.stride+block.rowBytes]
+					for col := 0; col < block.width; col++ {
+						rl[col] = clamp
+					}
+				}
+				return nil
+			}
+			dirRowInterp8Impl(line, aboveSlice, base, shift, maxBaseX, block.width)
+			x += dx
+		}
+		return nil
+	}
 	x := dx
 	for row := range predHeight {
 		base := x >> fracBits

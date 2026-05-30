@@ -64,31 +64,7 @@ func SubsampleLuma8ToQ3(outputQ3 []uint16, input []uint8, inputStride int, width
 	if err != nil {
 		return err
 	}
-	switch {
-	case subX && subY:
-		for row := 0; row < height; row += 2 {
-			outRow := row >> 1
-			for col := 0; col < width; col += 2 {
-				bot := (row+1)*inputStride + col
-				sum := int(input[row*inputStride+col]) + int(input[row*inputStride+col+1]) +
-					int(input[bot]) + int(input[bot+1])
-				outputQ3[outRow*CFLBufLine+(col>>1)] = uint16(sum << 1)
-			}
-		}
-	case subX:
-		for row := range outH {
-			for col := 0; col < width; col += 2 {
-				sum := int(input[row*inputStride+col]) + int(input[row*inputStride+col+1])
-				outputQ3[row*CFLBufLine+(col>>1)] = uint16(sum << 2)
-			}
-		}
-	default:
-		for row := range outH {
-			for col := range outW {
-				outputQ3[row*CFLBufLine+col] = uint16(input[row*inputStride+col]) << 3
-			}
-		}
-	}
+	subsampleLuma8Impl(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 	return nil
 }
 
@@ -217,14 +193,7 @@ func PredictCFLPlaneBlockVisible(dst frame.Plane, bytesPerSample int, bitDepth u
 		alphaQ3 < -16 || alphaQ3 > 16 {
 		return ErrInvalidPrediction
 	}
-	for row := range visibleHeight {
-		line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-		for col := range visibleWidth {
-			scaled := roundPowerOfTwoSigned(alphaQ3*int(acQ3[row*CFLBufLine+col]), 6)
-			current := readCFLPlaneSample(line, bytesPerSample, col)
-			writeCFLPlaneSample(line, bytesPerSample, col, uint16(clampInt(current+scaled, 0, int(max))))
-		}
-	}
+	applyCFLImpl(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)
 	return nil
 }
 

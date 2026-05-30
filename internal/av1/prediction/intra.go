@@ -121,24 +121,20 @@ func dcPrediction(width int, height int, max uint16, edges IntraEdges) (uint16, 
 		if len(edges.Above) < width {
 			return 0, ErrInvalidPrediction
 		}
-		for _, sample := range edges.Above[:width] {
-			if sample > max {
-				return 0, ErrInvalidPrediction
-			}
-			sum += int(sample)
+		if err := validateSamples(edges.Above[:width], max); err != nil {
+			return 0, err
 		}
+		sum += sumSamplesImpl(edges.Above[:width])
 		count += width
 	}
 	if edges.LeftAvailable {
 		if len(edges.Left) < height {
 			return 0, ErrInvalidPrediction
 		}
-		for _, sample := range edges.Left[:height] {
-			if sample > max {
-				return 0, ErrInvalidPrediction
-			}
-			sum += int(sample)
+		if err := validateSamples(edges.Left[:height], max); err != nil {
+			return 0, err
 		}
+		sum += sumSamplesImpl(edges.Left[:height])
 		count += height
 	}
 	if count == 0 {

@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build (!amd64 && !arm64) || (arm64 && purego)
+//go:build (!amd64 && !arm64) || (arm64 && purego) || (amd64 && purego)
 
 package prediction
 
