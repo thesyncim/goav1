@@ -871,13 +871,31 @@ func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.B
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
+	if err := c.reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
+		return err
+	}
+	if c.userCoeffVisitor != nil {
+		return c.userCoeffVisitor(visit, block)
+	}
+	return nil
+}
+
+// reconstructTXB performs the predict-then-reconstruct work for one decoded
+// transform block. It is the single reconstruction seam shared by the inline
+// single-thread path (VisitBlockCoeff, which calls it immediately) and the
+// deferred parallel reconstruction path. visit and block are taken by pointer
+// so the single-thread path pays no extra struct copy; the values dereferenced
+// into the predict/reconstruct callees match the previous inline calls exactly.
+// currentQIndex is snapshotted by the caller because the live delta-q state
+// advances past this block before a deferred pass would run.
+func (c *frameWorkTileResidualLoopController) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
 	if c.req.Predict == nil && c.req.PredictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
-		if block.Plane != 0 && frameWorkVisitUsesCFL(visit) {
+		if block.Plane != 0 && frameWorkVisitUsesCFL(*visit) {
 			if err := c.predictDeferredCFLChroma(); err != nil {
 				return err
 			}
 		} else {
-			if err := c.batch.PredictBlockIntraCoeff(c.index, visit, block, &c.req.PredictionScratch.Intra); err != nil {
+			if err := c.batch.PredictBlockIntraCoeff(c.index, *visit, *block, &c.req.PredictionScratch.Intra); err != nil {
 				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
 			}
 			c.stats.Predictions++
@@ -889,9 +907,9 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 	}
 	if err := c.batch.ReconstructBlockCoeff(c.index, FrameWorkBlockCoeffReconstruction{
 		Visit:           visit.Block,
-		Block:           block,
+		Block:           *block,
 		Transform:       block.Transform,
-		CurrentQIndex:   c.state.CurrentBaseQIdx,
+		CurrentQIndex:   currentQIndex,
 		SegmentID:       visit.SegmentID,
 		Int32Scratch:    c.req.Int32Scratch,
 		ResidualScratch: c.req.ResidualScratch,
@@ -899,9 +917,6 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	c.stats.Residuals++
-	if c.userCoeffVisitor != nil {
-		return c.userCoeffVisitor(visit, block)
-	}
 	return nil
 }
 
