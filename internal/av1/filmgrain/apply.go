@@ -151,10 +151,23 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 }
 
 func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
+	minValue, maxValue := lumaClipBounds(params)
+	var scaleBuf [LumaBlockSize]uint16
 	for y := yStart; y < params.Height; y++ {
-		for x := xStart; x < blockWidth; x++ {
-			g := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
-			applyLumaRowSample(dst, src, scaling, params, blockX+x, y, g)
+		// Non-overlap interior: dst, src and the grain run are all
+		// contiguous in x, so gather the scaling-LUT values once and let the
+		// dispatched apply kernel do the scaled-grain add+clip.
+		if n := blockWidth - xStart; n > 0 {
+			base := y*params.Stride + blockX + xStart
+			dstRow := dst[base : base+n]
+			srcRow := src[base : base+n]
+			gbase := lumaGrainSampleIndex(offsets[0][0], 0, 0, xStart, y)
+			grainRow := grain[gbase : gbase+n]
+			scale := scaleBuf[:n]
+			for x := 0; x < n; x++ {
+				scale[x] = uint16(scaleLUT(scaling, int(srcRow[x]), params.BitDepth))
+			}
+			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
 			current := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
@@ -187,10 +200,25 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 }
 
 func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
+	minValue, maxValue := chromaClipBounds(params)
+	var scaleBuf [LumaBlockSize]uint16
 	for y := yStart; y < params.Height; y++ {
-		for x := xStart; x < blockWidth; x++ {
-			g := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
-			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		// Non-overlap interior: dst, src and the grain run are contiguous in
+		// x. The scaling index still depends on the (possibly subsampled)
+		// luma plane, so gather the scale values scalar, then run the
+		// dispatched add+clip kernel.
+		if n := blockWidth - xStart; n > 0 {
+			base := y*params.Stride + blockX + xStart
+			dstRow := dst[base : base+n]
+			srcRow := src[base : base+n]
+			gbase := chromaGrainSampleIndex(offsets[0][0], shiftX, shiftY, 0, 0, xStart, y)
+			grainRow := grain[gbase : gbase+n]
+			scale := scaleBuf[:n]
+			for x := 0; x < n; x++ {
+				idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+				scale[x] = uint16(scaleLUT(scaling, idx, params.BitDepth))
+			}
+			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
 			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
