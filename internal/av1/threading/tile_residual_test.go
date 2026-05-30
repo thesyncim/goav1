@@ -697,7 +697,7 @@ func TestFrameWorkTileResidualCDFStorageInitDefault(t *testing.T) {
 		cdfs.Loop.Delta.LF != &storage.DeltaLF {
 		t.Fatalf("cdf pointer view does not alias storage: %+v", cdfs)
 	}
-	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+	for i := range tile.FrameLoopFilterCount {
 		if cdfs.Loop.Delta.LFMulti[i] != &storage.DeltaLFMulti[i] {
 			t.Fatalf("delta lf multi[%d] does not alias storage", i)
 		}

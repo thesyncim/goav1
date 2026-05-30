@@ -65,8 +65,8 @@ func TestFrameWorkBatchPredictBlockLumaFilterIntra(t *testing.T) {
 	if err := ctx.PredictBlockLumaIntra(0, visit, &scratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+x, 16+y)
 			if want := uint16(wantPix[y*16+x]); got != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", 16+x, 16+y, got, want)
@@ -192,7 +192,7 @@ func TestFrameWorkBatchPredictBlockInterClipsFrameEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 	for y := 176; y < 180; y++ {
-		for x := 0; x < 64; x++ {
+		for x := range 64 {
 			if got := output.Y.Pix[y*output.Y.Stride+x]; got != 0x55 {
 				t.Fatalf("sample(%d,%d)=%d want 0x55", x, y, got)
 			}
@@ -418,7 +418,7 @@ func TestFrameWorkBatchPredictBlockLumaIntraWritesPastVisibleRightEdge(t *testin
 	// filled from dst[31, 0]) and Left (col 31 rows 0..7) neighbors.
 	// DC = (8*seed + 8*seed) / 16 = seed.
 	const seed uint16 = 96
-	for y := 0; y < 8; y++ {
+	for y := range 8 {
 		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 31, y, seed)
 	}
 
@@ -460,7 +460,7 @@ func TestFrameWorkBatchPredictBlockLumaIntraWritesPastVisibleRightEdge(t *testin
 	// Read raw bytes by stride (not via frameWorkLoadSample which bounds-
 	// checks against plane.Width=34) so we can verify past-visible writes
 	// in the stride padding.
-	for y := 0; y < 8; y++ {
+	for y := range 8 {
 		row := y * output.Y.Stride
 		for x := 32; x < 40; x++ {
 			got := uint16(output.Y.Pix[row+x])
@@ -662,8 +662,8 @@ func TestFrameWorkBatchPredictBlockLumaDirectionalIntraEdgeUpsample(t *testing.T
 	if err := ctx.PredictBlockLumaIntra(0, visit, &predScratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 4 {
+		for x := range 4 {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+x, y)
 			if want := uint16(wantPix[y*4+x]); got != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", 16+x, y, got, want)
@@ -811,7 +811,7 @@ func TestFrameWorkFillDirectionalAboveCapsTopRightToPrimaryWidth(t *testing.T) {
 	const W, H = 64, 64
 	format := frame.Format{Width: W, Height: H, BitDepth: 8, Align: 64}
 	output := testBatchFrame(t, format)
-	for x := 0; x < W; x++ {
+	for x := range W {
 		// Distinct per-column markers above the block being predicted.
 		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, uint16(x+1))
 	}
@@ -868,7 +868,7 @@ func TestFrameWorkFillDirectionalAboveTruncatesToVisibleRightEdge(t *testing.T) 
 	dst := frame.Plane{Pix: pix, Stride: Stride, Width: Stride, Height: H}
 	// Above row (y=7): distinct per-column markers so the fill output records
 	// exactly which cols were loaded. Marker(c) = c + 1.
-	for c := 0; c < Stride; c++ {
+	for c := range Stride {
 		pix[7*Stride+c] = byte(c + 1)
 	}
 	var scratch FrameWorkIntraPredictionScratch
@@ -910,12 +910,12 @@ func TestFrameWorkIntraPredictionEdgesWithExtentTruncatesToVisibleRightEdge(t *t
 	const visibleW = 34
 	pix := make([]byte, Stride*H)
 	dst := frame.Plane{Pix: pix, Stride: Stride, Width: Stride, Height: H}
-	for c := 0; c < Stride; c++ {
+	for c := range Stride {
 		// Distinct marker per column on the above row (y=7) and on the
 		// left column (x=31) so we can assert which neighbors were read.
 		pix[7*Stride+c] = byte(c + 1)
 	}
-	for r := 0; r < H; r++ {
+	for r := range H {
 		pix[r*Stride+31] = byte(r + 100)
 	}
 	var scratch FrameWorkIntraPredictionScratch
@@ -944,7 +944,7 @@ func TestFrameWorkIntraPredictionEdgesWithExtentTruncatesToVisibleRightEdge(t *t
 	if !edges.LeftAvailable || len(edges.Left) < 8 {
 		t.Fatalf("expected LeftAvailable with len>=8, got %v len=%d", edges.LeftAvailable, len(edges.Left))
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		want := uint16(y + i + 100)
 		if edges.Left[i] != want {
 			t.Fatalf("Left[%d]=%d want %d", i, edges.Left[i], want)
@@ -1084,7 +1084,7 @@ func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 			name: "vertical-missing-top-uses-left",
 			mode: tile.IntraModeVertical,
 			seed: func(output *frame.Frame) {
-				for y := 0; y < 16; y++ {
+				for y := range 16 {
 					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 70)
 				}
 			},
@@ -1102,7 +1102,7 @@ func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 			name: "directional-missing-top-uses-left",
 			mode: tile.IntraModeD45,
 			seed: func(output *frame.Frame) {
-				for y := 0; y < 16; y++ {
+				for y := range 16 {
 					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 15, y, 81)
 				}
 			},
@@ -1120,7 +1120,7 @@ func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 			name: "horizontal-missing-left-uses-top",
 			mode: tile.IntraModeHorizontal,
 			seed: func(output *frame.Frame) {
-				for x := 0; x < 16; x++ {
+				for x := range 16 {
 					setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, 15, 93)
 				}
 			},
@@ -1168,8 +1168,8 @@ func TestFrameWorkBatchPredictBlockLumaIntraBoundaryEdges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for row := 0; row < 16; row++ {
-				for col := 0; col < 16; col++ {
+			for row := range 16 {
+				for col := range 16 {
 					if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x+col, y+row); got != tt.want {
 						t.Fatalf("sample(%d,%d)=%d want %d", x+col, y+row, got, tt.want)
 					}
@@ -1214,8 +1214,8 @@ func TestFrameWorkBatchPredictBlockInterFullpelExtendsReferenceEdges(t *testing.
 		t.Fatal(err)
 	}
 
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	for y := range 16 {
+		for x := range 16 {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y)
 			want := frameWorkTestSampleClamped(reference.Y, output.Layout.BytesPerSample, x-2, y+2)
 			if got != want {
@@ -1223,8 +1223,8 @@ func TestFrameWorkBatchPredictBlockInterFullpelExtendsReferenceEdges(t *testing.
 			}
 		}
 	}
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
+	for y := range 8 {
+		for x := range 8 {
 			wantU := frameWorkTestSampleClamped(reference.U, output.Layout.BytesPerSample, x-1, y+1)
 			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != wantU {
 				t.Fatalf("u sample(%d,%d)=%d want %d", x, y, got, wantU)
@@ -1605,8 +1605,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 	// average degenerates to a deterministic per-pixel formula. Position
 	// (16,16) matches testCompoundInterPredictionVisit's destination block.
 	const blockX, blockY, blockW, blockH = 16, 16, 16, 16
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 115)
 			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 117)
 		}
@@ -1617,8 +1617,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
 			// (115 + 117 + 1) >> 1 = 116
 			if got != 116 {
@@ -1627,8 +1627,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 		}
 	}
 	// Also pin the asymmetric case where the average rounds up.
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 164)
 			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 165)
 		}
@@ -1636,8 +1636,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
 			// (164 + 165 + 1) >> 1 = 165
 			if got != 165 {
@@ -1646,8 +1646,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 		}
 	}
 	// Same-value inputs must blend back to themselves (no off-by-one drift).
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			setFrameWorkTestSample(last.Y, last.Layout.BytesPerSample, blockX+col, blockY+row, 164)
 			setFrameWorkTestSample(bwd.Y, bwd.Layout.BytesPerSample, blockX+col, blockY+row, 164)
 		}
@@ -1655,8 +1655,8 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageZeroMV(t *testing.T) 
 	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < blockH; row++ {
-		for col := 0; col < blockW; col++ {
+	for row := range blockH {
+		for col := range blockW {
 			got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, blockX+col, blockY+row)
 			if got != 164 {
 				t.Fatalf("compound avg(164,164) at (%d,%d) = %d, want 164", blockX+col, blockY+row, got)
@@ -1834,15 +1834,15 @@ func TestFrameWorkBuildWedgeMaskSignComplementsLibaom(t *testing.T) {
 		}
 		width := int(dims.W4) * 4
 		height := int(dims.H4) * 4
-		for index := uint8(0); index < tile.MaxWedgeTypes; index++ {
+		for index := range uint8(tile.MaxWedgeTypes) {
 			if err := frameWorkBuildWedgeMask(mask[:], width, size, index, false); err != nil {
 				t.Fatalf("size=%v index=%d neg err=%v", size, index, err)
 			}
 			if err := frameWorkBuildWedgeMask(complement[:], width, size, index, true); err != nil {
 				t.Fatalf("size=%v index=%d pos err=%v", size, index, err)
 			}
-			for row := 0; row < height; row++ {
-				for col := 0; col < width; col++ {
+			for row := range height {
+				for col := range width {
 					got := int(mask[row*width+col]) + int(complement[row*width+col])
 					if got != frameWorkWedgeMaxAlpha {
 						t.Fatalf("size=%v index=%d mask(%d,%d) sum=%d want %d", size, index, col, row, got, frameWorkWedgeMaxAlpha)
@@ -2074,7 +2074,7 @@ func TestFrameWorkBatchPredictBlockDispatchesCompletePlanes(t *testing.T) {
 func TestFrameWorkBatchPredictBlockIntraSubsampledChromaUsesPlaneEdges(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	ctx := testIntraPredictionBatch(output)
-	for y := 0; y < 16; y++ {
+	for y := range 16 {
 		setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, 3, y, 64)
 	}
 
@@ -2091,8 +2091,8 @@ func TestFrameWorkBatchPredictBlockIntraSubsampledChromaUsesPlaneEdges(t *testin
 	if err := ctx.PredictBlock(0, visit, &scratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 8 {
+		for x := range 4 {
 			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != 127 {
 				t.Fatalf("u sample(%d,%d)=%d want 127", x, y, got)
 			}
@@ -2115,7 +2115,7 @@ func TestFrameWorkBatchPredictBlockIntraCoeffClippedChromaSmooth(t *testing.T) {
 		},
 	})
 	ctx.Jobs = []tile.Job{{SBCols: 3, SBRows: 2}}
-	for y := 0; y < 32; y++ {
+	for y := range 32 {
 		setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, 159, y, 77)
 		setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, 159, y, 91)
 	}
@@ -2135,7 +2135,7 @@ func TestFrameWorkBatchPredictBlockIntraCoeffClippedChromaSmooth(t *testing.T) {
 	if err := ctx.PredictBlockIntraCoeff(0, visit, block, &scratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 32; y++ {
+	for y := range 32 {
 		for x := 160; x < 176; x++ {
 			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != 77 {
 				t.Fatalf("u sample(%d,%d)=%d want 77", x, y, got)
@@ -2146,7 +2146,7 @@ func TestFrameWorkBatchPredictBlockIntraCoeffClippedChromaSmooth(t *testing.T) {
 	if err := ctx.PredictBlockIntraCoeff(0, visit, block, &scratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 32; y++ {
+	for y := range 32 {
 		for x := 160; x < 176; x++ {
 			if got := frameWorkTestSample(output.V, output.Layout.BytesPerSample, x, y); got != 91 {
 				t.Fatalf("v sample(%d,%d)=%d want 91", x, y, got)
@@ -2193,7 +2193,7 @@ func TestFrameWorkBatchPredictBlockIntraClippedChromaSmooth(t *testing.T) {
 		},
 	})
 	ctx.Jobs = []tile.Job{{SBCols: 3, SBRows: 2}}
-	for y := 0; y < 64; y++ {
+	for y := range 64 {
 		setFrameWorkTestSample(output.U, output.Layout.BytesPerSample, 127, y, 77)
 		setFrameWorkTestSample(output.V, output.Layout.BytesPerSample, 127, y, 91)
 	}
@@ -2210,7 +2210,7 @@ func TestFrameWorkBatchPredictBlockIntraClippedChromaSmooth(t *testing.T) {
 	if err := ctx.PredictBlock(0, visit, &scratch); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 64; y++ {
+	for y := range 64 {
 		for x := 128; x < 176; x++ {
 			if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, x, y); got != 77 {
 				t.Fatalf("u sample(%d,%d)=%d want 77", x, y, got)
@@ -2286,8 +2286,8 @@ func TestFrameWorkSubsampleLumaCFLQ3MatchesPrimitives(t *testing.T) {
 			var want [prediction.CFLBufSquare]uint16
 			if bytesPerSample == 1 {
 				src := make([]uint8, stride*height)
-				for row := 0; row < height; row++ {
-					for col := 0; col < width; col++ {
+				for row := range height {
+					for col := range width {
 						value := uint8((17 + row*13 + col*19) & max)
 						src[row*stride+col] = value
 						setFrameWorkTestSample(output.Y, bytesPerSample, x+col, y+row, uint16(value))
@@ -2298,8 +2298,8 @@ func TestFrameWorkSubsampleLumaCFLQ3MatchesPrimitives(t *testing.T) {
 				}
 			} else {
 				src := make([]uint16, stride*height)
-				for row := 0; row < height; row++ {
-					for col := 0; col < width; col++ {
+				for row := range height {
+					for col := range width {
 						value := uint16((257 + row*83 + col*41) & max)
 						src[row*stride+col] = value
 						setFrameWorkTestSample(output.Y, bytesPerSample, x+col, y+row, value)
@@ -2650,7 +2650,7 @@ func TestFrameWorkBatchPredictBlockInterIntrabcCopiesOutput(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	testFillFrame(output, 3)
 	ctx := testInterPredictionBatch(output, output)
-	for y := 0; y < 16; y++ {
+	for y := range 16 {
 		for x := 16; x < 32; x++ {
 			setFrameWorkTestSample(output.Y, output.Layout.BytesPerSample, x, y, uint16(40+y+x-16))
 		}
@@ -3438,10 +3438,10 @@ func testPredictFrameWorkCFLWant(t *testing.T, output *frame.Frame, visit tile.B
 func testFrameWorkIntraEdges(output *frame.Frame, plane frame.Plane, x int, y int, width int, height int) prediction.IntraEdges {
 	above := make([]uint16, width)
 	left := make([]uint16, height)
-	for col := 0; col < width; col++ {
+	for col := range width {
 		above[col] = frameWorkTestSample(plane, output.Layout.BytesPerSample, x+col, y-1)
 	}
-	for row := 0; row < height; row++ {
+	for row := range height {
 		left[row] = frameWorkTestSample(plane, output.Layout.BytesPerSample, x-1, y+row)
 	}
 	return prediction.IntraEdges{
@@ -3670,8 +3670,8 @@ func assertFrameWorkPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Pl
 
 func assertFrameWorkPlaneBlockEqualAt(t *testing.T, got frame.Plane, gotX int, gotY int, want frame.Plane, wantX int, wantY int, bytesPerSample int, width int, height int) {
 	t.Helper()
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			g := frameWorkTestSample(got, bytesPerSample, gotX+col, gotY+row)
 			w := frameWorkTestSample(want, bytesPerSample, wantX+col, wantY+row)
 			if g != w {
@@ -3706,8 +3706,8 @@ func assertFrameWorkCompoundBlendEqual(t *testing.T, got frame.Plane, buf0 *moti
 	if err := motion.BlendCompoundAvg(want, buf0, buf1, bytesPerSample, bitDepth, 0, 0, width, height, fwdOffset, bckOffset); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			w := frameWorkTestSample(want, bytesPerSample, col, row)
 			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
 			if g != w {
@@ -3724,8 +3724,8 @@ func assertFrameWorkMaskedCompoundEqual(t *testing.T, got frame.Plane, buf0 *mot
 	if err := motion.BlendCompoundMaskD16(want, buf0, buf1, bytesPerSample, bitDepth, 0, 0, width, height, mask, maskStride, subX, subY); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			w := frameWorkTestSample(want, bytesPerSample, col, row)
 			g := frameWorkTestSample(got, bytesPerSample, x+col, y+row)
 			if g != w {
@@ -3913,7 +3913,7 @@ func TestFrameWorkApplyDirectionalIntraEdgeFilterCornerBlock32x32D157(t *testing
 	// nLeft=0 — same as libaom's `if (n_top_px > 0)` guard. Confirm the
 	// default above samples remain 127 and the default left samples remain
 	// 129 (i.e. FilterIntraEdge was not run on them).
-	for i := 0; i < width+height; i++ {
+	for i := range width + height {
 		if got := scratch.Above[origin+i]; got != 127 {
 			t.Fatalf("above[%d]=%d want 127 (filter must be skipped)", i, got)
 		}
@@ -3976,7 +3976,7 @@ func TestFrameWorkDirectionalPredictionEdgesCornerBlock32x32D157(t *testing.T) {
 	// Above samples remain at the missing-above default (127). Left samples
 	// remain at the missing-left default (129). The edge filter is skipped
 	// for both edges when no real neighbours exist.
-	for i := 0; i < width+height-1; i++ {
+	for i := range width + height - 1 {
 		if got := edges.Above[origin+i]; got != 127 {
 			t.Fatalf("above[%d]=%d want 127", i, got)
 		}

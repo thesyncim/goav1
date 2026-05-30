@@ -107,8 +107,8 @@ func frameWorkBuildWedgeMask(mask []byte, stride int, size tile.BlockSize, wedge
 	hoff := (code.yOffset * height) >> 3
 	row0 := frameWorkWedgeMasterSize/2 - hoff
 	col0 := frameWorkWedgeMasterSize/2 - woff
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			sample, ok := frameWorkWedgeMasterSample(neg, code.direction, row0+row, col0+col)
 			if !ok {
 				return ErrInvalidBatch

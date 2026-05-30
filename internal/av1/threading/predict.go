@@ -2143,10 +2143,7 @@ func frameWorkExtendPlaneToClip(plane frame.Plane, window FrameWorkPlaneRegion, 
 	// ensure callers can read/write up to the new bounds. Don't extend Pix
 	// beyond the existing slice length; that would be a logic bug.
 	newRowBytes := planeWidth * bytesPerSample
-	newLen := (planeHeight-1)*plane.Stride + newRowBytes
-	if newLen > len(plane.Pix) {
-		newLen = len(plane.Pix)
-	}
+	newLen := min((planeHeight-1)*plane.Stride+newRowBytes, len(plane.Pix))
 	return frame.Plane{
 		Pix:    plane.Pix[:newLen],
 		Stride: plane.Stride,
@@ -2248,16 +2245,10 @@ func frameWorkHasTopRight(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB 
 		block.MICol+uint32((colOff+txW)<<ssX) >= miColEnd {
 		return false
 	}
-	blockW := int(dims.W4) >> ssX
-	if blockW < 1 {
-		blockW = 1
-	}
+	blockW := max(int(dims.W4)>>ssX, 1)
 	if rowOff > 0 {
 		if int(dims.W4) > 16 {
-			block64 := 16 >> ssX
-			if block64 < 1 {
-				block64 = 1
-			}
+			block64 := max(16>>ssX, 1)
 			if rowOff == 16>>ssY && colOff+txW == block64 {
 				return true
 			}
@@ -2310,21 +2301,12 @@ func frameWorkHasBottomLeft(block tile.BlockVisit, size tile.BlockSize, sbSizeMI
 		return false
 	}
 	if int(dims.W4) > 16 && colOff > 0 {
-		blockW64 := 16 >> ssX
-		if blockW64 < 1 {
-			blockW64 = 1
-		}
+		blockW64 := max(16>>ssX, 1)
 		colOff64 := colOff % blockW64
 		if colOff64 == 0 {
-			planeBlockH64 := 16 >> ssY
-			if planeBlockH64 < 1 {
-				planeBlockH64 = 1
-			}
+			planeBlockH64 := max(16>>ssY, 1)
 			rowOff64 := rowOff % planeBlockH64
-			blockH := int(dims.H4) >> ssY
-			if blockH < 1 {
-				blockH = 1
-			}
+			blockH := max(int(dims.H4)>>ssY, 1)
 			if blockH > planeBlockH64 {
 				blockH = planeBlockH64
 			}
@@ -2334,10 +2316,7 @@ func frameWorkHasBottomLeft(block tile.BlockVisit, size tile.BlockSize, sbSizeMI
 	if colOff > 0 {
 		return false
 	}
-	blockH := int(dims.H4) >> ssY
-	if blockH < 1 {
-		blockH = 1
-	}
+	blockH := max(int(dims.H4)>>ssY, 1)
 	if rowOff+txH < blockH {
 		return true
 	}
@@ -2768,10 +2747,7 @@ func frameWorkOBMCAboveHeight(size tile.BlockSize, geom frameWorkPredictionPlane
 	if !ok {
 		return 0, ErrInvalidBatch
 	}
-	overlap := int(dims.H4) * 4
-	if overlap > 64 {
-		overlap = 64
-	}
+	overlap := min(int(dims.H4)*4, 64)
 	overlap >>= 1
 	if geom.SubsamplingY {
 		overlap >>= 1
@@ -2789,10 +2765,7 @@ func frameWorkOBMCLeftWidth(size tile.BlockSize, geom frameWorkPredictionPlaneGe
 	if !ok {
 		return 0, ErrInvalidBatch
 	}
-	overlap := int(dims.W4) * 4
-	if overlap > 64 {
-		overlap = 64
-	}
+	overlap := min(int(dims.W4)*4, 64)
 	overlap >>= 1
 	if geom.SubsamplingX {
 		overlap >>= 1
@@ -2836,14 +2809,8 @@ func frameWorkOBMCLeftFilterHeight(block tile.BlockVisit, neighbor tile.Overlapp
 		return 0, ErrInvalidBatch
 	}
 	blockH4 := int(blockDims.H4)
-	neighborH4 := int(neighborDims.H4)
-	if neighborH4 > 16 {
-		neighborH4 = 16
-	}
-	opMI := blockH4
-	if neighborH4 < opMI {
-		opMI = neighborH4
-	}
+	neighborH4 := min(int(neighborDims.H4), 16)
+	opMI := min(neighborH4, blockH4)
 	bh := opMI * 4
 	if geom.SubsamplingY {
 		bh >>= 1
@@ -2876,14 +2843,8 @@ func frameWorkOBMCAboveFilterWidth(block tile.BlockVisit, neighbor tile.Overlapp
 		return 0, ErrInvalidBatch
 	}
 	blockW4 := int(blockDims.W4)
-	neighborW4 := int(neighborDims.W4)
-	if neighborW4 > 16 {
-		neighborW4 = 16
-	}
-	opMI := blockW4
-	if neighborW4 < opMI {
-		opMI = neighborW4
-	}
+	neighborW4 := min(int(neighborDims.W4), 16)
+	opMI := min(neighborW4, blockW4)
 	bw := opMI * 4
 	if geom.SubsamplingX {
 		bw >>= 1
@@ -2940,9 +2901,9 @@ func frameWorkBlendOBMCV(dst frame.Plane, tmp frame.Plane, bytesPerSample int, d
 		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < height; row++ {
+	for row := range height {
 		m := uint16(mask[row])
-		for col := 0; col < width; col++ {
+		for col := range width {
 			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
 			if !ok {
 				return ErrInvalidBatch
@@ -2965,8 +2926,8 @@ func frameWorkBlendOBMCH(dst frame.Plane, tmp frame.Plane, bytesPerSample int, d
 		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			m := uint16(mask[col])
 			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
 			if !ok {
@@ -2995,21 +2956,21 @@ func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second fram
 	}
 	switch bytesPerSample {
 	case 1:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				out := (uint32(firstLine[col])*uint32(fwdOffset) + uint32(secondLine[col])*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits
 				dstLine[col] = byte(out)
 			}
 		}
 	case 2:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				i := col * 2
 				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
 				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
@@ -3038,8 +2999,8 @@ func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, s
 		return ErrInvalidBatch
 	}
 	invert := maskType == tile.DiffWtdMaskType38Inv
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			a, ok := frameWorkLoadSample(first, bytesPerSample, col, row)
 			if !ok {
 				return ErrInvalidBatch
@@ -3057,10 +3018,7 @@ func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, s
 			if shift != 0 {
 				diff >>= shift
 			}
-			m := frameWorkDiffWtdMaskBase + diff/frameWorkDiffWtdFactor
-			if m > frameWorkBlendA64MaxAlpha {
-				m = frameWorkBlendA64MaxAlpha
-			}
+			m := min(frameWorkDiffWtdMaskBase+diff/frameWorkDiffWtdFactor, frameWorkBlendA64MaxAlpha)
 			if invert {
 				m = frameWorkBlendA64MaxAlpha - m
 			}
@@ -3075,10 +3033,7 @@ func frameWorkBuildInterIntraMask(mask []byte, maskStride int, width int, height
 		!frameWorkMaskBlockFits(len(mask), maskStride, width, height) {
 		return ErrInvalidBatch
 	}
-	scaleBase := width
-	if height > scaleBase {
-		scaleBase = height
-	}
+	scaleBase := max(height, width)
 	if scaleBase <= 0 || scaleBase > len(frameWorkInterIntraWeights) {
 		return ErrInvalidBatch
 	}
@@ -3086,8 +3041,8 @@ func frameWorkBuildInterIntraMask(mask []byte, maskStride int, width int, height
 	if sizeScale <= 0 {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			index := 0
 			switch mode {
 			case tile.InterIntraModeVertical:
@@ -3095,10 +3050,7 @@ func frameWorkBuildInterIntraMask(mask []byte, maskStride int, width int, height
 			case tile.InterIntraModeHorizontal:
 				index = col * sizeScale
 			case tile.InterIntraModeSmooth:
-				index = row
-				if col < index {
-					index = col
-				}
+				index = min(col, row)
 				index *= sizeScale
 			case tile.InterIntraModeDC:
 				mask[row*maskStride+col] = frameWorkBlendA64MaxAlpha / 2
@@ -3126,11 +3078,11 @@ func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, secon
 	}
 	switch bytesPerSample {
 	case 1:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				m, ok := frameWorkBlendMaskSample(mask, maskStride, row, col, subX, subY)
 				if !ok {
 					return ErrInvalidBatch
@@ -3144,11 +3096,11 @@ func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, secon
 			}
 		}
 	case 2:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				i := col * 2
 				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
 				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
@@ -3940,7 +3892,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 			if err != nil {
 				return prediction.IntraEdges{}, err
 			}
-			for col := 0; col < edgeWidth; col++ {
+			for col := range edgeWidth {
 				scratch.Above[col] = sample
 			}
 			edges.Above = scratch.Above[:edgeWidth]
@@ -3951,7 +3903,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for col := 0; col < edgeWidth; col++ {
+		for col := range edgeWidth {
 			scratch.Above[col] = sample
 		}
 		edges.Above = scratch.Above[:edgeWidth]
@@ -3987,7 +3939,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 			if err != nil {
 				return prediction.IntraEdges{}, err
 			}
-			for row := 0; row < edgeHeight; row++ {
+			for row := range edgeHeight {
 				scratch.Left[row] = sample
 			}
 			edges.Left = scratch.Left[:edgeHeight]
@@ -3998,7 +3950,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for row := 0; row < edgeHeight; row++ {
+		for row := range edgeHeight {
 			scratch.Left[row] = sample
 		}
 		edges.Left = scratch.Left[:edgeHeight]
@@ -4168,20 +4120,14 @@ func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bi
 	if block.HaveTop && block.HaveLeft {
 		nTopPx := width
 		if visibleW > 0 {
-			nTopPx = visibleW - x
-			if nTopPx < 0 {
-				nTopPx = 0
-			}
+			nTopPx = max(visibleW-x, 0)
 			if nTopPx > width {
 				nTopPx = width
 			}
 		}
 		nLeftPx := height
 		if visibleH > 0 {
-			nLeftPx = visibleH - y
-			if nLeftPx < 0 {
-				nLeftPx = 0
-			}
+			nLeftPx = max(visibleH-y, 0)
 			if nLeftPx > height {
 				nLeftPx = height
 			}
@@ -4271,10 +4217,7 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	// x..min(x+primaryWidth, readBoundX)-1 with the rest replicated, and
 	// when allowTopRight is set the top-right extension may extend at most
 	// to readBoundX-1 (a further primaryWidth cols, capped).
-	primaryLimit := readBoundX - x
-	if primaryLimit < 0 {
-		primaryLimit = 0
-	}
+	primaryLimit := max(readBoundX-x, 0)
 	if primaryLimit > primaryWidth {
 		primaryLimit = primaryWidth
 	}
@@ -4291,10 +4234,7 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 		}
 		return nil
 	}
-	topRightLimit := readBoundX - x - primaryWidth
-	if topRightLimit < 0 {
-		topRightLimit = 0
-	}
+	topRightLimit := max(readBoundX-x-primaryWidth, 0)
 	if topRightLimit > primaryWidth {
 		topRightLimit = primaryWidth
 	}
@@ -4362,10 +4302,7 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 	}
 	// Mirror libaom's n_left_px = min(txhpx, yd + txhpx) and
 	// n_bottomleft_px = min(txhpx, yd) caps.
-	primaryLimit := readBoundY - y
-	if primaryLimit < 0 {
-		primaryLimit = 0
-	}
+	primaryLimit := max(readBoundY-y, 0)
 	if primaryLimit > primaryHeight {
 		primaryLimit = primaryHeight
 	}
@@ -4382,10 +4319,7 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 		}
 		return nil
 	}
-	bottomLeftLimit := readBoundY - y - primaryHeight
-	if bottomLeftLimit < 0 {
-		bottomLeftLimit = 0
-	}
+	bottomLeftLimit := max(readBoundY-y-primaryHeight, 0)
 	if bottomLeftLimit > primaryHeight {
 		bottomLeftLimit = primaryHeight
 	}
@@ -4589,8 +4523,8 @@ func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y
 	if plane == FrameWorkPlaneV {
 		colors = palette.VColors
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			index := palette.UVMap[(mapY+row)*mapStride+mapX+col]
 			if index >= palette.UVSize {
 				return ErrInvalidBatch
@@ -4616,8 +4550,8 @@ func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y i
 	if mapX < 0 || mapY < 0 || mapX+width > mapStride || mapY+height > mapHeight {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			index := palette.YMap[(mapY+row)*mapStride+mapX+col]
 			if index >= palette.YSize {
 				return ErrInvalidBatch

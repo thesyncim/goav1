@@ -53,8 +53,8 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 	}
 
 	const sbMIB = 16 // 64x64 superblock = 16 4x4 MI units
-	for r := 0; r < sbRows; r++ {
-		for col := 0; col < sbCols; col++ {
+	for r := range sbRows {
+		for col := range sbCols {
 			miCol := uint32(col * sbMIB)
 			miRow := uint32(r * sbMIB)
 			visit := tile.BlockLoopVisit{
@@ -163,7 +163,7 @@ func TestReconWavefrontSpeedup(t *testing.T) {
 
 	measureSerial := func() time.Duration {
 		best := time.Duration(1<<63 - 1)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			testFillFrame(out, 0)
 			c := buildWavefrontReconController(t, out, sbCols, sbRows, &scratch)
 			bind(c)
@@ -179,7 +179,7 @@ func TestReconWavefrontSpeedup(t *testing.T) {
 	}
 	measureWavefront := func(workers int) time.Duration {
 		best := time.Duration(1<<63 - 1)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			testFillFrame(out, 0)
 			c := buildWavefrontReconController(t, out, sbCols, sbRows, &scratch)
 			c.wavefrontWorkers = workers

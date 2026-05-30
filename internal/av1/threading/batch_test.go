@@ -43,7 +43,7 @@ func TestBuildBatchesCapsWorkersToJobs(t *testing.T) {
 	if n != len(jobs) {
 		t.Fatalf("n=%d want %d", n, len(jobs))
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if batches[i].Worker != uint16(i) || batches[i].Count != 1 || batches[i].FirstJob != i {
 			t.Fatalf("batch[%d]=%+v", i, batches[i])
 		}
@@ -414,7 +414,7 @@ func testCDFValuesEqual(a []uint16, b []uint16) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
+	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
@@ -1054,7 +1054,7 @@ func TestFrameWorkBatchReconstructBlockCoeffChromaEdgeVisible(t *testing.T) {
 	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < 16; row++ {
+	for row := range 16 {
 		if got := output.U.Pix[row*output.U.Stride+23]; got != 96 {
 			t.Fatalf("left guard row=%d got=%d want 96", row, got)
 		}
@@ -1735,10 +1735,7 @@ func FuzzBuildBatches(f *testing.F) {
 			return
 		}
 		workers := int(data[0] & 7)
-		count := int(data[1]&7) + 1
-		if count > 8 {
-			count = 8
-		}
+		count := min(int(data[1]&7)+1, 8)
 		if len(data) < 2+count {
 			return
 		}
@@ -1760,7 +1757,7 @@ func FuzzBuildBatches(f *testing.F) {
 			t.Fatalf("n=%d workers=%d count=%d", n, workers, count)
 		}
 		next := 0
-		for i := 0; i < n; i++ {
+		for i := range n {
 			batch := batches[i]
 			if batch.FirstJob != next || batch.Count <= 0 || batch.FirstJob+batch.Count > count || batch.Units == 0 {
 				t.Fatalf("batch[%d]=%+v next=%d count=%d", i, batch, next, count)

@@ -156,9 +156,9 @@ func (m FrameWorkLoopFilterMap) CoverageStats(cols int, rows int) (FrameWorkLoop
 		return FrameWorkLoopFilterMapStats{}, err
 	}
 	var stats FrameWorkLoopFilterMapStats
-	for row := 0; row < rows; row++ {
+	for row := range rows {
 		base := row * m.Stride
-		for col := 0; col < cols; col++ {
+		for col := range cols {
 			record := m.Records[base+col]
 			if !record.Valid {
 				stats.Missing++
@@ -191,9 +191,9 @@ func (m FrameWorkLoopFilterMap) ForEachBlockInGrid(cols int, rows int, visit fun
 	if err := m.validateGrid(cols, rows); err != nil {
 		return err
 	}
-	for row := 0; row < rows; row++ {
+	for row := range rows {
 		base := row * m.Stride
-		for col := 0; col < cols; col++ {
+		for col := range cols {
 			record := m.Records[base+col]
 			if !record.Valid {
 				continue

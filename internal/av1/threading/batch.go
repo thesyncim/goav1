@@ -26,16 +26,13 @@ func BuildBatches(dst []Batch, jobs []tile.Job, workers int) (int, error) {
 		return 0, nil
 	}
 
-	batchCount := workers
-	if batchCount > jobCount {
-		batchCount = jobCount
-	}
+	batchCount := min(workers, jobCount)
 	if len(dst) < batchCount {
 		return 0, ErrBatchBufferTooSmall
 	}
 
 	totalUnits := uint32(0)
-	for i := 0; i < jobCount; i++ {
+	for i := range jobCount {
 		units := jobUnits(jobs[i])
 		if units == 0 {
 			return 0, ErrInvalidJobs

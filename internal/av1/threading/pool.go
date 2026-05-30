@@ -810,10 +810,7 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 	if strideSamples <= 0 {
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
-	allocRows := len(plane.Pix) / plane.Stride
-	if allocRows < plane.Height {
-		allocRows = plane.Height
-	}
+	allocRows := max(len(plane.Pix)/plane.Stride, plane.Height)
 	if xAligned1 > uint32(strideSamples) {
 		xAligned1 = uint32(strideSamples)
 	}
@@ -958,7 +955,7 @@ func NewPool(workers int) (*Pool, error) {
 		workers: make([]poolWorker, workers),
 		done:    make(chan workerResult, workers),
 	}
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		ch := make(chan poolTask)
 		p.workers[i].tasks = ch
 		go poolWorkerLoop(ch, p.done)
@@ -1005,7 +1002,7 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 		}
 		p.mu.Unlock()
 		var firstErr error
-		for i := 0; i < len(batches); i++ {
+		for i := range batches {
 			batch := batches[i]
 			err := fn(batch, jobs[batch.FirstJob:batch.FirstJob+batch.Count])
 			if firstErr == nil && err != nil {
@@ -1021,7 +1018,7 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 		return ErrPoolClosed
 	}
 
-	for i := 0; i < len(batches); i++ {
+	for i := range batches {
 		batch := batches[i]
 		p.workers[batch.Worker].tasks <- poolTask{
 			fn:    fn,
@@ -1031,7 +1028,7 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 	}
 
 	var firstErr error
-	for i := 0; i < len(batches); i++ {
+	for range batches {
 		result := <-p.done
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
@@ -1070,7 +1067,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		}
 		p.mu.Unlock()
 		var firstErr error
-		for i := 0; i < len(batches); i++ {
+		for i := range batches {
 			batch := batches[i]
 			ctx := base
 			ctx.Batch = batch
@@ -1093,7 +1090,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		wavefrontWorkers = len(p.workers)
 	}
 
-	for i := 0; i < len(batches); i++ {
+	for i := range batches {
 		batch := batches[i]
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
@@ -1106,7 +1103,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 	}
 
 	var firstErr error
-	for i := 0; i < len(batches); i++ {
+	for range batches {
 		result := <-p.done
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
@@ -1145,7 +1142,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 		}
 		p.mu.Unlock()
 		var firstErr error
-		for i := 0; i < len(batches); i++ {
+		for i := range batches {
 			batch := batches[i]
 			ctx := base
 			ctx.Batch = batch
@@ -1173,7 +1170,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 		wavefrontWorkers = len(p.workers)
 	}
 
-	for i := 0; i < len(batches); i++ {
+	for i := range batches {
 		batch := batches[i]
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
@@ -1186,7 +1183,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	}
 
 	var firstErr error
-	for i := 0; i < len(batches); i++ {
+	for range batches {
 		result := <-p.done
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
@@ -1213,7 +1210,7 @@ func (p *Pool) Close() {
 }
 
 func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
-	for i := 0; i < len(batches); i++ {
+	for i := range batches {
 		batch := batches[i]
 		if int(batch.Worker) >= workers ||
 			batch.FirstJob < 0 ||

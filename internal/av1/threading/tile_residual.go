@@ -148,7 +148,7 @@ func (s *FrameWorkTileResidualCDFStorage) InitDefault(baseQIndex uint8) error {
 	if err := next.DeltaLF.InitDefaultDelta(); err != nil {
 		return err
 	}
-	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+	for i := range tile.FrameLoopFilterCount {
 		if err := next.DeltaLFMulti[i].InitDefaultDelta(); err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 		Q:  &s.DeltaQ,
 		LF: &s.DeltaLF,
 	}
-	for i := 0; i < tile.FrameLoopFilterCount; i++ {
+	for i := range tile.FrameLoopFilterCount {
 		delta.LFMulti[i] = &s.DeltaLFMulti[i]
 	}
 	return FrameWorkTileResidualCDFs{
@@ -352,7 +352,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		wf.residual = make([][]int16, workers)
 	}
 	wf.states = wf.states[:workers]
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		if cap(wf.int32[w]) < int32Len {
 			wf.int32[w] = make([]int32, int32Len)
 		}
@@ -1356,10 +1356,7 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	if rowCount <= 0 {
 		return ErrInvalidBatch
 	}
-	workers := c.wavefrontWorkers
-	if workers > rowCount {
-		workers = rowCount
-	}
+	workers := min(c.wavefrontWorkers, rowCount)
 
 	if c.scratch.wavefront == nil {
 		c.scratch.wavefront = &frameWorkReconWavefront{}
@@ -1409,7 +1406,7 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	wf.events = c.scratch.reconEvents
 	wf.aborted.Store(false)
 	wf.ensureDone(rowCount)
-	for r := 0; r < rowCount; r++ {
+	for r := range rowCount {
 		wf.done[r].Store(0)
 	}
 
