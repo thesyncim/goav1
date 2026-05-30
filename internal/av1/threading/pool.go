@@ -247,6 +247,15 @@ type FrameWorkBatch struct {
 	Batch                         Batch
 	Jobs                          []tile.Job
 
+	// WavefrontWorkers is the number of idle pool goroutines that the per-tile
+	// reconstruction may employ for an SB-row wavefront when this batch is the
+	// only batch dispatched for the frame (a single-tile frame leaves the other
+	// W-1 pool lanes idle). It is zero on the single-worker fast path and on
+	// multi-batch (multi-tile) frames, where every lane is already busy, so the
+	// deferred wavefront stays off and the fused single-thread path runs. The
+	// pool sets it from WorkerCount when it dispatches exactly one batch.
+	WavefrontWorkers int
+
 	// geomCache optionally memoizes the job-constant JobRegion and per-plane
 	// JobOutputPlane windows for a single job index. It is caller-owned scratch
 	// installed by the per-job residual loop (which decodes thousands of
@@ -1079,11 +1088,18 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		return ErrPoolClosed
 	}
 
+	wavefrontWorkers := 0
+	if len(batches) == 1 {
+		wavefrontWorkers = len(p.workers)
+	}
+
 	for i := 0; i < len(batches); i++ {
 		batch := batches[i]
+		ctx := base
+		ctx.WavefrontWorkers = wavefrontWorkers
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameFn:    fn,
-			frameBatch: base,
+			frameBatch: ctx,
 			batch:      batch,
 			jobs:       jobs[batch.FirstJob : batch.FirstJob+batch.Count],
 		}
@@ -1147,11 +1163,23 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 		return ErrPoolClosed
 	}
 
+	// A single batch on a multi-worker pool means a single-tile frame: only one
+	// lane runs the per-tile decode while the other W-1 lanes sit idle. Offer
+	// those idle lanes to the per-tile reconstruction so it can run an SB-row
+	// wavefront. With more than one batch every lane is busy, so leave the count
+	// zero and let each batch run the fused single-thread path.
+	wavefrontWorkers := 0
+	if len(batches) == 1 {
+		wavefrontWorkers = len(p.workers)
+	}
+
 	for i := 0; i < len(batches); i++ {
 		batch := batches[i]
+		ctx := base
+		ctx.WavefrontWorkers = wavefrontWorkers
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameRunner: runner,
-			frameBatch:  base,
+			frameBatch:  ctx,
 			batch:       batch,
 			jobs:        jobs[batch.FirstJob : batch.FirstJob+batch.Count],
 		}

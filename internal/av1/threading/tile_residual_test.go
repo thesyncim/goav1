@@ -1136,8 +1136,8 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 	}
 	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
 	assertFrameWorkPlaneBlockEqual(t, output.U, want.U, output.Layout.BytesPerSample, 8, 8, 8, 8)
-	if !controller.cflPredictionDone || stats.Residuals != 1 {
-		t.Fatalf("controller cflDone=%v stats=%+v", controller.cflPredictionDone, stats)
+	if !controller.recon.cflPredictionDone || stats.Residuals != 1 {
+		t.Fatalf("controller cflDone=%v stats=%+v", controller.recon.cflPredictionDone, stats)
 	}
 }
 

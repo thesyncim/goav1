@@ -3,6 +3,9 @@ package threading
 import (
 	"fmt"
 	"os"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -18,6 +21,30 @@ import (
 // wavefront concurrency increment wires real selection. Default off: when off,
 // DecodeAndReconstructJobResiduals runs the existing fused path verbatim.
 var frameWorkDeferReconstruction = os.Getenv("GOAV1_DEFER_RECON") != ""
+
+// frameWorkWavefrontMinSBRowsPerWorker is the SB-row count, per available
+// worker, a tile must clear before the deferred SB-row wavefront engages.
+// Below it the fused single-thread path wins (no buffering, no goroutines), so
+// the wavefront stays off. It defaults to 2 (the diagonal must fill before it
+// drains) and is overridable only as a test hook so focused tests can force the
+// wavefront on the small conformance clips.
+var frameWorkWavefrontMinSBRowsPerWorker = frameWorkParseMinSBRows()
+
+func frameWorkParseMinSBRows() int {
+	if v := os.Getenv("GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER"); v != "" {
+		n := 0
+		for _, ch := range v {
+			if ch < '0' || ch > '9' {
+				return 2
+			}
+			n = n*10 + int(ch-'0')
+		}
+		if n >= 1 {
+			return n
+		}
+	}
+	return 2
+}
 
 // frameWorkReconEventKind distinguishes the two deferred reconstruction events:
 // a per-block predict "begin" marker and a per-TXB reconstruction.
@@ -247,6 +274,114 @@ type FrameWorkTileResidualScratch struct {
 	reconEvents  []frameWorkReconEvent
 	coeffArena   []int16
 	paletteArena []*tile.PaletteModeScratch
+
+	// wavefront holds the reusable SB-row wavefront scheduling state used when
+	// the deferred reconstruction replay runs across multiple goroutines. It is
+	// lazily allocated only on the multi-worker wavefront path (the fused
+	// single-thread and serial deferred replay never touch it, so they pay
+	// nothing); it is a pointer so the scratch struct stays copyable (the
+	// wavefront state embeds sync/atomic counters, which must not be copied). Its
+	// slices and per-goroutine state retain capacity across frames.
+	wavefront *frameWorkReconWavefront
+}
+
+// frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and
+// wavefront scheduling state. rowStart partitions the flat reconEvents list
+// into per-SB-row spans ([rowStart[r], rowStart[r+1])); done[r] counts the SBs
+// completed in row r so a goroutine reconstructing row r+1 can gate its reads of
+// the upper-right neighbor. states holds one reconstruction state per wavefront
+// goroutine (each with its own CFL state machine, prediction/residual scratch,
+// and geometry cache) so the goroutines never share mutable reconstruction
+// state. All buffers retain capacity across frames.
+type frameWorkReconWavefront struct {
+	rowStart  []int
+	sbSpans   []frameWorkReconSB
+	events    []frameWorkReconEvent
+	done      []atomic.Int32
+	states    []frameWorkReconState
+	predict   []FrameWorkPredictionScratch
+	inter     []FrameWorkInterPredictionScratch
+	cfl       []FrameWorkCFLPredictionScratch
+	int32     [][]int32
+	residual  [][]int16
+	doneAlloc []atomic.Int32
+	aborted   atomic.Bool
+}
+
+func (wf *frameWorkReconWavefront) reuseSBs() []frameWorkReconSB {
+	return wf.sbSpans[:0]
+}
+
+func (wf *frameWorkReconWavefront) commitSBs(sbs []frameWorkReconSB) {
+	wf.sbSpans = sbs
+}
+
+func (wf *frameWorkReconWavefront) sbs() []frameWorkReconSB {
+	return wf.sbSpans
+}
+
+func (wf *frameWorkReconWavefront) eventSpan(start int, end int) []frameWorkReconEvent {
+	return wf.events[start:end]
+}
+
+// ensureDone grows the per-row done-counter backing to rowCount entries,
+// reusing the previously allocated array when it is already large enough.
+// atomic.Int32 must not be copied once used, so the backing array is allocated
+// once and resliced; entries are reset by the caller before each wavefront.
+func (wf *frameWorkReconWavefront) ensureDone(rowCount int) {
+	if cap(wf.doneAlloc) < rowCount {
+		wf.doneAlloc = make([]atomic.Int32, rowCount)
+	}
+	wf.done = wf.doneAlloc[:rowCount]
+}
+
+// ensureStates lazily allocates wavefrontWorkers per-goroutine reconstruction
+// states with their own prediction/inter/CFL/residual scratch and a private
+// geometry cache, retaining them across frames. Each state is rebound to the
+// current job's batch, index, scratch, and request every frame; only the heap
+// scratch is reused.
+func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileResidualLoopController) error {
+	int32Len := len(c.req.Int32Scratch)
+	residualLen := len(c.req.ResidualScratch)
+	if cap(wf.states) < workers {
+		wf.states = make([]frameWorkReconState, workers)
+		wf.predict = make([]FrameWorkPredictionScratch, workers)
+		wf.inter = make([]FrameWorkInterPredictionScratch, workers)
+		wf.cfl = make([]FrameWorkCFLPredictionScratch, workers)
+		wf.int32 = make([][]int32, workers)
+		wf.residual = make([][]int16, workers)
+	}
+	wf.states = wf.states[:workers]
+	for w := 0; w < workers; w++ {
+		if cap(wf.int32[w]) < int32Len {
+			wf.int32[w] = make([]int32, int32Len)
+		}
+		wf.int32[w] = wf.int32[w][:int32Len]
+		if cap(wf.residual[w]) < residualLen {
+			wf.residual[w] = make([]int16, residualLen)
+		}
+		wf.residual[w] = wf.residual[w][:residualLen]
+		wf.predict[w].Inter = &wf.inter[w]
+		// Each goroutine reconstructs through its own batch copy whose geometry
+		// cache is private, so the per-block JobRegion/JobOutputPlane memoization
+		// never races. The cache is per-job; reset it before use.
+		st := &wf.states[w]
+		st.batch = c.batch
+		st.geom.reset()
+		st.batch.geomCache = &st.geom
+		st.index = c.index
+		st.localStats = FrameWorkTileResidualStats{}
+		st.stats = &st.localStats
+		st.predict = c.req.Predict
+		st.predictionScratch = &wf.predict[w]
+		st.cflScratch = &wf.cfl[w]
+		st.int32Scratch = wf.int32[w]
+		st.residualScratch = wf.residual[w]
+		st.pendingCFLPrediction = false
+		st.cflPredictionDone = false
+		st.cflVisit = tile.BlockLoopVisit{}
+	}
+	return nil
 }
 
 // resetDeferredReconBuffers slices the deferred reconstruction buffers back to
@@ -737,6 +872,17 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	scratch.geomCache.reset()
 	scratch.resetDeferredReconBuffers()
 	b.geomCache = &scratch.geomCache
+	// The deferred wavefront engages only when the pool offered idle lanes
+	// (single-tile frame on a multi-worker pool) and the tile clears the size
+	// threshold. The GOAV1_DEFER_RECON force-on hook keeps the serial deferred
+	// replay available as a byte-identity test harness without spawning
+	// goroutines. When neither is set, the fused single-thread path runs
+	// verbatim at zero added cost.
+	wavefrontWorkers := 0
+	if req.Predict == nil && frameWorkWavefrontEligible(b, index) {
+		wavefrontWorkers = b.WavefrontWorkers
+	}
+	deferReconstruction := frameWorkDeferReconstruction || wavefrontWorkers > 1
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  b,
 		index:                  index,
@@ -750,7 +896,22 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		userCoeffVisitor:       loopReq.CoeffVisitor,
 		restoration:            restoration,
 		readRestoration:        readRestoration,
-		deferReconstruction:    frameWorkDeferReconstruction,
+		deferReconstruction:    deferReconstruction,
+		wavefrontWorkers:       wavefrontWorkers,
+	}
+	// Wire the fused / serial-deferred reconstruction state to the controller's
+	// request scratch and shared geometry cache. The fused single-thread path
+	// pays no extra copy: it dereferences exactly the buffers the previous
+	// inline calls used.
+	scratch.controller.recon = frameWorkReconState{
+		batch:             b,
+		index:             index,
+		stats:             &scratch.stats,
+		predict:           req.Predict,
+		predictionScratch: req.PredictionScratch,
+		cflScratch:        &scratch.CFL,
+		int32Scratch:      req.Int32Scratch,
+		residualScratch:   req.ResidualScratch,
 	}
 	if loopReq.BeforeSuperblock != nil || readRestoration {
 		loopReq.BeforeSuperblock = scratch.controller.BeforeSuperblock
@@ -776,11 +937,37 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		return scratch.stats, err
 	}
 	if scratch.controller.deferReconstruction {
-		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
+		if scratch.controller.wavefrontWorkers > 1 {
+			if err := scratch.controller.replayDeferredReconstructionWavefront(); err != nil {
+				return scratch.stats, err
+			}
+		} else if err := scratch.controller.replayDeferredReconstruction(); err != nil {
 			return scratch.stats, err
 		}
 	}
 	return scratch.stats, nil
+}
+
+// frameWorkWavefrontEligible reports whether the deferred SB-row wavefront may
+// engage for Jobs[index]. The wavefront helps only when the pool offered idle
+// lanes (set by the pool when a single batch is dispatched) and the tile has
+// enough SB rows to keep those lanes busy past the wavefront ramp. Below the
+// threshold the fused single-thread path is the better choice (no buffering, no
+// goroutines), so this returns false and the caller leaves reconstruction
+// fused.
+func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
+	workers := b.WavefrontWorkers
+	if workers <= 1 {
+		return false
+	}
+	region, err := b.JobRegion(index)
+	if err != nil {
+		return false
+	}
+	sbRows := int(region.SBRows)
+	// Require enough SB rows per worker so the wavefront diagonal fills before
+	// it drains. Tiny frames stay on the fused path.
+	return sbRows >= frameWorkWavefrontMinSBRowsPerWorker*workers
 }
 
 // DecodeAndReconstructJobResidualsDefault derives the standard block-loop and
@@ -823,6 +1010,45 @@ type frameWorkTileResidualLoopController struct {
 	// replayDeferredReconstruction runs them after the whole tile's entropy
 	// decode completes.
 	deferReconstruction bool
+
+	// wavefrontWorkers is the number of idle pool goroutines available to fan
+	// the deferred replay out as an SB-row wavefront. It is zero on the
+	// single-worker and multi-tile paths, where the fused single-thread path
+	// runs verbatim.
+	wavefrontWorkers int
+
+	// recon holds the reconstruction state for the fused single-thread path and
+	// the serial deferred replay. The multi-worker wavefront uses its own
+	// per-goroutine states instead. It is wired to the controller's request
+	// scratch so the fused path pays no extra copy.
+	recon frameWorkReconState
+}
+
+// frameWorkReconState is the per-goroutine reconstruction state: the CFL
+// luma-first deferral state machine plus the prediction/residual scratch and a
+// private geometry cache. Splitting it out of the controller lets the
+// multi-worker wavefront give each goroutine its own isolated state (no shared
+// mutable reconstruction state, no shared geomCache => no data race), while the
+// fused single-thread path and the serial deferred replay keep using the single
+// instance the controller owns. The batch carried here owns its own geomCache
+// pointer; reconstruction reads only that goroutine's scratch and that
+// goroutine's CFL fields.
+type frameWorkReconState struct {
+	batch             FrameWorkBatch
+	index             int
+	stats             *FrameWorkTileResidualStats
+	predict           FrameWorkBlockPredictor
+	predictionScratch *FrameWorkPredictionScratch
+	cflScratch        *FrameWorkCFLPredictionScratch
+	int32Scratch      []int32
+	residualScratch   []int16
+
+	// geom is this goroutine's private job-geometry cache; batch.geomCache
+	// points at it on the wavefront path so the per-block memoization never
+	// races. localStats accumulates the goroutine's reconstruction counters,
+	// merged into the controller stats after the wavefront joins.
+	geom       frameWorkJobGeometryCache
+	localStats FrameWorkTileResidualStats
 
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
@@ -869,40 +1095,65 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile
 		})
 		return nil
 	}
-	return c.predictBlockBegin(&visit)
+	return c.fusedReconState().predictBlockBegin(&visit)
+}
+
+// fusedReconState returns the controller's reconstruction state for the fused
+// single-thread path, binding it from the controller's request/scratch the
+// first time it is needed. DecodeAndReconstructJobResiduals binds it up front
+// on the production path; this lazy bind keeps direct-construction unit tests
+// (which build the controller as a struct literal) working without each test
+// wiring the state by hand. The bind is a single nil check per block on the hot
+// path.
+func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconState {
+	if c.recon.stats == nil {
+		c.recon = frameWorkReconState{
+			batch:             c.batch,
+			index:             c.index,
+			stats:             c.stats,
+			predict:           c.req.Predict,
+			predictionScratch: c.req.PredictionScratch,
+			int32Scratch:      c.req.Int32Scratch,
+			residualScratch:   c.req.ResidualScratch,
+		}
+		if c.scratch != nil {
+			c.recon.cflScratch = &c.scratch.CFL
+		}
+	}
+	return &c.recon
 }
 
 // predictBlockBegin runs the predict portion of a block-loop visit: it resets
 // the CFL deferral state machine, predicts luma/non-CfL chroma (or arms the
 // pending-CfL state), and for skip-transform blocks flushes the deferred CfL
 // chroma immediately (there are no TXBs to trigger it later). It is shared by
-// the fused single-thread path (called inline from BeforeBlockCoefficients) and
-// the deferred path (replayed in decode order from
-// replayDeferredReconstruction).
-func (c *frameWorkTileResidualLoopController) predictBlockBegin(visit *tile.BlockLoopVisit) error {
-	c.pendingCFLPrediction = false
-	c.cflPredictionDone = false
-	c.cflVisit = tile.BlockLoopVisit{}
-	if err := c.predictBeforeCoefficients(*visit); err != nil {
+// the fused single-thread path (called inline from BeforeBlockCoefficients),
+// the serial deferred replay, and each goroutine of the multi-worker wavefront,
+// each operating on its own frameWorkReconState.
+func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) error {
+	s.pendingCFLPrediction = false
+	s.cflPredictionDone = false
+	s.cflVisit = tile.BlockLoopVisit{}
+	if err := s.predictBeforeCoefficients(*visit); err != nil {
 		return err
 	}
 	if visit.Prefix.SkipTransform {
-		if err := c.predictDeferredCFLChroma(); err != nil {
+		if err := s.predictDeferredCFLChroma(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
-	if c.req.Predict != nil {
-		if err := c.req.Predict(visit); err != nil {
+func (s *frameWorkReconState) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
+	if s.predict != nil {
+		if err := s.predict(visit); err != nil {
 			return fmt.Errorf("predict callback block=%+v: %w", visit.Block, err)
 		}
-		c.stats.Predictions++
+		s.stats.Predictions++
 		return nil
 	}
-	if c.req.PredictionScratch == nil {
+	if s.predictionScratch == nil {
 		return nil
 	}
 	if !visit.Prediction.Valid {
@@ -910,35 +1161,35 @@ func (c *frameWorkTileResidualLoopController) predictBeforeCoefficients(visit ti
 	}
 	if visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if frameWorkVisitUsesCFL(visit) {
-			c.pendingCFLPrediction = true
-			c.cflVisit = visit
+			s.pendingCFLPrediction = true
+			s.cflVisit = visit
 		}
 		return nil
 	}
 	if frameWorkVisitUsesCFL(visit) {
-		if err := c.batch.PredictBlockLumaIntra(c.index, visit, &c.req.PredictionScratch.Intra); err != nil {
+		if err := s.batch.PredictBlockLumaIntra(s.index, visit, &s.predictionScratch.Intra); err != nil {
 			return fmt.Errorf("predict cfl luma block=%+v: %w", visit.Block, err)
 		}
-		c.pendingCFLPrediction = true
-		c.cflVisit = visit
-		c.stats.Predictions++
+		s.pendingCFLPrediction = true
+		s.cflVisit = visit
+		s.stats.Predictions++
 		return nil
 	}
-	if err := c.batch.PredictBlock(c.index, visit, c.req.PredictionScratch); err != nil {
+	if err := s.batch.PredictBlock(s.index, visit, s.predictionScratch); err != nil {
 		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 	}
-	c.stats.Predictions++
+	s.stats.Predictions++
 	return nil
 }
 
-func (c *frameWorkTileResidualLoopController) predictDeferredCFLChroma() error {
-	if !c.pendingCFLPrediction || c.cflPredictionDone {
+func (s *frameWorkReconState) predictDeferredCFLChroma() error {
+	if !s.pendingCFLPrediction || s.cflPredictionDone {
 		return nil
 	}
-	if err := c.batch.PredictBlockChromaCFL(c.index, c.cflVisit, &c.scratch.CFL); err != nil {
-		return fmt.Errorf("predict cfl chroma block=%+v: %w", c.cflVisit.Block, err)
+	if err := s.batch.PredictBlockChromaCFL(s.index, s.cflVisit, s.cflScratch); err != nil {
+		return fmt.Errorf("predict cfl chroma block=%+v: %w", s.cflVisit.Block, err)
 	}
-	c.cflPredictionDone = true
+	s.cflPredictionDone = true
 	return nil
 }
 
@@ -1006,7 +1257,7 @@ func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.B
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
 	if c.deferReconstruction {
 		c.bufferReconTXB(&visit, &block, c.state.CurrentBaseQIdx)
-	} else if err := c.reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
+	} else if err := c.fusedReconState().reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
 		return err
 	}
 	if c.userCoeffVisitor != nil {
@@ -1046,20 +1297,193 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 // the CfL luma-first state machine and intra neighbor reads observe identical
 // inputs, producing byte-identical output.
 func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
-	for i := range c.scratch.reconEvents {
-		ev := &c.scratch.reconEvents[i]
+	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents)
+}
+
+// frameWorkReplayReconEvents runs a span of buffered reconstruction events in
+// decode order on one reconstruction state. It is the shared inner loop of both
+// the serial deferred replay and each wavefront goroutine's per-SB-row work.
+func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent) error {
+	for i := range events {
+		ev := &events[i]
 		switch ev.kind {
 		case frameWorkReconEventBlockBegin:
-			if err := c.predictBlockBegin(&ev.visit); err != nil {
+			if err := s.predictBlockBegin(&ev.visit); err != nil {
 				return err
 			}
 		case frameWorkReconEventTXB:
-			if err := c.reconstructTXB(&ev.visit, &ev.block, ev.currentQIndex); err != nil {
+			if err := s.reconstructTXB(&ev.visit, &ev.block, ev.currentQIndex); err != nil {
 				return err
 			}
 		default:
 			return ErrInvalidBatch
 		}
+	}
+	return nil
+}
+
+// frameWorkReconSB records one superblock's span of buffered reconstruction
+// events: the half-open [start, end) range into the flat reconEvents list and
+// the SB column within its row. Events for one SB are contiguous because the
+// block loop decodes superblocks in raster order.
+type frameWorkReconSB struct {
+	start int
+	end   int
+	col   int
+}
+
+// replayDeferredReconstructionWavefront replays the buffered reconstruction
+// events as an SB-row wavefront across wavefrontWorkers goroutines. Worker w
+// statically owns SB rows w, w+W, w+2W, ... and reconstructs each owned row's
+// superblocks left-to-right. Before reconstructing SB column C of row R it
+// waits until done[R-1] >= C+2 so the upper and upper-right neighbor
+// superblocks (R-1,C) and (R-1,C+1) — the furthest an intra top-right edge
+// read reaches — are fully reconstructed; after finishing SB column C it
+// publishes done[R] = C+1. Row 0 is ungated. Each goroutine uses its own
+// reconstruction state (CFL machine, prediction/residual scratch, geometry
+// cache), and the buffered events/arenas are read-only during the replay, so
+// the only cross-goroutine communication is the atomic done counters.
+func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefront() error {
+	region, err := c.batch.JobRegion(c.index)
+	if err != nil {
+		return err
+	}
+	sbSizeMIB := uint32(c.batch.Sequence.SBSizeMIB)
+	if sbSizeMIB == 0 {
+		return ErrInvalidBatch
+	}
+	rowCount := int(region.SBRows)
+	if rowCount <= 0 {
+		return ErrInvalidBatch
+	}
+	workers := c.wavefrontWorkers
+	if workers > rowCount {
+		workers = rowCount
+	}
+
+	if c.scratch.wavefront == nil {
+		c.scratch.wavefront = &frameWorkReconWavefront{}
+	}
+	wf := c.scratch.wavefront
+	// Partition the flat event list into per-SB-row spans and record each
+	// superblock's column. rowStart[r] is the first SB of row r in the sbs
+	// slice; rowStart[rowCount] is the total SB count. A new SB begins at a
+	// blockBegin event whose (sbRow, sbCol) differs from the previous block's.
+	wf.rowStart = wf.rowStart[:0]
+	sbs := wf.reuseSBs()
+	prevRow, prevCol := -1, -1
+	for i := range c.scratch.reconEvents {
+		ev := &c.scratch.reconEvents[i]
+		if ev.kind != frameWorkReconEventBlockBegin {
+			continue
+		}
+		sbRow := int((ev.visit.Block.MIRow - region.MIRowStart) / sbSizeMIB)
+		sbCol := int((ev.visit.Block.MICol - region.MIColStart) / sbSizeMIB)
+		if sbRow < 0 || sbRow >= rowCount || sbCol < 0 {
+			return ErrInvalidBatch
+		}
+		if sbRow == prevRow && sbCol == prevCol {
+			continue
+		}
+		if sbRow < prevRow || (sbRow == prevRow && sbCol < prevCol) {
+			// Events must arrive in SB-raster order for the wavefront gate to be
+			// valid; bail to the safe serial replay if they ever do not.
+			return ErrInvalidBatch
+		}
+		// Close the previous SB span.
+		if len(sbs) > 0 {
+			sbs[len(sbs)-1].end = i
+		}
+		// Open new row spans up to and including sbRow.
+		for len(wf.rowStart) <= sbRow {
+			wf.rowStart = append(wf.rowStart, len(sbs))
+		}
+		sbs = append(sbs, frameWorkReconSB{start: i, end: len(c.scratch.reconEvents), col: sbCol})
+		prevRow, prevCol = sbRow, sbCol
+	}
+	for len(wf.rowStart) <= rowCount {
+		wf.rowStart = append(wf.rowStart, len(sbs))
+	}
+	wf.commitSBs(sbs)
+
+	wf.events = c.scratch.reconEvents
+	wf.aborted.Store(false)
+	wf.ensureDone(rowCount)
+	for r := 0; r < rowCount; r++ {
+		wf.done[r].Store(0)
+	}
+
+	if err := wf.ensureStates(workers, c); err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	var firstErr atomic.Pointer[wavefrontError]
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			st := &wf.states[w]
+			for row := w; row < rowCount; row += workers {
+				if err := wf.reconstructRow(st, row, rowCount); err != nil {
+					// Signal abort so any goroutine spinning on this row's (now
+					// never-published) done counter stops waiting instead of
+					// deadlocking, then record the first error.
+					wf.aborted.Store(true)
+					firstErr.CompareAndSwap(nil, &wavefrontError{err: err})
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	if e := firstErr.Load(); e != nil {
+		return e.err
+	}
+	// Merge the per-goroutine reconstruction counters into the tile stats. The
+	// goroutines have all joined, so this read is race-free.
+	for w := 0; w < workers; w++ {
+		c.stats.Predictions += wf.states[w].localStats.Predictions
+		c.stats.Residuals += wf.states[w].localStats.Residuals
+	}
+	return nil
+}
+
+// wavefrontError boxes a worker error so atomic.Pointer can carry the first one
+// observed across the wavefront goroutines.
+type wavefrontError struct{ err error }
+
+// reconstructRow reconstructs every superblock of one SB row in left-to-right
+// order, gating each column on the row above via the done counters.
+func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row int, rowCount int) error {
+	sbs := wf.sbs()
+	lo := wf.rowStart[row]
+	hi := wf.rowStart[row+1]
+	for k := lo; k < hi; k++ {
+		sb := sbs[k]
+		if row > 0 {
+			// SB C of row R reads its top neighbor (R-1,C) and, when it exists,
+			// its top-right neighbor (R-1,C+1) — the furthest an intra top-right
+			// edge read reaches. Gate on done[R-1] >= C+2 so both are
+			// reconstructed, but clamp to the number of superblocks actually in
+			// row R-1: if (R-1,C+1) does not exist (right edge), done[R-1] tops
+			// out at the row-above SB count and waiting for C+2 would deadlock.
+			aboveCount := wf.rowStart[row] - wf.rowStart[row-1]
+			need := int32(sb.col + 2)
+			if int(need) > aboveCount {
+				need = int32(aboveCount)
+			}
+			for wf.done[row-1].Load() < need {
+				if wf.aborted.Load() {
+					return nil
+				}
+				runtime.Gosched()
+			}
+		}
+		if err := frameWorkReplayReconEvents(st, wf.eventSpan(sb.start, sb.end)); err != nil {
+			return err
+		}
+		wf.done[row].Store(int32(sb.col + 1))
 	}
 	return nil
 }
@@ -1072,35 +1496,35 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() err
 // into the predict/reconstruct callees match the previous inline calls exactly.
 // currentQIndex is snapshotted by the caller because the live delta-q state
 // advances past this block before a deferred pass would run.
-func (c *frameWorkTileResidualLoopController) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
-	if c.req.Predict == nil && c.req.PredictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
+	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if block.Plane != 0 && frameWorkVisitUsesCFL(*visit) {
-			if err := c.predictDeferredCFLChroma(); err != nil {
+			if err := s.predictDeferredCFLChroma(); err != nil {
 				return err
 			}
 		} else {
-			if err := c.batch.PredictBlockIntraCoeff(c.index, *visit, *block, &c.req.PredictionScratch.Intra); err != nil {
+			if err := s.batch.PredictBlockIntraCoeff(s.index, *visit, *block, &s.predictionScratch.Intra); err != nil {
 				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
 			}
-			c.stats.Predictions++
+			s.stats.Predictions++
 		}
 	} else if block.Plane != 0 {
-		if err := c.predictDeferredCFLChroma(); err != nil {
+		if err := s.predictDeferredCFLChroma(); err != nil {
 			return err
 		}
 	}
-	if err := c.batch.ReconstructBlockCoeff(c.index, FrameWorkBlockCoeffReconstruction{
+	if err := s.batch.ReconstructBlockCoeff(s.index, FrameWorkBlockCoeffReconstruction{
 		Visit:           visit.Block,
 		Block:           *block,
 		Transform:       block.Transform,
 		CurrentQIndex:   currentQIndex,
 		SegmentID:       visit.SegmentID,
-		Int32Scratch:    c.req.Int32Scratch,
-		ResidualScratch: c.req.ResidualScratch,
+		Int32Scratch:    s.int32Scratch,
+		ResidualScratch: s.residualScratch,
 	}); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
-	c.stats.Residuals++
+	s.stats.Residuals++
 	return nil
 }
 
