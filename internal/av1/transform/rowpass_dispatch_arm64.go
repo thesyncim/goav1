@@ -17,9 +17,9 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // call.
 //
 // NEON kernels exist (and are proven bit-exact by the dispatch differential
-// test) for DCT4, DCT8, DCT16, DCT32, ADST4 and ADST8. DCT8, DCT16 and DCT32
-// are bound here: their butterflies are large enough that two-row
-// vectorisation beats the scalar pure-Go kernels on this host. The
+// test) for DCT4, DCT8, DCT16, DCT32, DCT64, ADST4 and ADST8. DCT8, DCT16,
+// DCT32 and DCT64 are bound here: their butterflies are large enough that
+// two-row vectorisation beats the scalar pure-Go kernels on this host. The
 // DCT4/ADST4/ADST8 NEON bodies do not amortise the assembly-call and
 // slice-to-pointer overhead over their smaller / clamp-heavy work and measured
 // slower than pure-Go (see the Row2 benchmarks), so those three stay on
@@ -30,6 +30,7 @@ func init() {
 		inverseDCT8Row2Impl = inverseDCT8Row2NEONAdapter
 		inverseDCT16Row2Impl = inverseDCT16Row2NEONAdapter
 		inverseDCT32Row2Impl = inverseDCT32Row2NEONAdapter
+		inverseDCT64Row2Impl = inverseDCT64Row2NEONAdapter
 	}
 }
 
@@ -76,6 +77,16 @@ func inverseDCT32Row2NEONAdapter(r0, r1 []int32, min, max int32) {
 	r0 = r0[:dct32Size]
 	r1 = r1[:dct32Size]
 	inverseDCT32Row2NEON(&r0[0], &r1[0], int64(min), int64(max))
+}
+
+func inverseDCT64Row2NEONAdapter(r0, r1 []int32, min, max int32) {
+	if len(r0) < dct64Size || len(r1) < dct64Size {
+		inverseDCT64Row2PureGo(r0, r1, min, max)
+		return
+	}
+	r0 = r0[:dct64Size]
+	r1 = r1[:dct64Size]
+	inverseDCT64Row2NEON(&r0[0], &r1[0], int64(min), int64(max))
 }
 
 func inverseADST4Row2NEONAdapter(r0, r1 []int32, min, max int32) {

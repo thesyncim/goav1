@@ -32,6 +32,7 @@ var (
 	inverseDCT8Row2Impl  = inverseDCT8Row2PureGo
 	inverseDCT16Row2Impl = inverseDCT16Row2PureGo
 	inverseDCT32Row2Impl = inverseDCT32Row2PureGo
+	inverseDCT64Row2Impl = inverseDCT64Row2PureGo
 	inverseADST4Row2Impl = inverseADST4Row2PureGo
 	inverseADST8Row2Impl = inverseADST8Row2PureGo
 )
@@ -56,6 +57,9 @@ func inverse1DRow2(r0 []int32, r1 []int32, length int, typ tx1DType, min int32, 
 			return
 		case dct32Size:
 			inverseDCT32Row2Impl(r0, r1, min, max)
+			return
+		case dct64Size:
+			inverseDCT64Row2Impl(r0, r1, min, max)
 			return
 		}
 	case tx1DADST:
@@ -97,6 +101,11 @@ func inverseDCT16Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
 func inverseDCT32Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
 	inverseDCT32Row(r0, min, max)
 	inverseDCT32Row(r1, min, max)
+}
+
+func inverseDCT64Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
+	inverseDCT64Row(r0, min, max)
+	inverseDCT64Row(r1, min, max)
 }
 
 func inverseADST4Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
