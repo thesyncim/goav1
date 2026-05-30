@@ -205,6 +205,85 @@ func Bind(buffer []byte, format Format) (Frame, error) {
 	}, nil
 }
 
+// ExtendBorders edge-replicates each plane's cropped edge outward into the
+// allocated superblock-aligned padding, mirroring libaom's
+// aom_extend_frame_borders / aom_yv12_extend_frame_borders (which replicate the
+// last valid row/column of each plane outward, plus the bottom-right corner,
+// after a frame is decoded and before it can be used as a reference).
+//
+// The reconstruction foundation (RequiredSize) allocates the byte buffer to the
+// superblock-aligned extent but leaves the region past the cropped Width/Height
+// zero-filled. A bottom/right partial-superblock inter block whose
+// motion-compensated read lands in that past-crop region would otherwise read
+// zeros where libaom reads the replicated edge pixel. Extending the borders here
+// makes those reads match libaom whether they go through the convolve's
+// per-sample clamp or read the buffer directly. It is a no-op for any sample
+// that lies inside the cropped extent, so frames with no off-edge reads are
+// unaffected.
+func (f *Frame) ExtendBorders() {
+	bytesPerSample := f.Layout.BytesPerSample
+	if bytesPerSample <= 0 {
+		bytesPerSample = 1
+	}
+	f.Y.extendBorders(bytesPerSample)
+	if !f.Format.MonoChrome {
+		f.U.extendBorders(bytesPerSample)
+		f.V.extendBorders(bytesPerSample)
+	}
+}
+
+// extendBorders edge-replicates this plane's last valid column into the columns
+// [Width, allocWidth) of every valid row, then replicates the last valid row
+// (now including its extended columns) into rows [Height, allocHeight). The
+// bottom-right corner is filled by the second pass copying the fully extended
+// last row. bytesPerSample is 1 for 8-bit content and 2 for 10/12-bit content.
+func (p *Plane) extendBorders(bytesPerSample int) {
+	if p.Stride <= 0 || p.Width <= 0 || p.Height <= 0 || bytesPerSample <= 0 {
+		return
+	}
+	allocWidth := p.Stride / bytesPerSample
+	if allocWidth <= 0 {
+		return
+	}
+	allocHeight := len(p.Pix) / p.Stride
+	if allocHeight <= 0 {
+		return
+	}
+	width := p.Width
+	if width > allocWidth {
+		width = allocWidth
+	}
+	height := p.Height
+	if height > allocHeight {
+		height = allocHeight
+	}
+
+	// Right edge: replicate the last valid sample of each valid row across the
+	// padding columns [width, allocWidth).
+	if width < allocWidth {
+		lastCol := (width - 1) * bytesPerSample
+		for y := 0; y < height; y++ {
+			row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+			edge := row[lastCol : lastCol+bytesPerSample]
+			for x := width; x < allocWidth; x++ {
+				dst := x * bytesPerSample
+				copy(row[dst:dst+bytesPerSample], edge)
+			}
+		}
+	}
+
+	// Bottom edge: replicate the last valid row (already right-extended) into
+	// the padding rows [height, allocHeight). This also fills the bottom-right
+	// corner.
+	if height < allocHeight {
+		lastRow := p.Pix[(height-1)*p.Stride : (height-1)*p.Stride+p.Stride]
+		for y := height; y < allocHeight; y++ {
+			dst := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+			copy(dst, lastRow)
+		}
+	}
+}
+
 func normalizeFormat(format Format) (Format, error) {
 	if format.Width <= 0 || format.Height <= 0 {
 		return Format{}, ErrInvalidFormat

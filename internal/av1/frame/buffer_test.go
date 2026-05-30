@@ -552,3 +552,102 @@ func setTestPlaneSample(plane Plane, bytesPerSample int, x int, y int, value uin
 	plane.Pix[offset] = byte(value)
 	plane.Pix[offset+1] = byte(value >> 8)
 }
+
+func TestExtendBordersReplicatesEdges(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		bitDepth       uint8
+		bytesPerSample int
+	}{
+		{"8bit", 8, 1},
+		{"10bit", 10, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Width/Height 17x9 with 4:2:0 and SB size 8 (via Align only sets
+			// stride; SBSizeLog2 defaults to 6 -> 64). Use a small crop inside a
+			// 64-aligned allocation so the padding region is large.
+			format := Format{
+				Width:        17,
+				Height:       9,
+				BitDepth:     tc.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+				Align:        1,
+			}
+			layout, err := RequiredSize(format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, layout.Size)
+			f, err := Bind(buf, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Fill each plane's cropped region with a distinguishable gradient.
+			fill := func(p Plane) {
+				for y := 0; y < p.Height; y++ {
+					for x := 0; x < p.Width; x++ {
+						setTestPlaneSample(p, tc.bytesPerSample, x, y, uint16((x*7+y*3)&0x3ff))
+					}
+				}
+			}
+			fill(f.Y)
+			fill(f.U)
+			fill(f.V)
+
+			f.ExtendBorders()
+
+			check := func(p Plane) {
+				allocWidth := p.Stride / tc.bytesPerSample
+				allocHeight := len(p.Pix) / p.Stride
+				// Right edge: padding columns equal the last valid column.
+				for y := 0; y < p.Height; y++ {
+					edge := getTestPlaneSample(p, tc.bytesPerSample, p.Width-1, y)
+					for x := p.Width; x < allocWidth; x++ {
+						if got := getTestPlaneSample(p, tc.bytesPerSample, x, y); got != edge {
+							t.Fatalf("right pad (%d,%d)=%d want %d", x, y, got, edge)
+						}
+					}
+				}
+				// Bottom edge (incl. corner): padding rows equal the last valid
+				// row, including its right-extended columns.
+				for y := p.Height; y < allocHeight; y++ {
+					for x := 0; x < allocWidth; x++ {
+						want := getTestPlaneSample(p, tc.bytesPerSample, x, p.Height-1)
+						if got := getTestPlaneSample(p, tc.bytesPerSample, x, y); got != want {
+							t.Fatalf("bottom pad (%d,%d)=%d want %d", x, y, got, want)
+						}
+					}
+				}
+			}
+			check(f.Y)
+			check(f.U)
+			check(f.V)
+		})
+	}
+}
+
+func TestExtendBordersNoopWhenFilled(t *testing.T) {
+	// A frame whose cropped extent equals its allocation must be untouched.
+	format := Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 1}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, layout.Size)
+	for i := range buf {
+		buf[i] = byte(i * 31)
+	}
+	want := append([]byte(nil), buf...)
+	f, err := Bind(buf, format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ExtendBorders()
+	for i := range buf {
+		if buf[i] != want[i] {
+			t.Fatalf("byte %d changed: got %d want %d", i, buf[i], want[i])
+		}
+	}
+}

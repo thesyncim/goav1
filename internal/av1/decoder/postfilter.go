@@ -650,6 +650,17 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.Completed |= FrameWorkPostFilterLoopRestoration
 		result.Restoration = restorationResult
 	}
+	// Edge-replicate the reconstructed plane borders into the superblock-aligned
+	// padding before the frame becomes a reference, mirroring libaom's
+	// aom_extend_frame_borders (called after CDEF + loop restoration + superres
+	// and before film grain, which is applied to a separate display buffer).
+	// Inter prediction in later frames reads this buffer for motion-compensated
+	// samples that land past the cropped edge; without the replicated edge those
+	// reads would return the zero-filled padding instead of libaom's clamped
+	// edge pixel. It is a no-op for frames whose planes fill their allocation.
+	if ctx.Output != nil {
+		ctx.Output.ExtendBorders()
+	}
 	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
 		filmGrainResult, err := ctx.ApplyFilmGrainPostFilter(req.FilmGrain)
 		if err != nil {
