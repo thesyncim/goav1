@@ -157,7 +157,15 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		}
 	}
 
-	for col := range width {
+	// Column pass: transform two adjacent columns per iteration when a batched
+	// kernel exists (inverse1DCol2 guarantees the result equals two independent
+	// inverse1D calls), falling back to one scalar column at the tail (odd
+	// width) or for lengths/types without a batched kernel.
+	col := 0
+	for ; col+1 < width; col += 2 {
+		inverse1DCol2(scratch[col:], width, height, vertical, colMin, colMax)
+	}
+	if col < width {
 		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
