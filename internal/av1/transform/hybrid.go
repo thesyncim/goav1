@@ -107,6 +107,9 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	coeffW := coeffSize.Width
 	coeffH := coeffSize.Height
 
+	// Stage the row inputs into scratch, then run the row pass. The input
+	// staging is kept separate from the transform so the transform can batch
+	// two already-staged rows through the SIMD-accelerated inverse1DRow2.
 	for row := range height {
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		if row < coeffH {
@@ -127,6 +130,20 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 				tmpLine[col] = 0
 			}
 		}
+	}
+
+	// Row pass: transform two staged rows per iteration when a batched kernel
+	// exists, falling back to one scalar row at the tail (odd height) or for
+	// lengths without a batched kernel. inverse1DRow2 itself guarantees the
+	// result equals two independent inverse1DRow calls.
+	row := 0
+	for ; row+1 < height; row += 2 {
+		r0 := scratch[row*width : row*width+width : row*width+width]
+		r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+		inverse1DRow2(r0, r1, width, horizontal, rowMin, rowMax)
+	}
+	if row < height {
+		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
 
