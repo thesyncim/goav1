@@ -205,6 +205,12 @@ type BlockLoopRequest struct {
 	TemporalMVs                 *TemporalMotionField
 	CurrentMVFrame              *ReferenceMVFrame
 
+	// FrameMIRows and FrameMICols are the frame's MI grid extent
+	// (ALIGN_POWER_OF_TWO(dim, 3) >> MI_SIZE_LOG2), used to clamp ref-MV stack
+	// candidates to the frame boundary exactly as libaom's clamp_mv_ref.
+	FrameMIRows uint32
+	FrameMICols uint32
+
 	Color               parser.ColorConfig
 	TransformMode       parser.TransformMode
 	Lossless            bool
@@ -1062,6 +1068,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				TileMIRowStart: req.Walk.MIRowStart,
 				TileMIColEnd:   req.Walk.MIColEnd,
 				TileMIRowEnd:   req.Walk.MIRowEnd,
+				FrameMIRows:    req.FrameMIRows,
+				FrameMICols:    req.FrameMICols,
 
 				TemporalMVs:          req.TemporalMVs,
 				OrderHintBits:        req.OrderHintBits,

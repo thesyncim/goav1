@@ -12,6 +12,16 @@ import (
 
 var ErrInvalidTileWork = errors.New("decoder: invalid tile work")
 
+// mvFrameMeta is the per-slot order-hint metadata saved alongside a reference
+// frame's MV_REF side data, mirroring the RefCntBuffer fields libaom reads in
+// av1_setup_motion_field (order_hint, ref_order_hints, intra-only).
+type mvFrameMeta struct {
+	valid         bool
+	orderHint     uint32
+	refOrderHints [parser.InterRefsPerFrame]uint32
+	intraOnly     bool
+}
+
 type TileWorkPlan = decodework.TilePlan
 type FrameWorkPlan = decodework.FramePlan
 type FrameTileWorkPlan = decodework.FrameTilePlan
@@ -175,6 +185,30 @@ type FrameWorkState struct {
 	tileResidualCurrentCDFsValid    bool
 	tileResidualRetainedCDFs        threading.FrameWorkTileResidualCDFStorage
 	tileResidualRetainedCDFsValid   bool
+
+	// Temporal motion-vector (ref_frame_mvs / MFMV) state for the single-pool
+	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
+	// MV field from previously decoded reference frames' saved per-block MVs
+	// (libaom's cm->cur_frame->mvs + av1_setup_motion_field). The SVC/shared
+	// path (sharedFrameContexts != nil) wires this through the caller's
+	// per-surface store instead, so these fields are only populated when the
+	// shared store is absent.
+	//
+	// mvFrameStore is keyed by reference-map slot exactly like
+	// tileResidualFrameContexts: every refresh_frame_flags slot receives the
+	// finished frame's MV_REF side data, and primary/temporal lookups read the
+	// slot named by RefFrameIdx. mvFrameStoreMeta carries each saved frame's
+	// order-hint metadata needed for motion_field_projection scaling.
+	mvFrameStore        [parser.RefFrames]tile.ReferenceMVFrame
+	mvFrameStoreBacking [parser.RefFrames][]tile.ReferenceMVEntry
+	mvFrameStoreMeta    [parser.RefFrames]mvFrameMeta
+	currentMVFrame      tile.ReferenceMVFrame
+	currentMVFrameBack  []tile.ReferenceMVEntry
+	currentMVFrameValid bool
+	temporalMVs         tile.TemporalMotionField
+	temporalMVsBack     []tile.TemporalMotionEntry
+	temporalMVsValid    bool
+	mvReferences        [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	cdefIndexMap                    threading.FrameWorkCDEFIndexMap
 	cdefIndexMapValid               bool
 	loopFilterMap                   threading.FrameWorkLoopFilterMap
@@ -230,11 +264,24 @@ func (s *FrameWorkState) Active() bool {
 // Reset clears any in-flight frame work state without touching frame-pool or
 // reference ownership. Callers should normally use Finish for successfully
 // decoded final tile groups and Abort for incomplete or discarded frames.
+//
+// The temporal-MV backing buffers are retained (their contents cleared) so a
+// reused FrameWorkState stays allocation-free across Reset; only their capacity
+// survives, never stale MV data.
 func (s *FrameWorkState) Reset() {
 	if s == nil {
 		return
 	}
+	currentBack := s.currentMVFrameBack[:0]
+	temporalBack := s.temporalMVsBack[:0]
+	var storeBack [parser.RefFrames][]tile.ReferenceMVEntry
+	for i := range s.mvFrameStoreBacking {
+		storeBack[i] = s.mvFrameStoreBacking[i][:0]
+	}
 	*s = FrameWorkState{}
+	s.currentMVFrameBack = currentBack
+	s.temporalMVsBack = temporalBack
+	s.mvFrameStoreBacking = storeBack
 }
 
 func (s *FrameWorkState) resetActive() {
@@ -248,6 +295,14 @@ func (s *FrameWorkState) resetActive() {
 	s.tileResidualCurrentCDFsValid = false
 	s.tileResidualRetainedCDFs = threading.FrameWorkTileResidualCDFStorage{}
 	s.tileResidualRetainedCDFsValid = false
+	// The per-slot mvFrameStore (and its backing) persists across frames so
+	// future frames can inherit it; only the current frame's transient MV
+	// state is cleared. The backing slices are retained for reuse.
+	s.currentMVFrame = tile.ReferenceMVFrame{}
+	s.currentMVFrameValid = false
+	s.temporalMVs = tile.TemporalMotionField{}
+	s.temporalMVsValid = false
+	s.mvReferences = [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame{}
 	s.cdefIndexMap = threading.FrameWorkCDEFIndexMap{}
 	s.cdefIndexMapValid = false
 	s.loopFilterMap = threading.FrameWorkLoopFilterMap{}
@@ -264,6 +319,16 @@ func (s *FrameWorkState) resetReferenceState() {
 	}
 	s.tileResidualFrameContexts = [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage{}
 	s.tileResidualFrameContextValid = [parser.RefFrames]bool{}
+	// Drop the saved MV_REF side data so a new coded video sequence does not
+	// project temporal candidates from a prior sequence's frames. The backing
+	// slices keep their capacity (resliced to zero length) so a reused state
+	// stays allocation-free across sequence boundaries; only the metadata and
+	// grid descriptors are cleared.
+	s.mvFrameStore = [parser.RefFrames]tile.ReferenceMVFrame{}
+	s.mvFrameStoreMeta = [parser.RefFrames]mvFrameMeta{}
+	for i := range s.mvFrameStoreBacking {
+		s.mvFrameStoreBacking[i] = s.mvFrameStoreBacking[i][:0]
+	}
 }
 
 // SetCDEFIndexMap attaches frame-level CDEF side data to active frame work.
@@ -356,6 +421,9 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	s.tileResidualCurrentCDFsValid = true
 	s.tileResidualRetainedCDFs = threading.FrameWorkTileResidualCDFStorage{}
 	s.tileResidualRetainedCDFsValid = false
+	if err := s.prepareTemporalMotionField(event); err != nil {
+		return FrameWorkPlan{}, nil, err
+	}
 	s.active = true
 	return plan, output, nil
 }
@@ -382,6 +450,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 		return 0, err
 	}
 	s.finishTileResidualCDFs(event)
+	s.publishTemporalMotionFrame(event)
 	s.resetActive()
 	return count, nil
 }
@@ -419,6 +488,139 @@ func (s *FrameWorkState) initialTileResidualCDFs(event Event) (threading.FrameWo
 		return threading.FrameWorkTileResidualCDFStorage{}, err
 	}
 	return storage, nil
+}
+
+// mvFrameMIExtent mirrors libaom's mi_params.mi_cols/mi_rows derivation used to
+// size the MV_REF grid: ((pixels + 7) >> 3) << 1 (pixels rounded up to an 8x8
+// block, expressed in 4x4 MI units). It matches the conformance harness's
+// libaomVectorMIExtent so the single-pool path sizes identical grids.
+func mvFrameMIExtent(pixels uint32) uint32 {
+	return ((pixels + 7) >> 3) << 1
+}
+
+// prepareTemporalMotionField binds the current frame's MV_REF write buffer and,
+// when use_ref_frame_mvs is enabled, resolves the reference frames' saved MV
+// side data and projects the temporal motion field. It is the single-pool
+// counterpart of the per-surface wiring the SVC/shared path performs in its
+// batch callback, so it is skipped entirely when a shared frame-context store
+// is active (the shared path owns CurrentMVFrame/TemporalMVs itself).
+//
+// The per-slot MV store is keyed by reference-map slot (RefFrameIdx), exactly
+// like the entropy frame-context store, so no reference surface list is needed
+// here.
+func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
+	s.currentMVFrameValid = false
+	s.temporalMVsValid = false
+	if s.sharedFrameContexts != nil {
+		// The shared/SVC path wires per-surface MV frames through the caller's
+		// store and batch callback; leave the batch pointers nil here.
+		return nil
+	}
+	if event.FrameHeader.ShowExistingFrame {
+		return nil
+	}
+
+	miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
+	miRows := mvFrameMIExtent(event.FrameSize.Height)
+	need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		// A zero-dimension frame carries no MV grid; nothing to project.
+		return nil
+	}
+	if cap(s.currentMVFrameBack) < need {
+		s.currentMVFrameBack = make([]tile.ReferenceMVEntry, need)
+	}
+	if err := s.currentMVFrame.Init(miRows, miCols, s.currentMVFrameBack[:need]); err != nil {
+		return err
+	}
+	s.currentMVFrameValid = true
+
+	if !event.TileInfo.UseRefFrameMVS {
+		return nil
+	}
+
+	// Resolve each inter reference's saved MV_REF side data + order-hint
+	// metadata from the per-slot store, keyed by RefFrameIdx exactly as libaom
+	// indexes ref_frame_map. A reference whose slot was never published (no
+	// prior decoded frame) leaves the temporal projection without that source.
+	var refs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	for ref := 0; ref < parser.InterRefsPerFrame; ref++ {
+		slot := int(event.FrameSize.RefFrameIdx[ref])
+		if slot < 0 || slot >= parser.RefFrames {
+			return ErrInvalidSurfaceReference
+		}
+		meta := s.mvFrameStoreMeta[slot]
+		if !meta.valid {
+			// A reference slot never written by a prior frame has no MV grid to
+			// project. Leave its entry's Frame nil; Setup/projectSetupReference
+			// skip nil references per-reference, matching libaom's
+			// av1_setup_motion_field guarding on ref_buf[ref] != NULL.
+			continue
+		}
+		refs[ref] = tile.TemporalMotionReferenceFrame{
+			Frame:         &s.mvFrameStore[slot],
+			OrderHint:     meta.orderHint,
+			RefOrderHints: meta.refOrderHints,
+			IntraOnly:     meta.intraOnly,
+		}
+	}
+	s.mvReferences = refs
+
+	if cap(s.temporalMVsBack) < need {
+		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
+	}
+	if err := s.temporalMVs.Init(miRows, miCols, s.temporalMVsBack[:need]); err != nil {
+		return err
+	}
+	if _, err := s.temporalMVs.Setup(tile.TemporalMotionSetupRequest{
+		EnableOrderHint:  s.Sequence.EnableOrderHint,
+		OrderHintBits:    s.Sequence.OrderHintBits,
+		CurrentOrderHint: event.FrameHeader.OrderHint,
+		References:       s.mvReferences,
+	}); err != nil {
+		return err
+	}
+	s.temporalMVsValid = true
+	return nil
+}
+
+// publishTemporalMotionFrame copies the just-decoded frame's MV_REF side data
+// into every reference-map slot named by refresh_frame_flags, mirroring
+// libaom's cm->cur_frame->mvs being reachable through ref_frame_map after the
+// frame is published. It is the single-pool counterpart to the shared path's
+// per-surface MV store and is skipped when that store is active.
+func (s *FrameWorkState) publishTemporalMotionFrame(event Event) {
+	if s == nil || s.sharedFrameContexts != nil || !s.currentMVFrameValid {
+		return
+	}
+	if err := s.currentMVFrame.Validate(); err != nil {
+		return
+	}
+	meta := mvFrameMeta{
+		valid:         true,
+		orderHint:     event.FrameHeader.OrderHint,
+		refOrderHints: event.ReferenceOrderHints,
+		intraOnly: event.FrameHeader.FrameType == parser.FrameTypeKey ||
+			event.FrameHeader.FrameType == parser.FrameTypeIntraOnly,
+	}
+	for i := range parser.RefFrames {
+		if (event.FrameSize.RefreshFrameFlags & (1 << uint(i))) == 0 {
+			continue
+		}
+		need := len(s.currentMVFrame.Entries)
+		if cap(s.mvFrameStoreBacking[i]) < need {
+			s.mvFrameStoreBacking[i] = make([]tile.ReferenceMVEntry, need)
+		}
+		dst := s.mvFrameStoreBacking[i][:need]
+		copy(dst, s.currentMVFrame.Entries)
+		s.mvFrameStore[i] = tile.ReferenceMVFrame{
+			Rows:    s.currentMVFrame.Rows,
+			Cols:    s.currentMVFrame.Cols,
+			Stride:  s.currentMVFrame.Stride,
+			Entries: dst,
+		}
+		s.mvFrameStoreMeta[i] = meta
+	}
 }
 
 func (s *FrameWorkState) finishTileResidualCDFs(event Event) {
@@ -737,7 +939,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, fn)
+	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -779,7 +981,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -821,7 +1023,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -1285,17 +1487,46 @@ func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.
 // ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
 // passing the output frame and resolved reference frames to each batch.
 func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, nil, nil, nil, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, jobs, batches, fn)
 }
 
 // ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
 // passing the output frame, tile-group payload, and resolved reference frames
 // to each batch.
 func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, nil, nil, nil, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, jobs, batches, fn)
 }
 
-func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+// frameWorkMotionFields bundles the optional temporal-MV batch pointers so the
+// single-pool path can carry them through the execute helpers without widening
+// every signature for each field. All pointers are nil when temporal MV
+// projection is not active (intra frames, use_ref_frame_mvs off, or the shared
+// SVC path which wires these through its own callback).
+type frameWorkMotionFields struct {
+	current    *tile.ReferenceMVFrame
+	temporal   *tile.TemporalMotionField
+	references [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+}
+
+// motionFields exposes the active frame's temporal-MV batch pointers for the
+// single-pool path. It returns the zero value (all nil) when no MV state is
+// bound so the batch leaves CurrentMVFrame/TemporalMVs nil exactly as before.
+func (s *FrameWorkState) motionFields() frameWorkMotionFields {
+	if s == nil {
+		return frameWorkMotionFields{}
+	}
+	var fields frameWorkMotionFields
+	if s.currentMVFrameValid {
+		fields.current = &s.currentMVFrame
+	}
+	if s.temporalMVsValid {
+		fields.temporal = &s.temporalMVs
+		fields.references = s.mvReferences
+	}
+	return fields
+}
+
+func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return false, err
@@ -1331,6 +1562,9 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		InitialTileResidualCDFs:       initialTileResidualCDFs,
 		RetainedTileResidualCDFs:      retainedTileResidualCDFs,
 		RetainedTileResidualCDFsValid: retainedTileResidualCDFsValid,
+		CurrentMVFrame:                motion.current,
+		TemporalMVs:                   motion.temporal,
+		ReferenceMVs:                  motion.references,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		RestorationFrameBuffers:       restorationFrameBuffers,
@@ -1342,7 +1576,7 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 	return true, nil
 }
 
-func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
+func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return false, err
@@ -1378,6 +1612,9 @@ func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.P
 		InitialTileResidualCDFs:       initialTileResidualCDFs,
 		RetainedTileResidualCDFs:      retainedTileResidualCDFs,
 		RetainedTileResidualCDFsValid: retainedTileResidualCDFsValid,
+		CurrentMVFrame:                motion.current,
+		TemporalMVs:                   motion.temporal,
+		ReferenceMVs:                  motion.references,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		RestorationFrameBuffers:       restorationFrameBuffers,

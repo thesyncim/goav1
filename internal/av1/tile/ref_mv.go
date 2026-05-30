@@ -78,6 +78,11 @@ type ReferenceMVStackRequest struct {
 	TileMIColEnd   uint32
 	TileMIRowEnd   uint32
 
+	// FrameMIRows and FrameMICols are the frame's MI grid extent, used to clamp
+	// stack candidates to the frame boundary (libaom clamp_mv_ref).
+	FrameMIRows uint32
+	FrameMICols uint32
+
 	GlobalMVs        [2]motion.Vector
 	GlobalMotionType [2]parser.GlobalMotionType
 	RefSignBias      [referenceFrameCount]bool
@@ -510,6 +515,12 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		c.extendSingleReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &result.Stack)
 	}
 	sortReferenceMVStack(&result.Stack, result.NearestCount, result.Stack.Count)
+	// Clamp every finalized stack candidate to the frame boundary, mirroring
+	// libaom's clamp_mv_ref loop at the end of setup_ref_mv_list. This bounds
+	// predictors used by NEW/NEAREST/NEAR modes (and the single-ref mv_ref_list
+	// cache built next) so a spatial or temporal candidate pointing far past the
+	// frame edge cannot drift the reconstructed MV off libaom.
+	req.clampReferenceMVStack(dims, &result.Stack)
 	if !req.References.Compound {
 		// Refresh the single-ref MV cache from the post-sort stack so
 		// NEARESTMV/NEARMV decoders read the highest-weighted slot.
@@ -536,7 +547,57 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 const (
 	refMVRowCols       = 3
 	refMVMaxScanBlock4 = 16
+
+	// mvBorder is libaom's MV_BORDER: 16 pixels expressed in 1/8-pel units.
+	mvBorder = 16 << 3
+	// miSize is the side of one MI unit in luma pixels (libaom MI_SIZE).
+	miSize = 4
 )
+
+// clampReferenceMVStack clamps every finalized stack candidate's MV to the
+// frame boundary, porting libaom's clamp_mv_ref (av1/common/mvref_common.h).
+// The per-block limits derive from the block's distance to each frame edge
+// (mb_to_*_edge in set_mi_row_col) widened by the block size and MV_BORDER.
+// When the frame MI extent is unknown (zero) the clamp is skipped so callers
+// that do not populate FrameMI* keep their prior behaviour.
+func (req ReferenceMVStackRequest) clampReferenceMVStack(dims BlockDimensions, stack *ReferenceMVStack) {
+	if stack == nil || req.FrameMIRows == 0 || req.FrameMICols == 0 {
+		return
+	}
+	bw := int32(dims.W4) * miSize
+	bh := int32(dims.H4) * miSize
+	miCol := int32(req.MICol)
+	miRow := int32(req.MIRow)
+	// mb_to_*_edge in 1/8-pel units: GET_MV_SUBPEL(x) == x * 8.
+	mbToLeft := -((miCol * miSize) << 3)
+	mbToRight := (int32(req.FrameMICols) - int32(dims.W4) - miCol) * miSize << 3
+	mbToTop := -((miRow * miSize) << 3)
+	mbToBottom := (int32(req.FrameMIRows) - int32(dims.H4) - miRow) * miSize << 3
+	colMin := mbToLeft - (bw << 3) - mvBorder
+	colMax := mbToRight + (bw << 3) + mvBorder
+	rowMin := mbToTop - (bh << 3) - mvBorder
+	rowMax := mbToBottom + (bh << 3) + mvBorder
+	for i := 0; i < stack.Count; i++ {
+		stack.Candidates[i].This = clampMVToLimits(stack.Candidates[i].This, rowMin, rowMax, colMin, colMax)
+		if req.References.Compound {
+			stack.Candidates[i].Compound = clampMVToLimits(stack.Candidates[i].Compound, rowMin, rowMax, colMin, colMax)
+		}
+	}
+}
+
+func clampMVToLimits(mv motion.Vector, rowMin, rowMax, colMin, colMax int32) motion.Vector {
+	if mv.Col < colMin {
+		mv.Col = colMin
+	} else if mv.Col > colMax {
+		mv.Col = colMax
+	}
+	if mv.Row < rowMin {
+		mv.Row = rowMin
+	} else if mv.Row > rowMax {
+		mv.Row = rowMax
+	}
+	return mv
+}
 
 type temporalReferenceMVResult struct {
 	FirstAvailable    bool

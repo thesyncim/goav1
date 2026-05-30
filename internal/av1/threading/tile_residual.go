@@ -654,6 +654,10 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		return tile.BlockLoopRequest{}, err
 	}
 	scaledReferences := b.frameWorkBlockLoopScaledReferences()
+	// Frame MI extent for ref-MV clamping (clamp_mv_ref). On overflow the
+	// extent stays zero, which disables the clamp rather than misbounding it.
+	frameMIRows, _ := frameWorkMIExtent(b.FrameSize.Height)
+	frameMICols, _ := frameWorkMIExtent(b.FrameSize.CodedWidth)
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
@@ -701,6 +705,8 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		CurrentOrderHint:            b.FrameHeader.OrderHint,
 		TemporalMVs:                 b.TemporalMVs,
 		CurrentMVFrame:              b.CurrentMVFrame,
+		FrameMIRows:                 frameMIRows,
+		FrameMICols:                 frameMICols,
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),
