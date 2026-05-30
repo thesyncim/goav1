@@ -97,19 +97,23 @@ func TestRunDecodesL2T1OutputSize(t *testing.T) {
 	}
 }
 
-// TestRunDecodesL1T2FirstFrame exercises the dump_svc pixel decode path
+// TestRunDecodesL1T2AllFrames exercises the dump_svc pixel decode path
 // against the bundled L1T2 SVC vector. L1T2 shares a single 640x360
 // frame size across both temporal layers, so the single-pool driver
-// successfully decodes the first IDR frame before failing at frame 1
-// on the in-flight inter-layer reference issue documented in
-// docs/svc.md. The smoke test therefore asserts the partial decode
-// produces exactly one I420 frame of 640x360x1.5 bytes plus the
-// expected diagnostic annotations.
-func TestRunDecodesL1T2FirstFrame(t *testing.T) {
+// decodes every temporal unit. The decode previously aborted at frame 1
+// because the per-frame CDEF index-map scratch was validated against the
+// prior frame's decoded cdef_idx values before being cleared: a keyframe
+// with more cdef_bits left an index that exceeded the next frame's smaller
+// cdef_bits limit. With that clear-before-bind fixed the clip now decodes
+// all eight temporal units. The smoke test therefore asserts the full
+// 8-frame I420 output (8 * 640 * 360 * 1.5 bytes) plus the expected
+// diagnostic annotations.
+func TestRunDecodesL1T2AllFrames(t *testing.T) {
 	const (
 		width         = 640
 		height        = 360
 		bytesPerFrame = width * height * 3 / 2 // I420 4:2:0 8-bit
+		frames        = 8
 	)
 	ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-L1T2.ivf")
 	if _, err := os.Stat(ivfPath); err != nil {
@@ -121,8 +125,8 @@ func TestRunDecodesL1T2FirstFrame(t *testing.T) {
 
 	var stderr bytes.Buffer
 	err := run([]string{"-o", outPath, "-quiet", ivfPath}, io.Discard, &stderr)
-	if err == nil {
-		t.Fatalf("expected non-nil error for L1T2 partial decode, got nil\nstderr=%s", stderr.String())
+	if err != nil {
+		t.Fatalf("run L1T2 decode err=%v\nstderr=%s", err, stderr.String())
 	}
 	text := stderr.String()
 	if !strings.Contains(text, "640x360") {
@@ -136,9 +140,9 @@ func TestRunDecodesL1T2FirstFrame(t *testing.T) {
 	if statErr != nil {
 		t.Fatalf("stat output: %v", statErr)
 	}
-	if got := info.Size(); got != bytesPerFrame {
-		t.Fatalf("partial decode output size=%d want %d (one 640x360 I420 frame)",
-			got, bytesPerFrame)
+	if got := info.Size(); got != frames*bytesPerFrame {
+		t.Fatalf("L1T2 decode output size=%d want %d (%d 640x360 I420 frames)",
+			got, frames*bytesPerFrame, frames)
 	}
 }
 

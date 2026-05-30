@@ -564,17 +564,25 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, scratchSize.RestorationBoundaryBelow) {
 		return DecoderFrameWorkSideData{}, ErrFrameShortBuffer
 	}
+	// Clear the CDEF index/read scratch before binding. The scratch is reused
+	// across frames, so it may still hold the previous frame's decoded cdef_idx
+	// values. BindDecoderFrameWorkCDEFIndexMap validates each marked entry
+	// against this frame's cdef_bits limit; a higher index left over from a
+	// frame with more cdef_bits would otherwise be rejected against a smaller
+	// limit. Per-frame CDEF state always starts empty, so clearing first makes
+	// that validation operate on this frame's storage rather than stale data.
+	cdefIndex := scratch.CDEFIndexMap[:scratchSize.CDEFIndexMap]
+	cdefRead := scratch.CDEFReadMap[:scratchSize.CDEFReadMap]
+	clear(cdefIndex)
+	clear(cdefRead)
 	cdefMap, err := BindDecoderFrameWorkCDEFIndexMap(
 		sequence,
 		size,
 		cdef,
-		scratch.CDEFIndexMap[:scratchSize.CDEFIndexMap],
-		scratch.CDEFReadMap[:scratchSize.CDEFReadMap],
+		cdefIndex,
+		cdefRead,
 	)
 	if err != nil {
-		return DecoderFrameWorkSideData{}, err
-	}
-	if err := cdefMap.Reset(); err != nil {
 		return DecoderFrameWorkSideData{}, err
 	}
 	loopFilterMap, err := BindDecoderFrameWorkLoopFilterMap(sequence, size, scratch.LoopFilterMap[:scratchSize.LoopFilterMap])

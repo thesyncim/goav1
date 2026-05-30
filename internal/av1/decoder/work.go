@@ -1069,6 +1069,13 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		if len(r.CDEFIndex) < length || len(r.CDEFRead) < length {
 			return threading.ErrInvalidBatch
 		}
+		// Clear before binding: the CDEF index/read buffers are reused across
+		// frames and BindCDEFIndexMap validates each marked entry against this
+		// frame's cdef_bits limit. A stale index from a previous frame with more
+		// cdef_bits would be rejected against a smaller limit. SetCDEFIndexMap
+		// resets the map after this bind, so per-frame state always starts empty.
+		clear(r.CDEFIndex[:length])
+		clear(r.CDEFRead[:length])
 		cdefMap, err := b.BindCDEFIndexMap(r.CDEFIndex, r.CDEFRead)
 		if err != nil {
 			return err
