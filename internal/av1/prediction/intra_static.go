@@ -21,6 +21,10 @@ var smoothWeights = [...]uint16{
 }
 
 func predictPaeth(block planeBlock, bytesPerSample int, above []uint16, left []uint16, aboveLeft uint16) {
+	predictPaethImpl(block, bytesPerSample, above, left, aboveLeft)
+}
+
+func predictPaethPureGo(block planeBlock, bytesPerSample int, above []uint16, left []uint16, aboveLeft uint16) {
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
 			setBlockSample(block, bytesPerSample, row, col, paethPredictorSingle(left[row], above[col], aboveLeft))
@@ -37,8 +41,11 @@ func predictSmoothWithExtent(block planeBlock, bytesPerSample int, predWidth int
 	if err != nil {
 		return err
 	}
-	belowPred := left[predHeight-1]
-	rightPred := above[predWidth-1]
+	predictSmoothImpl(block, bytesPerSample, weightsW, weightsH, above, left, left[predHeight-1], above[predWidth-1])
+	return nil
+}
+
+func predictSmoothPureGo(block planeBlock, bytesPerSample int, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
@@ -49,7 +56,6 @@ func predictSmoothWithExtent(block planeBlock, bytesPerSample int, predWidth int
 			setBlockSample(block, bytesPerSample, row, col, uint16(divideRound(pred, 1+smoothWeightLog2Scale)))
 		}
 	}
-	return nil
 }
 
 func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predHeight int, above []uint16, left []uint16) error {
@@ -57,7 +63,11 @@ func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predH
 	if err != nil {
 		return err
 	}
-	belowPred := left[predHeight-1]
+	predictSmoothVerticalImpl(block, bytesPerSample, weights, above, left[predHeight-1])
+	return nil
+}
+
+func predictSmoothVerticalPureGo(block planeBlock, bytesPerSample int, weights []uint16, above []uint16, belowPred uint16) {
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
@@ -66,7 +76,6 @@ func predictSmoothVerticalWithExtent(block planeBlock, bytesPerSample int, predH
 			setBlockSample(block, bytesPerSample, row, col, uint16(divideRound(pred, smoothWeightLog2Scale)))
 		}
 	}
-	return nil
 }
 
 func predictSmoothHorizontalWithExtent(block planeBlock, bytesPerSample int, predWidth int, above []uint16, left []uint16) error {
@@ -74,7 +83,11 @@ func predictSmoothHorizontalWithExtent(block planeBlock, bytesPerSample int, pre
 	if err != nil {
 		return err
 	}
-	rightPred := above[predWidth-1]
+	predictSmoothHorizontalImpl(block, bytesPerSample, weights, left, above[predWidth-1])
+	return nil
+}
+
+func predictSmoothHorizontalPureGo(block planeBlock, bytesPerSample int, weights []uint16, left []uint16, rightPred uint16) {
 	scale := uint16(1 << smoothWeightLog2Scale)
 	for row := 0; row < block.height; row++ {
 		for col := 0; col < block.width; col++ {
@@ -83,7 +96,6 @@ func predictSmoothHorizontalWithExtent(block planeBlock, bytesPerSample int, pre
 			setBlockSample(block, bytesPerSample, row, col, uint16(divideRound(pred, smoothWeightLog2Scale)))
 		}
 	}
-	return nil
 }
 
 func paethPredictorSingle(left uint16, top uint16, topLeft uint16) uint16 {
