@@ -22,10 +22,9 @@ func init() {
 	if cpu.Detected.NEON {
 		convolveX8Impl = convolveX8NEON
 		convolveY8Impl = convolveY8NEON
-		// convolve2D8 keeps the pure-Go reference: the 2D NEON kernel is not
-		// implemented yet. The 1D X/Y NEON variants already accelerate the
-		// separable single-axis passes.
-		convolve2D8Impl = convolve2D8PureGo
+		// The 2D NEON kernel handles the common width>=8 8-tap shapes; its Go
+		// wrapper falls back to pure-Go for width-4 and 4-tap blocks.
+		convolve2D8Impl = convolve2D8NEON
 		return
 	}
 	convolveX8Impl = convolveX8PureGo
