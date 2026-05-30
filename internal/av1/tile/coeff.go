@@ -149,6 +149,22 @@ type coeffGeometry struct {
 
 var coeffGeometryTable [transformSizeCount]coeffGeometry
 
+// coeffPos is the precomputed scan position for one coefficient index: the
+// padded scratch offset (col*stride+row) plus the unpadded row/col. Computing
+// these once per transform size at init turns the per-coefficient
+// index->position math (a data-dependent division) into a table lookup on the
+// hot coefficient-read path. row/col stay below the transform dimension and
+// padded stays below scratchLen, all well within int16.
+type coeffPos struct {
+	padded int16
+	row    int16
+	col    int16
+}
+
+// coeffPosTable[size][coeffIndex] holds the precomputed position for every
+// valid coefficient index of size, indexed in [0, maxEOB).
+var coeffPosTable [transformSizeCount][]coeffPos
+
 func init() {
 	for size := TransformSize(0); size < transformSizeCount; size++ {
 		txSize, err := size.TransformSize()
@@ -160,14 +176,26 @@ func init() {
 			continue
 		}
 		stride := scanSize.Height + txPadHorizontal
+		maxEOB := scanSize.Width * scanSize.Height
 		coeffGeometryTable[size] = coeffGeometry{
 			valid:      true,
 			scanWidth:  scanSize.Width,
 			scanHeight: scanSize.Height,
 			stride:     stride,
-			maxEOB:     scanSize.Width * scanSize.Height,
+			maxEOB:     maxEOB,
 			scratchLen: (scanSize.Width + txPadHorizontal) * stride,
 		}
+		positions := make([]coeffPos, maxEOB)
+		for idx := 0; idx < maxEOB; idx++ {
+			col := idx / scanSize.Height
+			row := idx - col*scanSize.Height
+			positions[idx] = coeffPos{
+				padded: int16(col*stride + row),
+				row:    int16(row),
+				col:    int16(col),
+			}
+		}
+		coeffPosTable[size] = positions
 	}
 }
 
@@ -1061,24 +1089,27 @@ func setCoeffLevel(levels []uint8, size TransformSize, coeffIndex int, level int
 }
 
 func coeffPaddedPosition(size TransformSize, coeffIndex int) (padded int, stride int, row int, col int, err error) {
-	row, col, stride, err = coeffPosition(size, coeffIndex)
-	if err != nil {
-		return 0, 0, 0, 0, err
+	if size >= transformSizeCount {
+		return 0, 0, 0, 0, ErrInvalidDecodeState
 	}
-	return col*stride + row, stride, row, col, nil
+	g := &coeffGeometryTable[size]
+	if !g.valid || coeffIndex < 0 || coeffIndex >= g.maxEOB {
+		return 0, 0, 0, 0, ErrInvalidDecodeState
+	}
+	p := coeffPosTable[size][coeffIndex]
+	return int(p.padded), g.stride, int(p.row), int(p.col), nil
 }
 
 func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride int, err error) {
-	g, ok := coeffGeo(size)
-	if !ok {
+	if size >= transformSizeCount {
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
-	if coeffIndex < 0 || coeffIndex >= g.maxEOB {
+	g := &coeffGeometryTable[size]
+	if !g.valid || coeffIndex < 0 || coeffIndex >= g.maxEOB {
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
-	col = coeffIndex / g.scanHeight
-	row = coeffIndex - col*g.scanHeight
-	return row, col, g.stride, nil
+	p := coeffPosTable[size][coeffIndex]
+	return int(p.row), int(p.col), g.stride, nil
 }
 
 func clipMax3(v uint8) int {
