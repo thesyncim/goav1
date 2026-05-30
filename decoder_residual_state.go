@@ -634,6 +634,21 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 	}
 	var total DecoderFrameWorkTileResidualStats
 	for i := range batch.Jobs {
+		// Re-initialize the entropy (CDF) context from the frame context before
+		// each tile in the batch. AV1 decodes every tile from the same starting
+		// context (libaom: tile_data->tctx = *cm->fc inside the per-tile loop of
+		// decode_tiles), so a tile must never inherit the adapted CDFs of an
+		// earlier tile that shared this worker batch. Without this reset, the
+		// first tile decodes correctly but every subsequent tile in the same
+		// batch starts from desynced CDFs and produces wrong pixels. The per-job
+		// retain that follows still captures the context_update_tile_id tile's
+		// adapted CDFs (RetainDecoderFrameWorkTileResidualCDFStorage copies them
+		// out before the next iteration re-initializes the shared storage).
+		if i > 0 {
+			if err := InitDecoderFrameWorkTileResidualCDFStorage(batch, storage); err != nil {
+				return total, err
+			}
+		}
 		tileReq := req.Tile
 		loopReq, err := DecoderFrameWorkJobBlockLoopRequest(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
 		if err != nil {
