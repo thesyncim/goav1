@@ -238,6 +238,7 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	cdf = cdf[:symbols+1]
 
 	rangeValue := r.rng
+	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
 	lower := uint32(0)
@@ -249,18 +250,22 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	// head probability for tracing without a separate cdf[0] bounds check.
 	last := len(cdf) - 2
 	head := uint16(0)
+	// minTerm tracks ecMinProb*(last-symbol); it decrements by ecMinProb each
+	// iteration, replacing the per-step multiply with a single subtraction. The
+	// arithmetic is identical to ecMinProb*uint32(last-symbol).
+	minTerm := ecMinProb * uint32(last)
 	for symbol < last {
 		c := cdf[symbol]
 		if symbol == 0 {
 			head = c
 		}
-		lower = (((rangeValue >> 8) * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) +
-			ecMinProb*uint32(last-symbol)
+		lower = ((rngHi * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
 		if coded >= lower {
 			break
 		}
 		symbol++
 		upper = lower
+		minTerm -= ecMinProb
 	}
 	if symbol == last {
 		// Final symbol: cdf[last] == 0 so its split is 0 and coded >= 0 holds.
@@ -271,7 +276,18 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	}
 
 	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
-	r.normalize(r.dif-(lower<<(ecWindow-16)), upper-lower)
+	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
+	// in registers for updateCDFWindow instead of spilling across a call. The
+	// arithmetic matches (*Reader).normalize exactly.
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = rng << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
 	if r.allowCDFUpdate {
 		updateCDFWindow(cdf, symbol)
 	}
@@ -301,24 +317,29 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	cdf = cdf[:symbols+1]
 
 	rangeValue := r.rng
+	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
 	lower := uint32(0)
 	symbol := 0
 	last := len(cdf) - 2
 	head := uint16(0)
+	// minTerm tracks ecMinProb*(last-symbol); it decrements by ecMinProb each
+	// iteration, replacing the per-step multiply with a single subtraction. The
+	// arithmetic is identical to ecMinProb*uint32(last-symbol).
+	minTerm := ecMinProb * uint32(last)
 	for symbol < last {
 		c := cdf[symbol]
 		if symbol == 0 {
 			head = c
 		}
-		lower = (((rangeValue >> 8) * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) +
-			ecMinProb*uint32(last-symbol)
+		lower = ((rngHi * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
 		if coded >= lower {
 			break
 		}
 		symbol++
 		upper = lower
+		minTerm -= ecMinProb
 	}
 	if symbol == last {
 		lower = 0
@@ -328,7 +349,18 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	}
 
 	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
-	r.normalize(r.dif-(lower<<(ecWindow-16)), upper-lower)
+	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
+	// in registers for updateCDFWindow instead of spilling across a call. The
+	// arithmetic matches (*Reader).normalize exactly.
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = rng << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
 	if r.allowCDFUpdate {
 		updateCDFWindow(cdf, symbol)
 	}
