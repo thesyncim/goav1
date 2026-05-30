@@ -32,8 +32,8 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 	}
 
 	img := make([]uint16, 8*8)
-	for row := 0; row < 8; row++ {
-		for col := 0; col < 8; col++ {
+	for row := range 8 {
+		for col := range 8 {
 			img[row*8+col] = uint16(col * 32)
 		}
 	}
@@ -57,8 +57,8 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < 8; row++ {
-		for col := 0; col < 8; col++ {
+	for row := range 8 {
+		for col := range 8 {
 			want := uint16(10*row + col)
 			if got := dst[row*8+col]; got != want {
 				t.Fatalf("dst(%d,%d)=%d want %d", col, row, got, want)
@@ -78,8 +78,8 @@ func TestPublicCDEFBlockFilter(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for row := 0; row < 8; row++ {
-		for col := 0; col < 8; col++ {
+	for row := range 8 {
+		for col := range 8 {
 			want := uint16(10*row + col)
 			if got := dst[row*8+col]; got != want {
 				t.Fatalf("dst(%d,%d)=%d want %d", col, row, got, want)
@@ -204,8 +204,8 @@ func publicCDEFInput(width int, height int) ([]uint16, int) {
 		input[i] = av1.CDEFVeryLarge
 	}
 	origin := av1.CDEFVerticalBorder*av1.CDEFBStride + av1.CDEFHorizontalBorder
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			input[origin+row*av1.CDEFBStride+col] = uint16(10*row + col)
 		}
 	}

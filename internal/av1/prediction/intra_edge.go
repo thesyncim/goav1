@@ -47,7 +47,7 @@ func FilterIntraEdge(edge []uint16, scratch []uint16, strength uint8, bitDepth u
 	kernel := intraEdgeFilterKernels[strength-1]
 	for i := 1; i < len(edge); i++ {
 		sum := 0
-		for j := 0; j < intraEdgeTaps; j++ {
+		for j := range intraEdgeTaps {
 			k := i - 2 + j
 			if k < 0 {
 				k = 0
@@ -89,7 +89,7 @@ func UpsampleIntraEdge(edge []uint16, origin int, size int, scratch []uint16, bi
 	scratch[size+2] = edge[lastSource]
 
 	edge[origin-2] = scratch[0]
-	for i := 0; i < size; i++ {
+	for i := range size {
 		sum := -int(scratch[i]) + 9*int(scratch[i+1]) + 9*int(scratch[i+2]) - int(scratch[i+3])
 		sample := (sum + 8) >> 4
 		if sample < 0 {

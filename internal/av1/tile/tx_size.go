@@ -410,13 +410,13 @@ func (c *BlockModeContext) MarkTransformArea(x4 int, y4 int, spanW4 int, spanH4 
 		ctxLog2W > 5 || ctxLog2H > 5 {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < spanW4; i++ {
+	for i := range spanW4 {
 		c.AboveTx[x4+i] = ctxLog2W
 		if intra {
 			c.AboveTxIntra[x4+i] = ctxLog2W
 		}
 	}
-	for i := 0; i < spanH4; i++ {
+	for i := range spanH4 {
 		c.LeftTx[y4+i] = ctxLog2H
 		if intra {
 			c.LeftTxIntra[y4+i] = ctxLog2H
@@ -460,10 +460,7 @@ func (s *DecodeState) ReadSelectedTransformSize(cdfs *TransformCDFs, ctx *BlockM
 	if err != nil {
 		return 0, err
 	}
-	limit := int(dims.Max)
-	if limit > 2 {
-		limit = 2
-	}
+	limit := min(int(dims.Max), 2)
 	if depth < 0 || depth > limit {
 		return 0, ErrInvalidDecodeState
 	}

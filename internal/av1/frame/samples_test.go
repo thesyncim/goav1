@@ -45,7 +45,7 @@ func TestLoadSamplePlaneFullLoadsPastVisibleColumns8Bit(t *testing.T) {
 		t.Fatalf("samples=%+v", samples)
 	}
 	for y := 0; y < samples.Height; y++ {
-		for x := 0; x < loadedWidth; x++ {
+		for x := range loadedWidth {
 			if got, want := samples.Pix[y*samples.Stride+x], uint16(10*y+x); got != want {
 				t.Fatalf("row=%d col=%d got=%d want=%d", y, x, got, want)
 			}
@@ -82,7 +82,7 @@ func TestLoadSamplePlaneFullLoadsPastVisibleColumns16Bit(t *testing.T) {
 		t.Fatalf("samples=%+v", samples)
 	}
 	for y := 0; y < samples.Height; y++ {
-		for s := 0; s < loadedWidth; s++ {
+		for s := range loadedWidth {
 			if got, want := samples.Pix[y*samples.Stride+s], uint16(1000+y*10+s); got != want {
 				t.Fatalf("row=%d sample=%d got=%d want=%d", y, s, got, want)
 			}

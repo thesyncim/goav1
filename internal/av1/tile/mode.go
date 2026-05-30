@@ -248,7 +248,7 @@ func (c *BlockModeCDFs) InitDefault() error {
 			return err
 		}
 	}
-	for i := 0; i < BlockModeContexts; i++ {
+	for i := range BlockModeContexts {
 		if err := next.SegmentPred[i].Init([]uint16{16384}); err != nil {
 			return err
 		}
@@ -523,7 +523,7 @@ func (s *DecodeState) ReadCDEFIndexForBlock(params parser.CDEFParams, ctx *CDEFI
 	if err != nil {
 		return 0, err
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ctx.Index[units[i]] = index
 		ctx.Read[units[i]] = true
 	}
@@ -622,12 +622,12 @@ func MinPreviousSegmentID(prev []uint8, stride int, x4 int, y4 int, w4 int, h4 i
 		return 0, ErrInvalidDecodeState
 	}
 	best := uint8(parser.MaxSegments)
-	for y := 0; y < h4; y++ {
+	for y := range h4 {
 		row := (y4+y)*stride + x4
 		if row < 0 || row+w4 > len(prev) {
 			return 0, ErrInvalidDecodeState
 		}
-		for x := 0; x < w4; x++ {
+		for x := range w4 {
 			id := prev[row+x]
 			if id >= parser.MaxSegments {
 				return 0, ErrInvalidDecodeState
@@ -652,12 +652,12 @@ func FillSegmentID(dst []uint8, stride int, x4 int, y4 int, w4 int, h4 int, segm
 		w4 <= 0 || h4 <= 0 || x4+w4 > stride {
 		return ErrInvalidDecodeState
 	}
-	for y := 0; y < h4; y++ {
+	for y := range h4 {
 		row := (y4+y)*stride + x4
 		if row < 0 || row+w4 > len(dst) {
 			return ErrInvalidDecodeState
 		}
-		for x := 0; x < w4; x++ {
+		for x := range w4 {
 			dst[row+x] = segmentID
 		}
 	}

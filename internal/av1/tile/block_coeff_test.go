@@ -74,12 +74,12 @@ func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T
 	}
 	var modeCtx BlockModeContext
 	var coeffCtx CoeffEntropyContext
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		coeffCtx.Above[0][i] = 17
 		coeffCtx.Left[0][i] = 17
 	}
 	for plane := 1; plane <= 2; plane++ {
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			coeffCtx.Above[plane][i] = 17
 			coeffCtx.Left[plane][i] = 17
 		}
@@ -110,13 +110,13 @@ func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T
 	if result.TotalStats() != (LumaCoeffStats{}) {
 		t.Fatalf("stats=%+v want zero", result.TotalStats())
 	}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if coeffCtx.Above[0][i] != 0 || coeffCtx.Left[0][i] != 0 {
 			t.Fatalf("luma ctx[%d] above=%d left=%d want reset", i, coeffCtx.Above[0][i], coeffCtx.Left[0][i])
 		}
 	}
 	for plane := 1; plane <= 2; plane++ {
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if coeffCtx.Above[plane][i] != 0 || coeffCtx.Left[plane][i] != 0 {
 				t.Fatalf("plane %d ctx[%d] above=%d left=%d want reset", plane, i, coeffCtx.Above[plane][i], coeffCtx.Left[plane][i])
 			}

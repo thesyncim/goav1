@@ -151,8 +151,8 @@ func TestAddResidualPlaneBlock10BitHighQRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []uint16{predDC, predDC + 1, predDC - 1, predDC + 200, predDC - 300, bdClip, 0, bdClip}
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			got := getSample(plane, 2, x, y)
 			expected := want[x%8]
 			if got != expected {
@@ -162,8 +162,8 @@ func TestAddResidualPlaneBlock10BitHighQRegression(t *testing.T) {
 	}
 	// Verify the high byte of every sample is the correct upper bits of the
 	// 10-bit value (catches a "store only low byte" regression).
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			off := y*plane.Stride + x*2
 			lo := plane.Pix[off]
 			hi := plane.Pix[off+1]
@@ -191,7 +191,7 @@ func TestAddResidualPlaneBlock10BitClipBoundary(t *testing.T) {
 	}
 	// 255+100=355, 255+200=455, 255+768=1023, 255+769=1024 -> clip to 1023.
 	want := []uint16{355, 455, 1023, 1023}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		got := getSample(plane, 2, x, 0)
 		if got != want[x] {
 			t.Fatalf("sample(%d,0)=%d want %d", x, got, want[x])

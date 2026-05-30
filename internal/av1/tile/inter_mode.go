@@ -336,7 +336,7 @@ func (s *DecodeState) ReadDRLIndex(cdfs *InterModeCDFs, req DRLRequest) (int, er
 
 	if req.usesNewMV() {
 		refMVIndex := 0
-		for idx := 0; idx < 2; idx++ {
+		for idx := range 2 {
 			if req.RefMVCount <= idx+1 {
 				return refMVIndex, nil
 			}

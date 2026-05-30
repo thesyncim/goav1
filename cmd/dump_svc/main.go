@@ -55,6 +55,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	av1 "github.com/thesyncim/goav1"
@@ -317,8 +318,8 @@ SequenceScan:
 		fmt.Fprintf(log, "dump_svc: no SVC-tagged OBUs (single layer stream)\n")
 	} else {
 		fmt.Fprintf(log, "dump_svc: per-layer OBU counts (excluding SequenceHeader/TD/Metadata):\n")
-		for t := uint8(0); t < 8; t++ {
-			for s := uint8(0); s < 4; s++ {
+		for t := range uint8(8) {
+			for s := range uint8(4) {
 				if c, ok := counts[layerKey{T: t, S: s}]; ok {
 					fmt.Fprintf(log, "dump_svc:   T=%d S=%d obus=%d\n", t, s, c)
 				}
@@ -363,14 +364,14 @@ func describePayloadLayers(payload []byte) string {
 		}
 		return keys[i].S < keys[j].S
 	})
-	out := ""
+	var out strings.Builder
 	for i, k := range keys {
 		if i > 0 {
-			out += ","
+			out.WriteString(",")
 		}
-		out += fmt.Sprintf("T=%d S=%d", k.T, k.S)
+		out.WriteString(fmt.Sprintf("T=%d S=%d", k.T, k.S))
 	}
-	return out
+	return out.String()
 }
 
 type nopWriteCloser struct{ io.Writer }

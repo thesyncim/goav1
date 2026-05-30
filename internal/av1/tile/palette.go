@@ -501,7 +501,7 @@ func (s *DecodeState) readPaletteColorsUV(ctx *BlockModeContext, req PaletteMode
 		}
 		return nil
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		v, err := s.Reader.ReadBits(req.BitDepth)
 		if err != nil {
 			return err
@@ -527,14 +527,8 @@ func (s *DecodeState) readPaletteColorMapY(cdfs *IntraModeCDFs, req PaletteModeR
 	}
 	mapScratch[0] = uint8(first)
 	for i := 1; i < rows+cols-1; i++ {
-		start := 0
-		if i-rows+1 > start {
-			start = i - rows + 1
-		}
-		end := i
-		if cols-1 < end {
-			end = cols - 1
-		}
+		start := max(i-rows+1, 0)
+		end := min(cols-1, i)
 		for j := end; j >= start; j-- {
 			row := i - j
 			col := j
@@ -577,14 +571,8 @@ func (s *DecodeState) readPaletteColorMapUV(cdfs *IntraModeCDFs, req PaletteMode
 	}
 	mapScratch[0] = uint8(first)
 	for i := 1; i < rows+cols-1; i++ {
-		start := 0
-		if i-rows+1 > start {
-			start = i - rows + 1
-		}
-		end := i
-		if cols-1 < end {
-			end = cols - 1
-		}
+		start := max(i-rows+1, 0)
+		end := min(cols-1, i)
 		for j := end; j >= start; j-- {
 			row := i - j
 			col := j
@@ -629,11 +617,11 @@ func paletteColorIndexContext(colorMap []uint8, stride int, row int, col int, pa
 	}
 	var order [PaletteMaxSize]uint8
 	var inverse [PaletteMaxSize]uint8
-	for i := 0; i < PaletteMaxSize; i++ {
+	for i := range PaletteMaxSize {
 		order[i] = uint8(i)
 		inverse[i] = uint8(i)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		maxScore := scores[i]
 		maxIdx := i
 		for j := i + 1; j < paletteSize; j++ {
@@ -669,7 +657,7 @@ func mergePaletteColors(colors []uint16, cache []uint16, n int) {
 	var merged [PaletteMaxSize]uint16
 	cacheIdx := 0
 	transIdx := len(cache)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if cacheIdx < len(cache) && (transIdx >= n || cache[cacheIdx] <= colors[transIdx]) {
 			merged[i] = cache[cacheIdx]
 			cacheIdx++

@@ -882,7 +882,7 @@ func frameWorkRestorationFrameSampleScratchSizeMax(a tile.RestorationFrameSample
 		DataLen: maxInt(a.DataLen, b.DataLen),
 		DstLen:  maxInt(a.DstLen, b.DstLen),
 	}
-	for plane := 0; plane < len(result.Data); plane++ {
+	for plane := range len(result.Data) {
 		result.Data[plane] = frameWorkBorderedSamplePlaneLayoutMax(a.Data[plane], b.Data[plane])
 		result.Dst[plane] = frameWorkBorderedSamplePlaneLayoutMax(a.Dst[plane], b.Dst[plane])
 	}

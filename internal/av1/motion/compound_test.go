@@ -141,8 +141,8 @@ func TestBlendCompoundAvg(t *testing.T) {
 			if err := BlendCompoundAvg(dst, buf0, buf1, tc.bps, tc.bitDepth, 0, 0, w, h, 8, 8); err != nil {
 				t.Fatalf("BlendCompoundAvg: %v", err)
 			}
-			for y := 0; y < h; y++ {
-				for x := 0; x < w; x++ {
+			for y := range h {
+				for x := range w {
 					var got int
 					if tc.bps == 1 {
 						got = readPixel8(dst, x, y)
@@ -299,8 +299,8 @@ func TestPredictInterCompoundRefToConvBufCopyRoundTrip(t *testing.T) {
 			// place the block at (0,0) within an exactly-sized plane.
 			ref := frame.Plane{Pix: make([]byte, w*h*tc.bps), Stride: w * tc.bps, Width: w, Height: h}
 			want := make([]int, w*h)
-			for y := 0; y < h; y++ {
-				for x := 0; x < w; x++ {
+			for y := range h {
+				for x := range w {
 					p := (x*7 + y*11) & ((1 << tc.bitDepth) - 1)
 					want[y*w+x] = p
 					if tc.bps == 1 {
@@ -325,8 +325,8 @@ func TestPredictInterCompoundRefToConvBufCopyRoundTrip(t *testing.T) {
 			if err := BlendCompoundAvg(dst, &buf0, &buf1, tc.bps, tc.bitDepth, 0, 0, w, h, 8, 8); err != nil {
 				t.Fatalf("BlendCompoundAvg: %v", err)
 			}
-			for y := 0; y < h; y++ {
-				for x := 0; x < w; x++ {
+			for y := range h {
+				for x := range w {
 					var got int
 					if tc.bps == 1 {
 						got = readPixel8(dst, x, y)

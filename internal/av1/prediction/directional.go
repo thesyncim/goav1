@@ -148,7 +148,7 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	fracBits := 6 - upsampleAbove
 	baseInc := 1 << upsampleAbove
 	x := dx
-	for row := 0; row < predHeight; row++ {
+	for row := range predHeight {
 		base := x >> fracBits
 		shift := ((x << upsampleAbove) & 0x3f) >> 1
 		if base >= maxBaseX {
@@ -161,7 +161,7 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 			}
 			return nil
 		}
-		for col := 0; col < predWidth; col++ {
+		for col := range predWidth {
 			if row < block.height && col < block.width {
 				value := edges.Above[edges.AboveOrigin+maxBaseX]
 				if base < maxBaseX {
@@ -242,10 +242,10 @@ func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges Directiona
 	fracBits := 6 - upsampleLeft
 	baseInc := 1 << upsampleLeft
 	y := dy
-	for col := 0; col < predWidth; col++ {
+	for col := range predWidth {
 		base := y >> fracBits
 		shift := ((y << upsampleLeft) & 0x3f) >> 1
-		for row := 0; row < predHeight; row++ {
+		for row := range predHeight {
 			if base < maxBaseY {
 				if row < block.height && col < block.width {
 					p0 := int(edges.Left[edges.LeftOrigin+base])
@@ -275,8 +275,8 @@ func directionalZ2Ranges(width int, height int, upsampleAbove int, upsampleLeft 
 	fracBitsY := 6 - upsampleLeft
 	var aboveRange sampleIndexRange
 	var leftRange sampleIndexRange
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			y := row + 1
 			x := (col << 6) - y*dx
 			baseX := x >> fracBitsX

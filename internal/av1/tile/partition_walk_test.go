@@ -263,10 +263,7 @@ func FuzzWalkBlocksScripted(f *testing.F) {
 		if len(script) == 0 || len(script) > 128 {
 			return
 		}
-		root := BlockLevel(rawRoot % uint8(blockLevelCount))
-		if root < BlockLevel64x64 {
-			root = BlockLevel64x64
-		}
+		root := max(BlockLevel(rawRoot%uint8(blockLevelCount)), BlockLevel64x64)
 		rootSize := uint32(root.Size4x4())
 		if rootSize == 0 {
 			return

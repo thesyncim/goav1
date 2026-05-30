@@ -305,7 +305,7 @@ func FuzzRestorationUnitGeometry(f *testing.F) {
 			t.Fatalf("ProcessingStripeCount err=%v rect=%+v grid=%+v", err, rect, grid)
 		}
 		prevY := rect.Y0
-		for i := 0; i < count; i++ {
+		for i := range count {
 			stripe, ok, err := grid.ProcessingStripe(rect, i)
 			if err != nil || !ok {
 				t.Fatalf("stripe %d err=%v ok=%v", i, err, ok)
@@ -362,7 +362,7 @@ func FuzzRestorationProcessingUnit(f *testing.F) {
 				t.Fatal("empty processing units")
 			}
 			prevX := stripe.Rect.X0
-			for i := 0; i < count; i++ {
+			for i := range count {
 				unit, ok, err := grid.ProcessingUnit(stripe, typ, i)
 				if err != nil || !ok {
 					t.Fatalf("ProcessingUnit %d err=%v ok=%v", i, err, ok)

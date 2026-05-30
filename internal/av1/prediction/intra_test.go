@@ -58,7 +58,7 @@ func TestPredictIntraPlaneBlockDCMatchesLibaomCorpus(t *testing.T) {
 		max := uint16((1 << bitDepth) - 1)
 		for _, size := range libaomDRTxSizes {
 			rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
-			for iter := 0; iter < 16; iter++ {
+			for iter := range 16 {
 				baseEdges := randomStaticIntraEdges(size.width, size.height, max, rnd)
 				for _, availability := range []struct {
 					name  string
@@ -100,8 +100,8 @@ func TestPredictIntraPlaneBlockVerticalHighBitDepth(t *testing.T) {
 	if err := PredictIntraPlaneBlock(plane, 2, 12, 0, 0, 4, 3, IntraModeVertical, edges); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 3 {
+		for x := range 4 {
 			want := uint16((x + 1) * 100)
 			if got := getSample(plane, 2, x, y); got != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
@@ -119,7 +119,7 @@ func TestPredictIntraPlaneBlockHorizontal(t *testing.T) {
 	if err := PredictIntraPlaneBlock(plane, 1, 8, 1, 0, 4, 3, IntraModeHorizontal, edges); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
+	for y := range 3 {
 		for x := 1; x < 5; x++ {
 			want := uint16(7 + y)
 			if got := getSample(plane, 1, x, y); got != want {
@@ -162,7 +162,7 @@ func TestPredictIntraPlaneBlockAllocs(t *testing.T) {
 		AboveAvailable: true,
 		LeftAvailable:  true,
 	}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		edges.Above[i] = 90
 		edges.Left[i] = 92
 	}
@@ -306,8 +306,8 @@ func FuzzDCPredictor(f *testing.F) {
 			t.Fatalf("PredictIntraPlaneBlock err=%v", err)
 		}
 		want := dcPredictionLibaomReference(width, height, max, edges)
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				if got := getSample(plane, bytesPerSample, col, row); got != want {
 					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)
 				}

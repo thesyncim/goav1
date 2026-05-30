@@ -288,14 +288,8 @@ func FuzzCoeffEntropyContext(f *testing.F) {
 		if !ok {
 			t.Fatal("invalid normalized block size")
 		}
-		spanW := int(dims.W4)
-		if int(blockDims.W4) > spanW {
-			spanW = int(blockDims.W4)
-		}
-		spanH := int(dims.H4)
-		if int(blockDims.H4) > spanH {
-			spanH = int(blockDims.H4)
-		}
+		spanW := max(int(blockDims.W4), int(dims.W4))
+		spanH := max(int(blockDims.H4), int(dims.H4))
 		xLimit := MaxBlockModeSlots - spanW + 1
 		yLimit := MaxBlockModeSlots - spanH + 1
 		req := coeffContextReq(plane, block, size, int(rawX)%xLimit, int(rawY)%yLimit)

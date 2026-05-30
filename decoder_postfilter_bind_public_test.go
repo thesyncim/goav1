@@ -752,7 +752,7 @@ func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	}
 	var sampleScratch [3][]uint16
 	var dstScratch [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		sampleScratch[plane] = make([]uint16, scratch.Samples[plane])
 		dstScratch[plane] = make([]uint16, scratch.Dst[plane])
 	}
@@ -807,7 +807,7 @@ func TestPublicDecoderSuperResPostFilterRequestBinding(t *testing.T) {
 	}
 	var codedScratch [3][]uint16
 	var outputScratch [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		codedScratch[plane] = make([]uint16, scratch.CodedSamples[plane])
 		outputScratch[plane] = make([]uint16, scratch.OutputSamples[plane])
 	}
@@ -946,7 +946,7 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 	var dstScratch [3][]uint16
 	var codedScratch [3][]uint16
 	var outputScratch [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		sampleScratch[plane] = make([]uint16, scratch.CDEF.Samples[plane]+1)
 		dstScratch[plane] = make([]uint16, scratch.CDEF.Dst[plane]+1)
 		codedScratch[plane] = make([]uint16, scratch.SuperRes.CodedSamples[plane]+1)
@@ -1012,7 +1012,7 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 		scratch.Restoration.Apply.Unit.Wiener +
 		scratch.Restoration.Apply.Boundary.Above + scratch.Restoration.Apply.Boundary.Below +
 		scratch.FilmGrain.LumaSamples
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		wantUint16Scratch += scratch.CDEF.Samples[plane] + scratch.CDEF.Dst[plane]
 		wantUint16Scratch += scratch.SuperRes.CodedSamples[plane] + scratch.SuperRes.OutputSamples[plane]
 		if plane < 2 {
@@ -1100,7 +1100,7 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{Samples: [3]int{64, 16, 16}, Dst: [3]int{64, 16, 16}, DirectionGrid: 1, VarianceGrid: 1, Input: av1.CDEFInputBufferSize, UnitDst: av1.CDEFInputBufferSize}
 	var sampleScratch [3][]uint16
 	var dstScratch [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		sampleScratch[plane] = make([]uint16, cdefSize.Samples[plane])
 		dstScratch[plane] = make([]uint16, cdefSize.Dst[plane])
 	}
@@ -1112,7 +1112,7 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	outputFrame := make([]byte, superSize.OutputFrame)
 	var codedScratch [3][]uint16
 	var outputScratch [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		codedScratch[plane] = make([]uint16, superSize.CodedSamples[plane])
 		outputScratch[plane] = make([]uint16, superSize.OutputSamples[plane])
 	}

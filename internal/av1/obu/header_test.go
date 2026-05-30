@@ -14,8 +14,8 @@ import (
 func TestParseHeaderExtensionLayerIDs(t *testing.T) {
 	// Walk every (temporal_id, spatial_id) pair allowed by the 3+2-bit
 	// extension byte: 8 x 4 = 32 combinations.
-	for tid := uint8(0); tid < 8; tid++ {
-		for sid := uint8(0); sid < 4; sid++ {
+	for tid := range uint8(8) {
+		for sid := range uint8(4) {
 			ext := (tid << 5) | (sid << 3)
 			src := []byte{
 				byte(TypeFrameHeader)<<3 | 0x04, // extension_flag = 1, has_size_field = 0
@@ -59,8 +59,8 @@ func TestParseHeaderExtensionRejectsAllReservedBits(t *testing.T) {
 // TestPutHeaderRoundTripLayerIDs verifies PutHeader writes the 3+2+3-bit
 // layout and ParseHeader recovers the same IDs.
 func TestPutHeaderRoundTripLayerIDs(t *testing.T) {
-	for tid := uint8(0); tid < 8; tid++ {
-		for sid := uint8(0); sid < 4; sid++ {
+	for tid := range uint8(8) {
+		for sid := range uint8(4) {
 			in := Header{
 				Type:       TypeFrame,
 				Extension:  true,

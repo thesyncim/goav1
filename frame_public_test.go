@@ -32,7 +32,7 @@ func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		index, frame, err := pool.AcquireFormat(format)
 		if err != nil {
 			t.Fatal(err)

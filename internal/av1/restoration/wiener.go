@@ -103,7 +103,7 @@ func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, hei
 		// per-tap bounds checks on src.
 		srcRow := src[srcStart : srcStart+width+2*WienerHalfwin]
 		dstSlice := temp[dstRow : dstRow+width]
-		for col := 0; col < width; col++ {
+		for col := range width {
 			w := srcRow[col : col+WienerWin : col+WienerWin]
 			s0, s1, s2, s3, s4, s5, s6 := w[0], w[1], w[2], w[3], w[4], w[5], w[6]
 			if s0 > max || s1 > max || s2 > max || s3 > max || s4 > max || s5 > max || s6 > max {
@@ -128,7 +128,7 @@ func wienerVertical(temp []uint16, tempStride int, dst []uint16, dstStride int, 
 	f4 := int32(filter[4])
 	f5 := int32(filter[5])
 	f6 := int32(filter[6])
-	for row := 0; row < height; row++ {
+	for row := range height {
 		// The seven vertical taps are rows [row .. row+6]; row+3 is the center.
 		r0 := temp[(row+0)*tempStride : (row+0)*tempStride+width]
 		r1 := temp[(row+1)*tempStride : (row+1)*tempStride+width]

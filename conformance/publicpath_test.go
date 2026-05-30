@@ -62,7 +62,6 @@ var publicClips = []publicClip{
 // libaom golden.
 func TestPublicPathProfileClips(t *testing.T) {
 	for _, clip := range publicClips {
-		clip := clip
 		t.Run(clip.file, func(t *testing.T) {
 			got := decodeClipPublic(t, clip.file)
 			if len(got) != len(clip.frameMD5Hex) {

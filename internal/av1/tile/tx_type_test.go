@@ -215,7 +215,7 @@ func TestExtTXTypeCountAndFlagsMatchLibaom(t *testing.T) {
 			if count != bits.OnesCount16(tt.flag) {
 				t.Fatalf("count=%d popcount=%d", count, bits.OnesCount16(tt.flag))
 			}
-			for raw := uint8(0); raw < uint8(transform.TypeCount); raw++ {
+			for raw := range uint8(transform.TypeCount) {
 				typ := transform.Type(raw)
 				got, err := ExtTXTypeAllowed(tt.set, typ)
 				if err != nil {
@@ -291,13 +291,13 @@ func TestExtTXTypeInvMatchesLibaom(t *testing.T) {
 }
 
 func TestExtTXSymbolMapMatchesLibaom(t *testing.T) {
-	for set := ExtTXSetType(0); set < ExtTXSetTypes; set++ {
+	for set := range ExtTXSetType(ExtTXSetTypes) {
 		count, err := ExtTXTypeCount(set)
 		if err != nil {
 			t.Fatal(err)
 		}
 		seen := uint16(0)
-		for symbol := 0; symbol < count; symbol++ {
+		for symbol := range count {
 			typ, err := ExtTXTypeFromSymbol(set, symbol)
 			if err != nil {
 				t.Fatal(err)

@@ -163,7 +163,7 @@ func (c *CompoundBlendCDFs) InitDefault() error {
 		return entropy.ErrInvalidCDF
 	}
 	var next CompoundBlendCDFs
-	for ctx := 0; ctx < CompoundBlendContexts; ctx++ {
+	for ctx := range CompoundBlendContexts {
 		if err := next.CompoundIndex[ctx].Init([]uint16{compoundIndexDefaultCDF[ctx]}); err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func (c *CompoundBlendCDFs) InitDefault() error {
 			return err
 		}
 	}
-	for group := 0; group < InterIntraGroups; group++ {
+	for group := range InterIntraGroups {
 		if err := next.InterIntra[group].Init([]uint16{interIntraDefaultCDF[group]}); err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func (c *CompoundBlendCDFs) InitDefault() error {
 			return err
 		}
 	}
-	for size := BlockSize(0); size < blockSizeCount; size++ {
+	for size := range blockSizeCount {
 		wedgeCtx, ok := wedgeContext(size)
 		if !ok {
 			continue

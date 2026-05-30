@@ -375,9 +375,6 @@ func newSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.Decode
 
 func probeEventBudget(payloads [][]byte) int {
 	const eventsPerFrame = 16
-	n := len(payloads) * eventsPerFrame
-	if n < 64 {
-		n = 64
-	}
+	n := max(len(payloads)*eventsPerFrame, 64)
 	return n
 }

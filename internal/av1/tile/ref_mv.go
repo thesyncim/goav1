@@ -119,7 +119,7 @@ func (c *BlockModeContext) IntrabcReferenceDVStack(req ReferenceMVStackRequest) 
 		}
 	}
 	nearestCount := stack.Count
-	for i := 0; i < nearestCount; i++ {
+	for i := range nearestCount {
 		stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
 	// Pass the full tile-clamped offsets (not the in-SB grid-capped variants)
@@ -1841,7 +1841,7 @@ func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, c
 	}
 
 	matches := 0
-	for ref := 0; ref < 2; ref++ {
+	for ref := range 2 {
 		if candidate.References.Ref[ref] != refs.Ref[0] {
 			continue
 		}
@@ -1938,7 +1938,7 @@ func (stack *ReferenceMVStack) addUniqueFallback(candidate ReferenceMVCandidate)
 }
 
 func (stack *ReferenceMVStack) setSingleRefMVs(globalMV motion.Vector) {
-	for i := 0; i < MaxMVRefCandidates; i++ {
+	for i := range MaxMVRefCandidates {
 		stack.SingleRefMVs[i] = globalMV
 	}
 	for i := 0; i < MaxMVRefCandidates && i < stack.Count; i++ {
@@ -2019,12 +2019,12 @@ type compoundReferenceLists struct {
 }
 
 func (lists *compoundReferenceLists) add(candidate InterMotionResult, target [2]ReferenceFrame, signBias [referenceFrameCount]bool) {
-	for refIdx := 0; refIdx < 2; refIdx++ {
+	for refIdx := range 2 {
 		candidateRef := candidate.References.Ref[refIdx]
 		if !candidateRef.Valid() {
 			continue
 		}
-		for cmpIdx := 0; cmpIdx < 2; cmpIdx++ {
+		for cmpIdx := range 2 {
 			if candidateRef == target[cmpIdx] {
 				if lists.idCount[cmpIdx] < MaxMVRefCandidates {
 					lists.id[cmpIdx][lists.idCount[cmpIdx]] = candidate.MV[refIdx]
@@ -2046,7 +2046,7 @@ func (lists *compoundReferenceLists) add(candidate InterMotionResult, target [2]
 
 func (lists *compoundReferenceLists) compoundList(req ReferenceMVStackRequest) [MaxMVRefCandidates][2]motion.Vector {
 	var out [MaxMVRefCandidates][2]motion.Vector
-	for refIdx := 0; refIdx < 2; refIdx++ {
+	for refIdx := range 2 {
 		outIdx := 0
 		for i := 0; i < lists.idCount[refIdx] && outIdx < MaxMVRefCandidates; i++ {
 			out[outIdx][refIdx] = lists.id[refIdx][i]

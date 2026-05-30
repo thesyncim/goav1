@@ -264,9 +264,6 @@ func probeEventBudget(payloads [][]byte) int {
 	// Each frame typically expands to a handful of events. Reserve a generous
 	// upper bound so the streams planner never returns ErrEventBufferTooSmall.
 	const eventsPerFrame = 16
-	n := len(payloads) * eventsPerFrame
-	if n < 64 {
-		n = 64
-	}
+	n := max(len(payloads)*eventsPerFrame, 64)
 	return n
 }

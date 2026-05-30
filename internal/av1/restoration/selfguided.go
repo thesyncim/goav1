@@ -180,7 +180,7 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 	use0 := params.Radius[0] > 0
 	use1 := params.Radius[1] > 0
 	maxI := int32(max)
-	for row := 0; row < height; row++ {
+	for row := range height {
 		srcRow := src[srcOrigin+row*srcStride : srcOrigin+row*srcStride+width]
 		dstRow := dst[row*dstStride : row*dstStride+width]
 		f0Row := flt0[row*width : row*width+width]
@@ -213,7 +213,7 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
 	const shiftEven = SGRProjSgrBits + 5 - SGRProjRstBits
 	const shiftOdd = SGRProjSgrBits + 4 - SGRProjRstBits
-	for row := 0; row < height; row++ {
+	for row := range height {
 		k0 := aOrigin + row*bufStride
 		dgdRow := dgd[dgdOrigin+row*dgdStride : dgdOrigin+row*dgdStride+width]
 		dstRow := dst[row*dstStride : row*dstStride+width]
@@ -222,7 +222,7 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 			aNext := aBuf[k0+bufStride-1 : k0+bufStride+width+1]
 			bPrev := bBuf[k0-bufStride-1 : k0-bufStride+width+1]
 			bNext := bBuf[k0+bufStride-1 : k0+bufStride+width+1]
-			for col := 0; col < width; col++ {
+			for col := range width {
 				j := col + 1
 				a := (aPrev[j]+aNext[j])*6 +
 					(aPrev[j-1]+aPrev[j+1]+aNext[j-1]+aNext[j+1])*5
@@ -234,7 +234,7 @@ func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 		}
 		aCur := aBuf[k0-1 : k0+width+1]
 		bCur := bBuf[k0-1 : k0+width+1]
-		for col := 0; col < width; col++ {
+		for col := range width {
 			j := col + 1
 			a := aCur[j]*6 + (aCur[j-1]+aCur[j+1])*5
 			b := bCur[j]*6 + (bCur[j-1]+bCur[j+1])*5
@@ -248,7 +248,7 @@ func selfguided(dgd []int32, dgdOrigin int, width int, height int, dgdStride int
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
 	const nb = 5
 	const shift = SGRProjSgrBits + nb - SGRProjRstBits
-	for row := 0; row < height; row++ {
+	for row := range height {
 		k0 := aOrigin + row*bufStride
 		// Reslice the three stencil rows so that index j maps to column j and
 		// j-1/j+1 stay in bounds; the windows start one column left of k0.
@@ -260,7 +260,7 @@ func selfguided(dgd []int32, dgdOrigin int, width int, height int, dgdStride int
 		bNext := bBuf[k0+bufStride-1 : k0+bufStride+width+1]
 		dgdRow := dgd[dgdOrigin+row*dgdStride : dgdOrigin+row*dgdStride+width]
 		dstRow := dst[row*dstStride : row*dstStride+width]
-		for col := 0; col < width; col++ {
+		for col := range width {
 			j := col + 1 // center index inside the +1-padded windows
 			a := (aCur[j]+aCur[j-1]+aCur[j+1]+aPrev[j]+aNext[j])*4 +
 				(aPrev[j-1]+aNext[j-1]+aPrev[j+1]+aNext[j+1])*3
@@ -309,11 +309,11 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 }
 
 func boxsum(src []int32, srcOrigin int, width int, height int, srcStride int, radius int, squared bool, dst []int32, dstStride int) {
-	for row := 0; row < height; row++ {
+	for row := range height {
 		y0 := maxInt(0, row-radius)
 		y1 := minInt(height-1, row+radius)
 		dstRow := dst[row*dstStride : row*dstStride+width]
-		for col := 0; col < width; col++ {
+		for col := range width {
 			sum := int32(0)
 			x0 := maxInt(0, col-radius)
 			x1 := minInt(width-1, col+radius)

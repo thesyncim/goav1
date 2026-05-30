@@ -38,8 +38,8 @@ func TestApplyRestorationUnitNoneCopies(t *testing.T) {
 	for i := range dst {
 		dst[i] = 0xffff
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			src[origin+row*srcStride+col] = uint16(20 + row*7 + col)
 		}
 	}
@@ -51,8 +51,8 @@ func TestApplyRestorationUnitNoneCopies(t *testing.T) {
 	if result != (RestorationUnitApplyResult{Type: parser.RestorationNone}) {
 		t.Fatalf("result=%+v", result)
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			if got, want := dst[row*dstStride+col], src[origin+row*srcStride+col]; got != want {
 				t.Fatalf("dst[%d,%d]=%d want %d", row, col, got, want)
 			}
@@ -1105,8 +1105,8 @@ func FuzzApplyRestorationUnitNone(f *testing.F) {
 		if _, err := ApplyRestorationUnit(src, stride, origin, dst, width, width, height, RestorationUnit{Type: parser.RestorationNone}, bitDepth, RestorationUnitScratch{}); err != nil {
 			t.Fatalf("ApplyRestorationUnit none err=%v", err)
 		}
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				if got, want := dst[row*width+col], src[origin+row*stride+col]; got != want {
 					t.Fatalf("row=%d col=%d got=%d want %d", row, col, got, want)
 				}
@@ -1656,8 +1656,8 @@ func BenchmarkApplyRestorationFrameToFrameWienerSGR(b *testing.B) {
 func makeRestorationApplySource(stride int, height int, bitDepth uint8) []uint16 {
 	max := uint16((1 << bitDepth) - 1)
 	src := make([]uint16, stride*height)
-	for row := 0; row < height; row++ {
-		for col := 0; col < stride; col++ {
+	for row := range height {
+		for col := range stride {
 			src[row*stride+col] = uint16((row*37 + col*19 + row*col) & int(max))
 		}
 	}
@@ -1953,7 +1953,7 @@ func applyRestorationRecordByProcessingUnits(tb testing.TB, grid RestorationPlan
 		if err != nil {
 			tb.Fatal(err)
 		}
-		for unitIndex := 0; unitIndex < unitCount; unitIndex++ {
+		for unitIndex := range unitCount {
 			unit, ok, err := grid.ProcessingUnit(stripe, record.Unit.Type, unitIndex)
 			if err != nil || !ok {
 				tb.Fatalf("unit %d ok=%v err=%v", unitIndex, ok, err)

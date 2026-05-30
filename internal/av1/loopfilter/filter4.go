@@ -30,7 +30,7 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		for i := 0; i < length; i++ {
+		for i := range length {
 			q0 := q0Base + i*outer
 			p1 := int(pix[q0-2*step])
 			p0 := int(pix[q0-step])
@@ -47,7 +47,7 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		}
 		return nil
 	}
-	for i := 0; i < length; i++ {
+	for i := range length {
 		q0 := q0Base + i*outer
 		p1 := readSample(pix, bytesPerSample, q0-2*step)
 		p0 := readSample(pix, bytesPerSample, q0-step)

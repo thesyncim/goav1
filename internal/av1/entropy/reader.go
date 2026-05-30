@@ -114,7 +114,7 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 		return 0, ErrInvalidBitCount
 	}
 	var v uint32
-	for i := uint8(0); i < n; i++ {
+	for range n {
 		bit, err := r.ReadBit()
 		if err != nil {
 			return 0, err

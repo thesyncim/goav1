@@ -71,7 +71,7 @@ func UpscalePlaneCoded(src frame.SamplePlane, dst frame.SamplePlane, codedWidth 
 		// per-tap bounds checks on the source read and the destination write.
 		srcRow := src.Pix[y*src.Stride : y*src.Stride+srcWidth : y*src.Stride+srcWidth]
 		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+dstWidth : y*dst.Stride+dstWidth]
-		for x := 0; x < dstWidth; x++ {
+		for x := range dstWidth {
 			srcX := -(1 << ScaleBits) + initialSubpelX + x*stepX
 			srcXPx := srcX >> ScaleBits
 			srcXSubpel := (srcX & ScaleMask) >> ExtraBits
@@ -92,7 +92,7 @@ func UpscalePlaneCoded(src frame.SamplePlane, dst frame.SamplePlane, codedWidth 
 					int(w[6])*int(filter[6]) +
 					int(w[7])*int(filter[7])
 			} else {
-				for k := 0; k < FilterTaps; k++ {
+				for k := range FilterTaps {
 					sampleX := clipInt(base+k, 0, srcLast)
 					sum += int(srcRow[sampleX]) * int(filter[k])
 				}

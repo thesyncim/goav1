@@ -540,7 +540,7 @@ func BenchmarkReaderSymbolStream(b *testing.B) {
 	for b.Loop() {
 		r := NewReader(src)
 		cdf := []uint16{24576, 16384, 8192, 0, 0}
-		for i := 0; i < benchSymbolsPerOp; i++ {
+		for range benchSymbolsPerOp {
 			if _, err := r.ReadSymbol(cdf, 4); err != nil {
 				b.Fatal(err)
 			}
@@ -558,7 +558,7 @@ func BenchmarkReaderSymbolStreamNoUpdate(b *testing.B) {
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
 		r := NewReaderWithCDFUpdate(src, false)
-		for i := 0; i < benchSymbolsPerOp; i++ {
+		for range benchSymbolsPerOp {
 			if _, err := r.ReadSymbol(cdf, 4); err != nil {
 				b.Fatal(err)
 			}
@@ -574,7 +574,7 @@ func BenchmarkReaderBoolStream(b *testing.B) {
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
 		r := NewReader(src)
-		for i := 0; i < benchSymbolsPerOp; i++ {
+		for range benchSymbolsPerOp {
 			if _, err := r.ReadBoolQ15(CDFProbTop / 2); err != nil {
 				b.Fatal(err)
 			}

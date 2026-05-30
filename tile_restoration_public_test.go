@@ -132,8 +132,8 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 	for i := range dst {
 		dst[i] = 0xffff
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			src[origin+row*srcStride+col] = uint16(20 + row*7 + col)
 		}
 	}
@@ -144,8 +144,8 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 	if result != (av1.TileRestorationUnitApplyResult{Type: av1.RestorationNone}) {
 		t.Fatalf("result=%+v", result)
 	}
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			if got, want := dst[row*dstStride+col], src[origin+row*srcStride+col]; got != want {
 				t.Fatalf("dst[%d,%d]=%d want %d", row, col, got, want)
 			}

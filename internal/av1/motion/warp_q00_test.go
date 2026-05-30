@@ -85,8 +85,8 @@ func TestPredictWarpedPlaneBlockQ00Frame1MI80x4(t *testing.T) {
 		{111, 110, 121, 118, 114, 114, 104, 106},
 	}
 
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 8; x++ {
+	for y := range 16 {
+		for x := range 8 {
 			got := dst.Pix[(16+y)*dst.Stride+(320+x)]
 			if got != want[y][x] {
 				t.Fatalf("dst[%d,%d] = %d want %d (libaom av1_warp_affine_c)",

@@ -2,6 +2,7 @@ package tile
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -461,7 +462,7 @@ func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 }
 
 func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
-	for rawSize := TransformSize(0); rawSize < transformSizeCount; rawSize++ {
+	for rawSize := range transformSizeCount {
 		txSize, err := rawSize.TransformSize()
 		if err != nil {
 			t.Fatal(err)
@@ -472,7 +473,7 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 		}
 		maxEOB := scanSize.Width * scanSize.Height
 		coeffs := make([]int16, maxEOB)
-		for i := 0; i < maxEOB; i++ {
+		for i := range maxEOB {
 			switch i % 7 {
 			case 0:
 				coeffs[i] = -32768
@@ -513,7 +514,7 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 			}
 		}
 		for col := scanSize.Width; col < scanSize.Width+txPadHorizontal; col++ {
-			for row := 0; row < stride; row++ {
+			for row := range stride {
 				if got := levels[col*stride+row]; got != 0 {
 					t.Fatalf("size=%d bottom pad[%d,%d]=%d want 0", rawSize, row, col, got)
 				}
@@ -524,15 +525,15 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 
 func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
 	rnd := newCoeffContextRandom(0x1532a5)
-	for isInter := 0; isInter < 2; isInter++ {
+	for isInter := range 2 {
 		_ = isInter
-		for rawType := uint8(0); rawType < uint8(transform.TypeCount); rawType++ {
+		for rawType := range uint8(transform.TypeCount) {
 			typ := transform.Type(rawType)
 			class, err := typ.Class()
 			if err != nil {
 				t.Fatal(err)
 			}
-			for size := TransformSize(0); size < transformSizeCount; size++ {
+			for size := range transformSizeCount {
 				if !libaomEncodeTXBTypeValid(size, typ) {
 					continue
 				}
@@ -551,21 +552,21 @@ func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
 					t.Fatal(err)
 				}
 				levels := make([]uint8, mustCoeffLevelsScratchLen(t, size))
-				for repeat := 0; repeat < 3; repeat++ {
+				for range 3 {
 					for _, eob := range coeffNZMapEOBCases(maxEOB) {
 						for i := range levels {
 							levels[i] = 0
 						}
 						contexts := make([]int8, maxEOB)
 						want := make([]int8, maxEOB)
-						for c := 0; c < eob; c++ {
+						for c := range eob {
 							pos := int(scan[c])
 							mustSetCoeffLevel(t, levels, size, pos, int(rnd.u8()&0x7f))
 							contexts[pos] = int8(rnd.u16() >> 9)
 							want[pos] = contexts[pos]
 						}
 						copy(want, contexts)
-						for c := 0; c < eob; c++ {
+						for c := range eob {
 							pos := int(scan[c])
 							var ctx int
 							if c == eob-1 {
@@ -581,7 +582,7 @@ func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
 						if err := CoeffNZMapContexts(levels, size, class, scan, eob, contexts); err != nil {
 							t.Fatal(err)
 						}
-						for i := 0; i < maxEOB; i++ {
+						for i := range maxEOB {
 							if contexts[i] != want[i] {
 								t.Fatalf("size=%d type=%d eob=%d context[%d]=%d want %d", size, typ, eob, i, contexts[i], want[i])
 							}
@@ -1080,13 +1081,7 @@ func coeffNZMapEOBCases(maxEOB int) []int {
 		if eob <= 0 || eob > maxEOB {
 			continue
 		}
-		seen := false
-		for _, existing := range out {
-			if existing == eob {
-				seen = true
-				break
-			}
-		}
+		seen := slices.Contains(out, eob)
 		if !seen {
 			out = append(out, eob)
 		}

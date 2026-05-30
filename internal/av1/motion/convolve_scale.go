@@ -33,7 +33,7 @@ func SubpelKernelTableFor(filter InterpFilter, blockSize int) (SubpelKernelTable
 		return SubpelKernelTable{}, ErrInvalidMotion
 	}
 	var table SubpelKernelTable
-	for k := 0; k < len(table); k++ {
+	for k := range len(table) {
 		kern, err := interpKernel(filter, blockSize, k)
 		if err != nil {
 			return SubpelKernelTable{}, err
@@ -241,17 +241,17 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		base := srcRow * ref.Stride
 		xPos := startX
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (8 + filterBits - 1)
 			off := base + xInt
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(ref.Pix[off+k])
 			}
 			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
@@ -262,14 +262,14 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yPos := startY
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := int(scaledIntFloor(yPos)) - baseY
 			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -287,15 +287,15 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		xPos := startX
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (8 + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadSample8Clamped(ref, xInt+k, srcRow))
 			}
 			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
@@ -306,14 +306,14 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yPos := startY
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := int(scaledIntFloor(yPos)) - baseY
 			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -331,15 +331,15 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		xPos := startX
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSample(ref, xInt+k, srcRow))
 			}
 			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0Bits))
@@ -350,14 +350,14 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yPos := startY
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := int(scaledIntFloor(yPos)) - baseY
 			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
@@ -375,15 +375,15 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		xPos := startX
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (int(bitDepth) + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(loadHighBDSampleClamped(ref, xInt+k, srcRow))
 			}
 			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0Bits))
@@ -394,14 +394,14 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yPos := startY
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := int(scaledIntFloor(yPos)) - baseY
 			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset

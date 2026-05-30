@@ -43,7 +43,7 @@ func ResolveTemporalMotionReferences(surfaces []int, store []tile.TemporalMotion
 	}
 
 	var resolved [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
-	for i := 0; i < count; i++ {
+	for i := range count {
 		surface := surfaces[i]
 		if surface < 0 || surface >= len(store) || store[surface].Frame == nil {
 			return 0, ErrInvalidSurfaceReference
@@ -53,7 +53,7 @@ func ResolveTemporalMotionReferences(surfaces []int, store []tile.TemporalMotion
 		}
 		resolved[i] = store[surface]
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		dst[i] = resolved[i]
 	}
 	return count, nil

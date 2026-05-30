@@ -130,7 +130,7 @@ func (m RemoteManifest) Validate() error {
 		if err := vector.MD5.Validate(); err != nil {
 			return err
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			other := m.Vectors[j]
 			if other.Tag == vector.Tag ||
 				other.Stream.Name == vector.Stream.Name ||

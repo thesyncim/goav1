@@ -691,7 +691,7 @@ func testFrameWorkCDEFPostFilterRequest(t testing.TB, ctx FrameWorkPostFilterCon
 func testFrameWorkCDEFScratchStorage(size FrameWorkCDEFPostFilterScratchSize) ([3][]uint16, [3][]uint16, []cdef.DirectionGrid, []cdef.VarianceGrid, []uint16, []uint16) {
 	var samples [3][]uint16
 	var dst [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		if size.Samples[plane] > 0 {
 			samples[plane] = make([]uint16, size.Samples[plane])
 		}
@@ -760,8 +760,8 @@ func TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow(t *testing.T) {
 		Width:  planeWidth,
 		Height: planeHeight,
 	}
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			src.Pix[y*src.Stride+x] = uint16(100 + y)
 		}
 	}
@@ -781,8 +781,8 @@ func TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow(t *testing.T) {
 	}
 
 	// Visible rows 0..32 must hold the real samples (last visible row is 32).
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			if got, want := at(y, x), uint16(100+y); got != want {
 				t.Fatalf("input row=%d col=%d got=%d want=%d", y, x, got, want)
 			}
@@ -793,7 +793,7 @@ func TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow(t *testing.T) {
 	// directional taps at by=7 would diverge from libaom's bot_linebuf reads.
 	const lastVisible = planeHeight - 1
 	for y := planeHeight; y < unitY+unitH+cdef.VerticalBorder; y++ {
-		for x := 0; x < planeWidth; x++ {
+		for x := range planeWidth {
 			if got, want := at(y, x), uint16(100+lastVisible); got != want {
 				t.Fatalf("bottom-extension row=%d col=%d got=%d want=%d", y, x, got, want)
 			}
@@ -829,8 +829,8 @@ func TestFrameWorkCopyCDEFInputRightEdgeReplicatesLastColumn(t *testing.T) {
 		Width:  planeWidth,
 		Height: planeHeight,
 	}
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			src.Pix[y*src.Stride+x] = uint16(300 + x)
 		}
 	}
@@ -852,8 +852,8 @@ func TestFrameWorkCopyCDEFInputRightEdgeReplicatesLastColumn(t *testing.T) {
 	// Visible cols 0..32 must hold the real samples (last visible col is 32).
 	// Rows past the visible plane within the CDEF VerticalBorder are independently
 	// covered by TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow.
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			if got, want := at(y, x), uint16(300+x); got != want {
 				t.Fatalf("input row=%d col=%d got=%d want=%d", y, x, got, want)
 			}
@@ -870,7 +870,7 @@ func TestFrameWorkCopyCDEFInputRightEdgeReplicatesLastColumn(t *testing.T) {
 	// 2D edge extension for past-visible CDEF input).
 	const lastVisible = planeWidth - 1
 	wantSrcY1 := unitY + unitH + cdef.VerticalBorder
-	for y := 0; y < wantSrcY1; y++ {
+	for y := range wantSrcY1 {
 		for x := planeWidth; x < unitX+unitW+cdef.HorizontalBorder; x++ {
 			if got, want := at(y, x), uint16(300+lastVisible); got != want {
 				t.Fatalf("right-extension row=%d col=%d got=%d want=%d", y, x, got, want)
@@ -902,8 +902,8 @@ func TestFrameWorkCopyCDEFInputFinalColumnKeepsVeryLarge(t *testing.T) {
 		Width:  planeWidth,
 		Height: planeHeight,
 	}
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			src.Pix[y*src.Stride+x] = uint16(400 + x)
 		}
 	}
@@ -925,7 +925,7 @@ func TestFrameWorkCopyCDEFInputFinalColumnKeepsVeryLarge(t *testing.T) {
 	// Right border cols (relative offsets unitW..unitW+HorizontalBorder-1) must
 	// remain VeryLarge to match libaom's fill_rect(...VERY_LARGE) branch on the
 	// rightmost superblock unit.
-	for y := 0; y < unitH; y++ {
+	for y := range unitH {
 		for x := unitW; x < unitW+cdef.HorizontalBorder; x++ {
 			if got := at(y, x); got != cdef.VeryLarge {
 				t.Fatalf("final-column right border row=%d col=%d got=%d want VeryLarge", y, x, got)
@@ -955,8 +955,8 @@ func TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge(t *testing.T) {
 		Width:  planeWidth,
 		Height: planeHeight,
 	}
-	for y := 0; y < planeHeight; y++ {
-		for x := 0; x < planeWidth; x++ {
+	for y := range planeHeight {
+		for x := range planeWidth {
 			src.Pix[y*src.Stride+x] = uint16(200 + y)
 		}
 	}
@@ -978,7 +978,7 @@ func TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge(t *testing.T) {
 	// Bottom border rows (relative offsets unitH..unitH+VerticalBorder-1)
 	// must remain VeryLarge to match libaom's fill_rect(...VERY_LARGE) branch.
 	for y := unitH; y < unitH+cdef.VerticalBorder; y++ {
-		for x := 0; x < unitW; x++ {
+		for x := range unitW {
 			if got := at(y, x); got != cdef.VeryLarge {
 				t.Fatalf("final-unit bottom border row=%d col=%d got=%d want VeryLarge", y, x, got)
 			}

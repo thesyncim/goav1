@@ -105,7 +105,7 @@ func TestSurfaceReferencesReleaseAllRejectsShortReleaseBuffer(t *testing.T) {
 func TestSurfaceReferencesFrameReferences(t *testing.T) {
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if _, err := refs.Refresh(1<<uint(i), 10+i, releases[:]); err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestSurfaceReferencesFrameReferences(t *testing.T) {
 	if count != parser.InterRefsPerFrame {
 		t.Fatalf("count=%d", count)
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		if surfaces[i] != 10+i {
 			t.Fatalf("surface[%d]=%d want %d", i, surfaces[i], 10+i)
 		}
@@ -150,7 +150,7 @@ func TestSurfaceReferencesFrameReferencesIntra(t *testing.T) {
 func TestSurfaceReferencesFrameReferencesRejectsInvalidInputs(t *testing.T) {
 	var refs SurfaceReferences
 	var surfaces [parser.InterRefsPerFrame]int
-	for i := 0; i < len(surfaces); i++ {
+	for i := range len(surfaces) {
 		surfaces[i] = -99
 	}
 
@@ -179,7 +179,7 @@ func TestSurfaceReferencesFrameReferencesRejectsInvalidInputs(t *testing.T) {
 	if !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("FrameReferences missing surface err=%v want %v", err, ErrInvalidSurfaceReference)
 	}
-	for i := 0; i < len(surfaces); i++ {
+	for i := range len(surfaces) {
 		if surfaces[i] != -99 {
 			t.Fatalf("surface[%d]=%d changed on error", i, surfaces[i])
 		}
@@ -264,7 +264,7 @@ func TestSurfaceReferencesShowExistingFrameEvent(t *testing.T) {
 	if surface != 6 || count != 1 || releases[0] != 5 {
 		t.Fatalf("surface=%d count=%d releases=%v", surface, count, releases[:count])
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slot, ok := refs.ReferenceSlot(i)
 		if !ok || slot != 6 {
 			t.Fatalf("ref[%d]=%d ok=%v", i, slot, ok)
@@ -305,7 +305,7 @@ func TestSurfaceReferencesShowExistingKeyResetsReferences(t *testing.T) {
 	if count != 1 || releases[0] != 5 {
 		t.Fatalf("count=%d releases=%v", count, releases[:count])
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slot, ok := refs.ReferenceSlot(i)
 		if !ok || slot != 6 {
 			t.Fatalf("ref[%d]=%d ok=%v", i, slot, ok)

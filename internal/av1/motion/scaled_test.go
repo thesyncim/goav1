@@ -76,7 +76,6 @@ func TestNewScaleFactorsRejectsOutOfRange(t *testing.T) {
 		{"downscale beyond 2x height", 640, 1600, 640, 720},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := NewScaleFactors(tc.refW, tc.refH, tc.curW, tc.curH); err == nil {
 				t.Fatalf("NewScaleFactors(%d,%d,%d,%d): expected error, got nil",
@@ -106,7 +105,6 @@ func TestScaledBlockOriginIdentityMatchesSameSize(t *testing.T) {
 		{"eighth-pel both", Vector{Row: 1, Col: 3}},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(40, 24, tc.mv, false, false)
 			if err != nil {

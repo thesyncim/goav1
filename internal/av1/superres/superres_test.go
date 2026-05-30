@@ -58,7 +58,7 @@ func TestUpscalePlanePreservesConstantRows(t *testing.T) {
 	if err := UpscalePlane(srcPlane, dstPlane, 8); err != nil {
 		t.Fatal(err)
 	}
-	for x := 0; x < 9; x++ {
+	for x := range 9 {
 		if dst[x] != 100 {
 			t.Fatalf("row0 dst[%d]=%d want 100 full=%v", x, dst[x], dst[:9])
 		}

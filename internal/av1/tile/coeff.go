@@ -166,7 +166,7 @@ type coeffPos struct {
 var coeffPosTable [transformSizeCount][]coeffPos
 
 func init() {
-	for size := TransformSize(0); size < transformSizeCount; size++ {
+	for size := range transformSizeCount {
 		txSize, err := size.TransformSize()
 		if err != nil {
 			continue
@@ -186,7 +186,7 @@ func init() {
 			scratchLen: (scanSize.Width + txPadHorizontal) * stride,
 		}
 		positions := make([]coeffPos, maxEOB)
-		for idx := 0; idx < maxEOB; idx++ {
+		for idx := range maxEOB {
 			col := idx / scanSize.Height
 			row := idx - col*scanSize.Height
 			positions[idx] = coeffPos{
@@ -272,10 +272,7 @@ func EOBPositionToken(eob int) (token int, extra int, err error) {
 	if eob < len(eobToPosSmall) {
 		token = eobToPosSmall[eob]
 	} else {
-		index := (eob - 1) >> 5
-		if index > 16 {
-			index = 16
-		}
+		index := min((eob-1)>>5, 16)
 		token = eobToPosLarge[index]
 	}
 	extra = eob - eobGroupStart[token]
@@ -312,7 +309,7 @@ func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
 	if len(coeffs) < maxEOB || len(levels) < scratchLen {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < scratchLen; i++ {
+	for i := range scratchLen {
 		levels[i] = 0
 	}
 	stride := scanSize.Height + txPadHorizontal
@@ -348,7 +345,7 @@ func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Clas
 	if eob > maxEOB || len(scan) < eob || len(contexts) < maxEOB || len(levels) < scratchLen {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < eob; i++ {
+	for i := range eob {
 		pos := int(scan[i])
 		if pos < 0 || pos >= maxEOB {
 			return ErrInvalidDecodeState
@@ -377,42 +374,42 @@ func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 	}
 	q := CoeffQContext(baseQIndex)
 	var next CoeffCDFs
-	for tx := 0; tx < CoeffTxSizeContexts; tx++ {
-		for ctx := 0; ctx < TXBSkipContexts; ctx++ {
+	for tx := range CoeffTxSizeContexts {
+		for ctx := range TXBSkipContexts {
 			if err := next.TXBSkip[tx][ctx].Init(defaultCoeffTXBSkip[q][tx][ctx][:]); err != nil {
 				return err
 			}
 		}
-		for plane := 0; plane < CoeffPlaneTypes; plane++ {
-			for ctx := 0; ctx < EOBCoefContexts; ctx++ {
+		for plane := range CoeffPlaneTypes {
+			for ctx := range EOBCoefContexts {
 				if err := next.EOBExtra[tx][plane][ctx].Init(defaultCoeffEOBExtra[q][tx][plane][ctx][:]); err != nil {
 					return err
 				}
 			}
-			for ctx := 0; ctx < CoeffBRContexts; ctx++ {
+			for ctx := range CoeffBRContexts {
 				if err := next.CoeffBR[tx][plane][ctx].Init(defaultCoeffBR[q][tx][plane][ctx][:]); err != nil {
 					return err
 				}
 			}
-			for ctx := 0; ctx < CoeffBaseContexts; ctx++ {
+			for ctx := range CoeffBaseContexts {
 				if err := next.CoeffBase[tx][plane][ctx].Init(defaultCoeffBase[q][tx][plane][ctx][:]); err != nil {
 					return err
 				}
 			}
-			for ctx := 0; ctx < EOBBaseContexts; ctx++ {
+			for ctx := range EOBBaseContexts {
 				if err := next.CoeffBaseEOB[tx][plane][ctx].Init(defaultCoeffBaseEOB[q][tx][plane][ctx][:]); err != nil {
 					return err
 				}
 			}
 		}
 	}
-	for plane := 0; plane < CoeffPlaneTypes; plane++ {
-		for ctx := 0; ctx < 3; ctx++ {
+	for plane := range CoeffPlaneTypes {
+		for ctx := range 3 {
 			if err := next.DCSign[plane][ctx].Init(defaultCoeffDCSign[q][plane][ctx][:]); err != nil {
 				return err
 			}
 		}
-		for ctx := 0; ctx < maxEOBFlagContexts; ctx++ {
+		for ctx := range maxEOBFlagContexts {
 			if err := next.EOBFlag16[plane][ctx].Init(defaultCoeffEOBFlag16[q][plane][ctx][:]); err != nil {
 				return err
 			}
@@ -681,10 +678,10 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 
-	for i := 0; i < maxEOB; i++ {
+	for i := range maxEOB {
 		coeffs[i] = 0
 	}
-	for i := 0; i < scratchLen; i++ {
+	for i := range scratchLen {
 		levelsScratch[i] = 0
 	}
 

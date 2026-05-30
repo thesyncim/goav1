@@ -486,7 +486,7 @@ func validateRestorationFramePlan(plan RestorationFramePlan) error {
 		return ErrInvalidPlan
 	}
 	active := false
-	for plane := 0; plane < len(plan.Grids); plane++ {
+	for plane := range len(plan.Grids) {
 		if plane >= int(plan.Planes) {
 			if plan.Grids[plane] != (RestorationPlaneGrid{}) ||
 				plan.UnitRecords[plane] != 0 ||

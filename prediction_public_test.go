@@ -43,8 +43,8 @@ func TestPublicPredictIntraPlaneBlockHighBitDepth(t *testing.T) {
 	if err := av1.PredictIntraPlaneBlock(plane, 2, 12, 0, 0, 4, 3, av1.PredictionIntraModeVertical, edges); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 3 {
+		for x := range 4 {
 			want := uint16((x + 1) * 100)
 			if got := getPublicFrameSample(plane, 2, x, y); got != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
@@ -62,8 +62,8 @@ func TestPublicPredictDirectionalIntraPlaneBlock(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 3 {
+		for x := range 4 {
 			if got := getPublicFrameSample(plane, 1, x, y); got != above[x] {
 				t.Fatalf("vertical sample(%d,%d)=%d want %d", x, y, got, above[x])
 			}
@@ -181,7 +181,7 @@ func TestPublicPredictionAllocs(t *testing.T) {
 		LeftAvailable:      true,
 		AboveLeftAvailable: true,
 	}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		edges.Above[i] = 90
 		edges.Left[i] = 92
 	}

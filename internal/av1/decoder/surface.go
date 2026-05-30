@@ -45,7 +45,7 @@ func (r *SurfaceReferences) ReleaseAll(releases []int) (int, error) {
 	r.ensureInitialized()
 
 	releaseCount := 0
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		surface := r.slots[i]
 		if surface < 0 || containsSurface(releases[:releaseCount], surface) {
 			continue
@@ -83,7 +83,7 @@ func (r *SurfaceReferences) FrameReferences(event Event, surfaces []int) (int, e
 	r.ensureInitialized()
 
 	var resolved [parser.InterRefsPerFrame]int
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		ref := int(event.FrameSize.RefFrameIdx[i])
 		if ref < 0 || ref >= parser.RefFrames {
 			return 0, ErrInvalidSurfaceReference
@@ -94,7 +94,7 @@ func (r *SurfaceReferences) FrameReferences(event Event, surfaces []int) (int, e
 		}
 		resolved[i] = surface
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		surfaces[i] = resolved[i]
 	}
 	return parser.InterRefsPerFrame, nil
@@ -121,7 +121,7 @@ func (r *SurfaceReferences) Refresh(flags uint8, surface int, releases []int) (i
 	next := r.slots
 	var overwritten [parser.RefFrames]int
 	overwrittenCount := 0
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if (flags & (1 << uint(i))) == 0 {
 			continue
 		}
@@ -167,7 +167,7 @@ func (r *SurfaceReferences) ShowExisting(surface int, frameType parser.FrameType
 	next := r.slots
 	var overwritten [parser.RefFrames]int
 	overwrittenCount := 0
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		old := next[i]
 		if old >= 0 && old != surface && !containsSurface(overwritten[:overwrittenCount], old) {
 			overwritten[overwrittenCount] = old
@@ -186,7 +186,7 @@ func (r *SurfaceReferences) ensureInitialized() {
 
 func (r *SurfaceReferences) apply(next [parser.RefFrames]int, overwritten []int, releases []int) (int, error) {
 	releaseCount := 0
-	for i := 0; i < len(overwritten); i++ {
+	for i := range overwritten {
 		surface := overwritten[i]
 		if slotsHold(next, surface) {
 			continue
@@ -202,7 +202,7 @@ func (r *SurfaceReferences) apply(next [parser.RefFrames]int, overwritten []int,
 }
 
 func slotsHold(slots [parser.RefFrames]int, surface int) bool {
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if slots[i] == surface {
 			return true
 		}
@@ -211,7 +211,7 @@ func slotsHold(slots [parser.RefFrames]int, surface int) bool {
 }
 
 func containsSurface(slots []int, surface int) bool {
-	for i := 0; i < len(slots); i++ {
+	for i := range slots {
 		if slots[i] == surface {
 			return true
 		}
@@ -221,7 +221,7 @@ func containsSurface(slots []int, surface int) bool {
 
 func emptySurfaceReferenceSlots() [parser.RefFrames]int {
 	var slots [parser.RefFrames]int
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slots[i] = -1
 	}
 	return slots

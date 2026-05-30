@@ -39,8 +39,8 @@ func TestPublicDSPPlaneBlockOps(t *testing.T) {
 	if err := av1.CopyPlaneBlock(dst, src, 2, 2, 1, 1, 2, 3, 2); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getPublicFrameSample(dst, 2, 2+x, 1+y)
 			want := uint16(1000 + (2+y)*10 + 1 + x)
 			if got != want {
@@ -61,8 +61,8 @@ func TestPublicDSPPlaneBlockOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []uint16{0, 99, 100, 255, 120, 80, 255, 255}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 2 {
+		for x := range 4 {
 			if got := getPublicFrameSample(residualPlane, 1, x, y); got != want[y*4+x] {
 				t.Fatalf("residual sample(%d,%d)=%d want %d", x, y, got, want[y*4+x])
 			}
@@ -119,7 +119,7 @@ func TestPublicDSPBlendAndMinMax(t *testing.T) {
 
 	var a16 [64 * 2]byte
 	var b16 [64 * 2]byte
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		publicPut16(b16[:], i, 65535)
 	}
 	publicPut16(b16[:], 9, 13)

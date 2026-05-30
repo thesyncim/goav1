@@ -120,7 +120,7 @@ func RestorationUnitRecordScratchLen(grid RestorationPlaneGrid, record Restorati
 		if err != nil {
 			return RestorationUnitScratchSize{}, err
 		}
-		for unitIndex := 0; unitIndex < unitCount; unitIndex++ {
+		for unitIndex := range unitCount {
 			unit, ok, err := grid.ProcessingUnit(stripe, record.Unit.Type, unitIndex)
 			if err != nil {
 				return RestorationUnitScratchSize{}, err
@@ -319,7 +319,7 @@ func ApplyRestorationUnitRecord(grid RestorationPlaneGrid, record RestorationUni
 			return RestorationUnitRecordApplyResult{}, err
 		}
 		result.Stripes++
-		for unitIndex := 0; unitIndex < unitCount; unitIndex++ {
+		for unitIndex := range unitCount {
 			unit, ok, err := grid.ProcessingUnit(stripe, record.Unit.Type, unitIndex)
 			if err != nil {
 				return RestorationUnitRecordApplyResult{}, err
@@ -476,10 +476,10 @@ func copyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint1
 		!restorationSampleBlockFitsAt(len(dst), 0, dstStride, width, height) {
 		return ErrInvalidPlan
 	}
-	for row := 0; row < height; row++ {
+	for row := range height {
 		srcRow := srcOrigin + row*srcStride
 		dstRow := row * dstStride
-		for col := 0; col < width; col++ {
+		for col := range width {
 			sample := src[srcRow+col]
 			if sample > max {
 				return ErrInvalidPlan
@@ -495,7 +495,7 @@ func copyRestoredPlane(src []uint16, srcStride int, srcOrigin int, dst []uint16,
 		!restorationSampleBlockFitsAt(len(dst), dstOrigin, dstStride, width, height) {
 		return ErrInvalidPlan
 	}
-	for row := 0; row < height; row++ {
+	for row := range height {
 		srcRow := srcOrigin + row*srcStride
 		dstRow := dstOrigin + row*dstStride
 		copy(dst[dstRow:dstRow+width], src[srcRow:srcRow+width])
@@ -537,7 +537,7 @@ func applyRestorationStripeUnits(grid RestorationPlaneGrid, record RestorationUn
 	if err != nil {
 		return 0, err
 	}
-	for unitIndex := 0; unitIndex < unitCount; unitIndex++ {
+	for unitIndex := range unitCount {
 		unit, ok, err := grid.ProcessingUnit(stripe, record.Unit.Type, unitIndex)
 		if err != nil {
 			return 0, err

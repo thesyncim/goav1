@@ -173,7 +173,7 @@ func FuzzBuildJobs(f *testing.F) {
 		if n != count {
 			t.Fatalf("n=%d count=%d", n, count)
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if jobs[i].Tile != spans[i].Tile || jobs[i].Offset != spans[i].Offset || jobs[i].Size != spans[i].Size {
 				t.Fatalf("job[%d]=%+v span=%+v", i, jobs[i], spans[i])
 			}

@@ -76,15 +76,15 @@ func SubsampleLuma8ToQ3(outputQ3 []uint16, input []uint8, inputStride int, width
 			}
 		}
 	case subX:
-		for row := 0; row < outH; row++ {
+		for row := range outH {
 			for col := 0; col < width; col += 2 {
 				sum := int(input[row*inputStride+col]) + int(input[row*inputStride+col+1])
 				outputQ3[row*CFLBufLine+(col>>1)] = uint16(sum << 2)
 			}
 		}
 	default:
-		for row := 0; row < outH; row++ {
-			for col := 0; col < outW; col++ {
+		for row := range outH {
+			for col := range outW {
 				outputQ3[row*CFLBufLine+col] = uint16(input[row*inputStride+col]) << 3
 			}
 		}
@@ -119,7 +119,7 @@ func SubsampleLuma16ToQ3(outputQ3 []uint16, input []uint16, inputStride int, wid
 			}
 		}
 	case subX:
-		for row := 0; row < outH; row++ {
+		for row := range outH {
 			for col := 0; col < width; col += 2 {
 				p0 := input[row*inputStride+col]
 				p1 := input[row*inputStride+col+1]
@@ -130,8 +130,8 @@ func SubsampleLuma16ToQ3(outputQ3 []uint16, input []uint16, inputStride int, wid
 			}
 		}
 	default:
-		for row := 0; row < outH; row++ {
-			for col := 0; col < outW; col++ {
+		for row := range outH {
+			for col := range outW {
 				p := input[row*inputStride+col]
 				if p > max {
 					return ErrInvalidPrediction
@@ -154,7 +154,7 @@ func PadCFLReconQ3(reconQ3 []uint16, bufWidth int, bufHeight int, width int, hei
 		for row := 0; row < bufHeight; row++ {
 			line := row * CFLBufLine
 			last := reconQ3[line+bufWidth-1]
-			for col := 0; col < diffWidth; col++ {
+			for col := range diffWidth {
 				reconQ3[line+bufWidth+col] = last
 			}
 		}
@@ -181,14 +181,14 @@ func SubtractCFLAverage(srcQ3 []uint16, dstQ3 []int16, width int, height int) er
 		return ErrInvalidPrediction
 	}
 	sum := (width * height) >> 1
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			sum += int(srcQ3[row*CFLBufLine+col])
 		}
 	}
 	avg := sum >> numPelLog2
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dstQ3[row*CFLBufLine+col] = int16(int(srcQ3[row*CFLBufLine+col]) - avg)
 		}
 	}
@@ -217,9 +217,9 @@ func PredictCFLPlaneBlockVisible(dst frame.Plane, bytesPerSample int, bitDepth u
 		alphaQ3 < -16 || alphaQ3 > 16 {
 		return ErrInvalidPrediction
 	}
-	for row := 0; row < visibleHeight; row++ {
+	for row := range visibleHeight {
 		line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-		for col := 0; col < visibleWidth; col++ {
+		for col := range visibleWidth {
 			scaled := roundPowerOfTwoSigned(alphaQ3*int(acQ3[row*CFLBufLine+col]), 6)
 			current := readCFLPlaneSample(line, bytesPerSample, col)
 			writeCFLPlaneSample(line, bytesPerSample, col, uint16(clampInt(current+scaled, 0, int(max))))

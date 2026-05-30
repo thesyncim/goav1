@@ -194,7 +194,7 @@ func TestLayerPoolAcquireReleasePingPong(t *testing.T) {
 
 	// 64 ping-pong iterations: each acquires from both layers, swaps which is
 	// released first, and verifies cross-pool resolution holds throughout.
-	for iter := 0; iter < 64; iter++ {
+	for iter := range 64 {
 		id0, f0, err := pool.Acquire(layer0)
 		if err != nil {
 			t.Fatalf("iter=%d Acquire layer-0: %v", iter, err)

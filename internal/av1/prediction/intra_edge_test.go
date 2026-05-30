@@ -66,7 +66,7 @@ func TestFilterIntraEdgeMatchesLibaomOperationCorpus(t *testing.T) {
 	for _, bitDepth := range []uint8{8, 10, 12} {
 		hi := 1 << bitDepth
 		rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
-		for iter := 0; iter < libaomIntraEdgeIterations; iter++ {
+		for iter := range libaomIntraEdgeIterations {
 			strength := uint8(rnd.pseudoUniform(4))
 			size := 4*(rnd.pseudoUniform(128/4)+1) + 1
 			got := make([]uint16, size)
@@ -255,7 +255,7 @@ func TestUpsampleIntraEdgeMatchesLibaomOperationCorpus(t *testing.T) {
 	for _, bitDepth := range []uint8{8, 10, 12} {
 		hi := 1 << bitDepth
 		rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
-		for iter := 0; iter < libaomIntraEdgeIterations; iter++ {
+		for iter := range libaomIntraEdgeIterations {
 			size := 4 * (rnd.pseudoUniform(4) + 1)
 			got := make([]uint16, bufSize)
 			pix := uint16(0)
@@ -516,7 +516,7 @@ func filterIntraEdgeLibaomReference(edge []uint16, strength uint8) {
 	kernel := intraEdgeFilterKernels[strength-1]
 	for i := 1; i < len(edge); i++ {
 		sum := 0
-		for j := 0; j < intraEdgeTaps; j++ {
+		for j := range intraEdgeTaps {
 			k := i - 2 + j
 			if k < 0 {
 				k = 0
@@ -538,7 +538,7 @@ func upsampleIntraEdgeLibaomReference(edge []uint16, origin int, size int, bitDe
 	scratch[size+2] = edge[origin+size-1]
 
 	edge[origin-2] = scratch[0]
-	for i := 0; i < size; i++ {
+	for i := range size {
 		sum := -int(scratch[i]) + 9*int(scratch[i+1]) + 9*int(scratch[i+2]) - int(scratch[i+3])
 		sample := (sum + 8) >> 4
 		if sample < 0 {

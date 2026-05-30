@@ -53,7 +53,7 @@ func (s FrameWorkSuperResPostFilterScratchSize) BindRequest(outputFrame []byte, 
 		OutputFrame: outputFrame[:s.OutputFrame],
 		OutputView:  outputView,
 	}
-	for plane := 0; plane < len(req.CodedScratch); plane++ {
+	for plane := range len(req.CodedScratch) {
 		if s.CodedSamples[plane] < 0 || s.OutputSamples[plane] < 0 ||
 			len(coded[plane]) < s.CodedSamples[plane] || len(output[plane]) < s.OutputSamples[plane] {
 			return FrameWorkSuperResPostFilterRequest{}, frame.ErrShortBuffer
@@ -69,7 +69,7 @@ func (s FrameWorkSuperResPostFilterScratchSize) Max(other FrameWorkSuperResPostF
 	result := FrameWorkSuperResPostFilterScratchSize{
 		OutputFrame: maxInt(s.OutputFrame, other.OutputFrame),
 	}
-	for plane := 0; plane < len(result.CodedSamples); plane++ {
+	for plane := range len(result.CodedSamples) {
 		result.CodedSamples[plane] = maxInt(s.CodedSamples[plane], other.CodedSamples[plane])
 		result.OutputSamples[plane] = maxInt(s.OutputSamples[plane], other.OutputSamples[plane])
 	}
@@ -161,7 +161,7 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkS
 		return FrameWorkSuperResPostFilterScratchSize{}, nil
 	}
 	size := FrameWorkSuperResPostFilterScratchSize{OutputFrame: plan.OutputSize}
-	for plane := 0; plane < len(plan.Planes); plane++ {
+	for plane := range len(plan.Planes) {
 		planePlan := plan.Planes[plane]
 		if planePlan.OutputWidth == 0 {
 			continue
@@ -235,7 +235,7 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		Output:     output,
 		OutputSize: plan.OutputSize,
 	}
-	for plane := 0; plane < len(plan.Planes); plane++ {
+	for plane := range len(plan.Planes) {
 		planePlan := plan.Planes[plane]
 		if planePlan.OutputWidth == 0 {
 			continue
@@ -389,7 +389,7 @@ func (ctx FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req Fram
 	if len(req.OutputFrame) < size.OutputFrame {
 		return frame.ErrShortBuffer
 	}
-	for plane := 0; plane < len(plan.Planes); plane++ {
+	for plane := range len(plan.Planes) {
 		if plan.Planes[plane].OutputWidth == 0 {
 			continue
 		}

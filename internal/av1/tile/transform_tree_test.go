@@ -104,7 +104,7 @@ func TestMaxTransformSizeTableMatchesDav1d(t *testing.T) {
 }
 
 func TestBlockSignalsTransformSizeMatchesLibaom(t *testing.T) {
-	for size := BlockSize(0); size < blockSizeCount; size++ {
+	for size := range blockSizeCount {
 		want := size != BlockSize4x4
 		if got := blockSignalsTransformSize(size); got != want {
 			t.Fatalf("blockSignalsTransformSize(%d)=%v want %v", size, got, want)

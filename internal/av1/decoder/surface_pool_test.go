@@ -175,7 +175,7 @@ func TestBeginFrameSurfaceInter(t *testing.T) {
 	pool := testFramePool(t, parser.RefFrames+1)
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		index, _, err := pool.Acquire()
 		if err != nil {
 			t.Fatal(err)
@@ -204,7 +204,7 @@ func TestBeginFrameSurfaceInter(t *testing.T) {
 	if surface != parser.RefFrames || output == nil || refCount != parser.InterRefsPerFrame {
 		t.Fatalf("surface=%d output=%p refCount=%d", surface, output, refCount)
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		if references[i] != i {
 			t.Fatalf("references[%d]=%d want %d", i, references[i], i)
 		}
@@ -398,7 +398,7 @@ func TestShowExistingFrameSurfaceReleasesPool(t *testing.T) {
 	if pool.Available() != 2 {
 		t.Fatalf("available=%d want 2", pool.Available())
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slot, ok := refs.ReferenceSlot(i)
 		if !ok || slot != index1 {
 			t.Fatalf("slot[%d]=%d ok=%v want %d", i, slot, ok, index1)
@@ -529,7 +529,7 @@ func BenchmarkResolveFrameReferences(b *testing.B) {
 	pool := benchmarkFramePool(b, parser.InterRefsPerFrame)
 	var surfaces [parser.InterRefsPerFrame]int
 	var refs [parser.InterRefsPerFrame]*frame.Frame
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		index, _, err := pool.Acquire()
 		if err != nil {
 			b.Fatal(err)

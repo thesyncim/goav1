@@ -148,7 +148,7 @@ func fillNeutralChromaDigest(format frame.Format, bytesPerSample int, expected *
 		height = (height + 1) >> 1
 	}
 	neutral := uint16(1) << (format.BitDepth - 1)
-	for plane := 0; plane < 2; plane++ {
+	for range 2 {
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				*expected = append(*expected, byte(neutral))

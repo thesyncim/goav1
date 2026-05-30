@@ -105,19 +105,19 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 		const imStride = maxBlockSize
 		var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 		imH := height + filterTaps - 1
-		for y := 0; y < imH; y++ {
-			for x := 0; x < width; x++ {
+		for y := range imH {
+			for x := range width {
 				sum := 1 << (bd + filterBits - 1)
-				for k := 0; k < filterTaps; k++ {
+				for k := range filterTaps {
 					sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
 				}
 				im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
 			}
 		}
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				sum := 1 << offsetBits
-				for k := 0; k < filterTaps; k++ {
+				for k := range filterTaps {
 					sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 				}
 				out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
@@ -126,10 +126,10 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	case subX != 0:
 		// av1_dist_wtd_convolve_x: bits = FILTER_BITS - round_1.
 		bits := filterBits - compoundRound1Bits
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				res := 0
-				for k := 0; k < filterTaps; k++ {
+				for k := range filterTaps {
 					res += int(xKernel[k]) * load(refX+x-foX+k, refY+y)
 				}
 				res = (1 << bits) * roundPowerOfTwo(res, round0)
@@ -140,10 +140,10 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	case subY != 0:
 		// av1_dist_wtd_convolve_y: bits = FILTER_BITS - round_0.
 		bits := filterBits - round0
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				res := 0
-				for k := 0; k < filterTaps; k++ {
+				for k := range filterTaps {
 					res += int(yKernel[k]) * load(refX+x, refY+y-foY+k)
 				}
 				res *= (1 << bits)
@@ -154,8 +154,8 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	default:
 		// av1_dist_wtd_convolve_2d_copy: bits = 2*FILTER_BITS - round_1 - round_0.
 		bits := 2*filterBits - compoundRound1Bits - round0
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				res := load(refX+x, refY+y) << bits
 				res += roundOffset
 				out[y*width+x] = uint16(res)
@@ -219,7 +219,7 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 					}
 					coeffs := warpedFilter[offs]
 					sum := 1 << offsetBitsVert
-					for m := 0; m < filterTaps; m++ {
+					for m := range filterTaps {
 						sum += int(coeffs[m]) * int(tmp[(k+m+4)*warpedIntermediateColumns+(l+4)])
 					}
 					sum = roundPowerOfTwo(sum, reduceBitsVert)
@@ -253,8 +253,8 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	store := compoundPixelStorer(dst, bytesPerSample, bitDepth)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			i := y*width + x
 			tmp := int(src0[i])*fwdOffset + int(src1[i])*bckOffset
 			tmp >>= 4 // DIST_PRECISION_BITS
@@ -286,8 +286,8 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	store := compoundPixelStorer(dst, bytesPerSample, bitDepth)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			m, ok := compoundMaskSample(mask, maskStride, y, x, subX, subY)
 			if !ok {
 				return ErrInvalidMotion
@@ -318,18 +318,15 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 	const diffFactor = 16
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			i := y*width + x
 			diff := int(src0[i]) - int(src1[i])
 			if diff < 0 {
 				diff = -diff
 			}
 			diff = roundPowerOfTwo(diff, round)
-			m := maskBase + diff/diffFactor
-			if m < 0 {
-				m = 0
-			}
+			m := max(maskBase+diff/diffFactor, 0)
 			if m > compoundBlendA64MaxAlpha {
 				m = compoundBlendA64MaxAlpha
 			}

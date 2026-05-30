@@ -5249,7 +5249,7 @@ func publicDecoderResidualInterFrameHeaderPayload() []byte {
 	w.writeBool(false)                         // frame_size_override_flag
 	w.writeBits(0, 3)                          // primary_ref_frame
 	w.writeBits(0x01, 8)                       // refresh_frame_flags
-	for i := 0; i < av1.InterRefsPerFrame; i++ {
+	for range av1.InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // render_and_frame_size_different
@@ -5263,7 +5263,7 @@ func publicDecoderResidualInterFrameHeaderPayload() []byte {
 	publicDecoderResidualWriteZeroSegmentationParams(&w)
 	w.writeBool(false) // reference_select
 	w.writeBool(false) // reduced_tx_set
-	for i := 0; i < av1.InterRefsPerFrame; i++ {
+	for range av1.InterRefsPerFrame {
 		w.writeBool(false) // global_motion_is_global
 	}
 	return w.bytes()
@@ -5343,7 +5343,7 @@ func publicCDFValuesEqual(a []uint16, b []uint16) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
+	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}

@@ -272,7 +272,7 @@ func validateReferenceMVFrame(f *ReferenceMVFrame) error {
 
 func temporalReferenceOrderHints(refs [referenceFrameCount]TemporalMotionReferenceFrame) [referenceFrameCount]uint32 {
 	var hints [referenceFrameCount]uint32
-	for ref := ReferenceFrameLast; ref < referenceFrameCount; ref++ {
+	for ref := range referenceFrameCount {
 		hints[ref] = refs[ref].OrderHint
 	}
 	return hints
@@ -288,7 +288,7 @@ func temporalReferenceFuture(bits uint8, ref uint32, current uint32) (bool, erro
 
 func motionFieldRefOffsets(bits uint8, start uint32, refs [referenceFrameCount]uint32) ([referenceFrameCount]int, error) {
 	var offsets [referenceFrameCount]int
-	for ref := ReferenceFrameLast; ref < referenceFrameCount; ref++ {
+	for ref := range referenceFrameCount {
 		offset, err := motionFieldRelativeOrderHint(bits, start, refs[ref])
 		if err != nil {
 			return offsets, err

@@ -67,10 +67,7 @@ func (r *Reader) ReadBits(n uint8) (uint64, error) {
 	bitInByte := r.bit & 7
 
 	if bitInByte != 0 {
-		take := 8 - bitInByte
-		if take > bits {
-			take = bits
-		}
+		take := min(8-bitInByte, bits)
 		shift := 8 - bitInByte - take
 		mask := byte((1 << take) - 1)
 		v = uint64((r.src[byteIndex] >> shift) & mask)

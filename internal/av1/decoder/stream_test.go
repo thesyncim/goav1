@@ -145,7 +145,7 @@ func interFrameHeaderPayload() []byte {
 	w.writeBool(false)                            // frame_size_override_flag
 	w.writeBits(0, 3)                             // primary_ref_frame
 	w.writeBits(0x01, 8)                          // refresh_frame_flags
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // render_and_frame_size_different
@@ -159,7 +159,7 @@ func interFrameHeaderPayload() []byte {
 	writeZeroSegmentationParams(&w)
 	w.writeBool(false) // reference_select
 	w.writeBool(false) // reduced_tx_set
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBool(false) // global_motion_is_global
 	}
 	return w.bytes()
@@ -175,7 +175,7 @@ func interFrameHeaderPayloadWithReferenceState(update bool) []byte {
 	w.writeBool(false)                            // frame_size_override_flag
 	w.writeBits(0, 3)                             // primary_ref_frame
 	w.writeBits(0x01, 8)                          // refresh_frame_flags
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBits(0, 3) // ref_frame_idx[i]
 	}
 	w.writeBool(false) // render_and_frame_size_different
@@ -201,7 +201,7 @@ func interFrameHeaderPayloadWithReferenceState(update bool) []byte {
 	w.writeBool(false) // transform_mode_select
 	w.writeBool(false) // reference_select
 	w.writeBool(false) // reduced_tx_set
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBool(false) // global_motion_is_global
 	}
 	return w.bytes()
@@ -227,7 +227,7 @@ func switchFrameHeaderPayload() []byte {
 	w.writeBits(uint64(parser.FrameTypeSwitch), 2)
 	w.writeBool(true)
 	w.writeBool(false)
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBits(0, 3)
 	}
 	w.writeBits(15, 4)
@@ -243,7 +243,7 @@ func switchFrameHeaderPayload() []byte {
 	writeZeroSegmentationParams(&w)
 	w.writeBool(false)
 	w.writeBool(false)
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for range parser.InterRefsPerFrame {
 		w.writeBool(false)
 	}
 	return w.bytes()
@@ -305,14 +305,14 @@ func writeLoopFilterDeltaUpdate(w *testBitWriter) {
 	w.writeBits(0, 3)  // loop_filter_sharpness
 	w.writeBool(true)  // mode_ref_delta_enabled
 	w.writeBool(true)  // mode_ref_delta_update
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		update := i == 2
 		w.writeBool(update)
 		if update {
 			writeSignedBits(w, 4, 7)
 		}
 	}
-	for i := 0; i < parser.LoopFilterModeDeltas; i++ {
+	for range parser.LoopFilterModeDeltas {
 		w.writeBool(false)
 	}
 }
@@ -983,12 +983,12 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	if events[3].FilmGrain.Apply || events[3].FilmGrain.BitsRead != events[3].GlobalMotion.BitsRead {
 		t.Fatalf("inter film grain=%+v", events[3].FilmGrain)
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		if events[3].GlobalMotion.Ref[i].Type != parser.GlobalMotionIdentity {
 			t.Fatalf("inter global motion ref[%d]=%+v", i, events[3].GlobalMotion.Ref[i])
 		}
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		if events[3].FrameSize.RefFrameIdx[i] != 0 {
 			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[3].FrameSize.RefFrameIdx[i])
 		}
@@ -1077,7 +1077,7 @@ func TestStreamSwitchFrameRefreshesAllReferenceSlots(t *testing.T) {
 	if keyEvent.FrameSize.RefreshFrameFlags != 0xff {
 		t.Fatalf("key RefreshFrameFlags=%02x want ff", keyEvent.FrameSize.RefreshFrameFlags)
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if !dec.references.Frames[i].Valid {
 			t.Fatalf("references[%d] should be valid after key", i)
 		}
@@ -1107,7 +1107,7 @@ func TestStreamSwitchFrameRefreshesAllReferenceSlots(t *testing.T) {
 	if !event.TileGroup.Final {
 		t.Fatalf("S_FRAME tile group not final: %+v", event.TileGroup)
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		ref := dec.references.Frames[i]
 		if !ref.Valid || ref.FrameType != parser.FrameTypeSwitch {
 			t.Fatalf("references[%d]=%+v want valid FrameTypeSwitch", i, ref)
@@ -1147,7 +1147,7 @@ func TestStreamSwitchFrameSurfaceReferencesReset(t *testing.T) {
 		t.Fatalf("release count=%d want 2", count)
 	}
 	released5, released6 := false, false
-	for i := 0; i < count; i++ {
+	for i := range count {
 		switch releases[i] {
 		case 5:
 			released5 = true
@@ -1158,7 +1158,7 @@ func TestStreamSwitchFrameSurfaceReferencesReset(t *testing.T) {
 	if !released5 || !released6 {
 		t.Fatalf("releases=%v want both 5 and 6", releases[:count])
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slot, ok := refs.ReferenceSlot(i)
 		if !ok || slot != 7 {
 			t.Fatalf("after S_FRAME, ref[%d]=%d ok=%v want 7", i, slot, ok)
@@ -1194,7 +1194,7 @@ func TestStreamSwitchFrameProvidesReferencesForFollowingInter(t *testing.T) {
 	if count != parser.InterRefsPerFrame {
 		t.Fatalf("count=%d", count)
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		if surfaces[i] != 9 {
 			t.Fatalf("surfaces[%d]=%d want 9", i, surfaces[i])
 		}

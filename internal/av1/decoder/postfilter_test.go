@@ -521,7 +521,7 @@ func TestFrameWorkStateRunStepWithPostFilterGateRejectsBeforePublish(t *testing.
 	if result != (FrameWorkStepResult{}) || !state.Active() {
 		t.Fatalf("result=%+v active=%v", result, state.Active())
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if slot, ok := refs.ReferenceSlot(i); ok || slot != -1 {
 			t.Fatalf("reference[%d] slot=%d ok=%v want unpublished", i, slot, ok)
 		}
@@ -569,7 +569,7 @@ func TestFrameWorkStateRunStepWithPostFilterSkipsHookUntilFinalTileGroup(t *test
 	if result != (FrameWorkStepResult{}) || !state.Active() {
 		t.Fatalf("result=%+v active=%v", result, state.Active())
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if slot, ok := refs.ReferenceSlot(i); ok || slot != -1 {
 			t.Fatalf("reference[%d] slot=%d ok=%v want unpublished", i, slot, ok)
 		}

@@ -176,7 +176,7 @@ func (s *Stream) PushRTPPayload(dst []byte, used int, spans []rtp.OBUSpan, event
 		return newUsed, 0, ErrEventBufferTooSmall
 	}
 
-	for i := 0; i < spanCount; i++ {
+	for i := range spanCount {
 		span := spans[i]
 		end := span.Offset + span.Length
 		if span.Offset < 0 || span.Length < 0 || end < span.Offset || end > newUsed {
@@ -506,7 +506,7 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 
 	if ref.FrameType == parser.FrameTypeKey {
 		ref.ShowableFrame = false
-		for i := 0; i < parser.RefFrames; i++ {
+		for i := range parser.RefFrames {
 			s.references.Frames[i] = ref
 		}
 	}
@@ -566,7 +566,7 @@ func referenceOrderHints(size parser.FrameSize, refs *parser.ReferenceState) [pa
 	if refs == nil {
 		return hints
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		slot := size.RefFrameIdx[i]
 		if slot < parser.RefFrames {
 			hints[i] = refs.Frames[slot].OrderHint
@@ -612,7 +612,7 @@ func sameSequenceExceptOperatingParameters(a parser.SequenceHeader, b parser.Seq
 }
 
 func clearOperatingParameters(s *parser.SequenceHeader) {
-	for i := 0; i < len(s.OperatingPoints); i++ {
+	for i := range len(s.OperatingPoints) {
 		s.OperatingPoints[i].DecoderBufferDelay = 0
 		s.OperatingPoints[i].EncoderBufferDelay = 0
 		s.OperatingPoints[i].LowDelayMode = false

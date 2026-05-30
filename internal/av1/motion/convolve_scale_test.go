@@ -28,15 +28,15 @@ func libaomConvolveScale2DRef(dst frame.Plane, src frame.Plane, refX0, refY0 int
 
 	// Horizontal pass: src_horiz = src - fo_vert * src_stride
 	startRow := refY0 - foVert
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		xQN := subpelXQN
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := (xQN >> ScaleSubpelBits)
 			xFilterIdx := (xQN & ScaleSubpelMask) >> ScaleExtraBits
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (bd + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				col := refX0 + xInt + k - foHoriz
 				sum += int(kernel[k]) * int(src.Pix[srcRow*src.Stride+col])
 			}
@@ -49,16 +49,16 @@ func libaomConvolveScale2DRef(dst frame.Plane, src frame.Plane, refX0, refY0 int
 	offsetBits := bd + 2*filterBits - conv_params_round_0
 	roundOffset := (1 << (offsetBits - conv_params_round_1)) + (1 << (offsetBits - conv_params_round_1 - 1))
 	bits := 2*filterBits - conv_params_round_0 - conv_params_round_1
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yQN := subpelYQN
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := (yQN >> ScaleSubpelBits)
 			yFilterIdx := (yQN & ScaleSubpelMask) >> ScaleExtraBits
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
 			// src_y = &src_vert[(yQN>>10) * im_stride]; tap k reads
 			// src_y[(k - fo_vert) * im_stride] = im_block[(fo_vert + yInt + k - fo_vert) * im_stride] = im[(yInt + k) * im_stride]
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, conv_params_round_1) - roundOffset
@@ -79,15 +79,15 @@ func libaomConvolveScale2DHighBDRef(dst frame.Plane, src frame.Plane, bd int, re
 	max := uint16((1 << bd) - 1)
 
 	startRow := refY0 - foVert
-	for y := 0; y < imH; y++ {
+	for y := range imH {
 		srcRow := startRow + y
 		xQN := subpelXQN
-		for x := 0; x < width; x++ {
+		for x := range width {
 			xInt := (xQN >> ScaleSubpelBits)
 			xFilterIdx := (xQN & ScaleSubpelMask) >> ScaleExtraBits
 			kernel := xTable[xFilterIdx]
 			sum := 1 << (bd + filterBits - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				col := refX0 + xInt + k - foHoriz
 				sum += int(kernel[k]) * int(getSample(src, 2, col, srcRow))
 			}
@@ -99,14 +99,14 @@ func libaomConvolveScale2DHighBDRef(dst frame.Plane, src frame.Plane, bd int, re
 	offsetBits := bd + 2*filterBits - conv_params_round_0
 	roundOffset := (1 << (offsetBits - conv_params_round_1)) + (1 << (offsetBits - conv_params_round_1 - 1))
 	bits := 2*filterBits - conv_params_round_0 - conv_params_round_1
-	for x := 0; x < width; x++ {
+	for x := range width {
 		yQN := subpelYQN
-		for y := 0; y < height; y++ {
+		for y := range height {
 			yInt := (yQN >> ScaleSubpelBits)
 			yFilterIdx := (yQN & ScaleSubpelMask) >> ScaleExtraBits
 			kernel := yTable[yFilterIdx]
 			sum := 1 << offsetBits
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(sum, conv_params_round_1) - roundOffset
@@ -188,7 +188,6 @@ func TestConvolveScale2D8MatchesLibaomReference(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			for _, filterX := range []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpMultiTapSharp, InterpBilinear} {
 				for _, filterY := range []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpMultiTapSharp, InterpBilinear} {
@@ -242,14 +241,14 @@ func TestConvolveScale2D8ClampedMatchesLibaomReferenceAtEdge(t *testing.T) {
 	// edges into a padded buffer.
 	const pad = 12
 	padded, _ := testPlane(w+2*pad, h+2*pad, 1, w+2*pad)
-	for y := 0; y < h+2*pad; y++ {
+	for y := range h + 2*pad {
 		sy := y - pad
 		if sy < 0 {
 			sy = 0
 		} else if sy >= h {
 			sy = h - 1
 		}
-		for x := 0; x < w+2*pad; x++ {
+		for x := range w + 2*pad {
 			sx := x - pad
 			if sx < 0 {
 				sx = 0
@@ -342,14 +341,14 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FrameTopLeft(t *testing.T) {
 
 	const pad = 16
 	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
-	for y := 0; y < srcH+2*pad; y++ {
+	for y := range srcH + 2*pad {
 		sy := y - pad
 		if sy < 0 {
 			sy = 0
 		} else if sy >= srcH {
 			sy = srcH - 1
 		}
-		for x := 0; x < srcW+2*pad; x++ {
+		for x := range srcW + 2*pad {
 			sx := x - pad
 			if sx < 0 {
 				sx = 0
@@ -406,14 +405,14 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1RightEdge(t *testing.T) {
 
 	const pad = 24
 	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
-	for y := 0; y < srcH+2*pad; y++ {
+	for y := range srcH + 2*pad {
 		sy := y - pad
 		if sy < 0 {
 			sy = 0
 		} else if sy >= srcH {
 			sy = srcH - 1
 		}
-		for x := 0; x < srcW+2*pad; x++ {
+		for x := range srcW + 2*pad {
 			sx := x - pad
 			if sx < 0 {
 				sx = 0
@@ -452,14 +451,14 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid(t *testing.T) {
 
 	const pad = 32
 	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 1, srcW+2*pad)
-	for y := 0; y < srcH+2*pad; y++ {
+	for y := range srcH + 2*pad {
 		sy := y - pad
 		if sy < 0 {
 			sy = 0
 		} else if sy >= srcH {
 			sy = srcH - 1
 		}
-		for x := 0; x < srcW+2*pad; x++ {
+		for x := range srcW + 2*pad {
 			sx := x - pad
 			if sx < 0 {
 				sx = 0
@@ -488,9 +487,7 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid(t *testing.T) {
 	filters := []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpMultiTapSharp, InterpBilinear}
 
 	for _, dst := range dstPositions {
-		dst := dst
 		for _, mv := range mvs {
-			mv := mv
 			for _, fX := range filters {
 				for _, fY := range filters {
 					fX, fY := fX, fY
@@ -587,8 +584,8 @@ func filterName(f InterpFilter) string {
 
 func comparePlanes(t *testing.T, name string, got, want frame.Plane, w, h, bytesPerSample int) {
 	t.Helper()
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			g := getSample(got, bytesPerSample, x, y)
 			wv := getSample(want, bytesPerSample, x, y)
 			if g != wv {
@@ -608,8 +605,8 @@ func highBDPlane(width, height, seed, bd int) frame.Plane {
 	plane, _ := testPlane(width, height, 2, width*2)
 	state := uint32(0x55aa55aa | uint32(seed))
 	max := uint16((1 << bd) - 1)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			state = state*1664525 + 1013904223
 			v := uint16(state>>16) & max
 			setSample(plane, 2, x, y, v)

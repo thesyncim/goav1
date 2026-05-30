@@ -945,8 +945,8 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			t.Run("X", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
 				convolveXHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity)
-				for row := 0; row < 8; row++ {
-					for col := 0; col < 8; col++ {
+				for row := range 8 {
+					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
 						want := getSample(src, 2, 8+col, 8+row)
 						if got != want {
@@ -958,8 +958,8 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			t.Run("Y", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
 				convolveYHighBD(dst, src, max, 8, 8, 8, 8, 8, 8, identity)
-				for row := 0; row < 8; row++ {
-					for col := 0; col < 8; col++ {
+				for row := range 8 {
+					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
 						want := getSample(src, 2, 8+col, 8+row)
 						if got != want {
@@ -971,8 +971,8 @@ func TestConvolveHighBDIdentityKernel(t *testing.T) {
 			t.Run("2D", func(t *testing.T) {
 				dst, _ := testPlane(32, 32, 2, stride)
 				convolve2DHighBD(dst, src, tc.bitDepth, max, 8, 8, 8, 8, 8, 8, identity, identity)
-				for row := 0; row < 8; row++ {
-					for col := 0; col < 8; col++ {
+				for row := range 8 {
+					for col := range 8 {
 						got := getSample(dst, 2, 8+col, 8+row)
 						want := getSample(src, 2, 8+col, 8+row)
 						if got != want {
@@ -1117,10 +1117,10 @@ func TestConvolveHighBDQ10OneDimensional(t *testing.T) {
 func libaomVerbatimHighBDXSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, xFilter [filterTaps]int16) {
 	foHoriz := filterTaps/2 - 1
 	bits := filterBits - round0Bits
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			res := int32(0)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				res += int32(xFilter[k]) * int32(getSample(src, 2, refX+x-foHoriz+k, refY+y))
 			}
 			res = int32(libaomRoundPowerOfTwo(int(res), round0Bits))
@@ -1133,10 +1133,10 @@ func libaomVerbatimHighBDXSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal 
 // libaomVerbatimHighBDYSR ports libaom av1_highbd_convolve_y_sr_c.
 func libaomVerbatimHighBDYSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal uint16, dstX int, dstY int, refX int, refY int, w int, h int, yFilter [filterTaps]int16) {
 	foVert := filterTaps/2 - 1
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			res := int32(0)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				res += int32(yFilter[k]) * int32(getSample(src, 2, refX+x, refY+y-foVert+k))
 			}
 			setSample(dst, 2, dstX+x, dstY+y, libaomClipPixelHighBD(libaomRoundPowerOfTwo(int(res), filterBits), maxVal))
@@ -1154,10 +1154,10 @@ func libaomVerbatimHighBD2DSRClamped(dst frame.Plane, src frame.Plane, bd uint8,
 	imH := h + filterTaps - 1
 	foHoriz := filterTaps/2 - 1
 	foVert := filterTaps/2 - 1
-	for y := 0; y < imH; y++ {
-		for x := 0; x < w; x++ {
+	for y := range imH {
+		for x := range w {
 			sum := int32(1) << (uint32(bd) + uint32(filterBits) - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int32(xFilter[k]) * int32(getSampleClamped(src, 2, refX+x-foHoriz+k, refY-foVert+y))
 			}
 			imBlock[y*imStride+x] = int16(libaomRoundPowerOfTwo(int(sum), round0Bits))
@@ -1166,10 +1166,10 @@ func libaomVerbatimHighBD2DSRClamped(dst frame.Plane, src frame.Plane, bd uint8,
 	offsetBits := int(bd) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			sum := int32(1) << uint32(offsetBits)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int32(yFilter[k]) * int32(imBlock[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(int(sum), round1Bits) - roundOffset
@@ -1302,10 +1302,10 @@ func libaomVerbatimHighBD2DSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal
 	foHoriz := filterTaps/2 - 1
 	foVert := filterTaps/2 - 1
 	// Horizontal filter — bias is (1 << (bd + FILTER_BITS - 1)).
-	for y := 0; y < imH; y++ {
-		for x := 0; x < w; x++ {
+	for y := range imH {
+		for x := range w {
 			sum := int32(1) << (uint32(bd) + uint32(filterBits) - 1)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int32(xFilter[k]) * int32(getSample(src, 2, refX+x-foHoriz+k, refY-foVert+y))
 			}
 			imBlock[y*imStride+x] = int16(libaomRoundPowerOfTwo(int(sum), round0Bits))
@@ -1315,10 +1315,10 @@ func libaomVerbatimHighBD2DSR(dst frame.Plane, src frame.Plane, bd uint8, maxVal
 	offsetBits := int(bd) + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			sum := int32(1) << uint32(offsetBits)
-			for k := 0; k < filterTaps; k++ {
+			for k := range filterTaps {
 				sum += int32(yFilter[k]) * int32(imBlock[(y+k)*imStride+x])
 			}
 			res := libaomRoundPowerOfTwo(int(sum), round1Bits) - roundOffset

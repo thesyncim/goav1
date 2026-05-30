@@ -436,7 +436,7 @@ func (s *FrameWorkState) finishTileResidualCDFs(event Event) {
 		s.sharedFrameContexts.store(globalID, cdfs)
 		return
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		if (event.FrameSize.RefreshFrameFlags & (1 << uint(i))) == 0 {
 			continue
 		}

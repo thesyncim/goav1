@@ -136,14 +136,14 @@ func ExtendRestorationFrame(data []uint16, stride int, origin int, width int, he
 		return ErrInvalidPlan
 	}
 
-	for y := 0; y < height; y++ {
+	for y := range height {
 		line, ok := restorationFrameLine(data, stride, origin, -borderHorz, y, lineWidth)
 		if !ok {
 			return ErrInvalidPlan
 		}
 		first := line[borderHorz]
 		last := line[borderHorz+width-1]
-		for x := 0; x < borderHorz; x++ {
+		for x := range borderHorz {
 			line[x] = first
 			line[borderHorz+width+x] = last
 		}
@@ -392,7 +392,7 @@ func saveRestorationDeblockBoundaryLinesFromBytesSuperRes(grid RestorationPlaneG
 	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
 		return ErrInvalidPlan
 	}
-	for i := 0; i < linesToSave; i++ {
+	for i := range linesToSave {
 		if err := upscaleRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, codedWidth, bitDepth, rowScratch, row+i, stripe, i, above, boundaries); err != nil {
 			return err
 		}
@@ -461,7 +461,7 @@ func SaveRestorationFrameBoundaryLinesFromFrameSuperRes(plan RestorationFramePla
 	if planeCount != 1 && planeCount != 3 {
 		return ErrInvalidPlan
 	}
-	for plane := 0; plane < planeCount; plane++ {
+	for plane := range planeCount {
 		grid := plan.Grids[plane]
 		if grid.Type == parser.RestorationNone {
 			continue
@@ -483,7 +483,7 @@ func SaveRestorationFrameBoundaryLinesFromFrame(plan RestorationFramePlan, frm a
 	if planeCount != 1 && planeCount != 3 {
 		return ErrInvalidPlan
 	}
-	for plane := 0; plane < planeCount; plane++ {
+	for plane := range planeCount {
 		grid := plan.Grids[plane]
 		if grid.Type == parser.RestorationNone {
 			continue
@@ -505,7 +505,7 @@ func saveRestorationDeblockBoundaryLinesFromBytes(grid RestorationPlaneGrid, pla
 	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
 		return ErrInvalidPlan
 	}
-	for i := 0; i < linesToSave; i++ {
+	for i := range linesToSave {
 		if err := saveRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, row+i, stripe, i, above, boundaries); err != nil {
 			return err
 		}
@@ -528,7 +528,7 @@ func saveRestorationCDEFBoundaryLinesFromBytes(grid RestorationPlaneGrid, plane 
 	if row < 0 || row >= int(grid.PlaneHeight) {
 		return ErrInvalidPlan
 	}
-	for i := 0; i < restorationCtxVert; i++ {
+	for i := range restorationCtxVert {
 		if err := saveRestorationBoundaryLineFromBytes(grid, plane, bytesPerSample, row, stripe, i, above, boundaries); err != nil {
 			return err
 		}
@@ -550,12 +550,12 @@ func saveRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av1fr
 	switch bytesPerSample {
 	case 1:
 		src := plane.Pix[rowOffset : rowOffset+width]
-		for i := 0; i < width; i++ {
+		for i := range width {
 			out[i] = uint16(src[i])
 		}
 	case 2:
 		src := plane.Pix[rowOffset : rowOffset+width*2]
-		for i := 0; i < width; i++ {
+		for i := range width {
 			out[i] = uint16(src[2*i]) | uint16(src[2*i+1])<<8
 		}
 	default:
@@ -622,7 +622,7 @@ func setupRestorationStripeBoundaryFromSaved(stripe RestorationProcessingStripe,
 		if len(scratch.Below) < lineWidth*restorationBorder {
 			return ErrInvalidPlan
 		}
-		for i := 0; i < restorationBorder; i++ {
+		for i := range restorationBorder {
 			dst, ok := restorationStripeDataLine(data, dataStride, dataOrigin, stripe, int(stripe.Rect.Height())+i, lineWidth)
 			if !ok {
 				return ErrInvalidPlan
@@ -696,7 +696,7 @@ func restoreRestorationStripeBoundarySaved(unitRect RestorationUnitRect, stripe 
 		}
 		stripeBottom := int(stripe.Rect.Y1)
 		unitEnd := int(unitRect.Y1)
-		for i := 0; i < restorationBorder; i++ {
+		for i := range restorationBorder {
 			if stripeBottom+i >= unitEnd+restorationBorder {
 				break
 			}
@@ -745,7 +745,7 @@ func saveRestorationDeblockBoundaryLines(grid RestorationPlaneGrid, src []uint16
 	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
 		return ErrInvalidPlan
 	}
-	for i := 0; i < linesToSave; i++ {
+	for i := range linesToSave {
 		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row+i, stripe, i, above, boundaries); err != nil {
 			return err
 		}
@@ -768,7 +768,7 @@ func saveRestorationCDEFBoundaryLines(grid RestorationPlaneGrid, src []uint16, s
 	if row < 0 || row >= int(grid.PlaneHeight) {
 		return ErrInvalidPlan
 	}
-	for i := 0; i < restorationCtxVert; i++ {
+	for i := range restorationCtxVert {
 		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row, stripe, i, above, boundaries); err != nil {
 			return err
 		}
@@ -792,14 +792,14 @@ func saveRestorationBoundaryLine(grid RestorationPlaneGrid, src []uint16, srcStr
 
 func extendRestorationBoundaryLines(grid RestorationPlaneGrid, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
 	width := int(grid.PlaneWidth)
-	for i := 0; i < restorationCtxVert; i++ {
+	for i := range restorationCtxVert {
 		line, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+i, width)
 		if !ok {
 			return ErrInvalidPlan
 		}
 		first := line[restorationExtraHorz]
 		last := line[restorationExtraHorz+width-1]
-		for j := 0; j < restorationExtraHorz; j++ {
+		for j := range restorationExtraHorz {
 			line[j] = first
 			line[restorationExtraHorz+width+j] = last
 		}

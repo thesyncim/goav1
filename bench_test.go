@@ -342,9 +342,6 @@ func benchMaxProbeEvents(payloads [][]byte) int {
 	// generous bound so the streams planner never returns
 	// ErrDecoderEventBufferTooSmall during sizing.
 	const eventsPerFrame = 16
-	n := len(payloads) * eventsPerFrame
-	if n < 64 {
-		n = 64
-	}
+	n := max(len(payloads)*eventsPerFrame, 64)
 	return n
 }

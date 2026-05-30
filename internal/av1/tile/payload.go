@@ -22,7 +22,7 @@ func (j Job) Payload(payload []byte) ([]byte, error) {
 // ValidatePayloads checks that every job names a valid byte range inside
 // payload.
 func ValidatePayloads(payload []byte, jobs []Job) error {
-	for i := 0; i < len(jobs); i++ {
+	for i := range jobs {
 		if _, _, err := jobs[i].PayloadRange(len(payload)); err != nil {
 			return err
 		}

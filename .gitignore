@@ -11,3 +11,6 @@ third_party/upstream/
 internal/av1/testdata/libaom/
 internal/av1/testdata/dav1d/
 internal/av1/testdata/argon/
+
+# Agent worktrees and local Claude state
+.claude/

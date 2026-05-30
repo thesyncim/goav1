@@ -182,7 +182,7 @@ func (c *MotionModeCDFs) InitDefault() error {
 		return entropy.ErrInvalidCDF
 	}
 	var next MotionModeCDFs
-	for size := BlockSize(0); size < blockSizeCount; size++ {
+	for size := range blockSizeCount {
 		if !motionModeBlockSizeAllowed(size) {
 			continue
 		}

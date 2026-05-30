@@ -52,7 +52,7 @@ func ResolveFrameReferencesWithProvider(provider FrameSurfaceProvider, surfaces 
 	}
 
 	var resolved [parser.InterRefsPerFrame]*frame.Frame
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if surfaces[i] < 0 {
 			return 0, ErrInvalidSurfaceReference
 		}
@@ -65,7 +65,7 @@ func ResolveFrameReferencesWithProvider(provider FrameSurfaceProvider, surfaces 
 		}
 		resolved[i] = ref
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		dst[i] = resolved[i]
 	}
 	return count, nil
@@ -115,7 +115,7 @@ func ResolveTemporalMotionReferencesWithProvider(provider TemporalMotionReferenc
 	}
 
 	var resolved [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
-	for i := 0; i < count; i++ {
+	for i := range count {
 		surface := surfaces[i]
 		if surface < 0 {
 			return 0, ErrInvalidSurfaceReference
@@ -132,7 +132,7 @@ func ResolveTemporalMotionReferencesWithProvider(provider TemporalMotionReferenc
 		}
 		resolved[i] = ref
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		dst[i] = resolved[i]
 	}
 	return count, nil

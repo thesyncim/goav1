@@ -244,8 +244,8 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRowAllocs(t *testing.T) {
 func testFrameWorkFilmGrainLumaRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
 	dst := make([]uint16, stride*height)
 	src := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			src[y*stride+x] = value
 		}
 	}

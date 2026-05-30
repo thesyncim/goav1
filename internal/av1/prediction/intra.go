@@ -218,7 +218,7 @@ func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 		v := byte(value)
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := 0; i < len(line); i++ {
+			for i := range line {
 				line[i] = v
 			}
 		}

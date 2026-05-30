@@ -897,7 +897,7 @@ func testFrameWorkFilmGrainPostFilterRequest(size FrameWorkFilmGrainPostFilterSc
 func testFrameWorkFilmGrainScratchStorage(size FrameWorkFilmGrainPostFilterScratchSize) ([]int16, [2][]int16, []uint16, [2][]uint16) {
 	var chromaGrain [2][]int16
 	var chromaSamples [2][]uint16
-	for plane := 0; plane < len(chromaGrain); plane++ {
+	for plane := range len(chromaGrain) {
 		if size.ChromaGrain[plane] > 0 {
 			chromaGrain[plane] = make([]int16, size.ChromaGrain[plane])
 		}

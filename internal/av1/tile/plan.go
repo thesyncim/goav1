@@ -45,7 +45,7 @@ func BuildJobs(dst []Job, tiles parser.TileInfo, spans []parser.TileSpan) (int, 
 		return 0, ErrInvalidPlan
 	}
 	var previous uint16
-	for i := 0; i < count; i++ {
+	for i := range count {
 		span := spans[i]
 		if span.Tile >= numTiles || span.Offset < 0 || span.Size < 0 {
 			return 0, ErrInvalidPlan

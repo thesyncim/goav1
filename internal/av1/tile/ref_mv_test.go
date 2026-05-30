@@ -64,7 +64,7 @@ func TestCDFUpdateBlock64x60LibaomWeights(t *testing.T) {
 	wts := [8]uint16{672, 664, 656, 8, 4, 4, 8, 4}
 	_ = refFrameType
 	stack := ReferenceMVStack{Count: cnt}
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		stack.Candidates[i].Weight = wts[i]
 	}
 
@@ -1726,7 +1726,7 @@ func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
 		ctx.GridBlockSize[cell.y][cell.x] = cell.size
 		ctx.GridBlockSizeVisited[cell.y][cell.x] = 1
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		ctx.AboveBlockSize[i+6] = BlockSize8x8
 		ctx.AboveIntra[i+6] = 1
 		ctx.GridBlockSizeVisited[9][i+6] = 1

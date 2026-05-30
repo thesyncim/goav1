@@ -460,8 +460,8 @@ func (c *TransformTypeCDFs) InitDefault() error {
 		return entropy.ErrInvalidCDF
 	}
 	var next TransformTypeCDFs
-	for tx := 0; tx < ExtTXSizes; tx++ {
-		for mode := 0; mode < int(intraModeCount); mode++ {
+	for tx := range ExtTXSizes {
+		for mode := range int(intraModeCount) {
 			cdf7 := defaultIntraExtTX7Uniform
 			if tx < len(defaultIntraExtTX7Mode) {
 				cdf7 = defaultIntraExtTX7Mode[tx][mode]
@@ -478,7 +478,7 @@ func (c *TransformTypeCDFs) InitDefault() error {
 			}
 		}
 	}
-	for tx := 0; tx < ExtTXSizes; tx++ {
+	for tx := range ExtTXSizes {
 		if err := next.Inter[1][tx].Init(defaultInterExtTX16[tx][:]); err != nil {
 			return err
 		}

@@ -249,14 +249,8 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 	if allocHeight <= 0 {
 		return
 	}
-	width := p.Width
-	if width > allocWidth {
-		width = allocWidth
-	}
-	height := p.Height
-	if height > allocHeight {
-		height = allocHeight
-	}
+	width := min(p.Width, allocWidth)
+	height := min(p.Height, allocHeight)
 
 	// Right edge: replicate the last valid sample of each valid row across the
 	// padding columns [width, allocWidth).

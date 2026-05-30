@@ -96,14 +96,11 @@ func addMonochromeNeutralChromaMD5(h hash.Hash, format frame.Format, bytesPerSam
 			row[i+1] = byte(neutral >> 8)
 		}
 	}
-	for plane := 0; plane < 2; plane++ {
+	for range 2 {
 		for y := 0; y < height; y++ {
 			remaining := rowBytes
 			for remaining > 0 {
-				chunk := remaining
-				if chunk > len(row) {
-					chunk = len(row)
-				}
+				chunk := min(remaining, len(row))
 				if _, err := h.Write(row[:chunk]); err != nil {
 					return err
 				}

@@ -265,8 +265,8 @@ func TestPublicOutputFilterAllocs(t *testing.T) {
 func publicFilmGrainRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
 	dst := make([]uint16, stride*height)
 	src := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			src[y*stride+x] = value
 		}
 	}
@@ -286,7 +286,7 @@ func publicFilmGrainLumaSamples(width int, height int, stride int, subsamplingX 
 	shiftY := publicFilmGrainShift(subsamplingY)
 	rows := ((height - 1) << shiftY) + 1
 	samples := make([]uint16, stride*rows)
-	for y := 0; y < rows; y++ {
+	for y := range rows {
 		for x := 0; x < ((width-1)<<shiftX)+1+shiftX; x++ {
 			samples[y*stride+x] = value
 		}

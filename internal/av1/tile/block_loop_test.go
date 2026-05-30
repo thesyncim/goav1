@@ -246,7 +246,6 @@ func TestBlockLoopLoadFirstRootIndependentOfCarrierLength(t *testing.T) {
 	want := baseline()
 
 	for _, n := range []int{1, 2, 3, 8} {
-		n := n
 		t.Run("len="+itoaTest(n), func(t *testing.T) {
 			carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, n)}
 			// Seed every slot with non-zero state. If the load path were to
@@ -1506,10 +1505,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		if len(payload) == 0 || len(payload) > 64 {
 			return
 		}
-		root := BlockLevel(rawRoot % uint8(blockLevelCount))
-		if root < BlockLevel64x64 {
-			root = BlockLevel64x64
-		}
+		root := max(BlockLevel(rawRoot%uint8(blockLevelCount)), BlockLevel64x64)
 		rootSize := root.Size4x4()
 		cols := uint32((rawCols % rootSize) + 1)
 		rows := uint32((rawRows % rootSize) + 1)
@@ -1683,7 +1679,7 @@ func mustBlockLoopCDFs(t *testing.T) (PartitionCDFs, BlockModeCDFs, DeltaCDFs) {
 	}
 	var multi [FrameLoopFilterCount]entropy.CDF
 	deltaCDFs := DeltaCDFs{Q: &q, LF: &lf}
-	for i := 0; i < FrameLoopFilterCount; i++ {
+	for i := range FrameLoopFilterCount {
 		if err := multi[i].InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}

@@ -283,7 +283,7 @@ func TestReadRestorationUnitsForSuperblock(t *testing.T) {
 		{Index: 2, Col: 0, Row: 1, Rect: RestorationUnitRect{X0: 0, Y0: 56, X1: 64, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
 		{Index: 3, Col: 1, Row: 1, Rect: RestorationUnitRect{X0: 64, Y0: 56, X1: 128, Y1: 128}, StripeCount: 2, Unit: RestorationUnit{Type: parser.RestorationNone}},
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if records[i] != want[i] {
 			t.Fatalf("record[%d]=%+v want %+v", i, records[i], want[i])
 		}

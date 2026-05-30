@@ -265,7 +265,7 @@ func validDecodedWienerInfo(info av1restoration.WienerInfo) bool {
 
 func validDecodedWienerFilter(filter av1restoration.WienerFilter) bool {
 	sum := int32(0)
-	for i := 0; i < av1restoration.WienerWin; i++ {
+	for i := range av1restoration.WienerWin {
 		sum += int32(filter[i])
 	}
 	return filter[7] == 0 &&

@@ -539,7 +539,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, f
 		})
 		return nil
 	}
-	for offset := 0; offset < length4; offset++ {
+	for offset := range length4 {
 		// libaom resolves filter level and width per MI cell along the edge
 		// (set_lpf_parameters): the current block's level is constant, but the
 		// previous-side block (and its transform size) can vary cell-by-cell,
@@ -562,10 +562,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, f
 			level = previousLevel
 			fromPrevious = previousLevel != 0
 		}
-		width := currentWidth
-		if previousWidth < width {
-			width = previousWidth
-		}
+		width := min(previousWidth, currentWidth)
 		if level == 0 {
 			width = 0
 		}
@@ -781,7 +778,7 @@ func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext,
 	// cell-by-cell along the same TX edge.
 	hadAny := false
 	lastWidth := 0
-	for offset := 0; offset < length4; offset++ {
+	for offset := range length4 {
 		previousWidth, hasChroma, err := frameWorkLoopFilterPreviousChromaCellWidth(ctx, filterMap, plane, edge, x4, y4, offset, plan.MICols, plan.MIRows)
 		if err != nil {
 			return err
@@ -790,10 +787,7 @@ func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext,
 		level := currentLevel
 		fromPrevious := false
 		if hasChroma {
-			width = currentWidth
-			if previousWidth < width {
-				width = previousWidth
-			}
+			width = min(previousWidth, currentWidth)
 			if level == 0 {
 				previousLevel, err := frameWorkLoopFilterPreviousChromaCellLevel(ctx, filterMap, plane, edge, x4, y4, offset, plan.MICols, plan.MIRows)
 				if err != nil {
@@ -1400,7 +1394,7 @@ func frameWorkResolveLoopFilterLevels(ctx FrameWorkPostFilterContext, record thr
 		planeCount = 1
 	}
 	for plane := 0; plane < planeCount; plane++ {
-		for edge := 0; edge < 2; edge++ {
+		for edge := range 2 {
 			level, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.Plane(plane), loopfilter.Edge(edge))
 			if err != nil {
 				return err

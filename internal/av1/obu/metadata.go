@@ -271,7 +271,7 @@ func parseMetadataHDRMDCV(src []byte) (MetadataHDRMDCV, error) {
 		return MetadataHDRMDCV{}, err
 	}
 	var m MetadataHDRMDCV
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		m.PrimaryChromaticityX[i] = uint16(src[i*4])<<8 | uint16(src[i*4+1])
 		m.PrimaryChromaticityY[i] = uint16(src[i*4+2])<<8 | uint16(src[i*4+3])
 	}
@@ -334,7 +334,7 @@ func parseScalabilityStructure(r *bitstream.Reader) (ScalabilityStructure, error
 
 	layers := int(s.SpatialLayersCountMinus1) + 1
 	if s.SpatialLayerDimensionsPresent {
-		for i := 0; i < layers; i++ {
+		for i := range layers {
 			w, err := r.ReadBits(16)
 			if err != nil {
 				return s, err
@@ -348,7 +348,7 @@ func parseScalabilityStructure(r *bitstream.Reader) (ScalabilityStructure, error
 		}
 	}
 	if s.SpatialLayerDescriptionPresent {
-		for i := 0; i < layers; i++ {
+		for i := range layers {
 			ref, err := r.ReadBits(8)
 			if err != nil {
 				return s, err

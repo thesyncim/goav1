@@ -87,7 +87,7 @@ func TestPublicLoopFilterLevelThresholdsAndBlockLevel(t *testing.T) {
 
 func TestPublicApplyLoopFilterEdges(t *testing.T) {
 	plane := publicPredictionPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setPublicFrameSample(plane, 1, x, 0, 90)
 		setPublicFrameSample(plane, 1, x, 1, 90)
 		setPublicFrameSample(plane, 1, x, 2, 100)
@@ -97,7 +97,7 @@ func TestPublicApplyLoopFilterEdges(t *testing.T) {
 	if err := av1.ApplyLoopFilter4Edge(plane, 1, 8, av1.LoopFilterEdgeHorizontal, 0, 2, 4, thresholds); err != nil {
 		t.Fatal(err)
 	}
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		if got := getPublicFrameSample(plane, 1, x, 0); got != 92 {
 			t.Fatalf("p1 sample=%d want 92", got)
 		}
@@ -113,8 +113,8 @@ func TestPublicApplyLoopFilterEdges(t *testing.T) {
 	}
 
 	wide := publicPredictionPlane(4, 8, 1, 4)
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 4; y++ {
+	for x := range 4 {
+		for y := range 4 {
 			setPublicFrameSample(wide, 1, x, y, 90)
 		}
 		for y := 4; y < 8; y++ {
@@ -134,7 +134,7 @@ func TestPublicApplyLoopFilterEdges(t *testing.T) {
 
 func TestPublicApplyLoopFilterBlockEdges(t *testing.T) {
 	plane := publicPredictionPlane(4, 4, 1, 4)
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		setPublicFrameSample(plane, 1, x, 0, 90)
 		setPublicFrameSample(plane, 1, x, 1, 90)
 		setPublicFrameSample(plane, 1, x, 2, 100)

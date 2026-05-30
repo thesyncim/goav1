@@ -167,8 +167,8 @@ func TestExtendRestorationFrame(t *testing.T) {
 	origin := borderVert*stride + borderHorz
 	data := make([]uint16, stride*(height+2*borderVert))
 	fillUint16(data, 0xeeee)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			data[origin+y*stride+x] = uint16(20 + y*11 + x)
 		}
 	}
@@ -493,8 +493,8 @@ func FuzzExtendRestorationFrame(f *testing.F) {
 		stride := width + 2*borderHorz + int(rawBH%5)
 		origin := borderVert*stride + borderHorz
 		data := make([]uint16, stride*(height+2*borderVert))
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := range height {
+			for x := range width {
 				data[origin+y*stride+x] = fuzzRestorationApplySample(dataBytes, y*width+x, max)
 			}
 		}
@@ -911,17 +911,17 @@ func assertSavedBoundaryRow(t *testing.T, grid RestorationPlaneGrid, src []uint1
 	}
 	srcOff := srcRow * srcStride
 	want := src[srcOff : srcOff+width]
-	for i := 0; i < restorationExtraHorz; i++ {
+	for i := range restorationExtraHorz {
 		if got[i] != want[0] {
 			t.Fatalf("left extension[%d]=%d want %d", i, got[i], want[0])
 		}
 	}
-	for i := 0; i < width; i++ {
+	for i := range width {
 		if got[restorationExtraHorz+i] != want[i] {
 			t.Fatalf("sample[%d]=%d want %d", i, got[restorationExtraHorz+i], want[i])
 		}
 	}
-	for i := 0; i < restorationExtraHorz; i++ {
+	for i := range restorationExtraHorz {
 		if got[restorationExtraHorz+width+i] != want[width-1] {
 			t.Fatalf("right extension[%d]=%d want %d", i, got[restorationExtraHorz+width+i], want[width-1])
 		}
@@ -943,7 +943,7 @@ func assertBoundaryUntouched(t *testing.T, boundary []uint16, boundaryStride int
 
 func assertBoundaryRows(t *testing.T, data []uint16, stride int, origin int, stripe RestorationProcessingStripe, scratch []uint16, boundary []uint16, boundaryStride int, rsbRow int, lineWidth int, above bool) {
 	t.Helper()
-	for i := 0; i < restorationBorder; i++ {
+	for i := range restorationBorder {
 		rowOffset := int(stripe.Rect.Height()) + i
 		bufRow := rsbRow + minInt(i, restorationCtxVert-1)
 		if above {

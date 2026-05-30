@@ -489,7 +489,7 @@ func decoderFrameWorkPostFilterScratchFrame(format FrameFormat, layout FrameLayo
 // lengths needed for size.
 func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {
 	var uint16Scratch int
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		uint16Scratch += size.CDEF.Samples[plane] + size.CDEF.Dst[plane]
 		uint16Scratch += size.SuperRes.CodedSamples[plane] + size.SuperRes.OutputSamples[plane]
 	}
@@ -498,12 +498,12 @@ func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilter
 	uint16Scratch += size.Restoration.Apply.Unit.Wiener
 	uint16Scratch += size.Restoration.Apply.Boundary.Above + size.Restoration.Apply.Boundary.Below
 	uint16Scratch += size.FilmGrain.LumaSamples
-	for plane := 0; plane < 2; plane++ {
+	for plane := range 2 {
 		uint16Scratch += size.FilmGrain.ChromaSamples[plane]
 	}
 
 	int16Scratch := size.FilmGrain.LumaGrain
-	for plane := 0; plane < 2; plane++ {
+	for plane := range 2 {
 		int16Scratch += size.FilmGrain.ChromaGrain[plane]
 	}
 
@@ -663,13 +663,13 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 	}
 
 	uint16Scratch := scratch.Uint16Scratch
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		buffers.CDEFSampleScratch[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.CDEF.Samples[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
 		}
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		buffers.CDEFDstScratch[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.CDEF.Dst[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
@@ -688,13 +688,13 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		buffers.SuperResCodedScratch[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.SuperRes.CodedSamples[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
 		}
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		buffers.SuperResOutputScratch[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.SuperRes.OutputSamples[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
@@ -732,7 +732,7 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
-	for plane := 0; plane < 2; plane++ {
+	for plane := range 2 {
 		buffers.FilmGrainChromaGrain[plane], int16Scratch, err = decoderFrameWorkPostFilterTakeScratch(int16Scratch, size.FilmGrain.ChromaGrain[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
@@ -742,7 +742,7 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
-	for plane := 0; plane < 2; plane++ {
+	for plane := range 2 {
 		buffers.FilmGrainChromaSamples[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.FilmGrain.ChromaSamples[plane])
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
@@ -859,7 +859,7 @@ func BindDecoderFrameWorkCDEFPostFilterRequest(size DecoderFrameWorkCDEFPostFilt
 		InputScratch:   inputScratch[:size.Input],
 		UnitDstScratch: unitDstScratch[:size.UnitDst],
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		if decoderFrameWorkPostFilterScratchTooShort(sampleScratch[plane], size.Samples[plane]) ||
 			decoderFrameWorkPostFilterScratchTooShort(dstScratch[plane], size.Dst[plane]) {
 			return DecoderFrameWorkCDEFPostFilterRequest{}, ErrFrameShortBuffer
@@ -880,7 +880,7 @@ func BindDecoderFrameWorkSuperResPostFilterRequest(size DecoderFrameWorkSuperRes
 	req := DecoderFrameWorkSuperResPostFilterRequest{
 		OutputFrame: outputFrame[:size.OutputFrame],
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		if decoderFrameWorkPostFilterScratchTooShort(codedScratch[plane], size.CodedSamples[plane]) ||
 			decoderFrameWorkPostFilterScratchTooShort(outputScratch[plane], size.OutputSamples[plane]) {
 			return DecoderFrameWorkSuperResPostFilterRequest{}, ErrFrameShortBuffer
@@ -936,7 +936,7 @@ func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGra
 		LumaGrain:   lumaGrain[:size.LumaGrain],
 		LumaSamples: lumaSamples[:size.LumaSamples],
 	}
-	for plane := 0; plane < 2; plane++ {
+	for plane := range 2 {
 		if decoderFrameWorkPostFilterScratchTooShort(chromaGrain[plane], size.ChromaGrain[plane]) ||
 			decoderFrameWorkPostFilterScratchTooShort(chromaSamples[plane], size.ChromaSamples[plane]) {
 			return DecoderFrameWorkFilmGrainPostFilterRequest{}, ErrFrameShortBuffer

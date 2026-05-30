@@ -80,7 +80,7 @@ func TestDecodeStateReadSymbol(t *testing.T) {
 		t.Fatalf("symbol=%d want 0", symbol)
 	}
 	want := []uint16{15360, 0, 1}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if cdf.Values()[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
 		}
@@ -106,7 +106,7 @@ func TestDecodeStateReadSignedDelta(t *testing.T) {
 		t.Fatalf("delta=%d want 0", delta)
 	}
 	want := []uint16{4464, 628, 89, 0, 1}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if cdf.Values()[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", cdf.Values(), want)
 		}
@@ -372,7 +372,7 @@ func FuzzDecodeStateBlockDeltas(f *testing.F) {
 		if state.DeltaLFFromBase < -MaxLoopFilter || state.DeltaLFFromBase > MaxLoopFilter {
 			t.Fatalf("DeltaLFFromBase=%d", state.DeltaLFFromBase)
 		}
-		for i := 0; i < FrameLoopFilterCount; i++ {
+		for i := range FrameLoopFilterCount {
 			if state.DeltaLF[i] < -MaxLoopFilter || state.DeltaLF[i] > MaxLoopFilter {
 				t.Fatalf("DeltaLF[%d]=%d", i, state.DeltaLF[i])
 			}
@@ -464,7 +464,7 @@ func initDeltaCDFs(tb testing.TB) DeltaCDFs {
 		tb.Fatal(err)
 	}
 	cdfs := DeltaCDFs{Q: &q, LF: &lf}
-	for i := 0; i < FrameLoopFilterCount; i++ {
+	for i := range FrameLoopFilterCount {
 		if err := multi[i].InitDefaultDelta(); err != nil {
 			tb.Fatal(err)
 		}
@@ -478,7 +478,7 @@ func assertEntropyCDFValues(t *testing.T, got []uint16, want []uint16) {
 	if len(got) != len(want) {
 		t.Fatalf("len=%d want %d", len(got), len(want))
 	}
-	for i := 0; i < len(want); i++ {
+	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("cdf=%v want %v", got, want)
 		}

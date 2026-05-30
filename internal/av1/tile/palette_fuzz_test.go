@@ -59,7 +59,7 @@ func FuzzReadPaletteMode(f *testing.F) {
 		ctx := &BlockModeContext{}
 		aboveSize := uint8(int(rawAboveSize) % (PaletteMaxSize + 1))
 		neighbor := PaletteModeResult{YSize: aboveSize, UVSize: aboveSize}
-		for i := uint8(0); i < aboveSize; i++ {
+		for i := range aboveSize {
 			value := uint16(i+1) << (bitDepth - 4)
 			neighbor.YColors[i] = value
 			neighbor.UColors[i] = value
@@ -186,7 +186,7 @@ func FuzzPaletteColorIndexContext(f *testing.F) {
 		}
 		// Order must be a permutation of 0..PaletteMaxSize-1.
 		var seen [PaletteMaxSize]bool
-		for i := 0; i < PaletteMaxSize; i++ {
+		for i := range PaletteMaxSize {
 			v := order[i]
 			if int(v) >= PaletteMaxSize {
 				t.Fatalf("order[%d]=%d out of range", i, v)
@@ -219,7 +219,7 @@ func FuzzPaletteCache(f *testing.F) {
 			// Generate strictly-increasing color sequences to mimic
 			// libaom's contract that palette colors are sorted.
 			prev := uint16(0)
-			for i := uint8(0); i < size; i++ {
+			for i := range size {
 				step := uint16((pack>>(uint(i)*8))&0xff) + 1
 				prev += step
 				if prev > 0x0fff {

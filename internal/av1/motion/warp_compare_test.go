@@ -81,7 +81,7 @@ func libaomWarpAffineC(pred []byte, predStride int, ref []byte, refStride, refWi
 					offs := round(sx, WARPEDDIFF_PREC_BITS) + WARPEDPIXEL_PREC_SHIFTS
 					coeffs := warpedFilter[offs]
 					sum := 1 << offsetBitsHoriz
-					for m := 0; m < 8; m++ {
+					for m := range 8 {
 						sampleX := clamp(ix+m, 0, refWidth-1)
 						sum += int(ref[iy*refStride+sampleX]) * int(coeffs[m])
 					}
@@ -91,21 +91,15 @@ func libaomWarpAffineC(pred []byte, predStride int, ref []byte, refStride, refWi
 			}
 
 			// Vertical filter
-			rowEnd := pRow + pHeight - i - 4
-			if rowEnd > 4 {
-				rowEnd = 4
-			}
-			colEnd := pCol + pWidth - j - 4
-			if colEnd > 4 {
-				colEnd = 4
-			}
+			rowEnd := min(pRow+pHeight-i-4, 4)
+			colEnd := min(pCol+pWidth-j-4, 4)
 			for k := -4; k < rowEnd; k++ {
 				sy := int(sy4) + int(delta)*(k+4)
 				for l := -4; l < colEnd; l++ {
 					offs := round(sy, WARPEDDIFF_PREC_BITS) + WARPEDPIXEL_PREC_SHIFTS
 					coeffs := warpedFilter[offs]
 					sum := 1 << offsetBitsVert
-					for m := 0; m < 8; m++ {
+					for m := range 8 {
 						sum += int(tmp[(k+m+4)*8+(l+4)]) * int(coeffs[m])
 					}
 					sum = round(sum, reduceBitsVert)
@@ -139,7 +133,7 @@ func TestWarpAffineMatchesLibaomReference(t *testing.T) {
 		{8, 8}, {16, 16}, {8, 16}, {16, 8}, {32, 8}, {8, 32}, {32, 16}, {16, 32},
 	}
 
-	for caseIdx := 0; caseIdx < 64; caseIdx++ {
+	for caseIdx := range 64 {
 		for _, sz := range cases {
 			pCol := rng.Intn(refW-sz.w+1) &^ 7
 			pRow := rng.Intn(refH-sz.h+1) &^ 7

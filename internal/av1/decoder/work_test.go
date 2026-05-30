@@ -689,7 +689,7 @@ func TestExecuteTileWorkUsesPlanRanges(t *testing.T) {
 	var seen [2]uint16
 
 	err = ExecuteTileWork(plan, workerPool, jobs[:], batches[:], func(batch threading.Batch, batchJobs []tile.Job) error {
-		for i := 0; i < len(batchJobs); i++ {
+		for i := range batchJobs {
 			seen[batch.FirstJob+i] = batchJobs[i].Tile
 		}
 		return nil
@@ -716,7 +716,7 @@ func TestExecuteFrameWorkStepExecutesBeginAndTile(t *testing.T) {
 	}
 	var seen uint16
 	executed, err := ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
-		for i := 0; i < len(batchJobs); i++ {
+		for i := range batchJobs {
 			seen += batchJobs[i].Tile + 1
 		}
 		return nil
@@ -734,7 +734,7 @@ func TestExecuteFrameWorkStepExecutesBeginAndTile(t *testing.T) {
 	}
 	seen = 0
 	executed, err = ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
-		for i := 0; i < len(batchJobs); i++ {
+		for i := range batchJobs {
 			seen += batchJobs[i].Tile + 1
 		}
 		return nil
@@ -1128,7 +1128,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 		TileInfo:     parser.TileInfo{RefreshContext: true, ContextUpdateTileID: 0},
 		Quantization: parser.QuantizationParams{BaseQIdx: 64},
 	}
-	for i := 0; i < parser.InterRefsPerFrame; i++ {
+	for i := range parser.InterRefsPerFrame {
 		inter.FrameSize.RefFrameIdx[i] = 0
 	}
 	var referenceSurfaces [parser.InterRefsPerFrame]int
@@ -3135,7 +3135,7 @@ func TestFrameWorkStateShowExistingKeyResetsReferences(t *testing.T) {
 	if pool.Available() != 2 {
 		t.Fatalf("available=%d want 2", pool.Available())
 	}
-	for i := 0; i < parser.RefFrames; i++ {
+	for i := range parser.RefFrames {
 		slot, ok := refs.ReferenceSlot(i)
 		if !ok || slot != index1 {
 			t.Fatalf("slot[%d]=%d ok=%v want %d", i, slot, ok, index1)
@@ -5100,7 +5100,7 @@ func testUint16sEqual(a []uint16, b []uint16) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
+	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}

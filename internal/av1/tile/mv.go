@@ -337,7 +337,7 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 		result.IntegerPart = d
 	} else {
 		n := mvClass + MVClass0Bits - 1
-		for i := 0; i < n; i++ {
+		for i := range n {
 			bitCDF, err := cdfs.BitCDF(i)
 			if err != nil {
 				return 0, MVComponentResult{}, err

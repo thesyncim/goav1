@@ -45,7 +45,7 @@ func TestAnnexBCoreVector(t *testing.T) {
 	wantFrames := [...]uint32{0, 0, 1}
 	var got [64]byte
 	wantOff := 0
-	for i := 0; i < len(wantTypes); i++ {
+	for i := range len(wantTypes) {
 		unit, ok, err := it.Next()
 		if err != nil || !ok {
 			t.Fatalf("unit %d ok=%v err=%v", i, ok, err)

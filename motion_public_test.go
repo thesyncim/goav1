@@ -91,8 +91,8 @@ func TestPublicPredictInterPlaneBlockHighBitDepth(t *testing.T) {
 	if err := av1.PredictInterPlaneBlockBitDepth(dst, src, 2, 12, 1, 2, 3, 2, mv); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getPublicFrameSample(dst, 2, 1+x, 2+y)
 			want := uint16(1000 + (1+y)*10 + 2 + x)
 			if got != want {
@@ -110,8 +110,8 @@ func TestPublicPredictInterPlaneBlockFractionalBilinear(t *testing.T) {
 	if err := av1.PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 4, 4, 3, 2, 8, 0, filters); err != nil {
 		t.Fatal(err)
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 3; x++ {
+	for y := range 2 {
+		for x := range 3 {
 			got := getPublicFrameSample(dst, 1, x, y)
 			want := uint16(10*(4+y) + 5 + x)
 			if got != want {

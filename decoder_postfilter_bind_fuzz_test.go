@@ -92,10 +92,7 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 	f.Fuzz(func(t *testing.T, rawCodedWidth uint16, rawHeight uint16, rawUpscaledWidth uint16, rawAlign uint8, flags uint8) {
 		codedWidth := uint32(rawCodedWidth%256) + 1
 		height := uint32(rawHeight%256) + 1
-		upscaledWidth := uint32(rawUpscaledWidth%320) + 1
-		if upscaledWidth < codedWidth {
-			upscaledWidth = codedWidth
-		}
+		upscaledWidth := max(uint32(rawUpscaledWidth%320)+1, codedWidth)
 		align := 1 << (rawAlign % 7)
 		mono := flags&1 != 0
 		superRes := flags&2 != 0

@@ -35,7 +35,7 @@ func (s FrameWorkCDEFPostFilterScratchSize) BindRequest(indexMap FrameWorkCDEFIn
 		InputScratch:   input[:s.Input],
 		UnitDstScratch: unitDst[:s.UnitDst],
 	}
-	for plane := 0; plane < len(req.SampleScratch); plane++ {
+	for plane := range len(req.SampleScratch) {
 		if s.Samples[plane] < 0 || s.Dst[plane] < 0 ||
 			len(samples[plane]) < s.Samples[plane] || len(dst[plane]) < s.Dst[plane] {
 			return FrameWorkCDEFPostFilterRequest{}, frame.ErrShortBuffer
@@ -54,7 +54,7 @@ func (s FrameWorkCDEFPostFilterScratchSize) Max(other FrameWorkCDEFPostFilterScr
 		Input:         maxInt(s.Input, other.Input),
 		UnitDst:       maxInt(s.UnitDst, other.UnitDst),
 	}
-	for plane := 0; plane < len(result.Samples); plane++ {
+	for plane := range len(result.Samples) {
 		result.Samples[plane] = maxInt(s.Samples[plane], other.Samples[plane])
 		result.Dst[plane] = maxInt(s.Dst[plane], other.Dst[plane])
 	}
@@ -91,7 +91,7 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 		return FrameWorkCDEFPostFilterScratchSize{}, frame.ErrInvalidSlot
 	}
 	var size FrameWorkCDEFPostFilterScratchSize
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
 		if !ok {
 			continue
@@ -156,7 +156,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	var directions cdef.DirectionGrid
 	var variances cdef.VarianceGrid
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
 		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
 		if plane == 0 && !processPlane {
@@ -230,7 +230,7 @@ func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWor
 	if coeffShift < 0 || coeffShift > 4 {
 		return frame.ErrInvalidFormat
 	}
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
 		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
 		if plane == 0 && !processPlane {
@@ -264,8 +264,8 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 	unitSizeY := cdef.BlockSize >> yDec
 	blockWidth := 8 >> xDec
 	blockHeight := 8 >> yDec
-	for unitRow := 0; unitRow < rows; unitRow++ {
-		for unitCol := 0; unitCol < cols; unitCol++ {
+	for unitRow := range rows {
+		for unitCol := range cols {
 			mapOffset := unitRow*indexMap.Stride + unitCol
 			if !indexMap.Read[mapOffset] {
 				continue
@@ -464,8 +464,8 @@ func frameWorkCDEFBlockPositionsFiltered(storage []cdef.BlockPosition, unitW int
 	cols := (unitW + blockW - 1) / blockW
 	rows := (unitH + blockH - 1) / blockH
 	out := storage[:0]
-	for by := 0; by < rows; by++ {
-		for bx := 0; bx < cols; bx++ {
+	for by := range rows {
+		for bx := range cols {
 			if frameWorkCDEFBlockAllSkipped(skipMap, unitRow, unitCol, by, bx) {
 				continue
 			}
@@ -493,9 +493,9 @@ func frameWorkCDEFBlockAllSkipped(skipMap *FrameWorkLoopFilterMap, unitRow int, 
 	if miColStart+miPerBlock > skipMap.Stride || miRowStart+miPerBlock > skipMap.Rows {
 		return false
 	}
-	for dy := 0; dy < miPerBlock; dy++ {
+	for dy := range miPerBlock {
 		row := (miRowStart + dy) * skipMap.Stride
-		for dx := 0; dx < miPerBlock; dx++ {
+		for dx := range miPerBlock {
 			record := skipMap.Records[row+miColStart+dx]
 			if !record.Valid {
 				return false
@@ -535,10 +535,7 @@ func frameWorkValidateCDEFIndexMap(indexMap FrameWorkCDEFIndexMap, cols int, row
 }
 
 func frameWorkCDEFHasFiltering(params parser.CDEFParams, mono bool) bool {
-	limit := int(params.StrengthCount)
-	if limit > parser.MaxCDEFStrengths {
-		limit = parser.MaxCDEFStrengths
-	}
+	limit := min(int(params.StrengthCount), parser.MaxCDEFStrengths)
 	for i := 0; i < limit; i++ {
 		if params.YStrength[i] != 0 || (!mono && params.UVStrength[i] != 0) {
 			return true
@@ -548,10 +545,7 @@ func frameWorkCDEFHasFiltering(params parser.CDEFParams, mono bool) bool {
 }
 
 func frameWorkCDEFChromaHasFiltering(params parser.CDEFParams) bool {
-	limit := int(params.StrengthCount)
-	if limit > parser.MaxCDEFStrengths {
-		limit = parser.MaxCDEFStrengths
-	}
+	limit := min(int(params.StrengthCount), parser.MaxCDEFStrengths)
 	for i := 0; i < limit; i++ {
 		if params.UVStrength[i] != 0 {
 			return true
@@ -561,10 +555,7 @@ func frameWorkCDEFChromaHasFiltering(params parser.CDEFParams) bool {
 }
 
 func frameWorkCDEFPlaneHasFiltering(params parser.CDEFParams, plane int) bool {
-	limit := int(params.StrengthCount)
-	if limit > parser.MaxCDEFStrengths {
-		limit = parser.MaxCDEFStrengths
-	}
+	limit := min(int(params.StrengthCount), parser.MaxCDEFStrengths)
 	for i := 0; i < limit; i++ {
 		if plane == 0 && params.YStrength[i] != 0 {
 			return true

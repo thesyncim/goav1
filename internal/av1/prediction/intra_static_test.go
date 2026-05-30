@@ -114,7 +114,7 @@ func TestStaticIntraPredictorsMatchLibaomCorpus(t *testing.T) {
 			mask := uint16((1 << bitDepth) - 1)
 			rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
 			for _, size := range libaomDRTxSizes {
-				for iter := 0; iter < 16; iter++ {
+				for iter := range 16 {
 					edges := randomStaticIntraEdges(size.width, size.height, mask, rnd)
 					if iter == 0 {
 						for i := range edges.Above {
@@ -216,8 +216,8 @@ func FuzzStaticIntraPredictors(f *testing.F) {
 		if err := PredictIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, width, height, mode, edges); err != nil {
 			t.Fatalf("PredictIntraPlaneBlock err=%v", err)
 		}
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				if got := getSample(plane, bytesPerSample, col, row); got > max {
 					t.Fatalf("sample(%d,%d)=%d exceeds max %d", col, row, got, max)
 				}
@@ -278,8 +278,8 @@ func predictStaticIntraLibaomReference(width int, height int, mode IntraMode, ed
 	scale := uint16(1 << smoothWeightLog2Scale)
 	belowPred := edges.Left[height-1]
 	rightPred := edges.Above[width-1]
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			var pred uint16
 			switch mode {
 			case IntraModePaeth:

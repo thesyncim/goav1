@@ -260,7 +260,7 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 			return ErrInvalidDecodeState
 		}
 		step := half >> 1
-		for i := uint32(0); i < 4; i++ {
+		for i := range uint32(4) {
 			y := miRow + i*step
 			if i > 0 && y >= w.req.MIRowEnd {
 				break
@@ -276,7 +276,7 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 			return ErrInvalidDecodeState
 		}
 		step := half >> 1
-		for i := uint32(0); i < 4; i++ {
+		for i := range uint32(4) {
 			x := miCol + i*step
 			if i > 0 && x >= w.req.MIColEnd {
 				break

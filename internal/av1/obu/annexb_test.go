@@ -200,7 +200,7 @@ func FuzzAnnexBIterator(f *testing.F) {
 		}
 		it := NewAnnexBIterator(src)
 		var prevOffset uint32
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			unit, ok, err := it.Next()
 			if err != nil {
 				return

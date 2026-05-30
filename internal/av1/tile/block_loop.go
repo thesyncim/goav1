@@ -479,7 +479,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
 		scratch.Mode.AbovePaletteY = above.mode.PaletteY
 		scratch.Mode.AbovePaletteUV = above.mode.PaletteUV
-		for plane := 0; plane < 3; plane++ {
+		for plane := range 3 {
 			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
 		}
 		// Fill cells past the current SB column (slots SBSizeMIB..) with the
@@ -520,7 +520,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
 		scratch.Mode.LeftPaletteY = left.mode.PaletteY
 		scratch.Mode.LeftPaletteUV = left.mode.PaletteUV
-		for plane := 0; plane < 3; plane++ {
+		for plane := range 3 {
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
 	}
@@ -564,7 +564,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.PaletteY = scratch.Mode.AbovePaletteY
 	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
 	captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
 	}
 
@@ -592,7 +592,7 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.PaletteY = scratch.Mode.LeftPaletteY
 	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
 	captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
 	return nil
@@ -631,7 +631,7 @@ func promotePendingDiagonalCarriers(carrier *BlockLoopContextCarrier) {
 	if len(carrier.Diagonal) < n {
 		carrier.Diagonal = make([]diagonalCornerSlot, n)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		carrier.Diagonal[i] = carrier.PendingDiagonal[i]
 		carrier.PendingDiagonal[i] = diagonalCornerSlot{}
 	}
@@ -660,12 +660,12 @@ func captureDiagonalCornerToPending(carrier *BlockLoopContextCarrier, nextColInd
 	if bottom >= MaxBlockModeSlots {
 		bottom = MaxBlockModeSlots - 1
 	}
-	for d := 0; d < intrabcCrossSBHistory; d++ {
+	for d := range intrabcCrossSBHistory {
 		row := bottom - d
 		if row < 0 {
 			break
 		}
-		for e := 0; e < intrabcCrossSBHistory; e++ {
+		for e := range intrabcCrossSBHistory {
 			col := right - e
 			if col < 0 {
 				break
@@ -727,7 +727,7 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 	// edge. Loading the full MaxBlockModeSlots row works for any sbSizeMIB <=
 	// MaxBlockModeSlots since the right-SB-above contexts use the same array
 	// dimensions.
-	for off := 0; off < MaxBlockModeSlots; off++ {
+	for off := range MaxBlockModeSlots {
 		mode.SBTopRightInterMotion[off] = right.mode.InterMotion[off]
 		mode.SBTopRightMotionValid[off] = right.mode.MotionValid[off]
 		mode.SBTopRightBlockSize[off] = right.mode.BlockSize[off]
@@ -781,7 +781,7 @@ func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeConte
 	if bottom >= MaxBlockModeSlots {
 		bottom = MaxBlockModeSlots - 1
 	}
-	for d := 0; d < intrabcCrossSBHistory; d++ {
+	for d := range intrabcCrossSBHistory {
 		row := bottom - d
 		if row < 0 {
 			break
@@ -817,12 +817,12 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 	if right >= MaxBlockModeSlots {
 		right = MaxBlockModeSlots - 1
 	}
-	for d := 0; d < intrabcCrossSBHistory; d++ {
+	for d := range intrabcCrossSBHistory {
 		col := right - d
 		if col < 0 {
 			break
 		}
-		for y := 0; y < MaxBlockModeSlots; y++ {
+		for y := range MaxBlockModeSlots {
 			dst.InterMotionHistory[d][y] = mode.GridInterMotion[y][col]
 			dst.MotionValidHistory[d][y] = mode.GridMotionValid[y][col]
 			dst.BlockSizeHistory[d][y] = mode.GridBlockSize[y][col]
@@ -1232,7 +1232,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					if motionMode == MotionModeTranslation &&
 						refs.Compound &&
 						!blockReferenceScaled(refs, req.ScaledReferences) {
-						for r := 0; r < 2; r++ {
+						for r := range 2 {
 							if !refs.Ref[r].Valid() {
 								continue
 							}

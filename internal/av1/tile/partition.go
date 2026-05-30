@@ -387,7 +387,7 @@ func (c *PartitionContext) Mark(level BlockLevel, partition Partition, xb8 int, 
 	if xb8+span > MaxPartitionSlots || yb8+span > MaxPartitionSlots {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < span; i++ {
+	for i := range span {
 		c.Above[xb8+i] = uint8(top)
 		c.Left[yb8+i] = uint8(left)
 	}

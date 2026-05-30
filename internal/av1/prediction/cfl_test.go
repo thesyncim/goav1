@@ -9,7 +9,7 @@ import (
 )
 
 func TestCFLAlphaQ3MatchesLibaom(t *testing.T) {
-	for jointSign := int8(0); jointSign < cflJointSigns; jointSign++ {
+	for jointSign := range int8(cflJointSigns) {
 		for _, alphaIndex := range []uint8{0, 1, 15, 16, 17, 31, 127, 255} {
 			for _, predType := range []CFLPredType{CFLPredU, CFLPredV} {
 				got, err := CFLAlphaQ3(alphaIndex, jointSign, predType)
@@ -38,7 +38,7 @@ func TestCFLSubsampleMatchesLibaomCorpus(t *testing.T) {
 		} {
 			t.Run(sub.name, func(t *testing.T) {
 				rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
-				for iter := 0; iter < 100; iter++ {
+				for iter := range 100 {
 					stride := size.width + 7
 					src8 := make([]uint8, stride*size.height)
 					for i := range src8 {
@@ -79,7 +79,7 @@ func TestCFLSubsampleMatchesLibaomCorpus(t *testing.T) {
 func TestSubtractCFLAverageMatchesLibaomCorpus(t *testing.T) {
 	rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
 	for _, size := range libaomCFLTxSizes {
-		for iter := 0; iter < 100; iter++ {
+		for iter := range 100 {
 			src := make([]uint16, CFLBufSquare)
 			for row := 0; row < size.height; row++ {
 				for col := 0; col < size.width; col++ {
@@ -108,7 +108,7 @@ func TestPredictCFLPlaneBlockMatchesLibaomCorpus(t *testing.T) {
 		}
 		max := uint16((1 << bitDepth) - 1)
 		for _, size := range libaomCFLTxSizes {
-			for iter := 0; iter < 100; iter++ {
+			for iter := range 100 {
 				alphaQ3 := rnd.pseudoUniform(33) - 16
 				dc := uint16(rnd.pseudoUniform(int(max) + 1))
 				ac := make([]int16, CFLBufSquare)
@@ -137,8 +137,8 @@ func TestPredictCFLPlaneBlockVisibleUsesPaddedAC(t *testing.T) {
 	plane, _ := testPlane(16, 12, 1, 16)
 	fillCFLTestPlane(plane, 1, 64)
 	ac := make([]int16, CFLBufSquare)
-	for row := 0; row < 16; row++ {
-		for col := 0; col < 16; col++ {
+	for row := range 16 {
+		for col := range 16 {
 			ac[row*CFLBufLine+col] = int16(row + col)
 		}
 	}
@@ -152,8 +152,8 @@ func TestPredictCFLPlaneBlockVisibleUsesPaddedAC(t *testing.T) {
 
 func TestPadCFLReconQ3MatchesLibaom(t *testing.T) {
 	recon := make([]uint16, CFLBufSquare)
-	for row := 0; row < 4; row++ {
-		for col := 0; col < 6; col++ {
+	for row := range 4 {
+		for col := range 6 {
 			recon[row*CFLBufLine+col] = uint16(10*row + col)
 		}
 	}
@@ -164,13 +164,13 @@ func TestPadCFLReconQ3MatchesLibaom(t *testing.T) {
 	if gotW != 8 || gotH != 8 {
 		t.Fatalf("size=%dx%d want 8x8", gotW, gotH)
 	}
-	for row := 0; row < 4; row++ {
+	for row := range 4 {
 		if recon[row*CFLBufLine+6] != recon[row*CFLBufLine+5] || recon[row*CFLBufLine+7] != recon[row*CFLBufLine+5] {
 			t.Fatalf("row %d horizontal pad failed", row)
 		}
 	}
 	for row := 4; row < 8; row++ {
-		for col := 0; col < 8; col++ {
+		for col := range 8 {
 			if recon[row*CFLBufLine+col] != recon[3*CFLBufLine+col] {
 				t.Fatalf("row %d col %d vertical pad=%d want %d", row, col, recon[row*CFLBufLine+col], recon[3*CFLBufLine+col])
 			}
@@ -368,14 +368,14 @@ func cflSubsample8Reference(outputQ3 []uint16, input []uint8, inputStride int, w
 			}
 		}
 	case subX:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			for col := 0; col < width; col += 2 {
 				outputQ3[row*CFLBufLine+(col>>1)] = uint16(int(input[row*inputStride+col])+int(input[row*inputStride+col+1])) << 2
 			}
 		}
 	default:
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				outputQ3[row*CFLBufLine+col] = uint16(input[row*inputStride+col]) << 3
 			}
 		}
@@ -392,14 +392,14 @@ func cflSubsample16Reference(outputQ3 []uint16, input []uint16, inputStride int,
 			}
 		}
 	case subX:
-		for row := 0; row < height; row++ {
+		for row := range height {
 			for col := 0; col < width; col += 2 {
 				outputQ3[row*CFLBufLine+(col>>1)] = (input[row*inputStride+col] + input[row*inputStride+col+1]) << 2
 			}
 		}
 	default:
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				outputQ3[row*CFLBufLine+col] = input[row*inputStride+col] << 3
 			}
 		}
@@ -409,14 +409,14 @@ func cflSubsample16Reference(outputQ3 []uint16, input []uint16, inputStride int,
 func cflSubtractAverageReference(srcQ3 []uint16, dstQ3 []int16, width int, height int) {
 	log2, _ := log2PowerOfTwoInt(width * height)
 	sum := (width * height) >> 1
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			sum += int(srcQ3[row*CFLBufLine+col])
 		}
 	}
 	avg := sum >> log2
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			dstQ3[row*CFLBufLine+col] = int16(int(srcQ3[row*CFLBufLine+col]) - avg)
 		}
 	}
@@ -424,8 +424,8 @@ func cflSubtractAverageReference(srcQ3 []uint16, dstQ3 []int16, width int, heigh
 
 func cflPredictReference(plane frame.Plane, bytesPerSample int, bitDepth uint8, acQ3 []int16, alphaQ3 int, width int, height int) {
 	max := int((1 << bitDepth) - 1)
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			current := int(getSample(plane, bytesPerSample, col, row))
 			scaled := cflRoundPowerOfTwoSignedReference(alphaQ3*int(acQ3[row*CFLBufLine+col]), 6)
 			setCFLTestSample(plane, bytesPerSample, col, row, uint16(cflClampReference(current+scaled, 0, max)))

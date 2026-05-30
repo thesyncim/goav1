@@ -122,7 +122,7 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 	}
 
 	off := TileListHeaderBytes
-	for i := 0; i < tileCount; i++ {
+	for i := range tileCount {
 		if off+TileListEntryHeaderBytes > len(payload) {
 			return list, ErrTileListShortEntry
 		}

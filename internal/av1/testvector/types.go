@@ -350,7 +350,7 @@ func (m Manifest) Validate() error {
 		if vector.Tag == 0 {
 			return ErrInvalidTag
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if m.Vectors[j].Tag == vector.Tag {
 				return ErrDuplicateTag
 			}
@@ -360,7 +360,7 @@ func (m Manifest) Validate() error {
 		if digest.Tag == 0 {
 			return ErrInvalidTag
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if m.Digests[j].Tag == digest.Tag && m.Digests[j].FrameIndex == digest.FrameIndex {
 				return ErrDuplicateTag
 			}
@@ -374,7 +374,7 @@ func ParseMD5Hex(src []byte) (MD5, error) {
 		return MD5{}, ErrInvalidMD5
 	}
 	var md5 MD5
-	for i := 0; i < len(md5); i++ {
+	for i := range len(md5) {
 		hi, ok := hexNibble(src[i*2])
 		if !ok {
 			return MD5{}, ErrInvalidMD5

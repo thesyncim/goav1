@@ -60,7 +60,7 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, 
 		len(lumaGrain) < s.LumaGrain || len(lumaSamples) < s.LumaSamples {
 		return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
 	}
-	for plane := 0; plane < len(s.ScalingPoints); plane++ {
+	for plane := range len(s.ScalingPoints) {
 		if s.ScalingPoints[plane] < 0 || s.ARCoeffs[plane] < 0 {
 			return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
 		}
@@ -69,7 +69,7 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, 
 		LumaGrain:   lumaGrain[:s.LumaGrain],
 		LumaSamples: lumaSamples[:s.LumaSamples],
 	}
-	for plane := 0; plane < len(req.ChromaGrain); plane++ {
+	for plane := range len(req.ChromaGrain) {
 		if s.ChromaGrain[plane] < 0 || s.ChromaSamples[plane] < 0 ||
 			len(chromaGrain[plane]) < s.ChromaGrain[plane] || len(chromaSamples[plane]) < s.ChromaSamples[plane] {
 			return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
@@ -88,11 +88,11 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) Max(other FrameWorkFilmGrainPos
 		LumaLine:    maxInt(s.LumaLine, other.LumaLine),
 		LumaColumn:  maxInt(s.LumaColumn, other.LumaColumn),
 	}
-	for plane := 0; plane < len(result.ScalingPoints); plane++ {
+	for plane := range len(result.ScalingPoints) {
 		result.ScalingPoints[plane] = maxInt(s.ScalingPoints[plane], other.ScalingPoints[plane])
 		result.ARCoeffs[plane] = maxInt(s.ARCoeffs[plane], other.ARCoeffs[plane])
 	}
-	for plane := 0; plane < len(result.ChromaGrain); plane++ {
+	for plane := range len(result.ChromaGrain) {
 		result.ChromaGrain[plane] = maxInt(s.ChromaGrain[plane], other.ChromaGrain[plane])
 		result.ChromaSamples[plane] = maxInt(s.ChromaSamples[plane], other.ChromaSamples[plane])
 	}
@@ -254,7 +254,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 		return FrameWorkFilmGrainPostFilterScratchSize{}, nil
 	}
 	var size FrameWorkFilmGrainPostFilterScratchSize
-	for plane := 0; plane < len(plan.Planes); plane++ {
+	for plane := range len(plan.Planes) {
 		size.ScalingPoints[plane] = plan.Planes[plane].ScalingPoints
 		size.ARCoeffs[plane] = plan.Planes[plane].ARCoeffs
 	}
@@ -524,7 +524,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 			}
 			blockHeight := frameWorkFilmGrainChromaBlockHeight(plan.Format)
 			rows := (plan.Planes[plane].Height + blockHeight - 1) / blockHeight
-			for row := 0; row < rows; row++ {
+			for row := range rows {
 				rowStart := row * blockHeight * chroma.Stride
 				lumaRowStart := row * filmgrain.LumaBlockSize * luma.Stride
 				if _, err := ctx.ApplyFilmGrainChromaRow(chroma.Pix[rowStart:], chroma.Pix[rowStart:], luma.Pix[lumaRowStart:], chromaGrain[plane-1].Grain, luts.LUTs[plane][:], plane, row); err != nil {
@@ -539,7 +539,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 
 		if plan.Planes[0].Active {
 			rows := (plan.Planes[0].Height + filmgrain.LumaBlockSize - 1) / filmgrain.LumaBlockSize
-			for row := 0; row < rows; row++ {
+			for row := range rows {
 				rowStart := row * filmgrain.LumaBlockSize * luma.Stride
 				if _, err := ctx.ApplyFilmGrainLumaRow(luma.Pix[rowStart:], luma.Pix[rowStart:], lumaGrain.Grain, luts.LUTs[0][:], row); err != nil {
 					return FrameWorkFilmGrainPostFilterResult{}, err
@@ -584,7 +584,7 @@ func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req Fra
 	if len(req.LumaGrain) < size.LumaGrain || len(req.LumaSamples) < size.LumaSamples {
 		return frame.ErrShortBuffer
 	}
-	for plane := 0; plane < len(req.ChromaGrain); plane++ {
+	for plane := range len(req.ChromaGrain) {
 		if len(req.ChromaGrain[plane]) < size.ChromaGrain[plane] ||
 			len(req.ChromaSamples[plane]) < size.ChromaSamples[plane] {
 			return frame.ErrShortBuffer

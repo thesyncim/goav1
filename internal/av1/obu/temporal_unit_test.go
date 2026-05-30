@@ -73,7 +73,7 @@ func FuzzTemporalUnitIterator(f *testing.F) {
 			src = src[:4096]
 		}
 		it := NewTemporalUnitIterator(src)
-		for i := 0; i < 64; i++ {
+		for range 64 {
 			unit, ok, err := it.Next()
 			if err != nil {
 				return

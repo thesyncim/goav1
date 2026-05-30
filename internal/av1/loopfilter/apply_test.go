@@ -447,7 +447,6 @@ func TestFilterEdgeByWidthAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, width := range []int{4, 6, 8, 14} {
-		width := width
 		t.Run("width="+strconv.Itoa(width), func(t *testing.T) {
 			if err := FilterEdgeByWidth(width, plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds); err != nil {
 				t.Fatalf("warm-up err=%v", err)

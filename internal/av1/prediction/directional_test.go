@@ -208,7 +208,7 @@ func TestPredictDirectionalIntraPlaneBlockCornerFrame32x32D157(t *testing.T) {
 	}
 	got := collectPlaneSamples(plane, 1, width, height)
 	if !slices.Equal(got, want[:]) {
-		for row := 0; row < height; row++ {
+		for row := range height {
 			gotRow := got[row*width : (row+1)*width]
 			wantRow := want[row*width : (row+1)*width]
 			if !slices.Equal(gotRow, wantRow) {
@@ -290,7 +290,7 @@ func TestPredictDirectionalIntraPlaneBlockCornerFrame32x32D157HBD(t *testing.T) 
 		513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513, 513,
 	}
 	if !slices.Equal(got, want[:]) {
-		for row := 0; row < height; row++ {
+		for row := range height {
 			gotRow := got[row*width : (row+1)*width]
 			wantRow := want[row*width : (row+1)*width]
 			if !slices.Equal(gotRow, wantRow) {
@@ -311,7 +311,7 @@ func TestPredictDirectionalIntraPlaneBlockMatchesLibaomSaturatedCorpus(t *testin
 		max := uint16((1 << bitDepth) - 1)
 		for _, size := range libaomDRTxSizes {
 			for _, angleRange := range [][2]int{{1, 89}, {91, 179}, {181, 269}} {
-				for enableUpsample := 0; enableUpsample < 2; enableUpsample++ {
+				for enableUpsample := range 2 {
 					for angle := angleRange[0]; angle <= angleRange[1]; angle++ {
 						if DirectionalDX(angle) == 0 || DirectionalDY(angle) == 0 {
 							continue
@@ -446,8 +446,8 @@ func FuzzPredictDirectionalIntraPlaneBlock(f *testing.F) {
 		if err := PredictDirectionalIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, width, height, angle, edges); err != nil {
 			t.Fatalf("PredictDirectionalIntraPlaneBlock err=%v", err)
 		}
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				if got := getSample(plane, bytesPerSample, col, row); got > max {
 					t.Fatalf("sample(%d,%d)=%d exceeds max %d", col, row, got, max)
 				}
@@ -479,8 +479,8 @@ var libaomDRTxSizes = [...]directionalTestSize{
 
 func collectPlaneSamples(plane frame.Plane, bytesPerSample int, width int, height int) []uint16 {
 	out := make([]uint16, 0, width*height)
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			out = append(out, getSample(plane, bytesPerSample, col, row))
 		}
 	}
@@ -555,14 +555,14 @@ func predictDirectionalLibaomReference(width int, height int, angle int, edges D
 	upsampleLeft := boolToInt(edges.UpsampleLeft)
 	switch {
 	case angle == 90:
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				out[row*width+col] = edges.Above[edges.AboveOrigin+col]
 			}
 		}
 	case angle == 180:
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				out[row*width+col] = edges.Left[edges.LeftOrigin+row]
 			}
 		}
@@ -580,13 +580,13 @@ func predictDirectionalLibaomReference(width int, height int, angle int, edges D
 			shift := ((x << upsampleAbove) & 0x3f) >> 1
 			if base >= maxBaseX {
 				for ; row < height; row++ {
-					for col := 0; col < width; col++ {
+					for col := range width {
 						out[row*width+col] = edges.Above[edges.AboveOrigin+maxBaseX]
 					}
 				}
 				return out, nil
 			}
-			for col := 0; col < width; col++ {
+			for col := range width {
 				if base < maxBaseX {
 					p0 := int(edges.Above[edges.AboveOrigin+base])
 					p1 := int(edges.Above[edges.AboveOrigin+base+1])
@@ -608,8 +608,8 @@ func predictDirectionalLibaomReference(width int, height int, angle int, edges D
 		minBaseY := -(1 << upsampleLeft)
 		fracBitsX := 6 - upsampleAbove
 		fracBitsY := 6 - upsampleLeft
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
+		for row := range height {
+			for col := range width {
 				y := row + 1
 				x := (col << 6) - y*dx
 				baseX := x >> fracBitsX
@@ -643,7 +643,7 @@ func predictDirectionalLibaomReference(width int, height int, angle int, edges D
 		fracBits := 6 - upsampleLeft
 		baseInc := 1 << upsampleLeft
 		y := dy
-		for col := 0; col < width; col++ {
+		for col := range width {
 			base := y >> fracBits
 			shift := ((y << upsampleLeft) & 0x3f) >> 1
 			for row := 0; row < height; row++ {

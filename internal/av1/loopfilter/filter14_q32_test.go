@@ -51,8 +51,8 @@ func TestFilter14EdgeQ32Row7(t *testing.T) {
 		/* y=15 */ {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 819, 823, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826, 826},
 	}
 
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			plane.Pix[y*plane.Stride+x*bytesPerSample] = byte(rows[y][x])
 			plane.Pix[y*plane.Stride+x*bytesPerSample+1] = byte(rows[y][x] >> 8)
 		}

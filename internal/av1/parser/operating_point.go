@@ -82,7 +82,7 @@ func OperatingPointTemporalLayerCount(idc uint16) uint8 {
 		return 1
 	}
 	var n uint8
-	for j := uint8(0); j < MaxOperatingPointTemporalLayers; j++ {
+	for j := range uint8(MaxOperatingPointTemporalLayers) {
 		n += uint8((idc >> j) & 1)
 	}
 	return n
@@ -98,7 +98,7 @@ func OperatingPointSpatialLayerCount(idc uint16) uint8 {
 		return 1
 	}
 	var n uint8
-	for j := uint8(0); j < MaxOperatingPointSpatialLayers; j++ {
+	for j := range uint8(MaxOperatingPointSpatialLayers) {
 		n += uint8((idc >> (j + MaxOperatingPointTemporalLayers)) & 1)
 	}
 	return n
@@ -120,7 +120,7 @@ func SelectOperatingPoint(seq SequenceHeader, temporalID uint8, spatialID uint8)
 	if count <= 0 || count > len(seq.OperatingPoints) {
 		return 0, false
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if OperatingPointIDCMatches(seq.OperatingPoints[i].IDC, temporalID, spatialID) {
 			return i, true
 		}

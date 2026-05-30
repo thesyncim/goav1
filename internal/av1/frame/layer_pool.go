@@ -272,7 +272,7 @@ func (p *LayerPool) ReleaseMany(globalIDs []int) error {
 		if err != nil {
 			return err
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if globalIDs[j] == globalIDs[i] {
 				return ErrInvalidSlot
 			}

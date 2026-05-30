@@ -613,7 +613,7 @@ func TestExtendBordersReplicatesEdges(t *testing.T) {
 				// Bottom edge (incl. corner): padding rows equal the last valid
 				// row, including its right-extended columns.
 				for y := p.Height; y < allocHeight; y++ {
-					for x := 0; x < allocWidth; x++ {
+					for x := range allocWidth {
 						want := getTestPlaneSample(p, tc.bytesPerSample, x, p.Height-1)
 						if got := getTestPlaneSample(p, tc.bytesPerSample, x, y); got != want {
 							t.Fatalf("bottom pad (%d,%d)=%d want %d", x, y, got, want)

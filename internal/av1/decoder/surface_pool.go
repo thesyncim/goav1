@@ -47,7 +47,7 @@ func ResolveFrameReferences(pool *frame.Pool, surfaces []int, dst []*frame.Frame
 	}
 
 	var resolved [parser.InterRefsPerFrame]*frame.Frame
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if surfaces[i] < 0 {
 			return 0, ErrInvalidSurfaceReference
 		}
@@ -57,7 +57,7 @@ func ResolveFrameReferences(pool *frame.Pool, surfaces []int, dst []*frame.Frame
 		}
 		resolved[i] = ref
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		dst[i] = resolved[i]
 	}
 	return count, nil

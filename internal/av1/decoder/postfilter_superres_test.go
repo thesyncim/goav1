@@ -156,7 +156,7 @@ func TestFrameWorkPostFilterContextApplySuperResPostFilterWritesOutputScratch(t 
 			t.Fatalf("Y[%d]=%d want %d", x, got, want)
 		}
 	}
-	for x := 0; x < 13; x++ {
+	for x := range 13 {
 		if got := result.Output.Y.Pix[result.Output.Y.Stride+x]; got != 100 {
 			t.Fatalf("Y row1[%d]=%d want 100", x, got)
 		}
@@ -625,7 +625,7 @@ func testFrameWorkSuperResPostFilterRequest(t *testing.T, ctx FrameWorkPostFilte
 func testFrameWorkSuperResScratchStorage(size FrameWorkSuperResPostFilterScratchSize) ([]byte, [3][]uint16, [3][]uint16) {
 	var coded [3][]uint16
 	var output [3][]uint16
-	for plane := 0; plane < 3; plane++ {
+	for plane := range 3 {
 		if size.CodedSamples[plane] > 0 {
 			coded[plane] = make([]uint16, size.CodedSamples[plane])
 		}

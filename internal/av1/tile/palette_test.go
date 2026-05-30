@@ -12,18 +12,18 @@ func TestPaletteDefaultsMatchLibaomShape(t *testing.T) {
 	if err := cdfs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
-	for sizeCtx := 0; sizeCtx < PaletteBSizeContexts; sizeCtx++ {
+	for sizeCtx := range PaletteBSizeContexts {
 		if _, err := cdfs.PaletteYSizeCDF(sizeCtx); err != nil {
 			t.Fatalf("size ctx %d: %v", sizeCtx, err)
 		}
-		for modeCtx := 0; modeCtx < PaletteYModeContexts; modeCtx++ {
+		for modeCtx := range PaletteYModeContexts {
 			if _, err := cdfs.PaletteYModeCDF(sizeCtx, modeCtx); err != nil {
 				t.Fatalf("mode ctx %d/%d: %v", sizeCtx, modeCtx, err)
 			}
 		}
 	}
 	for colors := PaletteMinSize; colors <= PaletteMaxSize; colors++ {
-		for ctx := 0; ctx < PaletteColorContexts; ctx++ {
+		for ctx := range PaletteColorContexts {
 			if _, err := cdfs.PaletteYColorIndexCDF(colors, ctx); err != nil {
 				t.Fatalf("color ctx colors=%d ctx=%d: %v", colors, ctx, err)
 			}

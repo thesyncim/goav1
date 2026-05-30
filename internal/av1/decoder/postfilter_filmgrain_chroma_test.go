@@ -322,8 +322,8 @@ func testFrameWorkFilmGrainLumaTemplate(value int16) []int16 {
 func testFrameWorkFilmGrainChromaRowBuffers(width int, height int, stride int, value uint16) ([]uint16, []uint16) {
 	dst := make([]uint16, stride*height)
 	src := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			src[y*stride+x] = value
 		}
 	}
@@ -332,8 +332,8 @@ func testFrameWorkFilmGrainChromaRowBuffers(width int, height int, stride int, v
 
 func testFrameWorkFilmGrainSampleBuffer(width int, height int, stride int, value uint16) []uint16 {
 	samples := make([]uint16, stride*height)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			samples[y*stride+x] = value
 		}
 	}

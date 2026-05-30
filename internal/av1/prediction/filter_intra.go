@@ -105,7 +105,7 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 	}
 
 	var buffer [33][33]uint16
-	for row := 0; row < predHeight; row++ {
+	for row := range predHeight {
 		buffer[row+1][0] = edges.Left[row]
 	}
 	buffer[0][0] = edges.AboveLeft
@@ -122,9 +122,9 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 				buffer[row][col-1],
 				buffer[row+1][col-1],
 			}
-			for k := 0; k < 8; k++ {
+			for k := range 8 {
 				sum := 0
-				for i := 0; i < len(p); i++ {
+				for i := range len(p) {
 					sum += int(filterIntraTaps[mode][k][i]) * int(p[i])
 				}
 				sample := roundPowerOfTwo(sum, filterIntraScaleBits)
@@ -138,8 +138,8 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 		}
 	}
 
-	for row := 0; row < height; row++ {
-		for col := 0; col < width; col++ {
+	for row := range height {
+		for col := range width {
 			setBlockSample(block, bytesPerSample, row, col, buffer[row+1][col+1])
 		}
 	}

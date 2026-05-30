@@ -90,7 +90,7 @@ func (f *ReferenceMVFrame) MarkBlock(req ReferenceMVFrameBlockRequest) error {
 	if req.Prediction.Valid && !req.Prediction.Intra && req.Prediction.InterMotionValid {
 		entry = referenceMVEntryForInter(req.Prediction.InterMotion, req.RefFrameSide)
 	}
-	for y := 0; y < h; y++ {
+	for y := range h {
 		line := f.Entries[(row+y)*f.Stride+col : (row+y)*f.Stride+col+w]
 		for x := range line {
 			line[x] = entry

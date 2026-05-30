@@ -110,8 +110,8 @@ func TestFilterIntraPredictorWithExtentClipsVisiblePixels(t *testing.T) {
 	}
 	full := filterIntraLibaomReference(8, 8, FilterIntraModePaeth, edges, 0xff)
 	got := collectPlaneSamples(plane, 1, 6, 6)
-	for row := 0; row < 6; row++ {
-		for col := 0; col < 6; col++ {
+	for row := range 6 {
+		for col := range 6 {
 			if want := full[row*8+col]; got[row*6+col] != want {
 				t.Fatalf("sample(%d,%d)=%d want %d", col, row, got[row*6+col], want)
 			}
@@ -126,10 +126,10 @@ func TestFilterIntraPredictorMatchesLibaomCorpus(t *testing.T) {
 			bytesPerSample = 2
 		}
 		mask := uint16((1 << bitDepth) - 1)
-		for mode := FilterIntraModeDC; mode < FilterIntraModes; mode++ {
+		for mode := range FilterIntraModes {
 			for _, size := range libaomFilterIntraTxSizes {
 				rnd := newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed)
-				for iter := 0; iter < 32; iter++ {
+				for iter := range 32 {
 					edges := randomStaticIntraEdges(size.width, size.height, mask, rnd)
 					want := filterIntraLibaomReference(size.width, size.height, mode, edges, mask)
 					plane, _ := testPlane(size.width, size.height, bytesPerSample, size.width*bytesPerSample)
@@ -226,7 +226,7 @@ func BenchmarkFilterIntraPredictor(b *testing.B) {
 
 func filterIntraLibaomReference(width int, height int, mode FilterIntraMode, edges IntraEdges, max uint16) []uint16 {
 	var buffer [33][33]uint16
-	for row := 0; row < height; row++ {
+	for row := range height {
 		buffer[row+1][0] = edges.Left[row]
 	}
 	buffer[0][0] = edges.AboveLeft
@@ -243,9 +243,9 @@ func filterIntraLibaomReference(width int, height int, mode FilterIntraMode, edg
 				buffer[row][col-1],
 				buffer[row+1][col-1],
 			}
-			for k := 0; k < 8; k++ {
+			for k := range 8 {
 				sum := 0
-				for i := 0; i < len(p); i++ {
+				for i := range len(p) {
 					sum += int(libaomFilterIntraTaps[mode][k][i]) * int(p[i])
 				}
 				sample := roundPowerOfTwo(sum, filterIntraScaleBits)
@@ -260,7 +260,7 @@ func filterIntraLibaomReference(width int, height int, mode FilterIntraMode, edg
 	}
 
 	out := make([]uint16, 0, width*height)
-	for row := 0; row < height; row++ {
+	for row := range height {
 		out = append(out, buffer[row+1][1:width+1]...)
 	}
 	return out
