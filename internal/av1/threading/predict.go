@@ -733,11 +733,25 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, readBoundX, readBoundY, edgeBlock, &scratch.Intra, false)
+	// libaom computes the CfL DC predictor and applies CfL over the chroma
+	// TRANSFORM size (av1_cfl_predict_block(xd, ..., tx_size, plane)), writing
+	// the whole transform into the frame buffer; the trailing past-cropped-edge
+	// rows/cols land in the superblock-aligned padding (and feed later
+	// neighbor/filter reads). Using the frame-edge-clipped visible extent here
+	// would average a different number of DC neighbor samples (e.g. only the 4
+	// visible left rows of a bottom-edge TX_16X8 instead of all 8), shifting the
+	// DC base and therefore every CfL sample by a constant. Predict over the
+	// full transform extent (fullWidth x fullHeight) clamped only to the
+	// superblock-aligned writable window, matching libaom.
+	writeWidth, writeHeight, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, geom.X, geom.Y, fullWidth, fullHeight)
+	if !ok {
+		writeWidth, writeHeight = geom.Width, geom.Height
+	}
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, false)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlock(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, prediction.IntraModeDC, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, prediction.IntraModeDC, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	predType := prediction.CFLPredU
@@ -748,7 +762,7 @@ func (b FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := prediction.PredictCFLPlaneBlockVisible(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, fullWidth, fullHeight, scratch.ACQ3[:], alphaQ3); err != nil {
+	if err := prediction.PredictCFLPlaneBlockVisible(geom.Output, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, scratch.ACQ3[:], alphaQ3); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
