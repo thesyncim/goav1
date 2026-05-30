@@ -1,0 +1,344 @@
+package goav1_test
+
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"testing"
+
+	av1 "github.com/thesyncim/goav1"
+)
+
+// profileClips are the vendored profile-conformance clips and their per-frame
+// aomdec MD5 goldens, identical to the set guarded by conformance/publicpath_test.go.
+// They cover 4:4:4 8-bit, 4:2:2 8-bit, and 4:2:0 12-bit.
+var profileClips = []struct {
+	file        string
+	frameMD5Hex []string
+}{
+	{
+		file: "profile1-444-8bit-64x64.ivf",
+		frameMD5Hex: []string{
+			"00211cdc8f799c808849c955a318a0f5",
+			"397ff01920ff514bc611ab49d76371c1",
+			"f8fbfb25a42da47a7adb71510de9b178",
+		},
+	},
+	{
+		file: "profile2-422-8bit-64x64.ivf",
+		frameMD5Hex: []string{
+			"dabd492413632a810adeaf4e5d0c6d97",
+			"eb6cf8d1d4d644686cf03c513acd5978",
+			"84983e98afeef6692448e98fc5980431",
+		},
+	},
+	{
+		file: "profile2-420-12bit-64x64.ivf",
+		frameMD5Hex: []string{
+			"e714741e4ad4fce5a4469c79705f132c",
+			"447103c7d7358e4cbb6f5b98ce4e1be1",
+			"dcd86cbbf80f81d9699eaf6c6e879e72",
+		},
+	},
+}
+
+func profileClipPath(name string) string {
+	return filepath.Join("internal", "av1", "testvector", "testdata", "profiles", name)
+}
+
+// TestSimpleDecoderProfileClipsMatchGolden decodes each vendored profile clip
+// through the high-level Decoder API and asserts every visible frame's MD5
+// equals the libaom golden. This proves the convenience API drives the same
+// byte-exact public decode path as the low-level hand-bound sequence.
+func TestSimpleDecoderProfileClipsMatchGolden(t *testing.T) {
+	for _, clip := range profileClips {
+		t.Run(clip.file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(clip.file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
+
+			dec, err := av1.NewDecoderFromIVF(ivf)
+			if err != nil {
+				t.Fatalf("NewDecoderFromIVF: %v", err)
+			}
+			defer dec.Close()
+
+			var got []string
+			for {
+				frames, ok, err := dec.DecodeNext()
+				if err != nil {
+					t.Fatalf("DecodeNext: %v", err)
+				}
+				if !ok {
+					break
+				}
+				for _, f := range frames {
+					sum := frameMD5Visible(f)
+					got = append(got, hex.EncodeToString(sum[:]))
+				}
+			}
+
+			if len(got) != len(clip.frameMD5Hex) {
+				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+			}
+			for i, want := range clip.frameMD5Hex {
+				if got[i] != want {
+					t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
+// TestDecodeIVFMatchesGolden exercises the one-shot DecodeIVF helper and asserts
+// each returned independent frame copy hashes to the libaom golden.
+func TestDecodeIVFMatchesGolden(t *testing.T) {
+	clip := profileClips[0]
+	ivf, err := os.ReadFile(profileClipPath(clip.file))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+
+	frames, err := av1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("DecodeIVF: %v", err)
+	}
+	if len(frames) != len(clip.frameMD5Hex) {
+		t.Fatalf("decoded %d frames, want %d", len(frames), len(clip.frameMD5Hex))
+	}
+	for i, want := range clip.frameMD5Hex {
+		sum := decodedFrameMD5(frames[i])
+		if g := hex.EncodeToString(sum[:]); g != want {
+			t.Fatalf("frame %d md5 got=%s want=%s", i, g, want)
+		}
+	}
+}
+
+// TestSimpleDecoderMatchesLowLevelPath proves byte-for-byte that the high-level
+// Decoder produces exactly the same visible-frame bytes as the low-level
+// hand-bound stream-runner path for every vendored profile clip.
+func TestSimpleDecoderMatchesLowLevelPath(t *testing.T) {
+	for _, clip := range profileClips {
+		t.Run(clip.file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(clip.file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
+
+			lowLevel := decodeLowLevel(t, ivf)
+
+			dec, err := av1.NewDecoderFromIVF(ivf)
+			if err != nil {
+				t.Fatalf("NewDecoderFromIVF: %v", err)
+			}
+			defer dec.Close()
+
+			var highLevel [][16]byte
+			for {
+				frames, ok, err := dec.DecodeNext()
+				if err != nil {
+					t.Fatalf("DecodeNext: %v", err)
+				}
+				if !ok {
+					break
+				}
+				for _, f := range frames {
+					highLevel = append(highLevel, frameMD5Visible(f))
+				}
+			}
+
+			if len(highLevel) != len(lowLevel) {
+				t.Fatalf("high-level produced %d frames, low-level %d", len(highLevel), len(lowLevel))
+			}
+			for i := range lowLevel {
+				if highLevel[i] != lowLevel[i] {
+					t.Fatalf("frame %d differs: high=%s low=%s",
+						i, hex.EncodeToString(highLevel[i][:]), hex.EncodeToString(lowLevel[i][:]))
+				}
+			}
+		})
+	}
+}
+
+// decodeLowLevel reproduces the hand-bound public stream-runner path (as in
+// cmd/aom-go-dec and conformance/publicpath_test.go) and returns the per-frame
+// visible MD5 in display order, copying pixels out per payload so multi-frame
+// streams retain every frame.
+func decodeLowLevel(t *testing.T, ivf []byte) [][16]byte {
+	t.Helper()
+
+	it, err := av1.NewIVFIterator(ivf)
+	if err != nil {
+		t.Fatalf("NewIVFIterator: %v", err)
+	}
+	var payloads [][]byte
+	for {
+		f, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("ivf next: %v", err)
+		}
+		if !ok {
+			break
+		}
+		payloads = append(payloads, append([]byte(nil), f.Payload...))
+	}
+
+	const workers = 1
+	workerPool, err := av1.NewTileWorkerPool(workers)
+	if err != nil {
+		t.Fatalf("worker pool: %v", err)
+	}
+	defer workerPool.Close()
+
+	var probeStream av1.DecoderStream
+	probeEvents := make([]av1.DecoderEvent, 16*len(payloads)+64)
+	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
+	probeJobs := make([]av1.TileJob, av1.MaxTiles)
+	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
+	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(
+		probeStream, payloads, workers, probeEvents, probeSpans, probeJobs, probeBatches)
+	if err != nil {
+		t.Fatalf("stream plan: %v", err)
+	}
+	if !plan.HasEvent() {
+		t.Fatal("stream plan did not identify a bind event")
+	}
+
+	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
+		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
+	}
+
+	const surfaceCount = av1.RefFrames + 1
+	_, backingSize, err := av1.FramePoolRequiredSize(format, surfaceCount)
+	if err != nil {
+		t.Fatalf("FramePoolRequiredSize: %v", err)
+	}
+	pool, err := av1.BindFramePool(make([]byte, backingSize), format,
+		make([]av1.Frame, surfaceCount), make([]int, surfaceCount), make([]bool, surfaceCount))
+	if err != nil {
+		t.Fatalf("BindFramePool: %v", err)
+	}
+
+	var (
+		stream     av1.DecoderStream
+		refs       av1.DecoderSurfaceReferences
+		state      av1.DecoderFrameWorkState
+		stats      av1.DecoderFrameWorkTileResidualStats
+		sideData   av1.DecoderFrameWorkSideData
+		batch      av1.DecoderFrameWorkBatchResidualRunner
+		postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+	)
+	scratch := lowLevelStreamScratch(plan.Size)
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream,
+		av1.DecoderFrameWorkResidualEventRuntime{
+			State:             &state,
+			Refs:              &refs,
+			FramePool:         &pool,
+			Align:             64,
+			ReferenceSurfaces: make([]int, av1.InterRefsPerFrame),
+			ReferenceFrames:   make([]*av1.Frame, av1.InterRefsPerFrame),
+			Releases:          make([]int, av1.RefFrames),
+			WorkerPool:        workerPool,
+			SideData:          &sideData,
+			Stats:             &stats,
+		}, scratch, &batch)
+	if err != nil {
+		t.Fatalf("bind runner: %v", err)
+	}
+
+	var digests [][16]byte
+	for i, payload := range payloads {
+		var result av1.DecoderFrameWorkResidualStreamResult
+		if err := runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &postFilter); err != nil {
+			t.Fatalf("frame %d run: %v", i, err)
+		}
+		for _, f := range result.Run.Outputs {
+			if f != nil {
+				digests = append(digests, frameMD5Visible(f))
+			}
+		}
+	}
+	return digests
+}
+
+func lowLevelStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
+	return av1.DecoderFrameWorkResidualStreamScratch{
+		Events:    make([]av1.DecoderEvent, size.Events),
+		Event:     lowLevelEventScratch(size.Event),
+		SideData:  lowLevelSideDataScratch(size.Event.SideData),
+		Outputs:   make([]*av1.Frame, size.Event.Outputs),
+		RTPBuffer: make([]byte, size.RTPBuffer),
+		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans),
+	}
+}
+
+func lowLevelEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
+	return av1.DecoderFrameWorkResidualEventScratch{
+		Runner:   lowLevelBatchRunnerScratch(size.Runner),
+		SideData: lowLevelSideDataScratch(size.SideData),
+		Spans:    make([]av1.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]av1.TileJob, size.Plan.JobCount),
+		Batches:  make([]av1.TileBatch, size.Plan.BatchCount),
+	}
+}
+
+func lowLevelBatchRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
+	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]av1.TileDecodeState, size.Workers),
+		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
+		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
+		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
+		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
+		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
+		Int32Scratch:            make([]int32, size.Int32Scratch),
+		ResidualScratch:         make([]int16, size.ResidualScratch),
+		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
+	}
+}
+
+func lowLevelSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.DecoderFrameWorkSideDataScratch {
+	return av1.DecoderFrameWorkSideDataScratch{
+		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
+		CDEFReadMap:              make([]bool, size.CDEFReadMap),
+		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
+		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
+	}
+}
+
+// frameMD5Visible reproduces the libaom per-frame digest layout: visible Y rows,
+// then visible U rows, then visible V rows, each stripped of stride padding.
+func frameMD5Visible(f *av1.Frame) [16]byte {
+	h := md5.New()
+	bps := f.Layout.BytesPerSample
+	for _, plane := range []av1.FramePlane{f.Y, f.U, f.V} {
+		if plane.Width == 0 || plane.Height == 0 || len(plane.Pix) == 0 {
+			continue
+		}
+		rowBytes := plane.Width * bps
+		for row := 0; row < plane.Height; row++ {
+			off := row * plane.Stride
+			h.Write(plane.Pix[off : off+rowBytes])
+		}
+	}
+	var sum [16]byte
+	h.Sum(sum[:0])
+	return sum
+}
+
+// decodedFrameMD5 hashes a DecodedFrame's packed visible planes, which already
+// have no stride padding.
+func decodedFrameMD5(f av1.DecodedFrame) [16]byte {
+	h := md5.New()
+	h.Write(f.Y)
+	h.Write(f.U)
+	h.Write(f.V)
+	var sum [16]byte
+	h.Sum(sum[:0])
+	return sum
+}
