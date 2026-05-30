@@ -1453,10 +1453,33 @@ type wavefrontError struct{ err error }
 // reconstructRow reconstructs every superblock of one SB row in left-to-right
 // order, gating each column on the row above via the done counters.
 func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row int, rowCount int) error {
+	// rowStart holds rowCount+1 entries and done holds rowCount; validating the
+	// row index against both once lets the prove pass discharge the per-SB
+	// rowStart[row], rowStart[row+1] and done[row] accesses below (and, under the
+	// row>0 guard, the row-1 reads) without a check per superblock.
+	if row < 0 || row >= rowCount || row+1 >= len(wf.rowStart) || row >= len(wf.done) {
+		return ErrInvalidBatch
+	}
 	sbs := wf.sbs()
 	lo := wf.rowStart[row]
 	hi := wf.rowStart[row+1]
-	for k := lo; k < hi; k++ {
+	if lo < 0 || hi < lo || hi > len(sbs) {
+		return ErrInvalidBatch
+	}
+	sbs = sbs[lo:hi]
+	// The row-above SB count and the upper/this-row done counters depend only on
+	// row, so resolve them once per row instead of per superblock. Pinning the
+	// counter pointers also lifts their bounds checks out of the per-SB loop
+	// (the function calls in the spin loop below otherwise force a re-check each
+	// iteration). doneCur/donePrev alias wf.done entries proven in range above.
+	doneCur := &wf.done[row]
+	var donePrev *atomic.Int32
+	aboveCount := 0
+	if row > 0 {
+		aboveCount = wf.rowStart[row] - wf.rowStart[row-1]
+		donePrev = &wf.done[row-1]
+	}
+	for k := range sbs {
 		sb := sbs[k]
 		if row > 0 {
 			// SB C of row R reads its top neighbor (R-1,C) and, when it exists,
@@ -1465,12 +1488,11 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 			// reconstructed, but clamp to the number of superblocks actually in
 			// row R-1: if (R-1,C+1) does not exist (right edge), done[R-1] tops
 			// out at the row-above SB count and waiting for C+2 would deadlock.
-			aboveCount := wf.rowStart[row] - wf.rowStart[row-1]
 			need := int32(sb.col + 2)
 			if int(need) > aboveCount {
 				need = int32(aboveCount)
 			}
-			for wf.done[row-1].Load() < need {
+			for donePrev.Load() < need {
 				if wf.aborted.Load() {
 					return nil
 				}
@@ -1480,7 +1502,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 		if err := frameWorkReplayReconEvents(st, wf.eventSpan(sb.start, sb.end)); err != nil {
 			return err
 		}
-		wf.done[row].Store(int32(sb.col + 1))
+		doneCur.Store(int32(sb.col + 1))
 	}
 	return nil
 }
@@ -1510,15 +1532,11 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 			return err
 		}
 	}
-	if err := s.batch.ReconstructBlockCoeff(s.index, FrameWorkBlockCoeffReconstruction{
-		Visit:           visit.Block,
-		Block:           *block,
-		Transform:       block.Transform,
-		CurrentQIndex:   currentQIndex,
-		SegmentID:       visit.SegmentID,
-		Int32Scratch:    s.int32Scratch,
-		ResidualScratch: s.residualScratch,
-	}); err != nil {
+	// Hand the live decode block straight to the by-pointer reconstruction core
+	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
+	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
+	// reads exactly the fields the struct path forwarded.
+	if err := s.batch.reconstructBlockCoeffCore(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	s.stats.Residuals++

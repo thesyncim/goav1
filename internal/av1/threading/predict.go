@@ -2957,21 +2957,32 @@ func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second fram
 	switch bytesPerSample {
 	case 1:
 		for row := range height {
+			// dstLine/firstLine/secondLine all have length width
+			// (frameWorkPlaneBlockAddressable proved the rows fit). Pinning
+			// firstLine/secondLine to len(dstLine) lets the prove pass discharge
+			// all three per-pixel indices under the loop's col < len(dstLine).
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
-			for col := range width {
+			firstLine = firstLine[:len(dstLine)]
+			secondLine = secondLine[:len(dstLine)]
+			for col := range dstLine {
 				out := (uint32(firstLine[col])*uint32(fwdOffset) + uint32(secondLine[col])*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits
 				dstLine[col] = byte(out)
 			}
 		}
 	case 2:
 		for row := range height {
+			// Each line spans width samples of 2 bytes. Pin the source lines to
+			// len(dstLine) and walk the byte index i with an additive +2 induction
+			// (i, i+1) the prove pass can order, rather than a col*2 multiplicative
+			// index, so all six per-pixel accesses fold under len(dstLine).
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
-			for col := range width {
-				i := col * 2
+			firstLine = firstLine[:len(dstLine)]
+			secondLine = secondLine[:len(dstLine)]
+			for i := 0; i+1 < len(dstLine); i += 2 {
 				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
 				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
 				out := uint16((uint32(a)*uint32(fwdOffset) + uint32(b)*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits)
@@ -3079,10 +3090,14 @@ func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, secon
 	switch bytesPerSample {
 	case 1:
 		for row := range height {
+			// Pin the source lines to len(dstLine) (all are width) so the per-pixel
+			// firstLine/secondLine/dstLine indices fold under col < len(dstLine).
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
-			for col := range width {
+			firstLine = firstLine[:len(dstLine)]
+			secondLine = secondLine[:len(dstLine)]
+			for col := range dstLine {
 				m, ok := frameWorkBlendMaskSample(mask, maskStride, row, col, subX, subY)
 				if !ok {
 					return ErrInvalidBatch
@@ -3097,11 +3112,15 @@ func frameWorkBlendMaskedCompoundBlock(dst frame.Plane, first frame.Plane, secon
 		}
 	case 2:
 		for row := range height {
+			// Walk the 2-byte sample index with an additive +2 induction the prove
+			// pass can order (col is recovered as i>>1 for the mask lookup).
 			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
 			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
 			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
-			for col := range width {
-				i := col * 2
+			firstLine = firstLine[:len(dstLine)]
+			secondLine = secondLine[:len(dstLine)]
+			for i := 0; i+1 < len(dstLine); i += 2 {
+				col := i >> 1
 				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
 				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
 				m, ok := frameWorkBlendMaskSample(mask, maskStride, row, col, subX, subY)
@@ -3839,11 +3858,19 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 	if scratch == nil {
 		return prediction.IntraEdges{}, ErrInvalidBatch
 	}
-	if edgeWidth < width || edgeHeight < height ||
+	if edgeWidth < 0 || edgeHeight < 0 ||
+		edgeWidth < width || edgeHeight < height ||
 		edgeWidth > frameWorkIntraPredictionMaxEdgeSamples ||
 		edgeHeight > frameWorkIntraPredictionMaxEdgeSamples {
 		return prediction.IntraEdges{}, ErrInvalidBatch
 	}
+	// edgeWidth/edgeHeight are now in [0, frameWorkIntraPredictionMaxEdgeSamples]
+	// (= [0, 128]), well within len(scratch.Above)/len(scratch.Left) (= 512). The
+	// explicit >= 0 bound lets the prove pass discharge these reslices, and
+	// reslicing once folds the per-element edge stores below (col < edgeWidth ==
+	// len(above), row < edgeHeight == len(left)) under one dominating slice each.
+	above := scratch.Above[:edgeWidth]
+	left := scratch.Left[:edgeHeight]
 	readBoundX := dst.Width
 	if visibleW > 0 && visibleW < readBoundX {
 		readBoundX = visibleW
@@ -3864,10 +3891,11 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		if y <= 0 {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
-		available := edgeWidth
-		if x+available > readBoundX {
-			available = readBoundX - x
-		}
+		// min(edgeWidth, readBoundX-x) is byte-identical to the original
+		// "available = edgeWidth; if x+available > readBoundX { available =
+		// readBoundX - x }" and additionally proves available <= edgeWidth ==
+		// len(above), folding the per-element stores below.
+		available := min(edgeWidth, readBoundX-x)
 		if available > 0 {
 			nTopPx = available
 			for col := 0; col < available; col++ {
@@ -3875,12 +3903,13 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 				if !ok {
 					return prediction.IntraEdges{}, ErrInvalidBatch
 				}
-				scratch.Above[col] = sample
+				above[col] = sample
 			}
+			last := above[available-1]
 			for col := available; col < edgeWidth; col++ {
-				scratch.Above[col] = scratch.Above[available-1]
+				above[col] = last
 			}
-			edges.Above = scratch.Above[:edgeWidth]
+			edges.Above = above
 			edges.AboveAvailable = true
 		} else {
 			// libaom n_top_px=0 fallback: when the block has HaveTop but the
@@ -3892,10 +3921,10 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 			if err != nil {
 				return prediction.IntraEdges{}, err
 			}
-			for col := range edgeWidth {
-				scratch.Above[col] = sample
+			for col := range above {
+				above[col] = sample
 			}
-			edges.Above = scratch.Above[:edgeWidth]
+			edges.Above = above
 			edges.AboveAvailable = true
 		}
 	} else if fillMissing {
@@ -3903,20 +3932,19 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for col := range edgeWidth {
-			scratch.Above[col] = sample
+		for col := range above {
+			above[col] = sample
 		}
-		edges.Above = scratch.Above[:edgeWidth]
+		edges.Above = above
 		edges.AboveAvailable = true
 	}
 	if block.HaveLeft {
 		if x <= 0 {
 			return prediction.IntraEdges{}, ErrInvalidBatch
 		}
-		available := edgeHeight
-		if y+available > readBoundY {
-			available = readBoundY - y
-		}
+		// min(edgeHeight, readBoundY-y) is byte-identical to the original clamp and
+		// proves available <= edgeHeight == len(left).
+		available := min(edgeHeight, readBoundY-y)
 		if available > 0 {
 			nLeftPx = available
 			for row := 0; row < available; row++ {
@@ -3924,12 +3952,13 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 				if !ok {
 					return prediction.IntraEdges{}, ErrInvalidBatch
 				}
-				scratch.Left[row] = sample
+				left[row] = sample
 			}
+			last := left[available-1]
 			for row := available; row < edgeHeight; row++ {
-				scratch.Left[row] = scratch.Left[available-1]
+				left[row] = last
 			}
-			edges.Left = scratch.Left[:edgeHeight]
+			edges.Left = left
 			edges.LeftAvailable = true
 		} else {
 			// libaom n_left_px=0 fallback: mirror n_top_px=0 — when the block
@@ -3939,10 +3968,10 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 			if err != nil {
 				return prediction.IntraEdges{}, err
 			}
-			for row := range edgeHeight {
-				scratch.Left[row] = sample
+			for row := range left {
+				left[row] = sample
 			}
-			edges.Left = scratch.Left[:edgeHeight]
+			edges.Left = left
 			edges.LeftAvailable = true
 		}
 	} else if fillMissing {
@@ -3950,10 +3979,10 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		if err != nil {
 			return prediction.IntraEdges{}, err
 		}
-		for row := range edgeHeight {
-			scratch.Left[row] = sample
+		for row := range left {
+			left[row] = sample
 		}
-		edges.Left = scratch.Left[:edgeHeight]
+		edges.Left = left
 		edges.LeftAvailable = true
 	}
 	if block.HaveTop && block.HaveLeft {
@@ -4190,16 +4219,26 @@ func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bi
 // visible right edge, libaom clamps the real-sample range to the visible
 // extent and replicates the last visible sample for the past-visible slots.
 func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryWidth int, allowTopRight bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, visibleW int) error {
-	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+	// Window the above edge buffer to exactly the written
+	// [origin+minIndex, origin+maxIndex] span. The lo/hi guard validates the
+	// index range (lo<0 rejects origin+minIndex<0; hi>len rejects
+	// origin+maxIndex >= frameWorkDirectionalEdgeSamples; hi<lo rejects
+	// maxIndex<minIndex) and lets the prove pass fold the per-element stores
+	// below under this one dominating slice. above[j] addresses
+	// scratch.Above[origin+minIndex+j] for j in [0, len).
+	lo := frameWorkDirectionalEdgeOrigin + minIndex
+	hi := frameWorkDirectionalEdgeOrigin + maxIndex + 1
+	if lo < 0 || hi < lo || hi > len(scratch.Above) {
 		return ErrInvalidBatch
 	}
+	above := scratch.Above[lo:hi]
 	if !block.HaveTop {
 		sample, err := frameWorkMissingAboveSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
 			return err
 		}
-		for i := minIndex; i <= maxIndex; i++ {
-			scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+		for j := range above {
+			above[j] = sample
 		}
 		return nil
 	}
@@ -4229,8 +4268,8 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 		if err != nil {
 			return err
 		}
-		for i := minIndex; i <= maxIndex; i++ {
-			scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+		for j := range above {
+			above[j] = sample
 		}
 		return nil
 	}
@@ -4251,7 +4290,8 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	if allowTopRight && topRightLimit > 0 {
 		maxRealEnd = primaryWidth + topRightLimit
 	}
-	for i := minIndex; i <= maxIndex; i++ {
+	for j := range above {
+		i := minIndex + j
 		var sampleX int
 		switch {
 		case i < primaryLimit:
@@ -4270,7 +4310,7 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 		if !ok {
 			return ErrInvalidBatch
 		}
-		scratch.Above[frameWorkDirectionalEdgeOrigin+i] = sample
+		above[j] = sample
 	}
 	return nil
 }
@@ -4280,16 +4320,22 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 // / dst. See frameWorkFillDirectionalAbove for the n_left_px /
 // n_bottomleft_px contract this mirrors.
 func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, minIndex int, maxIndex int, primaryHeight int, allowBottomLeft bool, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, visibleH int) error {
-	if !frameWorkDirectionalRangeFits(minIndex, maxIndex) {
+	// See frameWorkFillDirectionalAbove: the inline lo/hi guard validates the
+	// index range and lets this slice plus the per-element stores fold under one
+	// dominating window. left[j] is scratch.Left[origin+minIndex+j] for j in [0, len).
+	lo := frameWorkDirectionalEdgeOrigin + minIndex
+	hi := frameWorkDirectionalEdgeOrigin + maxIndex + 1
+	if lo < 0 || hi < lo || hi > len(scratch.Left) {
 		return ErrInvalidBatch
 	}
+	left := scratch.Left[lo:hi]
 	if !block.HaveLeft {
 		sample, err := frameWorkMissingLeftSample(dst, bytesPerSample, bitDepth, x, y, block)
 		if err != nil {
 			return err
 		}
-		for i := minIndex; i <= maxIndex; i++ {
-			scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+		for j := range left {
+			left[j] = sample
 		}
 		return nil
 	}
@@ -4314,8 +4360,8 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 		if err != nil {
 			return err
 		}
-		for i := minIndex; i <= maxIndex; i++ {
-			scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+		for j := range left {
+			left[j] = sample
 		}
 		return nil
 	}
@@ -4331,7 +4377,8 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 	if allowBottomLeft && bottomLeftLimit > 0 {
 		maxRealEnd = primaryHeight + bottomLeftLimit
 	}
-	for i := minIndex; i <= maxIndex; i++ {
+	for j := range left {
+		i := minIndex + j
 		var sampleY int
 		switch {
 		case i < primaryLimit:
@@ -4350,7 +4397,7 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 		if !ok {
 			return ErrInvalidBatch
 		}
-		scratch.Left[frameWorkDirectionalEdgeOrigin+i] = sample
+		left[j] = sample
 	}
 	return nil
 }
@@ -4420,14 +4467,6 @@ func frameWorkIntraBoundaryDefault(bitDepth uint8, offset int) (uint16, bool) {
 	return uint16(value), true
 }
 
-func frameWorkDirectionalRangeFits(minIndex int, maxIndex int) bool {
-	if minIndex > maxIndex {
-		return false
-	}
-	return frameWorkDirectionalEdgeOrigin+minIndex >= 0 &&
-		frameWorkDirectionalEdgeOrigin+maxIndex < frameWorkDirectionalEdgeSamples
-}
-
 func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
 	offset, ok := frameWorkPlaneSampleOffset(plane, bytesPerSample, x, y)
 	if !ok {
@@ -4435,12 +4474,19 @@ func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (u
 	}
 	switch bytesPerSample {
 	case 1:
-		if offset >= len(plane.Pix) {
+		// The offset < 0 bound is already guaranteed by frameWorkPlaneSampleOffset
+		// but restating it here (the prove pass does not carry that fact across the
+		// call) lets the compiler discharge the plane.Pix[offset] load.
+		if offset < 0 || offset >= len(plane.Pix) {
 			return 0, false
 		}
 		return uint16(plane.Pix[offset]), true
 	case 2:
-		if offset+1 >= len(plane.Pix) {
+		// Bound with the subtraction form (offset > len-2, i.e. offset <= len-2)
+		// plus the explicit offset >= 0 so the prove pass can discharge both the
+		// plane.Pix[offset] and plane.Pix[offset+1] loads without the offset+1
+		// overflow ambiguity that the additive form leaves open.
+		if offset < 0 || offset > len(plane.Pix)-2 {
 			return 0, false
 		}
 		return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8, true
