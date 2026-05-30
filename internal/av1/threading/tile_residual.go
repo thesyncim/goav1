@@ -2,6 +2,7 @@ package threading
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -9,6 +10,35 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
+
+// frameWorkDeferReconstruction gates a deferred two-pass reconstruction path
+// that splits entropy decode (pass 1) from predict+reconstruct (pass 2). It is
+// read once at package init and serves only as a test harness to prove the
+// deferred path is byte-identical to the fused single-thread path before the
+// wavefront concurrency increment wires real selection. Default off: when off,
+// DecodeAndReconstructJobResiduals runs the existing fused path verbatim.
+var frameWorkDeferReconstruction = os.Getenv("GOAV1_DEFER_RECON") != ""
+
+// frameWorkReconEventKind distinguishes the two deferred reconstruction events:
+// a per-block predict "begin" marker and a per-TXB reconstruction.
+type frameWorkReconEventKind uint8
+
+const (
+	frameWorkReconEventBlockBegin frameWorkReconEventKind = iota
+	frameWorkReconEventTXB
+)
+
+// frameWorkReconEvent records one deferred reconstruction step captured during
+// pass 1 (entropy decode) and replayed in pass 2 (predict+reconstruct) in
+// decode order. blockBegin events carry the block-loop visit so pass 2 runs the
+// predict portion of BeforeBlockCoefficients; txb events carry a decoded
+// transform block whose Coeffs have been deep-copied into the scratch arena.
+type frameWorkReconEvent struct {
+	kind          frameWorkReconEventKind
+	visit         tile.BlockLoopVisit
+	block         tile.BlockCoeffBlock
+	currentQIndex uint8
+}
 
 // FrameWorkTileResidualCDFs groups the caller-owned entropy states needed to
 // walk block syntax, decode transform trees, and decode residual coefficients.
@@ -202,6 +232,78 @@ type FrameWorkTileResidualScratch struct {
 	controller frameWorkTileResidualLoopController
 	stats      FrameWorkTileResidualStats
 	geomCache  frameWorkJobGeometryCache
+
+	// reconEvents and coeffArena back the deferred two-pass reconstruction path
+	// (frameWorkDeferReconstruction). reconEvents records the in-order predict
+	// and reconstruct steps captured during entropy decode; coeffArena holds the
+	// deep-copied coefficients each TXB event references (the live decode reuses
+	// one scratch coefficient slice per TXB, so the buffered slice must not alias
+	// it). paletteArena holds deep-copied palette colour maps for buffered visits
+	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
+	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
+	// later blocks overwrite, so a buffered visit must own its own copy. All
+	// three retain capacity across tiles and are sliced to zero length per job by
+	// resetDeferredReconBuffers.
+	reconEvents  []frameWorkReconEvent
+	coeffArena   []int16
+	paletteArena []*tile.PaletteModeScratch
+}
+
+// resetDeferredReconBuffers slices the deferred reconstruction buffers back to
+// zero length while retaining their capacity, so a worker reusing this scratch
+// across jobs never replays a previous job's events or coefficients.
+func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
+	s.reconEvents = s.reconEvents[:0]
+	s.coeffArena = s.coeffArena[:0]
+	// Retain the previously allocated palette scratch backings (they live in the
+	// slice's capacity beyond the reset length) so a worker reusing this scratch
+	// across jobs allocates a palette backing at most once per arena slot.
+	s.paletteArena = s.paletteArena[:0]
+}
+
+// nextPaletteScratch returns a per-block palette map backing from the arena,
+// reusing a previously allocated entry from the slice's retained capacity when
+// available and allocating a fresh one otherwise. The returned pointer is
+// stable for the lifetime of the buffered events because the arena stores
+// pointers (slice growth never moves the pointed-to backings).
+func (s *FrameWorkTileResidualScratch) nextPaletteScratch() *tile.PaletteModeScratch {
+	n := len(s.paletteArena)
+	if n < cap(s.paletteArena) {
+		s.paletteArena = s.paletteArena[:n+1]
+		if s.paletteArena[n] == nil {
+			s.paletteArena[n] = &tile.PaletteModeScratch{}
+		}
+		return s.paletteArena[n]
+	}
+	store := &tile.PaletteModeScratch{}
+	s.paletteArena = append(s.paletteArena, store)
+	return store
+}
+
+// captureDeferredVisit returns a copy of visit safe to buffer for deferred
+// replay. The decoded visit's palette colour maps (YMap/UVMap) point into a
+// single per-tile PaletteModeScratch that subsequent palette-coded blocks
+// overwrite during pass 1; the fused path reads them immediately, but the
+// deferred path replays prediction after the whole tile has decoded, by which
+// time the shared scratch holds a later block's map. Deep-copy the referenced
+// map(s) into the scratch palette arena and repoint the buffered visit so pass
+// 2 reads this block's own indices. Non-palette visits (the overwhelming
+// majority) are returned unchanged and pay no copy.
+func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoopVisit) tile.BlockLoopVisit {
+	pal := &visit.Prediction.Palette
+	if pal.YMap == nil && pal.UVMap == nil {
+		return visit
+	}
+	store := s.nextPaletteScratch()
+	if pal.YMap != nil {
+		store.Y = *pal.YMap
+		pal.YMap = &store.Y
+	}
+	if pal.UVMap != nil {
+		store.UV = *pal.UVMap
+		pal.UVMap = &store.UV
+	}
+	return visit
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -633,6 +735,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	// geometry. It rides along on the batch value copied into the controller,
 	// so every c.batch.* call below shares it.
 	scratch.geomCache.reset()
+	scratch.resetDeferredReconBuffers()
 	b.geomCache = &scratch.geomCache
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  b,
@@ -647,6 +750,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		userCoeffVisitor:       loopReq.CoeffVisitor,
 		restoration:            restoration,
 		readRestoration:        readRestoration,
+		deferReconstruction:    frameWorkDeferReconstruction,
 	}
 	if loopReq.BeforeSuperblock != nil || readRestoration {
 		loopReq.BeforeSuperblock = scratch.controller.BeforeSuperblock
@@ -670,6 +774,11 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	scratch.stats.Loop = loopStats
 	if err != nil {
 		return scratch.stats, err
+	}
+	if scratch.controller.deferReconstruction {
+		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
+			return scratch.stats, err
+		}
 	}
 	return scratch.stats, nil
 }
@@ -709,6 +818,12 @@ type frameWorkTileResidualLoopController struct {
 	restoration            FrameWorkTileRestorationRequest
 	readRestoration        bool
 
+	// deferReconstruction selects the buffered two-pass path: pass 1 buffers
+	// predict/reconstruct events instead of running them inline, and
+	// replayDeferredReconstruction runs them after the whole tile's entropy
+	// decode completes.
+	deferReconstruction bool
+
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
 	cflVisit             tile.BlockLoopVisit
@@ -742,21 +857,39 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile
 			return err
 		}
 	}
+	if visit.Prefix.SkipTransform {
+		c.stats.SkippedBlocks++
+	} else {
+		c.stats.CoefficientBlocks++
+	}
+	if c.deferReconstruction {
+		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
+			kind:  frameWorkReconEventBlockBegin,
+			visit: c.scratch.captureDeferredVisit(visit),
+		})
+		return nil
+	}
+	return c.predictBlockBegin(&visit)
+}
+
+// predictBlockBegin runs the predict portion of a block-loop visit: it resets
+// the CFL deferral state machine, predicts luma/non-CfL chroma (or arms the
+// pending-CfL state), and for skip-transform blocks flushes the deferred CfL
+// chroma immediately (there are no TXBs to trigger it later). It is shared by
+// the fused single-thread path (called inline from BeforeBlockCoefficients) and
+// the deferred path (replayed in decode order from
+// replayDeferredReconstruction).
+func (c *frameWorkTileResidualLoopController) predictBlockBegin(visit *tile.BlockLoopVisit) error {
 	c.pendingCFLPrediction = false
 	c.cflPredictionDone = false
 	c.cflVisit = tile.BlockLoopVisit{}
-	if err := c.predictBeforeCoefficients(visit); err != nil {
+	if err := c.predictBeforeCoefficients(*visit); err != nil {
 		return err
 	}
 	if visit.Prefix.SkipTransform {
 		if err := c.predictDeferredCFLChroma(); err != nil {
 			return err
 		}
-	}
-	if visit.Prefix.SkipTransform {
-		c.stats.SkippedBlocks++
-	} else {
-		c.stats.CoefficientBlocks++
 	}
 	return nil
 }
@@ -871,11 +1004,62 @@ func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.B
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
-	if err := c.reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
+	if c.deferReconstruction {
+		c.bufferReconTXB(&visit, &block, c.state.CurrentBaseQIdx)
+	} else if err := c.reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
 		return err
 	}
 	if c.userCoeffVisitor != nil {
 		return c.userCoeffVisitor(visit, block)
+	}
+	return nil
+}
+
+// bufferReconTXB appends a deferred TXB reconstruction event, deep-copying the
+// decoded coefficients into the scratch arena. The live decode reuses one
+// coefficient scratch slice per transform block (block.Coeffs aliases it), so
+// the buffered slice is repointed into the arena with a three-index slice that
+// caps its capacity, preventing a later append from clobbering a neighbor
+// event's coefficients. Scan is dropped: reconstruction consumes only EOB,
+// Coeffs, and geometry-derived scan size.
+func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) {
+	buffered := *block
+	if n := len(block.Coeffs); n > 0 {
+		off := len(c.scratch.coeffArena)
+		c.scratch.coeffArena = append(c.scratch.coeffArena, block.Coeffs...)
+		buffered.Coeffs = c.scratch.coeffArena[off : off+n : off+n]
+	} else {
+		buffered.Coeffs = nil
+	}
+	buffered.Scan = nil
+	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
+		kind:          frameWorkReconEventTXB,
+		visit:         c.scratch.captureDeferredVisit(*visit),
+		block:         buffered,
+		currentQIndex: currentQIndex,
+	})
+}
+
+// replayDeferredReconstruction runs the buffered predict and reconstruct events
+// in decode order after the whole tile's entropy decode has completed. Because
+// the events are replayed in the same order the fused path interleaved them,
+// the CfL luma-first state machine and intra neighbor reads observe identical
+// inputs, producing byte-identical output.
+func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
+	for i := range c.scratch.reconEvents {
+		ev := &c.scratch.reconEvents[i]
+		switch ev.kind {
+		case frameWorkReconEventBlockBegin:
+			if err := c.predictBlockBegin(&ev.visit); err != nil {
+				return err
+			}
+		case frameWorkReconEventTXB:
+			if err := c.reconstructTXB(&ev.visit, &ev.block, ev.currentQIndex); err != nil {
+				return err
+			}
+		default:
+			return ErrInvalidBatch
+		}
 	}
 	return nil
 }
