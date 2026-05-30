@@ -11,15 +11,16 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // init binds the NEON batched column kernels on arm64.
 //
 // As with the row pass, every arm64 chip Go runs on supports NEON, but we gate
-// on cpu.Detected.NEON so a test can force the pure-Go path. The DCT8 and
-// DCT16 column-pair kernels both beat the scalar pure-Go column path on this
-// host (their wide butterflies amortise the assembly-call overhead), so both
-// are bound. The kernels are proven bit-exact by the column dispatch
+// on cpu.Detected.NEON so a test can force the pure-Go path. The DCT8, DCT16
+// and DCT32 column-pair kernels all beat the scalar pure-Go column path on this
+// host (their wide butterflies amortise the assembly-call overhead), so all
+// three are bound. The kernels are proven bit-exact by the column dispatch
 // differential test.
 func init() {
 	if cpu.Detected.NEON {
 		inverseDCT8Col2Impl = inverseDCT8Col2NEONAdapter
 		inverseDCT16Col2Impl = inverseDCT16Col2NEONAdapter
+		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
 	}
 }
 
@@ -44,4 +45,12 @@ func inverseDCT16Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
 		return
 	}
 	inverseDCT16Col2NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+func inverseDCT32Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 2 || len(buf) < (dct32Size-1)*rowStride+2 {
+		inverseDCT32Col2PureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT32Col2NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
 }

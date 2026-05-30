@@ -32,6 +32,7 @@ package transform
 var (
 	inverseDCT8Col2Impl  = inverseDCT8Col2PureGo
 	inverseDCT16Col2Impl = inverseDCT16Col2PureGo
+	inverseDCT32Col2Impl = inverseDCT32Col2PureGo
 )
 
 // inverse1DCol2 applies the 1D inverse column transform to two adjacent
@@ -48,6 +49,9 @@ func inverse1DCol2(buf []int32, rowStride int, length int, typ tx1DType, min int
 			return
 		case dct16Size:
 			inverseDCT16Col2Impl(buf, rowStride, min, max)
+			return
+		case dct32Size:
+			inverseDCT32Col2Impl(buf, rowStride, min, max)
 			return
 		}
 	}
@@ -70,4 +74,9 @@ func inverseDCT8Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 func inverseDCT16Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT16(buf, rowStride, min, max)
 	inverseDCT16(buf[1:], rowStride, min, max)
+}
+
+func inverseDCT32Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT32(buf, rowStride, min, max)
+	inverseDCT32(buf[1:], rowStride, min, max)
 }

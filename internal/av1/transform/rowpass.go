@@ -29,6 +29,8 @@ func inverse1DRow(c []int32, length int, typ tx1DType, min int32, max int32) {
 			inverseDCT8Row(c, min, max)
 		case dct16Size:
 			inverseDCT16Row(c, min, max)
+		case dct32Size:
+			inverseDCT32Row(c, min, max)
 		case dct64Size:
 			inverseDCT64Row(c, min, max)
 		default:
@@ -225,6 +227,18 @@ func inverseDCT16Row(c []int32, min int32, max int32) {
 	c[13] = clipRange(int64(even2)-t13a, min, max)
 	c[14] = clipRange(int64(even1)-t14, min, max)
 	c[15] = clipRange(int64(even0)-t15a, min, max)
+}
+
+// inverseDCT32Row applies the inverse DCT32 to the contiguous slice c (stride
+// 1). It reslices to the exact transform length so the compiler drops the
+// per-element bounds checks, then runs the shared strided butterfly with
+// stride 1; the result is byte-for-byte identical to inverseDCT32(c, 1, ...).
+func inverseDCT32Row(c []int32, min int32, max int32) {
+	if len(c) < dct32Size {
+		return
+	}
+	c = c[:dct32Size]
+	inverseDCT32(c, 1, min, max)
 }
 
 func inverseADST8Row(c []int32, min int32, max int32) {
