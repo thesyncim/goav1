@@ -1117,10 +1117,8 @@ func frameTypeIsInterOrSwitch(frameType parser.FrameType) bool {
 }
 
 const (
-	cflSignZero     = 0
-	cflSignNegative = 1
-	cflSignPositive = 2
-	cflSigns        = 3
+	cflSignZero = 0
+	cflSigns    = 3
 )
 
 func shouldReadIntraAngleDelta(size BlockSize, mode IntraMode) (bool, error) {

@@ -530,7 +530,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
 	}
-	if haveTop && haveLeft && carrier != nil && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
+	if haveTop && haveLeft && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
 		scratch.Mode.SBDiagonalInterMotionGrid = carrier.Diagonal[rootColIndex].InterMotion
 		scratch.Mode.SBDiagonalMotionValidGrid = carrier.Diagonal[rootColIndex].MotionValid
 		scratch.Mode.SBDiagonalBlockSizeGrid = carrier.Diagonal[rootColIndex].BlockSize

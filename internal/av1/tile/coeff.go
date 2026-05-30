@@ -8,24 +8,22 @@ import (
 )
 
 const (
-	CoeffQContexts        = 4
-	CoeffTxSizeContexts   = 5
-	CoeffPlaneTypes       = 2
-	TXBSkipContexts       = 13
-	EOBCoefContexts       = 9
-	EOBBaseContexts       = 4
-	CoeffBaseContexts     = 42
-	CoeffBRContexts       = 21
-	NumBaseLevels         = 2
-	BRCDFSize             = 4
-	CoeffBaseRange        = 4 * (BRCDFSize - 1)
-	MaxBaseBRRange        = CoeffBaseRange + NumBaseLevels + 1
-	CoeffContextBits      = 3
-	CoeffContextMask      = (1 << CoeffContextBits) - 1
-	maxEOBFlagContexts    = 2
-	maxEOBFlagCumulative  = 10
-	maxCoeffCumulativeLen = 10
-	txPadHorizontal       = 4
+	CoeffQContexts      = 4
+	CoeffTxSizeContexts = 5
+	CoeffPlaneTypes     = 2
+	TXBSkipContexts     = 13
+	EOBCoefContexts     = 9
+	EOBBaseContexts     = 4
+	CoeffBaseContexts   = 42
+	CoeffBRContexts     = 21
+	NumBaseLevels       = 2
+	BRCDFSize           = 4
+	CoeffBaseRange      = 4 * (BRCDFSize - 1)
+	MaxBaseBRRange      = CoeffBaseRange + NumBaseLevels + 1
+	CoeffContextBits    = 3
+	CoeffContextMask    = (1 << CoeffContextBits) - 1
+	maxEOBFlagContexts  = 2
+	txPadHorizontal     = 4
 )
 
 type CoeffPlaneType uint8
