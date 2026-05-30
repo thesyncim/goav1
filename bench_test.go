@@ -295,8 +295,19 @@ func newBenchSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.D
 
 func mustReadBenchVector(b *testing.B) []byte {
 	b.Helper()
-	path := filepath.Join(benchVectorPath)
-	raw, err := os.ReadFile(path)
+	// GOAV1_BENCH_VECTOR overrides the default lossless quantizer-00 clip so a
+	// profiling run can target a more representative bitstream (e.g. a higher
+	// quantizer that exercises the entropy and reconstruction paths more
+	// heavily). It accepts either an absolute path or a bare libaom vector
+	// name resolved under the bundled test-data directory.
+	path := benchVectorPath
+	if override := os.Getenv("GOAV1_BENCH_VECTOR"); override != "" {
+		path = override
+		if !filepath.IsAbs(override) && filepath.Dir(override) == "." {
+			path = filepath.Join("internal/av1/testdata/libaom", override)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		b.Fatalf("read bench vector %q: %v", path, err)
 	}
