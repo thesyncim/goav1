@@ -201,6 +201,7 @@ type FrameWorkTileResidualScratch struct {
 
 	controller frameWorkTileResidualLoopController
 	stats      FrameWorkTileResidualStats
+	geomCache  frameWorkJobGeometryCache
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -624,6 +625,15 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		restoration = *req.Restoration
 		readRestoration = true
 	}
+	// Install a per-job geometry cache so the job-constant JobRegion and
+	// per-plane JobOutputPlane windows are computed once and reused across the
+	// thousands of transform-block predict/reconstruct calls this job makes
+	// (all sharing this index). The cache lives in caller-owned scratch and is
+	// reset here so a worker reusing scratch across jobs never serves stale
+	// geometry. It rides along on the batch value copied into the controller,
+	// so every c.batch.* call below shares it.
+	scratch.geomCache.reset()
+	b.geomCache = &scratch.geomCache
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  b,
 		index:                  index,

@@ -246,6 +246,40 @@ type FrameWorkBatch struct {
 	RetainedTileResidualCDFsValid *bool
 	Batch                         Batch
 	Jobs                          []tile.Job
+
+	// geomCache optionally memoizes the job-constant JobRegion and per-plane
+	// JobOutputPlane windows for a single job index. It is caller-owned scratch
+	// installed by the per-job residual loop (which decodes thousands of
+	// transform blocks that all share one index) so the geometry is computed
+	// once per job/plane instead of once per coefficient block. When nil, the
+	// geometry methods recompute on every call, preserving the stateless
+	// value-receiver contract for all other callers. The cache holds geometry
+	// for exactly one index at a time and is keyed/validated by index, so a
+	// worker that reuses one cache across successive jobs stays byte-exact.
+	geomCache *frameWorkJobGeometryCache
+}
+
+// frameWorkJobGeometryCache memoizes the job-constant reconstruction geometry
+// for one job index. JobRegion and JobOutputPlane depend only on the job index
+// (and, for the plane window, the plane); within a single tile job they are
+// invariant across every decoded transform block. Caching them removes the
+// per-block recompute observed in profiling while producing bit-identical
+// results (the cache returns exactly what the original computation would).
+type frameWorkJobGeometryCache struct {
+	regionValid bool
+	regionIndex int
+	region      FrameWorkJobRegion
+
+	planeValid [3]bool
+	planeIndex [3]int
+	plane      [3]FrameWorkPlaneRegion
+}
+
+// reset invalidates every cached entry. The per-job loop calls this before a
+// job runs so a reused cache never serves stale geometry for a new index.
+func (c *frameWorkJobGeometryCache) reset() {
+	c.regionValid = false
+	c.planeValid = [3]bool{}
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
@@ -298,8 +332,31 @@ func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error
 	})
 }
 
-// JobRegion returns the clipped reconstruction region for Jobs[index].
+// JobRegion returns the clipped reconstruction region for Jobs[index]. When a
+// job-geometry cache is installed (by the residual loop), the result is
+// memoized per index so the pure integer recompute is amortized across the
+// many transform blocks of one job.
 func (b FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
+	if c := b.geomCache; c != nil && c.regionValid && c.regionIndex == index {
+		return c.region, nil
+	}
+	region, err := b.computeJobRegion(index)
+	if err != nil {
+		return region, err
+	}
+	if c := b.geomCache; c != nil {
+		// A new index invalidates any plane windows cached for the old one.
+		if !c.regionValid || c.regionIndex != index {
+			c.planeValid = [3]bool{}
+		}
+		c.region = region
+		c.regionIndex = index
+		c.regionValid = true
+	}
+	return region, nil
+}
+
+func (b FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error) {
 	if index < 0 || index >= len(b.Jobs) || !b.Sequence.Valid() ||
 		b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return FrameWorkJobRegion{}, ErrInvalidBatch
@@ -463,6 +520,23 @@ func (b FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane,
 // transform blocks regardless of the visible boundary, and later blocks read
 // those past-visible samples as predictor neighbors).
 func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV &&
+		c.planeValid[plane] && c.planeIndex[plane] == index {
+		return c.plane[plane], nil
+	}
+	window, err := b.computeJobOutputPlane(index, plane)
+	if err != nil {
+		return window, err
+	}
+	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV {
+		c.plane[plane] = window
+		c.planeIndex[plane] = index
+		c.planeValid[plane] = true
+	}
+	return window, nil
+}
+
+func (b FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return FrameWorkPlaneRegion{}, err
