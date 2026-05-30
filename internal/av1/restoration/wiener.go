@@ -74,12 +74,25 @@ func ApplyWienerRestoration(src []uint16, srcStride int, srcOrigin int, dst []ui
 
 	round0, round1 := wienerRounds(int(bitDepth))
 	temp := scratch[:need]
-	if !wienerHorizontal(src, srcStride, srcOrigin, width, height, info.HFilter, int(bitDepth), round0, max, temp) {
+	if !wienerHorizontalImpl(src, srcStride, srcOrigin, width, height, info.HFilter, int(bitDepth), round0, max, temp) {
 		return ErrInvalidRestoration
 	}
-	wienerVertical(temp, width, dst, dstStride, width, height, info.VFilter, int(bitDepth), round1, max)
+	wienerVerticalImpl(temp, width, dst, dstStride, width, height, info.VFilter, int(bitDepth), round1, max)
 	return nil
 }
+
+// wienerHorizontalImpl and wienerVerticalImpl are the dispatch slots for the two
+// separable Wiener passes. They are resolved exactly once, at package init (see
+// wiener_dispatch_*.go), so the per-call cost is a single indirect call with no
+// feature-detection branches. wienerHorizontal / wienerVertical below are the
+// canonical bit-exact references; every tuned variant MUST match them sample for
+// sample (the rounding term, the round0/round1 shifts, and the [0,maxClamp] /
+// [0,max] clamps). Tests and benchmarks must not mutate these concurrently with
+// live decoding.
+var (
+	wienerHorizontalImpl = wienerHorizontal
+	wienerVerticalImpl   = wienerVertical
+)
 
 func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) bool {
 	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
