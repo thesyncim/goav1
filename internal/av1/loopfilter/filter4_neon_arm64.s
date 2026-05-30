@@ -277,3 +277,153 @@ loop16:
 
 done16:
 	RET
+
+// ---- filter4 vertical (8-bit) context offsets ----
+#define F4V_BASE 0
+#define F4V_STRIDE 8
+#define F4V_COUNT 16
+#define F4V_LIMIT 24
+#define F4V_BLIMIT 32
+#define F4V_HEV 40
+
+// func filter4VertNEONAsm(ctx *filter4VertNEONCtx)
+// Vertical-edge narrow filter. The four taps are contiguous bytes within a row;
+// successive positions step by the row stride. Per group of eight positions the
+// kernel transposes through ld4 (gathering p1/p0/q0/q1 into four lane vectors),
+// runs the exact filter4 lane arithmetic shared with filter4EdgeNEONAsm, then
+// scatters the results back with st4. Bit-exact with filter4EdgePureGo.
+TEXT ·filter4VertNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD F4V_BASE(R0), R9
+	MOVD F4V_STRIDE(R0), R10
+	MOVD F4V_COUNT(R0), R13
+
+	MOVD F4V_LIMIT(R0), R6
+	WORD $0x4e020cc0 // dup v0.8h, w6
+	MOVD F4V_BLIMIT(R0), R7
+	WORD $0x4e020ce1 // dup v1.8h, w7
+	MOVD F4V_HEV(R0), R8
+	WORD $0x4e020d02 // dup v2.8h, w8
+	WORD $0x4f048403 // movi v3.8h, #128
+	WORD $0x6f0387e4 // mvni v4.8h, #127   (-128)
+	WORD $0x4f0387e5 // movi v5.8h, #127
+	WORD $0x4f008466 // movi v6.8h, #3
+	WORD $0x4f008487 // movi v7.8h, #4
+
+loop4v:
+	CBZ R13, done4v
+	MOVD R9, R11      // cursor = base
+	WORD $0x0d602170 // ld4 {v16.b, v17.b, v18.b, v19.b}[0], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d602570 // ld4 {v16.b, v17.b, v18.b, v19.b}[1], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d602970 // ld4 {v16.b, v17.b, v18.b, v19.b}[2], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d602d70 // ld4 {v16.b, v17.b, v18.b, v19.b}[3], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d603170 // ld4 {v16.b, v17.b, v18.b, v19.b}[4], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d603570 // ld4 {v16.b, v17.b, v18.b, v19.b}[5], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d603970 // ld4 {v16.b, v17.b, v18.b, v19.b}[6], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d603d70 // ld4 {v16.b, v17.b, v18.b, v19.b}[7], [x11]
+	ADD R10, R11, R11
+	WORD $0x2f08a610 // uxtl v16.8h, v16.8b
+	WORD $0x2f08a631 // uxtl v17.8h, v17.8b
+	WORD $0x2f08a652 // uxtl v18.8h, v18.8b
+	WORD $0x2f08a673 // uxtl v19.8h, v19.8b
+	WORD $0x6e638614 // sub v20.8h, v16.8h, v3.8h
+	WORD $0x6e638635 // sub v21.8h, v17.8h, v3.8h
+	WORD $0x6e638656 // sub v22.8h, v18.8h, v3.8h
+	WORD $0x6e638677 // sub v23.8h, v19.8h, v3.8h
+	WORD $0x6e718618 // sub v24.8h, v16.8h, v17.8h
+	WORD $0x4e60bb18 // abs v24.8h, v24.8h
+	WORD $0x6e728679 // sub v25.8h, v19.8h, v18.8h
+	WORD $0x4e60bb39 // abs v25.8h, v25.8h
+	WORD $0x6e72863a // sub v26.8h, v17.8h, v18.8h
+	WORD $0x4e60bb5a // abs v26.8h, v26.8h
+	WORD $0x6e73861b // sub v27.8h, v16.8h, v19.8h
+	WORD $0x4e60bb7b // abs v27.8h, v27.8h
+	WORD $0x4e783c1c // cmge v28.8h, v0.8h, v24.8h
+	WORD $0x4e793c1d // cmge v29.8h, v0.8h, v25.8h
+	WORD $0x4e3d1f9c // and v28.16b, v28.16b, v29.16b
+	WORD $0x4f11575e // shl v30.8h, v26.8h, #1
+	WORD $0x4f1f077f // sshr v31.8h, v27.8h, #1
+	WORD $0x4e7f87de // add v30.8h, v30.8h, v31.8h
+	WORD $0x4e7e3c3d // cmge v29.8h, v1.8h, v30.8h
+	WORD $0x4e3d1f9c // and v28.16b, v28.16b, v29.16b
+	WORD $0x4e62371d // cmgt v29.8h, v24.8h, v2.8h
+	WORD $0x4e62373e // cmgt v30.8h, v25.8h, v2.8h
+	WORD $0x4ebe1fbd // orr v29.16b, v29.16b, v30.16b
+	WORD $0x6e778698 // sub v24.8h, v20.8h, v23.8h
+	WORD $0x4e656f18 // smin v24.8h, v24.8h, v5.8h
+	WORD $0x4e646718 // smax v24.8h, v24.8h, v4.8h
+	WORD $0x4e3d1f18 // and v24.16b, v24.16b, v29.16b
+	WORD $0x6e7586d9 // sub v25.8h, v22.8h, v21.8h
+	WORD $0x4e669f39 // mul v25.8h, v25.8h, v6.8h
+	WORD $0x4e798718 // add v24.8h, v24.8h, v25.8h
+	WORD $0x4e656f18 // smin v24.8h, v24.8h, v5.8h
+	WORD $0x4e646718 // smax v24.8h, v24.8h, v4.8h
+	WORD $0x4e678719 // add v25.8h, v24.8h, v7.8h
+	WORD $0x4e656f39 // smin v25.8h, v25.8h, v5.8h
+	WORD $0x4e646739 // smax v25.8h, v25.8h, v4.8h
+	WORD $0x4f1d0739 // sshr v25.8h, v25.8h, #3
+	WORD $0x4e66871a // add v26.8h, v24.8h, v6.8h
+	WORD $0x4e656f5a // smin v26.8h, v26.8h, v5.8h
+	WORD $0x4e64675a // smax v26.8h, v26.8h, v4.8h
+	WORD $0x4f1d075a // sshr v26.8h, v26.8h, #3
+	WORD $0x4f1f2738 // srshr v24.8h, v25.8h, #1
+	WORD $0x4e7a86bb // add v27.8h, v21.8h, v26.8h
+	WORD $0x4e656f7b // smin v27.8h, v27.8h, v5.8h
+	WORD $0x4e64677b // smax v27.8h, v27.8h, v4.8h
+	WORD $0x4e63877b // add v27.8h, v27.8h, v3.8h
+	WORD $0x6e7986de // sub v30.8h, v22.8h, v25.8h
+	WORD $0x4e656fde // smin v30.8h, v30.8h, v5.8h
+	WORD $0x4e6467de // smax v30.8h, v30.8h, v4.8h
+	WORD $0x4e6387de // add v30.8h, v30.8h, v3.8h
+	WORD $0x4e78869f // add v31.8h, v20.8h, v24.8h
+	WORD $0x4e656fff // smin v31.8h, v31.8h, v5.8h
+	WORD $0x4e6467ff // smax v31.8h, v31.8h, v4.8h
+	WORD $0x4e6387ff // add v31.8h, v31.8h, v3.8h
+	WORD $0x6e7886f9 // sub v25.8h, v23.8h, v24.8h
+	WORD $0x4e656f39 // smin v25.8h, v25.8h, v5.8h
+	WORD $0x4e646739 // smax v25.8h, v25.8h, v4.8h
+	WORD $0x4e638739 // add v25.8h, v25.8h, v3.8h
+	WORD $0x4e7d1f9a // bic v26.16b, v28.16b, v29.16b
+	WORD $0x4ebc1f94 // mov v20.16b, v28.16b
+	WORD $0x6e711f74 // bsl v20.16b, v27.16b, v17.16b
+	WORD $0x4ebc1f95 // mov v21.16b, v28.16b
+	WORD $0x6e721fd5 // bsl v21.16b, v30.16b, v18.16b
+	WORD $0x4eba1f56 // mov v22.16b, v26.16b
+	WORD $0x6e701ff6 // bsl v22.16b, v31.16b, v16.16b
+	WORD $0x4eba1f57 // mov v23.16b, v26.16b
+	WORD $0x6e731f37 // bsl v23.16b, v25.16b, v19.16b
+	WORD $0x0e212ad8 // xtn v24.8b, v22.8h
+	WORD $0x0e212a99 // xtn v25.8b, v20.8h
+	WORD $0x0e212aba // xtn v26.8b, v21.8h
+	WORD $0x0e212afb // xtn v27.8b, v23.8h
+	MOVD R9, R11      // cursor = base
+	WORD $0x0d202178 // st4 {v24.b, v25.b, v26.b, v27.b}[0], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d202578 // st4 {v24.b, v25.b, v26.b, v27.b}[1], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d202978 // st4 {v24.b, v25.b, v26.b, v27.b}[2], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d202d78 // st4 {v24.b, v25.b, v26.b, v27.b}[3], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d203178 // st4 {v24.b, v25.b, v26.b, v27.b}[4], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d203578 // st4 {v24.b, v25.b, v26.b, v27.b}[5], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d203978 // st4 {v24.b, v25.b, v26.b, v27.b}[6], [x11]
+	ADD R10, R11, R11
+	WORD $0x0d203d78 // st4 {v24.b, v25.b, v26.b, v27.b}[7], [x11]
+	ADD R10, R11, R11
+	LSL $3, R10, R12  // 8*stride
+	ADD R12, R9, R9
+	SUB $1, R13, R13
+	B loop4v
+
+done4v:
+	RET

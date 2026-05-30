@@ -53,15 +53,35 @@ func wideKernels() []wideKernel {
 	}
 }
 
+// fillWideContent fills buf with one of several content regimes. Pure-random
+// content almost never satisfies the flat8in/flat8out predicates, so the flat
+// and near-flat modes are essential to exercise filter8's flat branch and
+// filter14's fourteen-tap wide path (where a divergence once slipped past a
+// random-only test and only surfaced on a real monochrome frame).
+func fillWideContent(buf []byte, rng *rand.Rand, mode int) {
+	for i := range buf {
+		switch mode {
+		case 0:
+			buf[i] = byte(rng.Intn(256)) // random
+		case 1:
+			buf[i] = byte(120 + rng.Intn(16)) // near-flat
+		case 2:
+			buf[i] = byte(127 + rng.Intn(3)) // very flat (wide path)
+		case 3:
+			buf[i] = byte(rng.Intn(4)) // flat near 0 (clamp edge)
+		default:
+			buf[i] = byte(252 + rng.Intn(4)) // flat near 255 (clamp edge)
+		}
+	}
+}
+
 func runWideKernel(t *testing.T, k wideKernel, seed int64, length int, params filter4Params) {
 	t.Helper()
 	const stride = 128
 	const rows = 16
 	rng := rand.New(rand.NewSource(seed))
 	base := make([]byte, stride*rows)
-	for i := range base {
-		base[i] = byte(rng.Intn(256))
-	}
+	fillWideContent(base, rng, int(seed)%5)
 	step := stride
 	outer := 1
 	q0Base := 8 * stride // q0 row 8 leaves >=7 rows of headroom either side
@@ -80,6 +100,34 @@ func runWideKernel(t *testing.T, k wideKernel, seed int64, length int, params fi
 	}
 }
 
+// runWideKernelVertical mirrors runWideKernel for a vertical edge: the taps are
+// one byte apart (step == 1) and successive positions advance by the row stride
+// (outer == stride). This exercises the transposing ld4/ld2 vertical NEON path.
+func runWideKernelVertical(t *testing.T, k wideKernel, seed int64, length int, params filter4Params) {
+	t.Helper()
+	const stride = 96
+	const rows = 80
+	rng := rand.New(rand.NewSource(seed))
+	base := make([]byte, stride*rows)
+	fillWideContent(base, rng, int(seed)%5)
+	step := 1
+	outer := stride
+	q0Base := 16 // column 16 leaves >=7 bytes of tap headroom on the left
+
+	want := append([]byte(nil), base...)
+	got := append([]byte(nil), base...)
+
+	k.ref(want, q0Base, step, outer, length, 1, params)
+	k.impl()(got, q0Base, step, outer, length, 1, params)
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s vertical seed=%d len=%d params=%+v idx=%d got=%d want=%d",
+				k.name, seed, length, params, i, got[i], want[i])
+		}
+	}
+}
+
 // TestWideFilterDispatchMatchesPureGo is the bit-exactness guard for the
 // dispatched six/eight/fourteen-sample kernels. It drives the resolved dispatch
 // slot (NEON asm on arm64) against the pure-Go reference over a spread of edge
@@ -93,6 +141,25 @@ func TestWideFilterDispatchMatchesPureGo(t *testing.T) {
 			for _, length := range lengths {
 				for rep := 0; rep < 4; rep++ {
 					runWideKernel(t, k, seed, length, params)
+					seed++
+				}
+			}
+		}
+	}
+}
+
+// TestWideFilterDispatchVerticalMatchesPureGo is the bit-exactness guard for the
+// vertical-edge six/eight/fourteen-sample kernels (transposing ld4/ld2 NEON on
+// arm64) against the pure-Go reference over the same length and threshold
+// spread. Every output byte must match.
+func TestWideFilterDispatchVerticalMatchesPureGo(t *testing.T) {
+	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 64}
+	for _, k := range wideKernels() {
+		var seed int64 = 7000
+		for _, params := range wideFilterParamsCorpus() {
+			for _, length := range lengths {
+				for rep := 0; rep < 4; rep++ {
+					runWideKernelVertical(t, k, seed, length, params)
 					seed++
 				}
 			}

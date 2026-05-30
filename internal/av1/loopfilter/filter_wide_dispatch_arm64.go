@@ -19,10 +19,7 @@ func init() {
 	if cpu.Detected.NEON {
 		filter6EdgeImpl = filter6EdgeNEON
 		filter8EdgeImpl = filter8EdgeNEON
-		// filter14 keeps the pure-Go reference: its flat2 decision plus twelve
-		// weighted-average outputs exceed the register budget of a single
-		// contiguous NEON pass, so it is left on the audited scalar path.
-		filter14EdgeImpl = filter14EdgePureGo
+		filter14EdgeImpl = filter14EdgeNEON
 		return
 	}
 	filter6EdgeImpl = filter6EdgePureGo

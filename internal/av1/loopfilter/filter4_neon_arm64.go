@@ -44,6 +44,49 @@ type filter4NEONCtx struct {
 //go:noescape
 func filter4EdgeNEONAsm(ctx *filter4NEONCtx)
 
+// filter4VertNEONCtx is the asm calling context for the 8-bit vertical-edge
+// kernel. A vertical edge has its four taps (p1,p0,q0,q1) contiguous in one row
+// while successive positions step by the row stride, so the asm transposes via
+// per-lane ld4/st4: base points at the first position's p1 byte and stride is
+// the byte distance between adjacent positions. Field order is part of the ABI
+// shared with filter4_neon_arm64.s; do not reorder.
+type filter4VertNEONCtx struct {
+	base   *byte   // pointer to p1 of the first position (q0Base - 2)
+	stride uintptr // byte stride between successive positions along the edge
+	count  uintptr // number of 8-position groups to process
+	limit  int64
+	blimit int64
+	hev    int64
+}
+
+//go:noescape
+func filter4VertNEONAsm(ctx *filter4VertNEONCtx)
+
+// filter4VertNEON accelerates the 8-bit narrow filter for vertical edges, where
+// the four taps are one byte apart (step == 1) and positions advance by the row
+// stride. It transposes eight positions per group through ld4/st4 so the lane
+// arithmetic is identical to the horizontal kernel. Any tail shorter than eight
+// positions routes through the pure-Go reference.
+func filter4VertNEON(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	groups := length / 8
+	if step != 1 || groups == 0 {
+		filter4EdgePureGo(pix, q0Base, step, outer, length, params)
+		return
+	}
+	ctx := filter4VertNEONCtx{
+		base:   &pix[q0Base-2],
+		stride: uintptr(outer),
+		count:  uintptr(groups),
+		limit:  int64(params.limit),
+		blimit: int64(params.blimit),
+		hev:    int64(params.hev),
+	}
+	filter4VertNEONAsm(&ctx)
+	if rem := length - groups*8; rem > 0 {
+		filter4EdgePureGo(pix, q0Base+groups*8*outer, step, outer, rem, params)
+	}
+}
+
 // filter4Edge16NEONCtx is the asm calling context for the two-byte (10/12-bit)
 // narrow kernel. Field order and sizes are part of the ABI shared with
 // filter4_neon_arm64.s; do not reorder. The centre and clamp bounds are passed
@@ -96,13 +139,17 @@ func filter4Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, 
 }
 
 func filter4EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
-	// The NEON path handles horizontal edges only: there the per-position
-	// stride (outer) is one byte, so eight positions form contiguous loads.
-	// Vertical edges (outer == stride, step == 1) need a gather/transpose and
-	// stay on the reference. Bit depth is fixed at 8 here (callers gate on
-	// bytesPerSample == 1), so center == 128 and the clamp range is [-128,127].
+	// Bit depth is fixed at 8 here (callers gate on bytesPerSample == 1), so
+	// center == 128 and the clamp range is [-128,127]. Horizontal edges have a
+	// one-byte per-position stride (outer == 1) so eight positions form
+	// contiguous loads; vertical edges have one-byte taps (step == 1) and route
+	// through the transposing ld4/st4 kernel.
 	groups := length / 8
 	if outer != 1 || groups == 0 {
+		if step == 1 {
+			filter4VertNEON(pix, q0Base, step, outer, length, params)
+			return
+		}
 		filter4EdgePureGo(pix, q0Base, step, outer, length, params)
 		return
 	}

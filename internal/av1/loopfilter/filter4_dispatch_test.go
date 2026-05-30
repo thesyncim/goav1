@@ -92,6 +92,54 @@ func TestFilter4DispatchMatchesPureGo(t *testing.T) {
 	}
 }
 
+// runFilter4KernelVertical materialises a flat 8-bit buffer and runs both the
+// reference and the dispatched kernel along a vertical edge: the four taps are
+// one byte apart (step == 1) and successive positions advance by the row stride
+// (outer == stride). This exercises the transposing ld4/st4 vertical NEON path.
+func runFilter4KernelVertical(t *testing.T, seed int64, length int, params filter4Params) {
+	t.Helper()
+	const stride = 64
+	const rows = 80
+	rng := rand.New(rand.NewSource(seed))
+	base := make([]byte, stride*rows)
+	for i := range base {
+		base[i] = byte(rng.Intn(256))
+	}
+
+	step := 1
+	outer := stride
+	q0Base := 8 // column 8 leaves >=2 bytes of tap headroom on the left
+
+	want := append([]byte(nil), base...)
+	got := append([]byte(nil), base...)
+
+	filter4EdgePureGo(want, q0Base, step, outer, length, params)
+	filter4EdgeImpl(got, q0Base, step, outer, length, params)
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("vertical seed=%d len=%d params=%+v idx=%d got=%d want=%d",
+				seed, length, params, i, got[i], want[i])
+		}
+	}
+}
+
+// TestFilter4DispatchVerticalMatchesPureGo is the bit-exactness guard for the
+// vertical-edge narrow kernel (transposing ld4/st4 NEON on arm64) against the
+// pure-Go reference over a spread of edge lengths and threshold configurations.
+func TestFilter4DispatchVerticalMatchesPureGo(t *testing.T) {
+	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 63}
+	var seed int64 = 9000
+	for _, params := range filter4DispatchParamsCorpus() {
+		for _, length := range lengths {
+			for rep := 0; rep < 4; rep++ {
+				runFilter4KernelVertical(t, seed, length, params)
+				seed++
+			}
+		}
+	}
+}
+
 // TestFilter4DispatchMatchesPureGoForcedPureGo confirms the differential holds
 // when the dispatcher is forced onto the pure-Go branch (CPU override), so the
 // test still has meaning on a NEON host where the slot would otherwise always
