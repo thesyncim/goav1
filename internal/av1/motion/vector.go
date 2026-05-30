@@ -300,19 +300,19 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	switch {
 	case subX != 0 && subY != 0:
 		if planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-			convolve2D8(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		} else {
 			convolve2D8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		}
 	case subX != 0:
 		if planeRegionFits(ref, 1, refX-foX, refY, width+filterTaps-1, height) {
-			convolveX8(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
+			convolveX8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
 		} else {
 			convolveX8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
 		}
 	case subY != 0:
 		if planeRegionFits(ref, 1, refX, refY-foY, width, height+filterTaps-1) {
-			convolveY8(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
+			convolveY8Impl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
 		} else {
 			convolveY8Clamped(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
 		}
@@ -389,7 +389,7 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 	return nil
 }
 
-func convolveX8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveX8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	// 4-tap kernels (small blocks / bilinear) have zero end taps, so skip those MACs.
@@ -451,7 +451,7 @@ func convolveX8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 	}
 }
 
-func convolveY8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+func convolveY8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
@@ -512,7 +512,7 @@ func convolveY8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 	}
 }
 
-func convolve2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+func convolve2D8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
 	foX := filterTaps/2 - 1

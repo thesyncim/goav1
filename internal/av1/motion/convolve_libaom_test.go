@@ -103,7 +103,7 @@ func runLibaomConvolveXCase(t *testing.T, size libaomConvolveBlockSize, subX int
 	if err != nil {
 		t.Fatalf("x %dx%d sub=%d filter=%d: %v", size.width, size.height, subX, filter, err)
 	}
-	convolveX8(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, kernel)
+	convolveX8Impl(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, kernel)
 	libaomConvolveXRef(want, src, libaomInputOrigin, libaomInputOrigin, 0, 0, size.width, size.height, kernel)
 	assertLibaomConvolveEqual(t, "x", got, want, size, subX, 0, InterpFilters{X: filter})
 }
@@ -117,7 +117,7 @@ func runLibaomConvolveYCase(t *testing.T, size libaomConvolveBlockSize, subY int
 	if err != nil {
 		t.Fatalf("y %dx%d sub=%d filter=%d: %v", size.width, size.height, subY, filter, err)
 	}
-	convolveY8(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, kernel)
+	convolveY8Impl(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, kernel)
 	libaomConvolveYRef(want, src, libaomInputOrigin, libaomInputOrigin, 0, 0, size.width, size.height, kernel)
 	assertLibaomConvolveEqual(t, "y", got, want, size, 0, subY, InterpFilters{Y: filter})
 }
@@ -135,7 +135,7 @@ func runLibaomConvolve2DCase(t *testing.T, size libaomConvolveBlockSize, subX in
 	if err != nil {
 		t.Fatalf("2d %dx%d sub=%d,%d filters=%d,%d: %v", size.width, size.height, subX, subY, filters.X, filters.Y, err)
 	}
-	convolve2D8(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, xKernel, yKernel)
+	convolve2D8Impl(got, src, 0, 0, libaomInputOrigin, libaomInputOrigin, size.width, size.height, xKernel, yKernel)
 	libaomConvolve2DRef(want, src, libaomInputOrigin, libaomInputOrigin, 0, 0, size.width, size.height, xKernel, yKernel)
 	assertLibaomConvolveEqual(t, "2d", got, want, size, subX, subY, filters)
 }

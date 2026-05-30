@@ -42,7 +42,7 @@ func BenchmarkConvolve2D8_32(b *testing.B) {
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 32, 32, func() {
-		convolve2D8(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
+		convolve2D8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
 	})
 }
 
@@ -52,7 +52,7 @@ func BenchmarkConvolve2D8_8(b *testing.B) {
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 8, 8, func() {
-		convolve2D8(dst, ref, 0, 0, filterTaps, filterTaps, 8, 8, xk, yk)
+		convolve2D8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 8, 8, xk, yk)
 	})
 }
 
@@ -62,7 +62,7 @@ func BenchmarkConvolve2D8_4tap_4(b *testing.B) {
 	xk := subpelFilters4[3]
 	yk := subpelFilters4[5]
 	runConvolveBench(b, 4, 4, func() {
-		convolve2D8(dst, ref, 0, 0, filterTaps, filterTaps, 4, 4, xk, yk)
+		convolve2D8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 4, 4, xk, yk)
 	})
 }
 
@@ -72,7 +72,7 @@ func BenchmarkConvolve2D8_mixed_4x16(b *testing.B) {
 	xk := subpelFilters4[3]
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 4, 16, func() {
-		convolve2D8(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk)
+		convolve2D8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk)
 	})
 }
 
@@ -81,7 +81,7 @@ func BenchmarkConvolveX8_32(b *testing.B) {
 	dst, ref := benchPlanes(32, 8)
 	xk := subpelFilters8[3]
 	runConvolveBench(b, 32, 32, func() {
-		convolveX8(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk)
+		convolveX8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk)
 	})
 }
 
@@ -90,7 +90,7 @@ func BenchmarkConvolveY8_32(b *testing.B) {
 	dst, ref := benchPlanes(32, 8)
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 32, 32, func() {
-		convolveY8(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+		convolveY8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
 	})
 }
 
