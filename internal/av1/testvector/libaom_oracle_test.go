@@ -308,7 +308,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			)
 			spatialID := event.SpatialID
 			globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
-			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
+			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -669,6 +669,12 @@ type libaomSpatialLayerState struct {
 type libaomSpatialLayers struct {
 	byID       map[uint8]*libaomSpatialLayerState
 	sharedRefs decoder.SurfaceReferences
+	// sharedFrameContexts is the stream-global, surface-keyed entropy (CDF)
+	// frame-context store. It is shared across spatial layers exactly like
+	// sharedRefs because AV1 frame contexts live in the shared RefCntBuffer
+	// pool, so an enhancement layer inheriting from a base-layer reference
+	// (primary_ref_frame) must read the base layer's saved context.
+	sharedFrameContexts decoder.SharedFrameContextStore
 }
 
 // libaomGlobalSurfaceStride bounds the per-layer pool index range in the

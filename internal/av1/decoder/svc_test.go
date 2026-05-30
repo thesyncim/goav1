@@ -142,7 +142,7 @@ func TestRunEventWithContextAndExternalReferencesNilProvider(t *testing.T) {
 	var state FrameWorkState
 	var refs SurfaceReferences
 	var event Event
-	if _, err := state.RunEventWithContextAndExternalReferences(&refs, nil, parser.SequenceHeader{}, event, 32, nil, nil, 1, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidSurfaceReference) {
+	if _, err := state.RunEventWithContextAndExternalReferences(&refs, nil, parser.SequenceHeader{}, event, 32, nil, nil, 1, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("nil-provider err=%v want %v", err, ErrInvalidSurfaceReference)
 	}
 }

@@ -156,16 +156,31 @@ type FrameWorkState struct {
 
 	tileResidualFrameContexts     [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage
 	tileResidualFrameContextValid [parser.RefFrames]bool
-	tileResidualCurrentCDFs       threading.FrameWorkTileResidualCDFStorage
-	tileResidualCurrentCDFsValid  bool
-	tileResidualRetainedCDFs      threading.FrameWorkTileResidualCDFStorage
-	tileResidualRetainedCDFsValid bool
-	cdefIndexMap                  threading.FrameWorkCDEFIndexMap
-	cdefIndexMapValid             bool
-	loopFilterMap                 threading.FrameWorkLoopFilterMap
-	loopFilterMapValid            bool
-	restorationFrameBuffers       threading.FrameWorkRestorationFrameBuffers
-	restorationFrameBuffersValid  bool
+	// sharedFrameContexts, when non-nil, redirects entropy (CDF) frame-context
+	// save/restore to a stream-global, surface-keyed store instead of the
+	// per-layer tileResidualFrameContexts array above. This mirrors libaom
+	// storing frame_context inside the shared RefCntBuffer pool
+	// (cm->cur_frame->frame_context = *cm->fc) and loading it on inheritance
+	// (get_primary_ref_frame_buf(cm)->frame_context). It is required for SVC
+	// cross-spatial-layer inheritance, where the primary reference buffer is a
+	// lower layer's surface this layer's local array never saw. The fields are
+	// set per event by RunEventWithContextAndExternalReferences and cleared on
+	// return; sharedFrameContextRefs supplies the slot->global-ID map and
+	// sharedFrameContextGlobalSurface maps the current frame's local pool index
+	// to its global surface ID.
+	sharedFrameContexts             *SharedFrameContextStore
+	sharedFrameContextRefs          *SurfaceReferences
+	sharedFrameContextGlobalSurface func(local int) int
+	tileResidualCurrentCDFs         threading.FrameWorkTileResidualCDFStorage
+	tileResidualCurrentCDFsValid    bool
+	tileResidualRetainedCDFs        threading.FrameWorkTileResidualCDFStorage
+	tileResidualRetainedCDFsValid   bool
+	cdefIndexMap                    threading.FrameWorkCDEFIndexMap
+	cdefIndexMapValid               bool
+	loopFilterMap                   threading.FrameWorkLoopFilterMap
+	loopFilterMapValid              bool
+	restorationFrameBuffers         threading.FrameWorkRestorationFrameBuffers
+	restorationFrameBuffersValid    bool
 	// sideDataBound records whether this frame's CDEF/loop-filter/restoration
 	// maps have already been bound (and reset). Binding resets the maps, so it
 	// must happen exactly once per frame -- on the first tile group -- even when
@@ -366,10 +381,31 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 
 func (s *FrameWorkState) initialTileResidualCDFs(event Event) (threading.FrameWorkTileResidualCDFStorage, error) {
 	var storage threading.FrameWorkTileResidualCDFStorage
+	// AV1 frame-context inheritance: when primary_ref_frame != PRIMARY_REF_NONE
+	// the frame's entropy (CDF) context is loaded from the referenced buffer,
+	// mirroring libaom's
+	//   *cm->fc = get_primary_ref_frame_buf(cm)->frame_context;
+	// (av1/decoder/decodeframe.c). The referenced buffer is the surface in the
+	// reference-map slot RefFrameIdx[primary_ref_frame] (get_primary_ref_frame_buf
+	// maps primary_ref_frame+1 through remapped_ref_idx into ref_frame_map).
 	if event.FrameHeader.PrimaryRefFrame != parser.PrimaryRefNone && event.FrameHeader.PrimaryRefFrame < parser.InterRefsPerFrame {
 		slot := event.FrameSize.RefFrameIdx[event.FrameHeader.PrimaryRefFrame]
-		if slot < parser.RefFrames && s.tileResidualFrameContextValid[slot] {
-			return s.tileResidualFrameContexts[slot], nil
+		if slot < parser.RefFrames {
+			// Shared, global-surface-keyed store (SVC / cross-pool): the
+			// referenced buffer's frame_context lives under its global surface
+			// ID, which may belong to a different spatial layer. Read it the
+			// same way libaom reads frame_context from the shared RefCntBuffer.
+			if s.sharedFrameContexts != nil && s.sharedFrameContextRefs != nil {
+				if globalID, ok := s.sharedFrameContextRefs.ReferenceSlot(int(slot)); ok {
+					if ctx, ok := s.sharedFrameContexts.load(globalID); ok {
+						return ctx, nil
+					}
+				}
+			} else if s.tileResidualFrameContextValid[slot] {
+				// Single-pool fallback: per-layer reference array keyed by the
+				// local reference-map slot.
+				return s.tileResidualFrameContexts[slot], nil
+			}
 		}
 	}
 	if err := storage.InitDefault(event.Quantization.BaseQIdx); err != nil {
@@ -385,6 +421,20 @@ func (s *FrameWorkState) finishTileResidualCDFs(event Event) {
 	cdfs := s.tileResidualCurrentCDFs
 	if s.tileResidualRetainedCDFsValid {
 		cdfs = s.tileResidualRetainedCDFs
+	}
+	// Save the adapted frame context for every refreshed reference-map slot,
+	// mirroring libaom's cm->cur_frame->frame_context = *cm->fc at frame end:
+	// every slot that refresh_frame_flags points at the current frame now also
+	// references the current frame's saved entropy context.
+	if s.sharedFrameContexts != nil && s.sharedFrameContextGlobalSurface != nil {
+		// Shared, global-surface-keyed store: save once under the current
+		// frame's global surface ID. The shared SurfaceReferences refresh
+		// (performed by finishExternal) already points the refreshed slots at
+		// this global ID, so a single keyed entry is reachable by every later
+		// frame that inherits from any of those slots.
+		globalID := s.sharedFrameContextGlobalSurface(s.Surface)
+		s.sharedFrameContexts.store(globalID, cdfs)
+		return
 	}
 	for i := 0; i < parser.RefFrames; i++ {
 		if (event.FrameSize.RefreshFrameFlags & (1 << uint(i))) == 0 {

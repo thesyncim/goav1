@@ -149,6 +149,61 @@ func (fn FrameSurfaceReleaserFunc) ReleaseFrameSurfaces(ids []int) error {
 	return fn(ids)
 }
 
+// SharedFrameContextStore holds saved entropy (CDF) frame contexts keyed by
+// the stream-global surface ID, mirroring libaom storing frame_context inside
+// the shared RefCntBuffer pool (av1/decoder/decodeframe.c:
+// cm->cur_frame->frame_context = *cm->fc at frame end). SVC enhancement-layer
+// frames with primary_ref_frame != PRIMARY_REF_NONE inherit their frame
+// context from the referenced buffer
+// (get_primary_ref_frame_buf(cm)->frame_context), which may belong to a
+// different spatial layer. A per-layer store keyed by local reference slot
+// cannot reach a lower layer's saved context; keying by the shared global
+// surface ID does.
+//
+// The store must be shared across all spatial layers that participate in the
+// same AV1 stream, exactly like the shared SurfaceReferences, because both the
+// reference slots and the per-buffer frame contexts are stream-global per the
+// AV1 spec.
+//
+// The zero value is ready to use. The store is caller-owned and not safe for
+// concurrent use across frames; AV1 decoding is serial across the frame-begin,
+// tile, and frame-finish events that touch it.
+type SharedFrameContextStore struct {
+	contexts map[int]threading.FrameWorkTileResidualCDFStorage
+}
+
+// Reset clears every saved frame context. Callers invoke this at a new coded
+// video sequence boundary, matching ResetFrameSurfaceReferences clearing the
+// stream-global reference slots.
+func (s *SharedFrameContextStore) Reset() {
+	if s == nil {
+		return
+	}
+	s.contexts = nil
+}
+
+// load returns the saved frame context for the global surface ID, reporting
+// whether one is present.
+func (s *SharedFrameContextStore) load(globalID int) (threading.FrameWorkTileResidualCDFStorage, bool) {
+	if s == nil || globalID < 0 || s.contexts == nil {
+		return threading.FrameWorkTileResidualCDFStorage{}, false
+	}
+	ctx, ok := s.contexts[globalID]
+	return ctx, ok
+}
+
+// store saves the adapted frame context under the global surface ID, mirroring
+// libaom's cm->cur_frame->frame_context = *cm->fc at frame end.
+func (s *SharedFrameContextStore) store(globalID int, ctx threading.FrameWorkTileResidualCDFStorage) {
+	if s == nil || globalID < 0 {
+		return
+	}
+	if s.contexts == nil {
+		s.contexts = make(map[int]threading.FrameWorkTileResidualCDFStorage)
+	}
+	s.contexts[globalID] = ctx
+}
+
 // RunEventWithContextAndExternalReferences is the SVC-friendly counterpart of
 // RunEventWithContextAndSideDataAndPostFilterRunners. The caller is
 // responsible for retaining decoded surfaces across spatial-layer pools and
@@ -165,7 +220,7 @@ func (fn FrameSurfaceReleaserFunc) ReleaseFrameSurfaces(ids []int) error {
 //
 // refs must be shared across all spatial layers that participate in the same
 // AV1 stream, because reference slots are stream-global per the AV1 spec.
-func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
+func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, frameContexts *SharedFrameContextStore, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
 	if provider == nil {
 		return FrameWorkEventResult{}, ErrInvalidSurfaceReference
 	}
@@ -173,6 +228,17 @@ func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceR
 		// Identity: the caller is not using a global namespace.
 		globalSurface = func(local int) int { return local }
 	}
+	// Route entropy (CDF) frame-context save/restore through the shared,
+	// global-surface-keyed store for the duration of this event so that the
+	// frame-context inheritance (primary_ref_frame) and save (refresh) read
+	// and write the stream-global RefCntBuffer-equivalent slot rather than this
+	// layer's local reference array. Cleared on return so a panic or error path
+	// cannot leak per-event sharing config across frames.
+	s.sharedFrameContexts = frameContexts
+	s.sharedFrameContextRefs = refs
+	s.sharedFrameContextGlobalSurface = globalSurface
+	defer s.clearSharedFrameContext()
+
 	step, output, referenceCount, references, err := s.planEventWithExternalReferenceContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, provider)
 	if err != nil {
 		return FrameWorkEventResult{}, err
@@ -191,6 +257,15 @@ func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceR
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+func (s *FrameWorkState) clearSharedFrameContext() {
+	if s == nil {
+		return
+	}
+	s.sharedFrameContexts = nil
+	s.sharedFrameContextRefs = nil
+	s.sharedFrameContextGlobalSurface = nil
 }
 
 func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, provider FrameSurfaceProvider) (FrameWorkStep, *frame.Frame, int, []*frame.Frame, error) {
