@@ -1145,7 +1145,11 @@ func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coef
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := geo.stride
-	if padded+4 >= len(levels) || padded+4*stride >= len(levels) || padded+stride+1 >= len(levels) {
+	// stride > 0 always holds for a valid transform geometry; asserting it lets
+	// the bounds-check elimination pass prove every padded+k*stride access below
+	// is covered by the padded+4*stride guard (k in 1..4), removing the per-access
+	// checks in the hot context loop. The guard never fires on valid input.
+	if stride <= 0 || padded < 0 || padded+4 >= len(levels) || padded+4*stride >= len(levels) || padded+stride+1 >= len(levels) {
 		return 0, ErrInvalidDecodeState
 	}
 	if class == transform.Class2D && pos == 0 {
@@ -1204,7 +1208,10 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := geo.stride
-	if padded+2*stride+2 >= len(levels) || padded+4 >= len(levels) {
+	// stride > 0 lets BCE prove the padded+k*stride accesses (k in 1..2) are
+	// covered by the padded+2*stride+2 guard, removing per-access checks. The
+	// guard never fires on valid transform geometry.
+	if stride <= 0 || padded < 0 || padded+2*stride+2 >= len(levels) || padded+4 >= len(levels) {
 		return 0, ErrInvalidDecodeState
 	}
 	row := int(p.row)
