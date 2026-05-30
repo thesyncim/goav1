@@ -168,17 +168,9 @@ func newDecodeBenchmarkHarness(b *testing.B, frames []av1.IVFFrame) *decodeBench
 		b.Fatal(err)
 	}
 
-	format := av1.FrameFormat{
-		Width:        int(plan.Bind.Event.FrameSize.CodedWidth),
-		Height:       int(plan.Bind.Event.FrameSize.Height),
-		BitDepth:     plan.Bind.Sequence.ColorConfig.BitDepth,
-		MonoChrome:   plan.Bind.Sequence.ColorConfig.MonoChrome,
-		SubsamplingX: plan.Bind.Sequence.ColorConfig.SubsamplingX,
-		SubsamplingY: plan.Bind.Sequence.ColorConfig.SubsamplingY,
-		Align:        64,
-	}
-	if format.BitDepth == 0 {
-		format.BitDepth = 8
+	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
+		b.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}
 	// Provide enough surfaces for the bounded reference set plus the in-flight
 	// output. A pool of MaxFrameBufferCount slots matches the worst-case
