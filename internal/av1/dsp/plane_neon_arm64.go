@@ -42,17 +42,21 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 		if vecCols == width {
 			return
 		}
+		tail := width - vecCols
 		for row := 0; row < block.height; row++ {
-			base := row * block.stride
-			resBase := row * residualStride
-			for col := vecCols; col < width; col++ {
-				v := int(block.pix[base+col]) + int(residual[resBase+col])
+			base := row*block.stride + vecCols
+			resBase := row*residualStride + vecCols
+			line := block.pix[base : base+tail : base+tail]
+			resLine := residual[resBase : resBase+tail : resBase+tail]
+			line = line[:len(resLine)]
+			for col, r := range resLine {
+				v := int(line[col]) + int(r)
 				if v < 0 {
 					v = 0
 				} else if v > maxInt {
 					v = maxInt
 				}
-				block.pix[base+col] = byte(v)
+				line[col] = byte(v)
 			}
 		}
 	case 2:
@@ -64,19 +68,23 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 		if vecCols == width {
 			return
 		}
+		tail := width - vecCols
 		for row := 0; row < block.height; row++ {
-			base := row * block.stride
-			resBase := row * residualStride
-			for col := vecCols; col < width; col++ {
-				off := base + col*2
-				v := int(uint16(block.pix[off])|uint16(block.pix[off+1])<<8) + int(residual[resBase+col])
+			base := row*block.stride + vecCols*2
+			resBase := row*residualStride + vecCols
+			line := block.pix[base : base+2*tail : base+2*tail]
+			resLine := residual[resBase : resBase+tail : resBase+tail]
+			line = line[:2*len(resLine)]
+			for col, r := range resLine {
+				pair := line[col*2 : col*2+2 : col*2+2]
+				v := int(uint16(pair[0])|uint16(pair[1])<<8) + int(r)
 				if v < 0 {
 					v = 0
 				} else if v > maxInt {
 					v = maxInt
 				}
-				block.pix[off] = byte(v)
-				block.pix[off+1] = byte(v >> 8)
+				pair[0] = byte(v)
+				pair[1] = byte(v >> 8)
 			}
 		}
 	}
