@@ -2,11 +2,12 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-// AVX2 per-column dequant kernel plus a CPUID/XGETBV feature probe. The kernel
-// is bit-exact with dequantColumnPureGo (see dequant.go); the Go wrapper in
-// dequant_avx2_amd64.go handles the n%8 tail with the scalar reference and
-// never invokes the asm when blocks8 == 0. Every mnemonic below is accepted
-// directly by the Go assembler at this GOARCH, so no manual encoding is needed.
+// AVX2 per-column dequant kernel. The kernel is bit-exact with
+// dequantColumnPureGo (see dequant.go); the Go wrapper in dequant_avx2_amd64.go
+// handles the n%8 tail with the scalar reference and never invokes the asm when
+// blocks8 == 0. AVX2 availability is gated by the shared CPUID detector in
+// internal/av1/dsp/cpu. Every mnemonic below is accepted directly by the Go
+// assembler at this GOARCH, so no manual encoding is needed.
 
 //go:build amd64 && !purego
 
@@ -82,22 +83,4 @@ loop:
 
 done:
 	VZEROUPPER
-	RET
-
-// func cpuidQuantize(eax, ecx uint32) (a, b, c, d uint32)
-TEXT ·cpuidQuantize(SB), NOSPLIT, $0-24
-	MOVL eax+0(FP), AX
-	MOVL ecx+4(FP), CX
-	CPUID
-	MOVL AX, a+8(FP)
-	MOVL BX, b+12(FP)
-	MOVL CX, c+16(FP)
-	MOVL DX, d+20(FP)
-	RET
-
-// func xgetbvQuantize() (lo uint32)
-TEXT ·xgetbvQuantize(SB), NOSPLIT, $0-4
-	MOVL  $0, CX
-	XGETBV
-	MOVL  AX, lo+0(FP)
 	RET

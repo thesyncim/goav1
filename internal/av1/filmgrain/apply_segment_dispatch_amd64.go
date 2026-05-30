@@ -20,20 +20,14 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 var applyGrainSegmentUseAVX2 bool
 
 // init binds the architecture-best grain apply kernel on amd64. AVX2 is not
-// part of the GOAMD64=v1 baseline the Go toolchain assumes, so it is probed at
-// runtime via CPUID (see cpuid_amd64.s); when present the kernel routes through
-// the hand-written AVX2 asm, otherwise it keeps the pure-Go reference. All bit
-// depths share one code path because the math is identical once the caller has
-// gathered the scaling-LUT values and supplied the clamp bounds.
-//
-// cpu.Detected.AVX2 records the same result for diagnostics. The cpu package's
-// own init reports a conservative SSE2-only baseline (it does not yet run
-// CPUID), so this package performs the CPUID probe itself and publishes the
-// AVX2 bit back into cpu.Detected without disturbing the other fields.
+// part of the GOAMD64=v1 baseline the Go toolchain assumes, so it is selected
+// only when the shared CPUID detector (see internal/av1/dsp/cpu) reports an
+// OS-enabled AVX2 unit; when present the kernel routes through the hand-written
+// AVX2 asm, otherwise it keeps the pure-Go reference. All bit depths share one
+// code path because the math is identical once the caller has gathered the
+// scaling-LUT values and supplied the clamp bounds.
 func init() {
-	avx2 := detectAVX2()
-	applyGrainSegmentUseAVX2 = avx2
-	cpu.Detected.AVX2 = avx2
+	applyGrainSegmentUseAVX2 = cpu.Detected.AVX2
 }
 
 func applyGrainSegment(dst []uint16, src []uint16, scale []uint16, grain []int16, scalingShift int, minValue int, maxValue int) {

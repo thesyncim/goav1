@@ -55,36 +55,6 @@ type dequantColumnAVX2Ctx struct {
 //go:noescape
 func dequantColumnAVX2Asm(ctx *dequantColumnAVX2Ctx)
 
-//go:noescape
-func cpuidQuantize(eax, ecx uint32) (a, b, c, d uint32)
-
-//go:noescape
-func xgetbvQuantize() (lo uint32)
-
-// detectAVX2 probes CPUID/XGETBV for OS-enabled AVX2. It mirrors the standard
-// sequence: leaf 1 must report OSXSAVE and AVX, XCR0 must enable both XMM and
-// YMM state, and leaf 7 sub-leaf 0 must report the AVX2 bit.
-func detectAVX2() bool {
-	maxLeaf, _, _, _ := cpuidQuantize(0, 0)
-	if maxLeaf < 7 {
-		return false
-	}
-	_, _, ecx1, _ := cpuidQuantize(1, 0)
-	const osxsaveBit = 1 << 27
-	const avxBit = 1 << 28
-	if ecx1&osxsaveBit == 0 || ecx1&avxBit == 0 {
-		return false
-	}
-	// XCR0 bit 1 (SSE/XMM) and bit 2 (AVX/YMM) must both be set by the OS.
-	const xcr0YMM = (1 << 1) | (1 << 2)
-	if xgetbvQuantize()&xcr0YMM != xcr0YMM {
-		return false
-	}
-	_, ebx7, _, _ := cpuidQuantize(7, 0)
-	const avx2Bit = 1 << 5
-	return ebx7&avx2Bit != 0
-}
-
 func dequantColumnAVX2(dst []int32, coeff []int16, scale int32, txScale uint8, dqMin int32, dqMax int32) {
 	n := len(coeff)
 	if n == 0 {
@@ -108,22 +78,13 @@ func dequantColumnAVX2(dst []int32, coeff []int16, scale int32, txScale uint8, d
 	}
 }
 
-// hasAVX2 reports whether this process may execute the AVX2 column kernel.
-//
-// The shared cpu.Detected feature struct is the authoritative source; the
-// dispatch binds when cpu.Detected.AVX2 is set. Because that package's amd64
-// detector does not yet probe CPUID for AVX2, this file also runs a local
-// CPUID/XGETBV check (detectAVX2) so the AVX2 kernel is used on real x86-64
-// hardware that advertises and OS-enables AVX2. Under Apple Rosetta 2 the
-// guest CPUID hides AVX (osxsave/avx report 0), so both sources are false and
-// the dispatcher correctly falls back to pure-Go even though Rosetta can in
-// fact execute the instructions.
-func hasAVX2() bool {
-	return cpu.Detected.AVX2 || detectAVX2()
-}
-
 func init() {
-	if hasAVX2() {
+	// The shared cpu.Detected feature struct (see internal/av1/dsp/cpu) is the
+	// authoritative AVX2 source: its amd64 init gates on CPUID.7 AVX2 plus
+	// OSXSAVE and the XCR0 YMM state bits. Under Apple Rosetta 2 the guest CPUID
+	// hides AVX, so this stays false and the dispatcher keeps the pure-Go
+	// (bit-exact) kernel even though Rosetta can in fact execute the AVX2 ops.
+	if cpu.Detected.AVX2 {
 		dequantColumnImpl = dequantColumnAVX2
 	}
 }

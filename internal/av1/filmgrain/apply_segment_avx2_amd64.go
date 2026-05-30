@@ -49,41 +49,6 @@ type applyGrainSegmentAVX2Ctx struct {
 //go:noescape
 func applyGrainSegmentAVX2Asm(ctx *applyGrainSegmentAVX2Ctx)
 
-// cpuid is the CPUID instruction wrapper (see cpuid_amd64.s). The cpu package
-// reports an SSE2-only baseline and does not run CPUID itself, so this package
-// probes AVX2 directly.
-//
-//go:noescape
-func cpuid(eaxArg, ecxArg uint32) (eax, ebx, ecx, edx uint32)
-
-// detectAVX2 reports whether the host CPU advertises AVX2 and OSXSAVE-backed
-// YMM state. It checks: max-leaf >= 7, CPUID.1:ECX.OSXSAVE (bit 27), XCR0 SSE
-// and AVX state bits (1 and 2), and CPUID.7:EBX.AVX2 (bit 5). XGETBV is read via
-// the xgetbv0 asm helper.
-func detectAVX2() bool {
-	maxLeaf, _, _, _ := cpuid(0, 0)
-	if maxLeaf < 7 {
-		return false
-	}
-	_, _, ecx1, _ := cpuid(1, 0)
-	const osxsave = 1 << 27
-	if ecx1&osxsave == 0 {
-		return false
-	}
-	xcr0 := xgetbv0()
-	const xcr0SSE = 1 << 1
-	const xcr0AVX = 1 << 2
-	if xcr0&(xcr0SSE|xcr0AVX) != (xcr0SSE | xcr0AVX) {
-		return false
-	}
-	_, ebx7, _, _ := cpuid(7, 0)
-	const avx2Bit = 1 << 5
-	return ebx7&avx2Bit != 0
-}
-
-//go:noescape
-func xgetbv0() uint32
-
 func applyGrainSegmentAVX2(dst []uint16, src []uint16, scale []uint16, grain []int16, scalingShift int, minValue int, maxValue int) {
 	n := len(dst)
 	groups := n / 8
