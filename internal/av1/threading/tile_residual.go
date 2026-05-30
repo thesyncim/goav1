@@ -207,7 +207,7 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 // InitTileResidualCDFStorage seeds storage from the frame context selected for
 // this tile group, falling back to AV1 defaults when the batch is used outside
 // decoder-managed frame work.
-func (b FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidualCDFStorage) error {
+func (b *FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidualCDFStorage) error {
 	if storage == nil {
 		return ErrInvalidBatch
 	}
@@ -220,7 +220,7 @@ func (b FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidua
 
 // RetainTileResidualCDFStorage publishes storage as the adapted frame context
 // only for the context_update_tile_id job when CDF updates are enabled.
-func (b FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage) error {
+func (b *FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage) error {
 	if index < 0 || index >= len(b.Jobs) || state == nil || storage == nil {
 		return ErrInvalidBatch
 	}
@@ -639,7 +639,7 @@ func (s *FrameWorkTileResidualStats) Add(other FrameWorkTileResidualStats) {
 
 // JobBlockLoopRequest derives the block-loop request for Jobs[index] from the
 // frame context carried by this batch.
-func (b FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride int) (tile.BlockLoopRequest, error) {
+func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride int) (tile.BlockLoopRequest, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return tile.BlockLoopRequest{}, err
@@ -783,7 +783,7 @@ const refNoScaleFP int32 = 1 << motion.RefScaleShift
 //
 // Dimensions follow libaom: the reference's y_crop_width/height versus the
 // current frame's coded width/height (cm->width / cm->height).
-func (b FrameWorkBatch) frameWorkBlockLoopScaledReferences() [parser.InterRefsPerFrame]bool {
+func (b *FrameWorkBatch) frameWorkBlockLoopScaledReferences() [parser.InterRefsPerFrame]bool {
 	var scaled [parser.InterRefsPerFrame]bool
 	curWidth := int(b.FrameSize.CodedWidth)
 	curHeight := int(b.FrameSize.Height)
@@ -816,7 +816,7 @@ func (b FrameWorkBatch) frameWorkBlockLoopScaledReferences() [parser.InterRefsPe
 
 // JobBlockLoopContextRootColumns returns the number of caller-owned above-edge
 // carrier slots needed by Jobs[index]'s block-loop request.
-func (b FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) {
+func (b *FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return 0, err
@@ -973,7 +973,7 @@ func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
 // DecodeAndReconstructJobResidualsDefault derives the standard block-loop and
 // transform requests from the frame-work batch, then decodes and reconstructs
 // one tile job using caller-owned scratch buffers.
-func (b FrameWorkBatch) DecodeAndReconstructJobResidualsDefault(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualDefaultRequest) (FrameWorkTileResidualStats, error) {
+func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsDefault(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualDefaultRequest) (FrameWorkTileResidualStats, error) {
 	loopReq, err := b.JobBlockLoopRequest(index, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride)
 	if err != nil {
 		return FrameWorkTileResidualStats{}, err
@@ -1548,14 +1548,14 @@ func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
 		visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL
 }
 
-func (b FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+func (b *FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
 	if visit.Prediction.Valid && visit.Prediction.Intra {
 		return b.ReadIntraBlockTransforms(state, visit)
 	}
 	return b.ReadInterBlockTransforms(state, visit)
 }
 
-func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+func (b *FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
 	if state == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
 		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
@@ -1570,7 +1570,7 @@ func (b FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit 
 	}, nil
 }
 
-func (b FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+func (b *FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
 	if state == nil {
 		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}

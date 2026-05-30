@@ -49,7 +49,8 @@ func TestFrameWorkBatchCDEFIndexMapShapeAndBind(t *testing.T) {
 		t.Fatalf("bad cdef bits err=%v want %v", err, ErrInvalidBatch)
 	}
 
-	if _, _, _, err := (FrameWorkBatch{}).CDEFIndexMapShape(); !errors.Is(err, ErrInvalidBatch) {
+	emptyBatch := FrameWorkBatch{}
+	if _, _, _, err := emptyBatch.CDEFIndexMapShape(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid batch shape err=%v want %v", err, ErrInvalidBatch)
 	}
 }

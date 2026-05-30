@@ -65,7 +65,8 @@ func TestFrameWorkBatchSetupTemporalMotionField(t *testing.T) {
 }
 
 func TestFrameWorkBatchSetupTemporalMotionFieldRejectsMissingField(t *testing.T) {
-	if _, err := (FrameWorkBatch{}).SetupTemporalMotionField(); !errors.Is(err, ErrInvalidBatch) {
+	emptyBatch := FrameWorkBatch{}
+	if _, err := emptyBatch.SetupTemporalMotionField(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("err=%v want %v", err, ErrInvalidBatch)
 	}
 }

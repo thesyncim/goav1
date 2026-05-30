@@ -29,7 +29,7 @@ func (m FrameWorkCDEFIndexMap) Reset() error {
 }
 
 // CDEFIndexMapShape returns the frame-level 64x64 CDEF-unit grid dimensions.
-func (b FrameWorkBatch) CDEFIndexMapShape() (cols int, rows int, length int, err error) {
+func (b *FrameWorkBatch) CDEFIndexMapShape() (cols int, rows int, length int, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return 0, 0, 0, ErrInvalidBatch
 	}
@@ -52,7 +52,7 @@ func (b FrameWorkBatch) CDEFIndexMapShape() (cols int, rows int, length int, err
 }
 
 // BindCDEFIndexMap validates and slices caller-owned storage for this frame.
-func (b FrameWorkBatch) BindCDEFIndexMap(index []uint8, read []bool) (FrameWorkCDEFIndexMap, error) {
+func (b *FrameWorkBatch) BindCDEFIndexMap(index []uint8, read []bool) (FrameWorkCDEFIndexMap, error) {
 	cols, rows, length, err := b.CDEFIndexMapShape()
 	if err != nil {
 		return FrameWorkCDEFIndexMap{}, err

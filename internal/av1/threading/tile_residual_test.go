@@ -149,7 +149,8 @@ func TestFrameWorkBatchReferenceMVFrameShapeAndBind(t *testing.T) {
 	if _, err := ctx.BindTemporalMotionField(temporalEntries[:length-1]); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("short temporal bind err=%v want %v", err, ErrInvalidBatch)
 	}
-	if _, _, _, err := (FrameWorkBatch{}).ReferenceMVFrameShape(); !errors.Is(err, ErrInvalidBatch) {
+	emptyBatch := FrameWorkBatch{}
+	if _, _, _, err := emptyBatch.ReferenceMVFrameShape(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid shape err=%v want %v", err, ErrInvalidBatch)
 	}
 }

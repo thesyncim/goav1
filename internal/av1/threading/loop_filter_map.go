@@ -41,7 +41,7 @@ type FrameWorkLoopFilterMapStats struct {
 }
 
 // LoopFilterMapShape returns the frame-level MI grid dimensions.
-func (b FrameWorkBatch) LoopFilterMapShape() (cols int, rows int, length int, err error) {
+func (b *FrameWorkBatch) LoopFilterMapShape() (cols int, rows int, length int, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return 0, 0, 0, ErrInvalidBatch
 	}
@@ -62,7 +62,7 @@ func (b FrameWorkBatch) LoopFilterMapShape() (cols int, rows int, length int, er
 }
 
 // BindLoopFilterMap validates and slices caller-owned storage for this frame.
-func (b FrameWorkBatch) BindLoopFilterMap(records []FrameWorkLoopFilterBlockRecord) (FrameWorkLoopFilterMap, error) {
+func (b *FrameWorkBatch) BindLoopFilterMap(records []FrameWorkLoopFilterBlockRecord) (FrameWorkLoopFilterMap, error) {
 	cols, rows, length, err := b.LoopFilterMapShape()
 	if err != nil {
 		return FrameWorkLoopFilterMap{}, err

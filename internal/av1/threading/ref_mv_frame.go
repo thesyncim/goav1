@@ -4,7 +4,7 @@ import "github.com/thesyncim/goav1/internal/av1/tile"
 
 // ReferenceMVFrameShape returns the frame-level half-MI MV_REF grid dimensions
 // used by libaom for current-frame ref-frame-MVS side data.
-func (b FrameWorkBatch) ReferenceMVFrameShape() (cols int, rows int, length int, err error) {
+func (b *FrameWorkBatch) ReferenceMVFrameShape() (cols int, rows int, length int, err error) {
 	miRows, miCols, err := b.referenceMVFrameMIExtents()
 	if err != nil {
 		return 0, 0, 0, err
@@ -21,7 +21,7 @@ func (b FrameWorkBatch) ReferenceMVFrameShape() (cols int, rows int, length int,
 // BindReferenceMVFrame validates and clears caller-owned MV_REF storage for the
 // current frame. Callers can assign the returned frame to FrameWorkBatch's
 // CurrentMVFrame before deriving job block-loop requests.
-func (b FrameWorkBatch) BindReferenceMVFrame(entries []tile.ReferenceMVEntry) (tile.ReferenceMVFrame, error) {
+func (b *FrameWorkBatch) BindReferenceMVFrame(entries []tile.ReferenceMVEntry) (tile.ReferenceMVFrame, error) {
 	miRows, miCols, err := b.referenceMVFrameMIExtents()
 	if err != nil {
 		return tile.ReferenceMVFrame{}, err
@@ -42,7 +42,7 @@ func (b FrameWorkBatch) BindReferenceMVFrame(entries []tile.ReferenceMVEntry) (t
 
 // BindTemporalMotionField validates and clears caller-owned projected MFMV
 // storage for the current frame.
-func (b FrameWorkBatch) BindTemporalMotionField(entries []tile.TemporalMotionEntry) (tile.TemporalMotionField, error) {
+func (b *FrameWorkBatch) BindTemporalMotionField(entries []tile.TemporalMotionEntry) (tile.TemporalMotionField, error) {
 	miRows, miCols, err := b.referenceMVFrameMIExtents()
 	if err != nil {
 		return tile.TemporalMotionField{}, err
@@ -63,7 +63,7 @@ func (b FrameWorkBatch) BindTemporalMotionField(entries []tile.TemporalMotionEnt
 
 // SetupTemporalMotionField clears and projects TemporalMVs from resolved
 // reference MV metadata using libaom's av1_setup_motion_field() ordering.
-func (b FrameWorkBatch) SetupTemporalMotionField() (tile.TemporalMotionSetupStats, error) {
+func (b *FrameWorkBatch) SetupTemporalMotionField() (tile.TemporalMotionSetupStats, error) {
 	if b.TemporalMVs == nil {
 		return tile.TemporalMotionSetupStats{}, ErrInvalidBatch
 	}
@@ -79,7 +79,7 @@ func (b FrameWorkBatch) SetupTemporalMotionField() (tile.TemporalMotionSetupStat
 	return stats, nil
 }
 
-func (b FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint32, err error) {
+func (b *FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint32, err error) {
 	if !b.Sequence.Valid() || b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return 0, 0, ErrInvalidBatch
 	}

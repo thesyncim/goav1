@@ -25,7 +25,7 @@ type FrameWorkBlockCoeffReconstruction struct {
 // BlockQuantizer derives the dequantizer and lossless flag for one decoded
 // block using the current delta-q state and, when segmentation is enabled, the
 // block's segment delta.
-func (b FrameWorkBatch) BlockQuantizer(currentQIndex uint8, segmentID uint8, plane FrameWorkPlane) (quantize.Quantizer, bool, error) {
+func (b *FrameWorkBatch) BlockQuantizer(currentQIndex uint8, segmentID uint8, plane FrameWorkPlane) (quantize.Quantizer, bool, error) {
 	if !b.Sequence.Valid() {
 		return quantize.Quantizer{}, false, ErrInvalidBatch
 	}
@@ -47,7 +47,7 @@ func (b FrameWorkBatch) BlockQuantizer(currentQIndex uint8, segmentID uint8, pla
 // BlockQIndex derives the segment-adjusted qindex for the current block. The
 // current qindex is the tile decode state's CurrentBaseQIdx after delta_qindex
 // has been applied for the block.
-func (b FrameWorkBatch) BlockQIndex(currentQIndex uint8, segmentID uint8) (uint8, bool, error) {
+func (b *FrameWorkBatch) BlockQIndex(currentQIndex uint8, segmentID uint8) (uint8, bool, error) {
 	qIndex := currentQIndex
 	if b.Segmentation.Enabled {
 		if segmentID >= parser.MaxSegments {
@@ -62,7 +62,7 @@ func (b FrameWorkBatch) BlockQIndex(currentQIndex uint8, segmentID uint8) (uint8
 
 // BlockCoeffPlanePosition maps a decoded coefficient block to absolute output
 // plane samples. The returned coordinates are in the plane's own sample grid.
-func (b FrameWorkBatch) BlockCoeffPlanePosition(index int, visit tile.BlockVisit, block tile.BlockCoeffBlock) (FrameWorkPlane, int, int, error) {
+func (b *FrameWorkBatch) BlockCoeffPlanePosition(index int, visit tile.BlockVisit, block tile.BlockCoeffBlock) (FrameWorkPlane, int, int, error) {
 	geom, err := b.blockCoeffGeometry(index, visit, block)
 	if err != nil {
 		return 0, 0, 0, err
@@ -72,7 +72,7 @@ func (b FrameWorkBatch) BlockCoeffPlanePosition(index int, visit tile.BlockVisit
 
 // ReconstructBlockCoeff dequantizes and adds one decoded transform block into
 // Jobs[index]'s clipped output-plane window.
-func (b FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeffReconstruction) error {
+func (b *FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeffReconstruction) error {
 	geom, err := b.blockCoeffGeometry(index, req.Visit, req.Block)
 	if err != nil {
 		return err
@@ -124,7 +124,7 @@ type frameWorkBlockCoeffGeometry struct {
 	visibleHeight int
 }
 
-func (b FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, block tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, block tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
@@ -204,7 +204,7 @@ func frameWorkBlockCoeffVisibleSize(block tile.TransformBlock, size transform.Si
 	return visibleWidth, visibleHeight, nil
 }
 
-func (b FrameWorkBatch) blockCoeffPlane(tilePlane int) (FrameWorkPlane, uint, uint, error) {
+func (b *FrameWorkBatch) blockCoeffPlane(tilePlane int) (FrameWorkPlane, uint, uint, error) {
 	switch tilePlane {
 	case 0:
 		return FrameWorkPlaneY, 0, 0, nil

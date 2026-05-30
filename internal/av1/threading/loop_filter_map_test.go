@@ -40,7 +40,8 @@ func TestFrameWorkBatchLoopFilterMapShapeAndBind(t *testing.T) {
 	if _, err := ctx.BindLoopFilterMap(short); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("short records err=%v want %v", err, ErrInvalidBatch)
 	}
-	if _, _, _, err := (FrameWorkBatch{}).LoopFilterMapShape(); !errors.Is(err, ErrInvalidBatch) {
+	emptyBatch := FrameWorkBatch{}
+	if _, _, _, err := emptyBatch.LoopFilterMapShape(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid batch shape err=%v want %v", err, ErrInvalidBatch)
 	}
 }

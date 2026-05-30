@@ -292,7 +292,7 @@ func (c *frameWorkJobGeometryCache) reset() {
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
-func (b FrameWorkBatch) Surface() (int, error) {
+func (b *FrameWorkBatch) Surface() (int, error) {
 	switch b.Step.Kind {
 	case decodework.FrameStepBegin:
 		if b.Step.Begin.Surface < 0 {
@@ -311,7 +311,7 @@ func (b FrameWorkBatch) Surface() (int, error) {
 
 // JobPayload returns the exact tile payload bytes for Jobs[index]. The
 // returned slice aliases Payload and is valid only for the callback invocation.
-func (b FrameWorkBatch) JobPayload(index int) ([]byte, error) {
+func (b *FrameWorkBatch) JobPayload(index int) ([]byte, error) {
 	if index < 0 || index >= len(b.Jobs) {
 		return nil, ErrInvalidBatch
 	}
@@ -320,7 +320,7 @@ func (b FrameWorkBatch) JobPayload(index int) ([]byte, error) {
 
 // JobEntropyReader returns an entropy reader over Jobs[index]'s exact tile
 // payload. The reader inherits the frame-level CDF update mode carried by b.
-func (b FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
+func (b *FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
 	if index < 0 || index >= len(b.Jobs) {
 		return entropy.Reader{}, ErrInvalidBatch
 	}
@@ -331,7 +331,7 @@ func (b FrameWorkBatch) JobEntropyReader(index int) (entropy.Reader, error) {
 
 // JobDecodeState initializes state for Jobs[index]'s exact tile payload. The
 // state records whether this job's adapted entropy context should be retained.
-func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error {
+func (b *FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error {
 	if index < 0 || index >= len(b.Jobs) || state == nil {
 		return ErrInvalidBatch
 	}
@@ -345,7 +345,7 @@ func (b FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) error
 // job-geometry cache is installed (by the residual loop), the result is
 // memoized per index so the pure integer recompute is amortized across the
 // many transform blocks of one job.
-func (b FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
+func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 	if c := b.geomCache; c != nil && c.regionValid && c.regionIndex == index {
 		return c.region, nil
 	}
@@ -365,7 +365,7 @@ func (b FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 	return region, nil
 }
 
-func (b FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error) {
+func (b *FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error) {
 	if index < 0 || index >= len(b.Jobs) || !b.Sequence.Valid() ||
 		b.FrameSize.CodedWidth == 0 || b.FrameSize.Height == 0 {
 		return FrameWorkJobRegion{}, ErrInvalidBatch
@@ -441,7 +441,7 @@ func (b FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error) 
 
 // JobBlockDeltaContext returns the AV1 block-delta context for an absolute MI
 // coordinate inside Jobs[index]'s region.
-func (b FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint32, fullSuperblock bool, skipTransform bool) (tile.BlockDeltaContext, error) {
+func (b *FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint32, fullSuperblock bool, skipTransform bool) (tile.BlockDeltaContext, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return tile.BlockDeltaContext{}, err
@@ -462,7 +462,7 @@ func (b FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uint
 
 // RestorationPlaneGrid returns the loop-restoration unit grid for one plane of
 // this batch's frame context.
-func (b FrameWorkBatch) RestorationPlaneGrid(plane FrameWorkPlane) (tile.RestorationPlaneGrid, error) {
+func (b *FrameWorkBatch) RestorationPlaneGrid(plane FrameWorkPlane) (tile.RestorationPlaneGrid, error) {
 	if plane > FrameWorkPlaneV || !b.Sequence.Valid() {
 		return tile.RestorationPlaneGrid{}, ErrInvalidBatch
 	}
@@ -471,7 +471,7 @@ func (b FrameWorkBatch) RestorationPlaneGrid(plane FrameWorkPlane) (tile.Restora
 
 // RestorationFramePlan returns the frame-level loop-restoration allocation plan
 // for this batch's frame context.
-func (b FrameWorkBatch) RestorationFramePlan() (tile.RestorationFramePlan, error) {
+func (b *FrameWorkBatch) RestorationFramePlan() (tile.RestorationFramePlan, error) {
 	if !b.Sequence.Valid() {
 		return tile.RestorationFramePlan{}, ErrInvalidBatch
 	}
@@ -481,7 +481,7 @@ func (b FrameWorkBatch) RestorationFramePlan() (tile.RestorationFramePlan, error
 // LoopRestorationPlan ports libaom's CDEF/superres/restoration scheduling
 // decision for the frame. skipLoopFilter is the decoder-level skip flag from
 // libaom's AV1Decoder.
-func (b FrameWorkBatch) LoopRestorationPlan(skipLoopFilter bool) (FrameWorkLoopRestorationPlan, error) {
+func (b *FrameWorkBatch) LoopRestorationPlan(skipLoopFilter bool) (FrameWorkLoopRestorationPlan, error) {
 	restoration, err := b.RestorationFramePlan()
 	if err != nil {
 		return FrameWorkLoopRestorationPlan{}, err
@@ -503,7 +503,7 @@ func (b FrameWorkBatch) LoopRestorationPlan(skipLoopFilter bool) (FrameWorkLoopR
 
 // JobRestorationUnitRange returns the restoration units whose top-left corners
 // are decoded while processing the superblock at sbX,sbY inside Jobs[index].
-func (b FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane, sbX uint16, sbY uint16) (tile.RestorationUnitRange, bool, error) {
+func (b *FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane, sbX uint16, sbY uint16) (tile.RestorationUnitRange, bool, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return tile.RestorationUnitRange{}, false, err
@@ -528,7 +528,7 @@ func (b FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane,
 // residual writes can land past the visible edge (libaom emits whole
 // transform blocks regardless of the visible boundary, and later blocks read
 // those past-visible samples as predictor neighbors).
-func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+func (b *FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV &&
 		c.planeValid[plane] && c.planeIndex[plane] == index {
 		return c.plane[plane], nil
@@ -545,7 +545,7 @@ func (b FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWo
 	return window, nil
 }
 
-func (b FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+func (b *FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return FrameWorkPlaneRegion{}, err
@@ -611,7 +611,7 @@ func (b FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (
 }
 
 // ReferenceFrame returns the resolved frame for one AV1 inter-reference slot.
-func (b FrameWorkBatch) ReferenceFrame(reference FrameWorkReference) (*frame.Frame, error) {
+func (b *FrameWorkBatch) ReferenceFrame(reference FrameWorkReference) (*frame.Frame, error) {
 	index := int(reference)
 	if index >= parser.InterRefsPerFrame || index >= len(b.References) || b.References[index] == nil {
 		return nil, ErrInvalidBatch
@@ -620,7 +620,7 @@ func (b FrameWorkBatch) ReferenceFrame(reference FrameWorkReference) (*frame.Fra
 }
 
 // ReferencePlane returns the full plane from one resolved reference frame.
-func (b FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+func (b *FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	refFrame, err := b.ReferenceFrame(reference)
 	if err != nil {
 		return FrameWorkPlaneRegion{}, err
@@ -644,14 +644,14 @@ func (b FrameWorkBatch) ReferencePlane(reference FrameWorkReference, plane Frame
 // JobReferencePlane returns the reference-plane window matching Jobs[index]'s
 // clipped output region. It is valid for same-size reference sampling; scaled
 // references require motion-compensation code to map coordinates explicitly.
-func (b FrameWorkBatch) JobReferencePlane(index int, reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+func (b *FrameWorkBatch) JobReferencePlane(index int, reference FrameWorkReference, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	return b.JobReferencePlaneWindow(index, reference, plane, 0, 0)
 }
 
 // JobReferencePlaneWindow returns the reference-plane window matching
 // Jobs[index]'s clipped output region and expanded by marginX/marginY plane
 // samples. The window is clipped to the resolved reference frame plane.
-func (b FrameWorkBatch) JobReferencePlaneWindow(index int, reference FrameWorkReference, plane FrameWorkPlane, marginX uint32, marginY uint32) (FrameWorkPlaneRegion, error) {
+func (b *FrameWorkBatch) JobReferencePlaneWindow(index int, reference FrameWorkReference, plane FrameWorkPlane, marginX uint32, marginY uint32) (FrameWorkPlaneRegion, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return FrameWorkPlaneRegion{}, err
@@ -684,7 +684,7 @@ func (b FrameWorkBatch) JobReferencePlaneWindow(index int, reference FrameWorkRe
 
 // JobUpdatesFrameContext reports whether Jobs[index] is the designated tile
 // whose adapted entropy state should refresh the frame context.
-func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
+func (b *FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
 	if index < 0 || index >= len(b.Jobs) {
 		return false, ErrInvalidBatch
 	}
@@ -693,7 +693,7 @@ func (b FrameWorkBatch) JobUpdatesFrameContext(index int) (bool, error) {
 
 // ValidatePayloads checks that every job in the batch names a byte range inside
 // Payload.
-func (b FrameWorkBatch) ValidatePayloads() error {
+func (b *FrameWorkBatch) ValidatePayloads() error {
 	return tile.ValidatePayloads(b.Payload, b.Jobs)
 }
 

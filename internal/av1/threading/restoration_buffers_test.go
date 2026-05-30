@@ -152,7 +152,8 @@ func TestFrameWorkBatchBindRestorationFrameBuffersRejectsInvalidInputs(t *testin
 	); !errors.Is(err, tile.ErrJobBufferTooSmall) {
 		t.Fatalf("short boundaries err=%v want %v", err, tile.ErrJobBufferTooSmall)
 	}
-	if _, err := (FrameWorkBatch{}).BindRestorationFrameBuffers(nil, nil, nil); !errors.Is(err, ErrInvalidBatch) {
+	emptyBatch := FrameWorkBatch{}
+	if _, err := emptyBatch.BindRestorationFrameBuffers(nil, nil, nil); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid batch err=%v want %v", err, ErrInvalidBatch)
 	}
 

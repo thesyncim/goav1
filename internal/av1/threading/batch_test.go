@@ -1388,7 +1388,8 @@ func TestFrameWorkBatchReferencePlaneRejectsInvalidInputs(t *testing.T) {
 	if _, err := ctx.ReferenceFrame(FrameWorkReference(parser.InterRefsPerFrame)); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid reference err=%v want %v", err, ErrInvalidBatch)
 	}
-	if _, err := (FrameWorkBatch{References: []*frame.Frame{nil}}).ReferenceFrame(FrameWorkReferenceLast); !errors.Is(err, ErrInvalidBatch) {
+	nilRefBatch := FrameWorkBatch{References: []*frame.Frame{nil}}
+	if _, err := nilRefBatch.ReferenceFrame(FrameWorkReferenceLast); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("nil reference err=%v want %v", err, ErrInvalidBatch)
 	}
 	if _, err := ctx.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneU); !errors.Is(err, ErrInvalidBatch) {
@@ -1400,7 +1401,8 @@ func TestFrameWorkBatchReferencePlaneRejectsInvalidInputs(t *testing.T) {
 
 	badLayout := *mono
 	badLayout.Layout.BytesPerSample = 0
-	if _, err := (FrameWorkBatch{References: []*frame.Frame{&badLayout}}).ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
+	badLayoutBatch := FrameWorkBatch{References: []*frame.Frame{&badLayout}}
+	if _, err := badLayoutBatch.ReferencePlane(FrameWorkReferenceLast, FrameWorkPlaneY); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad layout err=%v want %v", err, ErrInvalidBatch)
 	}
 

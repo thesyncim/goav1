@@ -12,7 +12,7 @@ type FrameWorkRestorationFrameBuffers struct {
 
 // BindRestorationFrameBuffers validates and partitions caller-owned storage for
 // decoded restoration records and saved stripe boundaries.
-func (b FrameWorkBatch) BindRestorationFrameBuffers(recordBacking []tile.RestorationUnitRecord, above []uint16, below []uint16) (FrameWorkRestorationFrameBuffers, error) {
+func (b *FrameWorkBatch) BindRestorationFrameBuffers(recordBacking []tile.RestorationUnitRecord, above []uint16, below []uint16) (FrameWorkRestorationFrameBuffers, error) {
 	plan, err := b.RestorationFramePlan()
 	if err != nil {
 		return FrameWorkRestorationFrameBuffers{}, err
@@ -57,7 +57,7 @@ func (b FrameWorkRestorationFrameBuffers) ResetRecords() error {
 // ReadRestorationUnitsForSuperblock decodes every loop-restoration unit whose
 // top-left corner belongs to visit and writes it into the frame-wide record
 // buffers carried by req.
-func (b FrameWorkBatch) ReadRestorationUnitsForSuperblock(index int, state *tile.DecodeState, cdfs tile.RestorationCDFs, req *FrameWorkTileRestorationRequest, visit tile.BlockLoopSuperblockVisit) (int, error) {
+func (b *FrameWorkBatch) ReadRestorationUnitsForSuperblock(index int, state *tile.DecodeState, cdfs tile.RestorationCDFs, req *FrameWorkTileRestorationRequest, visit tile.BlockLoopSuperblockVisit) (int, error) {
 	if state == nil || req == nil {
 		return 0, ErrInvalidBatch
 	}
