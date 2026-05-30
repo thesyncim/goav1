@@ -1964,7 +1964,20 @@ func isGlobalMode(mode InterModeResult) bool {
 }
 
 func (stack *ReferenceMVStack) addSingleFallbackCandidate(candidate InterMotionResult, target ReferenceFrame, signBias [referenceFrameCount]bool) {
-	for ref := 0; ref < 2 && stack.Count < MaxMVRefCandidates; ref++ {
+	// libaom's process_single_ref_mv_candidate (mvref_common.c) iterates BOTH of
+	// the neighbor's reference slots unconditionally and appends each matching MV
+	// to the stack with no MAX_MV_REF_CANDIDATES cap inside the helper — the
+	// MAX_MV_REF_CANDIDATES gate lives only in setup_ref_mv_list's outer
+	// per-neighbor loop (mirrored by extendSingleReferenceMVStack's `stack.Count <
+	// MaxMVRefCandidates` loop guard). A single bi-predicted neighbor whose two
+	// refs differ from the target can therefore push ref_mv_count from 1 to 3.
+	// Capping this inner loop at MaxMVRefCandidates dropped the neighbor's second
+	// reference, undercounting ref_mv_count by one and skipping a DRL symbol the
+	// arithmetic decoder must still consume (deep alt-ref pyramids: park_joy
+	// p720 q55 oh=42 mi=(16,96) NEARMV->GOLDEN read a left/above BWDREF neighbor
+	// whose negated comp MV is libaom's third candidate). The stack array bound
+	// (MaxRefMVStackSize) still applies via addUniqueFallback.
+	for ref := 0; ref < 2; ref++ {
 		candidateRef := candidate.References.Ref[ref]
 		if !candidateRef.Valid() {
 			continue
