@@ -60,6 +60,13 @@ func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX i
 	return nil
 }
 
+// addResidualPlaneBlockImpl is the dispatch slot for the AddResidualPlaneBlock
+// inner loop. It is resolved exactly once, at package init (see
+// plane_dispatch_*.go), so the per-call cost is a single indirect call with no
+// feature-detection branches. It is only invoked after AddResidualPlaneBlock
+// has validated every input, so it never has to re-check bounds.
+var addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo
+
 // AddResidualPlaneBlock adds signed transform residuals to an already-predicted
 // destination block and clips to bitDepth.
 func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, residual []int16, residualStride int) error {
@@ -83,6 +90,15 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		return ErrInvalidBlock
 	}
 
+	addResidualPlaneBlockImpl(block, bytesPerSample, max, width, residual, residualStride)
+	return nil
+}
+
+// addResidualPlaneBlockPureGo is the portable reference for the residual-add
+// inner loop. Every SIMD variant the dispatcher selects MUST produce bit-exact
+// output relative to this function. AddResidualPlaneBlock has already validated
+// the block window, the residual extent, and that bytesPerSample is 1 or 2.
+func addResidualPlaneBlockPureGo(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
 	switch bytesPerSample {
 	case 1:
 		maxInt := int(max)
@@ -118,10 +134,7 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 				pair[1] = byte(v >> 8)
 			}
 		}
-	default:
-		return ErrInvalidBlock
 	}
-	return nil
 }
 
 type planeBlock struct {

@@ -208,6 +208,28 @@ func FuzzMinMaxAbsDiff8x8(f *testing.F) {
 	})
 }
 
+func BenchmarkMinMaxAbsDiff8x8(b *testing.B) {
+	var a [8 * 64]byte
+	var src [8 * 64]byte
+	fillMinMaxBytes(a[:], 0xdeadbeef)
+	fillMinMaxBytes(src[:], 0xfeedface)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _ = MinMaxAbsDiff8x8(a[:], 64, src[:], 64, 1)
+	}
+}
+
+func BenchmarkMinMaxAbsDiff8x8HighBitDepth(b *testing.B) {
+	var a [8 * 128]byte
+	var src [8 * 128]byte
+	fillMinMax16(a[:], 0xdeadbeef)
+	fillMinMax16(src[:], 0xfeedface)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _ = MinMaxAbsDiff8x8(a[:], 128, src[:], 128, 2)
+	}
+}
+
 func fillMinMaxBytes(dst []byte, seed uint32) {
 	x := seed
 	for i := range dst {

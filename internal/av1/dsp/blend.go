@@ -8,6 +8,33 @@ package dsp
 
 const blendA64MaxAlpha = 64
 
+// blendA64MaskArgs bundles the structurally-validated arguments handed to the
+// per-block blend kernel. Extents and strides are already known to fit; the
+// kernel still enforces the per-sample range (s0,s1 <= max) and per-weight
+// range (m <= 64), reporting any violation back to BlendA64Mask.
+type blendA64MaskArgs struct {
+	dst        []uint16
+	dstStride  int
+	src0       []uint16
+	src0Stride int
+	src1       []uint16
+	src1Stride int
+	mask       []uint8
+	maskStride int
+	width      int
+	height     int
+	max        uint16
+	subX       bool
+	subY       bool
+}
+
+// blendA64MaskImpl is the dispatch slot for the BlendA64Mask inner loop. It is
+// resolved exactly once at package init (see blend_dispatch_*.go), so the
+// per-call cost is a single indirect call. It returns false if any sample or
+// mask weight was out of range, in which case BlendA64Mask reports
+// ErrInvalidBlock.
+var blendA64MaskImpl = blendA64MaskPureGo
+
 // BlendA64Mask blends src0 and src1 into dst using libaom's AOM_BLEND_A64
 // alpha mask. Strides are expressed in samples, not bytes. subX and subY match
 // libaom's subw/subh mask subsampling flags.
@@ -29,21 +56,39 @@ func BlendA64Mask(dst []uint16, dstStride int, src0 []uint16, src0Stride int, sr
 		return ErrInvalidBlock
 	}
 
-	for row := range height {
-		for col := range width {
-			s0 := src0[row*src0Stride+col]
-			s1 := src1[row*src1Stride+col]
-			if s0 > max || s1 > max {
-				return ErrInvalidBlock
-			}
-			m, err := blendMaskSample(mask, maskStride, row, col, subX, subY)
-			if err != nil {
-				return err
-			}
-			dst[row*dstStride+col] = blendA64(m, s0, s1)
-		}
+	if !blendA64MaskImpl(blendA64MaskArgs{
+		dst: dst, dstStride: dstStride,
+		src0: src0, src0Stride: src0Stride,
+		src1: src1, src1Stride: src1Stride,
+		mask: mask, maskStride: maskStride,
+		width: width, height: height, max: max,
+		subX: subX, subY: subY,
+	}) {
+		return ErrInvalidBlock
 	}
 	return nil
+}
+
+// blendA64MaskPureGo is the portable reference for the blend inner loop. Every
+// SIMD variant the dispatcher selects MUST be bit-exact with it on valid input
+// and MUST agree on the valid/invalid verdict. Structural validation has
+// already been performed by BlendA64Mask.
+func blendA64MaskPureGo(a blendA64MaskArgs) bool {
+	for row := range a.height {
+		for col := range a.width {
+			s0 := a.src0[row*a.src0Stride+col]
+			s1 := a.src1[row*a.src1Stride+col]
+			if s0 > a.max || s1 > a.max {
+				return false
+			}
+			m, err := blendMaskSample(a.mask, a.maskStride, row, col, a.subX, a.subY)
+			if err != nil {
+				return false
+			}
+			a.dst[row*a.dstStride+col] = blendA64(m, s0, s1)
+		}
+	}
+	return true
 }
 
 func blendMaskSample(mask []uint8, maskStride int, row int, col int, subX bool, subY bool) (uint8, error) {
