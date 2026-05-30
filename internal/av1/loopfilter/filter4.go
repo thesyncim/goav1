@@ -30,21 +30,7 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		for i := range length {
-			q0 := q0Base + i*outer
-			p1 := int(pix[q0-2*step])
-			p0 := int(pix[q0-step])
-			q0Sample := int(pix[q0])
-			q1 := int(pix[q0+step])
-			if !needsFilter4(p1, p0, q0Sample, q1, params) {
-				continue
-			}
-			p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
-			pix[q0-2*step] = byte(p1)
-			pix[q0-step] = byte(p0)
-			pix[q0] = byte(q0Sample)
-			pix[q0+step] = byte(q1)
-		}
+		filter4EdgeImpl(pix, q0Base, step, outer, length, params)
 		return nil
 	}
 	for i := range length {
@@ -133,6 +119,35 @@ func edgeOuterStride(dst frame.Plane, bytesPerSample int, edge Edge) int {
 		return bytesPerSample
 	}
 	return dst.Stride
+}
+
+// filter4EdgeImpl is the dispatch slot for the 8-bit narrow four-sample
+// deblocking kernel, processing every sample position along one edge. It is
+// resolved once at package init (see filter4_dispatch_*.go); the per-edge cost
+// is one indirect call with no feature-detection branch. filter4EdgePureGo is
+// the canonical bit-exact reference every tuned variant must match.
+var filter4EdgeImpl = filter4EdgePureGo
+
+// filter4EdgePureGo applies the 8-bit narrow filter to length sample positions
+// along an edge. q0Base is the byte offset of the first q0 sample, step is the
+// byte stride between adjacent taps (perpendicular to the edge), and outer is
+// the byte stride between successive positions along the edge.
+func filter4EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	for i := 0; i < length; i++ {
+		q0 := q0Base + i*outer
+		p1 := int(pix[q0-2*step])
+		p0 := int(pix[q0-step])
+		q0Sample := int(pix[q0])
+		q1 := int(pix[q0+step])
+		if !needsFilter4(p1, p0, q0Sample, q1, params) {
+			continue
+		}
+		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
+		pix[q0-2*step] = byte(p1)
+		pix[q0-step] = byte(p0)
+		pix[q0] = byte(q0Sample)
+		pix[q0+step] = byte(q1)
+	}
 }
 
 func needsFilter4(p1 int, p0 int, q0 int, q1 int, params filter4Params) bool {
