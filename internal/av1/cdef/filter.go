@@ -72,6 +72,15 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 	if err := validateBlockFilter(dst, dstStride, dstOrigin, input, inputOrigin, params); err != nil {
 		return err
 	}
+	filterBlockImpl(dst, dstStride, dstOrigin, input, inputOrigin, params)
+	return nil
+}
+
+// filterBlockPureGo is the canonical bit-exact CDEF block filter. It assumes
+// its arguments were already validated by FilterBlock; the dispatch slot in
+// filter_dispatch.go defaults to this function so every build has a working
+// reference path.
+func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	enablePrimary := params.PrimaryStrength != 0
 	enableSecondary := params.SecondaryStrength != 0
 	clippingRequired := enablePrimary && enableSecondary
@@ -150,7 +159,6 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 			dst[dstRow+col] = uint16(y)
 		}
 	}
-	return nil
 }
 
 // constrainShift computes the per-call shift amount used by constrain. It is
