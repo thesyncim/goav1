@@ -143,7 +143,7 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 	width := size.Width
 	height := size.Height
 	rect2 := size.IsRect2()
-	for row := 0; row < height; row++ {
+	for row := range height {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		for col := range dstLine {
 			v := coeff[col*coeffStride+row]

@@ -47,8 +47,8 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 
 	// Build the predictor reference plane and add+clip via dsp directly.
 	wantPlane, _ := testPlane(W, H, 1, W)
-	for r := 0; r < H; r++ {
-		for c := 0; c < W; c++ {
+	for r := range H {
+		for c := range W {
 			wantPlane.Pix[r*wantPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
@@ -59,8 +59,8 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 	// Run ReconstructPlaneBlock on the same predictor and assert byte-exact
 	// equality with the hand-composed reference.
 	gotPlane, _ := testPlane(W, H, 1, W)
-	for r := 0; r < H; r++ {
-		for c := 0; c < W; c++ {
+	for r := range H {
+		for c := range W {
 			gotPlane.Pix[r*gotPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
@@ -80,8 +80,8 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for r := 0; r < H; r++ {
-		for c := 0; c < W; c++ {
+	for r := range H {
+		for c := range W {
 			got := gotPlane.Pix[r*gotPlane.Stride+c]
 			want := wantPlane.Pix[r*wantPlane.Stride+c]
 			if got != want {

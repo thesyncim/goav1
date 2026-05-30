@@ -16,11 +16,11 @@ import (
 
 func TestInverseDCT64BitExactLibaom(t *testing.T) {
 	rng := rand.New(rand.NewSource(64))
-	for trial := 0; trial < 200; trial++ {
+	for trial := range 200 {
 		var input [64]int32
 		// Mostly sparse: zero everywhere then plant 1-4 random coefficients.
 		nz := 1 + rng.Intn(4)
-		for k := 0; k < nz; k++ {
+		for range nz {
 			pos := rng.Intn(64)
 			input[pos] = int32(rng.Intn(1<<15) - (1 << 14))
 		}
@@ -39,7 +39,7 @@ func TestInverseDCT64BitExactLibaom(t *testing.T) {
 
 func TestInverseDCT64BitExactLibaomDense(t *testing.T) {
 	rng := rand.New(rand.NewSource(1064))
-	for trial := 0; trial < 200; trial++ {
+	for trial := range 200 {
 		var input [64]int32
 		for i := range input {
 			input[i] = int32(rng.Intn(1<<15) - (1 << 14))
@@ -63,7 +63,7 @@ func TestInverseDCT64BitExactLibaomDense(t *testing.T) {
 // ones whose impulse response was previously wrong (returned zero) and
 // drove the 64x64 DCT_DCT residual error on the column pass.
 func TestInverseDCT64BitExactLibaomImpulse(t *testing.T) {
-	for pos := 0; pos < 64; pos++ {
+	for pos := range 64 {
 		var input [64]int32
 		input[pos] = 1000
 		var want [64]int32
@@ -100,18 +100,15 @@ func libaomInverseResidual64x64(coeff []int32, coeffStride int, bd int) []int32 
 	shift0 := 2
 	shift1 := 4
 	rowBits := bd + 8
-	colBits := bd + 6
-	if colBits < 16 {
-		colBits = 16
-	}
+	colBits := max(bd+6, 16)
 
 	buf := make([]int32, width*height)
 	rowIn := make([]int32, width)
 	rowOut := make([]int32, width)
 
 	// Rows
-	for r := 0; r < height; r++ {
-		for c := 0; c < width; c++ {
+	for r := range height {
+		for c := range width {
 			var v int32
 			if c < 32 && r < 32 {
 				v = coeff[c*coeffStride+r]
@@ -127,14 +124,14 @@ func libaomInverseResidual64x64(coeff []int32, coeffStride int, bd int) []int32 
 	colIn := make([]int32, height)
 	colOut := make([]int32, height)
 	out := make([]int32, width*height)
-	for c := 0; c < width; c++ {
-		for r := 0; r < height; r++ {
+	for c := range width {
+		for r := range height {
 			colIn[r] = buf[r*width+c]
 		}
 		libaomClampBits(colIn, colBits)
 		libaom1DAll(colIn, colOut, height, tx1DDCT)
 		libaomRoundShiftArray(colOut, shift1)
-		for r := 0; r < height; r++ {
+		for r := range height {
 			out[r*width+c] = colOut[r]
 		}
 	}
@@ -151,7 +148,7 @@ func TestInverseBlockBitDepth64x64DCTDCTRandom(t *testing.T) {
 	coeffSize := adjustedScanSize(sz) // 32x32
 
 	rng := rand.New(rand.NewSource(20260527))
-	for trial := 0; trial < 20; trial++ {
+	for trial := range 20 {
 		coeff := make([]int32, coeffSize.Width*coeffSize.Height)
 		for i := range coeff {
 			if rng.Intn(10) == 0 {

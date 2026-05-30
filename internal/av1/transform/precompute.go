@@ -124,7 +124,7 @@ func init() {
 		idx := sizeIndex(vs.size)
 		scanSize := adjustedScanSizeTable[idx]
 		total := scanSize.Width * scanSize.Height
-		for mode := 0; mode < numScanModes; mode++ {
+		for mode := range numScanModes {
 			scan := make([]int16, total)
 			inverse := make([]int16, total)
 			fillScanOrderCompute(scan, inverse, scanSize, ScanMode(mode))

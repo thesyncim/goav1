@@ -465,7 +465,7 @@ func libaomIDCT32(input []int32, output []int32) {
 	// stage 2
 	bf0 = output
 	bf1 = step[:]
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		bf1[i] = bf0[i]
 	}
 	bf1[16] = halfBtf(cospi[62], bf0[16], -cospi[2], bf0[31])
@@ -488,7 +488,7 @@ func libaomIDCT32(input []int32, output []int32) {
 	// stage 3
 	bf0 = step[:]
 	bf1 = output
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		bf1[i] = bf0[i]
 	}
 	bf1[8] = halfBtf(cospi[60], bf0[8], -cospi[4], bf0[15])
@@ -519,7 +519,7 @@ func libaomIDCT32(input []int32, output []int32) {
 	// stage 4
 	bf0 = output
 	bf1 = step[:]
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		bf1[i] = bf0[i]
 	}
 	bf1[4] = halfBtf(cospi[56], bf0[4], -cospi[8], bf0[7])
@@ -823,7 +823,7 @@ func libaomIADST16(input []int32, output []int32) {
 	// stage 4
 	bf0 = output
 	bf1 = step[:]
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		bf1[i] = bf0[i]
 	}
 	bf1[8] = halfBtf(cospi[8], bf0[8], cospi[56], bf0[9])
@@ -858,7 +858,7 @@ func libaomIADST16(input []int32, output []int32) {
 	// stage 6
 	bf0 = output
 	bf1 = step[:]
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		bf1[i] = bf0[i]
 	}
 	bf1[4] = halfBtf(cospi[16], bf0[4], cospi[48], bf0[5])

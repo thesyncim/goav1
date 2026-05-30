@@ -26,8 +26,8 @@ func TestD157Block0InverseTransformMatchesLibaomReference(t *testing.T) {
 	dqMin := -int32(1) << 15
 	dqMax := int32(1)<<15 - 1
 	dq := make([]int32, W*H)
-	for col := 0; col < W; col++ {
-		for row := 0; row < H; row++ {
+	for col := range W {
+		for row := range H {
 			scale := int32(AC)
 			if col == 0 && row == 0 {
 				scale = DC
@@ -62,7 +62,7 @@ func TestD157Block0InverseTransformMatchesLibaomReference(t *testing.T) {
 	// libaom-port reference (faithful inv_txfm2d_add_c reproduction).
 	want := libaomInverseResidual(dq, H, Size{Width: W, Height: H}, TypeDCTDCT, 8)
 
-	for i := 0; i < W*H; i++ {
+	for i := range W * H {
 		if int32(got[i]) != want[i] {
 			t.Fatalf("D157 blk0 residual[%d]: got=%d want=%d", i, got[i], want[i])
 		}

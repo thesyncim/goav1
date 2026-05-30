@@ -132,10 +132,7 @@ func stageRangeBounds(bitDepth uint8) (rowMin int32, rowMax int32, colMin int32,
 		return 0, 0, 0, 0, false
 	}
 	rowBits := int(bitDepth) + 8
-	colBits := int(bitDepth) + 6
-	if colBits < 16 {
-		colBits = 16
-	}
+	colBits := max(int(bitDepth)+6, 16)
 	rowMin = -int32(1) << uint(rowBits-1)
 	rowMax = int32(1)<<uint(rowBits-1) - 1
 	colMin = -int32(1) << uint(colBits-1)

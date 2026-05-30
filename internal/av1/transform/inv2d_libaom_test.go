@@ -91,7 +91,7 @@ func libaom1D(input []int32, output []int32, length int, typ tx1DType) {
 			libaomIADST16(input, output)
 		}
 	case tx1DIdentity:
-		for i := 0; i < length; i++ {
+		for i := range length {
 			v := input[i]
 			out, _ := identity1DValue(v, length)
 			output[i] = out
@@ -115,18 +115,15 @@ func libaomInverseResidual(coeff []int32, coeffStride int, size Size, typ Type, 
 
 	shift0, shift1 := libaomInvShift(size)
 	rowBits := bd + 8
-	colBits := bd + 6
-	if colBits < 16 {
-		colBits = 16
-	}
+	colBits := max(bd+6, 16)
 
 	buf := make([]int32, width*height)
 	rowIn := make([]int32, width)
 	rowOut := make([]int32, width)
 
 	// Rows
-	for r := 0; r < height; r++ {
-		for c := 0; c < width; c++ {
+	for r := range height {
+		for c := range width {
 			v := coeff[c*coeffStride+r]
 			if rectType == 1 {
 				// libaom: round_shift(v * NewInvSqrt2, NewSqrt2Bits)
@@ -145,10 +142,10 @@ func libaomInverseResidual(coeff []int32, coeffStride int, size Size, typ Type, 
 	colIn := make([]int32, height)
 	colOut := make([]int32, height)
 	out := make([]int32, width*height)
-	for c := 0; c < width; c++ {
+	for c := range width {
 		flipLR := isLRFlip(typ)
 		flipUD := isUDFlip(typ)
-		for r := 0; r < height; r++ {
+		for r := range height {
 			cc := c
 			if flipLR {
 				cc = width - c - 1
@@ -158,7 +155,7 @@ func libaomInverseResidual(coeff []int32, coeffStride int, size Size, typ Type, 
 		libaomClampBits(colIn, colBits)
 		libaom1D(colIn, colOut, height, vertical)
 		libaomRoundShiftArray(colOut, shift1)
-		for r := 0; r < height; r++ {
+		for r := range height {
 			rr := r
 			if flipUD {
 				rr = height - r - 1
@@ -245,7 +242,7 @@ func TestInverseBlockBitDepth2DMatchesLibaom2D(t *testing.T) {
 					continue
 				}
 			}
-			for trial := 0; trial < 3; trial++ {
+			for trial := range 3 {
 				coeffSize := adjustedScanSize(sz)
 				coeff := make([]int32, coeffSize.Width*coeffSize.Height)
 				// 8-bit dq_coeff is up to ±(1<<15) per libaom decodetxb clamp.

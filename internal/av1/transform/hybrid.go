@@ -107,7 +107,7 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	coeffW := coeffSize.Width
 	coeffH := coeffSize.Height
 
-	for row := 0; row < height; row++ {
+	for row := range height {
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		if row < coeffH {
 			for col := range tmpLine {
@@ -140,11 +140,11 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		}
 	}
 
-	for col := 0; col < width; col++ {
+	for col := range width {
 		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
-	for row := 0; row < height; row++ {
+	for row := range height {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		for col, v := range tmpLine {

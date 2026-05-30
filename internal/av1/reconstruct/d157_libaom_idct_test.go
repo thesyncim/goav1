@@ -41,8 +41,8 @@ func TestReconstructD157Block0Row0MatchesLibaomIDCT(t *testing.T) {
 	}
 	plane, _ := testPlane(W, H, 1, W)
 	// Zero predictor so plane output equals residual (saturated to [0,255]).
-	for r := 0; r < H; r++ {
-		for c := 0; c < W; c++ {
+	for r := range H {
+		for c := range W {
 			plane.Pix[r*plane.Stride+c] = 0
 		}
 	}
@@ -61,12 +61,9 @@ func TestReconstructD157Block0Row0MatchesLibaomIDCT(t *testing.T) {
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
-	for c := 0; c < W; c++ {
+	for c := range W {
 		want := int16(d157Block0LibaomPreFilterRow0[c])
-		wantSat := want
-		if wantSat < 0 {
-			wantSat = 0
-		}
+		wantSat := max(want, 0)
 		if wantSat > 255 {
 			wantSat = 255
 		}

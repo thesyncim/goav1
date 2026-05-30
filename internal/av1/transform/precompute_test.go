@@ -108,7 +108,7 @@ func TestPrecomputedScanOrdersMatchGenerator(t *testing.T) {
 	for _, s := range allTransformSizes {
 		scanSize := adjustedScanSize(s)
 		total := scanSize.Width * scanSize.Height
-		for mode := 0; mode < numScanModes; mode++ {
+		for mode := range numScanModes {
 			wantScan := make([]int16, total)
 			wantInverse := make([]int16, total)
 			if err := fillScanOrderCompute(wantScan, wantInverse, scanSize, ScanMode(mode)); err != nil {

@@ -139,7 +139,7 @@ func TestInverseDCT1DStageClampMatchesLibaomHBD(t *testing.T) {
 		stageMin := -(int32(1) << uint(tc.stageBits-1))
 		stageMax := (int32(1) << uint(tc.stageBits-1)) - 1
 		t.Run(tc.name+"/dct4", func(t *testing.T) {
-			for trial := 0; trial < 1000; trial++ {
+			for trial := range 1000 {
 				var input [4]int32
 				for i := range input {
 					input[i] = int32(rng.Intn(int(2*tc.maxInput)+1)) - tc.maxInput
@@ -156,7 +156,7 @@ func TestInverseDCT1DStageClampMatchesLibaomHBD(t *testing.T) {
 			}
 		})
 		t.Run(tc.name+"/dct8", func(t *testing.T) {
-			for trial := 0; trial < 1000; trial++ {
+			for trial := range 1000 {
 				var input [8]int32
 				for i := range input {
 					input[i] = int32(rng.Intn(int(2*tc.maxInput)+1)) - tc.maxInput
@@ -206,7 +206,7 @@ func paramLibaom1D(input []int32, output []int32, length int, typ tx1DType, clam
 		maxVal := clamp(int32((1 << 30) - 1))
 		inverseADST1D(output, 1, length, minVal, maxVal)
 	case tx1DIdentity:
-		for i := 0; i < length; i++ {
+		for i := range length {
 			out, _ := identity1DValue(input[i], length)
 			output[i] = out
 		}
@@ -234,10 +234,7 @@ func correctLibaom2D(coeff []int32, coeffStride int, size Size, typ Type, bd int
 
 	shift0, shift1 := libaomInvShift(size)
 	rowBits := bd + 8
-	colBits := bd + 6
-	if colBits < 16 {
-		colBits = 16
-	}
+	colBits := max(bd+6, 16)
 
 	rowClamp := stageClampBits(rowBits)
 	colClamp := stageClampBits(colBits)
@@ -247,8 +244,8 @@ func correctLibaom2D(coeff []int32, coeffStride int, size Size, typ Type, bd int
 	rowOut := make([]int32, width)
 
 	// Rows
-	for r := 0; r < height; r++ {
-		for c := 0; c < width; c++ {
+	for r := range height {
+		for c := range width {
 			v := coeff[c*coeffStride+r]
 			if rectType == 1 {
 				v = libaomRoundShiftSingle(int64(v)*2896, 12)
@@ -264,10 +261,10 @@ func correctLibaom2D(coeff []int32, coeffStride int, size Size, typ Type, bd int
 	colIn := make([]int32, height)
 	colOut := make([]int32, height)
 	out := make([]int32, width*height)
-	for c := 0; c < width; c++ {
+	for c := range width {
 		flipLR := isLRFlip(typ)
 		flipUD := isUDFlip(typ)
-		for r := 0; r < height; r++ {
+		for r := range height {
 			cc := c
 			if flipLR {
 				cc = width - c - 1
@@ -277,7 +274,7 @@ func correctLibaom2D(coeff []int32, coeffStride int, size Size, typ Type, bd int
 		libaomClampBits(colIn, colBits)
 		paramLibaom1D(colIn, colOut, height, vertical, colClamp)
 		libaomRoundShiftArray(colOut, shift1)
-		for r := 0; r < height; r++ {
+		for r := range height {
 			rr := r
 			if flipUD {
 				rr = height - r - 1
@@ -359,7 +356,7 @@ func TestInverseBlockBitDepth2DMatchesLibaomHBD(t *testing.T) {
 						continue
 					}
 				}
-				for trial := 0; trial < 3; trial++ {
+				for trial := range 3 {
 					coeffSize := adjustedScanSize(sz)
 					coeff := make([]int32, coeffSize.Width*coeffSize.Height)
 					for i := range coeff {

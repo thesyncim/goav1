@@ -414,8 +414,8 @@ func TestReconstructPlaneBlockDCT64x64SparseInterShape(t *testing.T) {
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
-	for r := 0; r < H; r++ {
-		for c := 0; c < W; c++ {
+	for r := range H {
+		for c := range W {
 			if gotPix[r*W+c] != wantPix[r*W+c] {
 				t.Fatalf("sparse 64x64 reconstruct mismatch (r=%d c=%d): got=%d want=%d residual=%d",
 					r, c, gotPix[r*W+c], wantPix[r*W+c], wantResidual[r*W+c])
