@@ -450,25 +450,36 @@ func convolve2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int,
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 	for y := range imH {
+		// Reslice the source row once per row: the tap window srcRow[x:x+filterTaps]
+		// has a statically-known length so the compiler drops the per-tap bounds
+		// check on the inner loads.
+		srcRow := ref.Pix[(refY-foY+y)*ref.Stride+refX-foX:]
+		imRow := im[y*imStride:]
 		for x := range width {
+			s := srcRow[x : x+filterTaps]
 			sum := 1 << (8 + filterBits - 1)
 			for k := range filterTaps {
-				sum += int(xKernel[k]) * int(ref.Pix[(refY-foY+y)*ref.Stride+refX+x-foX+k])
+				sum += int(xKernel[k]) * int(s[k])
 			}
-			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
 		}
 	}
 	offsetBits := 8 + 2*filterBits - round0Bits
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	for y := range height {
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
 		for x := range width {
 			sum := 1 << offsetBits
+			// Step the column index by imStride instead of recomputing
+			// (y+k)*imStride per tap.
+			idx := y*imStride + x
 			for k := range filterTaps {
-				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+				sum += int(yKernel[k]) * int(im[idx])
+				idx += imStride
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
 		}
 	}
 }
@@ -492,13 +503,16 @@ func convolve2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, re
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	for y := range height {
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
 		for x := range width {
 			sum := 1 << offsetBits
+			idx := y*imStride + x
 			for k := range filterTaps {
-				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+				sum += int(yKernel[k]) * int(im[idx])
+				idx += imStride
 			}
 			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
 		}
 	}
 }
