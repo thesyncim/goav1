@@ -1905,6 +1905,20 @@ func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fram
 	if !ok {
 		return ErrInvalidBatch
 	}
+	// libaom's dec_build_prediction_by_above_pred predicts the neighbor over
+	// bw = (op_mi_size*MI_SIZE)>>ss_x where op_mi_size = AOMMIN(xd->width,
+	// mi_size_wide[neighbor]) is keyed off the UN-clipped current block MI width,
+	// and bh = clamp(block_high>>(ss_y+1), 4, ...). The interp-filter kernel is
+	// selected from those un-clipped dimensions. neighbor.Span4 is computed
+	// against the frame-clipped visible block width, so for a block straddling
+	// the right frame edge it shrinks below libaom's op_mi_size; recompute the
+	// un-clipped overlap width here for kernel selection while keeping the
+	// frame-clipped span for the blend write.
+	filterH := height
+	filterW, err := frameWorkOBMCAboveFilterWidth(block, neighbor, geom, b.Sequence.ColorConfig, plane, relX, width)
+	if err != nil {
+		return err
+	}
 	if height > geom.Height {
 		height = geom.Height
 	}
@@ -1914,7 +1928,7 @@ func (b FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fram
 	if width <= 0 || height <= 0 {
 		return ErrInvalidBatch
 	}
-	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, relX, 0, geom.X+relX, geom.Y, width, height); err != nil {
+	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, relX, 0, geom.X+relX, geom.Y, width, height, filterW, filterH); err != nil {
 		return err
 	}
 	return frameWorkBlendOBMCV(geom.Output, tmp, geom.BytesPerSample, geom.X+relX, geom.Y, relX, 0, width, height, mask)
@@ -1942,6 +1956,23 @@ func (b FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frame
 	if !ok {
 		return ErrInvalidBatch
 	}
+	// libaom's dec_build_prediction_by_left_pred predicts the neighbor over
+	// bw = clamp(block_wide>>(ss_x+1), 4, ...), bh = (op_mi_size*MI_SIZE)>>ss_y
+	// where op_mi_size = AOMMIN(xd->height, mi_size_high[neighbor]) is keyed off
+	// the UN-clipped current block MI height (xd->height), not the frame-edge
+	// visible height. The interp-filter kernel is selected from those un-clipped
+	// dimensions (av1_get_interp_filter_params_with_block_size). neighbor.Span4
+	// is computed in the tile decoder against the frame-clipped visible block
+	// height, so for a block straddling the bottom frame edge it shrinks below
+	// libaom's op_mi_size and goav1 would wrongly switch to the 4-tap filter.
+	// Recompute the un-clipped overlap height here for kernel selection from the
+	// un-clipped plane extent and the neighbor's own size, mirroring libaom,
+	// while keeping the frame-clipped span for the actual blend write.
+	filterW := width
+	filterH, err := frameWorkOBMCLeftFilterHeight(block, neighbor, geom, b.Sequence.ColorConfig, plane, relY, height)
+	if err != nil {
+		return err
+	}
 	if width > geom.Width {
 		width = geom.Width
 	}
@@ -1951,21 +1982,21 @@ func (b FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frame
 	if width <= 0 || height <= 0 {
 		return ErrInvalidBatch
 	}
-	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, 0, relY, geom.X, geom.Y+relY, width, height); err != nil {
+	if err := b.predictOBMCNeighborToScratch(tmp, plane, neighbor, geom, 0, relY, geom.X, geom.Y+relY, width, height, filterW, filterH); err != nil {
 		return err
 	}
 	return frameWorkBlendOBMCH(geom.Output, tmp, geom.BytesPerSample, geom.X, geom.Y+relY, 0, relY, width, height, mask)
 }
 
-func (b FrameWorkBatch) predictOBMCNeighborToScratch(dst frame.Plane, plane FrameWorkPlane, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int) error {
+func (b FrameWorkBatch) predictOBMCNeighborToScratch(dst frame.Plane, plane FrameWorkPlane, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filterW int, filterH int) error {
 	motionResult := neighbor.Motion
 	if !motionResult.References.Ref[0].Valid() {
 		return ErrInvalidBatch
 	}
-	return b.predictInterReferenceAreaToScratch(dst, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, dstX, dstY, absX, absY, width, height, neighbor.InterpFilters)
+	return b.predictInterReferenceAreaToScratch(dst, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, dstX, dstY, absX, absY, width, height, filterW, filterH, neighbor.InterpFilters)
 }
 
-func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filters motion.InterpFilters) error {
+func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filterW int, filterH int, filters motion.InterpFilters) error {
 	if !frameWorkPlaneBlockAddressable(dst, geom.BytesPerSample, dstX, dstY, width, height) {
 		return ErrInvalidBatch
 	}
@@ -2003,7 +2034,19 @@ func (b FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plan
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
+	// Select the interpolation-filter kernel from the un-clipped neighbor
+	// prediction dimensions (filterW/filterH), not the frame-edge-clipped write
+	// extent (width/height). libaom's OBMC neighbor predictor keys the
+	// 4-tap-vs-8-tap choice off the un-clipped bw/bh; a neighbor straddling the
+	// bottom/right frame edge whose visible extent shrinks to <= 4 must still use
+	// the wide filter or the blended OBMC samples diverge by +-1.
+	if filterW <= 0 {
+		filterW = width
+	}
+	if filterH <= 0 {
+		filterH = height
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -2759,6 +2802,95 @@ func frameWorkOBMCLeftWidth(size tile.BlockSize, geom frameWorkPredictionPlaneGe
 	// Full overlap drives OBMC mask selection; the blend write is clipped to
 	// the plane by the caller.
 	return overlap, nil
+}
+
+// frameWorkOBMCLeftFilterHeight returns the OBMC left-neighbor prediction height
+// (in plane samples) used to select the interpolation-filter kernel. libaom keys
+// the kernel off bh = (op_mi_size * MI_SIZE) >> ss_y where
+// op_mi_size = AOMMIN(xd->height, mi_size_high[neighbor]) uses the UN-clipped
+// current block MI height (xd->height). neighbor.Span4 (clippedSpan, in plane
+// samples) is instead derived from the frame-clipped visible block height by the
+// tile decoder, so it agrees with libaom EXCEPT when the block straddles the
+// bottom frame edge: there clippedSpan shrinks below libaom's op_mi_size and
+// would wrongly switch goav1 to the 4-tap filter. To keep the common (non-edge)
+// path byte-identical, only recompute when the plane is frame-clipped vertically
+// (geom.Height below the un-clipped plane extent); otherwise return clippedSpan
+// unchanged. The result drives kernel selection only; the blend write stays
+// clipped to the visible plane by the caller.
+func frameWorkOBMCLeftFilterHeight(block tile.BlockVisit, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, color parser.ColorConfig, plane FrameWorkPlane, relY int, clippedSpan int) (int, error) {
+	_, extentH, err := frameWorkBlockPlanePredictionExtentPixels(block, color, plane)
+	if err != nil {
+		return 0, err
+	}
+	if geom.Height >= extentH {
+		// Not bottom-clipped: clippedSpan already matches libaom's op_mi_size.
+		return clippedSpan, nil
+	}
+	neighborDims, ok := neighbor.Size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	blockDims, ok := block.Size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	blockH4 := int(blockDims.H4)
+	neighborH4 := int(neighborDims.H4)
+	if neighborH4 > 16 {
+		neighborH4 = 16
+	}
+	opMI := blockH4
+	if neighborH4 < opMI {
+		opMI = neighborH4
+	}
+	bh := opMI * 4
+	if geom.SubsamplingY {
+		bh >>= 1
+	}
+	if bh <= 0 {
+		return clippedSpan, nil
+	}
+	return bh, nil
+}
+
+// frameWorkOBMCAboveFilterWidth is the symmetric helper for the OBMC above
+// neighbor: libaom keys the kernel off bw = (op_mi_size * MI_SIZE) >> ss_x with
+// op_mi_size = AOMMIN(xd->width, mi_size_wide[neighbor]), the UN-clipped current
+// block MI width. Only recompute when the plane is frame-clipped horizontally so
+// the non-edge path stays byte-identical to neighbor.Span4.
+func frameWorkOBMCAboveFilterWidth(block tile.BlockVisit, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, color parser.ColorConfig, plane FrameWorkPlane, relX int, clippedSpan int) (int, error) {
+	extentW, _, err := frameWorkBlockPlanePredictionExtentPixels(block, color, plane)
+	if err != nil {
+		return 0, err
+	}
+	if geom.Width >= extentW {
+		return clippedSpan, nil
+	}
+	blockDims, ok := block.Size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	neighborDims, ok := neighbor.Size.Dimensions()
+	if !ok {
+		return 0, ErrInvalidBatch
+	}
+	blockW4 := int(blockDims.W4)
+	neighborW4 := int(neighborDims.W4)
+	if neighborW4 > 16 {
+		neighborW4 = 16
+	}
+	opMI := blockW4
+	if neighborW4 < opMI {
+		opMI = neighborW4
+	}
+	bw := opMI * 4
+	if geom.SubsamplingX {
+		bw >>= 1
+	}
+	if bw <= 0 {
+		return clippedSpan, nil
+	}
+	return bw, nil
 }
 
 func frameWorkOBMCPlaneOffset(rel4 int, subsampled bool) (int, bool) {
