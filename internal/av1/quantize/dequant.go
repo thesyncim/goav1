@@ -177,6 +177,30 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 		return ErrInvalidQuantizer
 	}
 
+	if iqMatrix == nil {
+		// Common path: no inverse quantization matrix. Each column shares a
+		// single scale (q.AC), except the DC coefficient at (0,0) which uses
+		// q.DC. The per-column inner loop is dispatched to the
+		// architecture-best variant; dequantColumnImpl is bit-exact with
+		// dequantColumnPureGo on every target.
+		for col := range width {
+			dstCol := dst[col*dstStride : col*dstStride+height]
+			coeffCol := coeff[col*coeffStride : col*coeffStride+height]
+			if col == 0 {
+				// DC coefficient uses q.DC; the remaining column entries use
+				// q.AC. Process the DC term with the scalar reference and the
+				// AC tail with the kernel.
+				dstCol[0] = dequantScalar(int32(coeffCol[0]), q.DC, txScale, dqMin, dqMax)
+				if height > 1 {
+					dequantColumnImpl(dstCol[1:], coeffCol[1:], q.AC, txScale, dqMin, dqMax)
+				}
+				continue
+			}
+			dequantColumnImpl(dstCol, coeffCol, q.AC, txScale, dqMin, dqMax)
+		}
+		return nil
+	}
+
 	for col := range width {
 		dstCol := dst[col*dstStride : col*dstStride+height]
 		coeffCol := coeff[col*coeffStride : col*coeffStride+height]
@@ -185,39 +209,58 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			if row == 0 && col == 0 {
 				scale = q.DC
 			}
-			if iqMatrix != nil {
-				scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
-			}
-			level := int32(coeffCol[row])
-			negative := level < 0
-			if negative {
-				level = -level
-			}
-			// libaom: dq_coeff = (int32)((int64)level * dqv & 0xffffff). The 24-bit
-			// mask saturates the product before the txScale shift to match
-			// libaom's tran_low_t bitwidth assumption. The multiply is widened
-			// to int64 to mirror libaom; for 12-bit content with high qindex
-			// the level*scale product can exceed int32 range before the mask
-			// narrows it to 24 bits, so a plain 32-bit multiply would wrap
-			// around and feed a different residual to the inverse transform.
-			product := int32((int64(level) * int64(scale)) & 0xffffff)
-			level = product >> txScale
-			if negative {
-				level = -level
-			}
-			// libaom decode_coefs() (av1/decoder/decodetxb.c:312) clamps the
-			// dequantized coefficient to ±(1<<(7+bd)) — 16 bits for 8-bit, 18
-			// bits for 10-bit, 20 bits for 12-bit. Without this clamp the
-			// inverse transform sees values libaom's tran_low_t never carries.
-			if level < dqMin {
-				level = dqMin
-			} else if level > dqMax {
-				level = dqMax
-			}
-			dstCol[row] = level
+			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+			dstCol[row] = dequantScalar(int32(coeffCol[row]), scale, txScale, dqMin, dqMax)
 		}
 	}
 	return nil
+}
+
+// dequantScalar dequantizes a single coefficient. It is the canonical scalar
+// reference for one coefficient: every vectorized dequantColumn variant MUST
+// produce bit-exact results relative to applying this to each element.
+//
+// libaom: dq_coeff = (int32)((int64)level * dqv & 0xffffff). The 24-bit mask
+// saturates the product before the txScale shift to match libaom's tran_low_t
+// bitwidth assumption. The multiply is widened to int64 to mirror libaom; for
+// 12-bit content with high qindex the level*scale product can exceed int32
+// range before the mask narrows it to 24 bits, so a plain 32-bit multiply
+// would wrap around and feed a different residual to the inverse transform.
+// The final clamp reproduces libaom decode_coefs() (av1/decoder/decodetxb.c:312)
+// which clamps to ±(1<<(7+bd)).
+func dequantScalar(coeff int32, scale int32, txScale uint8, dqMin int32, dqMax int32) int32 {
+	level := coeff
+	negative := level < 0
+	if negative {
+		level = -level
+	}
+	product := int32((int64(level) * int64(scale)) & 0xffffff)
+	level = product >> txScale
+	if negative {
+		level = -level
+	}
+	if level < dqMin {
+		level = dqMin
+	} else if level > dqMax {
+		level = dqMax
+	}
+	return level
+}
+
+// dequantColumnImpl is the dispatch slot for the per-column dequant kernel. It
+// is resolved exactly once, at package init (see dequant_dispatch_*.go), so the
+// per-column cost is a single indirect call with no feature-detection branches.
+// Tests and benchmarks must not mutate this variable concurrently with live
+// decoding. Every variant is bit-exact with dequantColumnPureGo.
+var dequantColumnImpl = dequantColumnPureGo
+
+// dequantColumnPureGo dequantizes n contiguous coefficients that share a single
+// scale, writing into dst. It is the portable reference: every SIMD variant the
+// dispatcher selects MUST be bit-exact with it.
+func dequantColumnPureGo(dst []int32, coeff []int16, scale int32, txScale uint8, dqMin int32, dqMax int32) {
+	for i := range coeff {
+		dst[i] = dequantScalar(int32(coeff[i]), scale, txScale, dqMin, dqMax)
+	}
 }
 
 // dqCoeffBounds returns the post-shift dequantized-coefficient clamp range that
