@@ -14,7 +14,7 @@ package testvector
 // span resolutions (256x144 / 640x360 / 1280x720), rate points (cq 20/32/55),
 // coding tools (all-intra vs inter GOP, single vs multi tile-column), bit
 // depths (8-bit primary plus 10/12-bit profile coverage), and chroma sampling
-// (4:2:0 primary plus profile-2 4:2:2 probes). At that length steady-state
+// (4:2:0 primary plus a profile-2 4:2:2 probe). At that length steady-state
 // decode dominates startup, so the goav1-vs-dav1d-vs-aomdec ratios are an
 // honest single-thread throughput comparison.
 //

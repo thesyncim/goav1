@@ -22,7 +22,7 @@
 # Axes covered: resolution (256x144, 640x360, 1280x720), rate/quality
 # (cq-level 20/32/55), coding tools (all-intra vs inter GOP, single vs 2 tile
 # columns), bit depth (8-bit primary plus 10/12-bit profile coverage), and
-# chroma sampling (4:2:0 primary plus profile-2 4:2:2 probes).
+# chroma sampling (4:2:0 primary plus a profile-2 4:2:2 probe).
 #
 # Usage:
 #   scripts/gen_bench_corpus.sh [OUTDIR]
@@ -194,8 +194,8 @@ encode p360_inter_q32_10bit  640 360 32 10
 encode p360_intra_q32_12bit  640 360 32 12 --kf-min-dist=0 --kf-max-dist=0
 encode p360_inter_q32_12bit  640 360 32 12
 encode p360_inter_q32_12bit_2tiles 640 360 32 12 --tile-columns=1
+encode p360_inter_q55_12bit  640 360 55 12
 encode p360_inter_q32_422_10bit 640 360 32 10 422
-encode p360_inter_q32_422_12bit 640 360 32 12 422
 
 # ---- 1280x720 (high res) ---------------------------------------------------
 encode p720_inter_q20  1280 720 20 8
