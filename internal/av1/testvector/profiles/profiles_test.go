@@ -27,7 +27,8 @@
 // inter, kf-max-dist=30) encoded from a moving synthetic source so that inter
 // prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma subsampling
 // (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both 8-bit and
-// 10-bit 4:4:4. All are committed under
+// 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires luma
+// and chroma palette prediction. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -44,6 +45,15 @@
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=1 --end-usage=q \
 //	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
 //	  -o profile1-444-10bit-64x64.ivf src444_10.yuv
+//	# 4:4:4 8-bit palette:
+//	ffmpeg -f lavfi -i nullsrc=size=64x64:rate=1:duration=3 -frames:v 3 \
+//	  -vf "geq=lum='if(lt(mod(X+N*4,16),8),64,192)':cb='if(lt(mod(Y+N*4,16),8),64,192)':cr='if(lt(mod(X+Y+N*4,32),16),64,192)',format=yuv444p" \
+//	  -f rawvideo palette444.yuv
+//	aomenc --i444 --width=64 --height=64 --limit=3 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=20 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --tune-content=screen --enable-palette=1 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-8bit-palette-64x64.ivf palette444.yuv
 //	# 4:2:2 8-bit:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-64x64.ivf src422.yuv
 //	# 4:2:0 12-bit:
@@ -94,10 +104,12 @@ type profileClip struct {
 
 	frameMD5Hex []string
 
-	wantSeqProfile   uint8
-	wantBitDepth     uint8
-	wantSubsamplingX bool
-	wantSubsamplingY bool
+	wantSeqProfile      uint8
+	wantBitDepth        uint8
+	wantSubsamplingX    bool
+	wantSubsamplingY    bool
+	wantPaletteYBlocks  int
+	wantPaletteUVBlocks int
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -121,6 +133,22 @@ var profileClips = []profileClip{
 		wantBitDepth:     8,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit screen-content clip with palette-coded blocks.
+		name: "profile1-444-8bit-palette-64x64",
+		file: "profile1-444-8bit-palette-64x64.ivf",
+		frameMD5Hex: []string{
+			"59e96ccf6f2faf403ae8f8b3214a202f",
+			"9a9cfad7d6aead1fb110309d2edc0268",
+			"6d7426c5bae2c5cca7c98b584e8057a6",
+		},
+		wantSeqProfile:      1,
+		wantBitDepth:        8,
+		wantSubsamplingX:    false,
+		wantSubsamplingY:    false,
+		wantPaletteYBlocks:  1,
+		wantPaletteUVBlocks: 1,
 	},
 	{
 		// Profile 1: 4:4:4 10-bit. SubsamplingX=false SubsamplingY=false.
@@ -381,6 +409,8 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}()
 
 	emitted := 0
+	paletteYBlocks := 0
+	paletteUVBlocks := 0
 	checkedColorConfig := false
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -508,6 +538,15 @@ func runProfileClip(t *testing.T, clip profileClip) {
 							}
 							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
 						},
+						AfterBlock: func(visit tile.BlockLoopVisit) error {
+							if visit.Prediction.Palette.YSize > 0 {
+								paletteYBlocks++
+							}
+							if visit.Prediction.Palette.UVSize > 0 {
+								paletteUVBlocks++
+							}
+							return nil
+						},
 						Int32Scratch:      int32Scratch,
 						ResidualScratch:   residualScratch,
 						PredictionScratch: &predictionScratch,
@@ -584,6 +623,12 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if emitted != len(wantDigests) {
 		t.Fatalf("emitted %d visible frames, want %d golden digests", emitted, len(wantDigests))
+	}
+	if paletteYBlocks < clip.wantPaletteYBlocks {
+		t.Fatalf("palette y blocks=%d want at least %d", paletteYBlocks, clip.wantPaletteYBlocks)
+	}
+	if paletteUVBlocks < clip.wantPaletteUVBlocks {
+		t.Fatalf("palette uv blocks=%d want at least %d", paletteUVBlocks, clip.wantPaletteUVBlocks)
 	}
 }
 

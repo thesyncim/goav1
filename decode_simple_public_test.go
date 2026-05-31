@@ -13,8 +13,8 @@ import (
 // profileClips are the vendored profile-conformance clips and their per-frame
 // aomdec MD5 goldens, identical to the profile/subsampling set guarded by
 // conformance/publicpath_test.go. They cover profile-1 4:4:4 8/10-bit,
-// profile-2 4:2:2 8-bit, and profile-2 4:2:0 12-bit, including inter-coded
-// non-4:2:0 clips.
+// profile-1 screen-content palette, profile-2 4:2:2 8-bit, and profile-2
+// 4:2:0 12-bit, including inter-coded non-4:2:0 clips.
 var profileClips = []struct {
 	file        string
 	frameMD5Hex []string
@@ -25,6 +25,14 @@ var profileClips = []struct {
 			"00211cdc8f799c808849c955a318a0f5",
 			"397ff01920ff514bc611ab49d76371c1",
 			"f8fbfb25a42da47a7adb71510de9b178",
+		},
+	},
+	{
+		file: "profile1-444-8bit-palette-64x64.ivf",
+		frameMD5Hex: []string{
+			"59e96ccf6f2faf403ae8f8b3214a202f",
+			"9a9cfad7d6aead1fb110309d2edc0268",
+			"6d7426c5bae2c5cca7c98b584e8057a6",
 		},
 	},
 	{

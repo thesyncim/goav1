@@ -28,9 +28,9 @@ type publicClip struct {
 
 // These vendored profile-conformance clips and their aomdec per-frame MD5
 // goldens are shared with internal/av1/testvector/profiles. They cover
-// profile-1 4:4:4 8/10-bit, profile-2 4:2:2 8-bit, and profile-2 4:2:0
-// 12-bit -- including inter-coded non-4:2:0 clips that libaom's published
-// vector suite does not ship.
+// profile-1 4:4:4 8/10-bit, profile-1 screen-content palette, profile-2
+// 4:2:2 8-bit, and profile-2 4:2:0 12-bit -- including inter-coded non-4:2:0
+// clips that libaom's published vector suite does not ship.
 var publicClips = []publicClip{
 	{
 		file: "profile1-444-8bit-64x64.ivf",
@@ -38,6 +38,14 @@ var publicClips = []publicClip{
 			"00211cdc8f799c808849c955a318a0f5",
 			"397ff01920ff514bc611ab49d76371c1",
 			"f8fbfb25a42da47a7adb71510de9b178",
+		},
+	},
+	{
+		file: "profile1-444-8bit-palette-64x64.ivf",
+		frameMD5Hex: []string{
+			"59e96ccf6f2faf403ae8f8b3214a202f",
+			"9a9cfad7d6aead1fb110309d2edc0268",
+			"6d7426c5bae2c5cca7c98b584e8057a6",
 		},
 	},
 	{

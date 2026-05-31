@@ -92,12 +92,10 @@ ship under `internal/av1/testdata/libaom/`.
 |  7 | Filter intra modes               | Yes     | internal/av1/prediction/filter_intra.go | All five libaom FILTER_INTRA_MODE         |
 |    |                                  |         |                                  | values (DC, V, H, D157, PAETH) implemented.    |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-|  8 | Palette Y                        | Partial | internal/av1/tile/palette.go     | Y palette size/color/CDF entry decoding and    |
-|    |                                  |         | internal/av1/threading/predict.go | predictor wiring are implemented; committed   |
-|    |                                  |         |                                  | palette-coded vector coverage is still absent. |
-|    | Palette UV                       | Partial | internal/av1/tile/palette.go     | UV palette size/color/CDF entry decoding and   |
-|    |                                  |         | internal/av1/threading/predict.go | predictor wiring are implemented; needs       |
-|    |                                  |         |                                  | committed vector coverage before `Yes`.        |
+|  8 | Palette Y                        | Yes     | internal/av1/tile/palette.go     | Y palette size/color/CDF entry decoding, map   |
+|    |                                  |         | internal/av1/threading/predict.go | prediction, and 4:4:4 profile vector pass.     |
+|    | Palette UV                       | Yes     | internal/av1/tile/palette.go     | UV palette size/color/CDF entry decoding, map  |
+|    |                                  |         | internal/av1/threading/predict.go | prediction, and 4:4:4 profile vector pass.     |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  9 | IntraBC                          | Yes     | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
 |    |                                  |         | internal/av1/tile/ref_mv.go      | stack and intra-mode entry implemented;        |
@@ -315,10 +313,11 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 12/12 vendored profile clips pass, covering
-  profile 1 4:4:4 8/10-bit all-intra and inter, profile 2 4:2:2 8-bit
-  all-intra and inter, profile 2 4:2:0 12-bit, superres, superres plus loop
-  restoration, edge-MV, and a non-SVC multi-tile clip.
+- `make dryrun-profiles`: 13/13 vendored profile clips pass, covering
+  profile 1 4:4:4 8/10-bit all-intra and inter, profile 1 4:4:4
+  screen-content palette, profile 2 4:2:2 8-bit all-intra and inter,
+  profile 2 4:2:0 12-bit, superres, superres plus loop restoration,
+  edge-MV, and a non-SVC multi-tile clip.
 
 ### SVC vector coverage
 
@@ -421,13 +420,10 @@ manifest. The next production-readiness items are:
    coded-size surfaces, so inter streams that reference superres output need a
    dedicated publishable upscaled-reference design before they are declared
    complete.
-3. **Palette vector coverage.** Palette syntax parsing and predictor wiring are
-   present; add a committed palette-coded stream before marking the row fully
-   covered.
-4. **Tile list OBU playback.** `EventTileList` parsing is present, but
+3. **Tile list OBU playback.** `EventTileList` parsing is present, but
    end-to-end tile-list reconstruction and output-frame blitting remain future
    work.
-5. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
+4. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
    regressions exist, but the upstream libaom v3.14.0 test-data set does not
    ship a dedicated `S_FRAME` IVF with MD5 goldens.
 
