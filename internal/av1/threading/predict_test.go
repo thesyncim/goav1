@@ -38,6 +38,60 @@ func TestFrameWorkBatchPredictBlockLumaIntraDC(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchPredictBlockPalette10Bit444(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        64,
+		Height:       64,
+		BitDepth:     10,
+		SubsamplingX: false,
+		SubsamplingY: false,
+		Align:        64,
+	})
+	testFillFrame(output, 0)
+	ctx := testIntraPredictionBatch(output)
+
+	var maps tile.PaletteModeScratch
+	for y := range 16 {
+		for x := range 16 {
+			maps.Y[y*16+x] = uint8((x/5 + y/7) % 3)
+			maps.UV[y*16+x] = uint8((x/4 + y/6) % 3)
+		}
+	}
+	palette := tile.PaletteModeResult{
+		YSize:   3,
+		UVSize:  3,
+		YColors: [tile.PaletteMaxSize]uint16{17, 511, 1000},
+		UColors: [tile.PaletteMaxSize]uint16{33, 444, 901},
+		VColors: [tile.PaletteMaxSize]uint16{55, 666, 990},
+		YMap:    &maps.Y,
+		UVMap:   &maps.UV,
+	}
+	visit := testIntraPredictionVisit(tile.IntraModeDC)
+	visit.Prediction.ChromaModeValid = true
+	visit.Prediction.ChromaMode = tile.ChromaIntraModeDC
+	visit.Prediction.Palette = palette
+
+	var scratch FrameWorkIntraPredictionScratch
+	if err := ctx.PredictBlockIntra(0, visit, &scratch); err != nil {
+		t.Fatal(err)
+	}
+	for y := range 16 {
+		for x := range 16 {
+			yIndex := maps.Y[y*16+x]
+			if got, want := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16+x, 16+y), palette.YColors[yIndex]; got != want {
+				t.Fatalf("Y sample(%d,%d)=%d want %d", 16+x, 16+y, got, want)
+			}
+			uvIndex := maps.UV[y*16+x]
+			if got, want := frameWorkTestSample(output.U, output.Layout.BytesPerSample, 16+x, 16+y), palette.UColors[uvIndex]; got != want {
+				t.Fatalf("U sample(%d,%d)=%d want %d", 16+x, 16+y, got, want)
+			}
+			if got, want := frameWorkTestSample(output.V, output.Layout.BytesPerSample, 16+x, 16+y), palette.VColors[uvIndex]; got != want {
+				t.Fatalf("V sample(%d,%d)=%d want %d", 16+x, 16+y, got, want)
+			}
+		}
+	}
+}
+
 func TestFrameWorkBatchPredictBlockLumaFilterIntra(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	testFillFrame(output, 0)

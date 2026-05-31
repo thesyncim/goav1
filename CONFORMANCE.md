@@ -92,11 +92,12 @@ ship under `internal/av1/testdata/libaom/`.
 |  7 | Filter intra modes               | Yes     | internal/av1/prediction/filter_intra.go | All five libaom FILTER_INTRA_MODE         |
 |    |                                  |         |                                  | values (DC, V, H, D157, PAETH) implemented.    |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-|  8 | Palette Y                        | Partial | internal/av1/tile/palette.go     | Y palette size/color/CDF entry decoding        |
-|    |                                  |         |                                  | implemented; not yet wired into block-loop     |
-|    |                                  |         |                                  | predictor for end-to-end reconstruction.       |
-|    | Palette UV                       | Partial | internal/av1/tile/palette.go     | UV palette size/color/CDF entry decoding       |
-|    |                                  |         |                                  | implemented; same wiring gap as Y.             |
+|  8 | Palette Y                        | Partial | internal/av1/tile/palette.go     | Y palette size/color/CDF entry decoding and    |
+|    |                                  |         | internal/av1/threading/predict.go | predictor wiring are implemented; committed   |
+|    |                                  |         |                                  | palette-coded vector coverage is still absent. |
+|    | Palette UV                       | Partial | internal/av1/tile/palette.go     | UV palette size/color/CDF entry decoding and   |
+|    |                                  |         | internal/av1/threading/predict.go | predictor wiring are implemented; needs       |
+|    |                                  |         |                                  | committed vector coverage before `Yes`.        |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  9 | IntraBC                          | Yes     | internal/av1/tile/block_loop.go  | DV decoding, DV validity check, predicted MV   |
 |    |                                  |         | internal/av1/tile/ref_mv.go      | stack and intra-mode entry implemented;        |
@@ -420,9 +421,9 @@ manifest. The next production-readiness items are:
    coded-size surfaces, so inter streams that reference superres output need a
    dedicated publishable upscaled-reference design before they are declared
    complete.
-3. **Palette prediction.** Palette syntax parsing exists in
-   `internal/av1/tile/palette.go`; expand committed vector coverage before
-   marking the block predictor path complete.
+3. **Palette vector coverage.** Palette syntax parsing and predictor wiring are
+   present; add a committed palette-coded stream before marking the row fully
+   covered.
 4. **Tile list OBU playback.** `EventTileList` parsing is present, but
    end-to-end tile-list reconstruction and output-frame blitting remain future
    work.
