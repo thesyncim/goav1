@@ -169,6 +169,29 @@ func BenchmarkDecodeFullVectorAllocs(b *testing.B) {
 	}
 }
 
+func TestDecodeFullVectorSteadyStateAllocs(t *testing.T) {
+	ivfBytes := mustReadBenchVector(t)
+	frames := mustCollectIVFFrames(t, ivfBytes)
+	harness := newDecodeBenchmarkHarness(t, frames)
+	defer harness.Close()
+
+	run := func() {
+		completed, _, err := harness.runOnce()
+		if err != nil {
+			t.Fatalf("decode full vector: %v", err)
+		}
+		if completed != len(frames) {
+			t.Fatalf("decoded %d frames want %d", completed, len(frames))
+		}
+	}
+
+	run()
+	allocs := testing.AllocsPerRun(50, run)
+	if allocs != 0 {
+		t.Fatalf("steady-state decode allocated: %f", allocs)
+	}
+}
+
 // BenchmarkDecodeFirstFrameOnly isolates the cost of decoding a single
 // keyframe so callers can compare the first-frame latency profile against
 // the steady-state per-frame cost reported by BenchmarkDecodeFullVector.
@@ -215,7 +238,7 @@ type decodeBenchmarkHarness struct {
 	payloads [][]byte
 }
 
-func newDecodeBenchmarkHarness(b *testing.B, frames []av1.IVFFrame) *decodeBenchmarkHarness {
+func newDecodeBenchmarkHarness(b testing.TB, frames []av1.IVFFrame) *decodeBenchmarkHarness {
 	b.Helper()
 	payloads := make([][]byte, len(frames))
 	for i, f := range frames {
@@ -301,7 +324,7 @@ func (h *decodeBenchmarkHarness) runOnce() (int, int, error) {
 	return result.Run.CompletedFrames, h.stats.TXBs, nil
 }
 
-func bindBenchFramePool(b *testing.B, format av1.FrameFormat, count int) av1.FramePool {
+func bindBenchFramePool(b testing.TB, format av1.FrameFormat, count int) av1.FramePool {
 	b.Helper()
 	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
 	if err != nil {
@@ -364,7 +387,7 @@ func newBenchSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.D
 	}
 }
 
-func mustReadBenchVector(b *testing.B) []byte {
+func mustReadBenchVector(b testing.TB) []byte {
 	b.Helper()
 	// GOAV1_BENCH_VECTOR overrides the default lossless quantizer-00 clip so a
 	// profiling run can target a more representative bitstream (e.g. a higher
@@ -381,7 +404,7 @@ func mustReadBenchVector(b *testing.B) []byte {
 	return mustReadBenchFile(b, path)
 }
 
-func mustReadBenchFile(b *testing.B, path string) []byte {
+func mustReadBenchFile(b testing.TB, path string) []byte {
 	b.Helper()
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -390,7 +413,7 @@ func mustReadBenchFile(b *testing.B, path string) []byte {
 	return raw
 }
 
-func mustCollectIVFFrames(b *testing.B, ivf []byte) []av1.IVFFrame {
+func mustCollectIVFFrames(b testing.TB, ivf []byte) []av1.IVFFrame {
 	b.Helper()
 	it, err := av1.NewIVFIterator(ivf)
 	if err != nil {
