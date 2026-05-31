@@ -72,23 +72,28 @@ func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []Referenc
 // MarkBlock ports libaom's intra_copy_frame_mvs()/av1_copy_frame_mvs() update
 // for one decoded block.
 func (f *ReferenceMVFrame) MarkBlock(req ReferenceMVFrameBlockRequest) error {
+	return f.MarkBlockPtr(req.MICol, req.MIRow, req.VisibleW4, req.VisibleH4, &req.Prediction, req.RefFrameSide)
+}
+
+// MarkBlockPtr is MarkBlock without copying the large block prediction result.
+func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 uint8, visibleH4 uint8, prediction *BlockPredictionModeResult, refFrameSide [referenceFrameCount]int8) error {
 	if err := f.Validate(); err != nil {
 		return err
 	}
-	if req.VisibleW4 == 0 || req.VisibleH4 == 0 {
+	if visibleW4 == 0 || visibleH4 == 0 {
 		return ErrInvalidDecodeState
 	}
-	col := int(req.MICol >> 1)
-	row := int(req.MIRow >> 1)
-	w := (int(req.VisibleW4) + 1) >> 1
-	h := (int(req.VisibleH4) + 1) >> 1
+	col := int(miCol >> 1)
+	row := int(miRow >> 1)
+	w := (int(visibleW4) + 1) >> 1
+	h := (int(visibleH4) + 1) >> 1
 	if col < 0 || row < 0 || w <= 0 || h <= 0 || col+w > f.Cols || row+h > f.Rows {
 		return ErrInvalidDecodeState
 	}
 
 	entry := ReferenceMVEntry{Ref: ReferenceFrameNone}
-	if req.Prediction.Valid && !req.Prediction.Intra && req.Prediction.InterMotionValid {
-		entry = referenceMVEntryForInter(req.Prediction.InterMotion, req.RefFrameSide)
+	if prediction != nil && prediction.Valid && !prediction.Intra && prediction.InterMotionValid {
+		entry = referenceMVEntryForInter(prediction.InterMotion, refFrameSide)
 	}
 	for y := range h {
 		line := f.Entries[(row+y)*f.Stride+col : (row+y)*f.Stride+col+w]

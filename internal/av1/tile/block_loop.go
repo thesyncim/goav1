@@ -400,13 +400,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitValue, err := decodeBlockLoopVisitWithCoeffController(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
+				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
 				if err != nil {
 					return fmt.Errorf("decode block=%+v: %w", block, err)
-				}
-				visitInfo := &scratch.visit
-				if !hasCoeffController || !req.DecodeCoefficients {
-					scratch.visit = visitValue
 				}
 				stats.Blocks++
 				stats.Prefixes++
@@ -888,6 +884,14 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
+	visit, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
+	if err != nil {
+		return BlockLoopVisit{}, err
+	}
+	return *visit, nil
+}
+
+func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (*BlockLoopVisit, error) {
 	if entropy.TraceRNGEnabled {
 		entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
 	}
@@ -900,7 +904,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	if req.Segmentation.Enabled && (!req.Segmentation.UpdateMap || req.Segmentation.Data.Preskip) {
 		segmentID, segmentPredicted, segment, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, false)
 		if err != nil {
-			return BlockLoopVisit{}, err
+			return nil, err
 		}
 	}
 
@@ -915,13 +919,13 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	}
 	prefix, err := s.readBlockModePrefixSyntax(cdfs.Mode, ctx, prefixReq, segmentPredicted)
 	if err != nil {
-		return BlockLoopVisit{}, fmt.Errorf("read prefix: %w", err)
+		return nil, fmt.Errorf("read prefix: %w", err)
 	}
 
 	if req.Segmentation.Enabled && req.Segmentation.UpdateMap && !req.Segmentation.Data.Preskip {
 		segmentID, segmentPredicted, segment, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, prefix.SkipTransform)
 		if err != nil {
-			return BlockLoopVisit{}, err
+			return nil, err
 		}
 		if segmentPredicted {
 			prefix.SegmentPredicted = true
@@ -929,11 +933,11 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	}
 	cdefIndex, err := s.ReadCDEFIndexForBlock(prefixReq.CDEF, cdef, prefixReq.Size, prefixReq.X4, prefixReq.Y4, prefix.SkipTransform)
 	if err != nil {
-		return BlockLoopVisit{}, err
+		return nil, err
 	}
 	prefix.CDEFIndex = cdefIndex
 	if err := ctx.Mark(block.Size, block.X4, block.Y4, prefix); err != nil {
-		return BlockLoopVisit{}, err
+		return nil, err
 	}
 
 	// libaom's read_delta_qindex / read_delta_lf gate the delta read on
@@ -956,7 +960,7 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 		Monochrome:     req.Monochrome,
 	}
 	if err := s.ReadBlockDeltas(req.Delta, delta, cdfs.Delta); err != nil {
-		return BlockLoopVisit{}, err
+		return nil, err
 	}
 
 	// Capture the above/left neighbor state at slot (X4, Y4) before
@@ -986,63 +990,53 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	if req.DecodePredictionModes {
 		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette)
 		if err != nil {
-			return BlockLoopVisit{}, fmt.Errorf("decode prediction: %w", err)
+			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
 
-	visit := BlockLoopVisit{
-		Block:            block,
-		SegmentID:        segmentID,
-		Segment:          segment,
-		SegmentPredicted: segmentPredicted,
-		Prefix:           prefix,
-		Prediction:       prediction,
-		Delta:            delta,
-	}
+	visit := &scratch.visit
+	visit.Block = block
+	visit.SegmentID = segmentID
+	visit.Segment = segment
+	visit.SegmentPredicted = segmentPredicted
+	visit.Prefix = prefix
+	visit.Prediction = prediction
+	visit.CoefficientsValid = false
+	visit.Delta = delta
 	if req.CurrentMVFrame != nil {
-		if err := req.CurrentMVFrame.MarkBlock(ReferenceMVFrameBlockRequest{
-			MICol:        block.MICol,
-			MIRow:        block.MIRow,
-			VisibleW4:    block.VisibleW4,
-			VisibleH4:    block.VisibleH4,
-			Prediction:   prediction,
-			RefFrameSide: req.RefFrameSide,
-		}); err != nil {
-			return BlockLoopVisit{}, err
+		if err := req.CurrentMVFrame.MarkBlockPtr(block.MICol, block.MIRow, block.VisibleW4, block.VisibleH4, &visit.Prediction, req.RefFrameSide); err != nil {
+			return nil, err
 		}
 	}
 	if req.DecodeCoefficients {
 		if hasCoeffController {
-			scratch.visit = visit
-			visitPtr := &scratch.visit
-			if err := coeffController.BeforeBlockCoefficientsPtr(visitPtr); err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("before coefficients: %w", err)
+			if err := coeffController.BeforeBlockCoefficientsPtr(visit); err != nil {
+				return nil, fmt.Errorf("before coefficients: %w", err)
 			}
-			coeffReq, err := coeffController.SelectBlockCoeffRequestPtr(visitPtr)
+			coeffReq, err := coeffController.SelectBlockCoeffRequestPtr(visit)
 			if err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
+				return nil, fmt.Errorf("select coeff request: %w", err)
 			}
 			coefficients, err := s.decodeBlockCoefficientsPtr(BlockCoeffCDFs{
 				Transform: cdfs.Transform,
 				Coeff:     cdfs.Coeff,
 			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block *BlockCoeffBlock) error {
-				return coeffController.VisitBlockCoeffPtr(visitPtr, block)
+				return coeffController.VisitBlockCoeffPtr(visit, block)
 			})
 			if err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
+				return nil, fmt.Errorf("decode coefficients: %w", err)
 			}
-			visitPtr.Coefficients = coefficients
-			visitPtr.CoefficientsValid = true
-			visit = *visitPtr
+			visit.Coefficients = coefficients
+			visit.CoefficientsValid = true
 		} else {
 			if req.BeforeCoefficients != nil {
-				if err := req.BeforeCoefficients(visit); err != nil {
-					return BlockLoopVisit{}, fmt.Errorf("before coefficients callback: %w", err)
+				if err := req.BeforeCoefficients(*visit); err != nil {
+					return nil, fmt.Errorf("before coefficients callback: %w", err)
 				}
 			}
-			coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, visit)
+			coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, *visit)
 			if err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
+				return nil, fmt.Errorf("select coeff request: %w", err)
 			}
 			coeffVisit := req.CoeffVisitor
 			if coeffVisit == nil {
@@ -1052,10 +1046,10 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 				Transform: cdfs.Transform,
 				Coeff:     cdfs.Coeff,
 			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
-				return coeffVisit(visit, block)
+				return coeffVisit(*visit, block)
 			})
 			if err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
+				return nil, fmt.Errorf("decode coefficients: %w", err)
 			}
 			visit.Coefficients = coefficients
 			visit.CoefficientsValid = true
