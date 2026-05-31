@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 )
 
+const traceEntropyReads = true
+
 var (
 	traceSeq   uint64
 	traceFrame uint32

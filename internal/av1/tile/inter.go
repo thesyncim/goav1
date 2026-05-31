@@ -616,7 +616,7 @@ func readBoolCDF(state *DecodeState, cdf *entropy.CDF) (bool, error) {
 	if state == nil {
 		return false, ErrInvalidDecodeState
 	}
-	symbol, err := state.Reader.ReadCDF(cdf)
+	symbol, err := state.Reader.ReadBinaryCDFTrusted(cdf)
 	if err != nil {
 		return false, err
 	}

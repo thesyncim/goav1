@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -195,6 +195,9 @@ test-transform-conformance:
 alloc:
 	./scripts/check_allocs.sh
 
+trace-zero:
+	./scripts/check_trace_zero.sh
+
 vet:
 	go vet ./...
 
@@ -274,7 +277,7 @@ dryrun-external-corpus:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
-ci-local: fmt-check vet test alloc
+ci-local: fmt-check vet test alloc trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
 # `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
@@ -303,6 +306,7 @@ help:
 	@echo "  bench-public               run public benchmarks"
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
 	@echo "  alloc                      run allocation regression checks"
+	@echo "  trace-zero                 prove entropy tracing compiles out of release hot paths"
 	@echo "  vet                        go vet ./..."
 	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
 	@echo "  fmt-check-strict           fail if gofmt would reformat anything"

@@ -365,7 +365,7 @@ Notes on the layering:
 
 - **`internal/av1/decoder`** — The state machine the user actually drives:
   - `Stream` (`stream.go`) — accepts OBUs, low-overhead bytes, or RTP
-    payloads via `PushLowOverhead` / `PushOBU` / `PushRTPPayload` and
+    payloads via `PushLowOverhead` / `PushOBUInto` / `PushRTPPayload` and
     produces `Event` values. Owns the in-progress `frameState`, the
     sequence header, the `ReferenceState`, and the RTP `Depacketizer`.
   - `Event` (`stream.go`) — a tagged union over OBU classification. Each
@@ -415,7 +415,7 @@ obu.NewLowOverheadIterator(src)
        |
        v
 for each unit:
-    Stream.PushUnit(unit, newCodedVideoSequence=false)
+    Stream.PushUnitInto(&event, unit, newCodedVideoSequence=false)
         |
         v
     switch unit.Header.Type {

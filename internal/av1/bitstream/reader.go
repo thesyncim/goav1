@@ -4,7 +4,10 @@
 
 package bitstream
 
-import "errors"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 var (
 	ErrNotEnoughBits       = errors.New("bitstream: not enough bits")
@@ -36,7 +39,7 @@ func (r *Reader) ByteAligned() bool {
 }
 
 func (r *Reader) ReadBit() (uint8, error) {
-	if r.BitsRemaining() < 1 {
+	if r.bit >= len(r.src)*8 {
 		return 0, ErrNotEnoughBits
 	}
 	byteIndex := r.bit >> 3
@@ -61,28 +64,42 @@ func (r *Reader) ReadBits(n uint8) (uint64, error) {
 		return 0, ErrNotEnoughBits
 	}
 
-	var v uint64
 	bits := int(n)
 	byteIndex := r.bit >> 3
 	bitInByte := r.bit & 7
+	src := r.src
 
+	if bitInByte == 0 && n == 64 {
+		v := binary.BigEndian.Uint64(src[byteIndex:])
+		r.bit += 64
+		return v, nil
+	}
+	if n <= 56 && len(src)-byteIndex >= 8 {
+		word := binary.BigEndian.Uint64(src[byteIndex:])
+		word <<= uint(bitInByte)
+		v := word >> uint(64-n)
+		r.bit += bits
+		return v, nil
+	}
+
+	var v uint64
 	if bitInByte != 0 {
 		take := min(8-bitInByte, bits)
 		shift := 8 - bitInByte - take
 		mask := byte((1 << take) - 1)
-		v = uint64((r.src[byteIndex] >> shift) & mask)
+		v = uint64((src[byteIndex] >> shift) & mask)
 		bits -= take
 		byteIndex++
 	}
 
 	for bits >= 8 {
-		v = (v << 8) | uint64(r.src[byteIndex])
+		v = (v << 8) | uint64(src[byteIndex])
 		bits -= 8
 		byteIndex++
 	}
 
 	if bits > 0 {
-		v = (v << uint(bits)) | uint64(r.src[byteIndex]>>(8-bits))
+		v = (v << uint(bits)) | uint64(src[byteIndex]>>(8-bits))
 	}
 
 	r.bit += int(n)

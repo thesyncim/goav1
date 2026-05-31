@@ -552,7 +552,7 @@ func readBoolCDFTrusted(s *DecodeState, cdf *entropy.CDF) (bool, error) {
 	if s == nil {
 		return false, ErrInvalidDecodeState
 	}
-	symbol, err := s.Reader.ReadCDFTrusted(cdf)
+	symbol, err := s.Reader.ReadBinaryCDFTrusted(cdf)
 	if err != nil {
 		return false, err
 	}

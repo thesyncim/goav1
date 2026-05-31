@@ -2,6 +2,8 @@
 
 package entropy
 
+const traceEntropyReads = false
+
 // traceCDFRead is a no-op stub when the goav1_trace_rng build tag is not set.
 // Keeping the helper inlineable preserves the entropy reader hot path.
 func traceCDFRead(_ uint16, _ int, _ uint32, _ uint32, _ int) {}

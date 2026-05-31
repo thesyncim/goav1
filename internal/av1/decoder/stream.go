@@ -151,20 +151,19 @@ func (s *Stream) PushLowOverhead(src []byte, events []Event) (int, error) {
 		if count >= len(events) {
 			return count, ErrEventBufferTooSmall
 		}
-		events[count], err = s.PushUnit(unit, false)
-		if err != nil {
+		if err := s.PushUnitInto(&events[count], unit, false); err != nil {
 			return count, err
 		}
 		count++
 	}
 }
 
-func (s *Stream) PushOBU(raw []byte, newCodedVideoSequence bool) (Event, error) {
+func (s *Stream) PushOBUInto(event *Event, raw []byte, newCodedVideoSequence bool) error {
 	unit, err := obu.ParseElement(raw)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
-	return s.PushUnit(unit, newCodedVideoSequence)
+	return s.PushUnitInto(event, unit, newCodedVideoSequence)
 }
 
 func (s *Stream) PushRTPPayload(dst []byte, used int, spans []rtp.OBUSpan, events []Event, payload []byte) (int, int, error) {
@@ -186,16 +185,18 @@ func (s *Stream) PushRTPPayload(dst []byte, used int, spans []rtp.OBUSpan, event
 		if err != nil {
 			return newUsed, i, err
 		}
-		events[i], err = s.PushUnit(unit, span.NewSequence)
-		if err != nil {
+		if err := s.PushUnitInto(&events[i], unit, span.NewSequence); err != nil {
 			return newUsed, i, err
 		}
 	}
 	return newUsed, spanCount, nil
 }
 
-func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, error) {
-	event := Event{
+func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence bool) error {
+	if event == nil {
+		return ErrEventBufferTooSmall
+	}
+	*event = Event{
 		Type:                  unit.Header.Type,
 		Unit:                  unit,
 		TemporalID:            unit.Header.TemporalID,
@@ -207,7 +208,7 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 	case obu.TypeSequenceHeader:
 		seq, err := parser.ParseSequenceHeader(unit.Payload)
 		if err != nil {
-			return Event{}, err
+			return err
 		}
 
 		event.Kind = EventSequenceHeader
@@ -221,18 +222,18 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 		}
 		s.sequence = seq
 		s.haveSequence = true
-		return event, nil
+		return nil
 
 	case obu.TypeTemporalDelimiter:
 		event.Kind = EventTemporalDelimiter
 		event.NewTemporalUnit = true
 		s.clearPendingFrame()
-		return event, nil
+		return nil
 
 	case obu.TypeRedundantFrameHeader:
 		if s.haveFrameHeader {
 			event.Kind = EventIgnored
-			return event, nil
+			return nil
 		}
 		event.Kind = EventRedundantFrameHeader
 		return s.acceptFrameHeader(event)
@@ -243,74 +244,74 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 
 	case obu.TypeFrame:
 		if !s.haveSequence {
-			return Event{}, ErrMissingSequenceHeader
+			return ErrMissingSequenceHeader
 		}
 		event.SequenceHeader = s.sequence
 		frameHeader, err := parser.ParseFrameHeaderPrefix(unit.Payload, s.sequence)
 		if err != nil {
-			return Event{}, err
+			return err
 		}
 		event.Kind = EventFrame
 		event.FrameHeader = frameHeader
 		if frameHeader.ShowExistingFrame {
-			return Event{}, parser.ErrInvalidFrameHeader
+			return parser.ErrInvalidFrameHeader
 		}
 		if !frameHeader.ShowExistingFrame {
 			frameSize, err := parser.ParseFrameSize(unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			tileInfo, err := parser.ParseTileInfo(unit.Payload, s.sequence, frameHeader, frameSize)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			quant, err := parser.ParseQuantizationParams(unit.Payload, s.sequence, tileInfo)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			segmentation, err := parser.ParseSegmentationParams(unit.Payload, frameHeader, quant, s.previousSegmentationData(frameHeader, frameSize))
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			delta, err := parser.ParseDeltaParams(unit.Payload, frameSize, quant, segmentation)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			loopFilter, err := parser.ParseLoopFilterParams(unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, s.previousLoopFilterDeltas(frameHeader, frameSize))
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			cdef, err := parser.ParseCDEFParams(unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			restoration, err := parser.ParseRestorationParams(unit.Payload, s.sequence, frameSize, segmentation, cdef)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			transformRef, err := parser.ParseTransformReferenceParams(unit.Payload, frameHeader, segmentation, restoration)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			skipMode, err := parser.ParseSkipModeParams(unit.Payload, s.sequence, frameHeader, frameSize, &s.references, transformRef)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			frameMode, err := parser.ParseFrameModeParams(unit.Payload, s.sequence, frameHeader, skipMode)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			globalMotion, err := parser.ParseGlobalMotionParams(unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			filmGrain, err := parser.ParseFilmGrainParams(unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, tileInfo, filmGrain.BitsRead, 0, true)
 			if err != nil {
-				return Event{}, err
+				return err
 			}
 			event.FrameSize = frameSize
 			event.TileInfo = tileInfo
@@ -336,68 +337,68 @@ func (s *Stream) PushUnit(unit obu.Unit, newCodedVideoSequence bool) (Event, err
 			if tileGroup.Final {
 				s.clearPendingFrame()
 			}
-			return event, nil
+			return nil
 		}
 		s.haveFrameHeader = true
 		s.tileGroups = 0
 		s.nextTile = 0
-		return event, nil
+		return nil
 
 	case obu.TypeTileGroup:
 		if !s.haveFrameHeader {
-			return Event{}, ErrMissingFrameHeader
+			return ErrMissingFrameHeader
 		}
 		tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, s.tileInfo, 0, s.nextTile, false)
 		if err != nil {
-			return Event{}, err
+			return err
 		}
 		event.Kind = EventTileGroup
-		s.applyFrameState(&event)
+		s.applyFrameState(event)
 		event.TileGroup = tileGroup
 		s.tileGroups++
 		s.nextTile = tileGroup.NextTile
 		if tileGroup.Final {
 			s.clearPendingFrame()
 		}
-		return event, nil
+		return nil
 
 	case obu.TypeMetadata:
 		event.Kind = EventMetadata
 		meta, mErr := obu.ParseMetadata(unit.Payload)
 		event.Metadata = meta
 		event.MetadataErr = mErr
-		return event, nil
+		return nil
 
 	case obu.TypeTileList:
 		event.Kind = EventTileList
 		list, err := parser.ParseTileListOBU(unit.Payload, s.tileListScratch[:0])
 		if err != nil {
 			event.TileListErr = err
-			return event, nil
+			return nil
 		}
 		// Re-anchor the scratch slice on the buffer the parser returned so a
 		// subsequent EventTileList reuses it without re-allocating.
 		s.tileListScratch = list.Entries[:len(list.Entries):cap(list.Entries)]
 		event.TileList = list
-		return event, nil
+		return nil
 
 	case obu.TypePadding:
 		event.Kind = EventPadding
-		return event, nil
+		return nil
 	}
 
 	event.Kind = EventReserved
-	return event, nil
+	return nil
 }
 
-func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
+func (s *Stream) acceptFrameHeader(event *Event) error {
 	if !s.haveSequence {
-		return Event{}, ErrMissingSequenceHeader
+		return ErrMissingSequenceHeader
 	}
 	event.SequenceHeader = s.sequence
 	frameHeader, err := parser.ParseFrameHeaderPrefix(event.Unit.Payload, s.sequence)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	event.FrameHeader = frameHeader
 	if frameHeader.ShowExistingFrame {
@@ -406,55 +407,55 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 
 	frameSize, err := parser.ParseFrameSize(event.Unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	quant, err := parser.ParseQuantizationParams(event.Unit.Payload, s.sequence, tileInfo)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	segmentation, err := parser.ParseSegmentationParams(event.Unit.Payload, frameHeader, quant, s.previousSegmentationData(frameHeader, frameSize))
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	delta, err := parser.ParseDeltaParams(event.Unit.Payload, frameSize, quant, segmentation)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	loopFilter, err := parser.ParseLoopFilterParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, segmentation, delta, s.previousLoopFilterDeltas(frameHeader, frameSize))
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	cdef, err := parser.ParseCDEFParams(event.Unit.Payload, s.sequence, frameSize, segmentation, loopFilter)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	restoration, err := parser.ParseRestorationParams(event.Unit.Payload, s.sequence, frameSize, segmentation, cdef)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	transformRef, err := parser.ParseTransformReferenceParams(event.Unit.Payload, frameHeader, segmentation, restoration)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	skipMode, err := parser.ParseSkipModeParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, transformRef)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	frameMode, err := parser.ParseFrameModeParams(event.Unit.Payload, s.sequence, frameHeader, skipMode)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	globalMotion, err := parser.ParseGlobalMotionParams(event.Unit.Payload, frameHeader, frameSize, tileInfo, &s.references, frameMode)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	filmGrain, err := parser.ParseFilmGrainParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	event.FrameSize = frameSize
 	event.TileInfo = tileInfo
@@ -476,24 +477,24 @@ func (s *Stream) acceptFrameHeader(event Event) (Event, error) {
 	s.storeFrameState(event)
 	s.haveFrameHeader = true
 	s.tileGroups = 0
-	return event, nil
+	return nil
 }
 
-func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
+func (s *Stream) acceptExistingFrame(event *Event) error {
 	if event.NewCodedVideoSequence {
-		return Event{}, parser.ErrInvalidFrameHeader
+		return parser.ErrInvalidFrameHeader
 	}
 	event.SequenceHeader = s.sequence
 
 	ref := s.references.Frames[event.FrameHeader.ExistingFrameIdx]
 	if !ref.Valid {
-		return Event{}, parser.ErrReferenceFrameNeeded
+		return parser.ErrReferenceFrameNeeded
 	}
 	if s.sequence.FrameIDNumbersPresent && ref.FrameID != event.FrameHeader.FrameID {
-		return Event{}, parser.ErrInvalidFrameHeader
+		return parser.ErrInvalidFrameHeader
 	}
 	if !ref.ShowableFrame {
-		return Event{}, parser.ErrInvalidFrameHeader
+		return parser.ErrInvalidFrameHeader
 	}
 
 	event.Kind = EventExistingFrame
@@ -510,7 +511,7 @@ func (s *Stream) acceptExistingFrame(event Event) (Event, error) {
 			s.references.Frames[i] = ref
 		}
 	}
-	return event, nil
+	return nil
 }
 
 func (s *Stream) clearPendingFrame() {
@@ -521,7 +522,7 @@ func (s *Stream) clearPendingFrame() {
 	s.frame = frameState{}
 }
 
-func (s *Stream) storeFrameState(event Event) {
+func (s *Stream) storeFrameState(event *Event) {
 	s.frame = frameState{
 		SequenceHeader:      event.SequenceHeader,
 		FrameHeader:         event.FrameHeader,

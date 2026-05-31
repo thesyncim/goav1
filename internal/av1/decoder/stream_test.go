@@ -10,6 +10,14 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/rtp"
 )
 
+func pushOBU(s *Stream, raw []byte, newCodedVideoSequence bool) (Event, error) {
+	var event Event
+	if err := s.PushOBUInto(&event, raw, newCodedVideoSequence); err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
 type testBitWriter struct {
 	buf [128]byte
 	bit int
@@ -493,7 +501,7 @@ func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
 	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
 
 	var dec Stream
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeMetadata, payload), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeMetadata, payload), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,9 +531,9 @@ func TestStreamTileListOBUParses(t *testing.T) {
 	}
 
 	var dec Stream
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeTileList, payload), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeTileList, payload), false)
 	if err != nil {
-		t.Fatalf("PushOBU err=%v", err)
+		t.Fatalf("PushOBUInto err=%v", err)
 	}
 	if event.Kind != EventTileList {
 		t.Fatalf("kind=%v want EventTileList", event.Kind)
@@ -552,9 +560,9 @@ func TestStreamTileListOBUCapturesParseError(t *testing.T) {
 	payload := []byte{0x00, 0x00, 0x00, 0x00}
 
 	var dec Stream
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeTileList, payload), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeTileList, payload), false)
 	if err != nil {
-		t.Fatalf("PushOBU should not propagate tile list parse error: %v", err)
+		t.Fatalf("PushOBUInto should not propagate tile list parse error: %v", err)
 	}
 	if event.Kind != EventTileList {
 		t.Fatalf("kind=%v want EventTileList", event.Kind)
@@ -569,9 +577,9 @@ func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
 	payload := []byte{0x01}
 
 	var dec Stream
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeMetadata, payload), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeMetadata, payload), false)
 	if err != nil {
-		t.Fatalf("PushOBU should not propagate metadata parse error: %v", err)
+		t.Fatalf("PushOBUInto should not propagate metadata parse error: %v", err)
 	}
 	if event.Kind != EventMetadata {
 		t.Fatalf("kind=%v", event.Kind)
@@ -583,21 +591,21 @@ func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
 
 func TestStreamRejectsFrameBeforeSequenceHeader(t *testing.T) {
 	var dec Stream
-	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, []byte{0x80}), false)
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, []byte{0x80}), false)
 	if !errors.Is(err, ErrMissingSequenceHeader) {
-		t.Fatalf("PushOBU err=%v want %v", err, ErrMissingSequenceHeader)
+		t.Fatalf("PushOBUInto err=%v want %v", err, ErrMissingSequenceHeader)
 	}
 }
 
 func TestStreamRejectsTileBeforeFrameHeader(t *testing.T) {
 	var dec Stream
-	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = dec.PushOBU(appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
+	_, err = pushOBU(&dec, appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
 	if !errors.Is(err, ErrMissingFrameHeader) {
-		t.Fatalf("PushOBU err=%v want %v", err, ErrMissingFrameHeader)
+		t.Fatalf("PushOBUInto err=%v want %v", err, ErrMissingFrameHeader)
 	}
 }
 
@@ -618,15 +626,15 @@ func TestStreamRejectsTileAfterFinalTileGroup(t *testing.T) {
 
 func TestStreamSequenceChange(t *testing.T) {
 	var dec Stream
-	first, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
+	first, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
+	second, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(32)), false)
+	third, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(32)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,17 +647,17 @@ func TestStreamSequenceChange(t *testing.T) {
 func TestStreamNewCodedVideoSequenceFlagResetsSameSequence(t *testing.T) {
 	var dec Stream
 	sequence := appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
-	if _, err := dec.PushOBU(sequence, false); err != nil {
+	if _, err := pushOBU(&dec, sequence, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
 	if !dec.haveFrameHeader || !dec.references.Frames[0].Valid {
 		t.Fatalf("frame header did not populate pending/reference state: pending=%v ref0=%+v", dec.haveFrameHeader, dec.references.Frames[0])
 	}
 
-	event, err := dec.PushOBU(sequence, true)
+	event, err := pushOBU(&dec, sequence, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1011,19 +1019,19 @@ func TestReferenceOrderHintsFromReferenceState(t *testing.T) {
 
 func TestStreamCarriesReferenceFrameHeaderState(t *testing.T) {
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
 
 	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
 	keyFrame = append(keyFrame, 0xaa)
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
 		t.Fatal(err)
 	}
 
 	updateFrame := append([]byte{}, interFrameHeaderPayloadWithReferenceState(true)...)
 	updateFrame = append(updateFrame, 0xbb)
-	updateEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, updateFrame), false)
+	updateEvent, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, updateFrame), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1041,7 +1049,7 @@ func TestStreamCarriesReferenceFrameHeaderState(t *testing.T) {
 
 	copyFrame := append([]byte{}, interFrameHeaderPayloadWithReferenceState(false)...)
 	copyFrame = append(copyFrame, 0xcc)
-	copyEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, copyFrame), false)
+	copyEvent, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, copyFrame), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1061,13 +1069,13 @@ func TestStreamSwitchFrameRefreshesAllReferenceSlots(t *testing.T) {
 	// state: every reference slot is rewritten to the decoded switch
 	// surface.
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
 
 	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
 	keyFrame = append(keyFrame, 0xaa)
-	keyEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false)
+	keyEvent, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, keyFrame), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,9 +1093,9 @@ func TestStreamSwitchFrameRefreshesAllReferenceSlots(t *testing.T) {
 
 	switchFrame := append([]byte{}, switchFrameHeaderPayload()...)
 	switchFrame = append(switchFrame, 0xbb)
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, switchFrame), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, switchFrame), false)
 	if err != nil {
-		t.Fatalf("S_FRAME PushOBU err=%v", err)
+		t.Fatalf("S_FRAME PushOBUInto err=%v", err)
 	}
 	if event.Kind != EventFrame {
 		t.Fatalf("S_FRAME event kind=%v", event.Kind)
@@ -1203,19 +1211,19 @@ func TestStreamSwitchFrameProvidesReferencesForFollowingInter(t *testing.T) {
 
 func TestStreamShowExistingFrame(t *testing.T) {
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
 
 	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
 	keyFrame = append(keyFrame, 0xaa)
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
 		t.Fatal(err)
 	}
 
 	interFrame := append([]byte{}, interFrameHeaderPayload()...)
 	interFrame = append(interFrame, 0xbb)
-	interEvent, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, interFrame), false)
+	interEvent, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, interFrame), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1223,7 +1231,7 @@ func TestStreamShowExistingFrame(t *testing.T) {
 		t.Fatalf("inter event=%+v", interEvent)
 	}
 
-	event, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1237,48 +1245,48 @@ func TestStreamShowExistingFrame(t *testing.T) {
 		t.Fatalf("show existing state=%+v inter=%+v", event, interEvent)
 	}
 
-	_, err = dec.PushOBU(appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
+	_, err = pushOBU(&dec, appendRTPElement(nil, obu.TypeTileGroup, []byte{0x80}), false)
 	if !errors.Is(err, ErrMissingFrameHeader) {
-		t.Fatalf("PushOBU err=%v want %v", err, ErrMissingFrameHeader)
+		t.Fatalf("PushOBUInto err=%v want %v", err, ErrMissingFrameHeader)
 	}
 }
 
 func TestStreamRejectsShowExistingBeforeReference(t *testing.T) {
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
-	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
 	if !errors.Is(err, parser.ErrReferenceFrameNeeded) {
-		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrReferenceFrameNeeded)
+		t.Fatalf("PushOBUInto err=%v want %v", err, parser.ErrReferenceFrameNeeded)
 	}
 }
 
 func TestStreamRejectsUnshowableExistingFrame(t *testing.T) {
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
 	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
 	keyFrame = append(keyFrame, 0xaa)
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, keyFrame), false); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, showExistingFrameHeaderPayload(0)), false)
 	if !errors.Is(err, parser.ErrInvalidFrameHeader) {
-		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrInvalidFrameHeader)
+		t.Fatalf("PushOBUInto err=%v want %v", err, parser.ErrInvalidFrameHeader)
 	}
 }
 
 func TestStreamRejectsFrameOBUShowExistingFrame(t *testing.T) {
 	var dec Stream
-	if _, err := dec.PushOBU(appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
-	_, err := dec.PushOBU(appendRTPElement(nil, obu.TypeFrame, showExistingFrameHeaderPayload(0)), false)
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrame, showExistingFrameHeaderPayload(0)), false)
 	if !errors.Is(err, parser.ErrInvalidFrameHeader) {
-		t.Fatalf("PushOBU err=%v want %v", err, parser.ErrInvalidFrameHeader)
+		t.Fatalf("PushOBUInto err=%v want %v", err, parser.ErrInvalidFrameHeader)
 	}
 }
 
@@ -1286,8 +1294,8 @@ func TestStreamAllocs(t *testing.T) {
 	raw := appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
 	allocs := testing.AllocsPerRun(1000, func() {
 		var dec Stream
-		_, err := dec.PushOBU(raw, false)
-		if err != nil {
+		var event Event
+		if err := dec.PushOBUInto(&event, raw, false); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1296,11 +1304,12 @@ func TestStreamAllocs(t *testing.T) {
 	}
 }
 
-func BenchmarkStreamPushOBU(b *testing.B) {
+func BenchmarkStreamPushOBUInto(b *testing.B) {
 	raw := appendRTPElement(nil, obu.TypeSequenceHeader, testSequenceHeaderPayload(16))
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		var dec Stream
-		_, _ = dec.PushOBU(raw, false)
+		var event Event
+		_ = dec.PushOBUInto(&event, raw, false)
 	}
 }

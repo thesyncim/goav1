@@ -72,7 +72,29 @@ func (r *Reader) BitsRead() int {
 
 // ReadBit decodes one equiprobable bit.
 func (r *Reader) ReadBit() (uint8, error) {
-	return r.ReadBoolQ15(CDFProbTop / 2)
+	if r == nil {
+		return 0, ErrInvalidProbability
+	}
+
+	rangeValue := r.rng
+	dif := r.dif
+	split := (rangeValue >> 8) << 7
+	split += ecMinProb
+	window := split << (ecWindow - 16)
+
+	bit := uint8(1)
+	nextRange := split
+	if dif >= window {
+		dif -= window
+		nextRange = rangeValue - split
+		bit = 0
+	}
+
+	if traceEntropyReads {
+		traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
+	}
+	r.normalize(dif, nextRange)
+	return bit, nil
 }
 
 // ReadBool decodes one boolean with an AV1 8-bit probability that the returned
@@ -103,7 +125,9 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 		bit = 0
 	}
 
-	traceBoolRead(prob, r.dif, r.rng, r.BitsRead())
+	if traceEntropyReads {
+		traceBoolRead(prob, r.dif, r.rng, r.BitsRead())
+	}
 	r.normalize(dif, nextRange)
 	return bit, nil
 }
@@ -113,12 +137,32 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 	if n > 32 {
 		return 0, ErrInvalidBitCount
 	}
+	if n == 0 {
+		return 0, nil
+	}
+	if r == nil {
+		return 0, ErrInvalidProbability
+	}
 	var v uint32
 	for range n {
-		bit, err := r.ReadBit()
-		if err != nil {
-			return 0, err
+		rangeValue := r.rng
+		dif := r.dif
+		split := (rangeValue >> 8) << 7
+		split += ecMinProb
+		window := split << (ecWindow - 16)
+
+		bit := uint8(1)
+		nextRange := split
+		if dif >= window {
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
 		}
+
+		if traceEntropyReads {
+			traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
+		}
+		r.normalize(dif, nextRange)
 		v = (v << 1) | uint32(bit)
 	}
 	return v, nil
@@ -275,7 +319,9 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 		return 0, ErrInvalidCDF
 	}
 
-	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+	if traceEntropyReads {
+		traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+	}
 	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
 	// in registers for updateCDFWindow instead of spilling across a call. The
 	// arithmetic matches (*Reader).normalize exactly.
@@ -305,10 +351,14 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 // a zero-valued CDF still reports ErrInvalidCDF. Slice callers that need the
 // full per-call monotonicity check continue to use ReadSymbol directly.
 func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
-	if cdf == nil {
+	if r == nil || cdf == nil {
 		return 0, ErrInvalidCDF
 	}
-	return r.ReadSymbolTrusted(cdf.Values(), cdf.Symbols())
+	symbols := int(cdf.symbols)
+	if symbols < 2 || symbols > MaxSymbols {
+		return 0, ErrInvalidCDF
+	}
+	return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
 }
 
 // readSymbolTrusted is the validation-free core of ReadSymbol. It assumes the
@@ -357,7 +407,9 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 		return 0, ErrInvalidCDF
 	}
 
-	traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+	if traceEntropyReads {
+		traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+	}
 	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
 	// in registers for updateCDFWindow instead of spilling across a call. The
 	// arithmetic matches (*Reader).normalize exactly.
@@ -397,10 +449,56 @@ func (r *Reader) ReadSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 // per-call monotonicity validation. The CDF must be valid by construction; see
 // ReadSymbolTrusted.
 func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
-	if cdf == nil {
+	if r == nil || cdf == nil {
 		return 0, ErrInvalidCDF
 	}
-	return r.ReadSymbolTrusted(cdf.Values(), cdf.Symbols())
+	symbols := int(cdf.symbols)
+	if symbols < 2 || symbols > MaxSymbols {
+		return 0, ErrInvalidCDF
+	}
+	return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+}
+
+// ReadBinaryCDFTrusted decodes one symbol from a two-symbol CDF without taking
+// the generic symbol-search path. The CDF must be valid by construction.
+func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
+	if r == nil || cdf == nil || cdf.symbols != 2 {
+		return 0, ErrInvalidCDF
+	}
+	window := cdf.values[:3]
+
+	rangeValue := r.rng
+	rngHi := rangeValue >> 8
+	coded := r.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := window[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		lower = 0
+	}
+	if lower >= upper {
+		return 0, ErrInvalidCDF
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(c0, 2, r.dif, r.rng, r.BitsRead())
+	}
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = rng << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
+	if r.allowCDFUpdate {
+		updateCDFWindow(window, symbol)
+	}
+	return symbol, nil
 }
 
 // ReadSignedDelta decodes the AV1 CDF-coded signed delta core used by

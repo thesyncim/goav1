@@ -87,7 +87,7 @@ func TestStreamRejectsExtensionReservedBits(t *testing.T) {
 		0x00, // obu_size = 0
 	}
 	var dec Stream
-	if _, err := dec.PushOBU(raw, false); err == nil {
+	if _, err := pushOBU(&dec, raw, false); err == nil {
 		t.Fatal("expected reserved-bit error")
 	}
 }

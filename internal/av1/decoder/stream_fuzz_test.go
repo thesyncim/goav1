@@ -140,6 +140,7 @@ func fuzzDriveIVF(data []byte) {
 func fuzzDriveLowOverhead(data []byte) {
 	it := obu.NewLowOverheadIterator(data)
 	var stream Stream
+	var event Event
 	units := 0
 	for {
 		unit, ok, err := it.Next()
@@ -150,7 +151,7 @@ func fuzzDriveLowOverhead(data []byte) {
 		if units > fuzzMaxUnits {
 			return
 		}
-		if _, err := stream.PushUnit(unit, units == 1); err != nil {
+		if err := stream.PushUnitInto(&event, unit, units == 1); err != nil {
 			return
 		}
 	}
@@ -159,6 +160,7 @@ func fuzzDriveLowOverhead(data []byte) {
 func fuzzDriveAnnexB(data []byte) {
 	it := obu.NewAnnexBIterator(data)
 	var stream Stream
+	var event Event
 	units := 0
 	for {
 		unit, ok, err := it.Next()
@@ -169,7 +171,7 @@ func fuzzDriveAnnexB(data []byte) {
 		if units > fuzzMaxUnits {
 			return
 		}
-		if _, err := stream.PushUnit(unit.OBU, false); err != nil {
+		if err := stream.PushUnitInto(&event, unit.OBU, false); err != nil {
 			return
 		}
 	}
@@ -197,5 +199,6 @@ func fuzzDriveSingleElement(data []byte) {
 		return
 	}
 	var stream Stream
-	_, _ = stream.PushUnit(unit, true)
+	var event Event
+	_ = stream.PushUnitInto(&event, unit, true)
 }
