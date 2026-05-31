@@ -534,6 +534,13 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	event := req.Event
 	event.SequenceHeader = req.Sequence
 
+	if event.Kind == DecoderEventTileList {
+		if event.TileListErr != nil {
+			return DecoderFrameWorkEventResult{}, event.TileListErr
+		}
+		return DecoderFrameWorkEventResult{}, ErrDecoderUnsupportedTileList
+	}
+
 	if req.Runner != nil {
 		if err := req.Runner.ResetStats(); err != nil {
 			return DecoderFrameWorkEventResult{}, err

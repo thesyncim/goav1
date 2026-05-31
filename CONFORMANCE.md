@@ -195,9 +195,11 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | (anchor_frame_idx, anchor_tile_row/col,        |
 |    |                                  |         |                                  | tile_data_size, tile data slice); EventTileList|
 |    |                                  |         |                                  | carries the parsed structure plus TileListErr  |
-|    |                                  |         |                                  | for partial payloads. End-to-end tile-list     |
-|    |                                  |         |                                  | decode (anchor-frame reuse + per-tile          |
-|    |                                  |         |                                  | reconstruction blit) is not yet wired.         |
+|    |                                  |         |                                  | for partial payloads. The residual decode      |
+|    |                                  |         |                                  | runner fails loudly with                       |
+|    |                                  |         |                                  | ErrDecoderUnsupportedTileList until            |
+|    |                                  |         |                                  | end-to-end tile-list decode (anchor-frame      |
+|    |                                  |         |                                  | reuse + per-tile reconstruction blit) is wired.|
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 25 | Frame type: key                  | Yes     | internal/av1/parser/frame.go     | FrameTypeKey; full reference reset path.       |
 |    | Frame type: intra-only           | Yes     | internal/av1/parser/frame.go     | FrameTypeIntraOnly; intra-only refresh.        |
@@ -432,9 +434,10 @@ manifest. The next production-readiness items are:
    12-bit 4:4:4 streams as upstream or locally generated goldens become
    available; the current vendored corpus includes 4:2:0 12-bit odd-size CDEF
    coverage.
-2. **Tile list OBU playback.** `EventTileList` parsing is present, but
-   end-to-end tile-list reconstruction and output-frame blitting remain future
-   work.
+2. **Tile list OBU playback.** `EventTileList` parsing is present and the
+   residual decode runner now returns `ErrDecoderUnsupportedTileList` instead
+   of silently ignoring playback, but end-to-end tile-list reconstruction and
+   output-frame blitting remain future work.
 3. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
    regressions exist, but the upstream libaom v3.14.0 test-data set does not
    ship a dedicated `S_FRAME` IVF with MD5 goldens.

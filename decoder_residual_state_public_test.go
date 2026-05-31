@@ -1695,6 +1695,31 @@ func TestPublicDecoderFrameWorkResidualEventRunnerRunEvents(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventRunnerRejectsTileList(t *testing.T) {
+	var eventRunner av1.DecoderFrameWorkResidualEventRunner
+
+	result, err := eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventTileList},
+	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrDecoderUnsupportedTileList) {
+		t.Fatalf("RunEvents err=%v want %v", err, av1.ErrDecoderUnsupportedTileList)
+	}
+	if result.Count != 0 || result.OutputCount != 0 || result.CompletedFrames != 0 {
+		t.Fatalf("result after unsupported tile list=%+v", result)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualEventRunnerPropagatesTileListParseError(t *testing.T) {
+	var eventRunner av1.DecoderFrameWorkResidualEventRunner
+
+	_, err := eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventTileList, TileListErr: av1.ErrTileListShortEntry},
+	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrTileListShortEntry) {
+		t.Fatalf("RunEvents err=%v want %v", err, av1.ErrTileListShortEntry)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.T) {
 	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
 		BitDepth:   8,
