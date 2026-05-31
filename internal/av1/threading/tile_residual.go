@@ -256,9 +256,10 @@ type FrameWorkTileResidualScratch struct {
 	InterTX      tile.InterCoeffTransformSelector
 	CFL          FrameWorkCFLPredictionScratch
 
-	controller frameWorkTileResidualLoopController
-	stats      FrameWorkTileResidualStats
-	geomCache  frameWorkJobGeometryCache
+	controller       frameWorkTileResidualLoopController
+	beforeSuperblock tile.BlockLoopSuperblockVisitor
+	stats            FrameWorkTileResidualStats
+	geomCache        frameWorkJobGeometryCache
 
 	// reconEvents and coeffArena back the deferred two-pass reconstruction path
 	// (frameWorkDeferReconstruction). reconEvents records the in-order predict
@@ -920,7 +921,10 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		residualScratch:   req.ResidualScratch,
 	}
 	if loopReq.BeforeSuperblock != nil || readRestoration {
-		loopReq.BeforeSuperblock = scratch.controller.BeforeSuperblock
+		if scratch.beforeSuperblock == nil {
+			scratch.beforeSuperblock = scratch.controller.BeforeSuperblock
+		}
+		loopReq.BeforeSuperblock = scratch.beforeSuperblock
 	}
 
 	loopStats, err := tile.DecodeBlockLoopWithCoeffController(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit tile.BlockLoopVisit) error {

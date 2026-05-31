@@ -785,31 +785,31 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 			name:        "postfiltered cdef restoration",
 			file:        "profile1-444-8bit-cdef-restoration-160x128.ivf",
 			wantVisible: 4,
-			maxAllocs:   8,
+			maxAllocs:   0,
 		},
 		{
 			name:        "superres inter external references",
 			file:        "profile1-444-8bit-superres-inter-160x128.ivf",
 			wantVisible: 8,
-			maxAllocs:   8,
+			maxAllocs:   0,
 		},
 		{
 			name:        "superres restoration high bit depth",
 			file:        "profile1-444-10bit-superres-restoration-160x128.ivf",
 			wantVisible: 4,
-			maxAllocs:   8,
+			maxAllocs:   0,
 		},
 		{
 			name:        "superres inter high bit depth",
 			file:        "profile1-444-10bit-superres-inter-simple-160x128.ivf",
 			wantVisible: 8,
-			maxAllocs:   8,
+			maxAllocs:   0,
 		},
 		{
 			name:        "film grain high bit depth",
 			file:        "profile1-444-10bit-filmgrain-96x96.ivf",
 			wantVisible: 3,
-			maxAllocs:   8,
+			maxAllocs:   0,
 		},
 	}
 

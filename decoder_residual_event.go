@@ -57,6 +57,8 @@ type DecoderFrameWorkResidualEventRunner struct {
 	Outputs     []*Frame
 
 	External DecoderFrameWorkExternalReferenceRuntime
+
+	sideRunner DecoderFrameWorkSideDataRunner
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -259,7 +261,7 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 			return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
 		}
 	}
-	return DecoderFrameWorkResidualEventRunner{
+	runner := DecoderFrameWorkResidualEventRunner{
 		State:             runtime.State,
 		Refs:              runtime.Refs,
 		FramePool:         runtime.FramePool,
@@ -277,14 +279,21 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 		Stats:             runtime.Stats,
 		Outputs:           runtime.Outputs,
 		External:          runtime.External,
-	}, side, nil
+	}
+	if runner.SideData != nil {
+		runner.sideRunner = decoderFrameWorkResidualSideDataRunner{
+			SideData:    runner.SideData,
+			BatchRunner: runner.BatchRunner,
+		}
+	}
+	return runner, side, nil
 }
 
 // Run plans and executes one decoder frame-work event using the runner's
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.
 func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
-	return RunDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 		State:             r.State,
 		Refs:              r.Refs,
 		FramePool:         r.FramePool,
@@ -304,14 +313,14 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 		Post:              post,
 		Stats:             r.Stats,
 		External:          r.External,
-	})
+	}, r.boundSideDataRunner(side))
 }
 
 // RunWithPostFilterRunner plans and executes one decoder frame-work event using
 // direct residual and postfilter runners, avoiding callback method values in the
 // final-frame path.
 func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
-	return RunDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 		State:             r.State,
 		Refs:              r.Refs,
 		FramePool:         r.FramePool,
@@ -331,7 +340,14 @@ func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence Se
 		PostRunner:        post,
 		Stats:             r.Stats,
 		External:          r.External,
-	})
+	}, r.boundSideDataRunner(side))
+}
+
+func (r DecoderFrameWorkResidualEventRunner) boundSideDataRunner(side *DecoderFrameWorkSideData) DecoderFrameWorkSideDataRunner {
+	if side == nil || side != r.SideData {
+		return nil
+	}
+	return r.sideRunner
 }
 
 // RunEvents plans and executes parsed decoder events in order. r.SideData must
@@ -525,6 +541,10 @@ func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
 // is attached to both the active frame-work state and the residual runner after
 // planning and before tile work runs.
 func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest) (DecoderFrameWorkEventResult, error) {
+	return runDecoderFrameWorkEventWithResidualRunner(req, nil)
+}
+
+func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
 	if decoderFrameWorkResidualEventHasTilePayload(req.Event) && req.Runner == nil {
 		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
 	}
@@ -551,7 +571,7 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}
 
 	if req.External.Enabled() {
-		return runDecoderFrameWorkEventWithExternalResidualRunner(req, event)
+		return runDecoderFrameWorkEventWithExternalResidualRunner(req, event, sideRunner)
 	}
 
 	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
@@ -642,13 +662,12 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}, nil
 }
 
-func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
 	postRunner := req.PostRunner
 	if req.Post != nil {
 		postRunner = decoderFrameWorkResidualPostFuncRunner{fn: req.Post}
 	}
-	var sideRunner DecoderFrameWorkSideDataRunner
-	if req.SideData != nil {
+	if sideRunner == nil && req.SideData != nil {
 		sideRunner = decoderFrameWorkResidualSideDataRunner{
 			SideData:    req.SideData,
 			BatchRunner: req.Runner,

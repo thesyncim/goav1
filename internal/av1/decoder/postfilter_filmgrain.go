@@ -592,6 +592,13 @@ func (ctx FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWor
 	if len(req.OutputFrame) < size {
 		return nil, frame.ErrShortBuffer
 	}
+	if req.OutputView != nil {
+		return ctx.bindFilmGrainPostFilterOutputView(req, size)
+	}
+	return ctx.bindFilmGrainPostFilterOutputAllocated(req, size)
+}
+
+func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputView(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
 	output, err := frame.Bind(req.OutputFrame[:size], ctx.Output.Format)
 	if err != nil {
 		return nil, err
@@ -599,9 +606,17 @@ func (ctx FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWor
 	if err := frameWorkCopyPostFilterFrame(&output, ctx.Output); err != nil {
 		return nil, err
 	}
-	if req.OutputView != nil {
-		*req.OutputView = output
-		return req.OutputView, nil
+	*req.OutputView = output
+	return req.OutputView, nil
+}
+
+func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputAllocated(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
+	output, err := frame.Bind(req.OutputFrame[:size], ctx.Output.Format)
+	if err != nil {
+		return nil, err
+	}
+	if err := frameWorkCopyPostFilterFrame(&output, ctx.Output); err != nil {
+		return nil, err
 	}
 	return &output, nil
 }
