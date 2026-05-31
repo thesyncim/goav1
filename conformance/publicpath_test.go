@@ -29,10 +29,9 @@ type publicClip struct {
 // These vendored profile-conformance clips and their aomdec per-frame MD5
 // goldens are shared with internal/av1/testvector/profiles. They cover
 // profile-1 4:4:4 8/10-bit, profile-1 screen-content palette, profile-1
-// CDEF/restoration, profile-1 film grain, profile-2 4:2:2 8-bit, and
-// profile-2 4:2:0 12-bit --
-// including inter-coded non-4:2:0 clips that libaom's published vector suite
-// does not ship.
+// CDEF/restoration, profile-1 film grain, profile-2 4:2:2 8-bit, profile-2
+// 4:2:0 12-bit, edge-motion, large-superblock, and multi-tile streams,
+// including non-4:2:0 clips that libaom's published vector suite does not ship.
 var publicClips = []publicClip{
 	{
 		file: "profile1-444-8bit-64x64.ivf",
@@ -153,6 +152,43 @@ var publicClips = []publicClip{
 			"e714741e4ad4fce5a4469c79705f132c",
 			"447103c7d7358e4cbb6f5b98ce4e1be1",
 			"dcd86cbbf80f81d9699eaf6c6e879e72",
+		},
+	},
+	{
+		file: "superblock128-420-8bit-128x128.ivf",
+		frameMD5Hex: []string{
+			"42ace8044951a222256ffcd65aa8bb67",
+			"c1b26993930b06dec4f0d05457035565",
+			"4e7b4292d96e53cc8ea5b16c8d7e13de",
+		},
+	},
+	{
+		file: "profile0-420-8bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f6c673ec13ccdd994fd10373a1d7f814",
+			"a3b01764f4b3e9c7bcec7c0e7e86be64",
+			"8158c19b78deb9ac6aaab9d411fe268f",
+			"eebdcf491352f1b13a24b614ba137832",
+			"54582e43045ece242c0a50e3f73e7a6b",
+		},
+	},
+	{
+		file: "profile2-420-12bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f85baff9f8f516879ab8da538e582a09",
+			"5dfd30b2a7eb7e2178a06bd7e060bc80",
+			"f14ff5bc1a1504908f1d22b4be5a0ca3",
+			"24e96db2d3644a748e587dd011863a4a",
+			"325a954def1c43d852c980ddc66ba652",
+		},
+	},
+	{
+		file: "multitile-2x1-rows-256x256.ivf",
+		frameMD5Hex: []string{
+			"19abff965e7c0b982b779b14ce5d67a9",
+			"d9670540a9ef1cc444eb684dde65928c",
+			"1ece7ab7594b417ad313c395c9bf153c",
+			"6de64107acac0d89ad361dfe615a1c5f",
 		},
 	},
 }

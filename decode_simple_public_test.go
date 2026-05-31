@@ -10,12 +10,10 @@ import (
 	av1 "github.com/thesyncim/goav1"
 )
 
-// profileClips are the vendored profile-conformance clips and their per-frame
-// aomdec MD5 goldens, identical to the profile/subsampling set guarded by
-// conformance/publicpath_test.go. They cover profile-1 4:4:4 8/10-bit,
-// profile-1 screen-content palette, profile-1 CDEF/restoration, profile-1 film
-// grain, profile-2 4:2:2 8-bit, and profile-2 4:2:0 12-bit, including
-// inter-coded non-4:2:0 clips.
+// profileClips are the vendored non-superres profile-conformance clips and
+// their per-frame aomdec MD5 goldens. They cover profile-1 4:4:4 8/10-bit,
+// palette, CDEF/restoration, film grain, profile-2 4:2:2/4:2:0, edge motion,
+// 128x128 superblocks, and multi-tile streams.
 var profileClips = []struct {
 	file        string
 	frameMD5Hex []string
@@ -141,12 +139,58 @@ var profileClips = []struct {
 			"dcd86cbbf80f81d9699eaf6c6e879e72",
 		},
 	},
+	{
+		file: "superblock128-420-8bit-128x128.ivf",
+		frameMD5Hex: []string{
+			"42ace8044951a222256ffcd65aa8bb67",
+			"c1b26993930b06dec4f0d05457035565",
+			"4e7b4292d96e53cc8ea5b16c8d7e13de",
+		},
+	},
+	{
+		file: "profile0-420-8bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f6c673ec13ccdd994fd10373a1d7f814",
+			"a3b01764f4b3e9c7bcec7c0e7e86be64",
+			"8158c19b78deb9ac6aaab9d411fe268f",
+			"eebdcf491352f1b13a24b614ba137832",
+			"54582e43045ece242c0a50e3f73e7a6b",
+		},
+	},
+	{
+		file: "profile2-420-12bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"f85baff9f8f516879ab8da538e582a09",
+			"5dfd30b2a7eb7e2178a06bd7e060bc80",
+			"f14ff5bc1a1504908f1d22b4be5a0ca3",
+			"24e96db2d3644a748e587dd011863a4a",
+			"325a954def1c43d852c980ddc66ba652",
+		},
+	},
+	{
+		file: "multitile-2x1-rows-256x256.ivf",
+		frameMD5Hex: []string{
+			"19abff965e7c0b982b779b14ce5d67a9",
+			"d9670540a9ef1cc444eb684dde65928c",
+			"1ece7ab7594b417ad313c395c9bf153c",
+			"6de64107acac0d89ad361dfe615a1c5f",
+		},
+	},
 }
 
 var superResProfileClips = []struct {
 	file        string
 	frameMD5Hex []string
 }{
+	{
+		file: "profile1-444-8bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"315663b1b307e46d4d4719ad759b39c2",
+			"b1c26bbbf277ac82c7fbdc0807974a1f",
+			"bd6aad53bf088c7ff5f54d93c59ff649",
+			"775085d7d08c8608b0acd2defa0fdc58",
+		},
+	},
 	{
 		file: "profile1-444-8bit-superres-inter-160x128.ivf",
 		frameMD5Hex: []string{
@@ -158,6 +202,15 @@ var superResProfileClips = []struct {
 			"150acaa0e5a682d454d7538b15cc4f2f",
 			"5d0ab2de3f3e9ce25036226b11375e49",
 			"78c4f82e984b44a272930333264bc764",
+		},
+	},
+	{
+		file: "profile1-444-10bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"c556c65e1ceceb72778a36a5351b1d96",
+			"6e66c5c97438754259295a95dde348a4",
+			"cbf0f9d0584eaaf09538091edfb8f885",
+			"f6f4c4213052d92f0ae700e793cad629",
 		},
 	},
 	{
@@ -184,6 +237,24 @@ var superResProfileClips = []struct {
 			"b5dfcdadffe2c9d246ad9930e39ab290",
 			"36278c9c6a7e15d325a45887e11ab60a",
 			"8e42428b236d37ca8d59c5c5e4ece89e",
+		},
+	},
+	{
+		file: "superres-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"024e5d1f55340eee39893567e8000554",
+			"80c239661f2cd1afe5fce5038ceac76f",
+			"93dc5cde59cb99bd524264b15c70a700",
+			"87887afdc06ba5f0e88b2acbe1ce0ce5",
+		},
+	},
+	{
+		file: "superres-restoration-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"93533110e2bd60fed6f15b5e65178bc6",
+			"bf83a513a868584aec7f9f05c5187d70",
+			"4e7dc4a0d7ab9cebdbdfdf3ef73b0d1c",
+			"6af9472b0679093facbefa85e973a7f9",
 		},
 	},
 }
@@ -237,11 +308,11 @@ func TestSimpleDecoderProfileClipsMatchGolden(t *testing.T) {
 	}
 }
 
-// TestSimpleDecoderSuperResInterProfileClipsMatchGolden proves the high-level
-// Decoder automatically routes super-res inter streams through the external
-// reference publication path, so later frames reference the upscaled output
-// surface rather than the coded reconstruction surface.
-func TestSimpleDecoderSuperResInterProfileClipsMatchGolden(t *testing.T) {
+// TestSimpleDecoderSuperResProfileClipsMatchGolden proves the high-level
+// Decoder automatically routes super-res streams through the external reference
+// publication path, so inter frames reference the upscaled output surface rather
+// than the coded reconstruction surface.
+func TestSimpleDecoderSuperResProfileClipsMatchGolden(t *testing.T) {
 	for _, clip := range superResProfileClips {
 		t.Run(clip.file, func(t *testing.T) {
 			ivf, err := os.ReadFile(profileClipPath(clip.file))
@@ -306,25 +377,28 @@ func TestDecodeIVFMatchesGolden(t *testing.T) {
 	}
 }
 
-func TestDecodeIVFSuperResInterMatchesGolden(t *testing.T) {
-	clip := superResProfileClips[0]
-	ivf, err := os.ReadFile(profileClipPath(clip.file))
-	if err != nil {
-		t.Fatalf("read clip: %v", err)
-	}
+func TestDecodeIVFSuperResProfileClipsMatchGolden(t *testing.T) {
+	for _, clip := range superResProfileClips {
+		t.Run(clip.file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(clip.file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
 
-	frames, err := av1.DecodeIVF(ivf)
-	if err != nil {
-		t.Fatalf("DecodeIVF: %v", err)
-	}
-	if len(frames) != len(clip.frameMD5Hex) {
-		t.Fatalf("decoded %d frames, want %d", len(frames), len(clip.frameMD5Hex))
-	}
-	for i, want := range clip.frameMD5Hex {
-		sum := decodedFrameMD5(frames[i])
-		if g := hex.EncodeToString(sum[:]); g != want {
-			t.Fatalf("frame %d md5 got=%s want=%s", i, g, want)
-		}
+			frames, err := av1.DecodeIVF(ivf)
+			if err != nil {
+				t.Fatalf("DecodeIVF: %v", err)
+			}
+			if len(frames) != len(clip.frameMD5Hex) {
+				t.Fatalf("decoded %d frames, want %d", len(frames), len(clip.frameMD5Hex))
+			}
+			for i, want := range clip.frameMD5Hex {
+				sum := decodedFrameMD5(frames[i])
+				if g := hex.EncodeToString(sum[:]); g != want {
+					t.Fatalf("frame %d md5 got=%s want=%s", i, g, want)
+				}
+			}
+		})
 	}
 }
 
