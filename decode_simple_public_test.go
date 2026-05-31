@@ -531,12 +531,19 @@ func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
 		payload: []byte{0xaa, 0xbb},
 	}})
 	truncatedIVF = truncatedIVF[:len(truncatedIVF)-1]
+	shortFrameHeaderIVF := appendPublicIVF(nil, 16, 16, 30, 1, nil)
+	shortFrameHeaderIVF = append(shortFrameHeaderIVF, 0x01)
 
 	tests := []struct {
 		name    string
 		ivf     []byte
 		wantErr error
 	}{
+		{
+			name:    "short IVF frame header",
+			ivf:     shortFrameHeaderIVF,
+			wantErr: av1.ErrIVFShortFrameHeader,
+		},
 		{
 			name:    "short IVF frame payload",
 			ivf:     truncatedIVF,
@@ -790,6 +797,12 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 			name:        "superres restoration high bit depth",
 			file:        "profile1-444-10bit-superres-restoration-160x128.ivf",
 			wantVisible: 4,
+			maxAllocs:   8,
+		},
+		{
+			name:        "film grain high bit depth",
+			file:        "profile1-444-10bit-filmgrain-96x96.ivf",
+			wantVisible: 3,
 			maxAllocs:   8,
 		},
 	}

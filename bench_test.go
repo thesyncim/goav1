@@ -27,7 +27,9 @@ const benchVectorPath = "internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.i
 
 const postFilterBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-8bit-cdef-restoration-160x128.ivf"
 const superResInterBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-8bit-superres-inter-160x128.ivf"
+const superResInterHighBDProfileBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-10bit-superres-inter-simple-160x128.ivf"
 const superResRestorationBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-10bit-superres-restoration-160x128.ivf"
+const filmGrainProfileBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-10bit-filmgrain-96x96.ivf"
 
 var decodeBenchmarkSink int
 
@@ -87,12 +89,28 @@ func BenchmarkDecodeSuperResInterProfileClip(b *testing.B) {
 	benchmarkDecodeHighLevelProfileClip(b, superResInterBenchVectorPath, 8)
 }
 
+// BenchmarkDecodeSuperResInterHighBDProfileClip measures the high-level
+// Decoder path on a moving 10-bit profile-1 super-res inter stream. This pins
+// the high-bit-depth external-reference publication case separately from the
+// 8-bit and all-keyframe super-res fixtures.
+func BenchmarkDecodeSuperResInterHighBDProfileClip(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClip(b, superResInterHighBDProfileBenchVectorPath, 8)
+}
+
 // BenchmarkDecodeSuperResRestorationProfileClip measures the high-level
 // Decoder path on a 10-bit profile-1 clip that combines super-res with
 // post-super-res loop restoration. It keeps the heavier full-postfilter tail in
 // the default benchmark set instead of leaving it only to conformance tests.
 func BenchmarkDecodeSuperResRestorationProfileClip(b *testing.B) {
 	benchmarkDecodeHighLevelProfileClip(b, superResRestorationBenchVectorPath, 4)
+}
+
+// BenchmarkDecodeFilmGrainProfileClip measures the high-level Decoder path on
+// a 10-bit profile-1 film-grain stream. Film grain has a distinct post-filter
+// tail from CDEF/restoration and super-res, so it stays visible in the default
+// production-readiness benchmark set.
+func BenchmarkDecodeFilmGrainProfileClip(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClip(b, filmGrainProfileBenchVectorPath, 3)
 }
 
 func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount int) {

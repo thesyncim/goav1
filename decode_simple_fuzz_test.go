@@ -54,6 +54,9 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 		{payload: []byte{0xaa, 0xbb}},
 	})
 	f.Add(truncatedIVF[:len(truncatedIVF)-1])
+	shortFrameHeaderIVF := appendPublicIVF(nil, 16, 16, 30, 1, nil)
+	shortFrameHeaderIVF = append(shortFrameHeaderIVF, 0x01)
+	f.Add(shortFrameHeaderIVF)
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
 		{payload: []byte{0x10}},
 	}))
