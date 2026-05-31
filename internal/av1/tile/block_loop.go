@@ -281,6 +281,7 @@ type BlockLoopStats struct {
 type BlockLoopSuperblockVisitor func(BlockLoopSuperblockVisit) error
 
 type BlockLoopVisitor func(BlockLoopVisit) error
+type BlockLoopPointerVisitor func(*BlockLoopVisit) error
 
 type BlockLoopCoeffController interface {
 	BeforeBlockCoefficients(BlockLoopVisit) error
@@ -334,10 +335,32 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 // coefficient controller. Passing the controller as an argument lets hot callers
 // keep controller state on the stack instead of storing it in BlockLoopRequest.
 func DecodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopVisitor) (BlockLoopStats, error) {
-	return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, coeffController, true, visit)
+	if visit == nil {
+		return BlockLoopStats{}, ErrInvalidDecodeState
+	}
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, func(block *BlockLoopVisit) error {
+		return visit(*block)
+	})
 }
 
 func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopVisitor) (BlockLoopStats, error) {
+	if visit == nil {
+		return BlockLoopStats{}, ErrInvalidDecodeState
+	}
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, func(block *BlockLoopVisit) error {
+		return visit(*block)
+	})
+}
+
+// DecodeBlockLoopWithCoeffControllerPtr is DecodeBlockLoopWithCoeffController
+// with a pointer visitor for hot callers that only need to inspect the visit
+// during the callback. BlockLoopVisit carries large prediction/coefficient
+// side data, so the pointer path avoids one full visit copy per decoded block.
+func DecodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, visit)
+}
+
+func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
 	if s == nil || scratch == nil || cdfs.Partition == nil || cdfs.Mode == nil || visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
@@ -377,9 +400,13 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitInfo, err := decodeBlockLoopVisitWithCoeffController(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
+				visitValue, err := decodeBlockLoopVisitWithCoeffController(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
 				if err != nil {
 					return fmt.Errorf("decode block=%+v: %w", block, err)
+				}
+				visitInfo := &scratch.visit
+				if !hasCoeffController || !req.DecodeCoefficients {
+					scratch.visit = visitValue
 				}
 				stats.Blocks++
 				stats.Prefixes++

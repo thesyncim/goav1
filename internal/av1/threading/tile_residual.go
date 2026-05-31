@@ -936,18 +936,18 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		loopReq.BeforeSuperblock = scratch.beforeSuperblock
 	}
 
-	loopStats, err := tile.DecodeBlockLoopWithCoeffController(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit tile.BlockLoopVisit) error {
+	loopStats, err := tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit *tile.BlockLoopVisit) error {
 		if !visit.CoefficientsValid {
 			return ErrInvalidBatch
 		}
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
 		if req.LoopFilterMap != nil {
-			if err := req.LoopFilterMap.MarkBlock(visit, state); err != nil {
+			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
 				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 			}
 		}
 		if req.AfterBlock != nil {
-			return req.AfterBlock(visit)
+			return req.AfterBlock(*visit)
 		}
 		return nil
 	})
@@ -1105,7 +1105,7 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 		}
 	}
 	if c.req.CDEFIndexMap != nil {
-		if err := c.req.CDEFIndexMap.MarkBlock(c.batch.CDEF, *visit); err != nil {
+		if err := c.req.CDEFIndexMap.MarkBlockPtr(c.batch.CDEF, visit); err != nil {
 			return err
 		}
 	}
@@ -1159,7 +1159,6 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) error {
 	s.pendingCFLPrediction = false
 	s.cflPredictionDone = false
-	s.cflVisit = tile.BlockLoopVisit{}
 	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
 		return err
 	}

@@ -94,10 +94,16 @@ func (m FrameWorkLoopFilterMap) Reset() error {
 // MarkBlock records block-local loop-filter metadata for every MI cell covered
 // by visit.
 func (m FrameWorkLoopFilterMap) MarkBlock(visit tile.BlockLoopVisit, state *tile.DecodeState) error {
+	return m.MarkBlockPtr(&visit, state)
+}
+
+// MarkBlockPtr is MarkBlock without copying the full block-loop visit. The hot
+// residual loop only needs selected fields to build one per-MI record.
+func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *tile.DecodeState) error {
 	if err := m.validate(); err != nil {
 		return err
 	}
-	if state == nil {
+	if visit == nil || state == nil {
 		return ErrInvalidBatch
 	}
 	block := visit.Block
@@ -107,7 +113,7 @@ func (m FrameWorkLoopFilterMap) MarkBlock(visit tile.BlockLoopVisit, state *tile
 	if block.MIColEnd > uint32(m.Stride) || block.MIRowEnd > uint32(m.Rows) {
 		return ErrInvalidBatch
 	}
-	refFrame, mode, err := frameWorkLoopFilterRefMode(visit)
+	refFrame, mode, err := frameWorkLoopFilterRefModePtr(visit)
 	if err != nil {
 		return err
 	}
@@ -250,6 +256,13 @@ func frameWorkLoopFilterRecordCovers(record FrameWorkLoopFilterBlockRecord, col 
 }
 
 func frameWorkLoopFilterRefMode(visit tile.BlockLoopVisit) (int, loopfilter.ModeDeltaClass, error) {
+	return frameWorkLoopFilterRefModePtr(&visit)
+}
+
+func frameWorkLoopFilterRefModePtr(visit *tile.BlockLoopVisit) (int, loopfilter.ModeDeltaClass, error) {
+	if visit == nil {
+		return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
+	}
 	if !visit.Prediction.Valid || visit.Prediction.Intra || !visit.Prediction.InterReferencesValid {
 		return 0, loopfilter.ModeDeltaClassZero, nil
 	}

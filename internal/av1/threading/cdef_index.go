@@ -80,8 +80,18 @@ func (b *FrameWorkBatch) BindCDEFIndexMap(index []uint8, read []bool) (FrameWork
 // visit. Skipped blocks leave the map untouched. Single-strength frames do not
 // code cdef_idx syntax, but non-skipped units are still valid with index zero.
 func (m FrameWorkCDEFIndexMap) MarkBlock(params parser.CDEFParams, visit tile.BlockLoopVisit) error {
+	return m.MarkBlockPtr(params, &visit)
+}
+
+// MarkBlockPtr is MarkBlock without copying the block-loop visit. The residual
+// loop calls this for every decoded block, and BlockLoopVisit carries large
+// prediction/coefficient side data that this routine only reads by field.
+func (m FrameWorkCDEFIndexMap) MarkBlockPtr(params parser.CDEFParams, visit *tile.BlockLoopVisit) error {
 	if err := m.validate(); err != nil {
 		return err
+	}
+	if visit == nil {
+		return ErrInvalidBatch
 	}
 	limit, ok := frameWorkCDEFIndexLimit(params)
 	if !ok {
