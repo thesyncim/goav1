@@ -9,36 +9,15 @@ import (
 	av1 "github.com/thesyncim/goav1"
 )
 
-// decoder owns all caller-supplied scratch the public residual stream runner
-// needs to decode a sequence of IVF frame payloads end-to-end. It mirrors the
-// layout used by bench_test.go's decodeBenchmarkHarness so the CLI exercises
-// the same public-API path a production integration would take.
+// decoder owns the public high-level decoder used by the CLI. The high-level
+// path still drives the residual stream runner, but it also selects the
+// caller-owned postfilter publication path when superres needs a detached
+// upscaled reference surface.
 type decoder struct {
-	pool       av1.FramePool
-	workerPool *av1.TileWorkerPool
-	stream     av1.DecoderStream
-
-	refs       av1.DecoderSurfaceReferences
-	state      av1.DecoderFrameWorkState
-	refSurface []int
-	refFrames  []*av1.Frame
-	releases   []int
-	stats      av1.DecoderFrameWorkTileResidualStats
-	sideData   av1.DecoderFrameWorkSideData
-	batch      av1.DecoderFrameWorkBatchResidualRunner
-
-	scratch av1.DecoderFrameWorkResidualStreamScratch
-	runner  av1.DecoderFrameWorkResidualStreamRunner
-
-	postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
-
+	dec      *av1.Decoder
 	payloads [][]byte
-	format   av1.FrameFormat
 }
 
-// newDecoder probes the supplied frame payloads to size all scratch arenas
-// the public stream runner needs, allocates them once, and binds the runner
-// against caller-owned state. Once bound, decode iterations are zero-alloc.
 func newDecoder(frames []av1.IVFFrame, workers int) (*decoder, error) {
 	if workers < 1 {
 		return nil, fmt.Errorf("workers must be >= 1, got %d", workers)
@@ -47,123 +26,47 @@ func newDecoder(frames []av1.IVFFrame, workers int) (*decoder, error) {
 	for i, f := range frames {
 		payloads[i] = f.Payload
 	}
-
-	workerPool, err := av1.NewTileWorkerPool(workers)
+	dec, err := av1.NewDecoder(payloads, av1.WithWorkers(workers))
 	if err != nil {
-		return nil, fmt.Errorf("worker pool: %w", err)
+		return nil, err
 	}
-
-	// Probe the stream to learn how much scratch the runner will need.
-	var probeStream av1.DecoderStream
-	probeEvents := make([]av1.DecoderEvent, probeEventBudget(payloads))
-	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
-	probeJobs := make([]av1.TileJob, av1.MaxTiles)
-	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
-
-	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(
-		probeStream, payloads, workers,
-		probeEvents, probeSpans, probeJobs, probeBatches,
-	)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("stream plan: %w", err)
-	}
-	if !plan.HasEvent() {
-		workerPool.Close()
-		return nil, errors.New("stream plan did not identify a bind event")
-	}
-
-	// Derive the pool format from the bound headers so the superblock alignment
-	// (64 vs 128) matches the surface the decoder reconstructs into.
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("frame format from stream plan: %w", err)
-	}
-
-	// The decoder can hold all RefFrames (8) reference slots live at once while
-	// also reconstructing the current frame and retaining frames decoded out of
-	// display order for later show_existing_frame output. RefFrames+1 is too few
-	// for deep alt-ref pyramids (frames are coded ahead of display and held as
-	// references), which exhausts the pool mid-stream. Size to RefFrames*2 to
-	// match the conformance harness, which decodes the full vector set.
-	const surfaceCount = av1.RefFrames * 2
-	pool, err := bindFramePool(format, surfaceCount)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("frame pool: %w", err)
-	}
-
-	d := &decoder{
-		pool:       pool,
-		workerPool: workerPool,
-		refSurface: make([]int, av1.InterRefsPerFrame),
-		refFrames:  make([]*av1.Frame, av1.InterRefsPerFrame),
-		releases:   make([]int, av1.RefFrames),
-		payloads:   payloads,
-		format:     format,
-	}
-	d.scratch = newStreamScratch(plan.Size)
-
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
-		av1.DecoderFrameWorkResidualEventRuntime{
-			State:             &d.state,
-			Refs:              &d.refs,
-			FramePool:         &d.pool,
-			Align:             64,
-			ReferenceSurfaces: d.refSurface,
-			ReferenceFrames:   d.refFrames,
-			Releases:          d.releases,
-			WorkerPool:        d.workerPool,
-			SideData:          &d.sideData,
-			Stats:             &d.stats,
-		}, d.scratch, &d.batch)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("bind runner: %w", err)
-	}
-	d.runner = runner
-	return d, nil
+	return &decoder{dec: dec, payloads: payloads}, nil
 }
 
 // Close releases the worker goroutine pool. It is safe to call more than once.
 func (d *decoder) Close() {
-	if d.workerPool != nil {
-		d.workerPool.Close()
-		d.workerPool = nil
+	if d.dec != nil {
+		d.dec.Close()
+		d.dec = nil
 	}
 }
 
-// Decode iterates the bound payloads, drives them through the runner one
-// payload at a time so per-frame timing is meaningful, writes each completed
-// frame's planes to dst in I420 / I400 order, and reports total bytes written
-// plus completed-frame count.
+// Decode iterates the bound payloads, drives them through the public decoder one
+// payload at a time so per-frame timing is meaningful, writes each visible
+// output frame's planes to dst in display order, and reports total bytes written
+// plus visible-frame count.
 func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, error) {
-	d.pool.Reset()
-	d.refs.Reset()
-	d.state.Reset()
-	d.stats = av1.DecoderFrameWorkTileResidualStats{}
-	if err := d.runner.Reset(); err != nil {
-		return 0, 0, fmt.Errorf("runner reset: %w", err)
+	if d == nil || d.dec == nil {
+		return 0, 0, errors.New("decoder closed")
+	}
+	if err := d.dec.Reset(); err != nil {
+		return 0, 0, fmt.Errorf("decoder reset: %w", err)
 	}
 
-	var (
-		totalBytes int64
-		completed  int
-		result     av1.DecoderFrameWorkResidualStreamResult
-	)
-
+	var totalBytes int64
+	completed := 0
 	for i, payload := range d.payloads {
 		start := time.Now()
-		result = av1.DecoderFrameWorkResidualStreamResult{}
-		if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &d.postFilter); err != nil {
+		frames, ok, err := d.dec.DecodeNext()
+		if err != nil {
 			return totalBytes, completed, fmt.Errorf("frame %d: %w", i, err)
 		}
+		if !ok {
+			return totalBytes, completed, fmt.Errorf("frame %d: decoder ended before payload", i)
+		}
 		elapsed := time.Since(start)
-		// result.Run.Outputs aliases the stream runner's caller-owned output
-		// arena, so the *Frame pointers are valid until the next Run* call.
 
-		for _, frame := range result.Run.Outputs {
+		for _, frame := range frames {
 			if frame == nil {
 				continue
 			}
@@ -176,8 +79,7 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 		}
 		if !quiet {
 			fmt.Fprintf(log, "frame %d payload=%d ms=%.3f outputs=%d completed_frames=%d\n",
-				i, len(payload), float64(elapsed.Microseconds())/1000.0,
-				result.Run.OutputCount, result.Run.CompletedFrames)
+				i, len(payload), float64(elapsed.Microseconds())/1000.0, len(frames), completed)
 		}
 	}
 	return totalBytes, completed, nil
@@ -206,70 +108,4 @@ func writeYUVFrame(dst io.Writer, frame *av1.Frame) (int64, error) {
 		}
 	}
 	return written, nil
-}
-
-func bindFramePool(format av1.FrameFormat, count int) (av1.FramePool, error) {
-	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
-	if err != nil {
-		return av1.FramePool{}, err
-	}
-	frames := make([]av1.Frame, count)
-	free := make([]int, count)
-	used := make([]bool, count)
-	return av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
-}
-
-func newStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
-	return av1.DecoderFrameWorkResidualStreamScratch{
-		Events:    make([]av1.DecoderEvent, size.Events),
-		Event:     newEventScratch(size.Event),
-		SideData:  newSideDataScratch(size.Event.SideData),
-		Outputs:   make([]*av1.Frame, size.Event.Outputs),
-		RTPBuffer: make([]byte, size.RTPBuffer),
-		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans),
-	}
-}
-
-func newEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
-	return av1.DecoderFrameWorkResidualEventScratch{
-		Runner:   newBatchRunnerScratch(size.Runner),
-		SideData: newSideDataScratch(size.SideData),
-		Spans:    make([]av1.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]av1.TileJob, size.Plan.JobCount),
-		Batches:  make([]av1.TileBatch, size.Plan.BatchCount),
-	}
-}
-
-func newBatchRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
-	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]av1.TileDecodeState, size.Workers),
-		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
-		Int32Scratch:            make([]int32, size.Int32Scratch),
-		ResidualScratch:         make([]int16, size.ResidualScratch),
-		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
-	}
-}
-
-func newSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.DecoderFrameWorkSideDataScratch {
-	return av1.DecoderFrameWorkSideDataScratch{
-		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
-		CDEFReadMap:              make([]bool, size.CDEFReadMap),
-		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
-		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
-		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
-		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
-	}
-}
-
-func probeEventBudget(payloads [][]byte) int {
-	// Each frame typically expands to a handful of events. Reserve a generous
-	// upper bound so the streams planner never returns ErrEventBufferTooSmall.
-	const eventsPerFrame = 16
-	n := max(len(payloads)*eventsPerFrame, 64)
-	return n
 }

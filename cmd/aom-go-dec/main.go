@@ -3,9 +3,9 @@
 //
 // It is intended as both a smoke-tool for the library and as executable
 // documentation for callers wiring goav1 into their own decoder. The pipeline
-// mirrors the end-to-end residual stream runner used by the repository's
-// benchmarks (bench_test.go) so the CLI exercises the same public-API path a
-// production integration would take.
+// uses the high-level Decoder convenience API, which drives the same residual
+// stream runner as the lower-level examples while also handling caller-owned
+// output surfaces needed by super-res streams.
 //
 // Usage:
 //
@@ -18,10 +18,9 @@
 //
 // The CLI uses only the public goav1 API surface; no internal packages are
 // imported. It runs residual decode plus reconstruction and applies the
-// supported loop-filter / CDEF / super-res / loop-restoration / film-grain
-// post-filter chain via DecoderFrameWorkReusableSupportedPostFilterRunner, so
-// decoded frames match libaom byte-for-byte. The reported width/height/bit
-// depth come from the parsed sequence header.
+// loop-filter / CDEF / super-res / loop-restoration / film-grain post-filter
+// chain through the same Decoder path exposed to library users. The reported
+// width/height/bit depth come from the parsed sequence header.
 package main
 
 import (
@@ -107,9 +106,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	totalBytes, decoded, err := dec.Decode(writer, *quiet, stderr)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
-	}
-	if decoded != len(frames) {
-		return fmt.Errorf("decoded %d frames, expected %d", decoded, len(frames))
 	}
 	elapsed := time.Since(start)
 

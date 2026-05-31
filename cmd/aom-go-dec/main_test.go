@@ -56,6 +56,42 @@ func TestRunDecodesBundledIVF(t *testing.T) {
 	}
 }
 
+// TestRunDecodesSuperResProfileClip keeps the CLI on the same super-res-capable
+// public path as av1.NewDecoderFromIVF. The clip is 4:4:4 8-bit, so each
+// displayed frame writes Y, U, and V at full 160x128 resolution.
+func TestRunDecodesSuperResProfileClip(t *testing.T) {
+	const (
+		width         = 160
+		height        = 128
+		frameCount    = 8
+		bytesPerFrame = width * height * 3
+		expectedBytes = bytesPerFrame * frameCount
+	)
+
+	ivfPath := repoRelativePath(t, "internal", "av1", "testvector", "testdata",
+		"profiles", "profile1-444-8bit-superres-inter-160x128.ivf")
+
+	outDir := t.TempDir()
+	outPath := filepath.Join(outDir, "out.yuv")
+
+	var stderr bytes.Buffer
+	if err := run([]string{"-o", outPath, "-quiet", ivfPath}, io.Discard, &stderr); err != nil {
+		t.Fatalf("run err=%v\nstderr=%s", err, stderr.String())
+	}
+
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if got := info.Size(); got != int64(expectedBytes) {
+		t.Fatalf("output size=%d want %d (8 * 160*128*3 = %d)",
+			got, expectedBytes, expectedBytes)
+	}
+	if !strings.Contains(stderr.String(), "decoded 8 frames") {
+		t.Errorf("stderr missing decoded summary line: %q", stderr.String())
+	}
+}
+
 // TestRunWritesStdoutWhenNoOutputFlag confirms the CLI streams YUV to the
 // writer supplied as stdout when -o is omitted, leaving stderr free for
 // diagnostics.
