@@ -34,11 +34,14 @@ func (c *CoeffEntropyContext) TXBContext(req CoeffContextRequest) (TXBContext, e
 	if c == nil {
 		return TXBContext{}, ErrInvalidDecodeState
 	}
-	txDims, blockDims, err := validateCoeffContextRequest(req)
+	txDims, blockDims, _, _, err := validateCoeffContextRequestWithSpan(req)
 	if err != nil {
 		return TXBContext{}, err
 	}
+	return c.txbContextKnown(req, txDims, blockDims)
+}
 
+func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) (TXBContext, error) {
 	dcSign := 0
 	for k := 0; k < int(txDims.W4); k++ {
 		sign := c.Above[req.Plane][req.X4+k] >> CoeffContextBits
@@ -97,6 +100,18 @@ func (c *CoeffEntropyContext) MarkTXB(req CoeffContextRequest, result TXBDecodeR
 		value = uint8(result.CulLevel)
 	}
 	return c.setTXBContext(req, value)
+}
+
+func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, result TXBDecodeResult) error {
+	value := uint8(0)
+	if !result.AllZero && result.EOB > 0 {
+		if !validCoeffEntropyValue(result.CulLevel) {
+			return ErrInvalidDecodeState
+		}
+		value = uint8(result.CulLevel)
+	}
+	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+	return nil
 }
 
 func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 int) error {
@@ -162,14 +177,15 @@ func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8
 	if c == nil || !validCoeffEntropyValue(int(value)) {
 		return ErrInvalidDecodeState
 	}
-	txDims, _, err := validateCoeffContextRequest(req)
+	txDims, _, visibleW, visibleH, err := validateCoeffContextRequestWithSpan(req)
 	if err != nil {
 		return err
 	}
-	visibleW, visibleH, err := coeffVisibleSpan(req, txDims)
-	if err != nil {
-		return err
-	}
+	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+	return nil
+}
+
+func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, value uint8) {
 	for k := 0; k < int(txDims.W4); k++ {
 		next := uint8(0)
 		if k < visibleW {
@@ -184,27 +200,32 @@ func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8
 		}
 		c.Left[req.Plane][req.Y4+k] = next
 	}
-	return nil
 }
 
 func validateCoeffContextRequest(req CoeffContextRequest) (TransformDimensions, BlockDimensions, error) {
+	txDims, blockDims, _, _, err := validateCoeffContextRequestWithSpan(req)
+	return txDims, blockDims, err
+}
+
+func validateCoeffContextRequestWithSpan(req CoeffContextRequest) (TransformDimensions, BlockDimensions, int, int, error) {
 	if req.Plane < 0 || req.Plane >= 3 || req.X4 < 0 || req.Y4 < 0 {
-		return TransformDimensions{}, BlockDimensions{}, ErrInvalidDecodeState
+		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
 	txDims, ok := req.Size.Dimensions()
 	if !ok {
-		return TransformDimensions{}, BlockDimensions{}, ErrInvalidDecodeState
+		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
 	blockDims, ok := req.PlaneBlock.Dimensions()
 	if !ok ||
 		req.X4+int(txDims.W4) > MaxBlockModeSlots ||
 		req.Y4+int(txDims.H4) > MaxBlockModeSlots {
-		return TransformDimensions{}, BlockDimensions{}, ErrInvalidDecodeState
+		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
-	if _, _, err := coeffVisibleSpan(req, txDims); err != nil {
-		return TransformDimensions{}, BlockDimensions{}, err
+	visibleW, visibleH, err := coeffVisibleSpan(req, txDims)
+	if err != nil {
+		return TransformDimensions{}, BlockDimensions{}, 0, 0, err
 	}
-	return txDims, blockDims, nil
+	return txDims, blockDims, visibleW, visibleH, nil
 }
 
 func coeffVisibleSpan(req CoeffContextRequest, txDims TransformDimensions) (int, int, error) {

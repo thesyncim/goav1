@@ -314,7 +314,26 @@ type coeffTransformRecorder interface {
 }
 
 func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
-	req, allZero, err := s.ReadTXBSkipWithContext(cdfs, ctx, ctxReq, req)
+	if ctx == nil {
+		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
+	}
+	plane, err := CoeffPlaneTypeForPlane(ctxReq.Plane)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+	txDims, blockDims, visibleW, visibleH, err := validateCoeffContextRequestWithSpan(ctxReq)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, err
+	}
+	txbCtx, err := ctx.txbContextKnown(ctxReq, txDims, blockDims)
+	if err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read txb context: %w", err)
+	}
+	req.Size = ctxReq.Size
+	req.Plane = plane
+	req.TXBSkipContext = txbCtx.TXBSkipContext
+	req.DCSignContext = txbCtx.DCSignContext
+	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read txb skip: %w", err)
 	}
@@ -340,7 +359,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}
-	if err := ctx.MarkTXB(ctxReq, result); err != nil {
+	if err := ctx.markTXBKnown(ctxReq, txDims, visibleW, visibleH, result); err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
 	}
 	if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
