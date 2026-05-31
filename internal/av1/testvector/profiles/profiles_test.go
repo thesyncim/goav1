@@ -28,8 +28,9 @@
 // so that inter prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma
 // subsampling (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both
 // 8-bit and 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires
-// luma and chroma palette prediction, and 8/10-bit 4:4:4 super-res clips that
-// run the caller-owned full postfilter output path. All are committed under
+// luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
+// and 8/10-bit 4:4:4 super-res clips that run the caller-owned full postfilter
+// output path. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -68,6 +69,17 @@
 //	  --superres-denominator=12 --superres-kf-denominator=12 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-10bit-superres-160x128.ivf src444_10_superres.yuv
+//	# 4:4:4 8-bit CDEF + loop restoration:
+//	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
+//	  --cpu-used=2 --end-usage=q --cq-level=28 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --enable-cdef=1 --enable-restoration=1 \
+//	  -o profile1-444-8bit-cdef-restoration-160x128.ivf src444_filters.yuv
+//	# 4:4:4 10-bit CDEF + loop restoration:
+//	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=2 --end-usage=q \
+//	  --cq-level=28 --kf-max-dist=1 --lag-in-frames=0 --enable-cdef=1 \
+//	  --enable-restoration=1 \
+//	  -o profile1-444-10bit-cdef-restoration-160x128.ivf src444_10_filters.yuv
 //	# 4:2:2 8-bit:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-64x64.ivf src422.yuv
 //	# 4:2:0 12-bit:
@@ -118,12 +130,14 @@ type profileClip struct {
 
 	frameMD5Hex []string
 
-	wantSeqProfile      uint8
-	wantBitDepth        uint8
-	wantSubsamplingX    bool
-	wantSubsamplingY    bool
-	wantPaletteYBlocks  int
-	wantPaletteUVBlocks int
+	wantSeqProfile        uint8
+	wantBitDepth          uint8
+	wantSubsamplingX      bool
+	wantSubsamplingY      bool
+	wantPaletteYBlocks    int
+	wantPaletteUVBlocks   int
+	wantCDEFFrames        int
+	wantRestorationFrames int
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -266,6 +280,40 @@ var profileClips = []profileClip{
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit with active CDEF and loop restoration.
+		name: "profile1-444-8bit-cdef-restoration-160x128",
+		file: "profile1-444-8bit-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"c7001ffcb04bce20728f246f5494e58a",
+			"f1a3ce1e10e2e84e1e61c46e735201ad",
+			"1aa1aa327a503776ff58af351198037a",
+			"7cfb09c54857fc6dd3994ef09e502fae",
+		},
+		wantSeqProfile:        1,
+		wantBitDepth:          8,
+		wantSubsamplingX:      false,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit with active CDEF and loop restoration.
+		name: "profile1-444-10bit-cdef-restoration-160x128",
+		file: "profile1-444-10bit-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"851bbe5c81da62f19d13b1efee5b60b5",
+			"07da346eb6963d2bf2a7c37eb626b09e",
+			"da669f9bf3e0a82727542a1f538b7226",
+			"496024c0fd9b1708ca5a9255e317ebf0",
+		},
+		wantSeqProfile:        1,
+		wantBitDepth:          10,
+		wantSubsamplingX:      false,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit super-res. 4 all-keyframes, super-res denom
@@ -459,6 +507,8 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	emitted := 0
 	paletteYBlocks := 0
 	paletteUVBlocks := 0
+	cdefFrames := 0
+	restorationFrames := 0
 	checkedColorConfig := false
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -608,6 +658,13 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				}
 				return nil
 			}), postFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
+				active := ctx.ActivePostFilters()
+				if active.Has(decoder.FrameWorkPostFilterCDEF) {
+					cdefFrames++
+				}
+				if active.Has(decoder.FrameWorkPostFilterLoopRestoration) {
+					restorationFrames++
+				}
 				if clip.superRes {
 					out, ev, err := applyCallerPostFilters(ctx)
 					if err != nil {
@@ -677,6 +734,12 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if paletteUVBlocks < clip.wantPaletteUVBlocks {
 		t.Fatalf("palette uv blocks=%d want at least %d", paletteUVBlocks, clip.wantPaletteUVBlocks)
+	}
+	if cdefFrames < clip.wantCDEFFrames {
+		t.Fatalf("cdef frames=%d want at least %d", cdefFrames, clip.wantCDEFFrames)
+	}
+	if restorationFrames < clip.wantRestorationFrames {
+		t.Fatalf("restoration frames=%d want at least %d", restorationFrames, clip.wantRestorationFrames)
 	}
 }
 
