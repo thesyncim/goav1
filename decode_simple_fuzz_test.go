@@ -33,6 +33,25 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
 		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00})},
 	}))
+	truncatedIVF := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: []byte{0xaa, 0xbb}},
+	})
+	f.Add(truncatedIVF[:len(truncatedIVF)-1])
+	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: []byte{0x10}},
+	}))
+	shortOBU := []byte{0x12}
+	shortOBU = appendPublicLEB128(shortOBU, 4)
+	shortOBU = append(shortOBU, 0xaa)
+	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: shortOBU},
+	}))
+	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: []byte{0x80}},
+	}))
+	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: []byte{0x13, 0x00}},
+	}))
 
 	if ivf, err := os.ReadFile(profileClipPath(profileClips[0].file)); err == nil {
 		f.Add(ivf)

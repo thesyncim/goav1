@@ -421,6 +421,80 @@ func TestDecodeIVFMatchesGolden(t *testing.T) {
 	}
 }
 
+func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
+	lowOverhead := func(raw ...byte) []byte {
+		return append([]byte(nil), raw...)
+	}
+	sizedOBU := func(header byte, size uint32, payload ...byte) []byte {
+		out := []byte{header}
+		out = appendPublicLEB128(out, size)
+		out = append(out, payload...)
+		return out
+	}
+	truncatedIVF := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
+		payload: []byte{0xaa, 0xbb},
+	}})
+	truncatedIVF = truncatedIVF[:len(truncatedIVF)-1]
+
+	tests := []struct {
+		name    string
+		ivf     []byte
+		wantErr error
+	}{
+		{
+			name:    "short IVF frame payload",
+			ivf:     truncatedIVF,
+			wantErr: av1.ErrIVFShortFramePayload,
+		},
+		{
+			name: "low overhead OBU missing size field",
+			ivf: appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
+				payload: lowOverhead(0x10),
+			}}),
+			wantErr: av1.ErrOBUMissingSizeField,
+		},
+		{
+			name: "low overhead OBU short payload",
+			ivf: appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
+				payload: sizedOBU(0x12, 4, 0xaa),
+			}}),
+			wantErr: av1.ErrOBUShortPayload,
+		},
+		{
+			name: "forbidden OBU header bit",
+			ivf: appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
+				payload: lowOverhead(0x80),
+			}}),
+			wantErr: av1.ErrOBUForbiddenBit,
+		},
+		{
+			name: "reserved OBU header bit",
+			ivf: appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
+				payload: lowOverhead(0x13, 0x00),
+			}}),
+			wantErr: av1.ErrOBUReservedBit,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name+"/NewDecoderFromIVF", func(t *testing.T) {
+			dec, err := av1.NewDecoderFromIVF(tc.ivf)
+			if dec != nil {
+				dec.Close()
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("NewDecoderFromIVF err=%v want %v", err, tc.wantErr)
+			}
+		})
+		t.Run(tc.name+"/DecodeIVF", func(t *testing.T) {
+			_, err := av1.DecodeIVF(tc.ivf)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("DecodeIVF err=%v want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 	validPayload := av1.AppendTileListOBU(nil, av1.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
