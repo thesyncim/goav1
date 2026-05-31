@@ -21,7 +21,8 @@
 #
 # Axes covered: resolution (256x144, 640x360, 1280x720), rate/quality
 # (cq-level 20/32/55), coding tools (all-intra vs inter GOP, single vs 2 tile
-# columns), and bit depth (8-bit primary, one 10-bit clip).
+# columns), bit depth (8-bit primary plus 10/12-bit profile coverage), and
+# chroma sampling (4:2:0 primary plus profile-2 4:2:2 probes).
 #
 # Usage:
 #   scripts/gen_bench_corpus.sh [OUTDIR]
@@ -72,18 +73,29 @@ echo
 # scaled_source WxH -> path to a length-extended y4m at that resolution.
 # Cached per resolution within one run.
 scaled_source() {
-  local w=$1 h=$2 depth=${3:-8}
-  local fmt=yuv420p
-  local key="$w"x"$h"_"$depth"
+  local w=$1 h=$2 depth=${3:-8} chroma=${4:-420}
+  local fmt
+  case "$chroma:$depth" in
+    420:8) fmt=yuv420p ;;
+    420:10) fmt=yuv420p10le ;;
+    420:12) fmt=yuv420p12le ;;
+    422:8) fmt=yuv422p ;;
+    422:10) fmt=yuv422p10le ;;
+    422:12) fmt=yuv422p12le ;;
+    444:8) fmt=yuv444p ;;
+    444:10) fmt=yuv444p10le ;;
+    444:12) fmt=yuv444p12le ;;
+    *) echo "ERROR: unsupported generated corpus format chroma=$chroma depth=$depth" >&2; exit 1 ;;
+  esac
+  local key="$w"x"$h"_"$chroma"_"$depth"
   local out="$WORK/src_${key}.y4m"
   if [ -f "$out" ]; then
     echo "$out"; return
   fi
   local strict=()
-  if [ "$depth" = "10" ]; then
-    fmt=yuv420p10le
-    # ffmpeg's y4m muxer treats 10-bit 4:2:0 as non-standard; -strict -1 lets it
-    # write the header. aomenc reads it fine with --input-bit-depth=10.
+  if [ "$depth" != "8" ]; then
+    # ffmpeg's y4m muxer treats high-bit-depth Y4M as non-standard; -strict -1
+    # lets it write the header. aomenc reads it with --input-bit-depth.
     strict=(-strict -1)
   fi
   # -stream_loop large enough to exceed FRAMES after the 10-frame source.
@@ -92,20 +104,34 @@ scaled_source() {
   echo "$out"
 }
 
-# encode NAME WxH CQ DEPTH EXTRA_AOMENC_ARGS...
+# encode NAME WxH CQ DEPTH [CHROMA] EXTRA_AOMENC_ARGS...
 # Produces $OUTDIR/NAME.ivf plus $OUTDIR/NAME.md5 (libaom stream-md5 format),
 # and cross-checks aomdec vs dav1d.
 encode() {
   local name=$1 w=$2 h=$3 cq=$4 depth=$5; shift 5
+  local chroma=420
+  case "${1:-}" in
+    420|422|444) chroma=$1; shift ;;
+  esac
   local extra=("$@")
-  local src; src=$(scaled_source "$w" "$h" "$depth")
+  local src; src=$(scaled_source "$w" "$h" "$depth" "$chroma")
   local ivf="$OUTDIR/$name.ivf"
   local md5="$OUTDIR/$name.md5"
 
-  local depth_args=(--bit-depth=8)
-  local profile_args=()
-  if [ "$depth" = "10" ]; then
-    depth_args=(--bit-depth=10 --input-bit-depth=10)
+  local depth_args=(--bit-depth="$depth")
+  if [ "$depth" != "8" ]; then
+    depth_args+=(--input-bit-depth="$depth")
+  fi
+  local profile_args=(--profile=0)
+  if [ "$chroma" = "422" ] || [ "$depth" = "12" ]; then
+    profile_args=(--profile=2)
+  elif [ "$chroma" = "444" ]; then
+    profile_args=(--profile=1)
+  fi
+  if [ "$chroma" = "444" ] && [ "$depth" = "12" ]; then
+    profile_args=(--profile=2)
+  fi
+  if [ "$depth" = "10" ] && [ "$chroma" = "420" ]; then
     profile_args=(--profile=0)
   fi
 
@@ -114,21 +140,22 @@ encode() {
     --ivf -o "$ivf" "$src"
 
   # libaom stream MD5: md5 over concatenated visible-frame planes (no padding).
-  # aomdec --i420 forces 8-bit YUV; for 10-bit use the native (--rawvideo)
-  # buffer so the digest covers 16-bit samples like goav1's FrameMD5 does.
+  # aomdec --i420 forces 8-bit 4:2:0 YUV; for high bit depth or non-4:2:0 use
+  # native rawvideo so the digest matches goav1's FrameMD5 plane layout.
   local ref
-  if [ "$depth" = "10" ]; then
-    ref=$("$AOMDEC" --rawvideo --md5 "$ivf" 2>/dev/null | awk 'NR==1{print $1}')
-  else
+  if [ "$depth" = "8" ] && [ "$chroma" = "420" ]; then
     ref=$("$AOMDEC" --i420 --md5 "$ivf" 2>/dev/null | awk 'NR==1{print $1}')
+  else
+    ref=$("$AOMDEC" --rawvideo --md5 "$ivf" 2>/dev/null | awk 'NR==1{print $1}')
   fi
   printf '%s\n' "$ref" > "$md5"
 
-  # Cross-check against dav1d's md5 muxer (8-bit only; dav1d emits the same
-  # stream digest as aomdec for 4:2:0 8-bit). 10-bit dav1d output ordering can
-  # differ, so we trust aomdec there and the Go bench is the final arbiter.
+  # Cross-check against dav1d's md5 muxer (8-bit 4:2:0 only; dav1d emits the
+  # same stream digest as aomdec there). High-bit-depth and non-4:2:0 raw
+  # output ordering can differ, so we trust aomdec and the Go bench is the
+  # final arbiter for those.
   local x="(dav1d skipped)"
-  if [ -n "$DAV1D" ] && [ "$depth" = "8" ]; then
+  if [ -n "$DAV1D" ] && [ "$depth" = "8" ] && [ "$chroma" = "420" ]; then
     local d
     d=$("$DAV1D" --muxer md5 -o - -i "$ivf" 2>/dev/null || true)
     if [ "$d" = "$ref" ]; then
@@ -139,8 +166,8 @@ encode() {
   fi
 
   local bytes; bytes=$(wc -c < "$ivf" | tr -d ' ')
-  printf '  %-26s %-9s cq=%-2s d=%-2s %8s bytes  md5=%s  %s\n' \
-    "$name" "${w}x${h}" "$cq" "$depth" "$bytes" "$ref" "$x"
+  printf '  %-30s %-9s cq=%-2s d=%-2s c=%-3s %8s bytes  md5=%s  %s\n' \
+    "$name" "${w}x${h}" "$cq" "$depth" "$chroma" "$bytes" "$ref" "$x"
 }
 
 echo "encoding corpus..."
@@ -164,6 +191,11 @@ encode p360_inter_q32  640 360 32 8
 encode p360_inter_q55  640 360 55 8
 encode p360_inter_q32_2tiles 640 360 32 8 --tile-columns=1
 encode p360_inter_q32_10bit  640 360 32 10
+encode p360_intra_q32_12bit  640 360 32 12 --kf-min-dist=0 --kf-max-dist=0
+encode p360_inter_q32_12bit  640 360 32 12
+encode p360_inter_q32_12bit_2tiles 640 360 32 12 --tile-columns=1
+encode p360_inter_q32_422_10bit 640 360 32 10 422
+encode p360_inter_q32_422_12bit 640 360 32 12 422
 
 # ---- 1280x720 (high res) ---------------------------------------------------
 encode p720_inter_q20  1280 720 20 8

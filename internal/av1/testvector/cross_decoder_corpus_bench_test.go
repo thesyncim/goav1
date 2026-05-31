@@ -12,10 +12,11 @@ package testvector
 // steady-state decode is barely measured. TestCrossDecoderCorpus closes that
 // gap: it runs against a locally-generated corpus of ~30-60 frame clips that
 // span resolutions (256x144 / 640x360 / 1280x720), rate points (cq 20/32/55),
-// coding tools (all-intra vs inter GOP, single vs multi tile-column), and bit
-// depths (8-bit primary plus one 10-bit). At that length steady-state decode
-// dominates startup, so the goav1-vs-dav1d-vs-aomdec ratios are an honest
-// single-thread throughput comparison.
+// coding tools (all-intra vs inter GOP, single vs multi tile-column), bit
+// depths (8-bit primary plus 10/12-bit profile coverage), and chroma sampling
+// (4:2:0 primary plus profile-2 4:2:2 probes). At that length steady-state
+// decode dominates startup, so the goav1-vs-dav1d-vs-aomdec ratios are an
+// honest single-thread throughput comparison.
 //
 // The corpus is NOT committed (it is large binary video). Regenerate it with
 // scripts/gen_bench_corpus.sh, which scales/length-extends a small source y4m
@@ -34,11 +35,11 @@ package testvector
 //     stream MD5 over the concatenated visible-frame planes (the libaom
 //     test/md5_helper.h layout: visible Y rows, then U, then V, no stride
 //     padding) and compares it byte-for-byte against the sidecar .md5 produced
-//     by aomdec (and cross-checked against dav1d during generation). A clip
-//     whose goav1 digest does not match, or that fails to decode, is a
-//     CONFORMANCE BUG: it is excluded from the timing aggregate and reported
-//     prominently. This bench therefore doubles as a conformance probe on real
-//     content, not just a perf tool.
+//     by aomdec (and cross-checked against dav1d for 8-bit 4:2:0 clips during
+//     generation). A clip whose goav1 digest does not match, or that fails to
+//     decode, is a CONFORMANCE BUG: it is excluded from the timing aggregate and
+//     reported prominently. This bench therefore doubles as a conformance probe
+//     on real content, not just a perf tool.
 //   - UNIFORM, FAIR TIMING. Every decoder is single-threaded
 //     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1) and
 //     decode-only with output discarded. Each (decoder, clip) is warmed up once
@@ -83,7 +84,8 @@ type corpusClip struct {
 	frames   int   // visible frames goav1 emitted (== external frame count)
 	width    int   // coded width of the first frame
 	height   int   // coded height of the first frame
-	bitDepth uint8 // 8 or 10
+	bitDepth uint8 // 8, 10, or 12
+	chroma   string
 	tileCols uint8 // tile columns of the first frame
 	allIntra bool  // every frame is a keyframe
 }
@@ -152,6 +154,7 @@ func loadCorpusClips(t *testing.T, dir string) (clips []corpusClip, failed []cor
 		clip.width = res.width
 		clip.height = res.height
 		clip.bitDepth = res.bitDepth
+		clip.chroma = res.chroma
 		clip.tileCols = res.tileCols
 		clip.allIntra = res.allIntra
 		if res.streamMD5 != want {
@@ -179,6 +182,7 @@ type corpusDecodeResult struct {
 	width     int
 	height    int
 	bitDepth  uint8
+	chroma    string
 	tileCols  uint8
 	allIntra  bool
 }
@@ -239,6 +243,7 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 	res.width = state.width
 	res.height = state.height
 	res.bitDepth = state.bitDepth
+	res.chroma = state.chroma
 	res.tileCols = state.tileCols
 	res.allIntra = state.allIntra && state.visibleFrames > 0
 	if state.visibleFrames == 0 {
@@ -259,6 +264,7 @@ type corpusDecodeState struct {
 	width         int
 	height        int
 	bitDepth      uint8
+	chroma        string
 	tileCols      uint8
 	allIntra      bool
 }
@@ -329,7 +335,9 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 		if s.width == 0 {
 			s.width = int(event.FrameSize.CodedWidth)
 			s.height = int(event.FrameSize.Height)
-			s.bitDepth = event.SequenceHeader.ColorConfig.BitDepth
+			cc := event.SequenceHeader.ColorConfig
+			s.bitDepth = cc.BitDepth
+			s.chroma = corpusChromaName(cc.MonoChrome, cc.SubsamplingX, cc.SubsamplingY)
 			s.tileCols = event.TileInfo.Cols
 		}
 
@@ -376,6 +384,21 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 		}
 	}
 	return nil
+}
+
+func corpusChromaName(monochrome, subsamplingX, subsamplingY bool) string {
+	switch {
+	case monochrome:
+		return "400"
+	case subsamplingX && subsamplingY:
+		return "420"
+	case subsamplingX:
+		return "422"
+	case subsamplingY:
+		return "440"
+	default:
+		return "444"
+	}
 }
 
 // hashVisibleFrame folds one emitted frame's visible plane bytes into the
@@ -682,8 +705,8 @@ func TestGeneratedCorpusConformance(t *testing.T) {
 	totalFrames := 0
 	for _, clip := range clips {
 		totalFrames += clip.frames
-		t.Logf("generated-corpus: %-26s %dx%d %d-bit frames=%d tiles=%d md5=%x",
-			clip.name, clip.width, clip.height, clip.bitDepth, clip.frames, clip.tileCols, clip.wantMD5)
+		t.Logf("generated-corpus: %-30s %dx%d %d-bit %s frames=%d tiles=%d md5=%x",
+			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, clip.wantMD5)
 	}
 	t.Logf("generated-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
 }
@@ -790,9 +813,9 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " goav1 multi-config cross-decoder throughput  (steady-state; PERF TRACKING)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
-	fmt.Fprintf(&b, " clips: %d generated (256x144/640x360/1280x720; cq 20/32/55; intra/inter; tiles; 8/10-bit)\n", len(clips))
+	fmt.Fprintf(&b, " clips: %d generated (256x144/640x360/1280x720; cq 20/32/55; intra/inter; tiles; 8/10/12-bit; 4:2:0/4:2:2)\n", len(clips))
 	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter.\n", crossBenchRuns)
-	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified (stream MD5 == aomdec/dav1d).\n")
+	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified (stream MD5 == aomdec; dav1d cross-checks 8-bit 4:2:0).\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw includes process startup,\n")
 	fmt.Fprintf(&b, "         adj subtracts one measured startup baseline per invocation. At ~48 frames/clip\n")
 	fmt.Fprintf(&b, "         the startup share is small, so raw≈adj (that's the point of the longer clips).\n")
@@ -800,15 +823,15 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 
 	// ---- clip manifest (config detail) ----
 	fmt.Fprintf(&b, "CLIP MANIFEST\n")
-	fmt.Fprintf(&b, "%-26s %-10s %6s %5s %5s %-7s\n", "clip", "res", "frames", "bits", "tiles", "type")
-	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", 64))
+	fmt.Fprintf(&b, "%-30s %-10s %6s %5s %-6s %5s %-7s\n", "clip", "res", "frames", "bits", "chroma", "tiles", "type")
+	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", 76))
 	for _, c := range clips {
 		typ := "inter"
 		if c.allIntra {
 			typ = "intra"
 		}
-		fmt.Fprintf(&b, "%-26s %-10s %6d %5d %5d %-7s\n",
-			truncate(c.name, 26), fmt.Sprintf("%dx%d", c.width, c.height), c.frames, c.bitDepth, c.tileCols, typ)
+		fmt.Fprintf(&b, "%-30s %-10s %6d %5d %-6s %5d %-7s\n",
+			truncate(c.name, 30), fmt.Sprintf("%dx%d", c.width, c.height), c.frames, c.bitDepth, c.chroma, c.tileCols, typ)
 	}
 	fmt.Fprintf(&b, "\n")
 
