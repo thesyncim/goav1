@@ -93,7 +93,13 @@ func (r *Reader) ReadBit() (uint8, error) {
 	if traceEntropyReads {
 		traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
 	}
-	r.normalize(dif, nextRange)
+	shift := 16 - bits.Len32(nextRange)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = nextRange << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
 	return bit, nil
 }
 
@@ -128,7 +134,13 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 	if traceEntropyReads {
 		traceBoolRead(prob, r.dif, r.rng, r.BitsRead())
 	}
-	r.normalize(dif, nextRange)
+	shift := 16 - bits.Len32(nextRange)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = nextRange << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
 	return bit, nil
 }
 
@@ -162,7 +174,13 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
 		}
-		r.normalize(dif, nextRange)
+		shift := 16 - bits.Len32(nextRange)
+		r.cnt -= shift
+		r.dif = ((dif + 1) << uint(shift)) - 1
+		r.rng = nextRange << uint(shift)
+		if r.cnt < 0 {
+			r.refill()
+		}
 		v = (v << 1) | uint32(bit)
 	}
 	return v, nil
@@ -538,16 +556,6 @@ func (r *Reader) ReadSignedDelta(cdf *CDF, small int) (int, error) {
 		return -abs, nil
 	}
 	return abs, nil
-}
-
-func (r *Reader) normalize(dif uint32, rng uint32) {
-	shift := 16 - bits.Len32(rng)
-	r.cnt -= shift
-	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
-		r.refill()
-	}
 }
 
 func invRecenterFiniteNonNeg(n uint32, ref uint32, v uint32) uint32 {
