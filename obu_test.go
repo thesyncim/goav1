@@ -165,6 +165,72 @@ func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
 	}
 }
 
+func FuzzPublicOBUStreamIterators(f *testing.F) {
+	lowOverhead := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
+	lowOverhead = appendPublicLowOverheadOBU(lowOverhead, av1.OBUFrame, []byte{0xaa})
+	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
+
+	for _, seed := range [][]byte{
+		nil,
+		{0x00},
+		{0x12, 0x00},
+		{0x10},
+		{0x80},
+		{0x13, 0x00},
+		lowOverhead,
+		annexB,
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 8<<10 {
+			data = data[:8<<10]
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic in public OBU stream path (len=%d): %v", len(data), r)
+			}
+		}()
+
+		_, _, _ = av1.ParseOBUHeader(data)
+		_, _ = av1.ParseOBUElement(data)
+		_, _, _ = av1.ParseLowOverheadOBU(data)
+		_, _, _ = av1.ParseAnnexBElement(data)
+		_, _ = av1.NormalizeLowOverheadOBU(make([]byte, len(data)*2+16), data)
+		fuzzPublicDriveLowOverhead(data)
+		fuzzPublicDriveTemporalUnit(data)
+		fuzzPublicDriveAnnexB(data)
+	})
+}
+
+func fuzzPublicDriveLowOverhead(data []byte) {
+	it := av1.NewLowOverheadIterator(data)
+	for range 1 << 12 {
+		if _, ok, err := it.Next(); err != nil || !ok {
+			return
+		}
+	}
+}
+
+func fuzzPublicDriveTemporalUnit(data []byte) {
+	it := av1.NewTemporalUnitIterator(data)
+	for range 1 << 12 {
+		if _, ok, err := it.Next(); err != nil || !ok {
+			return
+		}
+	}
+}
+
+func fuzzPublicDriveAnnexB(data []byte) {
+	it := av1.NewAnnexBIterator(data)
+	for range 1 << 12 {
+		if _, ok, err := it.Next(); err != nil || !ok {
+			return
+		}
+	}
+}
+
 func TestPublicParseMetadataOBU(t *testing.T) {
 	// HDR-CLL: type=2, max_cll=1000, max_fall=400, trailing 0x80.
 	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
