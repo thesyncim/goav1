@@ -362,6 +362,47 @@ func profileClipPath(name string) string {
 	return filepath.Join("internal", "av1", "testvector", "testdata", "profiles", name)
 }
 
+func TestSimpleDecoderProfileClipTablesCoverVendoredProfiles(t *testing.T) {
+	want := vendoredProfileClipNames(t)
+	got := make(map[string]int, len(profileClips)+len(superResProfileClips))
+	for _, clip := range profileClips {
+		got[clip.file]++
+	}
+	for _, clip := range superResProfileClips {
+		got[clip.file]++
+	}
+
+	for file, count := range got {
+		if count != 1 {
+			t.Errorf("profile clip %s appears %d times in public decoder tables", file, count)
+		}
+		if _, ok := want[file]; !ok {
+			t.Errorf("public decoder table references missing vendored clip %s", file)
+		}
+	}
+	for file := range want {
+		if got[file] == 0 {
+			t.Errorf("vendored profile clip %s is not covered by public decoder tables", file)
+		}
+	}
+}
+
+func vendoredProfileClipNames(t *testing.T) map[string]struct{} {
+	t.Helper()
+	paths, err := filepath.Glob(profileClipPath("*.ivf"))
+	if err != nil {
+		t.Fatalf("glob profile clips: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no vendored profile clips found")
+	}
+	clips := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		clips[filepath.Base(path)] = struct{}{}
+	}
+	return clips
+}
+
 // TestSimpleDecoderProfileClipsMatchGolden decodes each vendored profile clip
 // through the high-level Decoder API and asserts every visible frame's MD5
 // equals the libaom golden. This proves the convenience API drives the same

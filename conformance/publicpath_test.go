@@ -372,6 +372,50 @@ var externalReferenceClips = []publicClip{
 	},
 }
 
+func TestPublicPathProfileClipTablesCoverVendoredProfiles(t *testing.T) {
+	want := vendoredPublicProfileClipNames(t)
+	got := make(map[string]int, len(publicClips)+len(callerPostFilterClips)+len(externalReferenceClips))
+	for _, clip := range publicClips {
+		got[clip.file]++
+	}
+	for _, clip := range callerPostFilterClips {
+		got[clip.file]++
+	}
+	for _, clip := range externalReferenceClips {
+		got[clip.file]++
+	}
+
+	for file, count := range got {
+		if count != 1 {
+			t.Errorf("profile clip %s appears %d times in public path tables", file, count)
+		}
+		if _, ok := want[file]; !ok {
+			t.Errorf("public path table references missing vendored clip %s", file)
+		}
+	}
+	for file := range want {
+		if got[file] == 0 {
+			t.Errorf("vendored profile clip %s is not covered by public path tables", file)
+		}
+	}
+}
+
+func vendoredPublicProfileClipNames(t *testing.T) map[string]struct{} {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(publicProfileClipDir(t), "*.ivf"))
+	if err != nil {
+		t.Fatalf("glob profile clips: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no vendored profile clips found")
+	}
+	clips := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		clips[filepath.Base(path)] = struct{}{}
+	}
+	return clips
+}
+
 // TestPublicPathProfileClips decodes each vendored profile clip through the
 // public stream runner and asserts every visible frame's MD5 matches the
 // libaom golden.
@@ -997,17 +1041,21 @@ func newPublicSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.
 
 func readPublicClip(t *testing.T, name string) []byte {
 	t.Helper()
+	data, err := os.ReadFile(filepath.Join(publicProfileClipDir(t), name))
+	if err != nil {
+		t.Fatalf("read clip %s: %v", name, err)
+	}
+	return data
+}
+
+func publicProfileClipDir(t *testing.T) string {
+	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	path := filepath.Clean(filepath.Join(filepath.Dir(thisFile),
-		"..", "internal", "av1", "testvector", "testdata", "profiles", name))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read clip %s: %v", path, err)
-	}
-	return data
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile),
+		"..", "internal", "av1", "testvector", "testdata", "profiles"))
 }
 
 func readLibaomClip(t *testing.T, name string) []byte {
