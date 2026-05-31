@@ -10,47 +10,55 @@ import "errors"
 
 var ErrInvalidCDEF = errors.New("cdef: invalid input")
 
+var cdefDirectionDivTable = [...]int32{0, 840, 420, 280, 210, 168, 140, 120, 105}
+
 // FindDirection ports libaom's cdef_find_dir_c. img must contain an 8x8 block
 // addressed with stride. coeffShift is bitDepth-8 for 8/10/12-bit input.
 func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error) {
 	if stride < 8 || coeffShift < 0 || coeffShift > 4 || !blockFits(len(img), stride, 8, 8) {
 		return 0, 0, ErrInvalidCDEF
 	}
+	dir, variance := findDirectionUnchecked(img, stride, coeffShift)
+	return dir, variance, nil
+}
+
+func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int32) {
 	var cost [8]int32
-	var partial [8][15]int
-	divTable := [...]int{0, 840, 420, 280, 210, 168, 140, 120, 105}
+	var partial [8][15]int32
 	for i := range 8 {
+		rowBase := i * stride
+		iHalf := i >> 1
 		for j := range 8 {
-			x := int(img[i*stride+j]>>coeffShift) - 128
+			x := int32(img[rowBase+j]>>uint(coeffShift)) - 128
 			partial[0][i+j] += x
-			partial[1][i+j/2] += x
+			partial[1][i+(j>>1)] += x
 			partial[2][i] += x
-			partial[3][3+i-j/2] += x
+			partial[3][3+i-(j>>1)] += x
 			partial[4][7+i-j] += x
-			partial[5][3-i/2+j] += x
+			partial[5][3-iHalf+j] += x
 			partial[6][j] += x
-			partial[7][i/2+j] += x
+			partial[7][iHalf+j] += x
 		}
 	}
 	for i := range 8 {
-		cost[2] += int32(partial[2][i] * partial[2][i])
-		cost[6] += int32(partial[6][i] * partial[6][i])
+		cost[2] += partial[2][i] * partial[2][i]
+		cost[6] += partial[6][i] * partial[6][i]
 	}
-	cost[2] *= int32(divTable[8])
-	cost[6] *= int32(divTable[8])
+	cost[2] *= cdefDirectionDivTable[8]
+	cost[6] *= cdefDirectionDivTable[8]
 	for i := range 7 {
-		cost[0] += int32((partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * divTable[i+1])
-		cost[4] += int32((partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * divTable[i+1])
+		cost[0] += (partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * cdefDirectionDivTable[i+1]
+		cost[4] += (partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * cdefDirectionDivTable[i+1]
 	}
-	cost[0] += int32(partial[0][7] * partial[0][7] * divTable[8])
-	cost[4] += int32(partial[4][7] * partial[4][7] * divTable[8])
+	cost[0] += partial[0][7] * partial[0][7] * cdefDirectionDivTable[8]
+	cost[4] += partial[4][7] * partial[4][7] * cdefDirectionDivTable[8]
 	for i := 1; i < 8; i += 2 {
 		for j := range 5 {
-			cost[i] += int32(partial[i][3+j] * partial[i][3+j])
+			cost[i] += partial[i][3+j] * partial[i][3+j]
 		}
-		cost[i] *= int32(divTable[8])
+		cost[i] *= cdefDirectionDivTable[8]
 		for j := range 3 {
-			cost[i] += int32((partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * divTable[2*j+2])
+			cost[i] += (partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * cdefDirectionDivTable[2*j+2]
 		}
 	}
 	bestCost := int32(0)
@@ -62,20 +70,92 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 		}
 	}
 	variance := (bestCost - cost[(bestDir+4)&7]) >> 10
-	return bestDir, variance, nil
+	return bestDir, variance
 }
 
 // FindDirectionDual runs FindDirection for two adjacent 8x8 blocks.
 func FindDirectionDual(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32, error) {
-	dir1, var1, err := FindDirection(img1, stride, coeffShift)
-	if err != nil {
-		return 0, 0, 0, 0, err
+	if stride < 8 || coeffShift < 0 || coeffShift > 4 ||
+		!blockFits(len(img1), stride, 8, 8) ||
+		!blockFits(len(img2), stride, 8, 8) {
+		return 0, 0, 0, 0, ErrInvalidCDEF
 	}
-	dir2, var2, err := FindDirection(img2, stride, coeffShift)
-	if err != nil {
-		return 0, 0, 0, 0, err
-	}
+	dir1, var1, dir2, var2 := findDirectionDualUnchecked(img1, img2, stride, coeffShift)
 	return dir1, var1, dir2, var2, nil
+}
+
+func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
+	var partial1 [8][15]int32
+	var partial2 [8][15]int32
+	for i := range 8 {
+		rowBase := i * stride
+		iHalf := i >> 1
+		for j := range 8 {
+			x1 := int32(img1[rowBase+j]>>uint(coeffShift)) - 128
+			x2 := int32(img2[rowBase+j]>>uint(coeffShift)) - 128
+			diag0 := i + j
+			diag1 := i + (j >> 1)
+			diag3 := 3 + i - (j >> 1)
+			diag4 := 7 + i - j
+			diag5 := 3 - iHalf + j
+			diag7 := iHalf + j
+
+			partial1[0][diag0] += x1
+			partial1[1][diag1] += x1
+			partial1[2][i] += x1
+			partial1[3][diag3] += x1
+			partial1[4][diag4] += x1
+			partial1[5][diag5] += x1
+			partial1[6][j] += x1
+			partial1[7][diag7] += x1
+
+			partial2[0][diag0] += x2
+			partial2[1][diag1] += x2
+			partial2[2][i] += x2
+			partial2[3][diag3] += x2
+			partial2[4][diag4] += x2
+			partial2[5][diag5] += x2
+			partial2[6][j] += x2
+			partial2[7][diag7] += x2
+		}
+	}
+	dir1, var1 := finishDirection(&partial1)
+	dir2, var2 := finishDirection(&partial2)
+	return dir1, var1, dir2, var2
+}
+
+func finishDirection(partial *[8][15]int32) (int, int32) {
+	var cost [8]int32
+	for i := range 8 {
+		cost[2] += partial[2][i] * partial[2][i]
+		cost[6] += partial[6][i] * partial[6][i]
+	}
+	cost[2] *= cdefDirectionDivTable[8]
+	cost[6] *= cdefDirectionDivTable[8]
+	for i := range 7 {
+		cost[0] += (partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * cdefDirectionDivTable[i+1]
+		cost[4] += (partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * cdefDirectionDivTable[i+1]
+	}
+	cost[0] += partial[0][7] * partial[0][7] * cdefDirectionDivTable[8]
+	cost[4] += partial[4][7] * partial[4][7] * cdefDirectionDivTable[8]
+	for i := 1; i < 8; i += 2 {
+		for j := range 5 {
+			cost[i] += partial[i][3+j] * partial[i][3+j]
+		}
+		cost[i] *= cdefDirectionDivTable[8]
+		for j := range 3 {
+			cost[i] += (partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * cdefDirectionDivTable[2*j+2]
+		}
+	}
+	bestCost := int32(0)
+	bestDir := 0
+	for i := range 8 {
+		if cost[i] > bestCost {
+			bestCost = cost[i]
+			bestDir = i
+		}
+	}
+	return bestDir, (bestCost - cost[(bestDir+4)&7]) >> 10
 }
 
 func blockFits(length int, stride int, width int, height int) bool {

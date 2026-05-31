@@ -188,6 +188,18 @@ func BenchmarkFindDirection(b *testing.B) {
 	}
 }
 
+func BenchmarkFindDirectionDual(b *testing.B) {
+	const stride = 16
+	img := make([]uint16, stride*8)
+	for i := range img {
+		img[i] = uint16((i * 41) & 0xfff)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _, _ = FindDirectionDual(img, img[8:], stride, 4)
+	}
+}
+
 func findDirectionLibaomReference(img []uint16, stride int, coeffShift int) (int, int32) {
 	var cost [8]int32
 	var partial [8][15]int

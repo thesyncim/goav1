@@ -258,12 +258,27 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 	}
 	if params.Plane == PlaneY {
-		for _, block := range blocks {
+		for i := 0; i < len(blocks); {
+			block := blocks[i]
 			by := int(block.BY)
 			bx := int(block.BX)
 			srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
 			if srcOrigin < 0 || srcOrigin >= len(input) {
 				return ErrInvalidCDEF
+			}
+			nextOrigin := srcOrigin + blockWidth
+			if blockWidth == 8 && nextOrigin <= len(input) &&
+				i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
+				dir1, variance1, dir2, variance2, err := FindDirectionDual(input[srcOrigin:], input[nextOrigin:], BStride, params.CoeffShift)
+				if err != nil {
+					return err
+				}
+				directions[by][bx] = dir1
+				variances[by][bx] = variance1
+				directions[by][bx+1] = dir2
+				variances[by][bx+1] = variance2
+				i += 2
+				continue
 			}
 			dir, variance, err := FindDirection(input[srcOrigin:], BStride, params.CoeffShift)
 			if err != nil {
@@ -271,6 +286,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			}
 			directions[by][bx] = dir
 			variances[by][bx] = variance
+			i++
 		}
 	}
 	if params.Plane == PlaneU && params.XDec != params.YDec {
