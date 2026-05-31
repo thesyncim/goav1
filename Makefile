@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-extended dryrun-profiles ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -232,6 +232,12 @@ dryrun-fast:
 dryrun-relevant-supported:
 	GOAV1_RELEVANT_SUPPORTED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomRelevantSupportedFrameWorkDryRun' -count=1 -timeout 900s -v
 
+# dryrun-full runs every checksum-pinned vector in the committed libaom
+# manifest through the strict-MD5 framework dry-run. It is heavier than
+# dryrun-extended because it also includes the relevant-supported cohort.
+dryrun-full:
+	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
+
 # dryrun-profiles decodes the vendored profile-conformance clips (4:4:4 / 4:2:2
 # / 12-bit, both all-intra and inter) and asserts byte-exact per-frame MD5
 # against their libaom goldens.
@@ -287,6 +293,7 @@ help:
 	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
 	@echo "  dryrun-fast                strict-MD5 fast libaom framework dry-run"
 	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run"
+	@echo "  dryrun-full                strict-MD5 all committed libaom framework vectors"
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  dryrun-profiles            byte-exact profile-conformance clips (4:4:4 / 4:2:2 / 12-bit, isolated binary)"
 	@echo "  test-motion-conformance    libaom convolve conformance"

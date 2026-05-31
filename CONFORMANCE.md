@@ -309,7 +309,8 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
 - `make dryrun-fast`: 8/8 libaom fast vectors pass.
 - `make dryrun-relevant-supported`: 14/14 relevant vectors pass, including
   8-bit and 10-bit film grain and monochrome.
-- `make dryrun-extended`: 218/218 additional diagnostic vectors pass,
+- `make dryrun-full`: 240/240 committed remote libaom vectors pass.
+- `make dryrun-extended`: 226/226 opt-in diagnostic vectors pass,
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
@@ -339,11 +340,13 @@ and the vendored profile corpus adds a non-SVC `multitile-2x1-rows-256x256`
 clip. Both paths pass strict MD5. A broader non-SVC libaom tile corpus should
 still be added if upstream publishes one.
 
-### Extended size-vector coverage
+### Full and extended coverage
 
-`SuiteLevelExtended` carries the size, quantizer, and SVC diagnostic vectors
-that used to expose edge and inter-prediction gaps. The current
-`make dryrun-extended` gate runs them under strict MD5 and passes every vector.
+`SuiteLevelFull` carries all 240 checksum-pinned remote libaom vectors.
+`SuiteLevelExtended` carries the 226 opt-in size, quantizer, and SVC diagnostic
+vectors that used to expose edge and inter-prediction gaps. The current
+`make dryrun-full` and `make dryrun-extended` gates run them under strict MD5
+and pass every vector.
 
 ### How to reproduce
 
@@ -357,6 +360,12 @@ Relevant strict gate:
 
 ```sh
 make dryrun-relevant-supported
+```
+
+Full strict gate:
+
+```sh
+make dryrun-full
 ```
 
 Extended strict gate:
