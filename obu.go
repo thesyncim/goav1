@@ -278,6 +278,7 @@ var (
 	ErrTileListTooManyTiles       = internalparser.ErrTileListTooManyTiles
 	ErrTileListInvalidTileCount   = internalparser.ErrTileListInvalidTileCount
 	ErrTileListInvalidAnchorIndex = internalparser.ErrTileListInvalidAnchorIndex
+	ErrTileListInvalidAnchorTile  = internalparser.ErrTileListInvalidAnchorTile
 )
 
 // ParseTileListOBU parses an OBU_TILE_LIST payload per AV1 spec section

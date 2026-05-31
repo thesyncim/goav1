@@ -512,13 +512,13 @@ func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
 }
 
 func TestStreamTileListOBUParses(t *testing.T) {
-	// One tile with anchor_frame_idx=0, anchor_tile_row=1, anchor_tile_col=2,
+	// One tile with anchor_frame_idx=0, anchor_tile_row=1, anchor_tile_col=1,
 	// tile_data_size_minus_1=2 followed by 3 bytes of tile data.
 	payload := []byte{
 		0x01,       // output_frame_width_in_tiles_minus_1 = 1
 		0x01,       // output_frame_height_in_tiles_minus_1 = 1
 		0x00, 0x00, // tile_count_minus_1 = 0 (1 tile)
-		0x00, 0x01, 0x02, 0x00, 0x02, // entry header
+		0x00, 0x01, 0x01, 0x00, 0x02, // entry header
 		0xaa, 0xbb, 0xcc, // tile data
 	}
 
@@ -541,7 +541,7 @@ func TestStreamTileListOBUParses(t *testing.T) {
 		t.Fatalf("entries=%d want 1", len(event.TileList.Entries))
 	}
 	e := event.TileList.Entries[0]
-	if e.AnchorFrameIdx != 0 || e.AnchorTileRow != 1 || e.AnchorTileCol != 2 ||
+	if e.AnchorFrameIdx != 0 || e.AnchorTileRow != 1 || e.AnchorTileCol != 1 ||
 		e.TileDataSize() != 3 || string(e.TileData) != "\xaa\xbb\xcc" {
 		t.Fatalf("entry=%+v", e)
 	}

@@ -40,6 +40,7 @@ var (
 	ErrTileListTooManyTiles       = errors.New("parser: tile list tile_count exceeds output frame")
 	ErrTileListInvalidTileCount   = errors.New("parser: tile list tile_count out of range")
 	ErrTileListInvalidAnchorIndex = errors.New("parser: tile list anchor_frame_idx out of range")
+	ErrTileListInvalidAnchorTile  = errors.New("parser: tile list anchor tile out of output frame")
 )
 
 // TileListEntry describes one entry of a tile_list_obu(). TileData aliases the
@@ -135,6 +136,10 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 			AnchorTileRow:      payload[off+1],
 			AnchorTileCol:      payload[off+2],
 			TileDataSizeMinus1: uint16(payload[off+3])<<8 | uint16(payload[off+4]),
+		}
+		if int(entry.AnchorTileRow) > int(list.OutputFrameHeightInTilesMinus1) ||
+			int(entry.AnchorTileCol) > int(list.OutputFrameWidthInTilesMinus1) {
+			return list, ErrTileListInvalidAnchorTile
 		}
 		off += TileListEntryHeaderBytes
 		dataSize := int(entry.TileDataSizeMinus1) + 1

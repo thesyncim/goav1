@@ -221,6 +221,10 @@ func TestPublicParseTileListOBU(t *testing.T) {
 	if _, err := av1.ParseTileListOBU([]byte{0x00}, nil); !errors.Is(err, av1.ErrTileListShortHeader) {
 		t.Fatalf("short err=%v want ErrTileListShortHeader", err)
 	}
+	outOfGridAnchor := []byte{0x00, 0x00, 0x00, 0x00, 0, 1, 0, 0, 0, 0xaa}
+	if _, err := av1.ParseTileListOBU(outOfGridAnchor, nil); !errors.Is(err, av1.ErrTileListInvalidAnchorTile) {
+		t.Fatalf("anchor tile err=%v want ErrTileListInvalidAnchorTile", err)
+	}
 }
 
 func TestPublicParseTileListOBUAllocs(t *testing.T) {
