@@ -247,6 +247,16 @@
 //	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=999 \
 //	  --lag-in-frames=0 --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-8bit-edgemv-130x130.ivf src444_8_edgemv.yuv
+//	# 4:4:4 8-bit multi-tile:
+//	ffmpeg -f lavfi -i nullsrc=size=256x256:rate=1:duration=4 -frames:v 4 \
+//	  -vf "geq=lum='32+mod(X*5+Y*3+N*31+floor(X/16)*23+floor(Y/16)*11,208)':cb='48+mod(X*7+Y*2+N*19+floor((X+Y)/12)*17,176)':cr='40+mod(X*3+Y*9+N*29+floor((X*2+Y)/15)*13,184)',format=yuv444p" \
+//	  -f rawvideo src444_8_multitile.yuv
+//	aomenc --i444 --width=256 --height=256 --limit=4 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --tile-columns=1 --enable-cdef=0 \
+//	  --enable-restoration=0 \
+//	  -o profile1-444-8bit-multitile-2x1-256x256.ivf \
+//	  src444_8_multitile.yuv
 //	# 4:4:4 10-bit inter:
 //	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
@@ -304,6 +314,9 @@ type profileClip struct {
 	wantRestorationFrames int
 	wantFilmGrainFrames   int
 	wantInterFrames       int
+	wantTileCols          int
+	wantTileRows          int
+	wantTileGroupTiles    int
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -444,6 +457,25 @@ var profileClips = []profileClip{
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 		wantInterFrames:  1,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit multi-tile, guarding non-4:2:0 tile layout,
+		// split/reconstruction, and per-tile CDF retention.
+		name: "profile1-444-8bit-multitile-2x1-256x256",
+		file: "profile1-444-8bit-multitile-2x1-256x256.ivf",
+		frameMD5Hex: []string{
+			"afb8da499aa3e0394b61ae7859323bd7",
+			"eaf99aece59fc4ecbfb556eee5fcd3fc",
+			"7433db9f86a39411f616573b5735aad5",
+			"3661ba977cd76893d39563346fb3f5ec",
+		},
+		wantSeqProfile:     1,
+		wantBitDepth:       8,
+		wantSubsamplingX:   false,
+		wantSubsamplingY:   false,
+		wantTileCols:       2,
+		wantTileRows:       1,
+		wantTileGroupTiles: 2,
 	},
 	{
 		// Profile 1: 4:4:4 10-bit INTER. 8 frames (1 keyframe + 7 inter),
@@ -962,6 +994,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	restorationFrames := 0
 	filmGrainFrames := 0
 	interFrames := 0
+	maxTileCols := 0
+	maxTileRows := 0
+	maxTileGroupTiles := 0
 	checkedColorConfig := false
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -979,6 +1014,15 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			event := events[i]
 			if !eventRunsFrameWork(event) {
 				continue
+			}
+			if cols := int(event.TileInfo.Cols); cols > maxTileCols {
+				maxTileCols = cols
+			}
+			if rows := int(event.TileInfo.Rows); rows > maxTileRows {
+				maxTileRows = rows
+			}
+			if tiles := int(event.TileGroup.TileCount); tiles > maxTileGroupTiles {
+				maxTileGroupTiles = tiles
 			}
 			if !checkedColorConfig {
 				if event.SequenceHeader.SeqProfile != clip.wantSeqProfile {
@@ -1235,6 +1279,15 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if interFrames < clip.wantInterFrames {
 		t.Fatalf("inter frames=%d want at least %d", interFrames, clip.wantInterFrames)
+	}
+	if clip.wantTileCols != 0 && maxTileCols != clip.wantTileCols {
+		t.Fatalf("tile cols=%d want %d", maxTileCols, clip.wantTileCols)
+	}
+	if clip.wantTileRows != 0 && maxTileRows != clip.wantTileRows {
+		t.Fatalf("tile rows=%d want %d", maxTileRows, clip.wantTileRows)
+	}
+	if clip.wantTileGroupTiles != 0 && maxTileGroupTiles < clip.wantTileGroupTiles {
+		t.Fatalf("tile group tiles=%d want at least %d", maxTileGroupTiles, clip.wantTileGroupTiles)
 	}
 }
 

@@ -318,10 +318,10 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 32/32 vendored profile clips pass, covering
+- `make dryrun-profiles`: 33/33 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
-  8/10-bit edge-motion, all-key superres, and inter superres,
+  8/10-bit edge-motion, multi-tile, all-key superres, and inter superres,
   profile 2 4:2:2 8-bit all-intra/inter, profile 2 4:2:2 10-bit edge-size,
   profile 2 4:2:0 12-bit
   including odd edge sizes, 12-bit film grain, 12-bit superres, 8-bit superres,
@@ -351,9 +351,9 @@ ergonomics for multi-pool SVC are documented separately in
 ### Multi-tile vector coverage
 
 The remote libaom suite carries multi-tile coverage through the SVC vectors,
-and the vendored profile corpus adds a non-SVC `multitile-2x1-rows-256x256`
-clip. Both paths pass strict MD5. A broader non-SVC libaom tile corpus should
-still be added if upstream publishes one.
+and the vendored profile corpus adds non-SVC 4:2:0 and profile-1 4:4:4
+multi-tile clips. Both paths pass strict MD5. A broader non-SVC libaom tile
+corpus should still be added if upstream publishes one.
 
 ### Full and extended coverage
 
