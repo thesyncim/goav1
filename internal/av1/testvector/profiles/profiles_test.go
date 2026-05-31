@@ -191,6 +191,12 @@
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
+//	# 4:2:0 12-bit odd edge-size with active CDEF:
+//	aomenc --i420 --width=66 --height=66 --limit=3 --ivf --profile=2 \
+//	  --bit-depth=12 --input-bit-depth=12 --cpu-used=4 --end-usage=q \
+//	  --cq-level=36 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --enable-cdef=1 --enable-restoration=1 \
+//	  -o profile2-420-12bit-66x66.ivf src420_12_edge.yuv
 //
 //	# --- inter (kf-max-dist=30, 8 frames, moving synthetic source) ---
 //	# 4:4:4 8-bit inter:
@@ -409,6 +415,23 @@ var profileClips = []profileClip{
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
+	},
+	{
+		// Profile 2: 4:2:0 12-bit odd 66x66 size with active CDEF, guarding
+		// high-bit-depth chroma subsampling at frame edges that do not align
+		// to a superblock or chroma-pair boundary.
+		name: "profile2-420-12bit-66x66",
+		file: "profile2-420-12bit-66x66.ivf",
+		frameMD5Hex: []string{
+			"f8dc71c2aafcf0ed77ce9d91a0a8ca0d",
+			"8d44478c32115672846d4579d3962b58",
+			"9825261dad9f100b51cba05ad534029d",
+		},
+		wantSeqProfile:   2,
+		wantBitDepth:     12,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+		wantCDEFFrames:   1,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit with active CDEF and loop restoration.
