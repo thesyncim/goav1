@@ -641,7 +641,33 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
-		updateCDF4(values, symbol)
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		top := uint16(CDFProbTop)
+		c0 := values[0]
+		c1 := values[1]
+		c2 := values[2]
+		switch symbol {
+		case 0:
+			values[0] = c0 - (c0 >> rate)
+			values[1] = c1 - (c1 >> rate)
+			values[2] = c2 - (c2 >> rate)
+		case 1:
+			values[0] = c0 + ((top - c0) >> rate)
+			values[1] = c1 - (c1 >> rate)
+			values[2] = c2 - (c2 >> rate)
+		case 2:
+			values[0] = c0 + ((top - c0) >> rate)
+			values[1] = c1 + ((top - c1) >> rate)
+			values[2] = c2 - (c2 >> rate)
+		default:
+			values[0] = c0 + ((top - c0) >> rate)
+			values[1] = c1 + ((top - c1) >> rate)
+			values[2] = c2 + ((top - c2) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
 	}
 	return symbol
 }

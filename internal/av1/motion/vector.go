@@ -599,6 +599,10 @@ func convolveY8ClampedColumn(ref frame.Plane, sx int, sy int, fourTap bool, k0, 
 }
 
 func convolve2D8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	if width > 0 && width <= convolve2D8NarrowStride {
+		convolve2D8NarrowPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		return
+	}
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
 	foX := filterTaps/2 - 1
@@ -659,7 +663,71 @@ func convolve2D8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 	}
 }
 
+const convolve2D8NarrowStride = 4
+
+func convolve2D8NarrowPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = convolve2D8NarrowStride
+	var im [(maxBlockSize + filterTaps - 1) * imStride]int16
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	imH := height + filterTaps - 1
+	const xBias = 1 << (8 + filterBits - 1)
+
+	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
+	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	for y := range imH {
+		srcRow := ref.Pix[(refY-foY+y)*ref.Stride+refX-foX:]
+		imRow := im[y*imStride:]
+		if xFourTap {
+			for x := range width {
+				s := srcRow[x : x+filterTaps]
+				sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+			continue
+		}
+		for x := range width {
+			s := srcRow[x : x+filterTaps]
+			sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
+				xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := 8 + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	yBias := 1 << offsetBits
+
+	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
+	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	for y := range height {
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
+		if yFourTap {
+			col := im[(y+2)*imStride : (y+6)*imStride+width]
+			for x := range width {
+				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
+					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
+				res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			}
+			continue
+		}
+		col := im[y*imStride : (y+7)*imStride+width]
+		for x := range width {
+			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
+				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
+				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
+			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		}
+	}
+}
+
 func convolve2D8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	if width > 0 && width <= convolve2D8NarrowStride {
+		convolve2D8ClampedNarrowPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		return
+	}
 	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
 	foX := filterTaps/2 - 1
@@ -674,6 +742,119 @@ func convolve2D8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY i
 	for y := range imH {
 		// The vertical coordinate is constant across the row, so clamp it once
 		// instead of re-clamping it on every tap load.
+		cy := clampInt(refY-foY+y, 0, ref.Height-1)
+		rowBase := cy * ref.Stride
+		imRow := im[y*imStride:]
+		if xFourTap {
+			for x := 0; x < xLo; x++ {
+				sx := firstTap + x
+				sum := xBias +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+			if xHi > xLo {
+				srcRow := ref.Pix[rowBase+firstTap+xLo:]
+				for x := xLo; x < xHi; x++ {
+					i := x - xLo
+					s := srcRow[i : i+filterTaps]
+					sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
+					imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+				}
+			}
+			for x := xHi; x < width; x++ {
+				sx := firstTap + x
+				sum := xBias +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+			continue
+		}
+		for x := 0; x < xLo; x++ {
+			sx := firstTap + x
+			sum := xBias +
+				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		}
+		if xHi > xLo {
+			srcRow := ref.Pix[rowBase+firstTap+xLo:]
+			for x := xLo; x < xHi; x++ {
+				i := x - xLo
+				s := srcRow[i : i+filterTaps]
+				sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
+					xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
+				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			}
+		}
+		for x := xHi; x < width; x++ {
+			sx := firstTap + x
+			sum := xBias +
+				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
+				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+				xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+				xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
+				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		}
+	}
+	offsetBits := 8 + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	yBias := 1 << offsetBits
+
+	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
+	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	for y := range height {
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
+		if yFourTap {
+			col := im[(y+2)*imStride : (y+6)*imStride+width]
+			for x := range width {
+				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
+					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
+				res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			}
+			continue
+		}
+		col := im[y*imStride : (y+7)*imStride+width]
+		for x := range width {
+			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
+				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
+				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
+			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		}
+	}
+}
+
+func convolve2D8ClampedNarrowPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	const imStride = convolve2D8NarrowStride
+	var im [(maxBlockSize + filterTaps - 1) * imStride]int16
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	imH := height + filterTaps - 1
+	const xBias = 1 << (8 + filterBits - 1)
+
+	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
+	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	firstTap := refX - foX
+	xLo, xHi := clampedXInterior(firstTap, filterTaps, ref.Width, width)
+	for y := range imH {
 		cy := clampInt(refY-foY+y, 0, ref.Height-1)
 		rowBase := cy * ref.Stride
 		imRow := im[y*imStride:]
