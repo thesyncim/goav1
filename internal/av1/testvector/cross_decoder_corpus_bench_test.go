@@ -937,6 +937,56 @@ func TestParseCorpusOracleSidecar(t *testing.T) {
 	}
 }
 
+func TestExternalCorpusFrameMD5SidecarSmoke(t *testing.T) {
+	src := filepath.Join("testdata", "profiles", "profile1-444-8bit-64x64.ivf")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read profile smoke clip: %v", err)
+	}
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "clip.ivf")
+	if err := os.WriteFile(ivfPath, data, 0o644); err != nil {
+		t.Fatalf("write profile smoke clip: %v", err)
+	}
+	md5Path := ivfPath + ".md5"
+	if err := os.WriteFile(md5Path, []byte(strings.Join([]string{
+		"00211cdc8f799c808849c955a318a0f5",
+		"397ff01920ff514bc611ab49d76371c1",
+		"f8fbfb25a42da47a7adb71510de9b178",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write frame-md5 sidecar: %v", err)
+	}
+
+	candidates, skippedNoMD5 := discoverExternalCorpusCandidates(t, []string{dir})
+	if skippedNoMD5 != 0 {
+		t.Fatalf("skipped_no_md5=%d want 0", skippedNoMD5)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates=%d want 1", len(candidates))
+	}
+	clips, failed := loadCorpusClipCandidates(t, candidates)
+	if len(failed) != 0 {
+		t.Fatalf("failed=%v", failed)
+	}
+	if len(clips) != 1 {
+		t.Fatalf("clips=%d want 1", len(clips))
+	}
+	clip := clips[0]
+	if clip.oracleKind != corpusOracleFrameMD5 {
+		t.Fatalf("oracleKind=%d want frame MD5", clip.oracleKind)
+	}
+	if clip.oraclePath != md5Path {
+		t.Fatalf("oraclePath=%q want %q", clip.oraclePath, md5Path)
+	}
+	if clip.frames != 3 || clip.width != 64 || clip.height != 64 || clip.bitDepth != 8 || clip.chroma != "444" {
+		t.Fatalf("metadata=%dx%d %d-bit %s frames=%d, want 64x64 8-bit 444 frames=3",
+			clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames)
+	}
+	if got := corpusClipOracleLog(clip); !strings.Contains(got, "frame_md5s=3") || !strings.Contains(got, "clip.ivf.md5") {
+		t.Fatalf("oracle log %q missing frame count/sidecar", got)
+	}
+}
+
 // TestGeneratedCorpusConformance verifies every generated corpus clip once,
 // without the best-of-N timing loop from TestCrossDecoderCorpus. It is an
 // opt-in broad real-content conformance gate for locally materialized clips.
