@@ -317,17 +317,21 @@ func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVi
 // top/left dependencies inside large blocks follow libaom's
 // predict-and-reconstruct order.
 func (b *FrameWorkBatch) PredictBlockIntraCoeff(index int, visit tile.BlockLoopVisit, block tile.BlockCoeffBlock, scratch *FrameWorkIntraPredictionScratch) error {
-	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
+	return b.predictBlockIntraCoeffPtr(index, &visit, &block, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockIntraCoeffPtr(index int, visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	if scratch == nil || visit == nil || block == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
 		return ErrInvalidBatch
 	}
 	switch block.Plane {
 	case 0:
-		return b.predictBlockLumaIntraTransform(index, visit, block.Block, scratch)
+		return b.predictBlockLumaIntraTransformPtr(index, visit, block.Block, scratch)
 	case 1, 2:
 		if !visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL || visit.Prediction.CFLAlphaValid {
 			return ErrInvalidBatch
 		}
-		return b.predictBlockChromaIntraTransform(index, visit, FrameWorkPlane(block.Plane), block.Block, scratch)
+		return b.predictBlockChromaIntraTransformPtr(index, visit, FrameWorkPlane(block.Plane), block.Block, scratch)
 	default:
 		return ErrInvalidBatch
 	}
@@ -430,7 +434,7 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 	return nil
 }
 
-func (b *FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
 	_, _, predWidth, predHeight, err := frameWorkTransformVisibleAndExtentPixels(tx)
 	if err != nil {
 		return err
@@ -521,6 +525,10 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.Bl
 	return nil
 }
 
+func (b *FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	return b.predictBlockLumaIntraTransformPtr(index, &visit, tx, scratch)
+}
+
 func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkIntraPredictionScratch) error {
 	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !present {
@@ -577,7 +585,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 	return nil
 }
 
-func (b *FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
 	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !present {
 		return err
@@ -650,6 +658,10 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+func (b *FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+	return b.predictBlockChromaIntraTransformPtr(index, &visit, plane, tx, scratch)
 }
 
 func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {

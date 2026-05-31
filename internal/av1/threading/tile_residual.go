@@ -1160,7 +1160,7 @@ func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) erro
 	s.pendingCFLPrediction = false
 	s.cflPredictionDone = false
 	s.cflVisit = tile.BlockLoopVisit{}
-	if err := s.predictBeforeCoefficients(*visit); err != nil {
+	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
 		return err
 	}
 	if visit.Prefix.SkipTransform {
@@ -1172,8 +1172,15 @@ func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) erro
 }
 
 func (s *frameWorkReconState) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
+	return s.predictBeforeCoefficientsPtr(&visit)
+}
+
+func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoopVisit) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
 	if s.predict != nil {
-		if err := s.predict(visit); err != nil {
+		if err := s.predict(*visit); err != nil {
 			return fmt.Errorf("predict callback block=%+v: %w", visit.Block, err)
 		}
 		s.stats.Predictions++
@@ -1186,22 +1193,22 @@ func (s *frameWorkReconState) predictBeforeCoefficients(visit tile.BlockLoopVisi
 		return nil
 	}
 	if visit.Prediction.Intra && !visit.Prefix.SkipTransform {
-		if frameWorkVisitUsesCFL(visit) {
+		if frameWorkVisitUsesCFLPtr(visit) {
 			s.pendingCFLPrediction = true
-			s.cflVisit = visit
+			s.cflVisit = *visit
 		}
 		return nil
 	}
-	if frameWorkVisitUsesCFL(visit) {
-		if err := s.batch.PredictBlockLumaIntra(s.index, visit, &s.predictionScratch.Intra); err != nil {
+	if frameWorkVisitUsesCFLPtr(visit) {
+		if err := s.batch.PredictBlockLumaIntra(s.index, *visit, &s.predictionScratch.Intra); err != nil {
 			return fmt.Errorf("predict cfl luma block=%+v: %w", visit.Block, err)
 		}
 		s.pendingCFLPrediction = true
-		s.cflVisit = visit
+		s.cflVisit = *visit
 		s.stats.Predictions++
 		return nil
 	}
-	if err := s.batch.PredictBlock(s.index, visit, s.predictionScratch); err != nil {
+	if err := s.batch.PredictBlock(s.index, *visit, s.predictionScratch); err != nil {
 		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 	}
 	s.stats.Predictions++
@@ -1557,12 +1564,12 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 // advances past this block before a deferred pass would run.
 func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
-		if block.Plane != 0 && frameWorkVisitUsesCFL(*visit) {
+		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
 			if err := s.predictDeferredCFLChroma(); err != nil {
 				return err
 			}
 		} else {
-			if err := s.batch.PredictBlockIntraCoeff(s.index, *visit, *block, &s.predictionScratch.Intra); err != nil {
+			if err := s.batch.predictBlockIntraCoeffPtr(s.index, visit, block, &s.predictionScratch.Intra); err != nil {
 				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
 			}
 			s.stats.Predictions++
@@ -1604,6 +1611,13 @@ func frameWorkIntraTransformMode(pred tile.BlockPredictionModeResult) tile.Intra
 }
 
 func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
+	return frameWorkVisitUsesCFLPtr(&visit)
+}
+
+func frameWorkVisitUsesCFLPtr(visit *tile.BlockLoopVisit) bool {
+	if visit == nil {
+		return false
+	}
 	return visit.Prediction.Valid &&
 		visit.Prediction.Intra &&
 		visit.Prediction.ChromaModeValid &&
