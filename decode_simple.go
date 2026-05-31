@@ -21,7 +21,8 @@ import (
 // and the one-shot DecodeIVF helper alias a caller-owned arena (the frame pool
 // and the runner's output slice) that the Decoder owns and reuses across
 // calls. A returned *Frame (and the plane pixel memory it points at) remains
-// valid only until the next DecodeNext / DecodeAll call or until Close. Copy
+// valid only until the next DecodeNext / DecodeAll call or until Close. The
+// returned frame slice is also decoder-owned and reused on the next call. Copy
 // the plane bytes out if you need them to outlive the next call. DecodeAll
 // returns frames from a single underlying Run, so the batch it returns is
 // mutually valid until the following call.
@@ -56,6 +57,7 @@ type Decoder struct {
 	next        int
 	closed      bool
 	useExternal bool
+	visible     []*Frame
 }
 
 // decoderConfig holds resolved construction options.
@@ -171,6 +173,7 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		payloads:    payloads,
 		format:      format,
 		useExternal: useExternal,
+		visible:     make([]*Frame, 0, plan.Size.Event.Outputs),
 	}
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
@@ -204,6 +207,9 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)
 	}
 	d.runner = runner
+	if cap(d.visible) == 0 {
+		d.visible = make([]*Frame, 0, 1)
+	}
 	return d, nil
 }
 
@@ -273,12 +279,13 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 		return nil, false, fmt.Errorf("goav1: frame %d: %w", i, err)
 	}
 
-	out := make([]*Frame, 0, len(result.Run.Outputs))
+	out := d.visible[:0]
 	for _, f := range result.Run.Outputs {
 		if f != nil {
 			out = append(out, f)
 		}
 	}
+	d.visible = out
 	return out, true, nil
 }
 

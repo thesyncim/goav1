@@ -2,8 +2,55 @@ package goav1
 
 import (
 	"errors"
+	"os"
 	"testing"
 )
+
+func TestDecoderDecodeNextReusesVisibleSlice(t *testing.T) {
+	ivf, err := os.ReadFile("internal/av1/testvector/testdata/profiles/profile1-444-8bit-cdef-restoration-160x128.ivf")
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+	dec, err := NewDecoderFromIVF(ivf)
+	if err != nil {
+		t.Fatalf("NewDecoderFromIVF: %v", err)
+	}
+	defer dec.Close()
+
+	first, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext first: %v", err)
+	}
+	if !ok || len(first) == 0 {
+		t.Fatalf("first DecodeNext ok=%v len=%d", ok, len(first))
+	}
+	firstSlot := &first[0]
+
+	second, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext second: %v", err)
+	}
+	if !ok || len(second) == 0 {
+		t.Fatalf("second DecodeNext ok=%v len=%d", ok, len(second))
+	}
+	if secondSlot := &second[0]; secondSlot != firstSlot {
+		t.Fatalf("DecodeNext visible slice backing changed between frames: %p != %p", secondSlot, firstSlot)
+	}
+
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	afterReset, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext after reset: %v", err)
+	}
+	if !ok || len(afterReset) == 0 {
+		t.Fatalf("after-reset DecodeNext ok=%v len=%d", ok, len(afterReset))
+	}
+	if resetSlot := &afterReset[0]; resetSlot != firstSlot {
+		t.Fatalf("DecodeNext visible slice backing changed after reset: %p != %p", resetSlot, firstSlot)
+	}
+}
 
 func TestDecoderFinishFrameSurface(t *testing.T) {
 	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}

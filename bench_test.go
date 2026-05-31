@@ -25,6 +25,8 @@ import (
 // the L2 cache used during benchmarking.
 const benchVectorPath = "internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
 
+const postFilterBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-8bit-cdef-restoration-160x128.ivf"
+
 var decodeBenchmarkSink int
 
 // BenchmarkDecodeFullVector decodes every frame of the bundled libaom
@@ -64,6 +66,53 @@ func BenchmarkDecodeFullVector(b *testing.B) {
 	b.ReportMetric(float64(len(frames)), "frames/op")
 	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
 		b.ReportMetric(float64(len(frames)*b.N)/elapsed, "frames/s")
+	}
+}
+
+// BenchmarkDecodePostFilteredProfileClip measures the high-level Decoder path
+// on a small profile-1 clip that signals loop filter, CDEF, and loop
+// restoration. This complements BenchmarkDecodeFullVector, whose fixture is
+// primarily a residual/reconstruction throughput guard.
+func BenchmarkDecodePostFilteredProfileClip(b *testing.B) {
+	const frameCount = 4
+
+	ivfBytes := mustReadBenchFile(b, postFilterBenchVectorPath)
+	dec, err := av1.NewDecoderFromIVF(ivfBytes)
+	if err != nil {
+		b.Fatalf("NewDecoderFromIVF: %v", err)
+	}
+	defer dec.Close()
+
+	b.SetBytes(int64(len(ivfBytes)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	visible := 0
+	for i := 0; i < b.N; i++ {
+		if err := dec.Reset(); err != nil {
+			b.Fatalf("Reset: %v", err)
+		}
+		decoded := 0
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				b.Fatalf("DecodeNext: %v", err)
+			}
+			if !ok {
+				break
+			}
+			decoded += len(frames)
+		}
+		if decoded != frameCount {
+			b.Fatalf("decoded %d frames want %d", decoded, frameCount)
+		}
+		visible += decoded
+	}
+	decodeBenchmarkSink = visible
+
+	b.ReportMetric(frameCount, "frames/op")
+	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
+		b.ReportMetric(float64(frameCount*b.N)/elapsed, "frames/s")
 	}
 }
 
@@ -307,6 +356,11 @@ func mustReadBenchVector(b *testing.B) []byte {
 			path = filepath.Join("internal/av1/testdata/libaom", override)
 		}
 	}
+	return mustReadBenchFile(b, path)
+}
+
+func mustReadBenchFile(b *testing.B, path string) []byte {
+	b.Helper()
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		b.Fatalf("read bench vector %q: %v", path, err)

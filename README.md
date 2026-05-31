@@ -427,17 +427,20 @@ make bench-public          # public-API hot-path micro-benchmarks
   allocates zero bytes per iteration. New contributors should re-run it
   after any decoder change.
 
-Example output on an Apple M4 Max with Go 1.23:
+Example output on an Apple M4 Max with Go 1.26:
 
 ```
-BenchmarkDecodeFullVector-16          87  37268384 ns/op    3.46 MB/s    2.000 frames/op    53.66 frames/s    0 B/op    0 allocs/op
-BenchmarkDecodeFirstFrameOnly-16      67  17721317 ns/op    4.20 MB/s                                        0 B/op    0 allocs/op
-BenchmarkDecodeFullVectorAllocs-16    32  37482921 ns/op                                                     0 B/op    0 allocs/op
+BenchmarkDecodeFullVector-16                   34   33393048 ns/op   3.86 MB/s   2.000 frames/op   59.89 frames/s     8542 B/op   0 allocs/op
+BenchmarkDecodePostFilteredProfileClip-16      10  102419033 ns/op   0.23 MB/s   4.000 frames/op   39.06 frames/s   519493 B/op   7 allocs/op
+BenchmarkDecodeFullVectorAllocs-16             36   33660895 ns/op                                                 0 B/op   0 allocs/op
+BenchmarkDecodeFirstFrameOnly-16               72   16451093 ns/op   4.53 MB/s                                      3464 B/op   0 allocs/op
 ```
 
 The `MB/s` column is computed from the IVF bitstream byte count; the
 `frames/s` metric is added via `b.ReportMetric` and is the most useful
-single number for capacity planning.
+single number for capacity planning. `BenchmarkDecodePostFilteredProfileClip`
+uses the high-level decoder on a CDEF/restoration profile clip, so the normal
+post-filtered output path is represented in the default `make bench` sweep.
 
 ### Post-filter performance
 
