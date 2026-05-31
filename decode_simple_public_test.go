@@ -3,6 +3,7 @@ package goav1_test
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -392,6 +393,89 @@ func TestDecodeIVFMatchesGolden(t *testing.T) {
 			t.Fatalf("frame %d md5 got=%s want=%s", i, g, want)
 		}
 	}
+}
+
+func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
+	validPayload := av1.AppendTileListOBU(nil, av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 2,
+			TileData:           []byte{0xaa, 0xbb, 0xcc},
+		}},
+	})
+
+	tests := []struct {
+		name        string
+		tilePayload []byte
+		wantErr     error
+	}{
+		{
+			name:        "valid tile list is unsupported playback",
+			tilePayload: validPayload,
+			wantErr:     av1.ErrDecoderUnsupportedTileList,
+		},
+		{
+			name:        "malformed tile list propagates parse error",
+			tilePayload: []byte{0x00, 0x00, 0x00, 0x00},
+			wantErr:     av1.ErrTileListShortEntry,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prime := firstProfilePayload(t)
+			payload := appendPublicLowOverheadOBU(nil, av1.OBUTileList, tc.tilePayload)
+			ivf := appendPublicIVF(nil, 64, 64, 30, 1, []publicIVFFrame{
+				{payload: prime},
+				{timestamp: 1, payload: payload},
+			})
+
+			dec, err := av1.NewDecoderFromIVF(ivf)
+			if err != nil {
+				t.Fatalf("NewDecoderFromIVF: %v", err)
+			}
+			defer dec.Close()
+
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext prime: %v", err)
+			}
+			if !ok || len(frames) == 0 {
+				t.Fatalf("DecodeNext prime frames=%d ok=%v", len(frames), ok)
+			}
+
+			frames, ok, err = dec.DecodeNext()
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("DecodeNext err=%v want %v", err, tc.wantErr)
+			}
+			if ok || len(frames) != 0 {
+				t.Fatalf("DecodeNext frames=%d ok=%v after tile-list error", len(frames), ok)
+			}
+		})
+	}
+}
+
+func firstProfilePayload(t *testing.T) []byte {
+	t.Helper()
+
+	ivf, err := os.ReadFile(profileClipPath(profileClips[0].file))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+	it, err := av1.NewIVFIterator(ivf)
+	if err != nil {
+		t.Fatalf("NewIVFIterator: %v", err)
+	}
+	frame, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("first profile frame ok=%v err=%v", ok, err)
+	}
+	return append([]byte(nil), frame.Payload...)
 }
 
 func TestDecodeIVFSuperResProfileClipsMatchGolden(t *testing.T) {
