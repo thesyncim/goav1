@@ -2836,6 +2836,118 @@ func TestFrameWorkStateRunEventWithContextInterFrameReferences(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateRunEventWithContextSwitchFrameRefreshesAllReferences(t *testing.T) {
+	keyFrame := append([]byte{}, shownKeyFrameHeaderPayload()...)
+	keyFrame = append(keyFrame, 0xaa)
+	switchFrame := append([]byte{}, switchFrameHeaderPayload()...)
+	switchFrame = append(switchFrame, 0xbb)
+
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, keyFrame)
+	stream = appendLowOverheadOBU(stream, obu.TypeFrame, switchFrame)
+
+	var dec Stream
+	var events [3]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d", count)
+	}
+	if events[2].FrameHeader.FrameType != parser.FrameTypeSwitch ||
+		events[2].FrameSize.RefreshFrameFlags != 0xff ||
+		!events[2].FrameHeader.ErrorResilientMode ||
+		!events[2].FrameHeader.FrameSizeOverride {
+		t.Fatalf("switch event=%+v", events[2])
+	}
+
+	workerPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	pool := testFramePoolForSize(t, events[2].FrameSize.CodedWidth, events[2].FrameSize.Height, 2)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	var referenceSurfaces [parser.InterRefsPerFrame]int
+	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
+	var spans [1]parser.TileSpan
+	var jobs [1]tile.Job
+	var batches [1]threading.Batch
+	var releases [parser.RefFrames]int
+
+	var keyOutput *frame.Frame
+	keyResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+		keyOutput = ctx.Output
+		if ctx.Output == nil || len(ctx.References) != 0 {
+			t.Fatalf("key ctx output=%p references=%d", ctx.Output, len(ctx.References))
+		}
+		if len(ctx.Payload) != len(events[1].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xaa {
+			t.Fatalf("key payload=%v", ctx.Payload)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keyResult.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		keyResult.ReferenceCount != 0 ||
+		keyOutput == nil ||
+		state.Active() {
+		t.Fatalf("key result=%+v output=%p active=%v", keyResult, keyOutput, state.Active())
+	}
+	for i := range parser.RefFrames {
+		slot, ok := refs.ReferenceSlot(i)
+		if !ok || slot != keyResult.Step.Begin.Surface {
+			t.Fatalf("after key ref[%d]=%d ok=%v want %d", i, slot, ok, keyResult.Step.Begin.Surface)
+		}
+	}
+
+	var switchOutput *frame.Frame
+	switchResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+		switchOutput = ctx.Output
+		if ctx.Output == nil || ctx.Output == keyOutput {
+			t.Fatalf("switch output=%p key=%p", ctx.Output, keyOutput)
+		}
+		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xbb {
+			t.Fatalf("switch payload=%v", ctx.Payload)
+		}
+		if len(ctx.References) != parser.InterRefsPerFrame {
+			t.Fatalf("switch references=%d", len(ctx.References))
+		}
+		for i, ref := range ctx.References {
+			if ref != keyOutput {
+				t.Fatalf("switch reference[%d]=%p want key %p", i, ref, keyOutput)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switchResult.ReferenceCount != parser.InterRefsPerFrame ||
+		switchResult.Output != switchOutput ||
+		switchResult.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true, ReleaseCount: 1}) ||
+		state.Active() {
+		t.Fatalf("switch result=%+v output=%p active=%v", switchResult, switchOutput, state.Active())
+	}
+	for i := range parser.RefFrames {
+		slot, ok := refs.ReferenceSlot(i)
+		if !ok || slot != switchResult.Step.Begin.Surface {
+			t.Fatalf("after switch ref[%d]=%d ok=%v want %d", i, slot, ok, switchResult.Step.Begin.Surface)
+		}
+	}
+	if _, err := pool.Frame(keyResult.Step.Begin.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("key surface err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	if _, err := pool.Frame(switchResult.Step.Begin.Surface); err != nil {
+		t.Fatalf("switch surface err=%v", err)
+	}
+}
+
 func TestFrameWorkStateRunEventWithContextShowExisting(t *testing.T) {
 	pool := testFramePool(t, 1)
 	referenceSurface, referenceFrame, err := pool.Acquire()
