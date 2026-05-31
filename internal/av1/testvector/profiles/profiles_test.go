@@ -80,6 +80,15 @@
 //	  --cq-level=28 --kf-max-dist=1 --lag-in-frames=0 --enable-cdef=1 \
 //	  --enable-restoration=1 \
 //	  -o profile1-444-10bit-cdef-restoration-160x128.ivf src444_10_filters.yuv
+//	# 4:2:0 8-bit 128x128 superblock:
+//	ffmpeg -f lavfi -i nullsrc=size=128x128:rate=1:duration=3 -frames:v 3 \
+//	  -vf "geq=lum='64+mod(X*3+Y*2+N*17,128)':cb='64+mod(X*5+N*23,128)':cr='64+mod(Y*7+N*19,128)',format=yuv420p" \
+//	  -f rawvideo sb128_420.yuv
+//	aomenc --i420 --width=128 --height=128 --limit=3 --ivf --profile=0 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --sb-size=128 --min-partition-size=128 \
+//	  --max-partition-size=128 --enable-cdef=0 --enable-restoration=0 \
+//	  -o superblock128-420-8bit-128x128.ivf sb128_420.yuv
 //	# 4:2:2 8-bit:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-64x64.ivf src422.yuv
 //	# 4:2:0 12-bit:
@@ -134,6 +143,8 @@ type profileClip struct {
 	wantBitDepth          uint8
 	wantSubsamplingX      bool
 	wantSubsamplingY      bool
+	checkUse128x128SB     bool
+	wantUse128x128SB      bool
 	wantPaletteYBlocks    int
 	wantPaletteUVBlocks   int
 	wantCDEFFrames        int
@@ -386,6 +397,23 @@ var profileClips = []profileClip{
 		superRes:         true,
 	},
 	{
+		// Profile 0: 4:2:0 8-bit with use_128x128_superblock=true and a
+		// forced 128x128 partition root, guarding the large-superblock decode
+		// path against libaom output.
+		name: "superblock128-420-8bit-128x128",
+		file: "superblock128-420-8bit-128x128.ivf",
+		frameMD5Hex: []string{
+			"42ace8044951a222256ffcd65aa8bb67",
+			"c1b26993930b06dec4f0d05457035565",
+			"4e7b4292d96e53cc8ea5b16c8d7e13de",
+		},
+		wantBitDepth:      8,
+		wantSubsamplingX:  true,
+		wantSubsamplingY:  true,
+		checkUse128x128SB: true,
+		wantUse128x128SB:  true,
+	},
+	{
 		name: "profile0-420-8bit-edgemv-130x130",
 		file: "profile0-420-8bit-edgemv-130x130.ivf",
 		frameMD5Hex: []string{
@@ -541,6 +569,10 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				if cc.SubsamplingX != clip.wantSubsamplingX || cc.SubsamplingY != clip.wantSubsamplingY {
 					t.Fatalf("subsampling=(%v,%v) want (%v,%v)",
 						cc.SubsamplingX, cc.SubsamplingY, clip.wantSubsamplingX, clip.wantSubsamplingY)
+				}
+				if clip.checkUse128x128SB && event.SequenceHeader.Use128x128Superblock != clip.wantUse128x128SB {
+					t.Fatalf("Use128x128Superblock=%v want %v",
+						event.SequenceHeader.Use128x128Superblock, clip.wantUse128x128SB)
 				}
 				checkedColorConfig = true
 			}

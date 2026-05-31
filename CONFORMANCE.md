@@ -68,9 +68,9 @@ ship under `internal/av1/testdata/libaom/`.
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  5 | Superblock 64x64                 | Yes     | internal/av1/parser/sequence.go  | use_128x128_superblock=false; default for      |
 |    |                                  |         | internal/av1/tile/partition.go   | every fast conformance vector.                 |
-|    | Superblock 128x128               | Partial | internal/av1/parser/sequence.go  | Use128x128Superblock flag parsed and threaded  |
-|    |                                  |         | internal/av1/parser/restoration  | into restoration unit sizing; no committed     |
-|    |                                  |         |                                  | vector exercises the 128x128 partition tree.   |
+|    | Superblock 128x128               | Yes     | internal/av1/parser/sequence.go  | Use128x128Superblock flag parsed and threaded  |
+|    |                                  |         | internal/av1/parser/restoration  | into restoration unit sizing; forced-root      |
+|    |                                  |         | internal/av1/testvector/profiles | 128x128 vendored clip passes byte-exactly.     |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  6 | Intra mode DC                    | Yes     | internal/av1/prediction/intra.go | Pure-Go reference; alloc-tested.               |
 |    | Intra mode V (Vertical)          | Yes     | internal/av1/prediction/intra.go | Pure-Go reference.                             |
@@ -313,11 +313,12 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 17/17 vendored profile clips pass, covering
+- `make dryrun-profiles`: 18/18 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, and super-res, profile 2 4:2:2 8-bit all-intra and
   inter, profile 2 4:2:0 12-bit, superres, superres plus loop restoration,
-  edge-MV, and a non-SVC multi-tile clip.
+  a forced-root 128x128 superblock clip, edge-MV, and a non-SVC multi-tile
+  clip.
 
 ### SVC vector coverage
 
