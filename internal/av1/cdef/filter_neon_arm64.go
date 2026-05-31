@@ -62,11 +62,22 @@ type filterBlockNEONCtx struct {
 func filterBlockNEONAsm(ctx *filterBlockNEONCtx)
 
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
+	if params.Width == 4 {
+		var tmp [8 * 8]uint16
+		filterBlockNEONWide(tmp[:], 8, 0, input, inputOrigin, params)
+		for row := 0; row < params.Height; row++ {
+			copy(dst[dstOrigin+row*dstStride:dstOrigin+row*dstStride+4], tmp[row*8:row*8+4])
+		}
+		return
+	}
 	if params.Width != 8 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
+	filterBlockNEONWide(dst, dstStride, dstOrigin, input, inputOrigin, params)
+}
 
+func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	enablePrimary := params.PrimaryStrength != 0
 	enableSecondary := params.SecondaryStrength != 0
 	clippingRequired := enablePrimary && enableSecondary

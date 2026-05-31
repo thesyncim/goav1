@@ -69,11 +69,22 @@ type filterBlockAVX2Ctx struct {
 func filterBlockAVX2Asm(ctx *filterBlockAVX2Ctx)
 
 func filterBlockAVX2(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
+	if params.Width == 4 {
+		var tmp [8 * 8]uint16
+		filterBlockAVX2Wide(tmp[:], 8, 0, input, inputOrigin, params)
+		for row := 0; row < params.Height; row++ {
+			copy(dst[dstOrigin+row*dstStride:dstOrigin+row*dstStride+4], tmp[row*8:row*8+4])
+		}
+		return
+	}
 	if params.Width != 8 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
+	filterBlockAVX2Wide(dst, dstStride, dstOrigin, input, inputOrigin, params)
+}
 
+func filterBlockAVX2Wide(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	enablePrimary := params.PrimaryStrength != 0
 	enableSecondary := params.SecondaryStrength != 0
 	clippingRequired := enablePrimary && enableSecondary

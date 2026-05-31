@@ -43,3 +43,43 @@ func BenchmarkFilterBlockDispatch(b *testing.B) {
 		filterBlockImpl(dst, 8, 0, input, origin, params)
 	}
 }
+
+func BenchmarkFilterBlockDispatch4x8(b *testing.B) {
+	dst, input, origin, params := benchFilterBlockParams()
+	params.Width = 4
+	params.Height = 8
+	b.ReportAllocs()
+	for b.Loop() {
+		filterBlockImpl(dst, 8, 0, input, origin, params)
+	}
+}
+
+func BenchmarkFilterBlockPureGo4x8(b *testing.B) {
+	dst, input, origin, params := benchFilterBlockParams()
+	params.Width = 4
+	params.Height = 8
+	b.ReportAllocs()
+	for b.Loop() {
+		filterBlockPureGo(dst, 8, 0, input, origin, params)
+	}
+}
+
+func BenchmarkFilterBlockDispatch4x4(b *testing.B) {
+	dst, input, origin, params := benchFilterBlockParams()
+	params.Width = 4
+	params.Height = 4
+	b.ReportAllocs()
+	for b.Loop() {
+		filterBlockImpl(dst, 8, 0, input, origin, params)
+	}
+}
+
+func BenchmarkFilterBlockPureGo4x4(b *testing.B) {
+	dst, input, origin, params := benchFilterBlockParams()
+	params.Width = 4
+	params.Height = 4
+	b.ReportAllocs()
+	for b.Loop() {
+		filterBlockPureGo(dst, 8, 0, input, origin, params)
+	}
+}

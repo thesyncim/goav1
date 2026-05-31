@@ -169,6 +169,58 @@ func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount i
 	}
 }
 
+func TestDecodeHighLevelProfileClipSteadyStateAllocs(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		frameCount int
+	}{
+		{name: "postfiltered", path: postFilterBenchVectorPath, frameCount: 4},
+		{name: "superres_inter", path: superResInterBenchVectorPath, frameCount: 8},
+		{name: "superres_inter_highbd", path: superResInterHighBDProfileBenchVectorPath, frameCount: 8},
+		{name: "superres_restoration", path: superResRestorationBenchVectorPath, frameCount: 4},
+		{name: "filmgrain", path: filmGrainProfileBenchVectorPath, frameCount: 3},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ivfBytes := mustReadBenchFile(t, tc.path)
+			dec, err := av1.NewDecoderFromIVF(ivfBytes)
+			if err != nil {
+				t.Fatalf("NewDecoderFromIVF: %v", err)
+			}
+			defer dec.Close()
+
+			run := func() {
+				t.Helper()
+				if err := dec.Reset(); err != nil {
+					t.Fatalf("Reset: %v", err)
+				}
+				decoded := 0
+				for {
+					frames, ok, err := dec.DecodeNext()
+					if err != nil {
+						t.Fatalf("DecodeNext: %v", err)
+					}
+					if !ok {
+						break
+					}
+					decoded += len(frames)
+				}
+				if decoded != tc.frameCount {
+					t.Fatalf("decoded %d frames want %d", decoded, tc.frameCount)
+				}
+			}
+
+			run()
+			allocs := testing.AllocsPerRun(50, run)
+			if allocs != 0 {
+				t.Fatalf("steady-state decode allocated: %f", allocs)
+			}
+		})
+	}
+}
+
 // BenchmarkDecodeFullVectorAllocs is a steady-state allocation guardrail
 // for the end-to-end decode path. It runs the same harness as
 // BenchmarkDecodeFullVector and confirms that decoding the libaom
