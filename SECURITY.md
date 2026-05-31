@@ -223,12 +223,14 @@ boundary above.
     `FuzzPublicDecoderFrameWorkSideDataBinding`,
     `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
     `FuzzPublicDecodeTileBlockCoefficients`,
+    `FuzzPublicParseTileListOBU`,
     `FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients`.
   - Inverse transforms: WHT, ADST, warp, film grain (commit
     `ff8ba63`).
   - Inverse-qmatrix dequant path (commit `455ddac`).
   - Palette mode and color-map decode (commit `133a448`).
   - `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128`.
+  - Tile-list OBU parsing (`FuzzParseTileListOBU`).
   - Entropy reader and CDF state harnesses.
   - Prediction harnesses (intra, directional, filter-intra, CFL,
     static intra, intra edges, DC predictor).

@@ -240,6 +240,51 @@ func TestPublicParseTileListOBUAllocs(t *testing.T) {
 	}
 }
 
+func FuzzPublicParseTileListOBU(f *testing.F) {
+	for _, seed := range [][]byte{
+		nil,
+		{0x00},
+		{0x00, 0x00, 0x00},
+		{0x00, 0x00, 0x00, 0x00},
+		{
+			0x01, 0x00, 0x00, 0x01,
+			0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x20,
+			0x07, 0x00, 0x01, 0x00, 0x00, 0x30,
+		},
+		{0x00, 0x00, 0x00, 0x00, 0x80, 0, 0, 0, 0, 0xaa},
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		var scratch [av1.TileListMaxTiles]av1.TileListEntry
+		list, err := av1.ParseTileListOBU(payload, scratch[:0])
+		if err != nil {
+			return
+		}
+		if list.TileCount() != len(list.Entries) {
+			t.Fatalf("tile count=%d entries=%d", list.TileCount(), len(list.Entries))
+		}
+		if list.TileCount() <= 0 || list.TileCount() > av1.TileListMaxTiles {
+			t.Fatalf("invalid tile count=%d", list.TileCount())
+		}
+		if list.TileCount() > list.OutputFrameWidthInTiles()*list.OutputFrameHeightInTiles() {
+			t.Fatalf("tile count=%d exceeds output %dx%d", list.TileCount(), list.OutputFrameWidthInTiles(), list.OutputFrameHeightInTiles())
+		}
+		for i, entry := range list.Entries {
+			if entry.AnchorFrameIdx >= av1.TileListMaxExternalReferences {
+				t.Fatalf("entry %d anchor_frame_idx=%d", i, entry.AnchorFrameIdx)
+			}
+			if len(entry.TileData) != entry.TileDataSize() {
+				t.Fatalf("entry %d data len=%d want %d", i, len(entry.TileData), entry.TileDataSize())
+			}
+		}
+		if got := av1.AppendTileListOBU(nil, list); string(got) != string(payload) {
+			t.Fatalf("round trip mismatch\n got=%x\nwant=%x", got, payload)
+		}
+	})
+}
+
 func TestPublicAnnexBRoundTrip(t *testing.T) {
 	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
 	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0xaa}

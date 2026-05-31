@@ -38,6 +38,7 @@ bench-cross:
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
@@ -65,6 +66,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseFrameSize
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileInfo
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileGroupHeader
+	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileListOBU
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlock
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlockScaledQMatrix
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzQuantizeFPNoQMatrix
