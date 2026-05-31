@@ -203,6 +203,13 @@
 //	  --cq-level=36 --kf-max-dist=1 --lag-in-frames=0 \
 //	  --enable-cdef=1 --enable-restoration=1 \
 //	  -o profile2-420-12bit-66x66.ivf src420_12_edge.yuv
+//	# 4:2:0 12-bit super-res:
+//	aomenc --i420 --width=160 --height=128 --limit=4 --ivf --profile=2 \
+//	  --bit-depth=12 --input-bit-depth=12 --cpu-used=4 --end-usage=q \
+//	  --cq-level=36 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --superres-mode=1 --superres-denominator=12 \
+//	  --superres-kf-denominator=12 --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile2-420-12bit-superres-160x128.ivf src420_12_superres.yuv
 //
 //	# --- inter (kf-max-dist=30, 8 frames, moving synthetic source) ---
 //	# 4:4:4 8-bit inter:
@@ -453,6 +460,23 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 		wantCDEFFrames:   1,
+	},
+	{
+		// Profile 2: 4:2:0 12-bit super-res. The coded width is smaller than the
+		// displayed 160x128 output, guarding high-bit-depth super-res plumbing.
+		name: "profile2-420-12bit-superres-160x128",
+		file: "profile2-420-12bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"ea09f096227bac3e03277487354337fc",
+			"2f144bf1f5144412cb606e79f8d74770",
+			"92beb6d99acf1d73926dbed7b1eeb1ea",
+			"17ae4f314b20aecc1d20a83bdee07da0",
+		},
+		wantSeqProfile:   2,
+		wantBitDepth:     12,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+		superRes:         true,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit with active CDEF and loop restoration.
