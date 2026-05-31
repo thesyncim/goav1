@@ -13,8 +13,9 @@ import (
 
 // profileClips are the vendored non-superres profile-conformance clips and
 // their per-frame aomdec MD5 goldens. They cover profile-1 4:4:4 8/10-bit,
-// palette, CDEF/restoration, film grain, profile-2 4:2:2/4:2:0, 12-bit
-// film grain, edge motion, 128x128 superblocks, and multi-tile streams.
+// palette, CDEF/restoration, odd-edge filtering, film grain, profile-2
+// 4:2:2/4:2:0, 12-bit film grain, edge motion, 128x128 superblocks, and
+// multi-tile streams.
 var profileClips = []struct {
 	file        string
 	frameMD5Hex []string
@@ -70,6 +71,14 @@ var profileClips = []struct {
 		},
 	},
 	{
+		file: "profile1-444-8bit-edge-cdef-restoration-130x130.ivf",
+		frameMD5Hex: []string{
+			"8d23e95555d1c482b0c9a9aaf1a82bd0",
+			"ccd49de94b63207de8cbc935a5f63e5d",
+			"deaa20627918286a339c1c6b30dea119",
+		},
+	},
+	{
 		file: "profile1-444-10bit-edge-cdef-restoration-130x130.ivf",
 		frameMD5Hex: []string{
 			"3fedce7a89a109e6491429ea1b3aa2bc",
@@ -117,6 +126,16 @@ var profileClips = []struct {
 			"9d6cf7fd0eda963a93d553b7716e76b4",
 			"5fb4e9e5ccee31c503b160de7a173c03",
 			"ff7ee0fb4599801fc3015b9dd744ab1f",
+		},
+	},
+	{
+		file: "profile1-444-8bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"45b7de404cb0b5d469958768b8f5d479",
+			"945ed5c3b0a1191eed1499b6f3425025",
+			"35f885d3ec1b37fb61f896b78f4a7ec8",
+			"e852ba422c8e6c6e0d4e9077c1751f8d",
+			"956fbda68f31ead438b5835aa5f87980",
 		},
 	},
 	{
@@ -200,6 +219,15 @@ var profileClips = []struct {
 			"f14ff5bc1a1504908f1d22b4be5a0ca3",
 			"24e96db2d3644a748e587dd011863a4a",
 			"325a954def1c43d852c980ddc66ba652",
+		},
+	},
+	{
+		file: "profile1-444-8bit-multitile-2x1-256x256.ivf",
+		frameMD5Hex: []string{
+			"afb8da499aa3e0394b61ae7859323bd7",
+			"eaf99aece59fc4ecbfb556eee5fcd3fc",
+			"7433db9f86a39411f616573b5735aad5",
+			"3661ba977cd76893d39563346fb3f5ec",
 		},
 	},
 	{

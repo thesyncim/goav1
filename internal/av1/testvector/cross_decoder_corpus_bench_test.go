@@ -58,6 +58,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"hash"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -88,6 +89,11 @@ type corpusClip struct {
 	chroma   string
 	tileCols uint8 // tile columns of the first frame
 	allIntra bool  // every frame is a keyframe
+}
+
+type corpusClipCandidate struct {
+	name    string
+	ivfPath string
 }
 
 // corpusDir resolves the benchmark corpus directory. It honors
@@ -124,16 +130,28 @@ func loadCorpusClips(t *testing.T, dir string) (clips []corpusClip, failed []cor
 		t.Fatalf("glob corpus: %v", err)
 	}
 	sort.Strings(paths)
+	candidates := make([]corpusClipCandidate, 0, len(paths))
 	for _, ivfPath := range paths {
-		name := strings.TrimSuffix(filepath.Base(ivfPath), ".ivf")
-		md5Path := strings.TrimSuffix(ivfPath, ".ivf") + ".md5"
+		candidates = append(candidates, corpusClipCandidate{
+			name:    strings.TrimSuffix(filepath.Base(ivfPath), filepath.Ext(ivfPath)),
+			ivfPath: ivfPath,
+		})
+	}
+	return loadCorpusClipCandidates(t, candidates)
+}
 
+func loadCorpusClipCandidates(t *testing.T, candidates []corpusClipCandidate) (clips []corpusClip, failed []corpusFailure) {
+	t.Helper()
+	for _, candidate := range candidates {
+		name := candidate.name
+		ivfPath := candidate.ivfPath
+		md5Path := strings.TrimSuffix(ivfPath, filepath.Ext(ivfPath)) + ".md5"
 		md5Raw, err := os.ReadFile(md5Path)
 		if err != nil {
 			t.Logf("corpus: skipping %s (no .md5 sidecar: %v)", name, err)
 			continue
 		}
-		want, err := ParseMD5Hex([]byte(strings.TrimSpace(string(md5Raw))))
+		want, err := parseCorpusMD5Sidecar(md5Raw)
 		if err != nil {
 			t.Logf("corpus: skipping %s (bad .md5 sidecar: %v)", name, err)
 			continue
@@ -167,6 +185,26 @@ func loadCorpusClips(t *testing.T, dir string) (clips []corpusClip, failed []cor
 		clips = append(clips, clip)
 	}
 	return clips, failed
+}
+
+func parseCorpusMD5Sidecar(src []byte) (MD5, error) {
+	for i := 0; i+32 <= len(src); i++ {
+		if i > 0 {
+			if _, ok := hexNibble(src[i-1]); ok {
+				continue
+			}
+		}
+		if i+32 < len(src) {
+			if _, ok := hexNibble(src[i+32]); ok {
+				continue
+			}
+		}
+		md5, err := ParseMD5Hex(src[i : i+32])
+		if err == nil {
+			return md5, nil
+		}
+	}
+	return MD5{}, ErrInvalidMD5
 }
 
 // corpusFailure records a clip that failed the goav1 conformance check.
@@ -676,6 +714,29 @@ func bindCorpusMotionStore(event decoder.Event, count int) ([]tile.ReferenceMVEn
 		length
 }
 
+func TestParseCorpusMD5Sidecar(t *testing.T) {
+	want, err := ParseMD5Hex([]byte("0123456789abcdeffedcba9876543210"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{
+		"0123456789abcdeffedcba9876543210\n",
+		"0123456789abcdeffedcba9876543210  clip.yuv\n",
+		"MD5 (clip.ivf) = 0123456789abcdeffedcba9876543210\n",
+	} {
+		got, err := parseCorpusMD5Sidecar([]byte(input))
+		if err != nil {
+			t.Fatalf("parseCorpusMD5Sidecar(%q): %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("parseCorpusMD5Sidecar(%q)=%x want %x", input, got, want)
+		}
+	}
+	if _, err := parseCorpusMD5Sidecar([]byte("0123456789abcdeffedcba987654321000")); err == nil {
+		t.Fatal("parseCorpusMD5Sidecar accepted a longer unbounded hex token")
+	}
+}
+
 // TestGeneratedCorpusConformance verifies every generated corpus clip once,
 // without the best-of-N timing loop from TestCrossDecoderCorpus. It is an
 // opt-in broad real-content conformance gate for locally materialized clips.
@@ -709,6 +770,123 @@ func TestGeneratedCorpusConformance(t *testing.T) {
 			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, clip.wantMD5)
 	}
 	t.Logf("generated-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
+}
+
+func TestExternalCorpusConformance(t *testing.T) {
+	if os.Getenv("GOAV1_EXTERNAL_CORPUS") != "1" {
+		t.Skip("set GOAV1_EXTERNAL_CORPUS=1 with GOAV1_EXTERNAL_CORPUS_DIR(S) to run external-corpus conformance")
+	}
+	dirs := externalCorpusDirsFromEnv()
+	if len(dirs) == 0 {
+		t.Skip("external-corpus: set GOAV1_EXTERNAL_CORPUS_DIR or GOAV1_EXTERNAL_CORPUS_DIRS")
+	}
+
+	candidates, skippedNoMD5 := discoverExternalCorpusCandidates(t, dirs)
+	if len(candidates) == 0 {
+		t.Skipf("external-corpus: no .ivf clips with sibling .md5 sidecars in %s (skipped %d .ivf without sidecars)",
+			strings.Join(dirs, string(os.PathListSeparator)), skippedNoMD5)
+	}
+	t.Logf("external-corpus: roots=%s usable_ivf=%d skipped_no_md5=%d",
+		strings.Join(dirs, string(os.PathListSeparator)), len(candidates), skippedNoMD5)
+
+	clips, failed := loadCorpusClipCandidates(t, candidates)
+	if len(failed) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "\n!!! CONFORMANCE BUGS: %d external corpus clip(s) FAILED goav1 byte-exact decode !!!\n", len(failed))
+		for _, f := range failed {
+			fmt.Fprintf(&b, "    - %-50s %s\n", f.name, f.reason)
+		}
+		t.Fatal(b.String())
+	}
+	if len(clips) == 0 {
+		t.Skip("external-corpus: no usable clips")
+	}
+
+	totalFrames := 0
+	for _, clip := range clips {
+		totalFrames += clip.frames
+		t.Logf("external-corpus: %-50s %dx%d %d-bit %s frames=%d tiles=%d md5=%x",
+			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, clip.wantMD5)
+	}
+	t.Logf("external-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
+}
+
+func externalCorpusDirsFromEnv() []string {
+	raw := os.Getenv("GOAV1_EXTERNAL_CORPUS_DIRS")
+	if raw == "" {
+		raw = os.Getenv("GOAV1_EXTERNAL_CORPUS_DIR")
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, group := range strings.Split(raw, ",") {
+		for _, dir := range filepath.SplitList(group) {
+			dir = strings.TrimSpace(dir)
+			if dir == "" {
+				continue
+			}
+			dir = filepath.Clean(dir)
+			if seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
+}
+
+func discoverExternalCorpusCandidates(t *testing.T, dirs []string) (candidates []corpusClipCandidate, skippedNoMD5 int) {
+	t.Helper()
+	for _, root := range dirs {
+		info, err := os.Stat(root)
+		if err != nil {
+			t.Fatalf("external-corpus: stat %s: %v", root, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("external-corpus: %s is not a directory", root)
+		}
+		err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".ivf") {
+				return nil
+			}
+			md5Path := strings.TrimSuffix(path, filepath.Ext(path)) + ".md5"
+			if _, err := os.Stat(md5Path); err != nil {
+				if os.IsNotExist(err) {
+					skippedNoMD5++
+					return nil
+				}
+				return fmt.Errorf("stat md5 sidecar %s: %w", md5Path, err)
+			}
+			candidates = append(candidates, corpusClipCandidate{
+				name:    externalCorpusClipName(root, path),
+				ivfPath: path,
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("external-corpus: walk %s: %v", root, err)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].ivfPath < candidates[j].ivfPath
+	})
+	return candidates, skippedNoMD5
+}
+
+func externalCorpusClipName(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = filepath.Base(path)
+	}
+	rel = filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+	prefix := filepath.Base(filepath.Clean(root))
+	if prefix == "." || prefix == string(filepath.Separator) {
+		return rel
+	}
+	return prefix + "/" + rel
 }
 
 // TestCrossDecoderCorpus is the multi-config steady-state throughput benchmark.

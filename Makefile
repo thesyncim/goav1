@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -260,6 +260,12 @@ dryrun-profiles:
 dryrun-corpus:
 	GOAV1_CORPUS_CONFORMANCE=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestGeneratedCorpusConformance' -count=1 -timeout 900s -v
 
+# dryrun-external-corpus recursively scans GOAV1_EXTERNAL_CORPUS_DIR or
+# GOAV1_EXTERNAL_CORPUS_DIRS for local third-party IVF corpora. Each .ivf must
+# have a sibling .md5 containing the expected stream digest.
+dryrun-external-corpus:
+	GOAV1_EXTERNAL_CORPUS=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestExternalCorpusConformance' -count=1 -timeout 2400s -v
+
 # dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort
 # under strict per-frame MD5. It downloads multi-quantizer 10-bit, additional
 # SVC, and larger-size libaom vectors. This target is never part of CI or the
@@ -310,6 +316,7 @@ help:
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  dryrun-profiles            byte-exact profile clips (profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
 	@echo "  dryrun-corpus              byte-exact generated real-content corpus (requires local generated corpus)"
+	@echo "  dryrun-external-corpus     byte-exact local external IVF corpus (requires GOAV1_EXTERNAL_CORPUS_DIR(S))"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"
