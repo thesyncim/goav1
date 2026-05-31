@@ -139,6 +139,15 @@
 //	  --cpu-used=2 --end-usage=q --cq-level=28 --kf-max-dist=1 \
 //	  --lag-in-frames=0 --enable-cdef=1 --enable-restoration=1 \
 //	  -o profile1-444-8bit-cdef-restoration-160x128.ivf src444_filters.yuv
+//	# 4:4:4 8-bit odd edge-size CDEF + loop restoration:
+//	ffmpeg -f lavfi -i nullsrc=size=130x130:rate=1:duration=3 -frames:v 3 \
+//	  -vf "geq=lum='32+mod(X*7+Y*5+N*29+floor(X/9)*31+floor(Y/11)*17,208)':cb='40+mod(X*3+Y*11+N*23+floor((X+Y)/7)*19,184)':cr='48+mod(X*13+Y*2+N*31+floor((X*2+Y)/13)*23,176)',format=yuv444p" \
+//	  -f rawvideo src444_8_edge_rest.yuv
+//	aomenc --i444 --width=130 --height=130 --limit=3 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=30 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --enable-cdef=1 --enable-restoration=1 \
+//	  -o profile1-444-8bit-edge-cdef-restoration-130x130.ivf \
+//	  src444_8_edge_rest.yuv
 //	# 4:4:4 10-bit CDEF + loop restoration:
 //	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=2 --end-usage=q \
@@ -567,6 +576,23 @@ var profileClips = []profileClip{
 			"f1a3ce1e10e2e84e1e61c46e735201ad",
 			"1aa1aa327a503776ff58af351198037a",
 			"7cfb09c54857fc6dd3994ef09e502fae",
+		},
+		wantSeqProfile:        1,
+		wantBitDepth:          8,
+		wantSubsamplingX:      false,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit odd 130x130 size with active CDEF and
+		// loop restoration, guarding byte-path non-4:2:0 edge filtering.
+		name: "profile1-444-8bit-edge-cdef-restoration-130x130",
+		file: "profile1-444-8bit-edge-cdef-restoration-130x130.ivf",
+		frameMD5Hex: []string{
+			"8d23e95555d1c482b0c9a9aaf1a82bd0",
+			"ccd49de94b63207de8cbc935a5f63e5d",
+			"deaa20627918286a339c1c6b30dea119",
 		},
 		wantSeqProfile:        1,
 		wantBitDepth:          8,

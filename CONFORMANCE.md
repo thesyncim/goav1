@@ -318,9 +318,9 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 31/31 vendored profile clips pass, covering
+- `make dryrun-profiles`: 32/32 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
-  CDEF/restoration, odd edge-size CDEF/restoration, 8/10-bit film grain,
+  CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
   8/10-bit edge-motion, all-key superres, and inter superres,
   profile 2 4:2:2 8-bit all-intra/inter, profile 2 4:2:2 10-bit edge-size,
   profile 2 4:2:0 12-bit
@@ -437,7 +437,7 @@ manifest. The next production-readiness items are:
    real-content corpus and add small committed representative clips when the
    licensing/size tradeoff is acceptable. Keep adding profile-2 10/12-bit 4:2:2 and
    12-bit 4:4:4 streams as upstream or locally generated goldens become
-   available; the current vendored corpus includes profile-1 4:4:4 10-bit
+   available; the current vendored corpus includes profile-1 4:4:4 8/10-bit
    odd-size CDEF/restoration and 8/10-bit edge-motion plus 4:2:0 12-bit
    odd-size CDEF, film grain, edge-motion, and super-res coverage.
 2. **Tile list OBU playback.** `EventTileList` parsing is present and the
