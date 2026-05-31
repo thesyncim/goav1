@@ -155,6 +155,17 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 		if err != nil {
 			return 0, err
 		}
+		set, err := ExtTXSetTypeFor(req.Block.Size, true, s.ReducedTXSet)
+		if err != nil {
+			return 0, err
+		}
+		allowed, err := ExtTXTypeAllowed(set, typ)
+		if err != nil {
+			return 0, err
+		}
+		if !allowed {
+			return transform.TypeDCTDCT, nil
+		}
 		size, err := req.Block.Size.TransformSize()
 		if err != nil {
 			return 0, ErrInvalidDecodeState

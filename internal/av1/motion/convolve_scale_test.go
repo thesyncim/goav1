@@ -301,7 +301,6 @@ func TestConvolveScale2DHighBDMatchesLibaomReference(t *testing.T) {
 }
 
 func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
-	const blockW, blockH = 16, 16
 	const srcW, srcH = 160, 128
 	const curW, curH = 107, 128
 	const bd = 10
@@ -309,14 +308,6 @@ func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
 	sf, err := NewScaleFactors(srcW, srcH, curW, curH)
 	if err != nil {
 		t.Fatalf("NewScaleFactors: %v", err)
-	}
-	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, blockW)
-	if err != nil {
-		t.Fatalf("xTable: %v", err)
-	}
-	yTable, err := SubpelKernelTableFor(InterpEightTapSmooth, blockH)
-	if err != nil {
-		t.Fatalf("yTable: %v", err)
 	}
 
 	const pad = 24
@@ -339,24 +330,46 @@ func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
 		}
 	}
 
-	for _, pos := range []struct{ x, y int }{{0, 0}, {48, 0}, {curW - blockW, 0}, {curW - blockW, curH - blockH}} {
-		startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(pos.x, pos.y, Vector{}, false, false)
+	for _, tc := range []struct {
+		name           string
+		x, y           int
+		blockW, blockH int
+		mv             Vector
+		filterX        InterpFilter
+		filterY        InterpFilter
+	}{
+		{name: "top_left", x: 0, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+		{name: "middle", x: 48, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+		{name: "right_edge", x: curW - 16, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+		{name: "bottom_right", x: curW - 16, y: curH - 16, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+		{name: "moving_obmc_area", x: 96, y: 16, blockW: 8, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
+		{name: "moving_direct_area", x: 96, y: 0, blockW: 11, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
+	} {
+		xTable, err := SubpelKernelTableFor(tc.filterX, tc.blockW)
 		if err != nil {
-			t.Fatalf("ScaledBlockOrigin(%+v): %v", pos, err)
+			t.Fatalf("%s xTable: %v", tc.name, err)
 		}
-		got, _ := testPlane(blockW, blockH, 2, blockW*2)
-		if err := ConvolveScale2DHighBDClamped(got, src, bd, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-			t.Fatalf("ConvolveScale2DHighBDClamped(%+v): %v", pos, err)
+		yTable, err := SubpelKernelTableFor(tc.filterY, tc.blockH)
+		if err != nil {
+			t.Fatalf("%s yTable: %v", tc.name, err)
+		}
+		startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(tc.x, tc.y, tc.mv, false, false)
+		if err != nil {
+			t.Fatalf("%s ScaledBlockOrigin: %v", tc.name, err)
+		}
+		got, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
+		if err := ConvolveScale2DHighBDClamped(got, src, bd, 0, 0, tc.blockW, tc.blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+			t.Fatalf("%s ConvolveScale2DHighBDClamped: %v", tc.name, err)
 		}
 
 		intX := int(startX >> ScaleSubpelBits)
 		intY := int(startY >> ScaleSubpelBits)
 		subpelX := int(startX & ScaleSubpelMask)
 		subpelY := int(startY & ScaleSubpelMask)
-		want, _ := testPlane(blockW, blockH, 2, blockW*2)
-		libaomConvolveScale2DHighBDRef(want, padded, bd, pad+intX, pad+intY, 0, 0, blockW, blockH,
+		want, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
+		libaomConvolveScale2DHighBDRef(want, padded, bd, pad+intX, pad+intY, 0, 0, tc.blockW, tc.blockH,
 			subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
-		comparePlanes(t, fmt.Sprintf("superres10_%dx%d", pos.x, pos.y), got, want, blockW, blockH, 2)
+		comparePlanes(t, fmt.Sprintf("superres10_%s", tc.name), got, want, tc.blockW, tc.blockH, 2)
 	}
 }
 

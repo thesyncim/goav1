@@ -556,6 +556,29 @@ var profileClips = []profileClip{
 		superRes:         true,
 	},
 	{
+		// Profile 1: 4:4:4 10-bit moving super-res inter stream. The larger
+		// 16x16 chroma TXBs guard inter chroma tx_type clamping against the
+		// active extended transform set.
+		name: "profile1-444-10bit-superres-inter-simple-160x128",
+		file: "profile1-444-10bit-superres-inter-simple-160x128.ivf",
+		frameMD5Hex: []string{
+			"0a0b14f62deee8bdcedbdd2c648c6396",
+			"e7d1a6243d38d554df4f63b2a9d1beaf",
+			"51bb916a676b953252f33e514dab46fd",
+			"15a0daafab712254269a4ce27800c1c9",
+			"8114f35db56233a52e75e367eb9f7a33",
+			"b5dfcdadffe2c9d246ad9930e39ab290",
+			"36278c9c6a7e15d325a45887e11ab60a",
+			"8e42428b236d37ca8d59c5c5e4ece89e",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     10,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+		wantInterFrames:  7,
+		superRes:         true,
+	},
+	{
 		// Super-res only (no loop restoration, no CDEF). 4:2:0 8-bit, 160x128,
 		// 4 all-keyframes, super-res denom 12 => coded width 107 (not a multiple
 		// of 8), exercising the MI-aligned upscale source span. Guards the
