@@ -96,6 +96,14 @@ type FrameWorkPostFilterRunner interface {
 	Apply(FrameWorkPostFilterContext) error
 }
 
+// FrameWorkPostFilterGlobalSurfacePublisher is an optional extension for
+// external-reference callers whose postfilter runner writes the publishable
+// reference into a caller-owned global surface that differs from the coded
+// reconstruction surface.
+type FrameWorkPostFilterGlobalSurfacePublisher interface {
+	PublishedFrameWorkGlobalSurface() (int, bool)
+}
+
 // FrameWorkSideDataFunc binds caller-owned frame-level side data after event
 // planning and before tile work executes.
 type FrameWorkSideDataFunc func(*FrameWorkState, FrameWorkBatch) error
@@ -199,22 +207,22 @@ type FrameWorkState struct {
 	// finished frame's MV_REF side data, and primary/temporal lookups read the
 	// slot named by RefFrameIdx. mvFrameStoreMeta carries each saved frame's
 	// order-hint metadata needed for motion_field_projection scaling.
-	mvFrameStore        [parser.RefFrames]tile.ReferenceMVFrame
-	mvFrameStoreBacking [parser.RefFrames][]tile.ReferenceMVEntry
-	mvFrameStoreMeta    [parser.RefFrames]mvFrameMeta
-	currentMVFrame      tile.ReferenceMVFrame
-	currentMVFrameBack  []tile.ReferenceMVEntry
-	currentMVFrameValid bool
-	temporalMVs         tile.TemporalMotionField
-	temporalMVsBack     []tile.TemporalMotionEntry
-	temporalMVsValid    bool
-	mvReferences        [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
-	cdefIndexMap                    threading.FrameWorkCDEFIndexMap
-	cdefIndexMapValid               bool
-	loopFilterMap                   threading.FrameWorkLoopFilterMap
-	loopFilterMapValid              bool
-	restorationFrameBuffers         threading.FrameWorkRestorationFrameBuffers
-	restorationFrameBuffersValid    bool
+	mvFrameStore                 [parser.RefFrames]tile.ReferenceMVFrame
+	mvFrameStoreBacking          [parser.RefFrames][]tile.ReferenceMVEntry
+	mvFrameStoreMeta             [parser.RefFrames]mvFrameMeta
+	currentMVFrame               tile.ReferenceMVFrame
+	currentMVFrameBack           []tile.ReferenceMVEntry
+	currentMVFrameValid          bool
+	temporalMVs                  tile.TemporalMotionField
+	temporalMVsBack              []tile.TemporalMotionEntry
+	temporalMVsValid             bool
+	mvReferences                 [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	cdefIndexMap                 threading.FrameWorkCDEFIndexMap
+	cdefIndexMapValid            bool
+	loopFilterMap                threading.FrameWorkLoopFilterMap
+	loopFilterMapValid           bool
+	restorationFrameBuffers      threading.FrameWorkRestorationFrameBuffers
+	restorationFrameBuffersValid bool
 	// sideDataBound records whether this frame's CDEF/loop-filter/restoration
 	// maps have already been bound (and reset). Binding resets the maps, so it
 	// must happen exactly once per frame -- on the first tile group -- even when
@@ -449,7 +457,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 	if err != nil {
 		return 0, err
 	}
-	s.finishTileResidualCDFs(event)
+	s.finishTileResidualCDFs(event, -1)
 	s.publishTemporalMotionFrame(event)
 	s.resetActive()
 	return count, nil
@@ -623,7 +631,7 @@ func (s *FrameWorkState) publishTemporalMotionFrame(event Event) {
 	}
 }
 
-func (s *FrameWorkState) finishTileResidualCDFs(event Event) {
+func (s *FrameWorkState) finishTileResidualCDFs(event Event, publishedGlobalSurface int) {
 	if s == nil || !s.tileResidualCurrentCDFsValid {
 		return
 	}
@@ -641,8 +649,10 @@ func (s *FrameWorkState) finishTileResidualCDFs(event Event) {
 		// (performed by finishExternal) already points the refreshed slots at
 		// this global ID, so a single keyed entry is reachable by every later
 		// frame that inherits from any of those slots.
-		globalID := s.sharedFrameContextGlobalSurface(s.Surface)
-		s.sharedFrameContexts.store(globalID, cdfs)
+		if publishedGlobalSurface < 0 {
+			publishedGlobalSurface = s.sharedFrameContextGlobalSurface(s.Surface)
+		}
+		s.sharedFrameContexts.store(publishedGlobalSurface, cdfs)
 		return
 	}
 	for i := range parser.RefFrames {

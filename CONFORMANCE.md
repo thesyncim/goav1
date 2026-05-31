@@ -176,10 +176,10 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Loop restoration: switchable     | Yes     | internal/av1/tile/restoration.go | Per-unit Wiener / SGR / None selector.         |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 22 | Super-resolution (disabled)      | Yes     | internal/av1/parser/frame_size.go | SuperResEnabled=false: no upscale path.       |
-|    | Super-resolution (enabled)       | Partial | internal/av1/superres/superres.go | Caller-owned display path passes superres and |
-|    |                                  |         | internal/av1/decoder/postfilter_superres.go | restoration profile clips; publishable |
-|    |                                  |         |                                  | upscaled references for inter streams remain  |
-|    |                                  |         |                                  | a forward-looking gap.                        |
+|    | Super-resolution (enabled)       | Yes     | internal/av1/superres/superres.go | Caller-owned full path publishes upscaled     |
+|    |                                  |         | internal/av1/decoder/postfilter_superres.go | references through external surface |
+|    |                                  |         | internal/av1/decoder/svc.go       | IDs; all-key, restoration, and Profile 1      |
+|    |                                  |         |                                  | inter superres clips pass.                    |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 23 | Film grain synthesis             | Yes     | internal/av1/filmgrain/          | Gaussian RNG, scaling LUTs, luma/chroma grain  |
 |    |                                  |         | internal/av1/decoder/postfilter_filmgrain.go | blocks, per-row apply; covered by   |
@@ -315,12 +315,12 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 19/19 vendored profile clips pass, covering
+- `make dryrun-profiles`: 20/20 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
-  CDEF/restoration, film grain, and super-res, profile 2 4:2:2 8-bit
-  all-intra and inter, profile 2 4:2:0 12-bit, superres, superres plus loop
-  restoration, a forced-root 128x128 superblock clip, edge-MV, and a non-SVC
-  multi-tile clip.
+  CDEF/restoration, film grain, all-key superres, and inter superres,
+  profile 2 4:2:2 8-bit all-intra and inter, profile 2 4:2:0 12-bit,
+  superres, superres plus loop restoration, a forced-root 128x128
+  superblock clip, edge-MV, and a non-SVC multi-tile clip.
 
 ### SVC vector coverage
 
@@ -418,15 +418,10 @@ manifest. The next production-readiness items are:
 1. **Broader profile 2 corpus.** Keep adding profile-2 10/12-bit 4:2:2 and
    12-bit 4:4:4 streams as upstream or locally generated goldens become
    available.
-2. **Superres reference publication.** The caller-owned full postfilter path
-   handles superres display output; the frame-pool publication path still uses
-   coded-size surfaces, so inter streams that reference superres output need a
-   dedicated publishable upscaled-reference design before they are declared
-   complete.
-3. **Tile list OBU playback.** `EventTileList` parsing is present, but
+2. **Tile list OBU playback.** `EventTileList` parsing is present, but
    end-to-end tile-list reconstruction and output-frame blitting remain future
    work.
-4. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
+3. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
    regressions exist, but the upstream libaom v3.14.0 test-data set does not
    ship a dedicated `S_FRAME` IVF with MD5 goldens.
 

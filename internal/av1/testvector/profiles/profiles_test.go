@@ -30,7 +30,8 @@
 // 8-bit and 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires
 // luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
 // an 8-bit 4:4:4 film-grain clip, and 8/10-bit 4:4:4 super-res clips that run
-// the caller-owned full postfilter output path. All are committed under
+// the caller-owned full postfilter output path, including an inter stream that
+// references super-res output. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -62,6 +63,12 @@
 //	  --lag-in-frames=0 --superres-mode=1 --superres-denominator=12 \
 //	  --superres-kf-denominator=12 --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-8bit-superres-160x128.ivf src444_superres.yuv
+//	# 4:4:4 8-bit super-res inter:
+//	aomenc --i444 --width=160 --height=128 --limit=8 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=999 \
+//	  --lag-in-frames=0 --superres-mode=1 --superres-denominator=12 \
+//	  --superres-kf-denominator=12 --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-8bit-superres-inter-160x128.ivf src444_superres.yuv
 //	# 4:4:4 10-bit super-res:
 //	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
@@ -159,6 +166,7 @@ type profileClip struct {
 	wantCDEFFrames        int
 	wantRestorationFrames int
 	wantFilmGrainFrames   int
+	wantInterFrames       int
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -167,6 +175,8 @@ type profileClip struct {
 	// chain instead, exactly like a display/output consumer.
 	superRes bool
 }
+
+const profileSuperResOutputGlobalBase = 256
 
 var profileClips = []profileClip{
 	{
@@ -370,6 +380,28 @@ var profileClips = []profileClip{
 		superRes:         true,
 	},
 	{
+		// Profile 1: 4:4:4 8-bit super-res inter stream. Later frames reference
+		// the previously upscaled output, guarding the super-res reference path.
+		name: "profile1-444-8bit-superres-inter-160x128",
+		file: "profile1-444-8bit-superres-inter-160x128.ivf",
+		frameMD5Hex: []string{
+			"7057484f2d2048053692a9bc41ce197b",
+			"6b136fd484722654825fe6abc2e1773a",
+			"cddb59775cd003ed4624b782fce4eca4",
+			"32e3240e78dd8f53e7b673c9120fbe86",
+			"5054adcd48bad5490911bb07248fea75",
+			"150acaa0e5a682d454d7538b15cc4f2f",
+			"5d0ab2de3f3e9ce25036226b11375e49",
+			"78c4f82e984b44a272930333264bc764",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     8,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+		wantInterFrames:  1,
+		superRes:         true,
+	},
+	{
 		// Profile 1: 4:4:4 10-bit super-res. 4 all-keyframes, super-res denom
 		// 12, exercising the high-bit-depth 4:4:4 upscaled display path.
 		name: "profile1-444-10bit-superres-160x128",
@@ -530,12 +562,20 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	var frameSlots []frame.Frame
 	var free []int
 	var used []bool
+	var outputPool frame.Pool
+	var outputBacking []byte
+	var outputFrameSlots []frame.Frame
+	var outputFree []int
+	var outputUsed []bool
+	var frameContexts decoder.SharedFrameContextStore
 	var havePool bool
 	var mvEntryBacking []tile.ReferenceMVEntry
 	var temporalEntryBacking []tile.TemporalMotionEntry
 	var mvFrames []tile.ReferenceMVFrame
 	var mvStore []tile.TemporalMotionReferenceFrame
 	var mvLength int
+	var publishedMVEntryBacking []tile.ReferenceMVEntry
+	var publishedMVFrames []tile.ReferenceMVFrame
 
 	var events [16]decoder.Event
 	var referenceSurfaces [parser.InterRefsPerFrame]int
@@ -552,10 +592,16 @@ func runProfileClip(t *testing.T, clip profileClip) {
 		runtime.KeepAlive(frameSlots)
 		runtime.KeepAlive(free)
 		runtime.KeepAlive(used)
+		runtime.KeepAlive(outputBacking)
+		runtime.KeepAlive(outputFrameSlots)
+		runtime.KeepAlive(outputFree)
+		runtime.KeepAlive(outputUsed)
 		runtime.KeepAlive(mvEntryBacking)
 		runtime.KeepAlive(temporalEntryBacking)
 		runtime.KeepAlive(mvFrames)
 		runtime.KeepAlive(mvStore)
+		runtime.KeepAlive(publishedMVEntryBacking)
+		runtime.KeepAlive(publishedMVFrames)
 	}()
 
 	emitted := 0
@@ -564,6 +610,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	cdefFrames := 0
 	restorationFrames := 0
 	filmGrainFrames := 0
+	interFrames := 0
 	checkedColorConfig := false
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -606,13 +653,19 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			if !havePool {
 				pool, backing, frameSlots, free, used = bindFramePool(t, event, 8)
 				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindMotionStore(t, event, 8)
+				if clip.superRes {
+					outputPool, outputBacking, outputFrameSlots, outputFree, outputUsed = bindOutputFramePool(t, event, 8)
+					mvStore = make([]tile.TemporalMotionReferenceFrame, profileSuperResOutputGlobalBase+8)
+					publishedMVEntryBacking = make([]tile.ReferenceMVEntry, 8*mvLength)
+					publishedMVFrames = make([]tile.ReferenceMVFrame, 8)
+				}
 				havePool = true
 			}
 
 			var postMD5 testvector.MD5
 			havePost := false
 			currentMVSurface := -1
-			result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, sideDataRunner{}, batchRunner(func(ctx decoder.FrameWorkBatch) error {
+			tileRunner := batchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -716,7 +769,8 @@ func runProfileClip(t *testing.T, clip profileClip) {
 					}
 				}
 				return nil
-			}), postFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
+			})
+			post := &profilePostFilterRunner{fn: func(ctx decoder.FrameWorkPostFilterContext) (int, error) {
 				active := ctx.ActivePostFilters()
 				if active.Has(decoder.FrameWorkPostFilterCDEF) {
 					cdefFrames++
@@ -728,35 +782,42 @@ func runProfileClip(t *testing.T, clip profileClip) {
 					filmGrainFrames++
 				}
 				if clip.superRes {
-					out, ev, err := applyCallerPostFilters(ctx)
+					out, publishedGlobalSurface, ev, err := applyCallerPostFiltersForPublication(ctx, &outputPool)
 					if err != nil {
-						return err
+						return -1, err
 					}
+					published := false
+					defer func() {
+						if !published {
+							_ = releaseProfileSuperResOutput(&outputPool, publishedGlobalSurface)
+						}
+					}()
 					if currentMVSurface >= 0 {
-						if err := decoder.PublishTemporalMotionReference(ev, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
-							return err
+						if err := publishProfileSuperResTemporalMotionReference(ev, publishedGlobalSurface, &mvFrames[currentMVSurface], publishedMVFrames, publishedMVEntryBacking, mvStore, mvLength); err != nil {
+							return -1, err
 						}
 					}
 					got, err := testvector.FrameMD5(*out)
 					if err != nil {
-						return err
+						return -1, err
 					}
 					postMD5 = got
 					havePost = true
-					return nil
+					published = true
+					return publishedGlobalSurface, nil
 				}
 				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
 				size, err := supportedPostFilterScratchLen(ctx)
 				if err != nil {
-					return err
+					return -1, err
 				}
 				post.Scratch = postFilterScratchStorage(size)
 				if err := post.Apply(ctx); err != nil {
-					return err
+					return -1, err
 				}
 				if currentMVSurface >= 0 {
 					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
-						return err
+						return -1, err
 					}
 				}
 				output := post.Context.Output
@@ -765,20 +826,31 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				}
 				got, err := testvector.FrameMD5(*output)
 				if err != nil {
-					return err
+					return -1, err
 				}
 				postMD5 = got
 				havePost = true
-				return nil
-			}))
+				return -1, nil
+			}}
+			var result decoder.FrameWorkEventResult
+			var err error
+			if clip.superRes {
+				provider := profileSurfaceProvider{coded: &pool, output: &outputPool}
+				result, err = state.RunEventWithContextAndExternalReferences(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, provider, func(local int) int { return local }, provider, &frameContexts, sideDataRunner{}, tileRunner, post)
+			} else {
+				result, err = state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, sideDataRunner{}, tileRunner, post)
+			}
 			if err != nil {
-				t.Fatalf("ivf frame %d RunEventWithContextAndSideDataAndPostFilterRunners: %v", ivfFrame.Index, err)
+				t.Fatalf("ivf frame %d run framework event: %v", ivfFrame.Index, err)
 			}
 			if !result.Run.CompletedFrame {
 				continue
 			}
 			if !event.FrameHeader.ShowFrame {
 				continue
+			}
+			if event.FrameHeader.FrameType == parser.FrameTypeInter {
+				interFrames++
 			}
 			if !havePost {
 				t.Fatalf("ivf frame %d completed without postfilter", ivfFrame.Index)
@@ -809,6 +881,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if filmGrainFrames < clip.wantFilmGrainFrames {
 		t.Fatalf("film grain frames=%d want at least %d", filmGrainFrames, clip.wantFilmGrainFrames)
+	}
+	if interFrames < clip.wantInterFrames {
+		t.Fatalf("inter frames=%d want at least %d", interFrames, clip.wantInterFrames)
 	}
 }
 
@@ -853,6 +928,24 @@ func bindFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, []
 	return pool, backing, frames, free, used
 }
 
+func bindOutputFramePool(t *testing.T, event decoder.Event, count int) (frame.Pool, []byte, []frame.Frame, []int, []bool) {
+	t.Helper()
+	format := outputFrameFormatFromEvent(event)
+	layout, err := frame.RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size*count)
+	frames := make([]frame.Frame, count)
+	free := make([]int, count)
+	used := make([]bool, count)
+	pool, err := frame.BindPool(backing, format, frames, free, used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool, backing, frames, free, used
+}
+
 func bindMotionStore(t *testing.T, event decoder.Event, count int) ([]tile.ReferenceMVEntry, []tile.TemporalMotionEntry, []tile.ReferenceMVFrame, []tile.TemporalMotionReferenceFrame, int) {
 	t.Helper()
 	miCols := miExtent(event.FrameSize.CodedWidth)
@@ -873,12 +966,24 @@ func miExtent(pixels uint32) uint32 {
 }
 
 func frameFormatFromEvent(event decoder.Event) frame.Format {
+	return frameFormatFromEventWidth(event, event.FrameSize.CodedWidth)
+}
+
+func outputFrameFormatFromEvent(event decoder.Event) frame.Format {
+	width := event.FrameSize.UpscaledWidth
+	if width == 0 {
+		width = event.FrameSize.CodedWidth
+	}
+	return frameFormatFromEventWidth(event, width)
+}
+
+func frameFormatFromEventWidth(event decoder.Event, width uint32) frame.Format {
 	sbSizeLog2 := uint8(6)
 	if event.SequenceHeader.Use128x128Superblock {
 		sbSizeLog2 = 7
 	}
 	return frame.Format{
-		Width:        int(event.FrameSize.CodedWidth),
+		Width:        int(width),
 		Height:       int(event.FrameSize.Height),
 		BitDepth:     event.SequenceHeader.ColorConfig.BitDepth,
 		MonoChrome:   event.SequenceHeader.ColorConfig.MonoChrome,
@@ -887,6 +992,87 @@ func frameFormatFromEvent(event decoder.Event) frame.Format {
 		SBSizeLog2:   sbSizeLog2,
 		Align:        32,
 	}
+}
+
+type profileSurfaceProvider struct {
+	coded  *frame.Pool
+	output *frame.Pool
+}
+
+func (p profileSurfaceProvider) FrameSurface(id int) (*frame.Frame, error) {
+	pool, local, err := p.resolve(id)
+	if err != nil {
+		return nil, err
+	}
+	return pool.Frame(local)
+}
+
+func (p profileSurfaceProvider) ReleaseFrameSurfaces(ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for i, id := range ids {
+		pool, local, err := p.resolve(id)
+		if err != nil {
+			return err
+		}
+		if _, err := pool.Frame(local); err != nil {
+			return err
+		}
+		for j := range i {
+			if ids[j] == id {
+				return frame.ErrInvalidSlot
+			}
+		}
+	}
+	for _, id := range ids {
+		pool, local, err := p.resolve(id)
+		if err != nil {
+			return err
+		}
+		if err := pool.Release(local); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p profileSurfaceProvider) resolve(id int) (*frame.Pool, int, error) {
+	if id < 0 {
+		return nil, -1, decoder.ErrInvalidSurfaceReference
+	}
+	if id >= profileSuperResOutputGlobalBase {
+		if p.output == nil {
+			return nil, -1, decoder.ErrInvalidSurfaceReference
+		}
+		return p.output, id - profileSuperResOutputGlobalBase, nil
+	}
+	if p.coded == nil {
+		return nil, -1, decoder.ErrInvalidSurfaceReference
+	}
+	return p.coded, id, nil
+}
+
+func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSurface int, current *tile.ReferenceMVFrame, published []tile.ReferenceMVFrame, backing []tile.ReferenceMVEntry, store []tile.TemporalMotionReferenceFrame, mvLength int) error {
+	local := globalSurface - profileSuperResOutputGlobalBase
+	if local < 0 || local >= len(published) || mvLength <= 0 {
+		return decoder.ErrInvalidSurfaceReference
+	}
+	if len(backing) < (local+1)*mvLength {
+		return decoder.ErrSurfaceReferenceBufferTooSmall
+	}
+	if current == nil || len(current.Entries) != mvLength {
+		return decoder.ErrInvalidSurfaceReference
+	}
+	dst := backing[local*mvLength : (local+1)*mvLength]
+	copy(dst, current.Entries)
+	published[local] = tile.ReferenceMVFrame{
+		Rows:    current.Rows,
+		Cols:    current.Cols,
+		Stride:  current.Stride,
+		Entries: dst,
+	}
+	return decoder.PublishTemporalMotionReference(event, globalSurface, &published[local], store)
 }
 
 func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
@@ -913,6 +1099,31 @@ func (fn batchRunner) Run(ctx decoder.FrameWorkBatch) error { return fn(ctx) }
 type postFilterRunner func(decoder.FrameWorkPostFilterContext) error
 
 func (fn postFilterRunner) Apply(ctx decoder.FrameWorkPostFilterContext) error { return fn(ctx) }
+
+type profilePostFilterRunner struct {
+	fn                     func(decoder.FrameWorkPostFilterContext) (int, error)
+	publishedGlobalSurface int
+}
+
+func (r *profilePostFilterRunner) Apply(ctx decoder.FrameWorkPostFilterContext) error {
+	if r == nil || r.fn == nil {
+		return decoder.ErrInvalidFrameWorkState
+	}
+	r.publishedGlobalSurface = -1
+	publishedGlobalSurface, err := r.fn(ctx)
+	if err != nil {
+		return err
+	}
+	r.publishedGlobalSurface = publishedGlobalSurface
+	return nil
+}
+
+func (r *profilePostFilterRunner) PublishedFrameWorkGlobalSurface() (int, bool) {
+	if r == nil || r.publishedGlobalSurface < 0 {
+		return -1, false
+	}
+	return r.publishedGlobalSurface, true
+}
 
 type sideDataRunner struct{}
 
@@ -946,8 +1157,62 @@ func sideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWor
 // (size the upscale output frame first, then re-size for the post-super-res
 // tail) the public caller runner uses, and returns the final display frame.
 func applyCallerPostFilters(ctx decoder.FrameWorkPostFilterContext) (*frame.Frame, decoder.Event, error) {
-	var outputView frame.Frame
-	options := decoder.FrameWorkPostFilterBindOptions{SuperResOutputView: &outputView}
+	return applyCallerPostFiltersWithSuperResOutput(ctx, nil, nil)
+}
+
+func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext, outputPool *frame.Pool) (*frame.Frame, int, decoder.Event, error) {
+	local, outputFrame, err := acquireProfileOutputSurface(outputPool, ctx.Event)
+	if err != nil {
+		return nil, -1, decoder.Event{}, err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = outputPool.Release(local)
+		}
+	}()
+	backing, err := profileFrameBacking(outputFrame)
+	if err != nil {
+		return nil, -1, decoder.Event{}, err
+	}
+	out, ev, err := applyCallerPostFiltersWithSuperResOutput(ctx, backing, outputFrame)
+	if err != nil {
+		return nil, -1, decoder.Event{}, err
+	}
+	published = true
+	return out, profileSuperResOutputGlobalBase + local, ev, nil
+}
+
+func releaseProfileSuperResOutput(outputPool *frame.Pool, globalSurface int) error {
+	if globalSurface < profileSuperResOutputGlobalBase {
+		return decoder.ErrInvalidSurfaceReference
+	}
+	return outputPool.Release(globalSurface - profileSuperResOutputGlobalBase)
+}
+
+func acquireProfileOutputSurface(outputPool *frame.Pool, event decoder.Event) (int, *frame.Frame, error) {
+	if outputPool == nil {
+		return -1, nil, frame.ErrInvalidPool
+	}
+	return outputPool.AcquireFormat(outputFrameFormatFromEvent(event))
+}
+
+func profileFrameBacking(outputFrame *frame.Frame) ([]byte, error) {
+	if outputFrame == nil {
+		return nil, frame.ErrInvalidSlot
+	}
+	if outputFrame.Layout.Size < 0 || cap(outputFrame.Y.Pix) < outputFrame.Layout.Size {
+		return nil, frame.ErrShortBuffer
+	}
+	return outputFrame.Y.Pix[:outputFrame.Layout.Size], nil
+}
+
+func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterContext, superResOutputFrame []byte, outputView *frame.Frame) (*frame.Frame, decoder.Event, error) {
+	var scratchOutputView frame.Frame
+	if outputView == nil {
+		outputView = &scratchOutputView
+	}
+	options := decoder.FrameWorkPostFilterBindOptions{SuperResOutputView: outputView}
 	if ctx.LoopFilterMap != nil {
 		options.LoopFilterMap = *ctx.LoopFilterMap
 	}
@@ -967,12 +1232,18 @@ func applyCallerPostFilters(ctx decoder.FrameWorkPostFilterContext) (*frame.Fram
 	scratch := postFilterScratchStorage(first)
 	probe = callerProbeRequest(options)
 	probe.SuperRes.OutputFrame = scratch.SuperResOutputFrame
-	probe.SuperRes.OutputView = &outputView
+	if superResOutputFrame != nil {
+		probe.SuperRes.OutputFrame = superResOutputFrame
+	}
+	probe.SuperRes.OutputView = outputView
 	full, err := ctx.CallerPostFilterScratchLen(probe)
 	if err != nil {
 		return nil, decoder.Event{}, err
 	}
 	scratch = postFilterScratchStorage(full)
+	if superResOutputFrame != nil {
+		scratch.SuperResOutputFrame = superResOutputFrame
+	}
 
 	req, err := full.BindRequest(options, scratch)
 	if err != nil {

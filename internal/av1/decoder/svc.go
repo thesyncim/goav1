@@ -357,7 +357,8 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
-	completed, releaseCount, err := s.finishIfEventCompletesFrameWorkExternal(refs, framePool, event, releases, globalSurface, releaser)
+	publishedGlobalSurface, hasPublishedGlobalSurface := frameWorkPostFilterPublishedGlobalSurface(post)
+	completed, releaseCount, err := s.finishIfEventCompletesFrameWorkExternal(refs, framePool, event, releases, globalSurface, releaser, publishedGlobalSurface, hasPublishedGlobalSurface)
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
@@ -368,21 +369,21 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 	}, nil
 }
 
-func (s *FrameWorkState) finishIfEventCompletesFrameWorkExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser) (bool, int, error) {
+func (s *FrameWorkState) finishIfEventCompletesFrameWorkExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (bool, int, error) {
 	if !EventCompletesFrameWork(event) {
 		return false, 0, nil
 	}
 	if s == nil || !s.active {
 		return false, 0, ErrInvalidFrameWorkState
 	}
-	count, err := s.finishExternal(refs, framePool, event, releases, globalSurface, releaser)
+	count, err := s.finishExternal(refs, framePool, event, releases, globalSurface, releaser, publishedGlobalSurface, hasPublishedGlobalSurface)
 	if err != nil {
 		return false, 0, err
 	}
 	return true, count, nil
 }
 
-func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser) (int, error) {
+func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (int, error) {
 	if s == nil || !s.active {
 		return 0, ErrInvalidFrameWorkState
 	}
@@ -394,9 +395,16 @@ func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *fram
 	}
 
 	localSurface := s.Surface
-	globalID := globalSurface(localSurface)
-	if globalID < 0 {
+	codedGlobalID := globalSurface(localSurface)
+	if codedGlobalID < 0 {
 		return 0, ErrInvalidSurfaceReference
+	}
+	globalID := codedGlobalID
+	if hasPublishedGlobalSurface {
+		if publishedGlobalSurface < 0 {
+			return 0, ErrInvalidSurfaceReference
+		}
+		globalID = publishedGlobalSurface
 	}
 
 	next := *refs
@@ -404,21 +412,41 @@ func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *fram
 	if err != nil {
 		return 0, err
 	}
-	if count != 0 {
+	releaseIDs := releases[:count]
+	var releaseBatch [parser.RefFrames + 1]int
+	releaseCount := count
+	if hasPublishedGlobalSurface && globalID != codedGlobalID {
+		copy(releaseBatch[:], releases[:count])
+		releaseBatch[count] = codedGlobalID
+		releaseCount = count + 1
+		releaseIDs = releaseBatch[:releaseCount]
+	}
+	if releaseCount != 0 {
 		if releaser != nil {
-			if err := releaser.ReleaseFrameSurfaces(releases[:count]); err != nil {
+			if err := releaser.ReleaseFrameSurfaces(releaseIDs); err != nil {
 				return 0, err
 			}
 		} else if framePool != nil {
 			// Fallback: assume all releases live in framePool.
-			if err := framePool.ReleaseMany(releases[:count]); err != nil {
+			if err := framePool.ReleaseMany(releaseIDs); err != nil {
 				return 0, err
 			}
 		}
 	}
 
 	*refs = next
-	s.finishTileResidualCDFs(event)
+	s.finishTileResidualCDFs(event, globalID)
 	s.resetActive()
-	return count, nil
+	return releaseCount, nil
+}
+
+func frameWorkPostFilterPublishedGlobalSurface(post FrameWorkPostFilterRunner) (int, bool) {
+	if post == nil {
+		return -1, false
+	}
+	publisher, ok := post.(FrameWorkPostFilterGlobalSurfacePublisher)
+	if !ok {
+		return -1, false
+	}
+	return publisher.PublishedFrameWorkGlobalSurface()
 }

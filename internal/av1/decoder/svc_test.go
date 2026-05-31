@@ -147,6 +147,62 @@ func TestRunEventWithContextAndExternalReferencesNilProvider(t *testing.T) {
 	}
 }
 
+func TestFrameWorkStateFinishExternalPublishesPostFilterGlobalSurface(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const publishedGlobalSurface = 256
+	var released []int
+	releaser := FrameSurfaceReleaserFunc(func(ids []int) error {
+		released = append(released, ids...)
+		for _, id := range ids {
+			if id == begin.Surface {
+				if err := pool.Release(id); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	var frameContexts SharedFrameContextStore
+	state.sharedFrameContexts = &frameContexts
+	state.sharedFrameContextGlobalSurface = func(local int) int { return local }
+
+	var releases [parser.RefFrames]int
+	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, finalFrameEvent(0xff), releases[:], func(local int) int { return local }, releaser, publishedGlobalSurface, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed || releaseCount != 1 || state.Active() {
+		t.Fatalf("completed=%v releaseCount=%d active=%v", completed, releaseCount, state.Active())
+	}
+	if len(released) != 1 || released[0] != begin.Surface {
+		t.Fatalf("released=%v want coded surface %d", released, begin.Surface)
+	}
+	if _, err := pool.Frame(begin.Surface); !errors.Is(err, frame.ErrInvalidSlot) {
+		t.Fatalf("coded surface err=%v want %v", err, frame.ErrInvalidSlot)
+	}
+	slot, ok := refs.ReferenceSlot(0)
+	if !ok || slot != publishedGlobalSurface {
+		t.Fatalf("slot=%d ok=%v want %d", slot, ok, publishedGlobalSurface)
+	}
+	if _, ok := frameContexts.load(publishedGlobalSurface); !ok {
+		t.Fatalf("missing frame context for published global surface %d", publishedGlobalSurface)
+	}
+	if _, ok := frameContexts.load(begin.Surface); ok {
+		t.Fatalf("stored frame context under discarded coded surface %d", begin.Surface)
+	}
+}
+
 // newTestLayerPool wires a tiny LayerPool with two sub-pool slots and a
 // factory that synthesizes per-format backing storage on demand. It is the
 // production-side replacement for the testvector harness per-spatial-layer
