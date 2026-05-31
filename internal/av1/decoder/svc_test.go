@@ -203,6 +203,58 @@ func TestFrameWorkStateFinishExternalPublishesPostFilterGlobalSurface(t *testing
 	}
 }
 
+func TestFrameWorkStateFinishExternalPublishesTemporalMotionFrame(t *testing.T) {
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	var state FrameWorkState
+	begin, output, err := state.Begin(&refs, &pool, testSequence(), Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey, OrderHint: 7},
+		FrameSize:   testFrameSize(16, 16),
+	}, 32, nil, 1, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mvFrame, err := bindEmptyReferenceMVFrame(output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.currentMVFrame = mvFrame
+	state.currentMVFrameValid = true
+
+	var releases [parser.RefFrames]int
+	event := finalFrameEvent(0x03)
+	event.FrameHeader.FrameType = parser.FrameTypeInter
+	event.FrameHeader.OrderHint = 7
+	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, event, releases[:], func(local int) int { return local }, nil, -1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completed || releaseCount != 0 || state.Active() {
+		t.Fatalf("completed=%v releaseCount=%d active=%v", completed, releaseCount, state.Active())
+	}
+	for slot := range 2 {
+		ref, ok := refs.ReferenceSlot(slot)
+		if !ok || ref != begin.Surface {
+			t.Fatalf("slot %d ref=%d ok=%v want %d", slot, ref, ok, begin.Surface)
+		}
+		if !state.mvFrameStoreMeta[slot].valid {
+			t.Fatalf("slot %d missing temporal motion metadata", slot)
+		}
+		if state.mvFrameStoreMeta[slot].orderHint != event.FrameHeader.OrderHint {
+			t.Fatalf("slot %d order_hint=%d want %d", slot, state.mvFrameStoreMeta[slot].orderHint, event.FrameHeader.OrderHint)
+		}
+		if err := state.mvFrameStore[slot].Validate(); err != nil {
+			t.Fatalf("slot %d temporal motion frame: %v", slot, err)
+		}
+	}
+	for slot := 2; slot < parser.RefFrames; slot++ {
+		if state.mvFrameStoreMeta[slot].valid {
+			t.Fatalf("slot %d unexpectedly has temporal motion metadata", slot)
+		}
+	}
+}
+
 // newTestLayerPool wires a tiny LayerPool with two sub-pool slots and a
 // factory that synthesizes per-format backing storage on demand. It is the
 // production-side replacement for the testvector harness per-spatial-layer

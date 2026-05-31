@@ -198,6 +198,19 @@ var callerPostFilterClips = []publicClip{
 
 var externalReferenceClips = []publicClip{
 	{
+		file: "profile1-444-8bit-superres-inter-160x128.ivf",
+		frameMD5Hex: []string{
+			"7057484f2d2048053692a9bc41ce197b",
+			"6b136fd484722654825fe6abc2e1773a",
+			"cddb59775cd003ed4624b782fce4eca4",
+			"32e3240e78dd8f53e7b673c9120fbe86",
+			"5054adcd48bad5490911bb07248fea75",
+			"150acaa0e5a682d454d7538b15cc4f2f",
+			"5d0ab2de3f3e9ce25036226b11375e49",
+			"78c4f82e984b44a272930333264bc764",
+		},
+	},
+	{
 		file: "profile1-444-10bit-superres-inter-static-160x128.ivf",
 		frameMD5Hex: []string{
 			"ab4284f9b59b7cfd81bdf5ab27d7e10b",
@@ -268,9 +281,7 @@ func TestPublicPathCallerPostFilterProfileClips(t *testing.T) {
 // TestPublicPathExternalReferenceSuperResInterProfileClips drives super-res
 // inter clips through the exported residual-stream runner with external
 // reference publication. Later frames reference the upscaled output surface
-// rather than the coded reconstruction surface. The selected clips avoid the
-// separate temporal-motion side-data publication path, which is covered by the
-// internal profile harness and remains a public-path follow-up.
+// rather than the coded reconstruction surface.
 func TestPublicPathExternalReferenceSuperResInterProfileClips(t *testing.T) {
 	for _, clip := range externalReferenceClips {
 		t.Run(clip.file, func(t *testing.T) {
@@ -513,13 +524,12 @@ func decodeClipPublicDataWithExternalReferences(t *testing.T, ivfData []byte) []
 	provider := publicExternalSurfaceProvider{coded: &codedPool, output: &outputPool}
 
 	var (
-		stream        av1.DecoderStream
-		refs          av1.DecoderSurfaceReferences
-		state         av1.DecoderFrameWorkState
-		frameContexts av1.DecoderSharedFrameContextStore
-		stats         av1.DecoderFrameWorkTileResidualStats
-		sideData      av1.DecoderFrameWorkSideData
-		batch         av1.DecoderFrameWorkBatchResidualRunner
+		stream   av1.DecoderStream
+		refs     av1.DecoderSurfaceReferences
+		state    av1.DecoderFrameWorkState
+		stats    av1.DecoderFrameWorkTileResidualStats
+		sideData av1.DecoderFrameWorkSideData
+		batch    av1.DecoderFrameWorkBatchResidualRunner
 	)
 	refSurface := make([]int, av1.InterRefsPerFrame)
 	refFrames := make([]*av1.Frame, av1.InterRefsPerFrame)
@@ -543,7 +553,6 @@ func decodeClipPublicDataWithExternalReferences(t *testing.T, ivfData []byte) []
 				Provider:      provider,
 				GlobalSurface: func(local int) int { return local },
 				Releaser:      provider,
-				FrameContexts: &frameContexts,
 			},
 		}, scratch, &batch)
 	if err != nil {
