@@ -143,6 +143,51 @@ var profileClips = []struct {
 	},
 }
 
+var superResProfileClips = []struct {
+	file        string
+	frameMD5Hex []string
+}{
+	{
+		file: "profile1-444-8bit-superres-inter-160x128.ivf",
+		frameMD5Hex: []string{
+			"7057484f2d2048053692a9bc41ce197b",
+			"6b136fd484722654825fe6abc2e1773a",
+			"cddb59775cd003ed4624b782fce4eca4",
+			"32e3240e78dd8f53e7b673c9120fbe86",
+			"5054adcd48bad5490911bb07248fea75",
+			"150acaa0e5a682d454d7538b15cc4f2f",
+			"5d0ab2de3f3e9ce25036226b11375e49",
+			"78c4f82e984b44a272930333264bc764",
+		},
+	},
+	{
+		file: "profile1-444-10bit-superres-inter-static-160x128.ivf",
+		frameMD5Hex: []string{
+			"ab4284f9b59b7cfd81bdf5ab27d7e10b",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+		},
+	},
+	{
+		file: "profile1-444-10bit-superres-inter-simple-160x128.ivf",
+		frameMD5Hex: []string{
+			"0a0b14f62deee8bdcedbdd2c648c6396",
+			"e7d1a6243d38d554df4f63b2a9d1beaf",
+			"51bb916a676b953252f33e514dab46fd",
+			"15a0daafab712254269a4ce27800c1c9",
+			"8114f35db56233a52e75e367eb9f7a33",
+			"b5dfcdadffe2c9d246ad9930e39ab290",
+			"36278c9c6a7e15d325a45887e11ab60a",
+			"8e42428b236d37ca8d59c5c5e4ece89e",
+		},
+	},
+}
+
 func profileClipPath(name string) string {
 	return filepath.Join("internal", "av1", "testvector", "testdata", "profiles", name)
 }
@@ -192,10 +237,77 @@ func TestSimpleDecoderProfileClipsMatchGolden(t *testing.T) {
 	}
 }
 
+// TestSimpleDecoderSuperResInterProfileClipsMatchGolden proves the high-level
+// Decoder automatically routes super-res inter streams through the external
+// reference publication path, so later frames reference the upscaled output
+// surface rather than the coded reconstruction surface.
+func TestSimpleDecoderSuperResInterProfileClipsMatchGolden(t *testing.T) {
+	for _, clip := range superResProfileClips {
+		t.Run(clip.file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(clip.file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
+
+			dec, err := av1.NewDecoderFromIVF(ivf)
+			if err != nil {
+				t.Fatalf("NewDecoderFromIVF: %v", err)
+			}
+			defer dec.Close()
+
+			var got []string
+			for {
+				frames, ok, err := dec.DecodeNext()
+				if err != nil {
+					t.Fatalf("DecodeNext: %v", err)
+				}
+				if !ok {
+					break
+				}
+				for _, f := range frames {
+					sum := frameMD5Visible(f)
+					got = append(got, hex.EncodeToString(sum[:]))
+				}
+			}
+
+			if len(got) != len(clip.frameMD5Hex) {
+				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+			}
+			for i, want := range clip.frameMD5Hex {
+				if got[i] != want {
+					t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
 // TestDecodeIVFMatchesGolden exercises the one-shot DecodeIVF helper and asserts
 // each returned independent frame copy hashes to the libaom golden.
 func TestDecodeIVFMatchesGolden(t *testing.T) {
 	clip := profileClips[0]
+	ivf, err := os.ReadFile(profileClipPath(clip.file))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+
+	frames, err := av1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("DecodeIVF: %v", err)
+	}
+	if len(frames) != len(clip.frameMD5Hex) {
+		t.Fatalf("decoded %d frames, want %d", len(frames), len(clip.frameMD5Hex))
+	}
+	for i, want := range clip.frameMD5Hex {
+		sum := decodedFrameMD5(frames[i])
+		if g := hex.EncodeToString(sum[:]); g != want {
+			t.Fatalf("frame %d md5 got=%s want=%s", i, g, want)
+		}
+	}
+}
+
+func TestDecodeIVFSuperResInterMatchesGolden(t *testing.T) {
+	clip := superResProfileClips[0]
 	ivf, err := os.ReadFile(profileClipPath(clip.file))
 	if err != nil {
 		t.Fatalf("read clip: %v", err)

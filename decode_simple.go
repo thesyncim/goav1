@@ -31,6 +31,7 @@ import (
 // not concurrent use of the Decoder itself.
 type Decoder struct {
 	pool       FramePool
+	outputPool FramePool
 	workerPool *TileWorkerPool
 
 	stream   DecoderStream
@@ -47,12 +48,14 @@ type Decoder struct {
 	scratch    DecoderFrameWorkResidualStreamScratch
 	runner     DecoderFrameWorkResidualStreamRunner
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
+	external   decoderExternalPostFilterRunner
 
 	payloads [][]byte
 	format   FrameFormat
 
-	next   int
-	closed bool
+	next        int
+	closed      bool
+	useExternal bool
 }
 
 // decoderConfig holds resolved construction options.
@@ -144,30 +147,58 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		return nil, fmt.Errorf("goav1: frame pool: %w", err)
 	}
 
+	useExternal, outputFormat, err := decoderExternalOutputFormat(payloads, 64)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: super-res output format: %w", err)
+	}
+	var outputPool FramePool
+	if useExternal {
+		outputPool, err = newDecoderFramePool(outputFormat, surfaceCount)
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: output frame pool: %w", err)
+		}
+	}
+
 	d := &Decoder{
-		pool:       pool,
-		workerPool: workerPool,
-		refSurface: make([]int, InterRefsPerFrame),
-		refFrames:  make([]*Frame, InterRefsPerFrame),
-		releases:   make([]int, RefFrames),
-		payloads:   payloads,
-		format:     format,
+		pool:        pool,
+		outputPool:  outputPool,
+		workerPool:  workerPool,
+		refSurface:  make([]int, InterRefsPerFrame),
+		refFrames:   make([]*Frame, InterRefsPerFrame),
+		releases:    make([]int, RefFrames),
+		payloads:    payloads,
+		format:      format,
+		useExternal: useExternal,
+	}
+	if d.useExternal {
+		d.external.outputPool = &d.outputPool
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size)
 
+	runtime := DecoderFrameWorkResidualEventRuntime{
+		State:             &d.state,
+		Refs:              &d.refs,
+		FramePool:         &d.pool,
+		Align:             64,
+		ReferenceSurfaces: d.refSurface,
+		ReferenceFrames:   d.refFrames,
+		Releases:          d.releases,
+		WorkerPool:        d.workerPool,
+		SideData:          &d.sideData,
+		Stats:             &d.stats,
+	}
+	if d.useExternal {
+		provider := decoderExternalSurfaceProvider{coded: &d.pool, output: &d.outputPool}
+		runtime.External = DecoderFrameWorkExternalReferenceRuntime{
+			Provider:      provider,
+			GlobalSurface: func(local int) int { return local },
+			Releaser:      provider,
+		}
+	}
 	runner, _, err := BindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
-		DecoderFrameWorkResidualEventRuntime{
-			State:             &d.state,
-			Refs:              &d.refs,
-			FramePool:         &d.pool,
-			Align:             64,
-			ReferenceSurfaces: d.refSurface,
-			ReferenceFrames:   d.refFrames,
-			Releases:          d.releases,
-			WorkerPool:        d.workerPool,
-			SideData:          &d.sideData,
-			Stats:             &d.stats,
-		}, d.scratch, &d.batch)
+		runtime, d.scratch, &d.batch)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)
@@ -234,7 +265,11 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	d.next++
 
 	var result DecoderFrameWorkResidualStreamResult
-	if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, d.payloads[i], &d.postFilter); err != nil {
+	postFilter := DecoderFrameWorkPostFilterRunner(&d.postFilter)
+	if d.useExternal {
+		postFilter = &d.external
+	}
+	if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, d.payloads[i], postFilter); err != nil {
 		return nil, false, fmt.Errorf("goav1: frame %d: %w", i, err)
 	}
 
@@ -285,6 +320,9 @@ func (d *Decoder) Reset() error {
 		return errors.New("goav1: decoder closed")
 	}
 	d.pool.Reset()
+	if d.useExternal {
+		d.outputPool.Reset()
+	}
 	d.refs.Reset()
 	d.state.Reset()
 	d.stats = DecoderFrameWorkTileResidualStats{}
