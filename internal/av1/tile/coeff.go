@@ -1,8 +1,6 @@
 package tile
 
 import (
-	"fmt"
-
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -736,7 +734,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		var err error
 		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
 		if err != nil {
-			return TXBDecodeResult{}, fmt.Errorf("read txb skip size=%v ctx=%d: %w", req.Size, req.TXBSkipContext, err)
+			return TXBDecodeResult{}, err
 		}
 	}
 	clear(coeffs[:maxEOB])
@@ -750,10 +748,10 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		EOBMultiContext: req.EOBMultiContext,
 	})
 	if err != nil {
-		return TXBDecodeResult{}, fmt.Errorf("read eob size=%v plane=%v eobCtx=%d: %w", req.Size, req.Plane, req.EOBMultiContext, err)
+		return TXBDecodeResult{}, err
 	}
 	if eob.Position <= 0 || eob.Position > maxEOB {
-		return TXBDecodeResult{}, fmt.Errorf("eob position=%d max=%d token=%d extra=%d: %w", eob.Position, maxEOB, eob.Token, eob.Extra, ErrInvalidDecodeState)
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 
 	// Hoist the per-transform-size geometry and position slice out of the
@@ -788,7 +786,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	lastC := eob.Position - 1
 	lastPos := int(scan[lastC])
 	if lastPos < 0 || lastPos >= len(posSlice) || lastPos >= len(coeffs) {
-		return TXBDecodeResult{}, fmt.Errorf("read last coeff c=%d pos=%d: %w", lastC, lastPos, ErrInvalidDecodeState)
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	lastCtx := coeffLowerLevelsCtxEOBFast(maxEOB, lastC)
 	lastLevel := s.Reader.ReadCDF3Unchecked(&baseEOBArr[lastCtx]) + 1
@@ -807,7 +805,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if lastLevel >= MaxBaseBRRange {
 			tail, err := s.readCoeffGolomb()
 			if err != nil {
-				return TXBDecodeResult{}, fmt.Errorf("read coeff golomb c=0 pos=%d level=%d: %w", lastPos, lastLevel, err)
+				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
 			lastLevel += tail
@@ -820,7 +818,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			coeffTraceCoeff(0, lastPos, baseLevel, golombExtra, lastLevel, signBit)
 		}
 		if lastLevel > int(^uint16(0)>>1) {
-			return TXBDecodeResult{}, fmt.Errorf("coeff level overflow c=0 pos=%d level=%d: %w", lastPos, lastLevel, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(lastLevel)
 		if negative {
@@ -850,7 +848,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	clear(levelsScratch[:scratchLen])
 	lastPadded := int(posSlice[lastPos].padded)
 	if lastPadded < 0 || lastPadded >= len(levelsScratch) {
-		return TXBDecodeResult{}, fmt.Errorf("set last coeff level c=%d pos=%d: %w", lastC, lastPos, ErrInvalidDecodeState)
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
 	// While the levels map is being filled, coeffs[pos] carries a temporary
@@ -864,23 +862,41 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
 		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
-			return TXBDecodeResult{}, fmt.Errorf("lower levels ctx c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		// pos is now proven in range, so this posSlice read and the matching
 		// levelsScratch store below drop their bounds checks. padded is fetched
 		// once and reused for the store (coeffLowerLevelsCtxFast/coeffBRContextFast
 		// re-derive it internally, but hoisting it here removes the second
 		// posSlice index from the hot store path).
-		padded := int(posSlice[pos].padded)
+		p := posSlice[pos]
+		padded := int(p.padded)
 		if padded < 0 || padded >= len(levelsScratch) {
-			return TXBDecodeResult{}, fmt.Errorf("set coeff level c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := 0
 		if req.Class == transform.Class2D {
-			ctx := coeffLowerLevelsCtx2DFast(levelsScratch, posSlice, pos, geoPtr.stride)
+			ctx := 0
+			if pos != 0 {
+				s1 := padded + geoPtr.stride
+				s1p1 := s1 + 1
+				s2 := s1 + geoPtr.stride
+				p1 := padded + 1
+				p2 := padded + 2
+				_ = levelsScratch[s2]
+				_ = levelsScratch[p2]
+				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			}
 			level = s.Reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
-				brCtx := coeffBRContext2DFast(levelsScratch, posSlice, pos, geoPtr.stride)
+				s1 := padded + geoPtr.stride
+				s1p1 := s1 + 1
+				p1 := padded + 1
+				_ = levelsScratch[s1p1]
+				mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
+				brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
 				extra := s.readBaseRangeFromArr(brArr, brCtx)
 				level += extra
 			}
@@ -913,16 +929,16 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		// whenever pos<len(posSlice); the extra disjunct never fires but lets the
 		// prover drop the bounds check on the coeffs[pos] store below.
 		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
-			return TXBDecodeResult{}, fmt.Errorf("read stored coeff c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		nextC := int(coeffs[pos]) - 1
 		padded := int(posSlice[pos].padded)
 		if padded < 0 || padded >= len(levelsScratch) {
-			return TXBDecodeResult{}, fmt.Errorf("read stored coeff c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := int(levelsScratch[padded])
 		if level == 0 {
-			return TXBDecodeResult{}, fmt.Errorf("read nonzero coeff c=%d pos=%d: %w", c, pos, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		if pos > maxScanLine {
 			maxScanLine = pos
@@ -939,7 +955,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if level >= MaxBaseBRRange {
 			tail, err := s.readCoeffGolomb()
 			if err != nil {
-				return TXBDecodeResult{}, fmt.Errorf("read coeff golomb c=%d pos=%d level=%d: %w", c, pos, level, err)
+				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
 			level += tail
@@ -953,7 +969,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 		culLevel += level
 		if level > int(^uint16(0)>>1) {
-			return TXBDecodeResult{}, fmt.Errorf("coeff level overflow c=%d pos=%d level=%d: %w", c, pos, level, ErrInvalidDecodeState)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(level)
 		if negative {
