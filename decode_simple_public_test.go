@@ -503,6 +503,45 @@ func TestDecodeIVFSuperResProfileClipsMatchGolden(t *testing.T) {
 	}
 }
 
+func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
+	ivf, err := os.ReadFile(profileClipPath("profile1-444-8bit-cdef-restoration-160x128.ivf"))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+
+	dec, err := av1.NewDecoderFromIVF(ivf)
+	if err != nil {
+		t.Fatalf("NewDecoderFromIVF: %v", err)
+	}
+	defer dec.Close()
+
+	decodeAll := func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext: %v", err)
+			}
+			if !ok {
+				break
+			}
+			visible += len(frames)
+		}
+		if visible != 4 {
+			t.Fatalf("decoded %d visible frames, want 4", visible)
+		}
+	}
+
+	decodeAll()
+	allocs := testing.AllocsPerRun(20, decodeAll)
+	if allocs > 8 {
+		t.Fatalf("postfiltered DecodeNext allocs/run=%f want <= 8", allocs)
+	}
+}
+
 // TestSimpleDecoderMatchesLowLevelPath proves byte-for-byte that the high-level
 // Decoder produces exactly the same visible-frame bytes as the low-level
 // hand-bound stream-runner path for every vendored profile clip.
