@@ -196,6 +196,35 @@ var callerPostFilterClips = []publicClip{
 	},
 }
 
+var externalReferenceClips = []publicClip{
+	{
+		file: "profile1-444-10bit-superres-inter-static-160x128.ivf",
+		frameMD5Hex: []string{
+			"ab4284f9b59b7cfd81bdf5ab27d7e10b",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+		},
+	},
+	{
+		file: "profile1-444-10bit-superres-inter-simple-160x128.ivf",
+		frameMD5Hex: []string{
+			"0a0b14f62deee8bdcedbdd2c648c6396",
+			"e7d1a6243d38d554df4f63b2a9d1beaf",
+			"51bb916a676b953252f33e514dab46fd",
+			"15a0daafab712254269a4ce27800c1c9",
+			"8114f35db56233a52e75e367eb9f7a33",
+			"b5dfcdadffe2c9d246ad9930e39ab290",
+			"36278c9c6a7e15d325a45887e11ab60a",
+			"8e42428b236d37ca8d59c5c5e4ece89e",
+		},
+	},
+}
+
 // TestPublicPathProfileClips decodes each vendored profile clip through the
 // public stream runner and asserts every visible frame's MD5 matches the
 // libaom golden.
@@ -224,6 +253,28 @@ func TestPublicPathCallerPostFilterProfileClips(t *testing.T) {
 		t.Run(clip.file, func(t *testing.T) {
 			var postFilter av1.DecoderFrameWorkReusableCallerPostFilterRunner
 			got := decodeClipPublicDataWithRunner(t, readPublicClip(t, clip.file), &postFilter)
+			if len(got) != len(clip.frameMD5Hex) {
+				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+			}
+			for i, want := range clip.frameMD5Hex {
+				if g := hex.EncodeToString(got[i][:]); g != want {
+					t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, g, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPublicPathExternalReferenceSuperResInterProfileClips drives super-res
+// inter clips through the exported residual-stream runner with external
+// reference publication. Later frames reference the upscaled output surface
+// rather than the coded reconstruction surface. The selected clips avoid the
+// separate temporal-motion side-data publication path, which is covered by the
+// internal profile harness and remains a public-path follow-up.
+func TestPublicPathExternalReferenceSuperResInterProfileClips(t *testing.T) {
+	for _, clip := range externalReferenceClips {
+		t.Run(clip.file, func(t *testing.T) {
+			got := decodeClipPublicDataWithExternalReferences(t, readPublicClip(t, clip.file))
 			if len(got) != len(clip.frameMD5Hex) {
 				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
 			}
@@ -402,6 +453,317 @@ func decodeClipPublicDataWithRunner(t *testing.T, ivfData []byte, postFilter av1
 		}
 	}
 	return digests
+}
+
+func decodeClipPublicDataWithExternalReferences(t *testing.T, ivfData []byte) [][16]byte {
+	t.Helper()
+
+	it, err := av1.NewIVFIterator(ivfData)
+	if err != nil {
+		t.Fatalf("NewIVFIterator: %v", err)
+	}
+	var payloads [][]byte
+	for {
+		f, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("ivf next: %v", err)
+		}
+		if !ok {
+			break
+		}
+		payloads = append(payloads, append([]byte(nil), f.Payload...))
+	}
+	if len(payloads) == 0 {
+		t.Fatal("clip produced no frames")
+	}
+
+	const workers = 1
+	workerPool, err := av1.NewTileWorkerPool(workers)
+	if err != nil {
+		t.Fatalf("worker pool: %v", err)
+	}
+	defer workerPool.Close()
+
+	var probeStream av1.DecoderStream
+	probeEvents := make([]av1.DecoderEvent, 16*len(payloads)+64)
+	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
+	probeJobs := make([]av1.TileJob, av1.MaxTiles)
+	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
+	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(
+		probeStream, payloads, workers, probeEvents, probeSpans, probeJobs, probeBatches)
+	if err != nil {
+		t.Fatalf("stream plan: %v", err)
+	}
+	if !plan.HasEvent() {
+		t.Fatal("stream plan did not identify a bind event")
+	}
+
+	codedFormat, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
+		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
+	}
+	outputFormat, err := av1.FrameOutputFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	if err != nil {
+		t.Fatalf("FrameOutputFormatFromHeaders: %v", err)
+	}
+
+	const surfaceCount = av1.RefFrames + 1
+	codedPool := bindPublicFramePool(t, codedFormat, surfaceCount)
+	outputPool := bindPublicFramePool(t, outputFormat, surfaceCount)
+	provider := publicExternalSurfaceProvider{coded: &codedPool, output: &outputPool}
+
+	var (
+		stream        av1.DecoderStream
+		refs          av1.DecoderSurfaceReferences
+		state         av1.DecoderFrameWorkState
+		frameContexts av1.DecoderSharedFrameContextStore
+		stats         av1.DecoderFrameWorkTileResidualStats
+		sideData      av1.DecoderFrameWorkSideData
+		batch         av1.DecoderFrameWorkBatchResidualRunner
+	)
+	refSurface := make([]int, av1.InterRefsPerFrame)
+	refFrames := make([]*av1.Frame, av1.InterRefsPerFrame)
+	releases := make([]int, av1.RefFrames+1)
+	postFilter := &publicExternalPostFilterRunner{outputPool: &outputPool}
+
+	scratch := newPublicStreamScratch(plan.Size)
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream,
+		av1.DecoderFrameWorkResidualEventRuntime{
+			State:             &state,
+			Refs:              &refs,
+			FramePool:         &codedPool,
+			Align:             64,
+			ReferenceSurfaces: refSurface,
+			ReferenceFrames:   refFrames,
+			Releases:          releases,
+			WorkerPool:        workerPool,
+			SideData:          &sideData,
+			Stats:             &stats,
+			External: av1.DecoderFrameWorkExternalReferenceRuntime{
+				Provider:      provider,
+				GlobalSurface: func(local int) int { return local },
+				Releaser:      provider,
+				FrameContexts: &frameContexts,
+			},
+		}, scratch, &batch)
+	if err != nil {
+		t.Fatalf("bind runner: %v", err)
+	}
+
+	var digests [][16]byte
+	for i, payload := range payloads {
+		var result av1.DecoderFrameWorkResidualStreamResult
+		if err := runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter); err != nil {
+			t.Fatalf("frame %d run: %v", i, err)
+		}
+		for _, frame := range result.Run.Outputs {
+			if frame == nil {
+				continue
+			}
+			digests = append(digests, frameMD5(t, frame))
+		}
+	}
+	return digests
+}
+
+const publicExternalOutputSurfaceBase = 256
+
+type publicExternalSurfaceProvider struct {
+	coded  *av1.FramePool
+	output *av1.FramePool
+}
+
+func (p publicExternalSurfaceProvider) FrameSurface(id int) (*av1.Frame, error) {
+	pool, local, err := p.resolve(id)
+	if err != nil {
+		return nil, err
+	}
+	return pool.Frame(local)
+}
+
+func (p publicExternalSurfaceProvider) ReleaseFrameSurfaces(ids []int) error {
+	for i, id := range ids {
+		for j := range i {
+			if ids[j] == id {
+				return av1.ErrFrameInvalidSlot
+			}
+		}
+		pool, local, err := p.resolve(id)
+		if err != nil {
+			return err
+		}
+		if _, err := pool.Frame(local); err != nil {
+			return err
+		}
+	}
+	for _, id := range ids {
+		pool, local, err := p.resolve(id)
+		if err != nil {
+			return err
+		}
+		if err := pool.Release(local); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p publicExternalSurfaceProvider) resolve(id int) (*av1.FramePool, int, error) {
+	if id < 0 {
+		return nil, -1, av1.ErrDecoderInvalidSurfaceReference
+	}
+	if id >= publicExternalOutputSurfaceBase {
+		if p.output == nil {
+			return nil, -1, av1.ErrDecoderInvalidSurfaceReference
+		}
+		return p.output, id - publicExternalOutputSurfaceBase, nil
+	}
+	if p.coded == nil {
+		return nil, -1, av1.ErrDecoderInvalidSurfaceReference
+	}
+	return p.coded, id, nil
+}
+
+type publicExternalPostFilterRunner struct {
+	supported  av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+	outputPool *av1.FramePool
+	scratch    av1.DecoderFrameWorkPostFilterRequestScratch
+	size       av1.DecoderFrameWorkPostFilterRequestScratchSize
+	output     *av1.Frame
+	published  int
+}
+
+func (r *publicExternalPostFilterRunner) Apply(ctx av1.DecoderFrameWorkPostFilterContext) error {
+	if r == nil {
+		return av1.ErrDecoderInvalidFrameWorkState
+	}
+	r.output = nil
+	r.published = -1
+	if !ctx.ActivePostFilters().Has(av1.DecoderFrameWorkPostFilterSuperRes) {
+		if err := r.supported.Apply(ctx); err != nil {
+			return err
+		}
+		if out, ok := r.supported.PostFilterOutput(); ok {
+			r.output = out
+		}
+		return nil
+	}
+	if r.outputPool == nil {
+		return av1.ErrFrameInvalidPool
+	}
+	format, err := av1.FrameOutputFormatFromHeaders(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Output.Format.Align)
+	if err != nil {
+		return err
+	}
+	local, out, err := r.outputPool.AcquireFormat(format)
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = r.outputPool.Release(local)
+		}
+	}()
+	backing, err := publicFrameBacking(out)
+	if err != nil {
+		return err
+	}
+	side := av1.DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	first, err := ctx.CallerPostFilterScratchLen(av1.DecoderFrameWorkPostFilterRequest{
+		LoopFilter:  av1.DecoderFrameWorkLoopFilterPostFilterRequest{Map: side.LoopFilterMap},
+		CDEF:        av1.DecoderFrameWorkCDEFPostFilterRequest{IndexMap: side.CDEFIndexMap},
+		Restoration: av1.DecoderFrameWorkRestorationPostFilterRequest{Records: side.RestorationRecords},
+	})
+	if err != nil {
+		return err
+	}
+	probe := av1.DecoderFrameWorkPostFilterRequest{
+		LoopFilter:  av1.DecoderFrameWorkLoopFilterPostFilterRequest{Map: side.LoopFilterMap},
+		CDEF:        av1.DecoderFrameWorkCDEFPostFilterRequest{IndexMap: side.CDEFIndexMap},
+		Restoration: av1.DecoderFrameWorkRestorationPostFilterRequest{Records: side.RestorationRecords},
+		SuperRes: av1.DecoderFrameWorkSuperResPostFilterRequest{
+			OutputFrame: backing,
+			OutputView:  out,
+		},
+	}
+	full, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		return err
+	}
+	arena := av1.DecoderFrameWorkPostFilterRequestScratchLen(first).Max(
+		av1.DecoderFrameWorkPostFilterRequestScratchLen(full))
+	if publicPostFilterScratchTooSmall(r.scratch, arena) {
+		r.size = r.size.Max(arena)
+		r.scratch = publicPostFilterScratch(r.size)
+	}
+	buffers, err := av1.BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(full, side, r.scratch)
+	if err != nil {
+		return err
+	}
+	buffers.SuperResOutputFrame = backing
+	req, err := av1.BindDecoderFrameWorkPostFilterRequest(full, buffers)
+	if err != nil {
+		return err
+	}
+	req.SuperRes.OutputView = out
+	next, _, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		return err
+	}
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		return err
+	}
+	r.output = next.Output
+	r.published = publicExternalOutputSurfaceBase + local
+	published = true
+	return nil
+}
+
+func (r *publicExternalPostFilterRunner) PostFilterOutput() (*av1.Frame, bool) {
+	if r == nil || r.output == nil {
+		return nil, false
+	}
+	return r.output, true
+}
+
+func (r *publicExternalPostFilterRunner) PublishedFrameWorkGlobalSurface() (int, bool) {
+	if r == nil || r.published < 0 {
+		return -1, false
+	}
+	return r.published, true
+}
+
+func publicFrameBacking(f *av1.Frame) ([]byte, error) {
+	if f == nil {
+		return nil, av1.ErrFrameInvalidSlot
+	}
+	if f.Layout.Size < 0 || cap(f.Y.Pix) < f.Layout.Size {
+		return nil, av1.ErrFrameShortBuffer
+	}
+	return f.Y.Pix[:f.Layout.Size], nil
+}
+
+func publicPostFilterScratchTooSmall(s av1.DecoderFrameWorkPostFilterRequestScratch, size av1.DecoderFrameWorkPostFilterRequestScratchSize) bool {
+	return len(s.LoopFilterEdges) < size.LoopFilterEdges ||
+		len(s.CDEFDirectionGrid) < size.CDEFDirectionGrid ||
+		len(s.CDEFVarianceGrid) < size.CDEFVarianceGrid ||
+		len(s.ByteScratch) < size.ByteScratch ||
+		len(s.Uint16Scratch) < size.Uint16Scratch ||
+		len(s.Int16Scratch) < size.Int16Scratch ||
+		len(s.Int32Scratch) < size.Int32Scratch
+}
+
+func publicPostFilterScratch(size av1.DecoderFrameWorkPostFilterRequestScratchSize) av1.DecoderFrameWorkPostFilterRequestScratch {
+	return av1.DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:       make([]byte, size.ByteScratch),
+		Uint16Scratch:     make([]uint16, size.Uint16Scratch),
+		Int16Scratch:      make([]int16, size.Int16Scratch),
+		Int32Scratch:      make([]int32, size.Int32Scratch),
+	}
 }
 
 // frameMD5 reproduces the libaom test/md5_helper.h per-frame digest layout:

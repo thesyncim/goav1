@@ -28,6 +28,8 @@ type DecoderFrameWorkResidualEventRequest struct {
 
 	PostRunner DecoderFrameWorkPostFilterRunner
 	Stats      *DecoderFrameWorkTileResidualStats
+
+	External DecoderFrameWorkExternalReferenceRuntime
 }
 
 // DecoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
@@ -53,6 +55,8 @@ type DecoderFrameWorkResidualEventRunner struct {
 	SideData    *DecoderFrameWorkSideData
 	Stats       *DecoderFrameWorkTileResidualStats
 	Outputs     []*Frame
+
+	External DecoderFrameWorkExternalReferenceRuntime
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -111,6 +115,26 @@ type DecoderFrameWorkResidualEventRuntime struct {
 	SideData   *DecoderFrameWorkSideData
 	Stats      *DecoderFrameWorkTileResidualStats
 	Outputs    []*Frame
+
+	External DecoderFrameWorkExternalReferenceRuntime
+}
+
+// DecoderFrameWorkExternalReferenceRuntime configures the residual event
+// runner to resolve and release references through a caller-owned global
+// surface namespace. This is used by decode paths whose publishable reference
+// surface may differ from the coded reconstruction surface, such as super-res
+// publication into an upscaled output pool.
+type DecoderFrameWorkExternalReferenceRuntime struct {
+	Provider      DecoderFrameSurfaceProvider
+	GlobalSurface func(local int) int
+	Releaser      DecoderFrameSurfaceReleaser
+	FrameContexts *DecoderSharedFrameContextStore
+}
+
+// Enabled reports whether the runtime should use external reference
+// resolution.
+func (r DecoderFrameWorkExternalReferenceRuntime) Enabled() bool {
+	return r.Provider != nil
 }
 
 // DecoderFrameWorkResidualEventBindPlan reports the sequence/event context
@@ -252,6 +276,7 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 		SideData:          runtime.SideData,
 		Stats:             runtime.Stats,
 		Outputs:           runtime.Outputs,
+		External:          runtime.External,
 	}, side, nil
 }
 
@@ -278,6 +303,7 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 		SideData:          side,
 		Post:              post,
 		Stats:             r.Stats,
+		External:          r.External,
 	})
 }
 
@@ -304,6 +330,7 @@ func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence Se
 		SideData:          side,
 		PostRunner:        post,
 		Stats:             r.Stats,
+		External:          r.External,
 	})
 }
 
@@ -516,6 +543,10 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		*req.Stats = DecoderFrameWorkTileResidualStats{}
 	}
 
+	if req.External.Enabled() {
+		return runDecoderFrameWorkEventWithExternalResidualRunner(req, event)
+	}
+
 	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
@@ -602,6 +633,82 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent) (DecoderFrameWorkEventResult, error) {
+	postRunner := req.PostRunner
+	if req.Post != nil {
+		postRunner = decoderFrameWorkResidualPostFuncRunner{fn: req.Post}
+	}
+	var sideRunner DecoderFrameWorkSideDataRunner
+	if req.SideData != nil {
+		sideRunner = decoderFrameWorkResidualSideDataRunner{
+			SideData:    req.SideData,
+			BatchRunner: req.Runner,
+		}
+	}
+	result, err := req.State.RunEventWithContextAndExternalReferences(
+		req.Refs,
+		req.FramePool,
+		req.Sequence,
+		event,
+		req.Align,
+		req.ReferenceSurfaces,
+		req.ReferenceFrames,
+		req.Workers,
+		req.Spans,
+		req.Jobs,
+		req.Batches,
+		req.Releases,
+		req.WorkerPool,
+		req.External.Provider,
+		req.External.GlobalSurface,
+		req.External.Releaser,
+		req.External.FrameContexts,
+		sideRunner,
+		req.Runner,
+		postRunner,
+	)
+	stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
+	if req.Stats != nil {
+		*req.Stats = stats
+	}
+	if err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
+	if statsErr != nil {
+		return DecoderFrameWorkEventResult{}, statsErr
+	}
+	result.Output = decoderFrameWorkResidualPostFilterOutput(result.Output, result.Run, postRunner)
+	return result, nil
+}
+
+type decoderFrameWorkResidualPostFuncRunner struct {
+	fn DecoderFrameWorkPostFilterFunc
+}
+
+func (r decoderFrameWorkResidualPostFuncRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
+	if r.fn == nil {
+		return nil
+	}
+	return r.fn(ctx)
+}
+
+type decoderFrameWorkResidualSideDataRunner struct {
+	SideData    *DecoderFrameWorkSideData
+	BatchRunner *DecoderFrameWorkBatchResidualRunner
+}
+
+func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *DecoderFrameWorkState, _ DecoderFrameWorkBatch) error {
+	if r.SideData == nil {
+		return nil
+	}
+	if r.BatchRunner != nil {
+		if err := SetDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {
+			return err
+		}
+	}
+	return SetDecoderFrameWorkSideData(state, *r.SideData)
 }
 
 func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkTileResidualStats, error) {

@@ -149,6 +149,11 @@ type DecoderFrameWorkPostFilterFunc = internaldecoder.FrameWorkPostFilterFunc
 // full post-filter chain.
 type DecoderFrameWorkPostFilterRunner = internaldecoder.FrameWorkPostFilterRunner
 
+// DecoderFrameWorkPostFilterGlobalSurfacePublisher is an optional extension
+// for post-filter runners that publish a reference surface outside the coded
+// frame pool, such as a super-res upscaled output surface.
+type DecoderFrameWorkPostFilterGlobalSurfacePublisher = internaldecoder.FrameWorkPostFilterGlobalSurfacePublisher
+
 // DecoderFrameWorkPostFilterStage identifies one stage of the post-filter
 // pipeline (loop filter, CDEF, super-res, loop restoration, or film
 // grain). See the DecoderFrameWorkPostFilter* constants.
@@ -338,6 +343,10 @@ type DecoderFrameWorkTileResidualRequest = internalthreading.FrameWorkTileResidu
 // See also: DecoderFrameWorkTileResidualRequest.
 type DecoderFrameWorkTileResidualStats = internalthreading.FrameWorkTileResidualStats
 
+// DecoderFrameWorkSideDataRunner binds caller-owned frame-level side data after
+// event planning and before tile work executes.
+type DecoderFrameWorkSideDataRunner = internaldecoder.FrameWorkSideDataRunner
+
 // DecoderFrameWorkBlockCoeffReconstruction is the per-block reconstruction
 // request that combines a decoded coefficient block with the prediction
 // scratch needed to assemble the output sample plane.
@@ -392,6 +401,24 @@ type DecoderFrameWorkState = internaldecoder.FrameWorkState
 // currently bound to each AV1 reference slot. Updates happen at frame
 // begin/finish and during show_existing_frame events.
 type DecoderSurfaceReferences = internaldecoder.SurfaceReferences
+
+// DecoderFrameSurfaceProvider resolves caller-owned global surface IDs to
+// frame pointers for external-reference decode paths.
+type DecoderFrameSurfaceProvider = internaldecoder.FrameSurfaceProvider
+
+// DecoderFrameSurfaceProviderFunc adapts a function to DecoderFrameSurfaceProvider.
+type DecoderFrameSurfaceProviderFunc = internaldecoder.FrameSurfaceProviderFunc
+
+// DecoderFrameSurfaceReleaser releases caller-owned global surface IDs after
+// they are no longer referenced by the stream.
+type DecoderFrameSurfaceReleaser = internaldecoder.FrameSurfaceReleaser
+
+// DecoderFrameSurfaceReleaserFunc adapts a function to DecoderFrameSurfaceReleaser.
+type DecoderFrameSurfaceReleaserFunc = internaldecoder.FrameSurfaceReleaserFunc
+
+// DecoderSharedFrameContextStore stores retained entropy contexts by global
+// surface ID for external-reference decode paths.
+type DecoderSharedFrameContextStore = internaldecoder.SharedFrameContextStore
 
 // DecoderFrameWorkRestorationFrameBuffers groups the caller-owned
 // loop-restoration buffers (per-plane unit records and stripe
