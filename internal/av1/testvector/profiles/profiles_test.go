@@ -26,11 +26,12 @@
 // profile-conformance bitstreams; the inter clips are 64x64 8-frame bitstreams
 // (1 keyframe + 7 inter, kf-max-dist=30) encoded from a moving synthetic source
 // so that inter prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma
-// subsampling (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both
-// 8-bit and 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require
-// luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
-// 8/10-bit 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run
-// the caller-owned full postfilter output path, including inter streams that
+// subsampling (4:4:4 and 4:2:2) are exercised, with odd-edge profile-1 inter
+// streams at both 8-bit and 10-bit. Profile 1 is covered at both 8-bit and
+// 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require luma and
+// chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
+// 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run the
+// caller-owned full postfilter output path, including inter streams that
 // reference super-res output. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
@@ -229,6 +230,14 @@
 //	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
 //	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=30 \
 //	  --lag-in-frames=0 -o profile1-444-8bit-inter-64x64.ivf src444.yuv
+//	# 4:4:4 8-bit odd edge-size inter:
+//	ffmpeg -f lavfi -i nullsrc=size=130x130:rate=1:duration=5 -frames:v 5 \
+//	  -vf "geq=lum='48+mod((X+N*7)*3+(Y+N*5)*2+floor((X+N*4)/13)*17,176)':cb='32+mod((X+N*9)*5+Y*3,192)':cr='40+mod(X*2+(Y+N*8)*7,184)',format=yuv444p" \
+//	  -f rawvideo src444_8_edgemv.yuv
+//	aomenc --i444 --width=130 --height=130 --limit=5 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=999 \
+//	  --lag-in-frames=0 --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-8bit-edgemv-130x130.ivf src444_8_edgemv.yuv
 //	# 4:4:4 10-bit inter:
 //	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
@@ -408,6 +417,24 @@ var profileClips = []profileClip{
 		wantBitDepth:     8,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit odd 130x130 INTER, guarding byte-path edge
+		// motion prediction and chroma padding on non-4:2:0 streams.
+		name: "profile1-444-8bit-edgemv-130x130",
+		file: "profile1-444-8bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"45b7de404cb0b5d469958768b8f5d479",
+			"945ed5c3b0a1191eed1499b6f3425025",
+			"35f885d3ec1b37fb61f896b78f4a7ec8",
+			"e852ba422c8e6c6e0d4e9077c1751f8d",
+			"956fbda68f31ead438b5835aa5f87980",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     8,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+		wantInterFrames:  1,
 	},
 	{
 		// Profile 1: 4:4:4 10-bit INTER. 8 frames (1 keyframe + 7 inter),
