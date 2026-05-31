@@ -26,7 +26,8 @@
 // bitstreams; the inter clips are 64x64 8-frame bitstreams (1 keyframe + 7
 // inter, kf-max-dist=30) encoded from a moving synthetic source so that inter
 // prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma subsampling
-// (4:4:4 and 4:2:2) are exercised. All are committed under
+// (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both 8-bit and
+// 10-bit 4:4:4. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -38,6 +39,11 @@
 //	aomenc --i444 --width=64 --height=64 --limit=3 --ivf --profile=1 \
 //	  --cpu-used=1 --end-usage=q --cq-level=32 --kf-max-dist=1 \
 //	  --lag-in-frames=0 -o profile1-444-8bit-64x64.ivf src444.yuv
+//	# 4:4:4 10-bit:
+//	aomenc --i444 --width=64 --height=64 --limit=3 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=1 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
+//	  -o profile1-444-10bit-64x64.ivf src444_10.yuv
 //	# 4:2:2 8-bit:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-64x64.ivf src422.yuv
 //	# 4:2:0 12-bit:
@@ -49,6 +55,11 @@
 //	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
 //	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=30 \
 //	  --lag-in-frames=0 -o profile1-444-8bit-inter-64x64.ivf src444.yuv
+//	# 4:4:4 10-bit inter:
+//	aomenc --i444 --width=64 --height=64 --limit=8 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=30 --lag-in-frames=0 \
+//	  -o profile1-444-10bit-inter-64x64.ivf src444_10.yuv
 //	# 4:2:2 8-bit inter:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
 //
@@ -83,6 +94,7 @@ type profileClip struct {
 
 	frameMD5Hex []string
 
+	wantSeqProfile   uint8
 	wantBitDepth     uint8
 	wantSubsamplingX bool
 	wantSubsamplingY bool
@@ -105,7 +117,22 @@ var profileClips = []profileClip{
 			"397ff01920ff514bc611ab49d76371c1",
 			"f8fbfb25a42da47a7adb71510de9b178",
 		},
+		wantSeqProfile:   1,
 		wantBitDepth:     8,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit. SubsamplingX=false SubsamplingY=false.
+		name: "profile1-444-10bit-64x64",
+		file: "profile1-444-10bit-64x64.ivf",
+		frameMD5Hex: []string{
+			"96322d4430f0d27243c17e2128cfd625",
+			"571c0415f63a1f76e3796360aee3828a",
+			"2f6e92f93a95cb4725b9c2f9484ed42e",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     10,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 	},
@@ -118,6 +145,7 @@ var profileClips = []profileClip{
 			"eb6cf8d1d4d644686cf03c513acd5978",
 			"84983e98afeef6692448e98fc5980431",
 		},
+		wantSeqProfile:   2,
 		wantBitDepth:     8,
 		wantSubsamplingX: true,
 		wantSubsamplingY: false,
@@ -138,7 +166,28 @@ var profileClips = []profileClip{
 			"cc93559f8904df46c9a6f3223a3c1f30",
 			"fafc19265b25a4380c50ae5a40e4eb27",
 		},
+		wantSeqProfile:   1,
 		wantBitDepth:     8,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit INTER. 8 frames (1 keyframe + 7 inter),
+		// guarding high-bit-depth non-4:2:0 inter reconstruction.
+		name: "profile1-444-10bit-inter-64x64",
+		file: "profile1-444-10bit-inter-64x64.ivf",
+		frameMD5Hex: []string{
+			"3250b3e6c554a9725e372aba0e6f1836",
+			"bbcef705eff277b6134c82d154dfd0e0",
+			"5588133b22b316a0816a88bda01d711c",
+			"fe22846dd23a8ea296132d0b299d772b",
+			"d1b019af0ad85b194d474abe0698586b",
+			"9d6cf7fd0eda963a93d553b7716e76b4",
+			"5fb4e9e5ccee31c503b160de7a173c03",
+			"ff7ee0fb4599801fc3015b9dd744ab1f",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     10,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 	},
@@ -157,6 +206,7 @@ var profileClips = []profileClip{
 			"61013488539b1b1a169f1e372d96d180",
 			"0eca225d9dd9f6f768ab49a216511304",
 		},
+		wantSeqProfile:   2,
 		wantBitDepth:     8,
 		wantSubsamplingX: true,
 		wantSubsamplingY: false,
@@ -170,6 +220,7 @@ var profileClips = []profileClip{
 			"447103c7d7358e4cbb6f5b98ce4e1be1",
 			"dcd86cbbf80f81d9699eaf6c6e879e72",
 		},
+		wantSeqProfile:   2,
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
@@ -234,6 +285,7 @@ var profileClips = []profileClip{
 			"24e96db2d3644a748e587dd011863a4a",
 			"325a954def1c43d852c980ddc66ba652",
 		},
+		wantSeqProfile:   2,
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
@@ -348,6 +400,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				continue
 			}
 			if !checkedColorConfig {
+				if event.SequenceHeader.SeqProfile != clip.wantSeqProfile {
+					t.Fatalf("SeqProfile=%d want %d", event.SequenceHeader.SeqProfile, clip.wantSeqProfile)
+				}
 				cc := event.SequenceHeader.ColorConfig
 				if cc.BitDepth != clip.wantBitDepth {
 					t.Fatalf("BitDepth=%d want %d", cc.BitDepth, clip.wantBitDepth)

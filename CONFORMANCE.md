@@ -37,7 +37,7 @@ ship under `internal/av1/testdata/libaom/`.
 | #  | Area                             | Status  | Implementing path(s)             | Notes                                          |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  1 | Profile 0 (Main)                 | Yes     | internal/av1/parser/sequence.go  | seq_profile=0 parsed; default decode path.     |
-|    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8-bit all-intra and inter clips pass     |
+|    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra and inter clips pass  |
 |    |                                  |         | internal/av1/testvector/profiles | byte-exact internal + exported decode gates.   |
 |    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8-bit and 4:2:0 12-bit profile clips     |
 |    |                                  |         | internal/av1/testvector/profiles | pass; broader 10/12-bit vector sweep remains   |
@@ -56,8 +56,8 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         | internal/av1/frame/              | conformance vector.                            |
 |    | Subsampling 4:2:2                | Yes     | internal/av1/parser/sequence.go  | 4:2:2 8-bit all-intra and inter profile clips  |
 |    |                                  |         | internal/av1/testvector/profiles | pass byte-exactly.                             |
-|    | Subsampling 4:4:4                | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8-bit all-intra and inter profile clips  |
-|    |                                  |         | internal/av1/testvector/profiles | pass byte-exactly.                             |
+|    | Subsampling 4:4:4                | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra and inter profile    |
+|    |                                  |         | internal/av1/testvector/profiles | clips pass byte-exactly.                       |
 |    | Monochrome (4:0:0)               | Yes     | internal/av1/frame/              | Surfaces drop the UV planes; 8-bit and 10-bit  |
 |    |                                  |         | internal/av1/parser/sequence.go  | libaom monochrome vectors pass strict MD5.     |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
@@ -314,8 +314,8 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 10/10 vendored profile clips pass, covering
-  profile 1 4:4:4 8-bit all-intra and inter, profile 2 4:2:2 8-bit
+- `make dryrun-profiles`: 12/12 vendored profile clips pass, covering
+  profile 1 4:4:4 8/10-bit all-intra and inter, profile 2 4:2:2 8-bit
   all-intra and inter, profile 2 4:2:0 12-bit, superres, superres plus loop
   restoration, edge-MV, and a non-SVC multi-tile clip.
 
@@ -412,8 +412,9 @@ probe and keep committed changes focused on the resulting fix or guard.
 The remaining work is no longer driven by known failures in the current
 manifest. The next production-readiness items are:
 
-1. **Broader profile 1/2 corpus.** Keep adding 4:4:4, 4:2:2, and 12-bit
-   streams as upstream or locally generated goldens become available.
+1. **Broader profile 1/2 corpus.** Keep adding profile-2 10/12-bit 4:2:2 and
+   12-bit 4:4:4 streams as upstream or locally generated goldens become
+   available.
 2. **Superres reference publication.** The caller-owned full postfilter path
    handles superres display output; the frame-pool publication path still uses
    coded-size surfaces, so inter streams that reference superres output need a
