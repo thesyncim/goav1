@@ -340,6 +340,36 @@ func (s *FrameWorkState) resetReferenceState() {
 	}
 }
 
+// PreallocTemporalMotionScratch primes the single-pool temporal-MV backing
+// buffers so the first inter frame can bind and publish MV side data without
+// growing slices on the decode path.
+func (s *FrameWorkState) PreallocTemporalMotionScratch(size parser.FrameSize) error {
+	if s == nil {
+		return ErrInvalidFrameWorkState
+	}
+	if size.CodedWidth == 0 || size.Height == 0 {
+		return nil
+	}
+	miCols := mvFrameMIExtent(size.CodedWidth)
+	miRows := mvFrameMIExtent(size.Height)
+	need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		return nil
+	}
+	if cap(s.currentMVFrameBack) < need {
+		s.currentMVFrameBack = make([]tile.ReferenceMVEntry, need)
+	}
+	if cap(s.temporalMVsBack) < need {
+		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
+	}
+	for i := range s.mvFrameStoreBacking {
+		if cap(s.mvFrameStoreBacking[i]) < need {
+			s.mvFrameStoreBacking[i] = make([]tile.ReferenceMVEntry, need)
+		}
+	}
+	return nil
+}
+
 // SetCDEFIndexMap attaches frame-level CDEF side data to active frame work.
 // The caller owns the backing slices; the state passes this view into tile
 // batches and drops it when the frame finishes or aborts.

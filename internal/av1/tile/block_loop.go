@@ -610,15 +610,21 @@ func ensureIntrabcDiagonalCarriers(carrier *BlockLoopContextCarrier) {
 	if carrier == nil {
 		return
 	}
-	n := len(carrier.Above)
-	if n == 0 {
+	PreallocBlockLoopContextCarrierScratch(carrier, len(carrier.Above))
+}
+
+// PreallocBlockLoopContextCarrierScratch primes the diagonal edge carriers used
+// while walking multiple root blocks so callers can keep block-loop execution
+// allocation-free.
+func PreallocBlockLoopContextCarrierScratch(carrier *BlockLoopContextCarrier, rootColumns int) {
+	if carrier == nil || rootColumns <= 0 {
 		return
 	}
-	if len(carrier.Diagonal) < n {
-		carrier.Diagonal = make([]diagonalCornerSlot, n)
+	if len(carrier.Diagonal) < rootColumns {
+		carrier.Diagonal = make([]diagonalCornerSlot, rootColumns)
 	}
-	if len(carrier.PendingDiagonal) < n {
-		carrier.PendingDiagonal = make([]diagonalCornerSlot, n)
+	if len(carrier.PendingDiagonal) < rootColumns {
+		carrier.PendingDiagonal = make([]diagonalCornerSlot, rootColumns)
 	}
 }
 

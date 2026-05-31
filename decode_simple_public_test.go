@@ -820,6 +820,31 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 	}
 }
 
+func TestSimpleDecoderSuperResColdAndWarmAllocBudget(t *testing.T) {
+	tests := []struct {
+		name        string
+		file        string
+		wantVisible int
+	}{
+		{
+			name:        "superres inter external references",
+			file:        "profile1-444-8bit-superres-inter-160x128.ivf",
+			wantVisible: 8,
+		},
+		{
+			name:        "superres restoration high bit depth",
+			file:        "profile1-444-10bit-superres-restoration-160x128.ivf",
+			wantVisible: 4,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assertSimpleDecoderColdAndWarmAllocBudget(t, tc.file, tc.wantVisible)
+		})
+	}
+}
+
 func assertSimpleDecoderAllocBudget(t *testing.T, file string, wantVisible int, maxAllocs float64) {
 	t.Helper()
 
@@ -858,6 +883,71 @@ func assertSimpleDecoderAllocBudget(t *testing.T, file string, wantVisible int, 
 	allocs := testing.AllocsPerRun(20, decodeAll)
 	if allocs > maxAllocs {
 		t.Fatalf("%s DecodeNext allocs/run=%f want <= %f", file, allocs, maxAllocs)
+	}
+}
+
+func assertSimpleDecoderColdAndWarmAllocBudget(t *testing.T, file string, wantVisible int) {
+	t.Helper()
+
+	ivf, err := os.ReadFile(profileClipPath(file))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+
+	const runs = 20
+	decs := make([]*av1.Decoder, runs+1)
+	for i := range decs {
+		dec, err := av1.NewDecoderFromIVF(ivf)
+		if err != nil {
+			t.Fatalf("NewDecoderFromIVF[%d]: %v", i, err)
+		}
+		decs[i] = dec
+		defer dec.Close()
+	}
+	next := 0
+	coldAllocs := testing.AllocsPerRun(runs, func() {
+		if next >= len(decs) {
+			t.Fatalf("cold decoder index %d out of %d", next, len(decs))
+		}
+		assertSimpleDecoderDecodeAllVisible(t, decs[next], wantVisible)
+		next++
+	})
+	if coldAllocs != 0 {
+		t.Fatalf("%s cold DecodeNext allocs/run=%f want 0", file, coldAllocs)
+	}
+
+	dec, err := av1.NewDecoderFromIVF(ivf)
+	if err != nil {
+		t.Fatalf("NewDecoderFromIVF warm: %v", err)
+	}
+	defer dec.Close()
+	assertSimpleDecoderDecodeAllVisible(t, dec, wantVisible)
+	warmAllocs := testing.AllocsPerRun(runs, func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		assertSimpleDecoderDecodeAllVisible(t, dec, wantVisible)
+	})
+	if warmAllocs != 0 {
+		t.Fatalf("%s warm DecodeNext allocs/run=%f want 0", file, warmAllocs)
+	}
+}
+
+func assertSimpleDecoderDecodeAllVisible(t *testing.T, dec *av1.Decoder, wantVisible int) {
+	t.Helper()
+	visible := 0
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		visible += len(frames)
+	}
+	if visible != wantVisible {
+		t.Fatalf("decoded %d visible frames, want %d", visible, wantVisible)
 	}
 }
 

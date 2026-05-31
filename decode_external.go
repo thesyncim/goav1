@@ -42,6 +42,189 @@ func decoderExternalOutputFormat(payloads [][]byte, align int) (bool, FrameForma
 	return have, format, nil
 }
 
+func decoderPostFilterScratchArenaUpperBound(payloads [][]byte, align int, events []DecoderEvent) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+	var stream DecoderStream
+	var arena DecoderFrameWorkPostFilterRequestScratchSize
+	for _, payload := range payloads {
+		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
+		if err != nil {
+			return DecoderFrameWorkPostFilterRequestScratchSize{}, err
+		}
+		if len(events) < eventCount {
+			return DecoderFrameWorkPostFilterRequestScratchSize{}, ErrDecoderEventBufferTooSmall
+		}
+		sequence, _ := stream.SequenceHeader()
+		count, err := stream.PushLowOverhead(payload, events[:eventCount])
+		if err != nil {
+			return DecoderFrameWorkPostFilterRequestScratchSize{}, err
+		}
+		for i := range count {
+			event := events[i]
+			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
+			if !decoderFrameWorkResidualEventBindCandidate(event) {
+				continue
+			}
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, event, align)
+			if err != nil {
+				return DecoderFrameWorkPostFilterRequestScratchSize{}, err
+			}
+			arena = arena.Max(decoderExternalPostFilterScratchLen(size))
+		}
+	}
+	return arena, nil
+}
+
+func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events []DecoderEvent) (FrameSize, error) {
+	var stream DecoderStream
+	var maxSize FrameSize
+	for _, payload := range payloads {
+		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
+		if err != nil {
+			return FrameSize{}, err
+		}
+		if len(events) < eventCount {
+			return FrameSize{}, ErrDecoderEventBufferTooSmall
+		}
+		count, err := stream.PushLowOverhead(payload, events[:eventCount])
+		if err != nil {
+			return FrameSize{}, err
+		}
+		for i := range count {
+			event := events[i]
+			if !decoderFrameWorkResidualEventBindCandidate(event) ||
+				event.FrameHeader.ShowExistingFrame {
+				continue
+			}
+			if event.FrameSize.CodedWidth > maxSize.CodedWidth {
+				maxSize.CodedWidth = event.FrameSize.CodedWidth
+			}
+			if event.FrameSize.Height > maxSize.Height {
+				maxSize.Height = event.FrameSize.Height
+			}
+		}
+	}
+	return maxSize, nil
+}
+
+func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event DecoderEvent, align int) (DecoderFrameWorkPostFilterScratchSize, error) {
+	var output Frame
+	ctx, err := DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &output)
+	if err != nil {
+		return DecoderFrameWorkPostFilterScratchSize{}, err
+	}
+	remaining := ctx.RemainingPostFilters()
+	var size DecoderFrameWorkPostFilterScratchSize
+	if remaining.Has(DecoderFrameWorkPostFilterLoopFilter) {
+		edges, err := decoderLoopFilterEdgeScratchUpperBound(sequence, event.FrameSize)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.LoopFilter.Edges = edges
+	}
+	if remaining.Has(DecoderFrameWorkPostFilterCDEF) {
+		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.CDEF = cdefSize
+	}
+
+	tailCtx := ctx.WithCompletedPostFilters(DecoderFrameWorkPostFilterLoopFilter | DecoderFrameWorkPostFilterCDEF)
+	if tailCtx.RemainingPostFilters().Has(DecoderFrameWorkPostFilterSuperRes) {
+		superPlan, err := tailCtx.SuperResPostFilterPlan()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		superSize, err := tailCtx.SuperResPostFilterScratchLen()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.SuperRes = superSize
+		outputLayout, err := FrameRequiredSize(superPlan.OutputFormat)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		superOutput := decoderFrameWorkPostFilterScratchFrame(superPlan.OutputFormat, outputLayout)
+		tailCtx.Output = &superOutput
+		tailCtx = tailCtx.WithCompletedPostFilters(DecoderFrameWorkPostFilterSuperRes)
+	}
+	if tailCtx.RemainingPostFilters().Has(DecoderFrameWorkPostFilterLoopRestoration) {
+		restorationSize, err := decoderLoopRestorationScratchUpperBound(tailCtx)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.Restoration = restorationSize
+	}
+	if tailCtx.RemainingPostFilters().Has(DecoderFrameWorkPostFilterFilmGrain) {
+		filmGrainSize, err := tailCtx.FilmGrainPostFilterScratchLen()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.FilmGrain = filmGrainSize
+	}
+	return size, nil
+}
+
+func decoderLoopFilterEdgeScratchUpperBound(sequence SequenceHeader, size FrameSize) (int, error) {
+	cols, rows, _, err := DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		return 0, err
+	}
+	maxInt := int(^uint(0) >> 1)
+	if cols > maxInt/rows || cols*rows > maxInt/8 {
+		return 0, ErrFrameInvalidFormat
+	}
+	return cols * rows * 8, nil
+}
+
+func decoderLoopRestorationScratchUpperBound(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkRestorationPostFilterScratchSize, error) {
+	plan, err := DecoderFrameWorkRestorationFramePlan(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Event.Restoration)
+	if err != nil {
+		return DecoderFrameWorkRestorationPostFilterScratchSize{}, err
+	}
+	if !plan.Active {
+		return DecoderFrameWorkRestorationPostFilterScratchSize{}, nil
+	}
+	var out DecoderFrameWorkRestorationPostFilterScratchSize
+	for _, typ := range [...]RestorationType{RestorationWiener, RestorationSGRProj} {
+		records, err := decoderRestorationWorstCaseRecords(plan, typ)
+		if err != nil {
+			return DecoderFrameWorkRestorationPostFilterScratchSize{}, err
+		}
+		next, err := ctx.LoopRestorationPostFilterScratchLen(records, false)
+		if err != nil {
+			return DecoderFrameWorkRestorationPostFilterScratchSize{}, err
+		}
+		out = out.Max(next)
+	}
+	return out, nil
+}
+
+func decoderRestorationWorstCaseRecords(plan TileRestorationFramePlan, typ RestorationType) ([3][]TileRestorationUnitRecord, error) {
+	backing := make([]TileRestorationUnitRecord, plan.UnitRecordLen())
+	records, err := BindTileRestorationFrameRecordBuffers(plan, backing)
+	if err != nil {
+		return [3][]TileRestorationUnitRecord{}, err
+	}
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		grid := plan.Grids[plane]
+		if grid.Type == RestorationNone {
+			continue
+		}
+		if err := ResetTileRestorationPlaneRecords(grid, records[plane]); err != nil {
+			return [3][]TileRestorationUnitRecord{}, err
+		}
+		unitType := grid.Type
+		if grid.Type == RestorationSwitchable {
+			unitType = typ
+		}
+		for i := range records[plane] {
+			records[plane][i].Unit.Type = unitType
+		}
+	}
+	return records, nil
+}
+
 type decoderExternalSurfaceProvider struct {
 	coded  *FramePool
 	output *FramePool
@@ -165,13 +348,13 @@ func (r *decoderExternalPostFilterRunner) Apply(ctx DecoderFrameWorkPostFilterCo
 	if err != nil {
 		return err
 	}
-	arena := DecoderFrameWorkPostFilterRequestScratchLen(first).Max(
-		DecoderFrameWorkPostFilterRequestScratchLen(full))
+	arena := decoderExternalPostFilterScratchLen(first).Max(
+		decoderExternalPostFilterScratchLen(full))
 	if decoderPostFilterScratchTooSmall(r.scratch, arena) {
-		r.size = r.size.Max(arena)
-		r.scratch = decoderPostFilterScratch(r.size)
+		return ErrFrameShortBuffer
 	}
-	buffers, err := BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(full, side, r.scratch)
+	bindSize := decoderExternalPostFilterBindScratchSize(full)
+	buffers, err := BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(bindSize, side, r.scratch)
 	if err != nil {
 		return err
 	}
@@ -206,6 +389,15 @@ func (r *decoderExternalPostFilterRunner) PublishedFrameWorkGlobalSurface() (int
 		return -1, false
 	}
 	return r.published, true
+}
+
+func decoderExternalPostFilterScratchLen(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterRequestScratchSize {
+	return DecoderFrameWorkPostFilterRequestScratchLen(decoderExternalPostFilterBindScratchSize(size))
+}
+
+func decoderExternalPostFilterBindScratchSize(size DecoderFrameWorkPostFilterScratchSize) DecoderFrameWorkPostFilterScratchSize {
+	size.SuperRes.OutputFrame = 0
+	return size
 }
 
 func decoderFrameBacking(f *Frame) ([]byte, error) {

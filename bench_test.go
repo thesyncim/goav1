@@ -65,10 +65,12 @@ func BenchmarkDecodeFullVector(b *testing.B) {
 		}
 		sum += txbs
 	}
+	b.StopTimer()
+	elapsed := b.Elapsed().Seconds()
 	decodeBenchmarkSink = sum
 
 	b.ReportMetric(float64(len(frames)), "frames/op")
-	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
+	if elapsed > 0 {
 		b.ReportMetric(float64(len(frames)*b.N)/elapsed, "frames/s")
 	}
 }
@@ -157,10 +159,12 @@ func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount i
 	for i := 0; i < b.N; i++ {
 		visible += run()
 	}
+	b.StopTimer()
+	elapsed := b.Elapsed().Seconds()
 	decodeBenchmarkSink = visible
 
 	b.ReportMetric(float64(frameCount), "frames/op")
-	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
+	if elapsed > 0 {
 		b.ReportMetric(float64(frameCount*b.N)/elapsed, "frames/s")
 	}
 }

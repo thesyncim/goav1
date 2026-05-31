@@ -286,6 +286,15 @@ type FrameWorkTileResidualScratch struct {
 	wavefront *frameWorkReconWavefront
 }
 
+// PreallocCallbackScratch primes reusable method-value callbacks used by the
+// block-loop adapter so the first restoration tile does not allocate them.
+func (s *FrameWorkTileResidualScratch) PreallocCallbackScratch() {
+	if s == nil || s.beforeSuperblock != nil {
+		return
+	}
+	s.beforeSuperblock = s.controller.BeforeSuperblock
+}
+
 // frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and
 // wavefront scheduling state. rowStart partitions the flat reconEvents list
 // into per-SB-row spans ([rowStart[r], rowStart[r+1])); done[r] counts the SBs

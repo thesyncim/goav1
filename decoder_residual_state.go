@@ -31,6 +31,8 @@ package goav1
 //     ResetStats, TotalStats helpers: the bounded per-batch executor that
 //     ties the residual pipeline to the worker pool.
 
+import internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
 // DecoderFrameWorkResidualScratchLen reports the int32 and int16 residual
 // scratch lengths required to reconstruct one block at (size, typ) for the
 // given quantizer context.
@@ -463,14 +465,17 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 	}
 	predictionScratch := scratch.PredictionScratch[:size.Workers]
 	interScratch := scratch.InterPredictionScratch[:size.Workers]
+	tileScratch := scratch.TileScratch[:size.Workers]
 	for i := range predictionScratch {
 		predictionScratch[i].Inter = &interScratch[i]
+		tileScratch[i].PreallocCallbackScratch()
+		internaltile.PreallocBlockLoopContextCarrierScratch(&tileScratch[i].LoopContext, size.Batch.LoopContextAbove)
 	}
 	return DecoderFrameWorkBatchResidualRunner{
 		UseDefaultPrediction:   true,
 		States:                 scratch.States[:size.Workers],
 		Storages:               scratch.Storages[:size.Workers],
-		TileScratch:            scratch.TileScratch[:size.Workers],
+		TileScratch:            tileScratch,
 		RestorationRequests:    restorationRequests,
 		PredictionScratch:      predictionScratch,
 		InterPredictionScratch: interScratch,

@@ -179,6 +179,29 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		d.external.outputPool = &d.outputPool
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size)
+	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBound(payloads, d.scratch.Events)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
+	}
+	if err := d.state.PreallocTemporalMotionScratch(motionSize); err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: temporal motion scratch: %w", err)
+	}
+	postArena, err := decoderPostFilterScratchArenaUpperBound(payloads, 64, d.scratch.Events)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
+	}
+	if d.useExternal {
+		d.external.size = postArena
+		d.external.scratch = decoderPostFilterScratch(postArena)
+		d.external.supported.size = postArena
+		d.external.supported.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(postArena)
+	} else {
+		d.postFilter.size = postArena
+		d.postFilter.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(postArena)
+	}
 
 	runtime := DecoderFrameWorkResidualEventRuntime{
 		State:             &d.state,

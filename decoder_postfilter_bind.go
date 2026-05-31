@@ -267,11 +267,18 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	if r == nil {
 		return ErrDecoderInvalidFrameWorkState
 	}
-	r.output = nil
 	size, err := r.ScratchLen(ctx)
 	if err != nil {
 		return err
 	}
+	return r.applyWithScratchSize(ctx, size)
+}
+
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(ctx DecoderFrameWorkPostFilterContext, size DecoderFrameWorkPostFilterScratchSize) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	r.output = nil
 	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
 	side.RestorationOptimized = r.RestorationOptimized
 	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
@@ -362,7 +369,7 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) Apply(ctx DecoderFra
 		r.size = r.size.Max(arena)
 		r.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(r.size)
 	}
-	return r.runner.Apply(ctx)
+	return r.runner.applyWithScratchSize(ctx, exact)
 }
 
 // PostFilterOutput returns the final publishable output after Apply.
