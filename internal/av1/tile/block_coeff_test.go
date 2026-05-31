@@ -124,6 +124,52 @@ func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T
 	}
 }
 
+func TestDecodeBlockCoefficientsSkipAllZeroClearFastPath(t *testing.T) {
+	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
+	payload := mustTXBSkipPayload(t)
+	var state DecodeState
+	if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var modeCtx BlockModeContext
+	var coeffCtx CoeffEntropyContext
+	var scratch BlockCoeffScratch
+	var visits []BlockCoeffBlock
+	result, err := state.DecodeBlockCoefficients(BlockCoeffCDFs{
+		Transform: &transformCDFs,
+		Coeff:     &coeffCDFs,
+	}, &modeCtx, &coeffCtx, &scratch, BlockCoeffRequest{
+		Transform: TransformTreeRequest{
+			Size:          BlockSize4x4,
+			VisibleW4:     1,
+			VisibleH4:     1,
+			Color:         parser.ColorConfig{MonoChrome: true},
+			TransformMode: parser.TransformModeLargest,
+		},
+		LumaType:              transform.TypeDCTDCT,
+		SkipAllZeroCoeffClear: true,
+	}, func(block BlockCoeffBlock) error {
+		visits = append(visits, block)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := result.TotalStats()
+	if total.TXBs != 1 || total.AllZero != 1 || total.NonZero != 0 || total.EOBTotal != 0 {
+		t.Fatalf("stats=%+v want one all-zero txb", total)
+	}
+	if len(visits) != 1 {
+		t.Fatalf("visits=%d want 1", len(visits))
+	}
+	if !visits[0].Result.AllZero || visits[0].Result.EOB != 0 || len(visits[0].Coeffs) != 0 || len(visits[0].Scan) != 0 {
+		t.Fatalf("visit=%+v want all-zero without coeff/scan slices", visits[0])
+	}
+	if coeffCtx.Above[0][0] != 0 || coeffCtx.Left[0][0] != 0 {
+		t.Fatalf("coeff context above=%d left=%d want zero", coeffCtx.Above[0][0], coeffCtx.Left[0][0])
+	}
+}
+
 func TestDecodeBlockCoefficientsRejectsInvalidInputs(t *testing.T) {
 	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 	valid := BlockCoeffRequest{
@@ -191,6 +237,30 @@ func TestDecodeBlockCoefficientsAllocs(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("DecodeBlockCoefficients allocated: %f", allocs)
 	}
+}
+
+func mustTXBSkipPayload(t *testing.T) []byte {
+	t.Helper()
+	for i := 0; i <= 0xff; i++ {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			t.Fatal(err)
+		}
+		var state DecodeState
+		payload := []byte{byte(i)}
+		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		skip, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4, Context: 0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if skip {
+			return payload
+		}
+	}
+	t.Fatal("no single-byte txb_skip payload found")
+	return nil
 }
 
 func FuzzDecodeBlockCoefficients(f *testing.F) {

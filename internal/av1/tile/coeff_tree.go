@@ -352,6 +352,16 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("resolve coeff transform: %w", err)
 		}
 	}
+	if allZero && req.SkipAllZeroCoeffClear {
+		result := TXBDecodeResult{AllZero: true}
+		if err := ctx.markTXBKnown(ctxReq, txDims, visibleW, visibleH, result); err != nil {
+			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
+		}
+		if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
+			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
+		}
+		return selected, result, nil, nil, nil
+	}
 
 	coeffs, scan, levels, err := scratch.coeffBuffers(ctxReq.Size, selectedClass)
 	if err != nil {
