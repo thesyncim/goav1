@@ -228,8 +228,7 @@ dryrun-fast:
 	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
 
 # dryrun-relevant-supported runs the strict-MD5 SuiteLevelRelevant framework
-# dry-run cohort, excluding film-grain vectors until display-only grain is split
-# from reference publication.
+# dry-run cohort.
 dryrun-relevant-supported:
 	GOAV1_RELEVANT_SUPPORTED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomRelevantSupportedFrameWorkDryRun' -count=1 -timeout 900s -v
 
@@ -287,7 +286,7 @@ help:
 	@echo "  testvectors-fast           fast slice of the test-vector suite"
 	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
 	@echo "  dryrun-fast                strict-MD5 fast libaom framework dry-run"
-	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run excluding film grain"
+	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run"
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  dryrun-profiles            byte-exact profile-conformance clips (4:4:4 / 4:2:2 / 12-bit, isolated binary)"
 	@echo "  test-motion-conformance    libaom convolve conformance"

@@ -456,7 +456,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 						return err
 					}
 				}
-				got, err := FrameMD5(*post.Context.Output)
+				output := post.Context.Output
+				if post.DisplayOutput != nil {
+					output = post.DisplayOutput
+				}
+				got, err := FrameMD5(*output)
 				if err != nil {
 					return err
 				}
@@ -912,6 +916,7 @@ func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize)
 		RestorationAbove:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)),
 		RestorationBelow:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)),
 
+		FilmGrainOutputFrame: make([]byte, libaomMaxInt(size.FilmGrain.OutputFrame, 0)),
 		FilmGrainLumaGrain:   make([]int16, libaomMaxInt(size.FilmGrain.LumaGrain, 0)),
 		FilmGrainLumaSamples: make([]uint16, libaomMaxInt(size.FilmGrain.LumaSamples, 0)),
 	}

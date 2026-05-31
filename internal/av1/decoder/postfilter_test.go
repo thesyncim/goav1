@@ -465,7 +465,7 @@ func testFrameWorkPostFilterScratchStorage(size FrameWorkPostFilterScratchSize) 
 	cdefSamples, cdefDst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(size.CDEF)
 	superResOutputFrame, superResCoded, superResOutput := testFrameWorkSuperResScratchStorage(size.SuperRes)
 	restorationData, restorationDst, restorationWiener, restorationSGR, restorationAbove, restorationBelow := testFrameWorkRestorationPostFilterScratchStorage(size.Restoration)
-	lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size.FilmGrain)
+	filmGrainOutput, lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size.FilmGrain)
 	return FrameWorkPostFilterScratch{
 		LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
 
@@ -487,6 +487,7 @@ func testFrameWorkPostFilterScratchStorage(size FrameWorkPostFilterScratchSize) 
 		RestorationAbove:  restorationAbove,
 		RestorationBelow:  restorationBelow,
 
+		FilmGrainOutputFrame:   filmGrainOutput,
 		FilmGrainLumaGrain:     lumaGrain,
 		FilmGrainChromaGrain:   chromaGrain,
 		FilmGrainLumaSamples:   lumaSamples,

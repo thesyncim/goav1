@@ -748,6 +748,7 @@ func postFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decod
 		RestorationAbove:  make([]uint16, maxInt(size.Restoration.Apply.Boundary.Above, 0)),
 		RestorationBelow:  make([]uint16, maxInt(size.Restoration.Apply.Boundary.Below, 0)),
 
+		FilmGrainOutputFrame: make([]byte, maxInt(size.FilmGrain.OutputFrame, 0)),
 		FilmGrainLumaGrain:   make([]int16, maxInt(size.FilmGrain.LumaGrain, 0)),
 		FilmGrainLumaSamples: make([]uint16, maxInt(size.FilmGrain.LumaSamples, 0)),
 	}

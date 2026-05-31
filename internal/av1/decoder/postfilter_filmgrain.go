@@ -42,6 +42,8 @@ type FrameWorkFilmGrainPostFilterPlan struct {
 // FrameWorkFilmGrainPostFilterScratchSize reports caller-owned scratch needed
 // to stage scaling points and autoregressive coefficients for synthesis.
 type FrameWorkFilmGrainPostFilterScratchSize struct {
+	OutputFrame int
+
 	ScalingPoints [3]int
 	ARCoeffs      [3]int
 
@@ -53,10 +55,11 @@ type FrameWorkFilmGrainPostFilterScratchSize struct {
 	LumaColumn    int
 }
 
-// BindRequest validates and slices caller-owned grain/sample scratch for film
-// grain postfiltering.
-func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (FrameWorkFilmGrainPostFilterRequest, error) {
-	if s.LumaGrain < 0 || s.LumaSamples < 0 || s.LumaLine < 0 || s.LumaColumn < 0 ||
+// BindRequest validates and slices caller-owned output/grain/sample scratch for
+// film grain postfiltering.
+func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(outputFrame []byte, outputView *frame.Frame, lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (FrameWorkFilmGrainPostFilterRequest, error) {
+	if s.OutputFrame < 0 || len(outputFrame) < s.OutputFrame ||
+		s.LumaGrain < 0 || s.LumaSamples < 0 || s.LumaLine < 0 || s.LumaColumn < 0 ||
 		len(lumaGrain) < s.LumaGrain || len(lumaSamples) < s.LumaSamples {
 		return FrameWorkFilmGrainPostFilterRequest{}, frame.ErrShortBuffer
 	}
@@ -66,6 +69,8 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, 
 		}
 	}
 	req := FrameWorkFilmGrainPostFilterRequest{
+		OutputFrame: outputFrame[:s.OutputFrame],
+		OutputView:  outputView,
 		LumaGrain:   lumaGrain[:s.LumaGrain],
 		LumaSamples: lumaSamples[:s.LumaSamples],
 	}
@@ -83,6 +88,7 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) BindRequest(lumaGrain []int16, 
 // Max returns the per-field maximum film-grain scratch size.
 func (s FrameWorkFilmGrainPostFilterScratchSize) Max(other FrameWorkFilmGrainPostFilterScratchSize) FrameWorkFilmGrainPostFilterScratchSize {
 	result := FrameWorkFilmGrainPostFilterScratchSize{
+		OutputFrame: maxInt(s.OutputFrame, other.OutputFrame),
 		LumaGrain:   maxInt(s.LumaGrain, other.LumaGrain),
 		LumaSamples: maxInt(s.LumaSamples, other.LumaSamples),
 		LumaLine:    maxInt(s.LumaLine, other.LumaLine),
@@ -102,6 +108,9 @@ func (s FrameWorkFilmGrainPostFilterScratchSize) Max(other FrameWorkFilmGrainPos
 // FrameWorkFilmGrainPostFilterRequest carries caller-owned scratch for
 // ApplyFilmGrainPostFilter.
 type FrameWorkFilmGrainPostFilterRequest struct {
+	OutputFrame []byte
+	OutputView  *frame.Frame
+
 	LumaGrain     []int16
 	ChromaGrain   [2][]int16
 	LumaSamples   []uint16
@@ -112,6 +121,8 @@ type FrameWorkFilmGrainPostFilterRequest struct {
 type FrameWorkFilmGrainPostFilterResult struct {
 	Plan FrameWorkFilmGrainPostFilterPlan
 
+	Output     *frame.Frame
+	OutputSize int
 	NoOp       bool
 	LumaRows   int
 	ChromaRows [2]int
@@ -259,6 +270,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 		size.ARCoeffs[plane] = plan.Planes[plane].ARCoeffs
 	}
 	if frameWorkFilmGrainAnyPlaneActive(plan) {
+		size.OutputFrame = ctx.Output.Layout.Size
 		lumaStride := frameWorkFilmGrainSampleStride(ctx.Output.Layout.YStride, ctx.Output.Layout.BytesPerSample)
 		size.LumaSamples = lumaStride * ctx.Output.Format.Height
 	}
@@ -550,9 +562,48 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 			}
 			result.LumaRows = rows
 		}
+		result.Output = ctx.Output
+		result.OutputSize = ctx.Output.Layout.Size
 		return result, nil
 	}
-	return FrameWorkFilmGrainPostFilterResult{Plan: plan, NoOp: true}, nil
+	result := FrameWorkFilmGrainPostFilterResult{Plan: plan, NoOp: true}
+	if ctx.Output != nil {
+		result.Output = ctx.Output
+		result.OutputSize = ctx.Output.Layout.Size
+	}
+	return result, nil
+}
+
+// BindFilmGrainPostFilterOutput copies ctx.Output into caller-owned display
+// scratch for display-only grain synthesis. A no-op grain plan returns nil so
+// callers can keep using the publishable output directly.
+func (ctx FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWorkFilmGrainPostFilterRequest) (*frame.Frame, error) {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return nil, err
+	}
+	if !plan.Active || frameWorkFilmGrainNoOp(plan.Params) {
+		return nil, nil
+	}
+	if ctx.Output == nil {
+		return nil, frame.ErrInvalidSlot
+	}
+	size := ctx.Output.Layout.Size
+	if len(req.OutputFrame) < size {
+		return nil, frame.ErrShortBuffer
+	}
+	output, err := frame.Bind(req.OutputFrame[:size], ctx.Output.Format)
+	if err != nil {
+		return nil, err
+	}
+	if err := frameWorkCopyPostFilterFrame(&output, ctx.Output); err != nil {
+		return nil, err
+	}
+	if req.OutputView != nil {
+		*req.OutputView = output
+		return req.OutputView, nil
+	}
+	return &output, nil
 }
 
 func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, error) {
@@ -763,6 +814,24 @@ func frameWorkBuildFilmGrainUVScalingLUT(dst []uint8, count uint8, input [parser
 	if err := filmgrain.BuildScalingLUT(dst, points[:count]); err != nil {
 		return frame.ErrInvalidFormat
 	}
+	return nil
+}
+
+func frameWorkCopyPostFilterFrame(dst *frame.Frame, src *frame.Frame) error {
+	if dst == nil || src == nil {
+		return frame.ErrInvalidSlot
+	}
+	if dst.Format != src.Format || dst.Layout != src.Layout {
+		return frame.ErrInvalidFormat
+	}
+	if len(dst.Y.Pix) < len(src.Y.Pix) ||
+		len(dst.U.Pix) < len(src.U.Pix) ||
+		len(dst.V.Pix) < len(src.V.Pix) {
+		return frame.ErrShortBuffer
+	}
+	copy(dst.Y.Pix, src.Y.Pix)
+	copy(dst.U.Pix, src.U.Pix)
+	copy(dst.V.Pix, src.V.Pix)
 	return nil
 }
 

@@ -99,6 +99,8 @@ type DecoderFrameWorkPostFilterRequestBuffers struct {
 	SuperResCodedScratch  [3][]uint16
 	SuperResOutputScratch [3][]uint16
 
+	FilmGrainOutputFrame []byte
+
 	RestorationRecords              [3][]TileRestorationUnitRecord
 	RestorationBoundaries           [3]TileRestorationStripeBoundaries
 	RestorationDataScratch          []uint16
@@ -218,11 +220,14 @@ type DecoderFrameWorkSideData struct {
 type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
 	Scratch              DecoderFrameWorkPostFilterRequestScratch
 	RestorationOptimized bool
+	FilmGrainOutput      Frame
 
 	Size    DecoderFrameWorkPostFilterScratchSize
 	Request DecoderFrameWorkPostFilterRequest
 	Context DecoderFrameWorkPostFilterContext
 	Result  DecoderFrameWorkPostFilterResult
+
+	output *Frame
 }
 
 // DecoderFrameWorkPostFilterOutputProvider exposes the final display output
@@ -262,6 +267,7 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	if r == nil {
 		return ErrDecoderInvalidFrameWorkState
 	}
+	r.output = nil
 	size, err := r.ScratchLen(ctx)
 	if err != nil {
 		return err
@@ -272,7 +278,8 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	if err != nil {
 		return err
 	}
-	next, result, err := ctx.ApplySupportedPostFilters(req)
+	req.FilmGrain.OutputView = &r.FilmGrainOutput
+	next, output, result, err := ctx.ApplySupportedPostFiltersForPublication(req)
 	if err != nil {
 		return err
 	}
@@ -283,12 +290,19 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	r.Request = req
 	r.Context = next
 	r.Result = result
+	r.output = output
 	return nil
 }
 
-// PostFilterOutput returns the final publishable output after Apply.
+// PostFilterOutput returns the final display output after Apply.
 func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) PostFilterOutput() (*Frame, bool) {
-	if r == nil || r.Context.Output == nil {
+	if r == nil {
+		return nil, false
+	}
+	if r.output != nil {
+		return r.output, true
+	}
+	if r.Context.Output == nil {
 		return nil, false
 	}
 	return r.Context.Output, true
@@ -511,7 +525,7 @@ func DecoderFrameWorkPostFilterRequestScratchLen(size DecoderFrameWorkPostFilter
 		LoopFilterEdges:   size.LoopFilter.Edges,
 		CDEFDirectionGrid: size.CDEF.DirectionGrid,
 		CDEFVarianceGrid:  size.CDEF.VarianceGrid,
-		ByteScratch:       size.SuperRes.OutputFrame,
+		ByteScratch:       size.SuperRes.OutputFrame + size.FilmGrain.OutputFrame,
 		Uint16Scratch:     uint16Scratch,
 		Int16Scratch:      int16Scratch,
 		Int32Scratch:      size.Restoration.Apply.Unit.SGRProj,
@@ -692,7 +706,8 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
 
-	buffers.SuperResOutputFrame, _, err = decoderFrameWorkPostFilterTakeScratch(scratch.ByteScratch, size.SuperRes.OutputFrame)
+	byteScratch := scratch.ByteScratch
+	buffers.SuperResOutputFrame, byteScratch, err = decoderFrameWorkPostFilterTakeScratch(byteScratch, size.SuperRes.OutputFrame)
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
@@ -707,6 +722,11 @@ func BindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size DecoderFrameWo
 		if err != nil {
 			return DecoderFrameWorkPostFilterRequestBuffers{}, err
 		}
+	}
+
+	buffers.FilmGrainOutputFrame, _, err = decoderFrameWorkPostFilterTakeScratch(byteScratch, size.FilmGrain.OutputFrame)
+	if err != nil {
+		return DecoderFrameWorkPostFilterRequestBuffers{}, err
 	}
 
 	buffers.RestorationDataScratch, uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.Restoration.Samples.DataLen)
@@ -804,7 +824,7 @@ func BindDecoderFrameWorkPostFilterRequest(size DecoderFrameWorkPostFilterScratc
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequest{}, err
 	}
-	filmGrainReq, err := BindDecoderFrameWorkFilmGrainPostFilterRequest(size.FilmGrain, buffers.FilmGrainLumaGrain, buffers.FilmGrainChromaGrain, buffers.FilmGrainLumaSamples, buffers.FilmGrainChromaSamples)
+	filmGrainReq, err := BindDecoderFrameWorkFilmGrainPostFilterRequest(size.FilmGrain, buffers.FilmGrainOutputFrame, buffers.FilmGrainLumaGrain, buffers.FilmGrainChromaGrain, buffers.FilmGrainLumaSamples, buffers.FilmGrainChromaSamples)
 	if err != nil {
 		return DecoderFrameWorkPostFilterRequest{}, err
 	}
@@ -932,15 +952,16 @@ func BindDecoderFrameWorkRestorationPostFilterRequest(size DecoderFrameWorkResto
 	}, nil
 }
 
-// BindDecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned
-// film-grain scratch (luma/chroma grain and luma/chroma sample arenas)
-// into a film-grain apply request.
-func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGrainPostFilterScratchSize, lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (DecoderFrameWorkFilmGrainPostFilterRequest, error) {
-	if decoderFrameWorkPostFilterScratchTooShort(lumaGrain, size.LumaGrain) ||
+// BindDecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned film-grain
+// display, grain, and sample scratch into a film-grain apply request.
+func BindDecoderFrameWorkFilmGrainPostFilterRequest(size DecoderFrameWorkFilmGrainPostFilterScratchSize, outputFrame []byte, lumaGrain []int16, chromaGrain [2][]int16, lumaSamples []uint16, chromaSamples [2][]uint16) (DecoderFrameWorkFilmGrainPostFilterRequest, error) {
+	if decoderFrameWorkPostFilterScratchTooShort(outputFrame, size.OutputFrame) ||
+		decoderFrameWorkPostFilterScratchTooShort(lumaGrain, size.LumaGrain) ||
 		decoderFrameWorkPostFilterScratchTooShort(lumaSamples, size.LumaSamples) {
 		return DecoderFrameWorkFilmGrainPostFilterRequest{}, ErrFrameShortBuffer
 	}
 	req := DecoderFrameWorkFilmGrainPostFilterRequest{
+		OutputFrame: outputFrame[:size.OutputFrame],
 		LumaGrain:   lumaGrain[:size.LumaGrain],
 		LumaSamples: lumaSamples[:size.LumaSamples],
 	}

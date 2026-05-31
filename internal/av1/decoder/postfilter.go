@@ -54,6 +54,8 @@ type FrameWorkPostFilterBindOptions struct {
 
 	SuperResOutputView *frame.Frame
 
+	FilmGrainOutputView *frame.Frame
+
 	RestorationRecords    [3][]tile.RestorationUnitRecord
 	RestorationBoundaries [3]tile.RestorationStripeBoundaries
 	RestorationOptimized  bool
@@ -83,6 +85,7 @@ type FrameWorkPostFilterScratch struct {
 	RestorationAbove  []uint16
 	RestorationBelow  []uint16
 
+	FilmGrainOutputFrame   []byte
 	FilmGrainLumaGrain     []int16
 	FilmGrainChromaGrain   [2][]int16
 	FilmGrainLumaSamples   []uint16
@@ -108,7 +111,7 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
 	}
-	filmGrainReq, err := s.FilmGrain.BindRequest(scratch.FilmGrainLumaGrain, scratch.FilmGrainChromaGrain, scratch.FilmGrainLumaSamples, scratch.FilmGrainChromaSamples)
+	filmGrainReq, err := s.FilmGrain.BindRequest(scratch.FilmGrainOutputFrame, options.FilmGrainOutputView, scratch.FilmGrainLumaGrain, scratch.FilmGrainChromaGrain, scratch.FilmGrainLumaSamples, scratch.FilmGrainChromaSamples)
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
 	}
@@ -237,6 +240,8 @@ type FrameWorkBoundSupportedPostFilterRunner struct {
 	Request FrameWorkPostFilterRequest
 	Context FrameWorkPostFilterContext
 	Result  FrameWorkPostFilterResult
+
+	DisplayOutput *frame.Frame
 }
 
 // FrameWorkCallerPostFilterRunner adapts ApplyCallerPostFilters to the
@@ -307,7 +312,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	if err != nil {
 		return err
 	}
-	next, result, err := ctx.ApplySupportedPostFilters(req)
+	next, display, result, err := ctx.ApplySupportedPostFiltersForPublication(req)
 	if err != nil {
 		return err
 	}
@@ -318,6 +323,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	r.Request = req
 	r.Context = next
 	r.Result = result
+	r.DisplayOutput = display
 	return nil
 }
 
@@ -671,6 +677,51 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.FilmGrain = filmGrainResult
 	}
 	return ctx, result, nil
+}
+
+// ApplySupportedPostFiltersForPublication runs the supported postfilter chain
+// while preserving the frame-pool surface as the clean publishable reference.
+// Display-only film grain is synthesized into caller-owned request scratch and
+// returned separately.
+func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersForPublication(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, *frame.Frame, FrameWorkPostFilterResult, error) {
+	var result FrameWorkPostFilterResult
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+		next, result, err := ctx.ApplySupportedPostFilters(req)
+		return next, next.Output, result, err
+	}
+	if err := ctx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
+		return ctx, nil, result, err
+	}
+
+	publishCtx, result, err := ctx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain).ApplySupportedPostFilters(req)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+
+	displayCtx := publishCtx
+	displayCtx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
+	displayOutput, err := displayCtx.BindFilmGrainPostFilterOutput(req.FilmGrain)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+	if displayOutput != nil {
+		displayCtx.Output = displayOutput
+		displayCtx.detachedPostFilterOutput = true
+	}
+	filmGrainResult, err := displayCtx.ApplyFilmGrainPostFilter(req.FilmGrain)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+	if displayOutput == nil {
+		displayOutput = publishCtx.Output
+	} else if filmGrainResult.OutputSize == 0 {
+		filmGrainResult.Output = displayOutput
+		filmGrainResult.OutputSize = displayOutput.Layout.Size
+	}
+	publishCtx = publishCtx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
+	result.Completed |= FrameWorkPostFilterFilmGrain
+	result.FilmGrain = filmGrainResult
+	return publishCtx, displayOutput, result, nil
 }
 
 // saveRestorationBoundariesForRequest is the AV1 loop-restoration boundary save

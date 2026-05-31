@@ -314,6 +314,9 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 					}
 				}
 				postOutput = post.Context.Output
+				if post.DisplayOutput != nil {
+					postOutput = post.DisplayOutput
+				}
 				postRan = true
 				return nil
 			}),

@@ -286,9 +286,9 @@ type DecoderFrameWorkFilmGrainPostFilterPlan = internaldecoder.FrameWorkFilmGrai
 // scratch lengths required by the film-grain stage.
 type DecoderFrameWorkFilmGrainPostFilterScratchSize = internaldecoder.FrameWorkFilmGrainPostFilterScratchSize
 
-// DecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned
-// film-grain scratch (luma/chroma grain and sample arenas) into one
-// apply request.
+// DecoderFrameWorkFilmGrainPostFilterRequest binds caller-owned film-grain
+// scratch, including the display output frame, luma/chroma grain arenas, and
+// sample arenas, into one apply request.
 //
 // See also: BindDecoderFrameWorkFilmGrainPostFilterRequest.
 type DecoderFrameWorkFilmGrainPostFilterRequest = internaldecoder.FrameWorkFilmGrainPostFilterRequest
