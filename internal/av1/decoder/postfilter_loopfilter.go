@@ -97,6 +97,36 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
 }
 
+type frameWorkLoopFilterPlanningContext struct {
+	bounds [3]frameWorkLoopFilterBounds
+	ssX    int
+	ssY    int
+}
+
+func frameWorkLoopFilterPlanningContextFor(ctx FrameWorkPostFilterContext) (frameWorkLoopFilterPlanningContext, error) {
+	color := ctx.Event.SequenceHeader.ColorConfig
+	planning := frameWorkLoopFilterPlanningContext{
+		ssX: frameWorkLoopFilterSubsamplingShift(color.SubsamplingX),
+		ssY: frameWorkLoopFilterSubsamplingShift(color.SubsamplingY),
+	}
+	bounds, err := frameWorkLoopFilterPlaneBounds(ctx, loopfilter.PlaneY)
+	if err != nil {
+		return frameWorkLoopFilterPlanningContext{}, err
+	}
+	planning.bounds[loopfilter.PlaneY] = bounds
+	if color.MonoChrome {
+		return planning, nil
+	}
+	for plane := loopfilter.PlaneU; plane <= loopfilter.PlaneV; plane++ {
+		bounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
+		if err != nil {
+			return frameWorkLoopFilterPlanningContext{}, err
+		}
+		planning.bounds[plane] = bounds
+	}
+	return planning, nil
+}
+
 // FrameWorkLoopFilterPostFilterApplyResult summarizes application of stored
 // luma edge candidates through the pure-Go loop-filter kernels.
 type FrameWorkLoopFilterPostFilterApplyResult struct {
@@ -154,17 +184,23 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
 		return plan, err
 	}
+	planning, err := frameWorkLoopFilterPlanningContextFor(ctx)
+	if err != nil {
+		return plan, err
+	}
 	if err := frameWorkLoopFilterForEachValidatedBlock(filterMap, cols, rows, &plan, func(record threading.FrameWorkLoopFilterBlockRecord) error {
-		if err := frameWorkResolveLoopFilterLevels(ctx, record, &plan); err != nil {
+		levels, err := frameWorkResolveLoopFilterRecordLevels(ctx, record)
+		if err != nil {
 			return err
 		}
+		frameWorkAccumulateLoopFilterLevelStats(ctx, levels, &plan)
 		if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
 			return err
 		}
-		if err := frameWorkAppendLoopFilterLumaEdges(ctx, filterMap, record, &plan, req.Edges); err != nil {
+		if err := frameWorkAppendLoopFilterLumaEdges(ctx, filterMap, record, &plan, req.Edges, planning.bounds[loopfilter.PlaneY], levels); err != nil {
 			return err
 		}
-		return frameWorkAppendLoopFilterChromaEdges(ctx, filterMap, record, &plan, req.Edges)
+		return frameWorkAppendLoopFilterChromaEdges(ctx, filterMap, record, &plan, req.Edges, planning, levels)
 	}); err != nil {
 		return plan, err
 	}
@@ -493,19 +529,9 @@ func frameWorkAccumulateLoopFilterTransformStats(ctx FrameWorkPostFilterContext,
 	})
 }
 
-func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) error {
-	currentVertical, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.PlaneY, loopfilter.EdgeVertical)
-	if err != nil {
-		return err
-	}
-	currentHorizontal, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.PlaneY, loopfilter.EdgeHorizontal)
-	if err != nil {
-		return err
-	}
-	bounds, err := frameWorkLoopFilterPlaneBounds(ctx, loopfilter.PlaneY)
-	if err != nil {
-		return err
-	}
+func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, levels [3][2]uint8) error {
+	currentVertical := levels[loopfilter.PlaneY][loopfilter.EdgeVertical]
+	currentHorizontal := levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal]
 	if record.SkipTransform {
 		block := record.Block
 		if block.MICol > 0 {
@@ -559,7 +585,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, f
 	if length4 <= 0 {
 		return nil
 	}
-	length4, err := frameWorkLoopFilterClampEdgeLength(ctx, loopfilter.PlaneY, edge, x4, y4, length4)
+	length4, err := frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, length4)
 	if err != nil {
 		return err
 	}
@@ -803,7 +829,7 @@ func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge lo
 	return record, true, nil
 }
 
-func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) error {
+func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, planning frameWorkLoopFilterPlanningContext, levels [3][2]uint8) error {
 	if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
 		return nil
 	}
@@ -823,42 +849,30 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, filter
 		if base == 0 {
 			continue
 		}
-		currentVertical, err := frameWorkResolveLoopFilterLevel(ctx, record, plane, loopfilter.EdgeVertical)
-		if err != nil {
-			return err
-		}
-		currentHorizontal, err := frameWorkResolveLoopFilterLevel(ctx, record, plane, loopfilter.EdgeHorizontal)
-		if err != nil {
-			return err
-		}
-		planeBounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
-		if err != nil {
-			return err
-		}
 		planes[active] = plane
-		bounds[active] = planeBounds
-		vertical[active] = currentVertical
-		horizontal[active] = currentHorizontal
+		bounds[active] = planning.bounds[plane]
+		vertical[active] = levels[plane][loopfilter.EdgeVertical]
+		horizontal[active] = levels[plane][loopfilter.EdgeHorizontal]
 		active++
 	}
 	if active == 0 {
 		return nil
 	}
 	if record.SkipTransform {
-		tx, ok, err := frameWorkLoopFilterChromaBlock(ctx, record)
+		tx, ok, err := frameWorkLoopFilterChromaBlockWithShifts(ctx, record, planning.ssX, planning.ssY)
 		if err != nil || !ok {
 			return err
 		}
 		for i := 0; i < active; i++ {
-			if err := frameWorkAppendLoopFilterChromaTXBEdges(ctx, filterMap, record, plan, edges, bounds[i], planes[i], tx, vertical[i], horizontal[i]); err != nil {
+			if err := frameWorkAppendLoopFilterChromaTXBEdges(ctx, filterMap, record, plan, edges, bounds[i], planes[i], tx, vertical[i], horizontal[i], planning.ssX, planning.ssY); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return frameWorkLoopFilterForEachChromaTXB(ctx, record, func(tx tile.TransformBlock) error {
+	return frameWorkLoopFilterForEachChromaTXBWithShifts(ctx, record, planning.ssX, planning.ssY, func(tx tile.TransformBlock) error {
 		for i := 0; i < active; i++ {
-			if err := frameWorkAppendLoopFilterChromaTXBEdges(ctx, filterMap, record, plan, edges, bounds[i], planes[i], tx, vertical[i], horizontal[i]); err != nil {
+			if err := frameWorkAppendLoopFilterChromaTXBEdges(ctx, filterMap, record, plan, edges, bounds[i], planes[i], tx, vertical[i], horizontal[i], planning.ssX, planning.ssY); err != nil {
 				return err
 			}
 		}
@@ -866,15 +880,15 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, filter
 	})
 }
 
-func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, tx tile.TransformBlock, currentVertical uint8, currentHorizontal uint8) error {
-	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4(ctx, record, tx.X4, tx.Y4)
+func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, tx tile.TransformBlock, currentVertical uint8, currentHorizontal uint8, ssX int, ssY int) error {
+	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, tx.X4, tx.Y4, ssX, ssY)
 	if frameX4 > 0 {
-		if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, bounds, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVertical); err != nil {
+		if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, bounds, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVertical, ssX, ssY); err != nil {
 			return err
 		}
 	}
 	if frameY4 > 0 {
-		if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, bounds, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, currentHorizontal); err != nil {
+		if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, filterMap, record, plan, edges, bounds, plane, loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, currentHorizontal, ssX, ssY); err != nil {
 			return err
 		}
 	}
@@ -887,11 +901,11 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, fil
 // current/previous transform sizes (set_one_param_for_line_chroma); without
 // per-cell splitting the chroma plane reproduced the same q32 10-bit
 // divergence the luma fix already covered.
-func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, currentLevel uint8) error {
+func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, currentLevel uint8, ssX int, ssY int) error {
 	if length4 <= 0 {
 		return nil
 	}
-	length4, err := frameWorkLoopFilterClampEdgeLength(ctx, plane, edge, x4, y4, length4)
+	length4, err := frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, length4)
 	if err != nil {
 		return err
 	}
@@ -955,7 +969,7 @@ func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext,
 	var previousCache frameWorkLoopFilterChromaPreviousCache
 	needPreviousLevel := currentLevel == 0
 	for offset := range length4 {
-		previousWidth, hasChroma, previousLevel, err := previousCache.lookup(ctx, filterMap, plane, edge, x4, y4, offset, plan.MICols, plan.MIRows, needPreviousLevel)
+		previousWidth, hasChroma, previousLevel, err := previousCache.lookup(ctx, filterMap, plane, edge, x4, y4, offset, plan.MICols, plan.MIRows, needPreviousLevel, ssX, ssY)
 		if err != nil {
 			return err
 		}
@@ -1009,13 +1023,13 @@ type frameWorkLoopFilterChromaPreviousCache struct {
 	levelValid bool
 }
 
-func (c *frameWorkLoopFilterChromaPreviousCache) lookup(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int, needLevel bool) (int, bool, uint8, error) {
+func (c *frameWorkLoopFilterChromaPreviousCache) lookup(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int, needLevel bool, ssX int, ssY int) (int, bool, uint8, error) {
 	boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
 	targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
 	if err != nil {
 		return 0, false, 0, err
 	}
-	previous, ok, err := frameWorkLoopFilterPreviousChromaRecord(ctx, filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+	previous, ok, err := frameWorkLoopFilterPreviousChromaRecordWithShifts(filterMap, edge, boundaryX4, boundaryY4, cols, rows, ssX, ssY)
 	if err != nil {
 		return 0, false, 0, err
 	}
@@ -1023,7 +1037,7 @@ func (c *frameWorkLoopFilterChromaPreviousCache) lookup(ctx FrameWorkPostFilterC
 		return 0, false, 0, loopfilter.ErrInvalidFilter
 	}
 	if !c.valid || c.miCol != previous.Block.MICol || c.miRow != previous.Block.MIRow {
-		block, blockOK, err := frameWorkLoopFilterChromaBlock(ctx, previous)
+		block, blockOK, err := frameWorkLoopFilterChromaBlockWithShifts(ctx, previous, ssX, ssY)
 		if err != nil {
 			return 0, false, 0, err
 		}
@@ -1047,9 +1061,6 @@ func (c *frameWorkLoopFilterChromaPreviousCache) lookup(ctx FrameWorkPostFilterC
 	if !c.blockOK {
 		return 0, false, 0, nil
 	}
-	color := ctx.Event.SequenceHeader.ColorConfig
-	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
-	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
 	localX4 := (c.record.Block.X4 >> ssX) + targetX4 - (int(c.record.Block.MICol) >> ssX)
 	localY4 := (c.record.Block.Y4 >> ssY) + targetY4 - (int(c.record.Block.MIRow) >> ssY)
 	if !frameWorkLoopFilterTransformBlockContains(c.block, localX4, localY4) {
@@ -1130,6 +1141,10 @@ func frameWorkLoopFilterPreviousChromaRecord(ctx FrameWorkPostFilterContext, fil
 	color := ctx.Event.SequenceHeader.ColorConfig
 	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
 	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
+	return frameWorkLoopFilterPreviousChromaRecordWithShifts(filterMap, edge, boundaryX4, boundaryY4, cols, rows, ssX, ssY)
+}
+
+func frameWorkLoopFilterPreviousChromaRecordWithShifts(filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, boundaryX4 int, boundaryY4 int, cols int, rows int, ssX int, ssY int) (threading.FrameWorkLoopFilterBlockRecord, bool, error) {
 	var prevCol, prevRow int
 	switch edge {
 	case loopfilter.EdgeVertical:
@@ -1170,16 +1185,20 @@ func frameWorkLoopFilterPreviousChromaRecord(ctx FrameWorkPostFilterContext, fil
 // vertical edge, cols for a horizontal edge) to the cropped plane MI extent so
 // the edge spans only the visible samples, matching libaom's y_range/x_range.
 func frameWorkLoopFilterClampEdgeLength(ctx FrameWorkPostFilterContext, plane loopfilter.Plane, edge loopfilter.Edge, x4 int, y4 int, length4 int) (int, error) {
-	frameWidth, frameHeight, err := frameWorkLoopFilterPlaneSize(ctx, plane)
+	bounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
 	if err != nil {
 		return 0, err
 	}
+	return frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, length4)
+}
+
+func frameWorkLoopFilterClampEdgeLengthInBounds(bounds frameWorkLoopFilterBounds, edge loopfilter.Edge, x4 int, y4 int, length4 int) (int, error) {
 	var limit int
 	switch edge {
 	case loopfilter.EdgeVertical:
-		limit = (frameHeight+3)>>2 - y4
+		limit = (bounds.posHeight+3)>>2 - y4
 	case loopfilter.EdgeHorizontal:
-		limit = (frameWidth+3)>>2 - x4
+		limit = (bounds.posWidth+3)>>2 - x4
 	default:
 		return 0, loopfilter.ErrInvalidFilter
 	}
@@ -1517,7 +1536,12 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 }
 
 func frameWorkLoopFilterForEachChromaTXB(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, visit func(tile.TransformBlock) error) error {
-	block, ok, err := frameWorkLoopFilterChromaBlock(ctx, record)
+	color := ctx.Event.SequenceHeader.ColorConfig
+	return frameWorkLoopFilterForEachChromaTXBWithShifts(ctx, record, frameWorkLoopFilterSubsamplingShift(color.SubsamplingX), frameWorkLoopFilterSubsamplingShift(color.SubsamplingY), visit)
+}
+
+func frameWorkLoopFilterForEachChromaTXBWithShifts(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, ssX int, ssY int, visit func(tile.TransformBlock) error) error {
+	block, ok, err := frameWorkLoopFilterChromaBlockWithShifts(ctx, record, ssX, ssY)
 	if err != nil || !ok {
 		return err
 	}
@@ -1545,6 +1569,11 @@ func frameWorkLoopFilterForEachChromaTXB(ctx FrameWorkPostFilterContext, record 
 }
 
 func frameWorkLoopFilterChromaBlock(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord) (tile.TransformBlock, bool, error) {
+	color := ctx.Event.SequenceHeader.ColorConfig
+	return frameWorkLoopFilterChromaBlockWithShifts(ctx, record, frameWorkLoopFilterSubsamplingShift(color.SubsamplingX), frameWorkLoopFilterSubsamplingShift(color.SubsamplingY))
+}
+
+func frameWorkLoopFilterChromaBlockWithShifts(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, ssX int, ssY int) (tile.TransformBlock, bool, error) {
 	req, err := frameWorkLoopFilterTransformTreeRequest(ctx, record)
 	if err != nil {
 		return tile.TransformBlock{}, false, err
@@ -1556,8 +1585,6 @@ func frameWorkLoopFilterChromaBlock(ctx FrameWorkPostFilterContext, record threa
 	if !record.TransformTree.HasUV || !record.TransformTree.UV.Valid() {
 		return tile.TransformBlock{}, false, threading.ErrInvalidBatch
 	}
-	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
-	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
 	x4 := req.X4 >> ssX
 	y4 := req.Y4 >> ssY
 	visibleW4 := ((req.X4 + int(req.VisibleW4) + ssX) >> ssX) - x4
@@ -1580,6 +1607,10 @@ func frameWorkLoopFilterChromaFrame4(ctx FrameWorkPostFilterContext, record thre
 	color := ctx.Event.SequenceHeader.ColorConfig
 	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
 	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
+	return frameWorkLoopFilterChromaFrame4WithShifts(record, x4, y4, ssX, ssY)
+}
+
+func frameWorkLoopFilterChromaFrame4WithShifts(record threading.FrameWorkLoopFilterBlockRecord, x4 int, y4 int, ssX int, ssY int) (int, int) {
 	return (int(record.Block.MICol) >> ssX) + x4 - (record.Block.X4 >> ssX),
 		(int(record.Block.MIRow) >> ssY) + y4 - (record.Block.Y4 >> ssY)
 }
@@ -1652,6 +1683,16 @@ func frameWorkResolveLoopFilterLevel(ctx FrameWorkPostFilterContext, record thre
 }
 
 func frameWorkResolveLoopFilterLevels(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan) error {
+	levels, err := frameWorkResolveLoopFilterRecordLevels(ctx, record)
+	if err != nil {
+		return err
+	}
+	frameWorkAccumulateLoopFilterLevelStats(ctx, levels, plan)
+	return nil
+}
+
+func frameWorkResolveLoopFilterRecordLevels(ctx FrameWorkPostFilterContext, record threading.FrameWorkLoopFilterBlockRecord) ([3][2]uint8, error) {
+	var levels [3][2]uint8
 	planeCount := 3
 	if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
 		planeCount = 1
@@ -1660,8 +1701,22 @@ func frameWorkResolveLoopFilterLevels(ctx FrameWorkPostFilterContext, record thr
 		for edge := range 2 {
 			level, err := frameWorkResolveLoopFilterLevel(ctx, record, loopfilter.Plane(plane), loopfilter.Edge(edge))
 			if err != nil {
-				return err
+				return [3][2]uint8{}, err
 			}
+			levels[plane][edge] = level
+		}
+	}
+	return levels, nil
+}
+
+func frameWorkAccumulateLoopFilterLevelStats(ctx FrameWorkPostFilterContext, levels [3][2]uint8, plan *FrameWorkLoopFilterPostFilterPlan) {
+	planeCount := 3
+	if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
+		planeCount = 1
+	}
+	for plane := 0; plane < planeCount; plane++ {
+		for edge := range 2 {
+			level := levels[plane][edge]
 			stats := &plan.Levels[plane][edge]
 			stats.Blocks++
 			if level == 0 {
@@ -1673,5 +1728,4 @@ func frameWorkResolveLoopFilterLevels(ctx FrameWorkPostFilterContext, record thr
 			}
 		}
 	}
-	return nil
 }

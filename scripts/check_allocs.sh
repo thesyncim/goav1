@@ -5,7 +5,7 @@ go test . ./internal/av1/bitstream ./internal/av1/ivf ./internal/av1/obu ./inter
 
 bench_time=${GOAV1_ALLOC_BENCHTIME:-20x}
 bench_re='^BenchmarkDecode(PostFilteredProfileClip|SuperResInterProfileClip|SuperResInterHighBDProfileClip|SuperResRestorationProfileClip|FilmGrainProfileClip|FullVectorAllocs)$'
-bench_out=$(go test . -run '^$' -bench="$bench_re" -benchmem -benchtime="$bench_time" -count=1)
+bench_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench="$bench_re" -benchmem -benchtime="$bench_time" -count=1)
 printf '%s\n' "$bench_out"
 printf '%s\n' "$bench_out" | awk '
 BEGIN { count = 0; failed = 0 }
