@@ -1092,13 +1092,20 @@ func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockL
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {
+	return c.BeforeBlockCoefficientsPtr(&visit)
+}
+
+func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *tile.BlockLoopVisit) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
 	if c.userBeforeCoefficients != nil {
-		if err := c.userBeforeCoefficients(visit); err != nil {
+		if err := c.userBeforeCoefficients(*visit); err != nil {
 			return err
 		}
 	}
 	if c.req.CDEFIndexMap != nil {
-		if err := c.req.CDEFIndexMap.MarkBlock(c.batch.CDEF, visit); err != nil {
+		if err := c.req.CDEFIndexMap.MarkBlock(c.batch.CDEF, *visit); err != nil {
 			return err
 		}
 	}
@@ -1110,11 +1117,11 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile
 	if c.deferReconstruction {
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			visit: c.scratch.captureDeferredVisit(visit),
+			visit: c.scratch.captureDeferredVisit(*visit),
 		})
 		return nil
 	}
-	return c.fusedReconState().predictBlockBegin(&visit)
+	return c.fusedReconState().predictBlockBegin(visit)
 }
 
 // fusedReconState returns the controller's reconstruction state for the fused
@@ -1213,7 +1220,14 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
-	transforms, err := c.selectBlockTransforms(visit)
+	return c.SelectBlockCoeffRequestPtr(&visit)
+}
+
+func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+	if visit == nil {
+		return tile.BlockCoeffRequest{}, ErrInvalidBatch
+	}
+	transforms, err := c.selectBlockTransforms(*visit)
 	if err != nil {
 		return tile.BlockCoeffRequest{}, err
 	}
@@ -1274,13 +1288,20 @@ func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.B
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
+	return c.VisitBlockCoeffPtr(&visit, &block)
+}
+
+func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
+	if visit == nil || block == nil {
+		return ErrInvalidBatch
+	}
 	if c.deferReconstruction {
-		c.bufferReconTXB(&visit, &block, c.state.CurrentBaseQIdx)
-	} else if err := c.fusedReconState().reconstructTXB(&visit, &block, c.state.CurrentBaseQIdx); err != nil {
+		c.bufferReconTXB(visit, block, c.state.CurrentBaseQIdx)
+	} else if err := c.fusedReconState().reconstructTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
 		return err
 	}
 	if c.userCoeffVisitor != nil {
-		return c.userCoeffVisitor(visit, block)
+		return c.userCoeffVisitor(*visit, *block)
 	}
 	return nil
 }

@@ -399,27 +399,19 @@ func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.
 	if s == nil {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	txSize, err := size.TransformSize()
-	if err != nil {
+	geo, ok := coeffGeo(size)
+	if !ok || !class.Valid() {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	scanSize, err := transform.ScanSize(txSize)
-	if err != nil {
+	scanLen := geo.maxEOB
+	if scanLen > len(s.Coeffs) {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	scanLen := scanSize.Width * scanSize.Height
-	if scanLen > len(s.Scan) || scanLen > len(s.InverseScan) || scanLen > len(s.Coeffs) {
+	scan := coeffScanTable[size][class]
+	if len(scan) < scanLen {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	scan := s.Scan[:scanLen]
-	inverse := s.InverseScan[:scanLen]
-	if err := transform.FillDefaultScan(scan, inverse, txSize, class); err != nil {
-		return nil, nil, nil, ErrInvalidDecodeState
-	}
-	levelsLen, err := CoeffLevelsScratchLen(size)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	levelsLen := geo.scratchLen
 	if levelsLen > len(s.Levels) {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}

@@ -35,6 +35,8 @@ type BlockLoopScratch struct {
 	Coeff     BlockCoeffScratch
 	CoeffCtx  CoeffEntropyContext
 	Palette   PaletteModeScratch
+
+	visit BlockLoopVisit
 }
 
 // BlockLoopContextCarrier holds caller-owned edge contexts when a block-loop
@@ -284,6 +286,9 @@ type BlockLoopCoeffController interface {
 	BeforeBlockCoefficients(BlockLoopVisit) error
 	SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error)
 	VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error
+	BeforeBlockCoefficientsPtr(*BlockLoopVisit) error
+	SelectBlockCoeffRequestPtr(*BlockLoopVisit) (BlockCoeffRequest, error)
+	VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error
 }
 
 type BlockLoopCoeffRequestSelector func(BlockLoopVisit) (BlockCoeffRequest, error)
@@ -296,11 +301,23 @@ func (noBlockLoopCoeffController) BeforeBlockCoefficients(BlockLoopVisit) error 
 	return ErrInvalidDecodeState
 }
 
+func (noBlockLoopCoeffController) BeforeBlockCoefficientsPtr(*BlockLoopVisit) error {
+	return ErrInvalidDecodeState
+}
+
 func (noBlockLoopCoeffController) SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error) {
 	return BlockCoeffRequest{}, ErrInvalidDecodeState
 }
 
+func (noBlockLoopCoeffController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (BlockCoeffRequest, error) {
+	return BlockCoeffRequest{}, ErrInvalidDecodeState
+}
+
 func (noBlockLoopCoeffController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
+	return ErrInvalidDecodeState
+}
+
+func (noBlockLoopCoeffController) VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error {
 	return ErrInvalidDecodeState
 }
 
@@ -969,36 +986,53 @@ func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *Deco
 	}
 	if req.DecodeCoefficients {
 		if hasCoeffController {
-			if err := coeffController.BeforeBlockCoefficients(visit); err != nil {
+			scratch.visit = visit
+			visitPtr := &scratch.visit
+			if err := coeffController.BeforeBlockCoefficientsPtr(visitPtr); err != nil {
 				return BlockLoopVisit{}, fmt.Errorf("before coefficients: %w", err)
 			}
-		} else if req.BeforeCoefficients != nil {
-			if err := req.BeforeCoefficients(visit); err != nil {
-				return BlockLoopVisit{}, fmt.Errorf("before coefficients callback: %w", err)
+			coeffReq, err := coeffController.SelectBlockCoeffRequestPtr(visitPtr)
+			if err != nil {
+				return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
 			}
-		}
-		coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, visit)
-		if err != nil {
-			return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
-		}
-		coeffVisit := req.CoeffVisitor
-		if coeffVisit == nil {
-			coeffVisit = discardBlockLoopCoeff
-		}
-		coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
-			Transform: cdfs.Transform,
-			Coeff:     cdfs.Coeff,
-		}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
-			if hasCoeffController {
-				return coeffController.VisitBlockCoeff(visit, block)
+			coefficients, err := s.decodeBlockCoefficientsPtr(BlockCoeffCDFs{
+				Transform: cdfs.Transform,
+				Coeff:     cdfs.Coeff,
+			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block *BlockCoeffBlock) error {
+				return coeffController.VisitBlockCoeffPtr(visitPtr, block)
+			})
+			if err != nil {
+				return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
 			}
-			return coeffVisit(visit, block)
-		})
-		if err != nil {
-			return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
+			visitPtr.Coefficients = coefficients
+			visitPtr.CoefficientsValid = true
+			visit = *visitPtr
+		} else {
+			if req.BeforeCoefficients != nil {
+				if err := req.BeforeCoefficients(visit); err != nil {
+					return BlockLoopVisit{}, fmt.Errorf("before coefficients callback: %w", err)
+				}
+			}
+			coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, visit)
+			if err != nil {
+				return BlockLoopVisit{}, fmt.Errorf("select coeff request: %w", err)
+			}
+			coeffVisit := req.CoeffVisitor
+			if coeffVisit == nil {
+				coeffVisit = discardBlockLoopCoeff
+			}
+			coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
+				Transform: cdfs.Transform,
+				Coeff:     cdfs.Coeff,
+			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
+				return coeffVisit(visit, block)
+			})
+			if err != nil {
+				return BlockLoopVisit{}, fmt.Errorf("decode coefficients: %w", err)
+			}
+			visit.Coefficients = coefficients
+			visit.CoefficientsValid = true
 		}
-		visit.Coefficients = coefficients
-		visit.CoefficientsValid = true
 	}
 	return visit, nil
 }

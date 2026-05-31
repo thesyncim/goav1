@@ -13,6 +13,7 @@ type BlockCoeffCDFs struct {
 
 type BlockCoeffScratch struct {
 	Coeff LumaCoeffTreeScratch
+	block BlockCoeffBlock
 }
 
 type BlockCoeffRequest struct {
@@ -42,6 +43,7 @@ type BlockCoeffResult struct {
 }
 
 type BlockCoeffVisitor func(BlockCoeffBlock) error
+type blockCoeffPointerVisitor func(*BlockCoeffBlock) error
 
 func (r BlockCoeffResult) TotalStats() LumaCoeffStats {
 	out := r.Luma
@@ -55,6 +57,19 @@ func (r BlockCoeffResult) TotalStats() LumaCoeffStats {
 }
 
 func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, visit BlockCoeffVisitor) (BlockCoeffResult, error) {
+	if visit == nil {
+		return BlockCoeffResult{}, ErrInvalidDecodeState
+	}
+	return s.decodeBlockCoefficients(cdfs, modeCtx, coeffCtx, scratch, req, func(block *BlockCoeffBlock) error {
+		return visit(*block)
+	})
+}
+
+func (s *DecodeState) decodeBlockCoefficientsPtr(cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, visit blockCoeffPointerVisitor) (BlockCoeffResult, error) {
+	return s.decodeBlockCoefficients(cdfs, modeCtx, coeffCtx, scratch, req, visit)
+}
+
+func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, visit blockCoeffPointerVisitor) (BlockCoeffResult, error) {
 	if s == nil || cdfs.Transform == nil || cdfs.Coeff == nil ||
 		modeCtx == nil || coeffCtx == nil || scratch == nil || visit == nil {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
@@ -90,28 +105,30 @@ func (s *DecodeState) DecodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 		EOBMultiContext:  req.EOBMultiContext[0],
 	}
 	lumaVisit := func(block LumaCoeffBlock) error {
-		return visit(BlockCoeffBlock{
+		scratch.block = BlockCoeffBlock{
 			Plane:     0,
 			Block:     block.Block,
 			Transform: block.Transform,
 			Result:    block.Result,
 			Coeffs:    block.Coeffs,
 			Scan:      block.Scan,
-		})
+		}
+		return visit(&scratch.block)
 	}
 
 	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
 	var chromaReq [2]ChromaCoeffTreeRequest
 	var chromaPrep [2]chromaCoeffPlanePrep
 	chromaVisit := func(block ChromaCoeffBlock) error {
-		return visit(BlockCoeffBlock{
+		scratch.block = BlockCoeffBlock{
 			Plane:     block.Plane,
 			Block:     block.Block,
 			Transform: block.Transform,
 			Result:    block.Result,
 			Coeffs:    block.Coeffs,
 			Scan:      block.Scan,
-		})
+		}
+		return visit(&scratch.block)
 	}
 	if hasChroma {
 		for plane := 1; plane <= 2; plane++ {

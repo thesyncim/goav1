@@ -169,6 +169,7 @@ type coeffPos struct {
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
 // valid coefficient index of size, indexed in [0, maxEOB).
 var coeffPosTable [transformSizeCount][]coeffPos
+var coeffScanTable [transformSizeCount][3][]int16
 
 func init() {
 	for size := range transformSizeCount {
@@ -210,6 +211,13 @@ func init() {
 			}
 		}
 		coeffPosTable[size] = positions
+		for class := transform.Class2D; class <= transform.ClassVert; class++ {
+			scan := make([]int16, maxEOB)
+			inverse := make([]int16, maxEOB)
+			if err := transform.FillDefaultScan(scan, inverse, txSize, class); err == nil {
+				coeffScanTable[size][class] = scan
+			}
+		}
 	}
 }
 
