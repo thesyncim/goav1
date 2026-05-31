@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-extended dryrun-profiles ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-extended dryrun-profiles ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -225,7 +225,13 @@ tidy-check:
 	exit $$rc
 
 dryrun-fast:
-	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
+	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
+
+# dryrun-relevant-supported runs the strict-MD5 SuiteLevelRelevant framework
+# dry-run cohort, excluding film-grain vectors until display-only grain is split
+# from reference publication.
+dryrun-relevant-supported:
+	GOAV1_RELEVANT_SUPPORTED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomRelevantSupportedFrameWorkDryRun' -count=1 -timeout 900s -v
 
 # dryrun-profiles decodes the vendored profile-conformance clips (4:4:4 / 4:2:2
 # / 12-bit, both all-intra and inter) and asserts byte-exact per-frame MD5
@@ -236,13 +242,12 @@ dryrun-fast:
 dryrun-profiles:
 	go test -tags goav1_oracle ./internal/av1/testvector/profiles -run 'TestProfileVendoredClips' -count=1 -timeout 600s -v
 
-# dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort.
-# It downloads multi-quantizer 10-bit, additional SVC, and larger-size libaom
-# vectors and exercises them through the same lenient (first-frame) MD5 gate
-# as dryrun-fast. This target is never part of CI or the default test gates;
-# it is a local diagnostic for surfacing latent decoder gaps.
+# dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort
+# under strict per-frame MD5. It downloads multi-quantizer 10-bit, additional
+# SVC, and larger-size libaom vectors. This target is never part of CI or the
+# default test gates; it is a local diagnostic for surfacing latent decoder gaps.
 dryrun-extended:
-	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
+	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
 ci-local: fmt-check vet test alloc
 
@@ -281,8 +286,9 @@ help:
 	@echo "  testvectors                committed test-vector suite (with oracle)"
 	@echo "  testvectors-fast           fast slice of the test-vector suite"
 	@echo "  testvectors-full           full libaom remote suite (downloads vectors)"
-	@echo "  dryrun-fast                fast libaom framework dry-run (verbose)"
-	@echo "  dryrun-extended            opt-in extended libaom framework dry-run (10-bit q-sweep, larger sizes, extra SVC)"
+	@echo "  dryrun-fast                strict-MD5 fast libaom framework dry-run"
+	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run excluding film grain"
+	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  dryrun-profiles            byte-exact profile-conformance clips (4:4:4 / 4:2:2 / 12-bit, isolated binary)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
