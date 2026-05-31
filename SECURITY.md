@@ -222,6 +222,7 @@ boundary above.
     `FuzzPublicRunDecoderFrameWorkEventWithResidualRunner`,
     `FuzzPublicDecoderFrameWorkSideDataBinding`,
     `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
+    `FuzzPublicSimpleDecoderIVF`,
     `FuzzPublicDecodeTileBlockCoefficients`,
     `FuzzPublicParseTileListOBU`,
     `FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients`.

@@ -37,6 +37,7 @@ bench-cross:
 	GOAV1_CROSS_BENCH=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
 
 fuzz-smoke:
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
