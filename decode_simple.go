@@ -221,6 +221,7 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 			Provider:      provider,
 			GlobalSurface: func(local int) int { return local },
 			Releaser:      provider,
+			PostPublisher: &d.external,
 		}
 	}
 	runner, _, err := BindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,

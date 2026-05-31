@@ -343,12 +343,24 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err := ctx.MarkTXB(ctxReq, result); err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
 	}
-	if recorder, ok := selector.(coeffTransformRecorder); ok {
-		if err := recorder.RecordCoeffTransform(transformReq, selected); err != nil {
-			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
-		}
+	if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
+		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
 	}
 	return selected, result, coeffs, scan, nil
+}
+
+func recordCoeffTransform(selector CoeffTransformSelector, req CoeffTransformRequest, selected transform.Type) error {
+	switch recorder := selector.(type) {
+	case nil, *IntraCoeffTransformSelector, CoeffTransformSelectorFunc:
+		return nil
+	case *InterCoeffTransformSelector:
+		return recorder.RecordCoeffTransform(req, selected)
+	default:
+		if recorder, ok := selector.(coeffTransformRecorder); ok {
+			return recorder.RecordCoeffTransform(req, selected)
+		}
+		return nil
+	}
 }
 
 func eobMultiContextForClass(class transform.Class) int {

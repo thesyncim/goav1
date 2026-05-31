@@ -131,6 +131,7 @@ type DecoderFrameWorkExternalReferenceRuntime struct {
 	GlobalSurface func(local int) int
 	Releaser      DecoderFrameSurfaceReleaser
 	FrameContexts *DecoderSharedFrameContextStore
+	PostPublisher DecoderFrameWorkPostFilterGlobalSurfacePublisher
 }
 
 // Enabled reports whether the runtime should use external reference
@@ -673,7 +674,7 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 			BatchRunner: req.Runner,
 		}
 	}
-	result, err := req.State.RunEventWithContextAndExternalReferences(
+	result, err := req.State.RunEventWithContextAndExternalReferencesWithPostPublisher(
 		req.Refs,
 		req.FramePool,
 		req.Sequence,
@@ -694,6 +695,7 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 		sideRunner,
 		req.Runner,
 		postRunner,
+		req.External.PostPublisher,
 	)
 	stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
 	if req.Stats != nil {

@@ -1551,6 +1551,10 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 			return err
 		}
 	}
+	if block.Result.AllZero {
+		s.stats.Residuals++
+		return nil
+	}
 	// Hand the live decode block straight to the by-pointer reconstruction core
 	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
 	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
