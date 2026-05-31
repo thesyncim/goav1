@@ -653,6 +653,41 @@ func bindCorpusMotionStore(event decoder.Event, count int) ([]tile.ReferenceMVEn
 		length
 }
 
+// TestGeneratedCorpusConformance verifies every generated corpus clip once,
+// without the best-of-N timing loop from TestCrossDecoderCorpus. It is an
+// opt-in broad real-content conformance gate for locally materialized clips.
+func TestGeneratedCorpusConformance(t *testing.T) {
+	if os.Getenv("GOAV1_CORPUS_CONFORMANCE") != "1" {
+		t.Skip("set GOAV1_CORPUS_CONFORMANCE=1 (with the generated corpus) to run generated-corpus conformance")
+	}
+	dir, ok := corpusDir(t)
+	if !ok {
+		t.Skipf("generated-corpus: no clips in %s (regenerate with scripts/gen_bench_corpus.sh)", dir)
+	}
+	t.Logf("generated-corpus: corpus dir = %s", dir)
+
+	clips, failed := loadCorpusClips(t, dir)
+	if len(failed) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "\n!!! CONFORMANCE BUGS: %d generated corpus clip(s) FAILED goav1 byte-exact decode !!!\n", len(failed))
+		for _, f := range failed {
+			fmt.Fprintf(&b, "    - %-26s %s\n", f.name, f.reason)
+		}
+		t.Fatal(b.String())
+	}
+	if len(clips) == 0 {
+		t.Skip("generated-corpus: no usable clips")
+	}
+
+	totalFrames := 0
+	for _, clip := range clips {
+		totalFrames += clip.frames
+		t.Logf("generated-corpus: %-26s %dx%d %d-bit frames=%d tiles=%d md5=%x",
+			clip.name, clip.width, clip.height, clip.bitDepth, clip.frames, clip.tileCols, clip.wantMD5)
+	}
+	t.Logf("generated-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
+}
+
 // TestCrossDecoderCorpus is the multi-config steady-state throughput benchmark.
 // It requires the goav1_oracle build tag AND GOAV1_BENCH_CORPUS=1, and the
 // generated corpus on disk (scripts/gen_bench_corpus.sh). It is skipped

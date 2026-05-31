@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles ci-local help
+.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -252,6 +252,13 @@ dryrun-full:
 dryrun-profiles:
 	go test -tags goav1_oracle ./internal/av1/testvector/profiles -run 'TestProfileVendoredClips' -count=1 -timeout 600s -v
 
+# dryrun-corpus runs the generated real-content corpus through a single
+# byte-exact stream-MD5 verification pass. Generate the local ignored corpus
+# first with scripts/gen_bench_corpus.sh; this target skips cleanly when no
+# corpus is present.
+dryrun-corpus:
+	GOAV1_CORPUS_CONFORMANCE=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestGeneratedCorpusConformance' -count=1 -timeout 900s -v
+
 # dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort
 # under strict per-frame MD5. It downloads multi-quantizer 10-bit, additional
 # SVC, and larger-size libaom vectors. This target is never part of CI or the
@@ -301,6 +308,7 @@ help:
 	@echo "  dryrun-full                strict-MD5 all committed libaom framework vectors"
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
 	@echo "  dryrun-profiles            byte-exact profile clips (profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
+	@echo "  dryrun-corpus              byte-exact generated real-content corpus (requires local generated corpus)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"
