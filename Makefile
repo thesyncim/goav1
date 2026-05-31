@@ -244,7 +244,7 @@ dryrun-full:
 	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
 
 # dryrun-profiles decodes the vendored profile-conformance clips (profile-1
-# 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/super-res,
+# 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/edge/super-res,
 # profile-2 4:2:2 8/10-bit and 4:2:0 12-bit edge/super-res clips) and
 # asserts byte-exact per-frame MD5 against their libaom goldens.
 # The test lives in its own package (internal/av1/testvector/profiles) so it

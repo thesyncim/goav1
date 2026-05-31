@@ -144,6 +144,13 @@
 //	  --cq-level=28 --kf-max-dist=1 --lag-in-frames=0 --enable-cdef=1 \
 //	  --enable-restoration=1 \
 //	  -o profile1-444-10bit-cdef-restoration-160x128.ivf src444_10_filters.yuv
+//	# 4:4:4 10-bit odd edge-size CDEF + loop restoration:
+//	aomenc --i444 --width=130 --height=130 --limit=3 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=30 --kf-max-dist=1 --lag-in-frames=0 --enable-cdef=1 \
+//	  --enable-restoration=1 \
+//	  -o profile1-444-10bit-edge-cdef-restoration-130x130.ivf \
+//	  src444_10_edge_rest.yuv
 //	# 4:4:4 8-bit film grain:
 //	ffmpeg -f lavfi -i nullsrc=size=96x96:rate=1:duration=3 -frames:v 3 \
 //	  -vf "geq=lum='48+mod(X*5+Y*3+N*19,160)':cb='64+mod(X*7+N*23,128)':cr='64+mod(Y*11+N*17,128)',format=yuv444p" \
@@ -504,6 +511,23 @@ var profileClips = []profileClip{
 			"07da346eb6963d2bf2a7c37eb626b09e",
 			"da669f9bf3e0a82727542a1f538b7226",
 			"496024c0fd9b1708ca5a9255e317ebf0",
+		},
+		wantSeqProfile:        1,
+		wantBitDepth:          10,
+		wantSubsamplingX:      false,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit odd 130x130 size with active CDEF and
+		// loop restoration, guarding high-bit-depth non-4:2:0 edge handling.
+		name: "profile1-444-10bit-edge-cdef-restoration-130x130",
+		file: "profile1-444-10bit-edge-cdef-restoration-130x130.ivf",
+		frameMD5Hex: []string{
+			"3fedce7a89a109e6491429ea1b3aa2bc",
+			"ff141f5d501503efeed8c32824ec51d4",
+			"d996b27d544709b314685f1630599efe",
 		},
 		wantSeqProfile:        1,
 		wantBitDepth:          10,

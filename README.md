@@ -359,10 +359,11 @@ composition plus the proximate decoder error message.
 **All 14 libaom `SuiteLevelFast` vectors PASS** strict per-frame MD5
 through the framework dry-run. The broader committed libaom remote
 manifest is also green (`make dryrun-full`: 240/240), and the vendored
-profile corpus is green (`make dryrun-profiles`: 27/27), including
+profile corpus is green (`make dryrun-profiles`: 28/28), including
 profile-1 4:4:4 8/10-bit all-intra, inter, palette, CDEF/restoration,
-film grain, all-key superres, inter superres, profile-2 4:2:2 8/10-bit,
-and profile-2 4:2:0 12-bit edge-size and superres clips.
+odd edge-size CDEF/restoration, film grain, all-key superres, inter
+superres, profile-2 4:2:2 8/10-bit, and profile-2 4:2:0 12-bit edge-size
+and superres clips.
 
 Realtime decode is in active development. The supporting primitives -
 transport, OBU/sequence/frame-header parsing, tile work scheduling, residual

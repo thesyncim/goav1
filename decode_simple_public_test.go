@@ -70,6 +70,14 @@ var profileClips = []struct {
 		},
 	},
 	{
+		file: "profile1-444-10bit-edge-cdef-restoration-130x130.ivf",
+		frameMD5Hex: []string{
+			"3fedce7a89a109e6491429ea1b3aa2bc",
+			"ff141f5d501503efeed8c32824ec51d4",
+			"d996b27d544709b314685f1630599efe",
+		},
+	},
+	{
 		file: "profile1-444-8bit-filmgrain-96x96.ivf",
 		frameMD5Hex: []string{
 			"db1f78af3fbd46eec482cfcc02c59157",
