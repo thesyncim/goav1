@@ -80,6 +80,8 @@ func (r *Reader) ReadBit() (uint8, error) {
 
 // ReadBitTrusted decodes one equiprobable bit for callers that have already
 // proven the reader is non-nil. It is the hot-path core of ReadBit.
+//
+//go:nosplit
 func (r *Reader) ReadBitTrusted() uint8 {
 	rangeValue := r.rng
 	dif := r.dif
@@ -165,6 +167,8 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 
 // ReadBitsTrusted decodes n equiprobable bits MSB-first for callers that have
 // already proven n <= 32 and the reader is non-nil.
+//
+//go:nosplit
 func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
@@ -551,6 +555,7 @@ func (r *Reader) ReadCDF3Unchecked(cdf *CDF) int {
 	return r.readCDF3Known(&cdf.values)
 }
 
+//go:nosplit
 func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
@@ -603,6 +608,7 @@ func (r *Reader) ReadCDF4Unchecked(cdf *CDF) int {
 	return r.readCDF4Known(&cdf.values)
 }
 
+//go:nosplit
 func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
@@ -643,27 +649,26 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	if r.allowCDFUpdate {
 		count := values[4]
 		rate := uint(5 + (count >> 4))
-		top := uint16(CDFProbTop)
-		c0 := values[0]
-		c1 := values[1]
-		c2 := values[2]
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		c2 := uint32(values[2])
 		switch symbol {
 		case 0:
-			values[0] = c0 - (c0 >> rate)
-			values[1] = c1 - (c1 >> rate)
-			values[2] = c2 - (c2 >> rate)
+			values[0] = uint16(c0 - (c0 >> rate))
+			values[1] = uint16(c1 - (c1 >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
 		case 1:
-			values[0] = c0 + ((top - c0) >> rate)
-			values[1] = c1 - (c1 >> rate)
-			values[2] = c2 - (c2 >> rate)
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 - (c1 >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
 		case 2:
-			values[0] = c0 + ((top - c0) >> rate)
-			values[1] = c1 + ((top - c1) >> rate)
-			values[2] = c2 - (c2 >> rate)
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
 		default:
-			values[0] = c0 + ((top - c0) >> rate)
-			values[1] = c1 + ((top - c1) >> rate)
-			values[2] = c2 + ((top - c2) >> rate)
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
 		}
 		if count < MaxCDFCount {
 			values[4] = count + 1
@@ -681,6 +686,7 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 	return r.readBinaryCDFKnown(&cdf.values), nil
 }
 
+//go:nosplit
 func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
@@ -715,10 +721,11 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
 	count := cdf[2]
 	rate := uint(4 + (count >> 4))
+	c0 := uint32(cdf[0])
 	if symbol > 0 {
-		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+		cdf[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
 	} else {
-		cdf[0] -= cdf[0] >> rate
+		cdf[0] = uint16(c0 - (c0 >> rate))
 	}
 	if count < MaxCDFCount {
 		cdf[2] = count + 1
@@ -728,15 +735,17 @@ func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
 func updateCDF3(cdf *[MaxSymbols + 1]uint16, symbol int) {
 	count := cdf[3]
 	rate := uint(4 + (count >> 4))
+	c0 := uint32(cdf[0])
+	c1 := uint32(cdf[1])
 	if symbol > 0 {
-		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+		cdf[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
 	} else {
-		cdf[0] -= cdf[0] >> rate
+		cdf[0] = uint16(c0 - (c0 >> rate))
 	}
 	if symbol > 1 {
-		cdf[1] += (uint16(CDFProbTop) - cdf[1]) >> rate
+		cdf[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
 	} else {
-		cdf[1] -= cdf[1] >> rate
+		cdf[1] = uint16(c1 - (c1 >> rate))
 	}
 	if count < MaxCDFCount {
 		cdf[3] = count + 1
@@ -746,20 +755,23 @@ func updateCDF3(cdf *[MaxSymbols + 1]uint16, symbol int) {
 func updateCDF4(cdf *[MaxSymbols + 1]uint16, symbol int) {
 	count := cdf[4]
 	rate := uint(5 + (count >> 4))
+	c0 := uint32(cdf[0])
+	c1 := uint32(cdf[1])
+	c2 := uint32(cdf[2])
 	if symbol > 0 {
-		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+		cdf[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
 	} else {
-		cdf[0] -= cdf[0] >> rate
+		cdf[0] = uint16(c0 - (c0 >> rate))
 	}
 	if symbol > 1 {
-		cdf[1] += (uint16(CDFProbTop) - cdf[1]) >> rate
+		cdf[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
 	} else {
-		cdf[1] -= cdf[1] >> rate
+		cdf[1] = uint16(c1 - (c1 >> rate))
 	}
 	if symbol > 2 {
-		cdf[2] += (uint16(CDFProbTop) - cdf[2]) >> rate
+		cdf[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
 	} else {
-		cdf[2] -= cdf[2] >> rate
+		cdf[2] = uint16(c2 - (c2 >> rate))
 	}
 	if count < MaxCDFCount {
 		cdf[4] = count + 1
