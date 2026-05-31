@@ -300,6 +300,66 @@ func TestConvolveScale2DHighBDMatchesLibaomReference(t *testing.T) {
 	}
 }
 
+func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
+	const blockW, blockH = 16, 16
+	const srcW, srcH = 160, 128
+	const curW, curH = 107, 128
+	const bd = 10
+	src := highBDPlane(srcW, srcH, 0x5eed, bd)
+	sf, err := NewScaleFactors(srcW, srcH, curW, curH)
+	if err != nil {
+		t.Fatalf("NewScaleFactors: %v", err)
+	}
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, blockW)
+	if err != nil {
+		t.Fatalf("xTable: %v", err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapSmooth, blockH)
+	if err != nil {
+		t.Fatalf("yTable: %v", err)
+	}
+
+	const pad = 24
+	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 2, (srcW+2*pad)*2)
+	for y := range srcH + 2*pad {
+		sy := y - pad
+		if sy < 0 {
+			sy = 0
+		} else if sy >= srcH {
+			sy = srcH - 1
+		}
+		for x := range srcW + 2*pad {
+			sx := x - pad
+			if sx < 0 {
+				sx = 0
+			} else if sx >= srcW {
+				sx = srcW - 1
+			}
+			setSample(padded, 2, x, y, getSample(src, 2, sx, sy))
+		}
+	}
+
+	for _, pos := range []struct{ x, y int }{{0, 0}, {48, 0}, {curW - blockW, 0}, {curW - blockW, curH - blockH}} {
+		startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(pos.x, pos.y, Vector{}, false, false)
+		if err != nil {
+			t.Fatalf("ScaledBlockOrigin(%+v): %v", pos, err)
+		}
+		got, _ := testPlane(blockW, blockH, 2, blockW*2)
+		if err := ConvolveScale2DHighBDClamped(got, src, bd, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+			t.Fatalf("ConvolveScale2DHighBDClamped(%+v): %v", pos, err)
+		}
+
+		intX := int(startX >> ScaleSubpelBits)
+		intY := int(startY >> ScaleSubpelBits)
+		subpelX := int(startX & ScaleSubpelMask)
+		subpelY := int(startY & ScaleSubpelMask)
+		want, _ := testPlane(blockW, blockH, 2, blockW*2)
+		libaomConvolveScale2DHighBDRef(want, padded, bd, pad+intX, pad+intY, 0, 0, blockW, blockH,
+			subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
+		comparePlanes(t, fmt.Sprintf("superres10_%dx%d", pos.x, pos.y), got, want, blockW, blockH, 2)
+	}
+}
+
 // TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FrameTopLeft pins the
 // scaled 8-tap convolver against libaom for the exact SVC L2T1 spatial=1
 // frame-top-left block: a 1280x720 enhancement layer references the 640x360

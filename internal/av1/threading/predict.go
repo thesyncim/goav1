@@ -989,6 +989,8 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.B
 		cellY := geom.Y + cell.OffsetY
 		width := cell.Width
 		height := cell.Height
+		filterW := width
+		filterH := height
 		if cellX < geom.X || cellY < geom.Y {
 			return ErrInvalidBatch
 		}
@@ -1020,8 +1022,8 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.B
 			return err
 		}
 		if !sameSize {
-			if err := frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-				cellX, cellY, cellX, cellY, width, height, cell.MV, geom.SubsamplingX, geom.SubsamplingY, cell.InterpFilters); err != nil {
+			if err := frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+				cellX, cellY, cellX, cellY, width, height, filterW, filterH, cell.MV, geom.SubsamplingX, geom.SubsamplingY, cell.InterpFilters); err != nil {
 				return err
 			}
 			continue
@@ -1086,8 +1088,12 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFilters(index int, 
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the global warp matrix.
-		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
+		filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
+		if err != nil {
+			return ErrInvalidBatch
+		}
+		return frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.GlobalWarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -1338,8 +1344,12 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit 
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the local warp matrix.
-		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
+		filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
+		if err != nil {
+			return ErrInvalidBatch
+		}
+		return frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	model := visit.Prediction.WarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -1732,6 +1742,9 @@ type frameWorkPredictionPlaneGeometry struct {
 	Width  int
 	Height int
 
+	WriteWidth  int
+	WriteHeight int
+
 	// CodedWidth / CodedHeight are the current frame's coded (cropped) plane
 	// dimensions. They drive the reference same-size / scale-factor decision
 	// (libaom compares the reference frame's dimensions to the current coded
@@ -1770,9 +1783,21 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	if err != nil {
 		return err
 	}
+	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	writeWidth := geom.WriteWidth
+	writeHeight := geom.WriteHeight
+	if writeWidth <= 0 {
+		writeWidth = geom.Width
+	}
+	if writeHeight <= 0 {
+		writeHeight = geom.Height
+	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlane(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
+		return frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			geom.X, geom.Y, geom.X, geom.Y, writeWidth, writeHeight, filterW, filterH, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
@@ -1788,11 +1813,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	// block size to the visible extent would wrongly switch to the 4-tap
 	// filter and diverge by +-1 on the edge chroma samples. For luma and
 	// interior chroma the un-clipped extent equals geom.Width/Height (no-op).
-	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return ErrInvalidBatch
-	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, geom.Width, geom.Height, filterW, filterH, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(geom.Output, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, writeWidth, writeHeight, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1817,6 +1838,10 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
+	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return ErrInvalidBatch
+	}
 	if !sameSize {
 		// libaom: av1_make_inter_predictor() in av1/common/reconinter.c
 		// looks up scale factors via xd->block_ref_scale_factors, which
@@ -1824,8 +1849,8 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 		// from the output frame size — not from the staging buffer used
 		// for inter-intra / masked compound. The scratch plane here is
 		// block-sized, so we anchor the Q14 ratios to geom.Output.
-		return frameWorkPredictScaledReferencePlaneToBuffer(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
-			0, 0, geom.X, geom.Y, mv, filters)
+		return frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
+			0, 0, geom.X, geom.Y, filterW, filterH, mv, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
 	if err != nil {
@@ -1841,10 +1866,6 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	// shrinks to <= 4 must still use the wide filter, or the staged inter
 	// predictor diverges by +-1 on the edge chroma samples (the surviving
 	// Class-B 10-bit reconstruction gap).
-	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return ErrInvalidBatch
-	}
 	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
@@ -2027,8 +2048,8 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	}
 	if !sameSize {
 		curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
-		return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, curWidth, curHeight,
-			geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, absX, absY, width, height, mv,
+		return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst, ref, curWidth, curHeight,
+			geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, dstX, dstY, absX, absY, width, height, filterW, filterH, mv,
 			geom.SubsamplingX, geom.SubsamplingY, filters)
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(absX, absY, mv, geom.SubsamplingX, geom.SubsamplingY)
@@ -2077,6 +2098,16 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
+	writeWidth := width
+	writeHeight := height
+	fullWidth, fullHeight, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return frameWorkPredictionPlaneGeometry{}, false, err
+	}
+	if clippedW, clippedH, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, fullWidth, fullHeight); ok {
+		writeWidth = clippedW
+		writeHeight = clippedH
+	}
 	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
 	if !ok || b.Output.Layout.BytesPerSample <= 0 {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
@@ -2100,6 +2131,8 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 		Y:              y,
 		Width:          width,
 		Height:         height,
+		WriteWidth:     writeWidth,
+		WriteHeight:    writeHeight,
 		CodedWidth:     codedWidth,
 		CodedHeight:    codedHeight,
 		SubsamplingX:   subsamplingX,

@@ -30,8 +30,8 @@
 // 8-bit and 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require
 // luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
 // 8/10-bit 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run
-// the caller-owned full postfilter output path, including an inter stream that
-// references super-res output. All are committed under
+// the caller-owned full postfilter output path, including inter streams that
+// reference super-res output. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -101,6 +101,38 @@
 //	  --superres-denominator=12 --superres-kf-denominator=12 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-10bit-superres-160x128.ivf src444_10_superres.yuv
+//	# 4:4:4 10-bit super-res static inter:
+//	python3 - <<'PY'
+//	from pathlib import Path
+//	w, h, frames = 160, 128, 8
+//	with Path("src444_10_superres_static_inter.yuv").open("wb") as f:
+//	    for n in range(frames):
+//	        for plane in range(3):
+//	            for y in range(h):
+//	                row = bytearray()
+//	                for x in range(w):
+//	                    if plane == 0:
+//	                        v = 96 + ((x*7 + y*5 + (x ^ y)*3) % 832)
+//	                    elif plane == 1:
+//	                        v = 160 + ((x*11 + y*3) % 704)
+//	                    else:
+//	                        v = 128 + ((x*5 + y*13) % 736)
+//	                    row += bytes((v & 0xff, v >> 8))
+//	                f.write(row)
+//	PY
+//	aomenc --i444 --width=160 --height=128 --limit=8 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=999 --lag-in-frames=0 \
+//	  --superres-mode=1 --superres-denominator=12 \
+//	  --superres-kf-denominator=12 --enable-cdef=0 --enable-restoration=0 \
+//	  --loopfilter-control=0 --enable-obmc=0 --enable-global-motion=0 \
+//	  --enable-warped-motion=0 --enable-dual-filter=0 --enable-masked-comp=0 \
+//	  --enable-interintra-comp=0 --enable-onesided-comp=0 \
+//	  --enable-interinter-wedge=0 --enable-diff-wtd-comp=0 \
+//	  --enable-dist-wtd-comp=0 --enable-ref-frame-mvs=0 \
+//	  --reduced-reference-set=1 --enable-tx64=0 --enable-rect-tx=0 \
+//	  -o profile1-444-10bit-superres-inter-static-160x128.ivf \
+//	  src444_10_superres_static_inter.yuv
 //	# 4:4:4 8-bit CDEF + loop restoration:
 //	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
 //	  --cpu-used=2 --end-usage=q --cq-level=28 --kf-max-dist=1 \
@@ -498,6 +530,29 @@ var profileClips = []profileClip{
 		wantBitDepth:     10,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
+		superRes:         true,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit static super-res inter stream with loop filter
+		// disabled. Later frames reference high-bit-depth upscaled output,
+		// guarding the scaled super-res reference publication path.
+		name: "profile1-444-10bit-superres-inter-static-160x128",
+		file: "profile1-444-10bit-superres-inter-static-160x128.ivf",
+		frameMD5Hex: []string{
+			"ab4284f9b59b7cfd81bdf5ab27d7e10b",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+			"7a72c06659a4a041bbdcf65a7f45bb83",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     10,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+		wantInterFrames:  1,
 		superRes:         true,
 	},
 	{

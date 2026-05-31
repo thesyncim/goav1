@@ -85,9 +85,16 @@ func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, 
 func frameWorkPredictScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, bytesPerSample, bitDepth,
+		dstX, dstY, blockX, blockY, width, height, width, height, mv, subsamplingX, subsamplingY, filters)
+}
+
+func frameWorkPredictScaledReferencePlaneWithFilterSize(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
+	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
 	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
-	return frameWorkPredictScaledReferencePlaneWithDims(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
-		dstX, dstY, blockX, blockY, width, height, mv, subsamplingX, subsamplingY, filters)
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
+		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters)
 }
 
 // frameWorkScaledReferenceCurrentDims returns the current frame's coded
@@ -119,10 +126,17 @@ func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) 
 func frameWorkPredictScaledReferencePlaneToBuffer(dst frame.Plane, ref frame.Plane,
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, mv motion.Vector, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst, ref, geom, bitDepth,
+		dstX, dstY, blockX, blockY, geom.Width, geom.Height, mv, filters)
+}
+
+func frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst frame.Plane, ref frame.Plane,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters) error {
 	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
-	return frameWorkPredictScaledReferencePlaneWithDims(dst, ref, curWidth, curHeight,
-		geom.BytesPerSample, bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height, mv,
-		geom.SubsamplingX, geom.SubsamplingY, filters)
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst, ref, curWidth, curHeight,
+		geom.BytesPerSample, bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height,
+		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 }
 
 // frameWorkPredictScaledReferencePlaneWithDims is the explicit-output-dims
@@ -133,6 +147,15 @@ func frameWorkPredictScaledReferencePlaneWithDims(dst frame.Plane, ref frame.Pla
 	bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst, ref, curWidth, curHeight,
+		bytesPerSample, bitDepth, dstX, dstY, blockX, blockY, width, height, width, height, mv,
+		subsamplingX, subsamplingY, filters)
+}
+
+func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst frame.Plane, ref frame.Plane, curWidth int, curHeight int,
+	bytesPerSample int, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
+	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
 	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
 	if err != nil {
 		return ErrInvalidBatch
@@ -141,11 +164,11 @@ func frameWorkPredictScaledReferencePlaneWithDims(dst frame.Plane, ref frame.Pla
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	xTable, err := motion.SubpelKernelTableFor(filters.X, width)
+	xTable, err := motion.SubpelKernelTableFor(filters.X, filterWidth)
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	yTable, err := motion.SubpelKernelTableFor(filters.Y, height)
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, filterHeight)
 	if err != nil {
 		return ErrInvalidBatch
 	}

@@ -315,7 +315,7 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 22/22 vendored profile clips pass, covering
+- `make dryrun-profiles`: 23/23 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit film grain, all-key superres, and inter superres,
   profile 2 4:2:2 8-bit all-intra and inter, profile 2 4:2:0 12-bit,
