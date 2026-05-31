@@ -309,12 +309,14 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) PostFilterOutput() (*
 }
 
 // DecoderFrameWorkReusableSupportedPostFilterRunner is a self-sizing
-// post-filter runner for incremental decode loops (the public stream runner,
-// cmd/aom-go-dec). Each Apply computes the exact scratch the supported
-// post-filter chain (loop filter, CDEF, loop restoration, super-res, film
+// post-filter runner for incremental decode loops that need publishable
+// frame-pool references. Each Apply computes the exact scratch the supported
+// post-filter chain (loop filter, CDEF, loop restoration, and display-only film
 // grain) needs for the completed frame, grows its caller-owned arena when a
-// frame needs more than any prior frame, then applies the chain in place. It
-// implements DecoderFrameWorkPostFilterRunner and
+// frame needs more than any prior frame, then applies the chain. Super-res
+// output uses detached caller-owned storage and is handled by
+// DecoderFrameWorkReusableCallerPostFilterRunner. This type implements
+// DecoderFrameWorkPostFilterRunner and
 // DecoderFrameWorkPostFilterOutputProvider, so it can be passed directly to
 // RunLowOverheadIntoWithPostFilterRunner and the event runner will route the
 // filtered display frame back to the caller.
@@ -329,6 +331,18 @@ type DecoderFrameWorkReusableSupportedPostFilterRunner struct {
 	RestorationOptimized bool
 
 	runner DecoderFrameWorkSupportedPostFilterScratchRunner
+	size   DecoderFrameWorkPostFilterRequestScratchSize
+}
+
+// DecoderFrameWorkReusableCallerPostFilterRunner is a self-sizing runner for
+// the caller-owned full postfilter chain. It permits super-res to return a
+// detached display frame in caller-owned scratch, so it is appropriate for
+// output/display integrations that can keep that scratch alive.
+type DecoderFrameWorkReusableCallerPostFilterRunner struct {
+	// RestorationOptimized selects the optimized loop-restoration apply path.
+	RestorationOptimized bool
+
+	runner DecoderFrameWorkCallerPostFilterScratchRunner
 	size   DecoderFrameWorkPostFilterRequestScratchSize
 }
 
@@ -360,7 +374,10 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) PostFilterOutput() (
 }
 
 func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) decoderFrameWorkReusablePostFilterArenaTooSmall(arena DecoderFrameWorkPostFilterRequestScratchSize) bool {
-	s := r.runner.Scratch
+	return decoderFrameWorkPostFilterArenaTooSmall(r.runner.Scratch, arena)
+}
+
+func decoderFrameWorkPostFilterArenaTooSmall(s DecoderFrameWorkPostFilterRequestScratch, arena DecoderFrameWorkPostFilterRequestScratchSize) bool {
 	return len(s.LoopFilterEdges) < arena.LoopFilterEdges ||
 		len(s.CDEFDirectionGrid) < arena.CDEFDirectionGrid ||
 		len(s.CDEFVarianceGrid) < arena.CDEFVarianceGrid ||
@@ -368,6 +385,49 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) decoderFrameWorkReus
 		len(s.Uint16Scratch) < arena.Uint16Scratch ||
 		len(s.Int16Scratch) < arena.Int16Scratch ||
 		len(s.Int32Scratch) < arena.Int32Scratch
+}
+
+func (r *DecoderFrameWorkReusableCallerPostFilterRunner) decoderFrameWorkReusablePostFilterArenaTooSmall(arena DecoderFrameWorkPostFilterRequestScratchSize) bool {
+	return decoderFrameWorkPostFilterArenaTooSmall(r.runner.Scratch, arena)
+}
+
+func (r *DecoderFrameWorkReusableCallerPostFilterRunner) ensureScratch(ctx DecoderFrameWorkPostFilterContext) error {
+	exact, err := r.runner.ScratchLen(ctx)
+	if err != nil {
+		return err
+	}
+	arena := DecoderFrameWorkPostFilterRequestScratchLen(exact)
+	if r.decoderFrameWorkReusablePostFilterArenaTooSmall(arena) {
+		r.size = r.size.Max(arena)
+		r.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(r.size)
+	}
+	return nil
+}
+
+// Apply sizes scratch for ctx, grows the caller-owned arena if needed, and runs
+// the full caller postfilter chain. Super-res sizing is two-pass: first the
+// output frame backing is allocated, then the post-super-res tail scratch is
+// measured against the detached output view.
+func (r *DecoderFrameWorkReusableCallerPostFilterRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
+	}
+	r.runner.RestorationOptimized = r.RestorationOptimized
+	if err := r.ensureScratch(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureScratch(ctx); err != nil {
+		return err
+	}
+	return r.runner.Apply(ctx)
+}
+
+// PostFilterOutput returns the final display output after Apply.
+func (r *DecoderFrameWorkReusableCallerPostFilterRunner) PostFilterOutput() (*Frame, bool) {
+	if r == nil {
+		return nil, false
+	}
+	return r.runner.PostFilterOutput()
 }
 
 func decoderFrameWorkReusablePostFilterScratch(size DecoderFrameWorkPostFilterRequestScratchSize) DecoderFrameWorkPostFilterRequestScratch {

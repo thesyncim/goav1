@@ -239,9 +239,9 @@ dryrun-full:
 	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
 
 # dryrun-profiles decodes the vendored profile-conformance clips (profile-1
-# 4:4:4 8/10-bit, profile-1 4:4:4 palette, profile-2 4:2:2 8-bit and
-# 4:2:0 12-bit, both all-intra and inter) and asserts byte-exact per-frame MD5
-# against their libaom goldens.
+# 4:4:4 8/10-bit, profile-1 4:4:4 palette and super-res, profile-2 4:2:2
+# 8-bit and 4:2:0 12-bit, both all-intra and inter) and asserts byte-exact
+# per-frame MD5 against their libaom goldens.
 # The test lives in its own package (internal/av1/testvector/profiles) so it
 # compiles into a separate test binary from the oracle suite and cannot share
 # process state with the fast/extended dry-runs.
@@ -296,7 +296,7 @@ help:
 	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run"
 	@echo "  dryrun-full                strict-MD5 all committed libaom framework vectors"
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
-	@echo "  dryrun-profiles            byte-exact profile clips (profile-1 4:4:4 incl. palette, profile-2 4:2:2/12-bit)"
+	@echo "  dryrun-profiles            byte-exact profile clips (profile-1 4:4:4 incl. palette/super-res, profile-2 4:2:2/12-bit)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + test + alloc"

@@ -37,8 +37,8 @@ ship under `internal/av1/testdata/libaom/`.
 | #  | Area                             | Status  | Implementing path(s)             | Notes                                          |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  1 | Profile 0 (Main)                 | Yes     | internal/av1/parser/sequence.go  | seq_profile=0 parsed; default decode path.     |
-|    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra and inter clips pass  |
-|    |                                  |         | internal/av1/testvector/profiles | byte-exact internal + exported decode gates.   |
+|    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra, inter, palette, and  |
+|    |                                  |         | internal/av1/testvector/profiles | super-res clips pass byte-exact profile gates. |
 |    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8-bit and 4:2:0 12-bit profile clips     |
 |    |                                  |         | internal/av1/testvector/profiles | pass; broader 10/12-bit vector sweep remains   |
 |    |                                  |         |                                  | covered by opt-in extended gates.              |
@@ -313,11 +313,11 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 13/13 vendored profile clips pass, covering
-  profile 1 4:4:4 8/10-bit all-intra and inter, profile 1 4:4:4
-  screen-content palette, profile 2 4:2:2 8-bit all-intra and inter,
-  profile 2 4:2:0 12-bit, superres, superres plus loop restoration,
-  edge-MV, and a non-SVC multi-tile clip.
+- `make dryrun-profiles`: 15/15 vendored profile clips pass, covering
+  profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette, and
+  super-res, profile 2 4:2:2 8-bit all-intra and inter, profile 2 4:2:0
+  12-bit, superres, superres plus loop restoration, edge-MV, and a non-SVC
+  multi-tile clip.
 
 ### SVC vector coverage
 
@@ -412,7 +412,7 @@ probe and keep committed changes focused on the resulting fix or guard.
 The remaining work is no longer driven by known failures in the current
 manifest. The next production-readiness items are:
 
-1. **Broader profile 1/2 corpus.** Keep adding profile-2 10/12-bit 4:2:2 and
+1. **Broader profile 2 corpus.** Keep adding profile-2 10/12-bit 4:2:2 and
    12-bit 4:4:4 streams as upstream or locally generated goldens become
    available.
 2. **Superres reference publication.** The caller-owned full postfilter path

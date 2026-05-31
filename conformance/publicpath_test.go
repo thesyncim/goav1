@@ -113,6 +113,45 @@ var publicClips = []publicClip{
 	},
 }
 
+var callerPostFilterClips = []publicClip{
+	{
+		file: "profile1-444-8bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"315663b1b307e46d4d4719ad759b39c2",
+			"b1c26bbbf277ac82c7fbdc0807974a1f",
+			"bd6aad53bf088c7ff5f54d93c59ff649",
+			"775085d7d08c8608b0acd2defa0fdc58",
+		},
+	},
+	{
+		file: "profile1-444-10bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"c556c65e1ceceb72778a36a5351b1d96",
+			"6e66c5c97438754259295a95dde348a4",
+			"cbf0f9d0584eaaf09538091edfb8f885",
+			"f6f4c4213052d92f0ae700e793cad629",
+		},
+	},
+	{
+		file: "superres-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"024e5d1f55340eee39893567e8000554",
+			"80c239661f2cd1afe5fce5038ceac76f",
+			"93dc5cde59cb99bd524264b15c70a700",
+			"87887afdc06ba5f0e88b2acbe1ce0ce5",
+		},
+	},
+	{
+		file: "superres-restoration-420-8bit-160x128.ivf",
+		frameMD5Hex: []string{
+			"93533110e2bd60fed6f15b5e65178bc6",
+			"bf83a513a868584aec7f9f05c5187d70",
+			"4e7dc4a0d7ab9cebdbdfdf3ef73b0d1c",
+			"6af9472b0679093facbefa85e973a7f9",
+		},
+	},
+}
+
 // TestPublicPathProfileClips decodes each vendored profile clip through the
 // public stream runner and asserts every visible frame's MD5 matches the
 // libaom golden.
@@ -120,6 +159,27 @@ func TestPublicPathProfileClips(t *testing.T) {
 	for _, clip := range publicClips {
 		t.Run(clip.file, func(t *testing.T) {
 			got := decodeClipPublic(t, clip.file)
+			if len(got) != len(clip.frameMD5Hex) {
+				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+			}
+			for i, want := range clip.frameMD5Hex {
+				if g := hex.EncodeToString(got[i][:]); g != want {
+					t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, g, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPublicPathCallerPostFilterProfileClips drives all-keyframe super-res
+// clips through the exported caller-owned full postfilter runner. This covers
+// display output for super-res and post-super-res restoration without requiring
+// publishable upscaled references.
+func TestPublicPathCallerPostFilterProfileClips(t *testing.T) {
+	for _, clip := range callerPostFilterClips {
+		t.Run(clip.file, func(t *testing.T) {
+			var postFilter av1.DecoderFrameWorkReusableCallerPostFilterRunner
+			got := decodeClipPublicDataWithRunner(t, readPublicClip(t, clip.file), &postFilter)
 			if len(got) != len(clip.frameMD5Hex) {
 				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
 			}
@@ -194,6 +254,12 @@ func decodeClipPublic(t *testing.T, file string) [][16]byte {
 
 func decodeClipPublicData(t *testing.T, ivfData []byte) [][16]byte {
 	t.Helper()
+	var postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+	return decodeClipPublicDataWithRunner(t, ivfData, &postFilter)
+}
+
+func decodeClipPublicDataWithRunner(t *testing.T, ivfData []byte, postFilter av1.DecoderFrameWorkPostFilterRunner) [][16]byte {
+	t.Helper()
 
 	it, err := av1.NewIVFIterator(ivfData)
 	if err != nil {
@@ -249,13 +315,12 @@ func decodeClipPublicData(t *testing.T, ivfData []byte) [][16]byte {
 	pool := bindPublicFramePool(t, format, surfaceCount)
 
 	var (
-		stream     av1.DecoderStream
-		refs       av1.DecoderSurfaceReferences
-		state      av1.DecoderFrameWorkState
-		stats      av1.DecoderFrameWorkTileResidualStats
-		sideData   av1.DecoderFrameWorkSideData
-		batch      av1.DecoderFrameWorkBatchResidualRunner
-		postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+		stream   av1.DecoderStream
+		refs     av1.DecoderSurfaceReferences
+		state    av1.DecoderFrameWorkState
+		stats    av1.DecoderFrameWorkTileResidualStats
+		sideData av1.DecoderFrameWorkSideData
+		batch    av1.DecoderFrameWorkBatchResidualRunner
 	)
 	refSurface := make([]int, av1.InterRefsPerFrame)
 	refFrames := make([]*av1.Frame, av1.InterRefsPerFrame)
@@ -282,7 +347,7 @@ func decodeClipPublicData(t *testing.T, ivfData []byte) [][16]byte {
 	var digests [][16]byte
 	for i, payload := range payloads {
 		var result av1.DecoderFrameWorkResidualStreamResult
-		if err := runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &postFilter); err != nil {
+		if err := runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter); err != nil {
 			t.Fatalf("frame %d run: %v", i, err)
 		}
 		for _, frame := range result.Run.Outputs {
