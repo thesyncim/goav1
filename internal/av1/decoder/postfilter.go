@@ -756,7 +756,7 @@ func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req Fr
 	// The post-CDEF (afterCDEF=true) save runs after the surface is already
 	// upscaled and uses the plain path.
 	if !afterCDEF && ctx.superResActiveForRestorationSave() {
-		return ctx.saveRestorationDeblockBoundariesSuperRes(plan, boundaries, bytesPerSample)
+		return ctx.saveRestorationDeblockBoundariesSuperRes(plan, boundaries, bytesPerSample, req.DataScratch)
 	}
 	return tile.SaveRestorationFrameBoundaryLinesFromFrame(plan, *ctx.Output, bytesPerSample, boundaries, afterCDEF)
 }
@@ -780,7 +780,7 @@ func (ctx FrameWorkPostFilterContext) superResActiveForRestorationSave() bool {
 // saveRestorationDeblockBoundariesSuperRes performs the pre-CDEF restoration
 // boundary save against the MI-aligned coded surface, upscaling each saved row
 // to the upscaled plane width. It ports libaom's super-res deblock save branch.
-func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(plan tile.RestorationFramePlan, boundaries [3]tile.RestorationStripeBoundaries, bytesPerSample int) error {
+func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(plan tile.RestorationFramePlan, boundaries [3]tile.RestorationStripeBoundaries, bytesPerSample int, rowScratch []uint16) error {
 	codedFormat, err := codedFrameFormatFromHeaders(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Output.Format.Align)
 	if err != nil {
 		return err
@@ -807,7 +807,12 @@ func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(p
 			maxAlignedWidth = srcPlane.Width
 		}
 	}
-	upscale.RowScratch = make([]uint16, maxAlignedWidth)
+	if maxAlignedWidth > 0 {
+		if len(rowScratch) < maxAlignedWidth {
+			return tile.ErrJobBufferTooSmall
+		}
+		upscale.RowScratch = rowScratch[:maxAlignedWidth]
+	}
 	return tile.SaveRestorationFrameBoundaryLinesFromFrameSuperRes(plan, codedPlanes, bytesPerSample, upscale, boundaries)
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -244,6 +245,118 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterAllowsCompleted
 	}
 	if output.Y.Pix[0] != 0x33 {
 		t.Fatalf("output sample=%d want 0x33", output.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkPostFilterContextApplyCallerPostFiltersSuperResRestorationAllocs(t *testing.T) {
+	const codedWidth = 32
+	const upscaledWidth = 48
+	const height = 64
+
+	seq := testSequence()
+	size := parser.FrameSize{
+		CodedWidth:          codedWidth,
+		UpscaledWidth:       upscaledWidth,
+		Height:              height,
+		SuperResEnabled:     true,
+		SuperResDenominator: 16,
+	}
+	restoration := parser.RestorationParams{
+		Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+		UnitSizeY: 64,
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{
+		Width:        codedWidth,
+		Height:       height,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	for i := range output.Y.Pix {
+		output.Y.Pix[i] = byte(32 + i%96)
+	}
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		Restoration:    restoration,
+	}
+	batch := threading.FrameWorkBatch{
+		FrameWorkFrameContext: threading.FrameWorkFrameContext{
+			Sequence:    threading.FrameWorkSequenceContextFromHeader(seq),
+			FrameSize:   size,
+			Restoration: restoration,
+		},
+	}
+	plan, err := batch.RestorationFramePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffers, err := batch.BindRestorationFrameBuffers(
+		make([]tile.RestorationUnitRecord, plan.UnitRecordLen()),
+		make([]uint16, plan.BoundaryBufferLen()),
+		make([]uint16, plan.BoundaryBufferLen()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, RestorationFrameBuffers: &buffers}
+	var outputView frame.Frame
+	options := FrameWorkPostFilterBindOptions{
+		SuperResOutputView:    &outputView,
+		RestorationRecords:    buffers.Records,
+		RestorationBoundaries: buffers.Boundaries,
+	}
+	first, err := ctx.CallerPostFilterScratchLen(FrameWorkPostFilterRequest{
+		Restoration: FrameWorkRestorationPostFilterRequest{Records: buffers.Records},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SuperRes.OutputFrame == 0 || first.Restoration.Samples.DataLen != 0 {
+		t.Fatalf("bootstrap scratch=%+v", first)
+	}
+	firstScratch := testFrameWorkPostFilterScratchStorage(first)
+	probe, err := first.BindRequest(options, firstScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Restoration.Samples.DataLen < output.Y.Width {
+		t.Fatalf("restoration scratch too small for superres boundary row: %+v", full.Restoration)
+	}
+	scratch := testFrameWorkPostFilterScratchStorage(full)
+	req, err := full.BindRequest(options, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, result, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterSuperRes | FrameWorkPostFilterLoopRestoration
+	if result.Completed != wantCompleted ||
+		result.SuperRes.Output.Format.Width != upscaledWidth ||
+		result.Restoration.Records != 1 ||
+		next.RemainingPostFilters() != 0 ||
+		!next.DetachedPostFilterOutput() {
+		t.Fatalf("next remaining=%b detached=%v result=%+v", next.RemainingPostFilters(), next.DetachedPostFilterOutput(), result)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, _, err := ctx.ApplyCallerPostFilters(req); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("superres restoration caller postfilter allocated: %f", allocs)
 	}
 }
 

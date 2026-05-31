@@ -218,10 +218,10 @@ ship under `internal/av1/testdata/libaom/`.
 |    | refresh_frame_flags handling     | Yes     | internal/av1/parser/reference.go | Per-slot refresh bit applied at frame finish;  |
 |    |                                  |         | internal/av1/decoder/surface_pool.go | atomic batch release of replaced surfaces. |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-| 28 | Temporal motion field projection | Partial | internal/av1/tile/motion_field.go | TemporalMotionField.Setup matches libaom      |
+| 28 | Temporal motion field projection | Yes     | internal/av1/tile/motion_field.go | TemporalMotionField.Setup matches libaom      |
 |    |                                  |         | internal/av1/threading/ref_mv_frame.go | ordering; storage and entry binding       |
-|    |                                  |         | internal/av1/decoder/motion_field.go | exposed; bit-exactness still diverges on    |
-|    |                                  |         |                                  | the mv / mfmv vectors at frame 1.              |
+|    |                                  |         | internal/av1/decoder/motion_field.go | exposed; mv, mfmv, and SVC vectors pass    |
+|    |                                  |         |                                  | strict per-frame MD5.                          |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 29 | Segmentation                     | Yes     | internal/av1/parser/segmentation.go | SegmentationParams parsing + previous-state |
 |    |                                  |         | internal/av1/tile/decode.go      | carryover into tile decode state.              |
@@ -307,7 +307,7 @@ ship under `internal/av1/testdata/libaom/`.
 
 The framework dry-run gates use strict per-frame MD5. Current coverage is:
 
-- `make dryrun-fast`: 8/8 libaom fast vectors pass.
+- `make dryrun-fast`: 14/14 libaom fast vectors pass.
 - `make dryrun-relevant-supported`: 14/14 relevant vectors pass, including
   8-bit and 10-bit film grain and monochrome.
 - `make dryrun-full`: 240/240 committed remote libaom vectors pass.
@@ -315,7 +315,7 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 23/23 vendored profile clips pass, covering
+- `make dryrun-profiles`: 24/24 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit film grain, all-key superres, and inter superres,
   profile 2 4:2:2 8-bit all-intra and inter, profile 2 4:2:0 12-bit,
