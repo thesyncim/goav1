@@ -551,10 +551,13 @@ func frameWorkAccumulateLoopFilterTransformStats(ctx FrameWorkPostFilterContext,
 	if !record.TransformTree.HasUV {
 		return nil
 	}
-	return frameWorkLoopFilterForEachChromaTXB(ctx, record, func(tile.TransformBlock) error {
-		plan.ChromaTXBs++
-		return nil
-	})
+	color := ctx.Event.SequenceHeader.ColorConfig
+	count, err := frameWorkLoopFilterCountChromaTXBsWithShifts(color, record, frameWorkLoopFilterSubsamplingShift(color.SubsamplingX), frameWorkLoopFilterSubsamplingShift(color.SubsamplingY))
+	if err != nil {
+		return err
+	}
+	plan.ChromaTXBs += count
+	return nil
 }
 
 func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, levels [3][2]uint8) error {
@@ -1014,17 +1017,56 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, levelC
 		}
 		return nil
 	}
-	return frameWorkLoopFilterForEachChromaTXBWithShifts(planning.color, record, planning.ssX, planning.ssY, func(tx tile.TransformBlock) error {
-		if fuseUV {
-			return frameWorkAppendLoopFilterChromaTXBEdgesUV(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[0], tx, vertical[0], vertical[1], horizontal[0], horizontal[1], planning.ssX, planning.ssY)
-		}
-		for i := 0; i < active; i++ {
-			if err := frameWorkAppendLoopFilterChromaTXBEdges(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[i], planes[i], tx, vertical[i], horizontal[i], planning.ssX, planning.ssY); err != nil {
-				return err
+	return frameWorkAppendLoopFilterChromaTXBs(ctx, levelCtx, filterMap, record, plan, edges, planning, bounds, planes, vertical, horizontal, active, fuseUV)
+}
+
+func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, planning frameWorkLoopFilterPlanningContext, bounds [2]frameWorkLoopFilterBounds, planes [2]loopfilter.Plane, vertical [2]uint8, horizontal [2]uint8, active int, fuseUV bool) error {
+	block, ok, err := frameWorkLoopFilterChromaBlockWithShifts(planning.color, record, planning.ssX, planning.ssY)
+	if err != nil || !ok {
+		return err
+	}
+	uvDims, ok := record.TransformTree.UV.Dimensions()
+	if !ok {
+		return threading.ErrInvalidBatch
+	}
+	for y := 0; y < int(block.VisibleH4); y += int(uvDims.H4) {
+		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
+			tx := tile.TransformBlock{
+				X4:        block.X4 + x,
+				Y4:        block.Y4 + y,
+				Size:      record.TransformTree.UV,
+				VisibleW4: uint8(minInt(int(uvDims.W4), int(block.VisibleW4)-x)),
+				VisibleH4: uint8(minInt(int(uvDims.H4), int(block.VisibleH4)-y)),
+			}
+			frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, tx.X4, tx.Y4, planning.ssX, planning.ssY)
+			if fuseUV {
+				if frameX4 > 0 {
+					if err := frameWorkAppendLoopFilterChromaEdgeSegmentsUV(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[0], loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, vertical[0], vertical[1], planning.ssX, planning.ssY); err != nil {
+						return err
+					}
+				}
+				if frameY4 > 0 {
+					if err := frameWorkAppendLoopFilterChromaEdgeSegmentsUV(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[0], loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, horizontal[0], horizontal[1], planning.ssX, planning.ssY); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			for i := 0; i < active; i++ {
+				if frameX4 > 0 {
+					if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[i], planes[i], loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, vertical[i], planning.ssX, planning.ssY); err != nil {
+						return err
+					}
+				}
+				if frameY4 > 0 {
+					if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, levelCtx, filterMap, planning.color, record, plan, edges, bounds[i], planes[i], loopfilter.EdgeHorizontal, frameX4, frameY4, int(tx.VisibleW4), tx.Size, horizontal[i], planning.ssX, planning.ssY); err != nil {
+						return err
+					}
+				}
 			}
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, tx tile.TransformBlock, currentVertical uint8, currentHorizontal uint8, ssX int, ssY int) error {
@@ -1834,37 +1876,23 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 	plan.DroppedEdges++
 }
 
-func frameWorkLoopFilterForEachChromaTXB(ctx FrameWorkPostFilterContext, record *threading.FrameWorkLoopFilterBlockRecord, visit func(tile.TransformBlock) error) error {
-	color := ctx.Event.SequenceHeader.ColorConfig
-	return frameWorkLoopFilterForEachChromaTXBWithShifts(color, record, frameWorkLoopFilterSubsamplingShift(color.SubsamplingX), frameWorkLoopFilterSubsamplingShift(color.SubsamplingY), visit)
-}
-
-func frameWorkLoopFilterForEachChromaTXBWithShifts(color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, ssX int, ssY int, visit func(tile.TransformBlock) error) error {
+func frameWorkLoopFilterCountChromaTXBsWithShifts(color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, ssX int, ssY int) (int, error) {
 	block, ok, err := frameWorkLoopFilterChromaBlockWithShifts(color, record, ssX, ssY)
 	if err != nil || !ok {
-		return err
-	}
-	if visit == nil {
-		return threading.ErrInvalidBatch
+		return 0, err
 	}
 	uvDims, ok := record.TransformTree.UV.Dimensions()
 	if !ok {
-		return threading.ErrInvalidBatch
+		return 0, threading.ErrInvalidBatch
 	}
-	for y := 0; y < int(block.VisibleH4); y += int(uvDims.H4) {
-		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
-			if err := visit(tile.TransformBlock{
-				X4:        block.X4 + x,
-				Y4:        block.Y4 + y,
-				Size:      record.TransformTree.UV,
-				VisibleW4: uint8(minInt(int(uvDims.W4), int(block.VisibleW4)-x)),
-				VisibleH4: uint8(minInt(int(uvDims.H4), int(block.VisibleH4)-y)),
-			}); err != nil {
-				return err
-			}
-		}
+	w := int(block.VisibleW4)
+	h := int(block.VisibleH4)
+	txW := int(uvDims.W4)
+	txH := int(uvDims.H4)
+	if w <= 0 || h <= 0 || txW <= 0 || txH <= 0 {
+		return 0, threading.ErrInvalidBatch
 	}
-	return nil
+	return ((w + txW - 1) / txW) * ((h + txH - 1) / txH), nil
 }
 
 func frameWorkLoopFilterChromaBlock(ctx FrameWorkPostFilterContext, record *threading.FrameWorkLoopFilterBlockRecord) (tile.TransformBlock, bool, error) {

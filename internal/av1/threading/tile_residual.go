@@ -1234,17 +1234,31 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	if visit == nil {
 		return tile.BlockCoeffRequest{}, ErrInvalidBatch
 	}
-	transforms, err := c.selectBlockTransformsPtr(visit)
-	if err != nil {
-		return tile.BlockCoeffRequest{}, err
-	}
-	// libaom uses xd->qindex[segment_id] (the segment-adjusted qindex) — not
-	// the frame base — when gating tx-type syntax on the qindex==0/lossless
-	// shortcut. Mirror that so segmentation streams whose segment delta drives
-	// the effective qindex to 0 fall through to DCT_DCT identically.
-	segmentQIndex, lossless, err := c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
-	if err != nil {
-		return tile.BlockCoeffRequest{}, err
+	var transforms FrameWorkBlockTransforms
+	var segmentQIndex uint8
+	var lossless bool
+	if c.req.Transforms != nil {
+		var err error
+		transforms, err = c.req.Transforms(*visit)
+		if err != nil {
+			return tile.BlockCoeffRequest{}, err
+		}
+		// libaom uses xd->qindex[segment_id] (the segment-adjusted qindex) —
+		// not the frame base — when gating tx-type syntax on the
+		// qindex==0/lossless shortcut. Custom transform selectors do not carry
+		// that cached value, so resolve it here.
+		segmentQIndex, lossless, err = c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
+		if err != nil {
+			return tile.BlockCoeffRequest{}, err
+		}
+	} else if c.req.UseDefaultTransforms {
+		var err error
+		transforms, segmentQIndex, lossless, err = c.batch.readBlockTransformsAndQIndexPtr(c.state, visit)
+		if err != nil {
+			return tile.BlockCoeffRequest{}, err
+		}
+	} else {
+		return tile.BlockCoeffRequest{}, ErrInvalidBatch
 	}
 	transformSelect := transforms.TransformSelect
 	if transforms.ReadIntraTX {
@@ -1639,13 +1653,18 @@ func (b *FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile
 }
 
 func (b *FrameWorkBatch) readBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	transforms, _, _, err := b.readBlockTransformsAndQIndexPtr(state, visit)
+	return transforms, err
+}
+
+func (b *FrameWorkBatch) readBlockTransformsAndQIndexPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, uint8, bool, error) {
 	if visit == nil {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
+		return FrameWorkBlockTransforms{}, 0, false, ErrInvalidBatch
 	}
 	if visit.Prediction.Valid && visit.Prediction.Intra {
-		return b.readIntraBlockTransformsPtr(state, visit)
+		return b.readIntraBlockTransformsAndQIndexPtr(state, visit)
 	}
-	return b.readInterBlockTransformsPtr(state, visit)
+	return b.readInterBlockTransformsAndQIndexPtr(state, visit)
 }
 
 func (b *FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
@@ -1653,18 +1672,24 @@ func (b *FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit
 }
 
 func (b *FrameWorkBatch) readIntraBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	transforms, _, _, err := b.readIntraBlockTransformsAndQIndexPtr(state, visit)
+	return transforms, err
+}
+
+func (b *FrameWorkBatch) readIntraBlockTransformsAndQIndexPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, uint8, bool, error) {
 	if state == nil || visit == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
+		return FrameWorkBlockTransforms{}, 0, false, ErrInvalidBatch
 	}
-	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {
-		return FrameWorkBlockTransforms{}, err
+	qIndex, lossless, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID)
+	if err != nil {
+		return FrameWorkBlockTransforms{}, 0, false, err
 	}
 	return FrameWorkBlockTransforms{
 		Inter:       false,
 		Luma:        transform.TypeDCTDCT,
 		Chroma:      [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
 		ReadIntraTX: true,
-	}, nil
+	}, qIndex, lossless, nil
 }
 
 func (b *FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
@@ -1672,18 +1697,24 @@ func (b *FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit
 }
 
 func (b *FrameWorkBatch) readInterBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	transforms, _, _, err := b.readInterBlockTransformsAndQIndexPtr(state, visit)
+	return transforms, err
+}
+
+func (b *FrameWorkBatch) readInterBlockTransformsAndQIndexPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, uint8, bool, error) {
 	if state == nil || visit == nil {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
+		return FrameWorkBlockTransforms{}, 0, false, ErrInvalidBatch
 	}
-	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {
-		return FrameWorkBlockTransforms{}, err
+	qIndex, lossless, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID)
+	if err != nil {
+		return FrameWorkBlockTransforms{}, 0, false, err
 	}
 	return FrameWorkBlockTransforms{
 		Inter:       true,
 		Luma:        transform.TypeDCTDCT,
 		Chroma:      [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
 		ReadInterTX: true,
-	}, nil
+	}, qIndex, lossless, nil
 }
 
 func frameWorkAccumulateResidualStats(stats *FrameWorkTileResidualStats, coeff tile.LumaCoeffStats) {
