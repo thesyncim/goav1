@@ -9,7 +9,7 @@ trace_bin="$tmp/entropy-trace.test"
 tile_release_bin="$tmp/tile-release.test"
 tile_rng_trace_bin="$tmp/tile-rng-trace.test"
 tile_coeff_trace_bin="$tmp/tile-coeff-trace.test"
-reader_symbols='github.com/thesyncim/goav1/internal/av1/entropy\.\(\*Reader\)\.(ReadBit|ReadBoolQ15|ReadBits|ReadSymbol|ReadCDF|ReadCDFTrusted|ReadBinaryCDFTrusted|readSymbolTrusted)$'
+reader_symbols='github.com/thesyncim/goav1/internal/av1/entropy\.\(\*Reader\)\.(ReadBit|ReadBoolQ15|ReadBits|ReadSymbol|ReadCDF|ReadCDFTrusted|ReadCDF3Trusted|ReadCDF4Trusted|ReadBinaryCDFTrusted|readSymbolTrusted)$'
 tile_symbols='github.com/thesyncim/goav1/internal/av1/tile\.\(\*DecodeState\)\.ReadCoefficientsTXB$|github.com/thesyncim/goav1/internal/av1/tile\.decodeBlockLoopVisitWithCoeffController|github.com/thesyncim/goav1/internal/av1/tile\.\(\*BlockModeContext\)\.BuildReferenceMVStack$'
 
 go test -c -o "$release_bin" ./internal/av1/entropy

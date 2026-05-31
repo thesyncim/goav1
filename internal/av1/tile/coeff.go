@@ -667,22 +667,14 @@ func (s *DecodeState) readCoeffBaseFromArr(arr *[CoeffBaseContexts]entropy.CDF, 
 	if context < 0 || context >= CoeffBaseContexts {
 		return 0, entropy.ErrInvalidCDF
 	}
-	cdf, err := coeffCDF(&arr[context], NumBaseLevels+2)
-	if err != nil {
-		return 0, err
-	}
-	return s.Reader.ReadCDFTrusted(cdf)
+	return s.Reader.ReadCDF4Trusted(&arr[context])
 }
 
 func (s *DecodeState) readCoeffBaseEOBFromArr(arr *[EOBBaseContexts]entropy.CDF, context int) (int, error) {
 	if context < 0 || context >= EOBBaseContexts {
 		return 0, entropy.ErrInvalidCDF
 	}
-	cdf, err := coeffCDF(&arr[context], NumBaseLevels+1)
-	if err != nil {
-		return 0, err
-	}
-	symbol, err := s.Reader.ReadCDFTrusted(cdf)
+	symbol, err := s.Reader.ReadCDF3Trusted(&arr[context])
 	if err != nil {
 		return 0, err
 	}
@@ -696,11 +688,7 @@ func (s *DecodeState) readCoeffBRFromArr(arr *[CoeffBRContexts]entropy.CDF, cont
 	if context < 0 || context >= CoeffBRContexts {
 		return 0, entropy.ErrInvalidCDF
 	}
-	cdf, err := coeffCDF(&arr[context], BRCDFSize)
-	if err != nil {
-		return 0, err
-	}
-	return s.Reader.ReadCDFTrusted(cdf)
+	return s.Reader.ReadCDF4Trusted(&arr[context])
 }
 
 func (s *DecodeState) ReadDCSign(cdfs *CoeffCDFs, plane CoeffPlaneType, context int) (bool, error) {

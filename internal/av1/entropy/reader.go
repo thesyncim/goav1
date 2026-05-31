@@ -477,6 +477,108 @@ func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
 	return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
 }
 
+// ReadCDF3Trusted decodes one symbol from a three-symbol CDF without the
+// generic symbol-search loop. The CDF must be valid by construction.
+func (r *Reader) ReadCDF3Trusted(cdf *CDF) (int, error) {
+	if r == nil || cdf == nil || cdf.symbols != 3 {
+		return 0, ErrInvalidCDF
+	}
+	values := &cdf.values
+
+	rangeValue := r.rng
+	rngHi := rangeValue >> 8
+	coded := r.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := values[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		c1 := values[1]
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		if coded < lower {
+			symbol = 2
+			upper = lower
+			lower = 0
+		}
+	}
+	if lower >= upper {
+		return 0, ErrInvalidCDF
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(c0, 3, r.dif, r.rng, r.BitsRead())
+	}
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = rng << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
+	if r.allowCDFUpdate {
+		updateCDF3(values, symbol)
+	}
+	return symbol, nil
+}
+
+// ReadCDF4Trusted decodes one symbol from a four-symbol CDF without the
+// generic symbol-search loop. The CDF must be valid by construction.
+func (r *Reader) ReadCDF4Trusted(cdf *CDF) (int, error) {
+	if r == nil || cdf == nil || cdf.symbols != 4 {
+		return 0, ErrInvalidCDF
+	}
+	values := &cdf.values
+
+	rangeValue := r.rng
+	rngHi := rangeValue >> 8
+	coded := r.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := values[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		c1 := values[1]
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		if coded < lower {
+			symbol = 2
+			upper = lower
+			c2 := values[2]
+			lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+			if coded < lower {
+				symbol = 3
+				upper = lower
+				lower = 0
+			}
+		}
+	}
+	if lower >= upper {
+		return 0, ErrInvalidCDF
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(c0, 4, r.dif, r.rng, r.BitsRead())
+	}
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	r.cnt -= shift
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = rng << uint(shift)
+	if r.cnt < 0 {
+		r.refill()
+	}
+	if r.allowCDFUpdate {
+		updateCDF4(values, symbol)
+	}
+	return symbol, nil
+}
+
 // ReadBinaryCDFTrusted decodes one symbol from a two-symbol CDF without taking
 // the generic symbol-search path. The CDF must be valid by construction.
 func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
@@ -517,6 +619,47 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 		updateCDFWindow(window, symbol)
 	}
 	return symbol, nil
+}
+
+func updateCDF3(cdf *[MaxSymbols + 1]uint16, symbol int) {
+	count := cdf[3]
+	rate := uint(4 + (count >> 4))
+	if symbol > 0 {
+		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+	} else {
+		cdf[0] -= cdf[0] >> rate
+	}
+	if symbol > 1 {
+		cdf[1] += (uint16(CDFProbTop) - cdf[1]) >> rate
+	} else {
+		cdf[1] -= cdf[1] >> rate
+	}
+	if count < MaxCDFCount {
+		cdf[3] = count + 1
+	}
+}
+
+func updateCDF4(cdf *[MaxSymbols + 1]uint16, symbol int) {
+	count := cdf[4]
+	rate := uint(5 + (count >> 4))
+	if symbol > 0 {
+		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+	} else {
+		cdf[0] -= cdf[0] >> rate
+	}
+	if symbol > 1 {
+		cdf[1] += (uint16(CDFProbTop) - cdf[1]) >> rate
+	} else {
+		cdf[1] -= cdf[1] >> rate
+	}
+	if symbol > 2 {
+		cdf[2] += (uint16(CDFProbTop) - cdf[2]) >> rate
+	} else {
+		cdf[2] -= cdf[2] >> rate
+	}
+	if count < MaxCDFCount {
+		cdf[4] = count + 1
+	}
 }
 
 // ReadSignedDelta decodes the AV1 CDF-coded signed delta core used by

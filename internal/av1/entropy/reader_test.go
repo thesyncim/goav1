@@ -197,6 +197,44 @@ func TestReaderReadBinaryCDFTrustedMatchesReadCDF(t *testing.T) {
 	}
 }
 
+func TestReaderReadSmallCDFTrustedMatchesReadCDF(t *testing.T) {
+	src := []byte{0xa5, 0x5a, 0xc3, 0x3c, 0xf0}
+	for _, symbols := range []int{3, 4} {
+		t.Run("symbols", func(t *testing.T) {
+			var genericCDF CDF
+			if err := genericCDF.InitUniform(symbols); err != nil {
+				t.Fatal(err)
+			}
+			trustedCDF := genericCDF
+			generic := NewReader(src)
+			trusted := NewReader(src)
+
+			for i := 0; i < 16; i++ {
+				want, err := generic.ReadCDF(&genericCDF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got int
+				switch symbols {
+				case 3:
+					got, err = trusted.ReadCDF3Trusted(&trustedCDF)
+				case 4:
+					got, err = trusted.ReadCDF4Trusted(&trustedCDF)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != want {
+					t.Fatalf("symbol[%d]=%d want %d", i, got, want)
+				}
+				if trustedCDF != genericCDF {
+					t.Fatalf("cdf[%d]=%v want %v", i, trustedCDF.Values(), genericCDF.Values())
+				}
+			}
+		})
+	}
+}
+
 func TestReaderReadSignedDeltaZero(t *testing.T) {
 	var cdf CDF
 	if err := cdf.InitDefaultDelta(); err != nil {
