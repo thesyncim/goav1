@@ -786,6 +786,12 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 			wantVisible: 8,
 			maxAllocs:   8,
 		},
+		{
+			name:        "superres restoration high bit depth",
+			file:        "profile1-444-10bit-superres-restoration-160x128.ivf",
+			wantVisible: 4,
+			maxAllocs:   8,
+		},
 	}
 
 	for _, tc := range tests {
