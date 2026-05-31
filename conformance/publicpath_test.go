@@ -28,8 +28,8 @@ type publicClip struct {
 
 // These vendored profile-conformance clips and their aomdec per-frame MD5
 // goldens are shared with internal/av1/testvector/profiles. They cover 4:4:4
-// 8-bit, 4:2:2 8-bit, and 4:2:0 12-bit -- the profile/subsampling/bit-depth
-// combinations libaom's published vector suite does not ship.
+// 8-bit, 4:2:2 8-bit, and 4:2:0 12-bit -- including inter-coded non-4:2:0
+// clips that libaom's published vector suite does not ship.
 var publicClips = []publicClip{
 	{
 		file: "profile1-444-8bit-64x64.ivf",
@@ -40,11 +40,37 @@ var publicClips = []publicClip{
 		},
 	},
 	{
+		file: "profile1-444-8bit-inter-64x64.ivf",
+		frameMD5Hex: []string{
+			"11d7f1cc66c0e0484ad4d7566d66df35",
+			"0e590539ec2f2e33419f1de467ab9a18",
+			"d829dfffec65fcd80746b20f1c22b21b",
+			"2fdb71b5156533455f031e37a96b2a4d",
+			"23f8e6ee901994b9cbd2cfb91e181eeb",
+			"b69530f8be1ca111af9e9b4c29c3c984",
+			"cc93559f8904df46c9a6f3223a3c1f30",
+			"fafc19265b25a4380c50ae5a40e4eb27",
+		},
+	},
+	{
 		file: "profile2-422-8bit-64x64.ivf",
 		frameMD5Hex: []string{
 			"dabd492413632a810adeaf4e5d0c6d97",
 			"eb6cf8d1d4d644686cf03c513acd5978",
 			"84983e98afeef6692448e98fc5980431",
+		},
+	},
+	{
+		file: "profile2-422-8bit-inter-64x64.ivf",
+		frameMD5Hex: []string{
+			"e10a47c64fa7318c45ce0762bea3f0ce",
+			"393c471479eff858fe4901cee94b6e57",
+			"6251e9f45b4733552ba2b687b4c38154",
+			"43fbaf637130f61feaaed7e8844c5d4b",
+			"7ae17990bf39d7b507a441095ebe1ecb",
+			"275861a447790a60e26cf3f574cab809",
+			"61013488539b1b1a169f1e372d96d180",
+			"0eca225d9dd9f6f768ab49a216511304",
 		},
 	},
 	{
