@@ -1208,7 +1208,7 @@ func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoop
 		s.stats.Predictions++
 		return nil
 	}
-	if err := s.batch.PredictBlock(s.index, *visit, s.predictionScratch); err != nil {
+	if err := s.batch.predictBlockPtr(s.index, visit, s.predictionScratch); err != nil {
 		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 	}
 	s.stats.Predictions++
@@ -1234,7 +1234,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	if visit == nil {
 		return tile.BlockCoeffRequest{}, ErrInvalidBatch
 	}
-	transforms, err := c.selectBlockTransforms(*visit)
+	transforms, err := c.selectBlockTransformsPtr(visit)
 	if err != nil {
 		return tile.BlockCoeffRequest{}, err
 	}
@@ -1285,11 +1285,18 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 }
 
 func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	return c.selectBlockTransformsPtr(&visit)
+}
+
+func (c *frameWorkTileResidualLoopController) selectBlockTransformsPtr(visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if visit == nil {
+		return FrameWorkBlockTransforms{}, ErrInvalidBatch
+	}
 	if c.req.Transforms != nil {
-		return c.req.Transforms(visit)
+		return c.req.Transforms(*visit)
 	}
 	if c.req.UseDefaultTransforms {
-		return c.batch.ReadBlockTransforms(c.state, visit)
+		return c.batch.readBlockTransformsPtr(c.state, visit)
 	}
 	return FrameWorkBlockTransforms{}, ErrInvalidBatch
 }
@@ -1625,14 +1632,25 @@ func frameWorkVisitUsesCFLPtr(visit *tile.BlockLoopVisit) bool {
 }
 
 func (b *FrameWorkBatch) ReadBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	if visit.Prediction.Valid && visit.Prediction.Intra {
-		return b.ReadIntraBlockTransforms(state, visit)
+	return b.readBlockTransformsPtr(state, &visit)
+}
+
+func (b *FrameWorkBatch) readBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if visit == nil {
+		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
-	return b.ReadInterBlockTransforms(state, visit)
+	if visit.Prediction.Valid && visit.Prediction.Intra {
+		return b.readIntraBlockTransformsPtr(state, visit)
+	}
+	return b.readInterBlockTransformsPtr(state, visit)
 }
 
 func (b *FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	if state == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
+	return b.readIntraBlockTransformsPtr(state, &visit)
+}
+
+func (b *FrameWorkBatch) readIntraBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if state == nil || visit == nil || !visit.Prediction.Valid || !visit.Prediction.Intra {
 		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
 	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {
@@ -1647,7 +1665,11 @@ func (b *FrameWorkBatch) ReadIntraBlockTransforms(state *tile.DecodeState, visit
 }
 
 func (b *FrameWorkBatch) ReadInterBlockTransforms(state *tile.DecodeState, visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	if state == nil {
+	return b.readInterBlockTransformsPtr(state, &visit)
+}
+
+func (b *FrameWorkBatch) readInterBlockTransformsPtr(state *tile.DecodeState, visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
+	if state == nil || visit == nil {
 		return FrameWorkBlockTransforms{}, ErrInvalidBatch
 	}
 	if _, _, err := b.BlockQIndex(state.CurrentBaseQIdx, visit.SegmentID); err != nil {

@@ -122,20 +122,24 @@ type FrameWorkPredictionScratch struct {
 // chroma predictors. CfL needs luma-first reconstruction scheduling and remains
 // an explicit unsupported path here until that pipeline is wired.
 func (b *FrameWorkBatch) PredictBlock(index int, visit tile.BlockLoopVisit, scratch *FrameWorkPredictionScratch) error {
-	if !visit.Prediction.Valid {
+	return b.predictBlockPtr(index, &visit, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockPtr(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkPredictionScratch) error {
+	if visit == nil || !visit.Prediction.Valid {
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.Intra {
 		if scratch == nil {
 			return ErrInvalidBatch
 		}
-		return b.PredictBlockIntra(index, visit, &scratch.Intra)
+		return b.PredictBlockIntra(index, *visit, &scratch.Intra)
 	}
 	var interScratch *FrameWorkInterPredictionScratch
 	if scratch != nil {
 		interScratch = scratch.Inter
 	}
-	return b.PredictBlockInter(index, visit, interScratch)
+	return b.predictBlockInterPtr(index, visit, interScratch)
 }
 
 // PredictBlockLuma dispatches luma prediction for one decoded block-loop visit.
@@ -174,24 +178,36 @@ func (b *FrameWorkBatch) PredictBlockLuma(index int, visit tile.BlockLoopVisit, 
 // inter-intra prediction are supported; scaled references are rejected until
 // their prediction paths are integrated.
 func (b *FrameWorkBatch) PredictBlockInter(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
-	filters, err := frameWorkVisitMotionFilters(b.TileInfo, visit.Prediction)
+	return b.predictBlockInterPtr(index, &visit, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterPtr(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
+	filters, err := frameWorkVisitMotionFiltersPtr(b.TileInfo, &visit.Prediction)
 	if err != nil {
 		return err
 	}
-	return b.PredictBlockInterWithFilters(index, visit, scratch, filters)
+	return b.predictBlockInterWithFiltersPtr(index, visit, scratch, filters)
 }
 
 // PredictBlockInterWithFilters is PredictBlockInter with explicit interpolation
 // filters, matching callers that have already decoded switchable filter syntax.
 func (b *FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	if !visit.Prediction.Valid ||
+	return b.predictBlockInterWithFiltersPtr(index, &visit, scratch, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterWithFiltersPtr(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit == nil ||
+		!visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
 		!visit.Prediction.InterMotionValid {
 		return ErrInvalidBatch
 	}
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
+	if frameWorkPredictionIsIntrabcPtr(&visit.Prediction) {
 		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-			if err := b.predictBlockIntrabcPlane(index, visit, plane); err != nil {
+			if err := b.predictBlockIntrabcPlane(index, *visit, plane); err != nil {
 				return fmt.Errorf("intrabc plane %d: %w", plane, err)
 			}
 		}
@@ -202,28 +218,28 @@ func (b *FrameWorkBatch) PredictBlockInterWithFilters(index int, visit tile.Bloc
 			return ErrInvalidBatch
 		}
 		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-			if err := b.predictBlockInterCompoundPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+			if err := b.predictBlockInterCompoundPlaneWithFiltersPtr(index, visit, plane, scratch, filters); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeOBMC {
-		return b.PredictBlockInterOBMCWithFilters(index, visit, scratch, filters)
+		return b.predictBlockInterOBMCWithFiltersPtr(index, visit, scratch, filters)
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
 		if scratch == nil {
 			return ErrInvalidBatch
 		}
 		for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-			if err := b.predictBlockInterIntraPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+			if err := b.predictBlockInterIntraPlaneWithFiltersPtr(index, visit, plane, scratch, filters); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-		if err := b.predictBlockInterPlaneWithFilters(index, visit, plane, filters, scratch); err != nil {
+		if err := b.predictBlockInterPlaneWithFiltersPtr(index, visit, plane, filters, scratch); err != nil {
 			return err
 		}
 	}
@@ -244,11 +260,15 @@ func (b *FrameWorkBatch) PredictBlockInterOBMC(index int, visit tile.BlockLoopVi
 // PredictBlockInterOBMCWithFilters is PredictBlockInterOBMC with explicit
 // interpolation filters for the current block's base predictor.
 func (b *FrameWorkBatch) PredictBlockInterOBMCWithFilters(index int, visit tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	if scratch == nil {
+	return b.predictBlockInterOBMCWithFiltersPtr(index, &visit, scratch, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterOBMCWithFiltersPtr(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit == nil || scratch == nil {
 		return ErrInvalidBatch
 	}
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-		if err := b.predictBlockInterOBMCPlaneWithFilters(index, visit, plane, scratch, filters); err != nil {
+		if err := b.predictBlockInterOBMCPlaneWithFiltersPtr(index, visit, plane, scratch, filters); err != nil {
 			return err
 		}
 	}
@@ -907,8 +927,15 @@ func (b *FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, vis
 }
 
 func (b *FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
-		return b.predictBlockIntrabcPlane(index, visit, plane)
+	return b.predictBlockInterPlaneWithFiltersPtr(index, &visit, plane, filters, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
+	if frameWorkPredictionIsIntrabcPtr(&visit.Prediction) {
+		return b.predictBlockIntrabcPlane(index, *visit, plane)
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
 		return ErrInvalidBatch
@@ -935,11 +962,11 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile
 			return err
 		}
 		if warpable {
-			return b.predictBlockInterWarpPlaneWithFilters(index, visit, plane, filters, scratch)
+			return b.predictBlockInterWarpPlaneWithFiltersPtr(index, visit, plane, filters, scratch)
 		}
 		return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters, scratch)
 	}
-	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslation(visit.Prediction) {
+	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslationPtr(&visit.Prediction) {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -968,7 +995,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile
 			return err
 		}
 		if warpable {
-			return b.predictBlockInterGlobalWarpPlaneWithFilters(index, visit, plane, filters, scratch)
+			return b.predictBlockInterGlobalWarpPlaneWithFiltersPtr(index, visit, plane, filters, scratch)
 		}
 	}
 	// libaom's build_inter_predictors_sub8x8 splits the chroma block of an
@@ -978,7 +1005,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile
 	// visit.Prediction.SubChromaInter; we drive them here for U/V only,
 	// keeping luma on the standard single-MV path.
 	if visit.Prediction.SubChromaInterValid && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
-		return b.predictBlockInterSubChromaPlane(index, visit, plane, scratch)
+		return b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch)
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
 }
@@ -988,7 +1015,11 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFilters(index int, visit tile
 // the tile decoder (see tile.CollectSubChromaInterCells) and dispatches a
 // translational predictor per cell using that cell's own MV.
 func (b *FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch) error {
-	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
+	return b.predictBlockInterSubChromaPlanePtr(index, &visit, plane, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch) error {
+	if visit == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
 		return ErrInvalidBatch
 	}
 	if !visit.Prediction.SubChromaInterValid {
@@ -1068,9 +1099,14 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.B
 // allow_warp() in av1/common/reconinter.c, which returns 0 whenever
 // av1_is_scaled(sf) is true).
 func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	if !visit.Prediction.Valid ||
+	return b.predictBlockInterGlobalWarpPlaneWithFiltersPtr(index, &visit, plane, filters, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	if visit == nil ||
+		!visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
 		!visit.Prediction.InterMotionValid ||
 		!visit.Prediction.GlobalWarpedMotionValid {
 		return ErrInvalidBatch
@@ -1205,13 +1241,18 @@ func (b *FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoo
 }
 
 func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	if scratch == nil ||
-		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+	return b.predictBlockInterIntraPlaneWithFiltersPtr(index, &visit, plane, scratch, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit == nil ||
+		scratch == nil ||
+		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
 		!visit.Prediction.InterIntraValid ||
 		!visit.Prediction.InterIntra.Enabled {
 		return ErrInvalidBatch
 	}
-	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslation(visit.Prediction) {
+	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslationPtr(&visit.Prediction) {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
@@ -1309,6 +1350,13 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit
 }
 
 func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) bool {
+	return frameWorkPredictionUsesTranslationPtr(&pred)
+}
+
+func frameWorkPredictionUsesTranslationPtr(pred *tile.BlockPredictionModeResult) bool {
+	if pred == nil {
+		return false
+	}
 	if pred.MotionMode == tile.MotionModeTranslation {
 		return true
 	}
@@ -1316,6 +1364,13 @@ func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) boo
 }
 
 func frameWorkPredictionIsIntrabc(pred tile.BlockPredictionModeResult) bool {
+	return frameWorkPredictionIsIntrabcPtr(&pred)
+}
+
+func frameWorkPredictionIsIntrabcPtr(pred *tile.BlockPredictionModeResult) bool {
+	if pred == nil {
+		return false
+	}
 	return pred.IntrabcValid && pred.Intrabc
 }
 
@@ -1325,9 +1380,14 @@ func frameWorkPredictionIsIntrabc(pred tile.BlockPredictionModeResult) bool {
 // allow_warp() in av1/common/reconinter.c, which returns 0 whenever
 // av1_is_scaled(sf) is true).
 func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	if !visit.Prediction.Valid ||
+	return b.predictBlockInterWarpPlaneWithFiltersPtr(index, &visit, plane, filters, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	if visit == nil ||
+		!visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
 		!visit.Prediction.InterMotionValid ||
 		!visit.Prediction.WarpedMotionValid {
 		return ErrInvalidBatch
@@ -1384,10 +1444,15 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit 
 }
 
 func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	if scratch == nil ||
+	return b.predictBlockInterOBMCPlaneWithFiltersPtr(index, &visit, plane, scratch, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit == nil ||
+		scratch == nil ||
 		!visit.Prediction.Valid ||
 		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabc(visit.Prediction) ||
+		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
 		!visit.Prediction.InterMotionValid ||
 		!visit.Prediction.MotionModeValid ||
 		visit.Prediction.MotionMode != tile.MotionModeOBMC ||
@@ -1439,10 +1504,14 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFilters(index int, visit 
 }
 
 func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	if scratch == nil {
+	return b.predictBlockInterCompoundPlaneWithFiltersPtr(index, &visit, plane, scratch, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
+	if visit == nil || scratch == nil {
 		return ErrInvalidBatch
 	}
-	if frameWorkPredictionIsIntrabc(visit.Prediction) {
+	if frameWorkPredictionIsIntrabcPtr(&visit.Prediction) {
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
@@ -1474,7 +1543,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vi
 	// after the blend. Blending two already-rounded 8-bit predictors loses
 	// precision (off-by-1..3 across every compound block). Translational,
 	// scaled, and global-warp references now all produce the CONV_BUF directly.
-	return b.predictBlockInterCompoundConvBuf(index, visit, plane, scratch, geom, blend, filters)
+	return b.predictBlockInterCompoundConvBufPtr(index, visit, plane, scratch, geom, blend, filters)
 }
 
 // predictBlockInterCompoundConvBuf implements the translational compound inter
@@ -1483,6 +1552,13 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vi
 // buffers are blended (distance-weighted average or A64 soft mask) with a single
 // final rounding, matching the bitstream-exact compound output.
 func (b *FrameWorkBatch) predictBlockInterCompoundConvBuf(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry, blend tile.CompoundBlendResult, filters motion.InterpFilters) error {
+	return b.predictBlockInterCompoundConvBufPtr(index, &visit, plane, scratch, geom, blend, filters)
+}
+
+func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry, blend tile.CompoundBlendResult, filters motion.InterpFilters) error {
+	if visit == nil {
+		return ErrInvalidBatch
+	}
 	motionResult := visit.Prediction.InterMotion
 	bitDepth := b.Sequence.ColorConfig.BitDepth
 	warp := geom.Width >= 8 && geom.Height >= 8
@@ -3212,7 +3288,14 @@ func frameWorkMotionFilters(info parser.TileInfo) (motion.InterpFilters, error) 
 }
 
 func frameWorkVisitMotionFilters(info parser.TileInfo, prediction tile.BlockPredictionModeResult) (motion.InterpFilters, error) {
+	return frameWorkVisitMotionFiltersPtr(info, &prediction)
+}
+
+func frameWorkVisitMotionFiltersPtr(info parser.TileInfo, prediction *tile.BlockPredictionModeResult) (motion.InterpFilters, error) {
 	if info.InterpolationFilter == parser.InterpolationSwitchable {
+		if prediction == nil {
+			return motion.InterpFilters{}, ErrInvalidBatch
+		}
 		if !prediction.InterpFiltersValid || !prediction.InterpFilters.X.Valid() || !prediction.InterpFilters.Y.Valid() {
 			return motion.InterpFilters{}, ErrInvalidBatch
 		}
