@@ -8,7 +8,11 @@ import (
 	"sync/atomic"
 )
 
-const traceEntropyReads = true
+const (
+	// TraceRNGEnabled is true only for goav1_trace_rng builds.
+	TraceRNGEnabled   = true
+	traceEntropyReads = true
+)
 
 var (
 	traceSeq   uint64

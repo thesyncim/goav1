@@ -2,6 +2,8 @@
 
 package tile
 
+const coeffTraceEnabled = false
+
 func coeffTraceBlock(plane int, blkRow, blkCol int, txSize int, txClass int, eob int) {
 }
 

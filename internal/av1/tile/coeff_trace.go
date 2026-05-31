@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+const coeffTraceEnabled = true
+
 var (
 	coeffTraceOnce sync.Once
 	coeffTraceFile *os.File

@@ -844,7 +844,9 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
-	entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
+	if entropy.TraceRNGEnabled {
+		entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
+	}
 	ctx := &scratch.Mode
 	cdef := &scratch.CDEF
 	segmentID := uint8(0)

@@ -2,7 +2,13 @@
 
 package entropy
 
-const traceEntropyReads = false
+const (
+	// TraceRNGEnabled is a compile-time gate for call sites outside this
+	// package. Keep expensive trace arguments behind this constant so release
+	// builds do not prepare variadic args or call no-op stubs.
+	TraceRNGEnabled   = false
+	traceEntropyReads = false
+)
 
 // traceCDFRead is a no-op stub when the goav1_trace_rng build tag is not set.
 // Keeping the helper inlineable preserves the entropy reader hot path.
