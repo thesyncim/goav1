@@ -59,7 +59,7 @@ jobs:
           GOAV1_STRICT_MD5: '1'
         run: |
           set -o pipefail
-          # All eight fast-suite sub-vectors MUST pass strict per-frame MD5.
+          # All fast-suite sub-vectors MUST pass strict per-frame MD5.
           go test -tags goav1_oracle ./internal/av1/testvector \
             -run 'TestLibaomFastFrameWorkDryRun' \
             -count=1 -timeout 600s -v 2>&1 | tee dryrun.log

@@ -29,7 +29,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b8-00-quantizer-01.ivf", SHA1: "a56dd02c0258d4afea1ee358a22b54e99e39d5e1"},
 		MD5:    RemoteFile{Name: "av1-1-b8-00-quantizer-01.ivf.md5", SHA1: "b3d24124d81f1fbb26f5eb0036accb54f3ec69b2"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelQuantizer,
 	},
 	{
@@ -49,7 +49,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b10-00-quantizer-00.ivf", SHA1: "9bbe8499796aa588ff02e313fb0d4349940d2fea"},
 		MD5:    RemoteFile{Name: "av1-1-b10-00-quantizer-00.ivf.md5", SHA1: "36b402eedad2bacee8ac09acce44e2fc356dd80b"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelQuantizer | VectorLabelHighBitDepth,
 	},
 	{
@@ -109,7 +109,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b8-22-svc-L1T2.ivf", SHA1: "e94687eb0e90179b3800b6d5e11eb7e9bfb34eec"},
 		MD5:    RemoteFile{Name: "av1-1-b8-22-svc-L1T2.ivf.md5", SHA1: "2bc12b16385ea14323bc79607fb8dfbd7edaf8ef"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		// VectorLabelMultiTile: every frame uses Cols=3, Rows=1 - this
 		// is the only single-spatial-layer multi-tile vector in the
 		// libaom v3.14.0 AV1 suite (the L2T* vectors are also multi-
@@ -123,7 +123,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b8-23-film_grain-50.ivf", SHA1: "11bb40026103182c23a88133edafca369e5575e2"},
 		MD5:    RemoteFile{Name: "av1-1-b8-23-film_grain-50.ivf.md5", SHA1: "c58ccf7ff04711acc559c06f0bfce3c5b14800c3"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelFilmGrain,
 	},
 	{
@@ -143,7 +143,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b10-23-film_grain-50.ivf", SHA1: "2f883c7e11c21a31f79bd9c809541be90b0c7c4a"},
 		MD5:    RemoteFile{Name: "av1-1-b10-23-film_grain-50.ivf.md5", SHA1: "83f2094fca597ad38b4fd623b807de1774c53ffb"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelFilmGrain | VectorLabelHighBitDepth,
 	},
 	{
@@ -153,7 +153,7 @@ var libaomRemoteVectors = [...]RemoteVector{
 		Stream: RemoteFile{Name: "av1-1-b10-24-monochrome.ivf", SHA1: "03a8d002594ccc51932332002bb6f9837ef46d0f"},
 		MD5:    RemoteFile{Name: "av1-1-b10-24-monochrome.ivf.md5", SHA1: "e24aa6951afd7b2bb53eb1a73e25a19e7b189f82"},
 		Oracle: OracleFrameMD5,
-		Levels: SuiteLevelRelevant | SuiteLevelFull,
+		Levels: SuiteLevelFast | SuiteLevelRelevant | SuiteLevelFull,
 		Labels: VectorLabelMonochrome | VectorLabelHighBitDepth,
 	},
 

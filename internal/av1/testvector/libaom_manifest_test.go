@@ -37,8 +37,8 @@ func TestLibaomRemoteVectorLookupAndLabels(t *testing.T) {
 
 	manifest := LibaomRemoteManifest()
 	fast := manifest.SelectRemote(SuiteLevelFast, 0, nil)
-	if len(fast) != 8 {
-		t.Fatalf("fast vectors=%d want 8", len(fast))
+	if len(fast) != 14 {
+		t.Fatalf("fast vectors=%d want 14", len(fast))
 	}
 	motion := manifest.SelectRemote(SuiteLevelRelevant, VectorLabelMotion, nil)
 	if len(motion) != 2 {

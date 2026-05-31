@@ -155,7 +155,7 @@ func TestLibaomQuantizer00FrameWorkDryRun(t *testing.T) {
 
 func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 	if os.Getenv("GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN") != "1" {
-		t.Skip("set GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 to run the in-progress fast-vector framework dry-run")
+		t.Skip("set GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 to run the fast-vector framework dry-run")
 	}
 	for _, vector := range LibaomRemoteManifest().SelectRemote(SuiteLevelFast, 0, nil) {
 		t.Run(vector.Name, func(t *testing.T) {
