@@ -80,6 +80,11 @@ type TXBDecodeRequest struct {
 	TXBSkip         bool
 	DCSignContext   int
 	EOBMultiContext int
+	// SkipAllZeroCoeffClear lets fused internal callers avoid clearing the
+	// reusable coefficient scratch for txb_skip blocks that will not expose the
+	// coefficient buffer to user code. The default remains false so public
+	// callers still observe a zero-filled coefficient slice for AllZero TXBs.
+	SkipAllZeroCoeffClear bool
 }
 
 type TXBDecodeResult struct {
@@ -737,10 +742,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			return TXBDecodeResult{}, err
 		}
 	}
-	clear(coeffs[:maxEOB])
 	if allZero {
+		if !req.SkipAllZeroCoeffClear {
+			clear(coeffs[:maxEOB])
+		}
 		return TXBDecodeResult{AllZero: true}, nil
 	}
+	clear(coeffs[:maxEOB])
 
 	eob, err := s.ReadEOB(cdfs, EOBRequest{
 		Size:            req.Size,

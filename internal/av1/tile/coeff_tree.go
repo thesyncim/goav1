@@ -21,6 +21,8 @@ type LumaCoeffTreeRequest struct {
 	UseTransformType bool
 	TransformSelect  CoeffTransformSelector
 	EOBMultiContext  int
+
+	SkipAllZeroCoeffClear bool
 }
 
 type LumaCoeffTreeScratch struct {
@@ -60,6 +62,8 @@ type ChromaCoeffTreeRequest struct {
 	UseTransformType bool
 	TransformSelect  CoeffTransformSelector
 	EOBMultiContext  int
+
+	SkipAllZeroCoeffClear bool
 }
 
 type ChromaCoeffBlock struct {
@@ -125,7 +129,8 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 			VisibleH4:  block.VisibleH4,
 		}
 		typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
-			EOBMultiContext: req.EOBMultiContext,
+			EOBMultiContext:       req.EOBMultiContext,
+			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 		}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
 			Plane: 0,
 			Block: block,
@@ -279,7 +284,8 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				VisibleH4:  block.VisibleH4,
 			}
 			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
-				EOBMultiContext: req.EOBMultiContext,
+				EOBMultiContext:       req.EOBMultiContext,
+				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
 				Plane: req.Plane,
 				Block: block,

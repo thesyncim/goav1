@@ -890,6 +890,57 @@ func TestReadCoefficientsTXBAllocs(t *testing.T) {
 	}
 }
 
+func TestReadCoefficientsTXBSkipClearPolicy(t *testing.T) {
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
+	coeffs := make([]int16, len(scan))
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	req := TXBDecodeRequest{
+		Size:          TransformSize4x4,
+		Plane:         CoeffPlaneY,
+		Class:         transform.Class2D,
+		TXBSkipKnown:  true,
+		TXBSkip:       true,
+		DCSignContext: 0,
+	}
+
+	for i := range coeffs {
+		coeffs[i] = 7
+	}
+	result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTXBDecodeInvariants(t, result, coeffs, scan)
+
+	for i := range coeffs {
+		coeffs[i] = 7
+	}
+	req.SkipAllZeroCoeffClear = true
+	result, err = state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AllZero {
+		t.Fatalf("result=%+v want all zero", result)
+	}
+	for i, coeff := range coeffs {
+		if coeff != 7 {
+			t.Fatalf("coeff[%d]=%d want preserved sentinel", i, coeff)
+		}
+	}
+}
+
 func FuzzReadCoeffPrimitives(f *testing.F) {
 	f.Add([]byte{0x00}, uint8(TransformSize4x4), uint8(0), uint8(0), uint8(0), uint8(0))
 	f.Add([]byte{0xff}, uint8(TransformSize16x16), uint8(1), uint8(2), uint8(7), uint8(20))

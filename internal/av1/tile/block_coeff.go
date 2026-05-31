@@ -23,6 +23,8 @@ type BlockCoeffRequest struct {
 	ChromaType      [2]transform.Type
 	TransformSelect CoeffTransformSelector
 	EOBMultiContext [3]int
+
+	SkipAllZeroCoeffClear bool
 }
 
 type BlockCoeffBlock struct {
@@ -96,13 +98,14 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	result := BlockCoeffResult{Tree: tree}
 
 	lumaReq := LumaCoeffTreeRequest{
-		TreeRequest:      req.Transform,
-		Tree:             tree,
-		Class:            lumaClass,
-		TransformType:    req.LumaType,
-		UseTransformType: true,
-		TransformSelect:  req.TransformSelect,
-		EOBMultiContext:  req.EOBMultiContext[0],
+		TreeRequest:           req.Transform,
+		Tree:                  tree,
+		Class:                 lumaClass,
+		TransformType:         req.LumaType,
+		UseTransformType:      true,
+		TransformSelect:       req.TransformSelect,
+		EOBMultiContext:       req.EOBMultiContext[0],
+		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 	}
 	lumaVisit := func(block LumaCoeffBlock) error {
 		scratch.block = BlockCoeffBlock{
@@ -133,15 +136,16 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	if hasChroma {
 		for plane := 1; plane <= 2; plane++ {
 			chromaReq[plane-1] = ChromaCoeffTreeRequest{
-				TreeRequest:      req.Transform,
-				Tree:             tree,
-				Color:            req.Transform.Color,
-				Plane:            plane,
-				Class:            chromaClass[plane-1],
-				TransformType:    req.ChromaType[plane-1],
-				UseTransformType: true,
-				TransformSelect:  req.TransformSelect,
-				EOBMultiContext:  req.EOBMultiContext[plane],
+				TreeRequest:           req.Transform,
+				Tree:                  tree,
+				Color:                 req.Transform.Color,
+				Plane:                 plane,
+				Class:                 chromaClass[plane-1],
+				TransformType:         req.ChromaType[plane-1],
+				UseTransformType:      true,
+				TransformSelect:       req.TransformSelect,
+				EOBMultiContext:       req.EOBMultiContext[plane],
+				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 			}
 			// prepareChromaCoefficients validates the plane and performs the
 			// once-per-block SkipTransform context reset. The non-skip per-unit

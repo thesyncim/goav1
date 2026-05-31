@@ -1277,10 +1277,11 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 			SkipTransform: visit.Prefix.SkipTransform,
 			Lossless:      lossless,
 		},
-		LumaType:        transforms.Luma,
-		ChromaType:      transforms.Chroma,
-		TransformSelect: transformSelect,
-		EOBMultiContext: transforms.EOBMultiContext,
+		LumaType:              transforms.Luma,
+		ChromaType:            transforms.Chroma,
+		TransformSelect:       transformSelect,
+		EOBMultiContext:       transforms.EOBMultiContext,
+		SkipAllZeroCoeffClear: c.userCoeffVisitor == nil,
 	}, nil
 }
 
@@ -1329,7 +1330,9 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 // Coeffs, and geometry-derived scan size.
 func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) {
 	buffered := *block
-	if n := len(block.Coeffs); n > 0 {
+	if block.Result.AllZero {
+		buffered.Coeffs = nil
+	} else if n := len(block.Coeffs); n > 0 {
 		off := len(c.scratch.coeffArena)
 		c.scratch.coeffArena = append(c.scratch.coeffArena, block.Coeffs...)
 		buffered.Coeffs = c.scratch.coeffArena[off : off+n : off+n]
