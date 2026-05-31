@@ -23,14 +23,15 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // DCT4/ADST4/ADST8 NEON bodies do not amortise the assembly-call and
 // slice-to-pointer overhead over their smaller / clamp-heavy work and measured
 // slower than pure-Go (see the Row2 benchmarks), so those three stay on
-// pure-Go. The unbound kernels remain available for re-evaluation if the call
-// overhead or kernel shape changes.
+// pure-Go. DCT64 also stays on the pure-Go path for now: a 64x64 DCT fuzz seed
+// can corrupt memory through the paired arm64 assembly dispatch even though the
+// scalar path is stable. The unbound kernels remain available for
+// re-evaluation if the call overhead, kernel shape, or DCT64 assembly changes.
 func init() {
 	if cpu.Detected.NEON {
 		inverseDCT8Row2Impl = inverseDCT8Row2NEONAdapter
 		inverseDCT16Row2Impl = inverseDCT16Row2NEONAdapter
 		inverseDCT32Row2Impl = inverseDCT32Row2NEONAdapter
-		inverseDCT64Row2Impl = inverseDCT64Row2NEONAdapter
 	}
 }
 

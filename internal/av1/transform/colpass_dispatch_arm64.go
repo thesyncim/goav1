@@ -14,14 +14,14 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // on cpu.Detected.NEON so a test can force the pure-Go path. The DCT8, DCT16,
 // DCT32 and DCT64 column-pair kernels all beat the scalar pure-Go column path
 // on this host (their wide butterflies amortise the assembly-call overhead), so
-// all four are bound. The kernels are proven bit-exact by the column dispatch
-// differential test.
+// the 8/16/32-point variants are bound. DCT64 stays on the pure-Go path for
+// now: a 64x64 DCT fuzz seed can corrupt memory through the paired arm64
+// assembly dispatch even though the scalar path is stable.
 func init() {
 	if cpu.Detected.NEON {
 		inverseDCT8Col2Impl = inverseDCT8Col2NEONAdapter
 		inverseDCT16Col2Impl = inverseDCT16Col2NEONAdapter
 		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
-		inverseDCT64Col2Impl = inverseDCT64Col2NEONAdapter
 	}
 }
 
