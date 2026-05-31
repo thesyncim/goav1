@@ -603,14 +603,12 @@ func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error
 		if bit {
 			extra += 1 << (offsetBits - 1)
 		}
-		for i := 1; i < offsetBits; i++ {
-			raw, err := s.Reader.ReadBit()
+		if offsetBits > 1 {
+			tail, err := s.Reader.ReadBits(uint8(offsetBits - 1))
 			if err != nil {
 				return EOBResult{}, err
 			}
-			if raw != 0 {
-				extra += 1 << (offsetBits - 1 - i)
-			}
+			extra += int(tail)
 		}
 	}
 	pos, err := RecEOBPosition(token, extra)
@@ -1000,13 +998,12 @@ func (s *DecodeState) readCoeffGolomb() (int, error) {
 			break
 		}
 	}
-	for i := 0; i < length-1; i++ {
-		bit, err := s.Reader.ReadBit()
+	if length > 1 {
+		suffix, err := s.Reader.ReadBits(uint8(length - 1))
 		if err != nil {
 			return 0, err
 		}
-		x <<= 1
-		x += int(bit)
+		x = (1 << (length - 1)) | int(suffix)
 	}
 	return x - 1, nil
 }

@@ -155,10 +155,16 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 	if r == nil {
 		return 0, ErrInvalidProbability
 	}
+	src := r.src
+	pos := r.pos
+	dif := r.dif
+	rng := r.rng
+	cnt := r.cnt
+	tellOffs := r.tellOffs
 	var v uint32
 	for range n {
-		rangeValue := r.rng
-		dif := r.dif
+		rangeValue := rng
+		traceDif := dif
 		split := (rangeValue >> 8) << 7
 		split += ecMinProb
 		window := split << (ecWindow - 16)
@@ -172,17 +178,32 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 		}
 
 		if traceEntropyReads {
-			traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
+			traceBoolRead(CDFProbTop/2, traceDif, rng, pos*8-cnt+tellOffs)
 		}
 		shift := 16 - bits.Len32(nextRange)
-		r.cnt -= shift
-		r.dif = ((dif + 1) << uint(shift)) - 1
-		r.rng = nextRange << uint(shift)
-		if r.cnt < 0 {
-			r.refill()
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng = nextRange << uint(shift)
+		if cnt < 0 {
+			refillShift := ecWindow - 9 - (cnt + 15)
+			for refillShift >= 0 && pos < len(src) {
+				dif ^= uint32(src[pos]) << uint(refillShift)
+				cnt += 8
+				refillShift -= 8
+				pos++
+			}
+			if pos >= len(src) {
+				tellOffs += ecLotsBits - cnt
+				cnt = ecLotsBits
+			}
 		}
 		v = (v << 1) | uint32(bit)
 	}
+	r.pos = pos
+	r.dif = dif
+	r.rng = rng
+	r.cnt = cnt
+	r.tellOffs = tellOffs
 	return v, nil
 }
 
@@ -376,7 +397,16 @@ func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	if symbols < 2 || symbols > MaxSymbols {
 		return 0, ErrInvalidCDF
 	}
-	return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+	switch symbols {
+	case 2:
+		return r.readBinaryCDFKnown(&cdf.values)
+	case 3:
+		return r.readCDF3Known(&cdf.values)
+	case 4:
+		return r.readCDF4Known(&cdf.values)
+	default:
+		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+	}
 }
 
 // readSymbolTrusted is the validation-free core of ReadSymbol. It assumes the
@@ -474,7 +504,16 @@ func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
 	if symbols < 2 || symbols > MaxSymbols {
 		return 0, ErrInvalidCDF
 	}
-	return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+	switch symbols {
+	case 2:
+		return r.readBinaryCDFKnown(&cdf.values)
+	case 3:
+		return r.readCDF3Known(&cdf.values)
+	case 4:
+		return r.readCDF4Known(&cdf.values)
+	default:
+		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+	}
 }
 
 // ReadCDF3Trusted decodes one symbol from a three-symbol CDF without the
@@ -483,8 +522,10 @@ func (r *Reader) ReadCDF3Trusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 3 {
 		return 0, ErrInvalidCDF
 	}
-	values := &cdf.values
+	return r.readCDF3Known(&cdf.values)
+}
 
+func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) (int, error) {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
@@ -531,8 +572,10 @@ func (r *Reader) ReadCDF4Trusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 4 {
 		return 0, ErrInvalidCDF
 	}
-	values := &cdf.values
+	return r.readCDF4Known(&cdf.values)
+}
 
+func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) (int, error) {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
@@ -585,13 +628,15 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 2 {
 		return 0, ErrInvalidCDF
 	}
-	window := cdf.values[:3]
+	return r.readBinaryCDFKnown(&cdf.values)
+}
 
+func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) (int, error) {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
-	c0 := window[0]
+	c0 := values[0]
 	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 	symbol := 0
 	if coded < lower {
@@ -616,9 +661,22 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
-		updateCDFWindow(window, symbol)
+		updateCDF2(values, symbol)
 	}
 	return symbol, nil
+}
+
+func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
+	count := cdf[2]
+	rate := uint(4 + (count >> 4))
+	if symbol > 0 {
+		cdf[0] += (uint16(CDFProbTop) - cdf[0]) >> rate
+	} else {
+		cdf[0] -= cdf[0] >> rate
+	}
+	if count < MaxCDFCount {
+		cdf[2] = count + 1
+	}
 }
 
 func updateCDF3(cdf *[MaxSymbols + 1]uint16, symbol int) {

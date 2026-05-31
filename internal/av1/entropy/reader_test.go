@@ -59,6 +59,37 @@ func TestReaderReadBits(t *testing.T) {
 	}
 }
 
+func TestReaderReadBitsMatchesRepeatedReadBit(t *testing.T) {
+	src := []byte{0xa5, 0x5a, 0xc3, 0x3c, 0xf0, 0x0f, 0x99, 0x66}
+	for n := uint8(0); n <= 32; n++ {
+		bulk := NewReader(src)
+		step := NewReader(src)
+		got, err := bulk.ReadBits(n)
+		if err != nil {
+			t.Fatalf("ReadBits(%d): %v", n, err)
+		}
+		var want uint32
+		for i := uint8(0); i < n; i++ {
+			bit, err := step.ReadBit()
+			if err != nil {
+				t.Fatalf("ReadBit[%d/%d]: %v", i, n, err)
+			}
+			want = (want << 1) | uint32(bit)
+		}
+		if got != want {
+			t.Fatalf("ReadBits(%d)=%#x want %#x", n, got, want)
+		}
+		if bulk.BitsRead() != step.BitsRead() {
+			t.Fatalf("ReadBits(%d) BitsRead=%d want %d", n, bulk.BitsRead(), step.BitsRead())
+		}
+		nextBulk, bulkErr := bulk.ReadBit()
+		nextStep, stepErr := step.ReadBit()
+		if bulkErr != stepErr || nextBulk != nextStep {
+			t.Fatalf("ReadBits(%d) next bit=%d/%v want %d/%v", n, nextBulk, bulkErr, nextStep, stepErr)
+		}
+	}
+}
+
 func TestReaderReadUniform(t *testing.T) {
 	r := NewReader([]byte{0x00})
 	got, err := r.ReadUniform(10)
@@ -180,7 +211,7 @@ func TestReaderReadBinaryCDFTrustedMatchesReadCDF(t *testing.T) {
 	trusted := NewReader(src)
 
 	for i := 0; i < 8; i++ {
-		want, err := generic.ReadCDF(&genericCDF)
+		want, err := generic.ReadSymbol(genericCDF.Values(), genericCDF.Symbols())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,7 +241,7 @@ func TestReaderReadSmallCDFTrustedMatchesReadCDF(t *testing.T) {
 			trusted := NewReader(src)
 
 			for i := 0; i < 16; i++ {
-				want, err := generic.ReadCDF(&genericCDF)
+				want, err := generic.ReadSymbol(genericCDF.Values(), genericCDF.Symbols())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -517,6 +548,19 @@ func BenchmarkReaderReadBit(b *testing.B) {
 	}
 }
 
+func BenchmarkReaderReadBits(b *testing.B) {
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		for range benchSymbolsPerOp {
+			_, _ = r.ReadBits(8)
+		}
+	}
+}
+
 func BenchmarkReaderReadUniform(b *testing.B) {
 	src := []byte{0xff, 0x00, 0xa5, 0x5a}
 
@@ -647,6 +691,38 @@ func BenchmarkReaderCDFStream(b *testing.B) {
 		r := NewReader(src)
 		var cdf CDF
 		if err := cdf.Init([]uint16{8192, 16384, 24576}); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			if _, err := r.ReadCDF(&cdf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkReaderCDFStream2(b *testing.B) {
+	benchmarkReaderCDFStreamSymbols(b, 2)
+}
+
+func BenchmarkReaderCDFStream3(b *testing.B) {
+	benchmarkReaderCDFStreamSymbols(b, 3)
+}
+
+func BenchmarkReaderCDFStream4(b *testing.B) {
+	benchmarkReaderCDFStreamSymbols(b, 4)
+}
+
+func benchmarkReaderCDFStreamSymbols(b *testing.B, symbols int) {
+	b.Helper()
+	src := benchStream()
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		var cdf CDF
+		if err := cdf.InitUniform(symbols); err != nil {
 			b.Fatal(err)
 		}
 		for range benchSymbolsPerOp {
