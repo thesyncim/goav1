@@ -38,7 +38,8 @@ ship under `internal/av1/testdata/libaom/`.
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  1 | Profile 0 (Main)                 | Yes     | internal/av1/parser/sequence.go  | seq_profile=0 parsed; default decode path.     |
 |    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra, inter, palette,      |
-|    |                                  |         | internal/av1/testvector/profiles | CDEF/restoration, and super-res clips pass.    |
+|    |                                  |         | internal/av1/testvector/profiles | CDEF/restoration, film grain, and super-res    |
+|    |                                  |         |                                  | clips pass.                                    |
 |    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8-bit and 4:2:0 12-bit profile clips     |
 |    |                                  |         | internal/av1/testvector/profiles | pass; broader 10/12-bit vector sweep remains   |
 |    |                                  |         |                                  | covered by opt-in extended gates.              |
@@ -182,7 +183,8 @@ ship under `internal/av1/testdata/libaom/`.
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 23 | Film grain synthesis             | Yes     | internal/av1/filmgrain/          | Gaussian RNG, scaling LUTs, luma/chroma grain  |
 |    |                                  |         | internal/av1/decoder/postfilter_filmgrain.go | blocks, per-row apply; covered by   |
-|    |                                  |         |                                  | 8-bit and 10-bit film-grain strict vectors.    |
+|    |                                  |         |                                  | 8-bit, 10-bit, and Profile 1 4:4:4 strict     |
+|    |                                  |         |                                  | film-grain vectors.                            |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 24 | Tile groups: single              | Yes     | internal/av1/parser/tile_group.go | Single-tile group is the default path; every  |
 |    |                                  |         |                                  | committed fast-suite vector uses Cols=1 Rows=1.|
@@ -313,12 +315,12 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 18/18 vendored profile clips pass, covering
+- `make dryrun-profiles`: 19/19 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
-  CDEF/restoration, and super-res, profile 2 4:2:2 8-bit all-intra and
-  inter, profile 2 4:2:0 12-bit, superres, superres plus loop restoration,
-  a forced-root 128x128 superblock clip, edge-MV, and a non-SVC multi-tile
-  clip.
+  CDEF/restoration, film grain, and super-res, profile 2 4:2:2 8-bit
+  all-intra and inter, profile 2 4:2:0 12-bit, superres, superres plus loop
+  restoration, a forced-root 128x128 superblock clip, edge-MV, and a non-SVC
+  multi-tile clip.
 
 ### SVC vector coverage
 

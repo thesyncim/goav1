@@ -29,8 +29,8 @@
 // subsampling (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both
 // 8-bit and 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires
 // luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
-// and 8/10-bit 4:4:4 super-res clips that run the caller-owned full postfilter
-// output path. All are committed under
+// an 8-bit 4:4:4 film-grain clip, and 8/10-bit 4:4:4 super-res clips that run
+// the caller-owned full postfilter output path. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -80,6 +80,15 @@
 //	  --cq-level=28 --kf-max-dist=1 --lag-in-frames=0 --enable-cdef=1 \
 //	  --enable-restoration=1 \
 //	  -o profile1-444-10bit-cdef-restoration-160x128.ivf src444_10_filters.yuv
+//	# 4:4:4 8-bit film grain:
+//	ffmpeg -f lavfi -i nullsrc=size=96x96:rate=1:duration=3 -frames:v 3 \
+//	  -vf "geq=lum='48+mod(X*5+Y*3+N*19,160)':cb='64+mod(X*7+N*23,128)':cr='64+mod(Y*11+N*17,128)',format=yuv444p" \
+//	  -f rawvideo filmgrain444.yuv
+//	aomenc --i444 --width=96 --height=96 --limit=3 --ivf --profile=1 \
+//	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=1 \
+//	  --lag-in-frames=0 --enable-cdef=0 --enable-restoration=0 \
+//	  --film-grain-test=1 \
+//	  -o profile1-444-8bit-filmgrain-96x96.ivf filmgrain444.yuv
 //	# 4:2:0 8-bit 128x128 superblock:
 //	ffmpeg -f lavfi -i nullsrc=size=128x128:rate=1:duration=3 -frames:v 3 \
 //	  -vf "geq=lum='64+mod(X*3+Y*2+N*17,128)':cb='64+mod(X*5+N*23,128)':cr='64+mod(Y*7+N*19,128)',format=yuv420p" \
@@ -149,6 +158,7 @@ type profileClip struct {
 	wantPaletteUVBlocks   int
 	wantCDEFFrames        int
 	wantRestorationFrames int
+	wantFilmGrainFrames   int
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -325,6 +335,22 @@ var profileClips = []profileClip{
 		wantSubsamplingY:      false,
 		wantCDEFFrames:        1,
 		wantRestorationFrames: 1,
+	},
+	{
+		// Profile 1: 4:4:4 8-bit with active film grain, guarding luma and
+		// chroma grain synthesis on non-subsampled chroma output.
+		name: "profile1-444-8bit-filmgrain-96x96",
+		file: "profile1-444-8bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"db1f78af3fbd46eec482cfcc02c59157",
+			"f0abb8e97190db604aba5ffae2dd6b47",
+			"706e3f8b36da82f717a1496cbbddf0c9",
+		},
+		wantSeqProfile:      1,
+		wantBitDepth:        8,
+		wantSubsamplingX:    false,
+		wantSubsamplingY:    false,
+		wantFilmGrainFrames: 1,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit super-res. 4 all-keyframes, super-res denom
@@ -537,6 +563,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	paletteUVBlocks := 0
 	cdefFrames := 0
 	restorationFrames := 0
+	filmGrainFrames := 0
 	checkedColorConfig := false
 	for {
 		ivfFrame, ok, err := it.Next()
@@ -697,6 +724,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				if active.Has(decoder.FrameWorkPostFilterLoopRestoration) {
 					restorationFrames++
 				}
+				if active.Has(decoder.FrameWorkPostFilterFilmGrain) {
+					filmGrainFrames++
+				}
 				if clip.superRes {
 					out, ev, err := applyCallerPostFilters(ctx)
 					if err != nil {
@@ -729,7 +759,11 @@ func runProfileClip(t *testing.T, clip profileClip) {
 						return err
 					}
 				}
-				got, err := testvector.FrameMD5(*post.Context.Output)
+				output := post.Context.Output
+				if post.DisplayOutput != nil {
+					output = post.DisplayOutput
+				}
+				got, err := testvector.FrameMD5(*output)
 				if err != nil {
 					return err
 				}
@@ -772,6 +806,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if restorationFrames < clip.wantRestorationFrames {
 		t.Fatalf("restoration frames=%d want at least %d", restorationFrames, clip.wantRestorationFrames)
+	}
+	if filmGrainFrames < clip.wantFilmGrainFrames {
+		t.Fatalf("film grain frames=%d want at least %d", filmGrainFrames, clip.wantFilmGrainFrames)
 	}
 }
 
