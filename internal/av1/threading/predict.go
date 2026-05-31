@@ -1443,92 +1443,13 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFilters(index int, vi
 	if err != nil || !ok {
 		return err
 	}
-	usesWarp0 := visit.Prediction.GlobalWarpedMotionCompoundValid[0] && geom.Width >= 8 && geom.Height >= 8
-	usesWarp1 := visit.Prediction.GlobalWarpedMotionCompoundValid[1] && geom.Width >= 8 && geom.Height >= 8
 	// libaom keeps each compound reference predictor at the un-rounded 16-bit
 	// CONV_BUF precision (av1_dist_wtd_convolve_* / av1_warp_affine_c with
 	// is_compound, round_1 = COMPOUND_ROUND1_BITS) and only rounds to a pixel
 	// after the blend. Blending two already-rounded 8-bit predictors loses
-	// precision (off-by-1..3 across every compound block). Both translational and
-	// global-warp references produce the CONV_BUF directly; only scaled references
-	// keep the legacy 8-bit blend until the scaled convolver emits CONV_BUF
-	// precision.
-	scaled0, err := b.frameWorkCompoundRefScaled(motionResult.References.Ref[0], plane, geom)
-	if err != nil {
-		return err
-	}
-	scaled1, err := b.frameWorkCompoundRefScaled(motionResult.References.Ref[1], plane, geom)
-	if err != nil {
-		return err
-	}
-	if !scaled0 && !scaled1 {
-		return b.predictBlockInterCompoundConvBuf(index, visit, plane, scratch, geom, blend, filters)
-	}
-	first, err := frameWorkInterScratchPlane(scratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
-	if err != nil {
-		return err
-	}
-	second, err := frameWorkInterScratchPlane(scratch.Second[:], geom.BytesPerSample, geom.Width, geom.Height)
-	if err != nil {
-		return err
-	}
-	// libaom warps each reference of a compound GLOBAL_GLOBALMV block with its
-	// own global motion params (av1_init_warp_params per ref); chroma planes
-	// below 8x8 and scaled refs fall back to translation, matching the
-	// single-ref dispatch and av1_init_warp_params' block_width/height < 8 gate.
-	if usesWarp0 {
-		if err := b.predictBlockInterGlobalWarpToScratch(first, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotionCompound[0], motionResult.MV[0], geom, filters); err != nil {
-			return err
-		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(first, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters); err != nil {
-		return err
-	}
-	if usesWarp1 {
-		if err := b.predictBlockInterGlobalWarpToScratch(second, plane, motionResult.References.Ref[1], visit.Prediction.GlobalWarpedMotionCompound[1], motionResult.MV[1], geom, filters); err != nil {
-			return err
-		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(second, visit.Block, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters); err != nil {
-		return err
-	}
-	switch blend.Type {
-	case tile.CompoundTypeAverage, tile.CompoundTypeDistWtd:
-		fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
-		if err != nil {
-			return err
-		}
-		if err := frameWorkBlendCompoundBlock(geom.Output, first, second, geom.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
-			return err
-		}
-	case tile.CompoundTypeWedge:
-		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		maskStride := lumaWidth
-		if err := frameWorkBuildWedgeMask(scratch.Mask[:], maskStride, visit.Block.Size, blend.WedgeIndex, blend.WedgeSign); err != nil {
-			return err
-		}
-		if err := frameWorkBlendMaskedCompoundBlock(geom.Output, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
-			return err
-		}
-	case tile.CompoundTypeDiffWtd:
-		lumaWidth, lumaHeight, ok := frameWorkBlockVisiblePixels(visit.Block)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		maskStride := lumaWidth
-		if plane == FrameWorkPlaneY {
-			if err := frameWorkBuildDiffWtdMask(scratch.Mask[:], maskStride, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.Width, geom.Height, blend.MaskType); err != nil {
-				return err
-			}
-		}
-		if err := frameWorkBlendMaskedCompoundBlock(geom.Output, first, second, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
-			return err
-		}
-	default:
-		return ErrInvalidBatch
-	}
-	return nil
+	// precision (off-by-1..3 across every compound block). Translational,
+	// scaled, and global-warp references now all produce the CONV_BUF directly.
+	return b.predictBlockInterCompoundConvBuf(index, visit, plane, scratch, geom, blend, filters)
 }
 
 // predictBlockInterCompoundConvBuf implements the translational compound inter
@@ -1592,31 +1513,6 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBuf(index int, visit tile.
 	return nil
 }
 
-// frameWorkCompoundRefScaled reports whether a compound reference plane is
-// scaled relative to the current frame. Scaled compound refs keep the legacy
-// 8-bit blend path until the scaled convolver emits CONV_BUF precision.
-func (b *FrameWorkBatch) frameWorkCompoundRefScaled(refFrame tile.ReferenceFrame, plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry) (bool, error) {
-	reference, ok := frameWorkReferenceFromTile(refFrame)
-	if !ok {
-		return false, ErrInvalidBatch
-	}
-	refWindow, err := b.ReferencePlane(reference, plane)
-	if err != nil {
-		return false, err
-	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
-	if err != nil {
-		return false, err
-	}
-	return !sameSize, nil
-}
-
 // predictBlockInterCompoundRefToConvBuf fills a CONV_BUF with one translational
 // reference predictor at compound precision, mirroring the origin/subpel
 // derivation of predictBlockInterReferencePlaneToScratch.
@@ -1640,9 +1536,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 		return err
 	}
 	if !sameSize {
-		// Scaled-reference compound is rare and not yet ported to the CONV_BUF
-		// path; the caller never reaches here for scaled refs in the fast suite.
-		return ErrInvalidBatch
+		return frameWorkPredictScaledReferencePlaneToConvBuf(buf, ref, geom, b.Sequence.ColorConfig.BitDepth, mv, filters)
 	}
 	if useWarp {
 		if err := motion.PredictWarpedCompoundToConvBuf(buf, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {

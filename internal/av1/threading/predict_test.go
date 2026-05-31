@@ -3222,6 +3222,35 @@ func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMuta
 	}
 }
 
+func TestFrameWorkBatchPredictBlockInterCompoundScaledReferenceUsesConvBuf(t *testing.T) {
+	if !frameWorkScaledRefEnabled() {
+		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or unset GOAV1_SCALED_PRED to exercise")
+	}
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	last := testBatchFrame(t, output.Format)
+	bwd := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
+	fillFrameWorkInterReferenceVariant(last, 0xff, 23)
+	fillFrameWorkInterReferenceVariant(bwd, 0xff, 197)
+
+	ctx := testCompoundInterPredictionBatch(output, last, bwd)
+	mv0 := motion.Vector{Col: 3, Row: 5}
+	mv1 := motion.Vector{Col: 7, Row: -3}
+	filters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpMultiTapSharp}
+	visit := testCompoundInterPredictionVisit(mv0, mv1, tile.CompoundTypeAverage)
+	var scratch FrameWorkInterPredictionScratch
+	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, filters); err != nil {
+		t.Fatal(err)
+	}
+
+	first := testFrameWorkCompoundConvBuf(t, last.Y, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv0, false, false, filters)
+	second := testFrameWorkScaledCompoundConvBuf(t, bwd.Y, output.Format.Width, output.Format.Height, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, mv1, false, false, filters)
+	fwdOffset, bckOffset, err := ctx.frameWorkCompoundOffsets(visit.Prediction.InterMotion.References, visit.Prediction.CompoundBlend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFrameWorkCompoundBlendEqual(t, output.Y, first, second, output.Layout.BytesPerSample, output.Format.BitDepth, 16, 16, 16, 16, fwdOffset, bckOffset)
+}
+
 func TestFrameWorkBatchPredictBlockLumaInterAllocs(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128})
 	reference := testBatchFrame(t, output.Format)
@@ -3748,6 +3777,31 @@ func testFrameWorkCompoundConvBuf(t *testing.T, reference frame.Plane, bytesPerS
 	}
 	buf := &motion.CompoundConvBuf{}
 	if err := motion.PredictInterCompoundRefToConvBuf(buf, reference, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters); err != nil {
+		t.Fatal(err)
+	}
+	return buf
+}
+
+func testFrameWorkScaledCompoundConvBuf(t *testing.T, reference frame.Plane, curWidth int, curHeight int, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv motion.Vector, subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) *motion.CompoundConvBuf {
+	t.Helper()
+	sf, err := motion.NewScaleFactors(reference.Width, reference.Height, curWidth, curHeight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xTable, err := motion.SubpelKernelTableFor(filters.X, width)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, height)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := &motion.CompoundConvBuf{}
+	if err := motion.PredictScaledCompoundRefToConvBuf(buf, reference, bytesPerSample, bitDepth, width, height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
 		t.Fatal(err)
 	}
 	return buf

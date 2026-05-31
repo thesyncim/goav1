@@ -342,6 +342,70 @@ func TestPredictInterCompoundRefToConvBufCopyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPredictScaledCompoundRefToConvBufIdentityMatchesUnscaled(t *testing.T) {
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		bps      int
+	}{
+		{"bd8", 8, 1},
+		{"bd10", 10, 2},
+		{"bd12", 12, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const w, h = 16, 16
+			ref := frame.Plane{Pix: make([]byte, w*h*tc.bps), Stride: w * tc.bps, Width: w, Height: h}
+			mask := (1 << tc.bitDepth) - 1
+			for y := range h {
+				for x := range w {
+					p := (x*17 + y*29 + 11) & mask
+					if tc.bps == 1 {
+						ref.Pix[y*ref.Stride+x] = byte(p)
+					} else {
+						off := y*ref.Stride + x*2
+						ref.Pix[off] = byte(p)
+						ref.Pix[off+1] = byte(p >> 8)
+					}
+				}
+			}
+
+			sf, err := NewScaleFactors(w, h, w, h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(0, 0, Vector{}, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			xTable, err := SubpelKernelTableFor(InterpEightTapRegular, w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			yTable, err := SubpelKernelTableFor(InterpEightTapRegular, h)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var scaled, unscaled CompoundConvBuf
+			if err := PredictScaledCompoundRefToConvBuf(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+				t.Fatalf("PredictScaledCompoundRefToConvBuf: %v", err)
+			}
+			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, 0, 0, w, h, 0, 0, RegularFilters); err != nil {
+				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
+			}
+			if scaled.Width != unscaled.Width || scaled.Height != unscaled.Height {
+				t.Fatalf("dims got=%dx%d want=%dx%d", scaled.Width, scaled.Height, unscaled.Width, unscaled.Height)
+			}
+			for i := range w * h {
+				if scaled.Data[i] != unscaled.Data[i] {
+					t.Fatalf("convbuf[%d]=%d want %d", i, scaled.Data[i], unscaled.Data[i])
+				}
+			}
+		})
+	}
+}
+
 // TestPredictInterCompoundRefToConvBufErrors verifies the parameter guards.
 func TestPredictInterCompoundRefToConvBufErrors(t *testing.T) {
 	ref := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}

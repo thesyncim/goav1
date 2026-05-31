@@ -165,6 +165,77 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	return nil
 }
 
+// PredictScaledCompoundRefToConvBuf fills buf with the un-rounded 16-bit
+// CONV_BUF predictor for one scaled reference. It mirrors
+// av1_dist_wtd_convolve_2d_scale_c / av1_highbd_dist_wtd_convolve_2d_scale_c
+// with do_average == 0, so compound blends can keep the scaled predictor at
+// the same precision as the same-size translational path.
+func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	if buf == nil || xStep <= 0 || yStep <= 0 ||
+		!bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
+		return ErrInvalidMotion
+	}
+	out, ok := compoundConvBufView(buf, width, height)
+	if !ok {
+		return ErrInvalidMotion
+	}
+	imH, ok := scaledIMHeight(height, startY, yStep)
+	if !ok {
+		return ErrInvalidMotion
+	}
+	if !planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
+		return ErrInvalidMotion
+	}
+
+	const imStride = maxBlockSize
+	var im [scaledIMMaxHeight * maxBlockSize]int32
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	startRow := int(scaledIntFloor(startY)) - foY
+	round0 := compoundRound0(bitDepth)
+	for y := range imH {
+		srcRow := startRow + y
+		xPos := startX
+		for x := range width {
+			xInt := int(scaledIntFloor(xPos)) - foX
+			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
+			kernel := xTable[xFilterIdx]
+			sum := 1 << (int(bitDepth) + filterBits - 1)
+			for k := range filterTaps {
+				var sample int
+				if bytesPerSample == 1 {
+					sample = int(loadSample8Clamped(ref, xInt+k, srcRow))
+				} else {
+					sample = int(loadHighBDSampleClamped(ref, xInt+k, srcRow))
+				}
+				sum += int(kernel[k]) * sample
+			}
+			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
+			xPos += xStep
+		}
+	}
+
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	baseY := int(scaledIntFloor(startY))
+	for x := range width {
+		yPos := startY
+		for y := range height {
+			yInt := int(scaledIntFloor(yPos)) - baseY
+			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
+			kernel := yTable[yFilterIdx]
+			sum := 1 << offsetBits
+			for k := range filterTaps {
+				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
+			}
+			out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
+			yPos += yStep
+		}
+	}
+	return nil
+}
+
 // PredictWarpedCompoundToConvBuf fills buf with the un-rounded 16-bit CONV_BUF
 // warp predictor for one compound reference (av1_warp_affine_c with
 // is_compound && !do_average). It mirrors the warp filter in warp.go but emits

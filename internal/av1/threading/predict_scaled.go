@@ -139,6 +139,32 @@ func frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst frame.Plane,
 		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
 }
 
+func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, ref frame.Plane,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters) error {
+	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.Width)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.Height)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictScaledCompoundRefToConvBuf(buf, ref, geom.BytesPerSample, bitDepth,
+		geom.Width, geom.Height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
 // frameWorkPredictScaledReferencePlaneWithDims is the explicit-output-dims
 // form of the scaled-reference dispatch. curWidth / curHeight must be the
 // output frame plane dimensions (not the destination buffer dimensions),
