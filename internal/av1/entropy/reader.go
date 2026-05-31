@@ -75,7 +75,12 @@ func (r *Reader) ReadBit() (uint8, error) {
 	if r == nil {
 		return 0, ErrInvalidProbability
 	}
+	return r.ReadBitTrusted(), nil
+}
 
+// ReadBitTrusted decodes one equiprobable bit for callers that have already
+// proven the reader is non-nil. It is the hot-path core of ReadBit.
+func (r *Reader) ReadBitTrusted() uint8 {
 	rangeValue := r.rng
 	dif := r.dif
 	split := (rangeValue >> 8) << 7
@@ -100,7 +105,7 @@ func (r *Reader) ReadBit() (uint8, error) {
 	if r.cnt < 0 {
 		r.refill()
 	}
-	return bit, nil
+	return bit
 }
 
 // ReadBool decodes one boolean with an AV1 8-bit probability that the returned
@@ -155,6 +160,15 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 	if r == nil {
 		return 0, ErrInvalidProbability
 	}
+	return r.ReadBitsTrusted(n), nil
+}
+
+// ReadBitsTrusted decodes n equiprobable bits MSB-first for callers that have
+// already proven n <= 32 and the reader is non-nil.
+func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
+	if n == 0 {
+		return 0
+	}
 	src := r.src
 	pos := r.pos
 	dif := r.dif
@@ -204,7 +218,7 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 	r.rng = rng
 	r.cnt = cnt
 	r.tellOffs = tellOffs
-	return v, nil
+	return v
 }
 
 // ReadUniform decodes an AV1 ns(n)-style uniformly distributed value in
@@ -399,11 +413,11 @@ func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	}
 	switch symbols {
 	case 2:
-		return r.readBinaryCDFKnown(&cdf.values)
+		return r.readBinaryCDFKnown(&cdf.values), nil
 	case 3:
-		return r.readCDF3Known(&cdf.values)
+		return r.readCDF3Known(&cdf.values), nil
 	case 4:
-		return r.readCDF4Known(&cdf.values)
+		return r.readCDF4Known(&cdf.values), nil
 	default:
 		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
 	}
@@ -506,14 +520,20 @@ func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
 	}
 	switch symbols {
 	case 2:
-		return r.readBinaryCDFKnown(&cdf.values)
+		return r.readBinaryCDFKnown(&cdf.values), nil
 	case 3:
-		return r.readCDF3Known(&cdf.values)
+		return r.readCDF3Known(&cdf.values), nil
 	case 4:
-		return r.readCDF4Known(&cdf.values)
+		return r.readCDF4Known(&cdf.values), nil
 	default:
 		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
 	}
+}
+
+// ReadBinaryCDFUnchecked decodes one symbol from a two-symbol CDF. The caller
+// must prove r and cdf are non-nil and that cdf has exactly two symbols.
+func (r *Reader) ReadBinaryCDFUnchecked(cdf *CDF) int {
+	return r.readBinaryCDFKnown(&cdf.values)
 }
 
 // ReadCDF3Trusted decodes one symbol from a three-symbol CDF without the
@@ -522,10 +542,16 @@ func (r *Reader) ReadCDF3Trusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 3 {
 		return 0, ErrInvalidCDF
 	}
+	return r.readCDF3Known(&cdf.values), nil
+}
+
+// ReadCDF3Unchecked decodes one symbol from a three-symbol CDF. The caller must
+// prove r and cdf are non-nil and that cdf has exactly three symbols.
+func (r *Reader) ReadCDF3Unchecked(cdf *CDF) int {
 	return r.readCDF3Known(&cdf.values)
 }
 
-func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) (int, error) {
+func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
@@ -544,10 +570,6 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) (int, error) {
 			lower = 0
 		}
 	}
-	if lower >= upper {
-		return 0, ErrInvalidCDF
-	}
-
 	if traceEntropyReads {
 		traceCDFRead(c0, 3, r.dif, r.rng, r.BitsRead())
 	}
@@ -563,7 +585,7 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) (int, error) {
 	if r.allowCDFUpdate {
 		updateCDF3(values, symbol)
 	}
-	return symbol, nil
+	return symbol
 }
 
 // ReadCDF4Trusted decodes one symbol from a four-symbol CDF without the
@@ -572,10 +594,16 @@ func (r *Reader) ReadCDF4Trusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 4 {
 		return 0, ErrInvalidCDF
 	}
+	return r.readCDF4Known(&cdf.values), nil
+}
+
+// ReadCDF4Unchecked decodes one symbol from a four-symbol CDF. The caller must
+// prove r and cdf are non-nil and that cdf has exactly four symbols.
+func (r *Reader) ReadCDF4Unchecked(cdf *CDF) int {
 	return r.readCDF4Known(&cdf.values)
 }
 
-func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) (int, error) {
+func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
@@ -600,10 +628,6 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) (int, error) {
 			}
 		}
 	}
-	if lower >= upper {
-		return 0, ErrInvalidCDF
-	}
-
 	if traceEntropyReads {
 		traceCDFRead(c0, 4, r.dif, r.rng, r.BitsRead())
 	}
@@ -619,7 +643,7 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) (int, error) {
 	if r.allowCDFUpdate {
 		updateCDF4(values, symbol)
 	}
-	return symbol, nil
+	return symbol
 }
 
 // ReadBinaryCDFTrusted decodes one symbol from a two-symbol CDF without taking
@@ -628,10 +652,10 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 	if r == nil || cdf == nil || cdf.symbols != 2 {
 		return 0, ErrInvalidCDF
 	}
-	return r.readBinaryCDFKnown(&cdf.values)
+	return r.readBinaryCDFKnown(&cdf.values), nil
 }
 
-func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) (int, error) {
+func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
@@ -644,10 +668,6 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) (int, error)
 		upper = lower
 		lower = 0
 	}
-	if lower >= upper {
-		return 0, ErrInvalidCDF
-	}
-
 	if traceEntropyReads {
 		traceCDFRead(c0, 2, r.dif, r.rng, r.BitsRead())
 	}
@@ -663,7 +683,7 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) (int, error)
 	if r.allowCDFUpdate {
 		updateCDF2(values, symbol)
 	}
-	return symbol, nil
+	return symbol
 }
 
 func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
