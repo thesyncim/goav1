@@ -230,6 +230,8 @@ boundary above.
   - Inverse-qmatrix dequant path (commit `455ddac`).
   - Palette mode and color-map decode (commit `133a448`).
   - `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128`.
+  - Decoder stream dispatch across IVF, low-overhead OBU, Annex B,
+    temporal-unit grouping, and single-OBU input (`FuzzStreamPush`).
   - Tile-list OBU parsing (`FuzzParseTileListOBU`).
   - Entropy reader and CDF state harnesses.
   - Prediction harnesses (intra, directional, filter-intra, CFL,
