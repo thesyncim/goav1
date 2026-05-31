@@ -29,7 +29,7 @@
 // subsampling (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both
 // 8-bit and 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires
 // luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
-// an 8-bit 4:4:4 film-grain clip, and 8/10-bit 4:4:4 super-res clips that run
+// 8/10-bit 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run
 // the caller-owned full postfilter output path, including an inter stream that
 // references super-res output. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
@@ -96,6 +96,30 @@
 //	  --lag-in-frames=0 --enable-cdef=0 --enable-restoration=0 \
 //	  --film-grain-test=1 \
 //	  -o profile1-444-8bit-filmgrain-96x96.ivf filmgrain444.yuv
+//	# 4:4:4 10-bit film grain:
+//	python3 - <<'PY'
+//	from pathlib import Path
+//	w = h = 96
+//	with Path("filmgrain444_10.yuv").open("wb") as f:
+//	    for n in range(3):
+//	        for plane in range(3):
+//	            for y in range(h):
+//	                row = bytearray()
+//	                for x in range(w):
+//	                    if plane == 0:
+//	                        v = 192 + ((x*19 + y*11 + n*37) % 640)
+//	                    elif plane == 1:
+//	                        v = 256 + ((x*13 + y*5 + n*41) % 512)
+//	                    else:
+//	                        v = 256 + ((y*17 + x*3 + n*29) % 512)
+//	                    row += bytes((v & 0xff, v >> 8))
+//	                f.write(row)
+//	PY
+//	aomenc --i444 --width=96 --height=96 --limit=3 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --enable-cdef=0 --enable-restoration=0 --film-grain-test=1 \
+//	  -o profile1-444-10bit-filmgrain-96x96.ivf filmgrain444_10.yuv
 //	# 4:2:0 8-bit 128x128 superblock:
 //	ffmpeg -f lavfi -i nullsrc=size=128x128:rate=1:duration=3 -frames:v 3 \
 //	  -vf "geq=lum='64+mod(X*3+Y*2+N*17,128)':cb='64+mod(X*5+N*23,128)':cr='64+mod(Y*7+N*19,128)',format=yuv420p" \
@@ -127,7 +151,7 @@
 //	# Golden per-frame MD5s come from `aomdec --rawvideo` (libaom
 //	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces): split the
 //	# raw output into per-frame chunks (W*H*3 for 4:4:4, W*H + 2*(W/2*H) for
-//	# 4:2:2) and md5 each chunk.
+//	# 4:2:2), multiply by bytes/sample for high bit depth, and md5 each chunk.
 package profiles
 
 import (
@@ -358,6 +382,22 @@ var profileClips = []profileClip{
 		},
 		wantSeqProfile:      1,
 		wantBitDepth:        8,
+		wantSubsamplingX:    false,
+		wantSubsamplingY:    false,
+		wantFilmGrainFrames: 1,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit with active film grain, guarding high-bit-depth
+		// grain synthesis on non-subsampled chroma output.
+		name: "profile1-444-10bit-filmgrain-96x96",
+		file: "profile1-444-10bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"fc7889878eb34c3fc3044b6353de35a6",
+			"d058aaa10ea0893f8bd3d07a52f3ebdc",
+			"4e59d8318286bb75836070f420d706a5",
+		},
+		wantSeqProfile:      1,
+		wantBitDepth:        10,
 		wantSubsamplingX:    false,
 		wantSubsamplingY:    false,
 		wantFilmGrainFrames: 1,
