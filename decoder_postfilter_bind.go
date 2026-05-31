@@ -261,6 +261,58 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx Decode
 	})
 }
 
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) reusableScratchLen(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
+	if r == nil {
+		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderInvalidFrameWorkState
+	}
+	remaining := ctx.RemainingPostFilters()
+	supported := DecoderFrameWorkPostFilterLoopFilter |
+		DecoderFrameWorkPostFilterCDEF |
+		DecoderFrameWorkPostFilterLoopRestoration |
+		DecoderFrameWorkPostFilterFilmGrain
+	if remaining&^supported != 0 {
+		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderUnsupportedPostFilter
+	}
+	var size DecoderFrameWorkPostFilterScratchSize
+	if remaining.Has(DecoderFrameWorkPostFilterLoopFilter) {
+		_, _, length, err := DecoderFrameWorkLoopFilterMapShape(ctx.Event.SequenceHeader, ctx.Event.FrameSize)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		maxInt := int(^uint(0) >> 1)
+		if length > maxInt/8 {
+			return DecoderFrameWorkPostFilterScratchSize{}, ErrFrameInvalidFormat
+		}
+		size.LoopFilter.Edges = length * 8
+	}
+	if remaining.Has(DecoderFrameWorkPostFilterCDEF) {
+		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.CDEF = cdefSize
+	}
+	if remaining.Has(DecoderFrameWorkPostFilterLoopRestoration) {
+		var records [3][]TileRestorationUnitRecord
+		if ctx.RestorationFrameBuffers != nil {
+			records = ctx.RestorationFrameBuffers.Records
+		}
+		restorationSize, err := ctx.LoopRestorationPostFilterScratchLen(records, r.RestorationOptimized)
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.Restoration = restorationSize
+	}
+	if remaining.Has(DecoderFrameWorkPostFilterFilmGrain) {
+		filmGrainSize, err := ctx.FilmGrainPostFilterScratchLen()
+		if err != nil {
+			return DecoderFrameWorkPostFilterScratchSize{}, err
+		}
+		size.FilmGrain = filmGrainSize
+	}
+	return size, nil
+}
+
 // Apply binds exact request views from Scratch, applies supported postfilters,
 // and requires the resulting output to remain publishable by the frame pool.
 func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
@@ -360,7 +412,7 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) Apply(ctx DecoderFra
 		return ErrDecoderInvalidFrameWorkState
 	}
 	r.runner.RestorationOptimized = r.RestorationOptimized
-	exact, err := r.runner.ScratchLen(ctx)
+	exact, err := r.runner.reusableScratchLen(ctx)
 	if err != nil {
 		return err
 	}
