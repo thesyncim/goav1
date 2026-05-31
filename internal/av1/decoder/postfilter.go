@@ -624,7 +624,7 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 	// CDEF mutates the inter-stripe rows libaom needs as filter context. When
 	// CDEF is disabled the deblock-context is the same as the frame data; the
 	// non-optimized restoration path still requires those rows to be saved.
-	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) && ctx.shouldSaveRestorationDeblockBoundaries() {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
 			return ctx, result, err
 		}
@@ -677,6 +677,13 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		result.FilmGrain = filmGrainResult
 	}
 	return ctx, result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) shouldSaveRestorationDeblockBoundaries() bool {
+	if !ctx.ActivePostFilters().Has(FrameWorkPostFilterCDEF) {
+		return true
+	}
+	return ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF)
 }
 
 // ApplySupportedPostFiltersForPublication runs the supported postfilter chain

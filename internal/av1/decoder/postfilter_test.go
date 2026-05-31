@@ -210,6 +210,51 @@ func TestFrameWorkPostFilterContextRemainingPostFilters(t *testing.T) {
 	}
 }
 
+func TestFrameWorkPostFilterContextShouldSaveRestorationDeblockBoundaries(t *testing.T) {
+	restoration := parser.RestorationParams{Type: [3]parser.RestorationType{parser.RestorationWiener}}
+	tests := []struct {
+		name      string
+		ctx       FrameWorkPostFilterContext
+		wantSave  bool
+		remaining FrameWorkPostFilterStage
+	}{
+		{
+			name: "restoration-without-cdef",
+			ctx: FrameWorkPostFilterContext{
+				Event: Event{Restoration: restoration},
+			},
+			wantSave:  true,
+			remaining: FrameWorkPostFilterLoopRestoration,
+		},
+		{
+			name: "restoration-before-cdef",
+			ctx: FrameWorkPostFilterContext{
+				Event: Event{CDEF: parser.CDEFParams{Bits: 1}, Restoration: restoration},
+			},
+			wantSave:  true,
+			remaining: FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration,
+		},
+		{
+			name: "restoration-after-cdef",
+			ctx: FrameWorkPostFilterContext{
+				Event: Event{CDEF: parser.CDEFParams{Bits: 1}, Restoration: restoration},
+			}.WithCompletedPostFilters(FrameWorkPostFilterCDEF),
+			wantSave:  false,
+			remaining: FrameWorkPostFilterLoopRestoration,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ctx.RemainingPostFilters(); got != tt.remaining {
+				t.Fatalf("remaining=%b want %b", got, tt.remaining)
+			}
+			if got := tt.ctx.shouldSaveRestorationDeblockBoundaries(); got != tt.wantSave {
+				t.Fatalf("shouldSaveRestorationDeblockBoundaries=%v want %v", got, tt.wantSave)
+			}
+		})
+	}
+}
+
 func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 	a := FrameWorkPostFilterScratchSize{
 		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 1},

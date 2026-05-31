@@ -32,7 +32,8 @@
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
 // 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run the
 // caller-owned full postfilter output path, including inter streams that
-// reference super-res output. All are committed under
+// reference super-res output and a high-bit-depth super-res + loop-restoration
+// clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -102,6 +103,32 @@
 //	  --superres-denominator=12 --superres-kf-denominator=12 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-10bit-superres-160x128.ivf src444_10_superres.yuv
+//	# 4:4:4 10-bit super-res + loop restoration:
+//	python3 - <<'PY'
+//	from pathlib import Path
+//	w, h, frames = 160, 128, 4
+//	with Path("src444_10_superres_restoration.yuv").open("wb") as f:
+//	    for n in range(frames):
+//	        for plane in range(3):
+//	            for y in range(h):
+//	                row = bytearray()
+//	                for x in range(w):
+//	                    if plane == 0:
+//	                        v = 96 + ((x*9 + y*7 + n*37 + ((x//8) ^ (y//8))*29) % 832)
+//	                    elif plane == 1:
+//	                        v = 128 + ((x*5 + y*13 + n*41 + ((x+y)//11)*31) % 768)
+//	                    else:
+//	                        v = 160 + ((x*17 + y*3 + n*43 + ((x*2+y)//9)*23) % 704)
+//	                    row += bytes((v & 0xff, v >> 8))
+//	                f.write(row)
+//	PY
+//	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=30 --kf-max-dist=1 --lag-in-frames=0 --superres-mode=1 \
+//	  --superres-denominator=12 --superres-kf-denominator=12 \
+//	  --enable-cdef=1 --enable-restoration=1 \
+//	  -o profile1-444-10bit-superres-restoration-160x128.ivf \
+//	  src444_10_superres_restoration.yuv
 //	# 4:4:4 10-bit super-res static inter:
 //	python3 - <<'PY'
 //	from pathlib import Path
@@ -754,6 +781,25 @@ var profileClips = []profileClip{
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 		superRes:         true,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit super-res plus active loop restoration. This
+		// guards the high-bit-depth non-subsampled boundary handoff between the
+		// caller-owned super-res output and post-upscale restoration.
+		name: "profile1-444-10bit-superres-restoration-160x128",
+		file: "profile1-444-10bit-superres-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"7946827a2d34b524ed92cc9a3b8504b8",
+			"5c9585eecc0bff58859f42933505bdef",
+			"92508e59e357059ea42166a6befead4f",
+			"883da41a575466a10360f4b90710a339",
+		},
+		wantSeqProfile:        1,
+		wantBitDepth:          10,
+		wantSubsamplingX:      false,
+		wantSubsamplingY:      false,
+		wantRestorationFrames: 1,
+		superRes:              true,
 	},
 	{
 		// Profile 1: 4:4:4 10-bit static super-res inter stream with loop filter

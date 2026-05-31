@@ -283,6 +283,15 @@ var callerPostFilterClips = []publicClip{
 		},
 	},
 	{
+		file: "profile1-444-10bit-superres-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"7946827a2d34b524ed92cc9a3b8504b8",
+			"5c9585eecc0bff58859f42933505bdef",
+			"92508e59e357059ea42166a6befead4f",
+			"883da41a575466a10360f4b90710a339",
+		},
+	},
+	{
 		file: "profile2-420-12bit-superres-160x128.ivf",
 		frameMD5Hex: []string{
 			"ea09f096227bac3e03277487354337fc",
