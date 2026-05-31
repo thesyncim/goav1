@@ -26,6 +26,7 @@ import (
 const benchVectorPath = "internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
 
 const postFilterBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-8bit-cdef-restoration-160x128.ivf"
+const superResInterBenchVectorPath = "internal/av1/testvector/testdata/profiles/profile1-444-8bit-superres-inter-160x128.ivf"
 
 var decodeBenchmarkSink int
 
@@ -74,21 +75,29 @@ func BenchmarkDecodeFullVector(b *testing.B) {
 // restoration. This complements BenchmarkDecodeFullVector, whose fixture is
 // primarily a residual/reconstruction throughput guard.
 func BenchmarkDecodePostFilteredProfileClip(b *testing.B) {
-	const frameCount = 4
+	benchmarkDecodeHighLevelProfileClip(b, postFilterBenchVectorPath, 4)
+}
 
-	ivfBytes := mustReadBenchFile(b, postFilterBenchVectorPath)
+// BenchmarkDecodeSuperResInterProfileClip measures the high-level Decoder path
+// on a profile-1 super-res inter stream. Later frames reference the upscaled
+// external output surface, covering the output-pool publication path that plain
+// reconstruction and all-key super-res benchmarks do not exercise.
+func BenchmarkDecodeSuperResInterProfileClip(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClip(b, superResInterBenchVectorPath, 8)
+}
+
+func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount int) {
+	b.Helper()
+
+	ivfBytes := mustReadBenchFile(b, path)
 	dec, err := av1.NewDecoderFromIVF(ivfBytes)
 	if err != nil {
 		b.Fatalf("NewDecoderFromIVF: %v", err)
 	}
 	defer dec.Close()
 
-	b.SetBytes(int64(len(ivfBytes)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	visible := 0
-	for i := 0; i < b.N; i++ {
+	run := func() int {
+		b.Helper()
 		if err := dec.Reset(); err != nil {
 			b.Fatalf("Reset: %v", err)
 		}
@@ -106,11 +115,24 @@ func BenchmarkDecodePostFilteredProfileClip(b *testing.B) {
 		if decoded != frameCount {
 			b.Fatalf("decoded %d frames want %d", decoded, frameCount)
 		}
-		visible += decoded
+		return decoded
+	}
+
+	// Prime the high-level path so any one-shot scratch growth does not pollute
+	// the steady-state allocation and throughput measurements.
+	run()
+
+	b.SetBytes(int64(len(ivfBytes)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	visible := 0
+	for i := 0; i < b.N; i++ {
+		visible += run()
 	}
 	decodeBenchmarkSink = visible
 
-	b.ReportMetric(frameCount, "frames/op")
+	b.ReportMetric(float64(frameCount), "frames/op")
 	if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
 		b.ReportMetric(float64(frameCount*b.N)/elapsed, "frames/s")
 	}

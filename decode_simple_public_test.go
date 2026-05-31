@@ -604,7 +604,37 @@ func TestDecodeIVFSuperResProfileClipsMatchGolden(t *testing.T) {
 }
 
 func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
-	ivf, err := os.ReadFile(profileClipPath("profile1-444-8bit-cdef-restoration-160x128.ivf"))
+	tests := []struct {
+		name        string
+		file        string
+		wantVisible int
+		maxAllocs   float64
+	}{
+		{
+			name:        "postfiltered cdef restoration",
+			file:        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+			wantVisible: 4,
+			maxAllocs:   8,
+		},
+		{
+			name:        "superres inter external references",
+			file:        "profile1-444-8bit-superres-inter-160x128.ivf",
+			wantVisible: 8,
+			maxAllocs:   8,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assertSimpleDecoderAllocBudget(t, tc.file, tc.wantVisible, tc.maxAllocs)
+		})
+	}
+}
+
+func assertSimpleDecoderAllocBudget(t *testing.T, file string, wantVisible int, maxAllocs float64) {
+	t.Helper()
+
+	ivf, err := os.ReadFile(profileClipPath(file))
 	if err != nil {
 		t.Fatalf("read clip: %v", err)
 	}
@@ -630,15 +660,15 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 			}
 			visible += len(frames)
 		}
-		if visible != 4 {
-			t.Fatalf("decoded %d visible frames, want 4", visible)
+		if visible != wantVisible {
+			t.Fatalf("decoded %d visible frames, want %d", visible, wantVisible)
 		}
 	}
 
 	decodeAll()
 	allocs := testing.AllocsPerRun(20, decodeAll)
-	if allocs > 8 {
-		t.Fatalf("postfiltered DecodeNext allocs/run=%f want <= 8", allocs)
+	if allocs > maxAllocs {
+		t.Fatalf("%s DecodeNext allocs/run=%f want <= %f", file, allocs, maxAllocs)
 	}
 }
 

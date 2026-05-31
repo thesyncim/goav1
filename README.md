@@ -413,13 +413,19 @@ make bench-all             # full micro-benchmark sweep across every package
 make bench-public          # public-API hot-path micro-benchmarks
 ```
 
-`make bench` runs the three top-level decoder benchmarks defined in
+`make bench` runs the top-level decoder benchmarks defined in
 `bench_test.go`:
 
 - `BenchmarkDecodeFullVector` decodes every frame of the bundled
   `internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf` vector through
   the public residual stream runner, reporting ns/op, MB/sec of decoded
   bitstream, `frames/op`, and `frames/s`.
+- `BenchmarkDecodePostFilteredProfileClip` uses the high-level decoder on a
+  Profile 1 CDEF/restoration clip, so the normal post-filtered output path is
+  represented in the default sweep.
+- `BenchmarkDecodeSuperResInterProfileClip` uses the high-level decoder on a
+  Profile 1 super-res inter clip, covering the external output-pool reference
+  publication path.
 - `BenchmarkDecodeFirstFrameOnly` isolates the keyframe decode latency so
   the first-frame cost is visible separately from the steady-state per-frame
   number.
@@ -432,16 +438,15 @@ Example output on an Apple M4 Max with Go 1.26:
 
 ```
 BenchmarkDecodeFullVector-16                   34   33393048 ns/op   3.86 MB/s   2.000 frames/op   59.89 frames/s     8542 B/op   0 allocs/op
-BenchmarkDecodePostFilteredProfileClip-16      10  102419033 ns/op   0.23 MB/s   4.000 frames/op   39.06 frames/s   519493 B/op   7 allocs/op
+BenchmarkDecodePostFilteredProfileClip-16       3  100165639 ns/op   0.23 MB/s   4.000 frames/op   39.93 frames/s       64 B/op   4 allocs/op
+BenchmarkDecodeSuperResInterProfileClip-16      3   44682528 ns/op   0.15 MB/s   8.000 frames/op  179.10 frames/s      128 B/op   8 allocs/op
 BenchmarkDecodeFullVectorAllocs-16             36   33660895 ns/op                                                 0 B/op   0 allocs/op
 BenchmarkDecodeFirstFrameOnly-16               72   16451093 ns/op   4.53 MB/s                                      3464 B/op   0 allocs/op
 ```
 
 The `MB/s` column is computed from the IVF bitstream byte count; the
 `frames/s` metric is added via `b.ReportMetric` and is the most useful
-single number for capacity planning. `BenchmarkDecodePostFilteredProfileClip`
-uses the high-level decoder on a CDEF/restoration profile clip, so the normal
-post-filtered output path is represented in the default `make bench` sweep.
+single number for capacity planning.
 
 ### Post-filter performance
 

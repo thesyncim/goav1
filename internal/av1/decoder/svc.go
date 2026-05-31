@@ -413,13 +413,12 @@ func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *fram
 		return 0, err
 	}
 	releaseIDs := releases[:count]
-	var releaseBatch [parser.RefFrames + 1]int
 	releaseCount := count
 	if hasPublishedGlobalSurface && globalID != codedGlobalID {
-		copy(releaseBatch[:], releases[:count])
-		releaseBatch[count] = codedGlobalID
+		copy(s.externalReleaseScratch[:], releases[:count])
+		s.externalReleaseScratch[count] = codedGlobalID
 		releaseCount = count + 1
-		releaseIDs = releaseBatch[:releaseCount]
+		releaseIDs = s.externalReleaseScratch[:releaseCount]
 	}
 	if releaseCount != 0 {
 		if releaser != nil {

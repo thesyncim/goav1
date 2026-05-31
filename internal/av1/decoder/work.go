@@ -223,6 +223,7 @@ type FrameWorkState struct {
 	loopFilterMapValid           bool
 	restorationFrameBuffers      threading.FrameWorkRestorationFrameBuffers
 	restorationFrameBuffersValid bool
+	externalReleaseScratch       [parser.RefFrames + 1]int
 	// sideDataBound records whether this frame's CDEF/loop-filter/restoration
 	// maps have already been bound (and reset). Binding resets the maps, so it
 	// must happen exactly once per frame -- on the first tile group -- even when
