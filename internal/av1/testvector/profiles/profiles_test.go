@@ -27,7 +27,7 @@
 // (1 keyframe + 7 inter, kf-max-dist=30) encoded from a moving synthetic source
 // so that inter prediction, MV scaling, OBMC and compound on NON-4:2:0 chroma
 // subsampling (4:4:4 and 4:2:2) are exercised. Profile 1 is covered at both
-// 8-bit and 10-bit 4:4:4, plus an 8-bit 4:4:4 screen-content clip that requires
+// 8-bit and 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require
 // luma and chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips,
 // 8/10-bit 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run
 // the caller-owned full postfilter output path, including an inter stream that
@@ -57,6 +57,31 @@
 //	  --lag-in-frames=0 --tune-content=screen --enable-palette=1 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-8bit-palette-64x64.ivf palette444.yuv
+//	# 4:4:4 10-bit palette:
+//	python3 - <<'PY'
+//	from pathlib import Path
+//	w = h = 64
+//	with Path("palette444_10.yuv").open("wb") as f:
+//	    for n in range(3):
+//	        for plane in range(3):
+//	            for y in range(h):
+//	                row = bytearray()
+//	                for x in range(w):
+//	                    if plane == 0:
+//	                        v = 160 if ((x + n*4)//8 + y//8) % 2 == 0 else 832
+//	                    elif plane == 1:
+//	                        v = 224 if ((y + n*4)//8) % 2 == 0 else 768
+//	                    else:
+//	                        v = 256 if ((x + y + n*4)//8) % 2 == 0 else 704
+//	                    row += bytes((v & 0xff, v >> 8))
+//	                f.write(row)
+//	PY
+//	aomenc --i444 --width=64 --height=64 --limit=3 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=20 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --tune-content=screen --enable-palette=1 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-10bit-palette-64x64.ivf palette444_10.yuv
 //	# 4:4:4 8-bit super-res:
 //	aomenc --i444 --width=160 --height=128 --limit=4 --ivf --profile=1 \
 //	  --cpu-used=4 --end-usage=q --cq-level=32 --kf-max-dist=1 \
@@ -228,6 +253,23 @@ var profileClips = []profileClip{
 		},
 		wantSeqProfile:      1,
 		wantBitDepth:        8,
+		wantSubsamplingX:    false,
+		wantSubsamplingY:    false,
+		wantPaletteYBlocks:  1,
+		wantPaletteUVBlocks: 1,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit screen-content clip with palette-coded
+		// blocks, guarding high-bit-depth luma and chroma palette prediction.
+		name: "profile1-444-10bit-palette-64x64",
+		file: "profile1-444-10bit-palette-64x64.ivf",
+		frameMD5Hex: []string{
+			"dcd2ab9753a24747f1b731d011e6478a",
+			"b9aaba28bd6cc85fe157befe067cada9",
+			"dc714a2fc421619ab9384c185cf21ab6",
+		},
+		wantSeqProfile:      1,
+		wantBitDepth:        10,
 		wantSubsamplingX:    false,
 		wantSubsamplingY:    false,
 		wantPaletteYBlocks:  1,
