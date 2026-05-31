@@ -92,9 +92,16 @@ func frameWorkPredictScaledReferencePlane(geom frameWorkPredictionPlaneGeometry,
 func frameWorkPredictScaledReferencePlaneWithFilterSize(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, bytesPerSample, bitDepth,
+		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters, nil)
+}
+
+func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
+	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters, scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
-	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
-		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters)
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
+		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters, scratch)
 }
 
 // frameWorkScaledReferenceCurrentDims returns the current frame's coded
@@ -133,14 +140,28 @@ func frameWorkPredictScaledReferencePlaneToBuffer(dst frame.Plane, ref frame.Pla
 func frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst frame.Plane, ref frame.Plane,
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst, ref, geom, bitDepth,
+		dstX, dstY, blockX, blockY, filterWidth, filterHeight, mv, filters, nil)
+}
+
+func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame.Plane, ref frame.Plane,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters,
+	scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
-	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst, ref, curWidth, curHeight,
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight,
 		geom.BytesPerSample, bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height,
-		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters)
+		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters, scratch)
 }
 
 func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, ref frame.Plane,
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, bitDepth, mv, filters, nil)
+}
+
+func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundConvBuf, ref frame.Plane,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
+	scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
 	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
 	if err != nil {
@@ -158,8 +179,8 @@ func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, 
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictScaledCompoundRefToConvBuf(buf, ref, geom.BytesPerSample, bitDepth,
-		geom.Width, geom.Height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.BytesPerSample, bitDepth,
+		geom.Width, geom.Height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -182,6 +203,14 @@ func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst frame.Plane, 
 	bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
+	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight, bytesPerSample, bitDepth,
+		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters, nil)
+}
+
+func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst frame.Plane, ref frame.Plane, curWidth int, curHeight int,
+	bytesPerSample int, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
+	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters, scratch *motion.ScaledConvolveScratch) error {
 	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
 	if err != nil {
 		return ErrInvalidBatch
@@ -204,7 +233,7 @@ func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSize(dst frame.Plane, 
 			return ErrInvalidBatch
 		}
 	case 2:
-		if err := motion.ConvolveScale2DHighBDClamped(dst, ref, bitDepth, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+		if err := motion.ConvolveScale2DHighBDClampedWithScratch(dst, ref, bitDepth, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
 			return ErrInvalidBatch
 		}
 	default:

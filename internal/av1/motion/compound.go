@@ -173,6 +173,16 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	return PredictScaledCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, nil)
+}
+
+// PredictScaledCompoundRefToConvBufWithScratch is
+// PredictScaledCompoundRefToConvBuf using optional caller-owned scratch for the
+// large scaled intermediate block.
+func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if buf == nil || xStep <= 0 || yStep <= 0 ||
 		!bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
 		return ErrInvalidMotion
@@ -190,7 +200,7 @@ func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, by
 	}
 
 	const imStride = maxBlockSize
-	var im [scaledIMMaxHeight * maxBlockSize]int32
+	im, pooled := scaledHighBDIMForScratch(scratch)
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
@@ -233,6 +243,7 @@ func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, by
 			yPos += yStep
 		}
 	}
+	putScaledHighBDIM(im, pooled)
 	return nil
 }
 

@@ -110,6 +110,15 @@ func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	return ConvolveScale2DHighBDWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, nil)
+}
+
+// ConvolveScale2DHighBDWithScratch is ConvolveScale2DHighBD using optional
+// caller-owned scratch for the large intermediate block.
+func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -130,7 +139,9 @@ func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dst
 	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
 		return ErrInvalidMotion
 	}
-	convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+	im, pooled := scaledHighBDIMForScratch(scratch)
+	convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
+	putScaledHighBDIM(im, pooled)
 	return nil
 }
 
@@ -139,6 +150,15 @@ func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dst
 func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	return ConvolveScale2DHighBDClampedWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, nil)
+}
+
+// ConvolveScale2DHighBDClampedWithScratch is ConvolveScale2DHighBDClamped using
+// optional caller-owned scratch for the large intermediate block.
+func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -156,7 +176,9 @@ func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 	if !planeRegionFits(ref, 2, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
-	convolveScale2DHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+	im, pooled := scaledHighBDIMForScratch(scratch)
+	convolveScale2DHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
+	putScaledHighBDIM(im, pooled)
 	return nil
 }
 
@@ -325,9 +347,8 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 
 func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int) {
+	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
-	var im [scaledIMMaxHeight * maxBlockSize]int32
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
@@ -369,9 +390,8 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 
 func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int) {
+	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
-	var im [scaledIMMaxHeight * maxBlockSize]int32
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY

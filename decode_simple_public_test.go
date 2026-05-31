@@ -800,6 +800,12 @@ func TestSimpleDecoderPostFilteredClipAllocBudget(t *testing.T) {
 			maxAllocs:   8,
 		},
 		{
+			name:        "superres inter high bit depth",
+			file:        "profile1-444-10bit-superres-inter-simple-160x128.ivf",
+			wantVisible: 8,
+			maxAllocs:   8,
+		},
+		{
 			name:        "film grain high bit depth",
 			file:        "profile1-444-10bit-filmgrain-96x96.ivf",
 			wantVisible: 3,
