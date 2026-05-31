@@ -495,6 +495,31 @@ func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
 	}
 }
 
+func TestSimpleDecoderRejectsSwitchFrameWithoutReferences(t *testing.T) {
+	payload := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	switchFrame := append([]byte{}, publicSimpleDecoderSwitchFrameHeaderPayload()...)
+	switchFrame = append(switchFrame, 0xbb)
+	payload = appendPublicLowOverheadOBU(payload, av1.OBUFrame, switchFrame)
+	ivf := appendPublicIVF(nil, 16, 9, 30, 1, []publicIVFFrame{{payload: payload}})
+
+	t.Run("NewDecoderFromIVF", func(t *testing.T) {
+		dec, err := av1.NewDecoderFromIVF(ivf)
+		if dec != nil {
+			dec.Close()
+		}
+		if !errors.Is(err, av1.ErrReferenceFrameNeeded) {
+			t.Fatalf("NewDecoderFromIVF err=%v want %v", err, av1.ErrReferenceFrameNeeded)
+		}
+	})
+
+	t.Run("DecodeIVF", func(t *testing.T) {
+		_, err := av1.DecodeIVF(ivf)
+		if !errors.Is(err, av1.ErrReferenceFrameNeeded) {
+			t.Fatalf("DecodeIVF err=%v want %v", err, av1.ErrReferenceFrameNeeded)
+		}
+	})
+}
+
 func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 	validPayload := av1.AppendTileListOBU(nil, av1.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
@@ -523,6 +548,21 @@ func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 			name:        "malformed tile list propagates parse error",
 			tilePayload: []byte{0x00, 0x00, 0x00, 0x00},
 			wantErr:     av1.ErrTileListShortEntry,
+		},
+		{
+			name:        "invalid tile count propagates parse error",
+			tilePayload: []byte{0xff, 0xff, 0xff, 0xff},
+			wantErr:     av1.ErrTileListInvalidTileCount,
+		},
+		{
+			name:        "short tile data propagates parse error",
+			tilePayload: []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa},
+			wantErr:     av1.ErrTileListShortTileData,
+		},
+		{
+			name:        "trailing tile-list bytes propagate parse error",
+			tilePayload: append(append([]byte{}, validPayload...), 0xff),
+			wantErr:     av1.ErrTileListTrailingBytes,
 		},
 	}
 
@@ -558,6 +598,34 @@ func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func publicSimpleDecoderSwitchFrameHeaderPayload() []byte {
+	var w publicDecoderResidualBitWriter
+	w.writeBool(false) // show_existing_frame
+	w.writeBits(uint64(av1.FrameTypeSwitch), 2)
+	w.writeBool(true)  // show_frame
+	w.writeBool(false) // disable_cdf_update
+	for range av1.InterRefsPerFrame {
+		w.writeBits(0, 3) // ref_frame_idx[i]
+	}
+	w.writeBits(15, 4) // frame_width_minus_1
+	w.writeBits(8, 4)  // frame_height_minus_1
+	w.writeBool(false) // render_and_frame_size_different
+	w.writeBool(false) // allow_high_precision_mv
+	w.writeBool(false) // interpolation_filter is fixed
+	w.writeBits(0, 2)  // interpolation_filter = EIGHTTAP
+	w.writeBool(false) // is_motion_mode_switchable
+	w.writeBool(false) // disable_frame_end_update_cdf
+	w.writeBool(false) // uniform_tile_spacing_flag
+	publicDecoderResidualWriteColorQuantParams(&w)
+	publicDecoderResidualWriteZeroSegmentationParams(&w)
+	w.writeBool(false) // reference_select
+	w.writeBool(false) // reduced_tx_set
+	for range av1.InterRefsPerFrame {
+		w.writeBool(false) // global_motion_is_global
+	}
+	return w.bytes()
 }
 
 func firstProfilePayload(t *testing.T) []byte {
