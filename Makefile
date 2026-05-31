@@ -245,8 +245,8 @@ dryrun-full:
 
 # dryrun-profiles decodes the vendored profile-conformance clips (profile-1
 # 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/edge/tile/super-res,
-# profile-1 10-bit super-res+restoration, profile-2 4:2:2 8/10-bit and
-# 4:2:0 12-bit edge/super-res clips) and
+# profile-1 10-bit inter tile and super-res+restoration, profile-2 4:2:2
+# 8/10-bit and 4:2:0 12-bit edge/super-res clips) and
 # asserts byte-exact per-frame MD5 against their libaom goldens.
 # The test lives in its own package (internal/av1/testvector/profiles) so it
 # compiles into a separate test binary from the oracle suite and cannot share

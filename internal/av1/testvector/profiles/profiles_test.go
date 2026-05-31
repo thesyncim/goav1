@@ -30,10 +30,10 @@
 // streams at both 8-bit and 10-bit. Profile 1 is covered at both 8-bit and
 // 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require luma and
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
-// 4:4:4 film-grain clips, and 8/10-bit 4:4:4 super-res clips that run the
-// caller-owned full postfilter output path, including inter streams that
-// reference super-res output and a high-bit-depth super-res + loop-restoration
-// clip. All are committed under
+// 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, and 8/10-bit
+// 4:4:4 super-res clips that run the caller-owned full postfilter output path,
+// including inter streams that reference super-res output and a high-bit-depth
+// super-res + loop-restoration clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -295,6 +295,35 @@
 //	  --cq-level=32 --kf-max-dist=999 --lag-in-frames=0 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile1-444-10bit-edgemv-130x130.ivf src444_10_edgemv.yuv
+//	# 4:4:4 10-bit inter multi-tile:
+//	python3 - <<'PY'
+//	from pathlib import Path
+//	w, h, frames = 128, 128, 5
+//	with Path("src444_10_multitile_inter.yuv").open("wb") as f:
+//	    for n in range(frames):
+//	        sx, sy = n * 7, n * 5
+//	        for plane in range(3):
+//	            for y in range(h):
+//	                row = bytearray()
+//	                for x in range(w):
+//	                    if plane == 0:
+//	                        block = (((x + sx) // 8) ^ ((y + sy) // 8)) * 37
+//	                        v = 96 + ((x*7 + y*5 + n*43 + block) % 832)
+//	                    elif plane == 1:
+//	                        block = (((x + n*9) // 7) + ((y + n*3) // 11)) * 29
+//	                        v = 128 + ((x*13 + y*3 + n*31 + block) % 768)
+//	                    else:
+//	                        block = (((x + y + n*6) // 9) ^ ((x*2 + y) // 13)) * 31
+//	                        v = 160 + ((x*5 + y*17 + n*47 + block) % 704)
+//	                    row += bytes((v & 0xff, v >> 8))
+//	                f.write(row)
+//	PY
+//	aomenc --i444 --width=128 --height=128 --limit=5 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=999 --lag-in-frames=0 --tile-columns=1 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-10bit-multitile-inter-2x1-128x128.ivf \
+//	  src444_10_multitile_inter.yuv
 //	# 4:2:2 8-bit inter:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
 //
@@ -541,6 +570,27 @@ var profileClips = []profileClip{
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 		wantInterFrames:  1,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit inter multi-tile, combining high-bit-depth
+		// non-subsampled chroma, reference frames, and split tile layout.
+		name: "profile1-444-10bit-multitile-inter-2x1-128x128",
+		file: "profile1-444-10bit-multitile-inter-2x1-128x128.ivf",
+		frameMD5Hex: []string{
+			"622e6159c052250bebf439858a73ec97",
+			"5c3fd1c4289cb96721ec8ab01b26f039",
+			"e60e744ca2d50f4701952b15fda80cfe",
+			"cc6ee6ed27717c5341606e3d4371affb",
+			"e31c6c9af577991ed02f043a0523ada8",
+		},
+		wantSeqProfile:     1,
+		wantBitDepth:       10,
+		wantSubsamplingX:   false,
+		wantSubsamplingY:   false,
+		wantInterFrames:    4,
+		wantTileCols:       2,
+		wantTileRows:       1,
+		wantTileGroupTiles: 2,
 	},
 	{
 		// Profile 2: 4:2:2 8-bit INTER. 8 frames (1 keyframe + 7 inter,
