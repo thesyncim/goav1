@@ -316,10 +316,12 @@ canonical `yuv420p10le` / `yuv420p12le` layout. Monochrome streams produce
 I400 (Y plane only). The CLI exits with status 1 on any decode error and
 prints the error text to standard error.
 
-The CLI currently runs residual decode and reconstruction. Loop-filter,
-CDEF, super-res, loop-restoration, and film-grain post-filters are not yet
-wired in - the same configuration used by the throughput benchmarks. See
-`cmd/aom-go-dec/decoder.go` for the exact public-API path.
+The CLI uses the high-level public decoder path and writes frames after the
+normal loop-filter, CDEF, super-res, loop-restoration, and film-grain
+post-filter chain has run. `cmd/aom-go-dec/main_test.go` keeps that boundary
+covered with per-frame MD5 goldens for CDEF/restoration, film grain, and
+inter super-res clips. Throughput benchmarks may still isolate lower-level
+residual or post-filter stages when measuring specific hot paths.
 
 A second example program under
 [`cmd/dump_svc`](cmd/dump_svc) targets AV1 scalable video coding
