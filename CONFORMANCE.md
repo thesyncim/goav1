@@ -40,8 +40,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra, inter, palette,      |
 |    |                                  |         | internal/av1/testvector/profiles | CDEF/restoration, odd edge-size filters,       |
 |    |                                  |         |                                  | edge-motion, film grain, super-res clips pass. |
-|    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8/10-bit and 4:2:0 12-bit edge/super-res |
-|    |                                  |         | internal/av1/testvector/profiles | clips pass; broader 10/12-bit vector sweep     |
+|    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8/10-bit and 4:2:0 12-bit edge, film-   |
+|    |                                  |         | internal/av1/testvector/profiles | grain, and super-res clips pass; broader       |
+|    |                                  |         |                                  | 10/12-bit vector sweep                         |
 |    |                                  |         |                                  | covered by opt-in extended gates.              |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  2 | Bit depth 8                      | Yes     | internal/av1/frame/              | Full pipeline; primary conformance target.     |
@@ -317,13 +318,13 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 29/29 vendored profile clips pass, covering
+- `make dryrun-profiles`: 30/30 vendored profile clips pass, covering
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, odd edge-size CDEF/restoration, 8/10-bit film grain,
   edge-motion, all-key superres, and inter superres,
   profile 2 4:2:2 8-bit all-intra/inter, profile 2 4:2:2 10-bit edge-size,
   profile 2 4:2:0 12-bit
-  including odd edge sizes, 12-bit superres, 8-bit superres,
+  including odd edge sizes, 12-bit film grain, 12-bit superres, 8-bit superres,
   superres plus loop restoration, a forced-root 128x128 superblock clip,
   edge-MV, and a non-SVC multi-tile clip.
 - `make dryrun-corpus`: optional generated real-content corpus stream-MD5
@@ -437,7 +438,7 @@ manifest. The next production-readiness items are:
    12-bit 4:4:4 streams as upstream or locally generated goldens become
    available; the current vendored corpus includes profile-1 4:4:4 10-bit
    odd-size CDEF/restoration and edge-motion plus 4:2:0 12-bit odd-size CDEF,
-   edge-motion, and super-res coverage.
+   film grain, edge-motion, and super-res coverage.
 2. **Tile list OBU playback.** `EventTileList` parsing is present and the
    residual decode runner now returns `ErrDecoderUnsupportedTileList` instead
    of silently ignoring playback, but end-to-end tile-list reconstruction and

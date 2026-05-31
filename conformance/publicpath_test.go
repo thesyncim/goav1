@@ -30,9 +30,9 @@ type publicClip struct {
 // goldens are shared with internal/av1/testvector/profiles. They cover
 // profile-1 4:4:4 8/10-bit, profile-1 screen-content palette, profile-1
 // CDEF/restoration, profile-1 film grain, profile-2 4:2:2 8/10-bit, profile-2
-// 4:2:0 12-bit including odd edge sizes, edge-motion, large-superblock, and
-// multi-tile streams, including non-4:2:0 clips that libaom's published vector
-// suite does not ship.
+// 4:2:0 12-bit including odd edge sizes, film grain, edge-motion,
+// large-superblock, and multi-tile streams, including non-4:2:0 clips that
+// libaom's published vector suite does not ship.
 var publicClips = []publicClip{
 	{
 		file: "profile1-444-8bit-64x64.ivf",
@@ -187,6 +187,14 @@ var publicClips = []publicClip{
 			"f8dc71c2aafcf0ed77ce9d91a0a8ca0d",
 			"8d44478c32115672846d4579d3962b58",
 			"9825261dad9f100b51cba05ad534029d",
+		},
+	},
+	{
+		file: "profile2-420-12bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"48d28098e31d5ef96fa13d69bf13a374",
+			"774b0173bb05d4d3d271d3e04303ac1b",
+			"490cb07ef4b11d39480b11947796ef4b",
 		},
 	},
 	{

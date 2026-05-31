@@ -210,6 +210,12 @@
 //	  --cq-level=36 --kf-max-dist=1 --lag-in-frames=0 \
 //	  --enable-cdef=1 --enable-restoration=1 \
 //	  -o profile2-420-12bit-66x66.ivf src420_12_edge.yuv
+//	# 4:2:0 12-bit film grain:
+//	aomenc --i420 --width=96 --height=96 --limit=3 --ivf --profile=2 \
+//	  --bit-depth=12 --input-bit-depth=12 --cpu-used=4 --end-usage=q \
+//	  --cq-level=40 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --enable-cdef=0 --enable-restoration=0 --film-grain-test=1 \
+//	  -o profile2-420-12bit-filmgrain-96x96.ivf filmgrain420_12.yuv
 //	# 4:2:0 12-bit super-res:
 //	aomenc --i420 --width=160 --height=128 --limit=4 --ivf --profile=2 \
 //	  --bit-depth=12 --input-bit-depth=12 --cpu-used=4 --end-usage=q \
@@ -491,6 +497,22 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 		wantCDEFFrames:   1,
+	},
+	{
+		// Profile 2: 4:2:0 12-bit with active film grain, guarding
+		// high-bit-depth grain synthesis on the professional-profile path.
+		name: "profile2-420-12bit-filmgrain-96x96",
+		file: "profile2-420-12bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"48d28098e31d5ef96fa13d69bf13a374",
+			"774b0173bb05d4d3d271d3e04303ac1b",
+			"490cb07ef4b11d39480b11947796ef4b",
+		},
+		wantSeqProfile:      2,
+		wantBitDepth:        12,
+		wantSubsamplingX:    true,
+		wantSubsamplingY:    true,
+		wantFilmGrainFrames: 1,
 	},
 	{
 		// Profile 2: 4:2:0 12-bit super-res. The coded width is smaller than the
