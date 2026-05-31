@@ -188,6 +188,12 @@
 //	  -o superblock128-420-8bit-128x128.ivf sb128_420.yuv
 //	# 4:2:2 8-bit:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-64x64.ivf src422.yuv
+//	# 4:2:2 10-bit odd edge-size:
+//	aomenc --i422 --width=66 --height=66 --limit=3 --ivf --profile=2 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile2-422-10bit-66x66.ivf src422_10_edge.yuv
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
@@ -338,6 +344,21 @@ var profileClips = []profileClip{
 		},
 		wantSeqProfile:   2,
 		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 2: 4:2:2 10-bit odd 66x66 size, guarding high-bit-depth
+		// chroma rows at non-4:2:0 frame edges.
+		name: "profile2-422-10bit-66x66",
+		file: "profile2-422-10bit-66x66.ivf",
+		frameMD5Hex: []string{
+			"8f6b2f543fdd300f6a09285bd35b2dea",
+			"e6137fd48ed1c842cfef45b6a13d09e9",
+			"d66f267df360523a90ae1f25a101f68c",
+		},
+		wantSeqProfile:   2,
+		wantBitDepth:     10,
 		wantSubsamplingX: true,
 		wantSubsamplingY: false,
 	},
