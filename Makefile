@@ -263,7 +263,7 @@ dryrun-corpus:
 
 # dryrun-external-corpus recursively scans GOAV1_EXTERNAL_CORPUS_DIR or
 # GOAV1_EXTERNAL_CORPUS_DIRS for local third-party IVF corpora. Each .ivf must
-# have a sibling .md5 containing the expected stream digest.
+# have a supported stream-MD5 or per-frame MD5 sidecar.
 dryrun-external-corpus:
 	GOAV1_EXTERNAL_CORPUS=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestExternalCorpusConformance' -count=1 -timeout 2400s -v
 

@@ -34,12 +34,12 @@ package testvector
 //   - CORRECTNESS GATE / CONFORMANCE PROBE. For every clip goav1 accumulates a
 //     stream MD5 over the concatenated visible-frame planes (the libaom
 //     test/md5_helper.h layout: visible Y rows, then U, then V, no stride
-//     padding) and compares it byte-for-byte against the sidecar .md5 produced
-//     by aomdec (and cross-checked against dav1d for 8-bit 4:2:0 clips during
-//     generation). A clip whose goav1 digest does not match, or that fails to
-//     decode, is a CONFORMANCE BUG: it is excluded from the timing aggregate and
-//     reported prominently. This bench therefore doubles as a conformance probe
-//     on real content, not just a perf tool.
+//     padding) and compares it byte-for-byte against a stream-MD5 or per-frame
+//     MD5 sidecar produced by reference decoders. A clip whose goav1 digest
+//     does not match, or that fails to decode, is a CONFORMANCE BUG: it is
+//     excluded from the timing aggregate and reported prominently. This bench
+//     therefore doubles as a conformance probe on real content, not just a perf
+//     tool.
 //   - UNIFORM, FAIR TIMING. Every decoder is single-threaded
 //     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1) and
 //     decode-only with output discarded. Each (decoder, clip) is warmed up once
@@ -55,6 +55,7 @@ package testvector
 // crossBenchRuns from cross_decoder_bench_test.go (same package + build tag).
 
 import (
+	"bytes"
 	"crypto/md5"
 	"fmt"
 	"hash"
@@ -75,25 +76,42 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
-// corpusClip is one generated benchmark clip resolved on disk together with its
-// expected libaom stream MD5 and decode metadata.
+// corpusClip is one benchmark/corpus clip resolved on disk together with its
+// expected MD5 oracle and decode metadata.
 type corpusClip struct {
-	name     string // file stem, e.g. "p360_inter_q32"
-	ivfPath  string
-	ivfData  []byte
-	wantMD5  MD5   // expected stream digest (from the .md5 sidecar)
-	frames   int   // visible frames goav1 emitted (== external frame count)
-	width    int   // coded width of the first frame
-	height   int   // coded height of the first frame
-	bitDepth uint8 // 8, 10, or 12
-	chroma   string
-	tileCols uint8 // tile columns of the first frame
-	allIntra bool  // every frame is a keyframe
+	name          string // file stem, e.g. "p360_inter_q32"
+	ivfPath       string
+	ivfData       []byte
+	wantMD5       MD5   // expected stream digest, when the sidecar is stream-MD5
+	wantFrameMD5s []MD5 // expected visible-frame digests, when the sidecar is per-frame MD5
+	oracleKind    corpusOracleKind
+	oraclePath    string
+	frames        int   // visible frames goav1 emitted (== external frame count)
+	width         int   // coded width of the first frame
+	height        int   // coded height of the first frame
+	bitDepth      uint8 // 8, 10, or 12
+	chroma        string
+	tileCols      uint8 // tile columns of the first frame
+	allIntra      bool  // every frame is a keyframe
 }
 
 type corpusClipCandidate struct {
 	name    string
 	ivfPath string
+}
+
+type corpusOracleKind uint8
+
+const (
+	corpusOracleStreamMD5 corpusOracleKind = iota + 1
+	corpusOracleFrameMD5
+)
+
+type corpusOracleSidecar struct {
+	path      string
+	kind      corpusOracleKind
+	streamMD5 MD5
+	frameMD5s []MD5
 }
 
 // corpusDir resolves the benchmark corpus directory. It honors
@@ -118,11 +136,11 @@ func dirHasIVF(dir string) bool {
 	return len(matches) > 0
 }
 
-// loadCorpusClips discovers every *.ivf with a sibling *.md5 in dir, parses the
-// expected digest, and decodes each clip ONCE through goav1 to fill in the
-// frame count / dimensions / tile / bit-depth metadata AND to verify the goav1
-// stream digest matches the sidecar. Clips that fail to decode or mismatch are
-// returned in failed (a conformance bug) and omitted from clips.
+// loadCorpusClips discovers every *.ivf with a supported MD5 sidecar in dir,
+// parses the expected digest(s), and decodes each clip ONCE through goav1 to
+// fill in frame count / dimensions / tile / bit-depth metadata AND to verify
+// the decoded output matches the sidecar. Clips that fail to decode or mismatch
+// are returned in failed (a conformance bug) and omitted from clips.
 func loadCorpusClips(t *testing.T, dir string) (clips []corpusClip, failed []corpusFailure) {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(dir, "*.ivf"))
@@ -145,15 +163,9 @@ func loadCorpusClipCandidates(t *testing.T, candidates []corpusClipCandidate) (c
 	for _, candidate := range candidates {
 		name := candidate.name
 		ivfPath := candidate.ivfPath
-		md5Path := strings.TrimSuffix(ivfPath, filepath.Ext(ivfPath)) + ".md5"
-		md5Raw, err := os.ReadFile(md5Path)
+		oracle, err := loadCorpusOracleSidecar(ivfPath)
 		if err != nil {
-			t.Logf("corpus: skipping %s (no .md5 sidecar: %v)", name, err)
-			continue
-		}
-		want, err := parseCorpusMD5Sidecar(md5Raw)
-		if err != nil {
-			t.Logf("corpus: skipping %s (bad .md5 sidecar: %v)", name, err)
+			t.Logf("corpus: skipping %s (MD5 sidecar: %v)", name, err)
 			continue
 		}
 		ivfData, err := os.ReadFile(ivfPath)
@@ -162,7 +174,15 @@ func loadCorpusClipCandidates(t *testing.T, candidates []corpusClipCandidate) (c
 			continue
 		}
 
-		clip := corpusClip{name: name, ivfPath: ivfPath, ivfData: ivfData, wantMD5: want}
+		clip := corpusClip{
+			name:          name,
+			ivfPath:       ivfPath,
+			ivfData:       ivfData,
+			wantMD5:       oracle.streamMD5,
+			wantFrameMD5s: oracle.frameMD5s,
+			oracleKind:    oracle.kind,
+			oraclePath:    oracle.path,
+		}
 		res, derr := decodeCorpusClip(ivfData)
 		if derr != nil {
 			failed = append(failed, corpusFailure{name: name, reason: fmt.Sprintf("goav1 decode error: %v", derr)})
@@ -175,11 +195,8 @@ func loadCorpusClipCandidates(t *testing.T, candidates []corpusClipCandidate) (c
 		clip.chroma = res.chroma
 		clip.tileCols = res.tileCols
 		clip.allIntra = res.allIntra
-		if res.streamMD5 != want {
-			failed = append(failed, corpusFailure{
-				name:   name,
-				reason: fmt.Sprintf("MD5 MISMATCH: goav1=%x want=%x (%dx%d %d-bit frames=%d)", res.streamMD5, want, res.width, res.height, res.bitDepth, res.frames),
-			})
+		if err := verifyCorpusOracle(res, oracle); err != nil {
+			failed = append(failed, corpusFailure{name: name, reason: err.Error()})
 			continue
 		}
 		clips = append(clips, clip)
@@ -187,24 +204,143 @@ func loadCorpusClipCandidates(t *testing.T, candidates []corpusClipCandidate) (c
 	return clips, failed
 }
 
-func parseCorpusMD5Sidecar(src []byte) (MD5, error) {
-	for i := 0; i+32 <= len(src); i++ {
-		if i > 0 {
-			if _, ok := hexNibble(src[i-1]); ok {
-				continue
-			}
+func loadCorpusOracleSidecar(ivfPath string) (corpusOracleSidecar, error) {
+	for _, path := range corpusOracleSidecarPaths(ivfPath) {
+		raw, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
 		}
-		if i+32 < len(src) {
-			if _, ok := hexNibble(src[i+32]); ok {
-				continue
-			}
+		if err != nil {
+			return corpusOracleSidecar{}, fmt.Errorf("read %s: %w", path, err)
 		}
-		md5, err := ParseMD5Hex(src[i : i+32])
-		if err == nil {
-			return md5, nil
+		oracle, err := parseCorpusOracleSidecar(path, raw)
+		if err != nil {
+			return corpusOracleSidecar{}, fmt.Errorf("parse %s: %w", path, err)
+		}
+		return oracle, nil
+	}
+	return corpusOracleSidecar{}, fmt.Errorf("no supported MD5 sidecar found (tried %s)", strings.Join(corpusOracleSidecarPaths(ivfPath), ", "))
+}
+
+func corpusOracleSidecarPaths(ivfPath string) []string {
+	stem := strings.TrimSuffix(ivfPath, filepath.Ext(ivfPath))
+	return []string{
+		stem + ".md5",
+		ivfPath + ".md5",
+		stem + ".framemd5",
+		ivfPath + ".framemd5",
+	}
+}
+
+func corpusOracleSidecarExists(ivfPath string) (bool, error) {
+	for _, path := range corpusOracleSidecarPaths(ivfPath) {
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("stat MD5 sidecar %s: %w", path, err)
 		}
 	}
-	return MD5{}, ErrInvalidMD5
+	return false, nil
+}
+
+func parseCorpusOracleSidecar(path string, src []byte) (corpusOracleSidecar, error) {
+	tokens, err := parseCorpusMD5Tokens(src)
+	if err != nil {
+		return corpusOracleSidecar{}, err
+	}
+	oracle := corpusOracleSidecar{path: path}
+	if strings.EqualFold(filepath.Ext(path), ".framemd5") || len(tokens) > 1 {
+		oracle.kind = corpusOracleFrameMD5
+		oracle.frameMD5s = tokens
+		return oracle, nil
+	}
+	oracle.kind = corpusOracleStreamMD5
+	oracle.streamMD5 = tokens[0]
+	return oracle, nil
+}
+
+func parseCorpusMD5Tokens(src []byte) ([]MD5, error) {
+	var out []MD5
+	for len(src) > 0 {
+		line := src
+		if i := bytes.IndexByte(src, '\n'); i >= 0 {
+			line = src[:i]
+			src = src[i+1:]
+		} else {
+			src = nil
+		}
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			continue
+		}
+		for i := 0; i+32 <= len(line); i++ {
+			if i > 0 {
+				if _, ok := hexNibble(line[i-1]); ok {
+					continue
+				}
+			}
+			if i+32 < len(line) {
+				if _, ok := hexNibble(line[i+32]); ok {
+					continue
+				}
+			}
+			md5, err := ParseMD5Hex(line[i : i+32])
+			if err == nil {
+				out = append(out, md5)
+				i += 31
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, ErrInvalidMD5
+	}
+	return out, nil
+}
+
+func verifyCorpusOracle(res corpusDecodeResult, oracle corpusOracleSidecar) error {
+	switch oracle.kind {
+	case corpusOracleStreamMD5:
+		if res.streamMD5 == oracle.streamMD5 {
+			return nil
+		}
+		return fmt.Errorf("MD5 MISMATCH: goav1=%x want=%x (%dx%d %d-bit frames=%d sidecar=%s)",
+			res.streamMD5, oracle.streamMD5, res.width, res.height, res.bitDepth, res.frames, oracle.path)
+	case corpusOracleFrameMD5:
+		if len(res.frameMD5s) != len(oracle.frameMD5s) {
+			return fmt.Errorf("FRAME MD5 COUNT MISMATCH: goav1_frames=%d want_frames=%d (%dx%d %d-bit sidecar=%s)",
+				len(res.frameMD5s), len(oracle.frameMD5s), res.width, res.height, res.bitDepth, oracle.path)
+		}
+		for i := range oracle.frameMD5s {
+			if res.frameMD5s[i] != oracle.frameMD5s[i] {
+				return fmt.Errorf("FRAME MD5 MISMATCH: frame=%d goav1=%x want=%x (%dx%d %d-bit sidecar=%s)",
+					i, res.frameMD5s[i], oracle.frameMD5s[i], res.width, res.height, res.bitDepth, oracle.path)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown MD5 sidecar kind %d", oracle.kind)
+	}
+}
+
+func corpusClipOracleLog(clip corpusClip) string {
+	sidecar := filepath.Base(clip.oraclePath)
+	if sidecar == "." || sidecar == string(filepath.Separator) {
+		sidecar = ""
+	}
+	switch clip.oracleKind {
+	case corpusOracleFrameMD5:
+		if sidecar == "" {
+			return fmt.Sprintf("frame_md5s=%d", len(clip.wantFrameMD5s))
+		}
+		return fmt.Sprintf("frame_md5s=%d sidecar=%s", len(clip.wantFrameMD5s), sidecar)
+	case corpusOracleStreamMD5:
+		if sidecar == "" {
+			return fmt.Sprintf("md5=%x", clip.wantMD5)
+		}
+		return fmt.Sprintf("md5=%x sidecar=%s", clip.wantMD5, sidecar)
+	default:
+		return "md5=unknown"
+	}
 }
 
 // corpusFailure records a clip that failed the goav1 conformance check.
@@ -216,6 +352,7 @@ type corpusFailure struct {
 // corpusDecodeResult is the outcome of a single in-process goav1 decode.
 type corpusDecodeResult struct {
 	streamMD5 MD5
+	frameMD5s []MD5
 	frames    int
 	width     int
 	height    int
@@ -227,9 +364,9 @@ type corpusDecodeResult struct {
 
 // decodeCorpusClip runs the full goav1 FrameWork decode (residual + prediction
 // + post-filter) single-threaded over every IVF frame, accumulating the libaom
-// stream MD5 across all visible output frames. It is a RemoteVector-free
-// sibling of runLibaomFrameWorkDryRun that returns the digest and metadata
-// instead of comparing per-frame digests, so it works on arbitrary IVFs.
+// stream MD5 across all visible output frames while also keeping each visible
+// frame MD5. It is a RemoteVector-free sibling of runLibaomFrameWorkDryRun that
+// returns digests and metadata so it works on arbitrary IVFs.
 //
 // The corpus is plain single-layer (non-SVC) AV1, so a single frame pool and
 // motion store suffice; we still honor show_frame / show_existing_frame so the
@@ -277,6 +414,7 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 	var sum MD5
 	state.streamHash.Sum(sum[:0])
 	res.streamMD5 = sum
+	res.frameMD5s = append(res.frameMD5s, state.frameMD5s...)
 	res.frames = state.visibleFrames
 	res.width = state.width
 	res.height = state.height
@@ -299,6 +437,7 @@ type corpusDecodeState struct {
 
 	ivfFrames     int
 	visibleFrames int
+	frameMD5s     []MD5
 	width         int
 	height        int
 	bitDepth      uint8
@@ -443,9 +582,14 @@ func corpusChromaName(monochrome, subsamplingX, subsamplingY bool) string {
 // running stream digest, matching FrameMD5's plane walk (Y, then U, then V;
 // monochrome substitutes a neutral chroma plane).
 func (s *corpusDecodeState) hashVisibleFrame(f frame.Frame) error {
+	digest, err := FrameMD5(f)
+	if err != nil {
+		return err
+	}
 	if err := addFrameToStreamMD5(s.streamHash, f); err != nil {
 		return err
 	}
+	s.frameMD5s = append(s.frameMD5s, digest)
 	s.visibleFrames++
 	return nil
 }
@@ -714,26 +858,82 @@ func bindCorpusMotionStore(event decoder.Event, count int) ([]tile.ReferenceMVEn
 		length
 }
 
-func TestParseCorpusMD5Sidecar(t *testing.T) {
+func TestParseCorpusOracleSidecar(t *testing.T) {
 	want, err := ParseMD5Hex([]byte("0123456789abcdeffedcba9876543210"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{
-		"0123456789abcdeffedcba9876543210\n",
-		"0123456789abcdeffedcba9876543210  clip.yuv\n",
-		"MD5 (clip.ivf) = 0123456789abcdeffedcba9876543210\n",
-	} {
-		got, err := parseCorpusMD5Sidecar([]byte(input))
-		if err != nil {
-			t.Fatalf("parseCorpusMD5Sidecar(%q): %v", input, err)
-		}
-		if got != want {
-			t.Fatalf("parseCorpusMD5Sidecar(%q)=%x want %x", input, got, want)
-		}
+	second, err := ParseMD5Hex([]byte("fedcba98765432100123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := parseCorpusMD5Sidecar([]byte("0123456789abcdeffedcba987654321000")); err == nil {
-		t.Fatal("parseCorpusMD5Sidecar accepted a longer unbounded hex token")
+	for _, tc := range []struct {
+		name      string
+		path      string
+		input     string
+		kind      corpusOracleKind
+		streamMD5 MD5
+		frameMD5s []MD5
+	}{
+		{
+			name:      "plain stream digest",
+			path:      "clip.md5",
+			input:     "0123456789abcdeffedcba9876543210\n",
+			kind:      corpusOracleStreamMD5,
+			streamMD5: want,
+		},
+		{
+			name:      "aomdec stream digest",
+			path:      "clip.md5",
+			input:     "MD5 (clip.ivf) = 0123456789abcdeffedcba9876543210\n",
+			kind:      corpusOracleStreamMD5,
+			streamMD5: want,
+		},
+		{
+			name:      "multi-line md5 sidecar",
+			path:      "clip.ivf.md5",
+			input:     "0123456789abcdeffedcba9876543210  frame0.yuv\nfedcba98765432100123456789abcdef  frame1.yuv\n",
+			kind:      corpusOracleFrameMD5,
+			frameMD5s: []MD5{want, second},
+		},
+		{
+			name:      "fate framemd5",
+			path:      "clip.framemd5",
+			input:     "#format: frame checksums\n0, 0, 0, 1, 6144, 0123456789abcdeffedcba9876543210\n0, 1, 1, 1, 6144, fedcba98765432100123456789abcdef\n",
+			kind:      corpusOracleFrameMD5,
+			frameMD5s: []MD5{want, second},
+		},
+		{
+			name:      "single framemd5 token remains frame oracle",
+			path:      "clip.ivf.framemd5",
+			input:     "0123456789abcdeffedcba9876543210\n",
+			kind:      corpusOracleFrameMD5,
+			frameMD5s: []MD5{want},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseCorpusOracleSidecar(tc.path, []byte(tc.input))
+			if err != nil {
+				t.Fatalf("parseCorpusOracleSidecar(%q): %v", tc.input, err)
+			}
+			if got.kind != tc.kind {
+				t.Fatalf("kind=%d want %d", got.kind, tc.kind)
+			}
+			if got.streamMD5 != tc.streamMD5 {
+				t.Fatalf("streamMD5=%x want %x", got.streamMD5, tc.streamMD5)
+			}
+			if len(got.frameMD5s) != len(tc.frameMD5s) {
+				t.Fatalf("frameMD5s len=%d want %d", len(got.frameMD5s), len(tc.frameMD5s))
+			}
+			for i := range tc.frameMD5s {
+				if got.frameMD5s[i] != tc.frameMD5s[i] {
+					t.Fatalf("frameMD5s[%d]=%x want %x", i, got.frameMD5s[i], tc.frameMD5s[i])
+				}
+			}
+		})
+	}
+	if _, err := parseCorpusMD5Tokens([]byte("0123456789abcdeffedcba987654321000")); err == nil {
+		t.Fatal("parseCorpusMD5Tokens accepted a longer unbounded hex token")
 	}
 }
 
@@ -766,10 +966,10 @@ func TestGeneratedCorpusConformance(t *testing.T) {
 	totalFrames := 0
 	for _, clip := range clips {
 		totalFrames += clip.frames
-		t.Logf("generated-corpus: %-30s %dx%d %d-bit %s frames=%d tiles=%d md5=%x",
-			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, clip.wantMD5)
+		t.Logf("generated-corpus: %-30s %dx%d %d-bit %s frames=%d tiles=%d %s",
+			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, corpusClipOracleLog(clip))
 	}
-	t.Logf("generated-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
+	t.Logf("generated-corpus: %d clips / %d visible frames passed MD5 conformance", len(clips), totalFrames)
 }
 
 func TestExternalCorpusConformance(t *testing.T) {
@@ -783,7 +983,7 @@ func TestExternalCorpusConformance(t *testing.T) {
 
 	candidates, skippedNoMD5 := discoverExternalCorpusCandidates(t, dirs)
 	if len(candidates) == 0 {
-		t.Skipf("external-corpus: no .ivf clips with sibling .md5 sidecars in %s (skipped %d .ivf without sidecars)",
+		t.Skipf("external-corpus: no .ivf clips with supported MD5 sidecars in %s (skipped %d .ivf without sidecars)",
 			strings.Join(dirs, string(os.PathListSeparator)), skippedNoMD5)
 	}
 	t.Logf("external-corpus: roots=%s usable_ivf=%d skipped_no_md5=%d",
@@ -805,10 +1005,10 @@ func TestExternalCorpusConformance(t *testing.T) {
 	totalFrames := 0
 	for _, clip := range clips {
 		totalFrames += clip.frames
-		t.Logf("external-corpus: %-50s %dx%d %d-bit %s frames=%d tiles=%d md5=%x",
-			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, clip.wantMD5)
+		t.Logf("external-corpus: %-50s %dx%d %d-bit %s frames=%d tiles=%d %s",
+			clip.name, clip.width, clip.height, clip.bitDepth, clip.chroma, clip.frames, clip.tileCols, corpusClipOracleLog(clip))
 	}
-	t.Logf("external-corpus: %d clips / %d visible frames passed stream-MD5 conformance", len(clips), totalFrames)
+	t.Logf("external-corpus: %d clips / %d visible frames passed MD5 conformance", len(clips), totalFrames)
 }
 
 func externalCorpusDirsFromEnv() []string {
@@ -852,13 +1052,13 @@ func discoverExternalCorpusCandidates(t *testing.T, dirs []string) (candidates [
 			if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".ivf") {
 				return nil
 			}
-			md5Path := strings.TrimSuffix(path, filepath.Ext(path)) + ".md5"
-			if _, err := os.Stat(md5Path); err != nil {
-				if os.IsNotExist(err) {
-					skippedNoMD5++
-					return nil
-				}
-				return fmt.Errorf("stat md5 sidecar %s: %w", md5Path, err)
+			ok, err := corpusOracleSidecarExists(path)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				skippedNoMD5++
+				return nil
 			}
 			candidates = append(candidates, corpusClipCandidate{
 				name:    externalCorpusClipName(root, path),
