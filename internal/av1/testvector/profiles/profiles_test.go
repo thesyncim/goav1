@@ -228,6 +228,12 @@
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
 //	  --cq-level=32 --kf-max-dist=30 --lag-in-frames=0 \
 //	  -o profile1-444-10bit-inter-64x64.ivf src444_10.yuv
+//	# 4:4:4 10-bit odd edge-size inter:
+//	aomenc --i444 --width=130 --height=130 --limit=5 --ivf --profile=1 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=32 --kf-max-dist=999 --lag-in-frames=0 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile1-444-10bit-edgemv-130x130.ivf src444_10_edgemv.yuv
 //	# 4:2:2 8-bit inter:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
 //
@@ -416,6 +422,24 @@ var profileClips = []profileClip{
 		wantBitDepth:     10,
 		wantSubsamplingX: false,
 		wantSubsamplingY: false,
+	},
+	{
+		// Profile 1: 4:4:4 10-bit odd 130x130 INTER, guarding edge motion
+		// prediction on high-bit-depth non-4:2:0 chroma.
+		name: "profile1-444-10bit-edgemv-130x130",
+		file: "profile1-444-10bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"56de8e3645276aa7322d4d26ddf4d048",
+			"490eb309b57743705ad4a941b5d8dc89",
+			"da2ff78bcd92690494532709c4d1e6a9",
+			"f31fb72982c6141082dc7864e341f47a",
+			"c03c86fb63b5a556b37f729b344a2efe",
+		},
+		wantSeqProfile:   1,
+		wantBitDepth:     10,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
+		wantInterFrames:  1,
 	},
 	{
 		// Profile 2: 4:2:2 8-bit INTER. 8 frames (1 keyframe + 7 inter,

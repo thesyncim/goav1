@@ -135,6 +135,16 @@ var publicClips = []publicClip{
 		},
 	},
 	{
+		file: "profile1-444-10bit-edgemv-130x130.ivf",
+		frameMD5Hex: []string{
+			"56de8e3645276aa7322d4d26ddf4d048",
+			"490eb309b57743705ad4a941b5d8dc89",
+			"da2ff78bcd92690494532709c4d1e6a9",
+			"f31fb72982c6141082dc7864e341f47a",
+			"c03c86fb63b5a556b37f729b344a2efe",
+		},
+	},
+	{
 		file: "profile2-422-8bit-64x64.ivf",
 		frameMD5Hex: []string{
 			"dabd492413632a810adeaf4e5d0c6d97",
