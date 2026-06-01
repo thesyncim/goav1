@@ -1,9 +1,10 @@
-.PHONY: test bench bench-all bench-public bench-cross fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross gc-metrics fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
 FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
+GCMETRICS_COUNT ?= 5
 
 test:
 	go test ./...
@@ -35,6 +36,9 @@ bench-public:
 # can reach the oracle decode helper.
 bench-cross:
 	GOAV1_CROSS_BENCH=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
+
+gc-metrics:
+	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecodeFullVectorGCMetrics|BenchmarkDecodePostFilteredProfileClipGCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
@@ -305,6 +309,7 @@ help:
 	@echo "  bench-all                  full microbenchmark sweep across every package"
 	@echo "  bench-public               run public benchmarks"
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
+	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  trace-zero                 prove entropy tracing compiles out of release hot paths"
 	@echo "  vet                        go vet ./..."

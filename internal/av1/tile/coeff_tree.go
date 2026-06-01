@@ -118,6 +118,84 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 // req and handle the SkipTransform context reset (done once per block).
 func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, window coeffUnitWindow, visit LumaCoeffVisitor) (LumaCoeffStats, error) {
 	var stats LumaCoeffStats
+	if visit == nil {
+		return stats, ErrInvalidDecodeState
+	}
+	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+		return stats, err
+	}
+	if !req.Tree.Y.Valid() {
+		return stats, ErrInvalidDecodeState
+	}
+	if req.TreeRequest.SkipTransform {
+		return stats, nil
+	}
+
+	if !req.Tree.Variable {
+		dims, ok := req.Tree.Y.Dimensions()
+		if !ok {
+			return stats, ErrInvalidDecodeState
+		}
+		yStart := maxInt(window.Y4Start, req.TreeRequest.Y4)
+		yEnd := minInt(window.Y4End, req.TreeRequest.Y4+int(req.TreeRequest.VisibleH4))
+		xStart := maxInt(window.X4Start, req.TreeRequest.X4)
+		xEnd := minInt(window.X4End, req.TreeRequest.X4+int(req.TreeRequest.VisibleW4))
+		txbReq := TXBDecodeRequest{
+			EOBMultiContext:       req.EOBMultiContext,
+			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+		}
+		for y := yStart; y < yEnd; y += int(dims.H4) {
+			for x := xStart; x < xEnd; x += int(dims.W4) {
+				visibleW := minInt(int(dims.W4), req.TreeRequest.X4+int(req.TreeRequest.VisibleW4)-x)
+				visibleH := minInt(int(dims.H4), req.TreeRequest.Y4+int(req.TreeRequest.VisibleH4)-y)
+				if visibleW <= 0 || visibleH <= 0 {
+					return stats, ErrInvalidDecodeState
+				}
+				block := TransformBlock{
+					X4:        x,
+					Y4:        y,
+					Size:      req.Tree.Y,
+					VisibleW4: uint8(visibleW),
+					VisibleH4: uint8(visibleH),
+				}
+				ctxReq := CoeffContextRequest{
+					Plane:      0,
+					PlaneBlock: req.TreeRequest.Size,
+					Size:       block.Size,
+					X4:         block.X4,
+					Y4:         block.Y4,
+					VisibleW4:  block.VisibleW4,
+					VisibleH4:  block.VisibleH4,
+				}
+				typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, txbReq, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+					Plane: 0,
+					Block: block,
+				})
+				if err != nil {
+					return stats, fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+				}
+
+				stats.TXBs++
+				stats.EOBTotal += result.EOB
+				if result.AllZero {
+					stats.AllZero++
+				} else {
+					stats.NonZero++
+				}
+				if err := visit(LumaCoeffBlock{
+					Block:     block,
+					Transform: typ,
+					Result:    result,
+					Coeffs:    coeffs,
+					Scan:      scan,
+				}); err != nil {
+					return stats, err
+				}
+			}
+		}
+		return stats, nil
+	}
+
 	err := req.Tree.forEachLumaTXBInWindow(req.TreeRequest, window, func(block TransformBlock) error {
 		ctxReq := CoeffContextRequest{
 			Plane:      0,

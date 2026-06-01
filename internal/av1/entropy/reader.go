@@ -859,9 +859,16 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 
 //go:nosplit
 func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
-	rangeValue := c.rng
+	src := c.src
+	pos := c.pos
+	dif := c.dif
+	rng := c.rng
+	cnt := c.cnt
+	tellOffs := c.tellOffs
+
+	rangeValue := rng
 	rngHi := rangeValue >> 8
-	coded := c.dif >> (ecWindow - 16)
+	coded := dif >> (ecWindow - 16)
 	upper := rangeValue
 	c0 := values[0]
 	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
@@ -884,16 +891,26 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(c0, 4, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+		traceCDFRead(c0, 4, dif, rng, pos*8-cnt+tellOffs)
 	}
-	dif := c.dif - (lower << (ecWindow - 16))
-	rng := upper - lower
+	dif -= lower << (ecWindow - 16)
+	rng = upper - lower
 	shift := 16 - bits.Len32(rng)
-	c.cnt -= shift
-	c.dif = ((dif + 1) << uint(shift)) - 1
-	c.rng = rng << uint(shift)
-	if c.cnt < 0 {
-		c.refill()
+	cnt -= shift
+	dif = ((dif + 1) << uint(shift)) - 1
+	rng <<= uint(shift)
+	if cnt < 0 {
+		refillShift := ecWindow - 9 - (cnt + 15)
+		for refillShift >= 0 && pos < len(src) {
+			dif ^= uint32(src[pos]) << uint(refillShift)
+			cnt += 8
+			refillShift -= 8
+			pos++
+		}
+		if pos >= len(src) {
+			tellOffs += ecLotsBits - cnt
+			cnt = ecLotsBits
+		}
 	}
 	if c.allowCDFUpdate {
 		count := values[4]
@@ -923,6 +940,11 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 			values[4] = count + 1
 		}
 	}
+	c.pos = pos
+	c.dif = dif
+	c.rng = rng
+	c.cnt = cnt
+	c.tellOffs = tellOffs
 	return symbol
 }
 

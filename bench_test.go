@@ -14,6 +14,8 @@ package goav1_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/metrics"
 	"testing"
 
 	av1 "github.com/thesyncim/goav1"
@@ -81,6 +83,48 @@ func BenchmarkDecodeFullVector(b *testing.B) {
 // primarily a residual/reconstruction throughput guard.
 func BenchmarkDecodePostFilteredProfileClip(b *testing.B) {
 	benchmarkDecodeHighLevelProfileClip(b, postFilterBenchVectorPath, 4)
+}
+
+// BenchmarkDecodeFullVectorGCMetrics records steady-state Go runtime memory
+// shape for the residual-stream decode path. It is intentionally separate from
+// the throughput benchmark: use it to compare heap object count, scan bytes, and
+// GC CPU before/after scratch-shape changes.
+func BenchmarkDecodeFullVectorGCMetrics(b *testing.B) {
+	ivfBytes := mustReadBenchVector(b)
+	frames := mustCollectIVFFrames(b, ivfBytes)
+	harness := newDecodeBenchmarkHarness(b, frames)
+	defer harness.Close()
+
+	if _, _, err := harness.runOnce(); err != nil {
+		b.Fatal(err)
+	}
+
+	before := readGCBenchMetrics(true)
+	b.SetBytes(int64(len(ivfBytes)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		completed, txbs, err := harness.runOnce()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if completed != len(frames) {
+			b.Fatalf("decoded %d frames want %d", completed, len(frames))
+		}
+		sum += txbs
+	}
+	b.StopTimer()
+	decodeBenchmarkSink = sum
+	after := readGCBenchMetrics(true)
+	reportGCBenchMetrics(b, before, after)
+}
+
+// BenchmarkDecodePostFilteredProfileClipGCMetrics records the same runtime
+// memory shape for the high-level post-filtered decode path.
+func BenchmarkDecodePostFilteredProfileClipGCMetrics(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClipGCMetrics(b, postFilterBenchVectorPath, 4)
 }
 
 // BenchmarkDecodeSuperResInterProfileClip measures the high-level Decoder path
@@ -167,6 +211,54 @@ func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount i
 	if elapsed > 0 {
 		b.ReportMetric(float64(frameCount*b.N)/elapsed, "frames/s")
 	}
+}
+
+func benchmarkDecodeHighLevelProfileClipGCMetrics(b *testing.B, path string, frameCount int) {
+	b.Helper()
+
+	ivfBytes := mustReadBenchFile(b, path)
+	dec, err := av1.NewDecoderFromIVF(ivfBytes)
+	if err != nil {
+		b.Fatalf("NewDecoderFromIVF: %v", err)
+	}
+	defer dec.Close()
+
+	run := func() int {
+		b.Helper()
+		if err := dec.Reset(); err != nil {
+			b.Fatalf("Reset: %v", err)
+		}
+		decoded := 0
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				b.Fatalf("DecodeNext: %v", err)
+			}
+			if !ok {
+				break
+			}
+			decoded += len(frames)
+		}
+		if decoded != frameCount {
+			b.Fatalf("decoded %d frames want %d", decoded, frameCount)
+		}
+		return decoded
+	}
+
+	run()
+	before := readGCBenchMetrics(true)
+	b.SetBytes(int64(len(ivfBytes)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	visible := 0
+	for i := 0; i < b.N; i++ {
+		visible += run()
+	}
+	b.StopTimer()
+	decodeBenchmarkSink = visible
+	after := readGCBenchMetrics(true)
+	reportGCBenchMetrics(b, before, after)
 }
 
 func TestDecodeHighLevelProfileClipSteadyStateAllocs(t *testing.T) {
@@ -526,4 +618,90 @@ func benchMaxProbeEvents(payloads [][]byte) int {
 	const eventsPerFrame = 16
 	n := max(len(payloads)*eventsPerFrame, 64)
 	return n
+}
+
+type gcBenchMetrics struct {
+	heapScanBytes       uint64
+	stackScanBytes      uint64
+	totalScanBytes      uint64
+	heapLiveBytes       uint64
+	heapObjects         uint64
+	cpuTotalSeconds     float64
+	cpuAssistSeconds    float64
+	cpuDedicatedSeconds float64
+}
+
+func readGCBenchMetrics(forceGC bool) gcBenchMetrics {
+	if forceGC {
+		runtime.GC()
+	}
+	samples := []metrics.Sample{
+		{Name: "/gc/scan/heap:bytes"},
+		{Name: "/gc/scan/stack:bytes"},
+		{Name: "/gc/scan/total:bytes"},
+		{Name: "/gc/heap/live:bytes"},
+		{Name: "/gc/heap/objects:objects"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/gc/mark/assist:cpu-seconds"},
+		{Name: "/cpu/classes/gc/mark/dedicated:cpu-seconds"},
+	}
+	metrics.Read(samples)
+
+	var out gcBenchMetrics
+	for i := range samples {
+		switch samples[i].Name {
+		case "/gc/scan/heap:bytes":
+			out.heapScanBytes = metricUint64(samples[i])
+		case "/gc/scan/stack:bytes":
+			out.stackScanBytes = metricUint64(samples[i])
+		case "/gc/scan/total:bytes":
+			out.totalScanBytes = metricUint64(samples[i])
+		case "/gc/heap/live:bytes":
+			out.heapLiveBytes = metricUint64(samples[i])
+		case "/gc/heap/objects:objects":
+			out.heapObjects = metricUint64(samples[i])
+		case "/cpu/classes/gc/total:cpu-seconds":
+			out.cpuTotalSeconds = metricFloat64(samples[i])
+		case "/cpu/classes/gc/mark/assist:cpu-seconds":
+			out.cpuAssistSeconds = metricFloat64(samples[i])
+		case "/cpu/classes/gc/mark/dedicated:cpu-seconds":
+			out.cpuDedicatedSeconds = metricFloat64(samples[i])
+		}
+	}
+	return out
+}
+
+func reportGCBenchMetrics(b *testing.B, before gcBenchMetrics, after gcBenchMetrics) {
+	b.Helper()
+	ops := float64(max(b.N, 1))
+	b.ReportMetric(float64(after.heapScanBytes), "gc_heap_scan_B")
+	b.ReportMetric(float64(after.stackScanBytes), "gc_stack_scan_B")
+	b.ReportMetric(float64(after.totalScanBytes), "gc_total_scan_B")
+	b.ReportMetric(float64(after.heapLiveBytes), "gc_heap_live_B")
+	b.ReportMetric(float64(after.heapObjects), "gc_heap_objects")
+	b.ReportMetric(metricDelta(after.heapObjects, before.heapObjects), "gc_heap_objects_delta")
+	b.ReportMetric((after.cpuTotalSeconds-before.cpuTotalSeconds)/ops, "gc_cpu_total_s/op")
+	b.ReportMetric((after.cpuAssistSeconds-before.cpuAssistSeconds)/ops, "gc_assist_s/op")
+	b.ReportMetric((after.cpuDedicatedSeconds-before.cpuDedicatedSeconds)/ops, "gc_dedicated_s/op")
+}
+
+func metricUint64(sample metrics.Sample) uint64 {
+	if sample.Value.Kind() != metrics.KindUint64 {
+		return 0
+	}
+	return sample.Value.Uint64()
+}
+
+func metricFloat64(sample metrics.Sample) float64 {
+	if sample.Value.Kind() != metrics.KindFloat64 {
+		return 0
+	}
+	return sample.Value.Float64()
+}
+
+func metricDelta(after uint64, before uint64) float64 {
+	if after >= before {
+		return float64(after - before)
+	}
+	return -float64(before - after)
 }
