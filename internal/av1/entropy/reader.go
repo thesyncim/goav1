@@ -788,6 +788,15 @@ func (c *Cursor) ReadCDF4Unchecked(cdf *CDF) int {
 	return c.readCDF4Known(&cdf.values)
 }
 
+// ReadCDF4HighTokenUnchecked decodes the AV1 high-token base-range chain used
+// by coefficient BR syntax. It is equivalent to reading the same four-symbol
+// CDF up to four times, summing symbols, and stopping early when a symbol below
+// 3 is observed. The caller must prove c and cdf are non-nil and cdf has
+// exactly four symbols.
+func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) int {
+	return c.readCDF4HighTokenKnown(&cdf.values)
+}
+
 //go:nosplit
 func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
@@ -946,6 +955,106 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	c.cnt = cnt
 	c.tellOffs = tellOffs
 	return symbol
+}
+
+//go:nosplit
+func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
+	src := c.src
+	pos := c.pos
+	dif := c.dif
+	rng := c.rng
+	cnt := c.cnt
+	tellOffs := c.tellOffs
+	allowCDFUpdate := c.allowCDFUpdate
+
+	level := 0
+	for i := 0; i < 4; i++ {
+		rangeValue := rng
+		rngHi := rangeValue >> 8
+		coded := dif >> (ecWindow - 16)
+		upper := rangeValue
+		c0 := values[0]
+		lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		symbol := 0
+		if coded < lower {
+			symbol = 1
+			upper = lower
+			c1 := values[1]
+			lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+			if coded < lower {
+				symbol = 2
+				upper = lower
+				c2 := values[2]
+				lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+				if coded < lower {
+					symbol = 3
+					upper = lower
+					lower = 0
+				}
+			}
+		}
+		if traceEntropyReads {
+			traceCDFRead(c0, 4, dif, rng, pos*8-cnt+tellOffs)
+		}
+		dif -= lower << (ecWindow - 16)
+		rng = upper - lower
+		shift := 16 - bits.Len32(rng)
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng <<= uint(shift)
+		if cnt < 0 {
+			refillShift := ecWindow - 9 - (cnt + 15)
+			for refillShift >= 0 && pos < len(src) {
+				dif ^= uint32(src[pos]) << uint(refillShift)
+				cnt += 8
+				refillShift -= 8
+				pos++
+			}
+			if pos >= len(src) {
+				tellOffs += ecLotsBits - cnt
+				cnt = ecLotsBits
+			}
+		}
+		if allowCDFUpdate {
+			count := values[4]
+			rate := uint(5 + (count >> 4))
+			c0 := uint32(values[0])
+			c1 := uint32(values[1])
+			c2 := uint32(values[2])
+			switch symbol {
+			case 0:
+				values[0] = uint16(c0 - (c0 >> rate))
+				values[1] = uint16(c1 - (c1 >> rate))
+				values[2] = uint16(c2 - (c2 >> rate))
+			case 1:
+				values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+				values[1] = uint16(c1 - (c1 >> rate))
+				values[2] = uint16(c2 - (c2 >> rate))
+			case 2:
+				values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+				values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+				values[2] = uint16(c2 - (c2 >> rate))
+			default:
+				values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+				values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+				values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+			}
+			if count < MaxCDFCount {
+				values[4] = count + 1
+			}
+		}
+		level += symbol
+		if symbol < 3 {
+			break
+		}
+	}
+
+	c.pos = pos
+	c.dif = dif
+	c.rng = rng
+	c.cnt = cnt
+	c.tellOffs = tellOffs
+	return level
 }
 
 // ReadBinaryCDFTrusted decodes one symbol from a two-symbol CDF without taking

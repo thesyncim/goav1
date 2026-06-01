@@ -289,11 +289,27 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 				t.Fatal(err)
 			}
 			got4 = ref4
+			var refHi, gotHi CDF
+			if err := refHi.InitUniform(4); err != nil {
+				t.Fatal(err)
+			}
+			gotHi = refHi
 
 			for i := 0; i < 16; i++ {
 				want4 := ref.ReadCDF4Unchecked(&ref4)
 				if got4Symbol := got.ReadCDF4Unchecked(&got4); got4Symbol != want4 {
 					t.Fatalf("cdf4[%d]=%d want %d", i, got4Symbol, want4)
+				}
+				wantHi := 0
+				for j := 0; j < 4; j++ {
+					sym := ref.ReadCDF4Unchecked(&refHi)
+					wantHi += sym
+					if sym < 3 {
+						break
+					}
+				}
+				if gotHiSymbol := got.ReadCDF4HighTokenUnchecked(&gotHi); gotHiSymbol != wantHi {
+					t.Fatalf("cdf4hi[%d]=%d want %d", i, gotHiSymbol, wantHi)
 				}
 				want3 := ref.ReadCDF3Unchecked(&ref3)
 				if got3Symbol := got.ReadCDF3Unchecked(&got3); got3Symbol != want3 {
@@ -321,10 +337,10 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 					gotReader.pos, gotReader.dif, gotReader.rng, gotReader.cnt, gotReader.tellOffs, gotReader.allowCDFUpdate,
 					ref.pos, ref.dif, ref.rng, ref.cnt, ref.tellOffs, ref.allowCDFUpdate)
 			}
-			if got2 != ref2 || got3 != ref3 || got4 != ref4 {
-				t.Fatalf("cdf mismatch: got %v/%v/%v want %v/%v/%v",
-					got2.Values(), got3.Values(), got4.Values(),
-					ref2.Values(), ref3.Values(), ref4.Values())
+			if got2 != ref2 || got3 != ref3 || got4 != ref4 || gotHi != refHi {
+				t.Fatalf("cdf mismatch: got %v/%v/%v/%v want %v/%v/%v/%v",
+					got2.Values(), got3.Values(), got4.Values(), gotHi.Values(),
+					ref2.Values(), ref3.Values(), ref4.Values(), refHi.Values())
 			}
 		})
 	}

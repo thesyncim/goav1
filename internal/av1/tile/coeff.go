@@ -1026,25 +1026,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 }
 
 func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) int {
-	cdf := &arr[context]
-	k := reader.ReadCDF4Unchecked(cdf)
-	level := k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = reader.ReadCDF4Unchecked(cdf)
-	level += k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = reader.ReadCDF4Unchecked(cdf)
-	level += k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = reader.ReadCDF4Unchecked(cdf)
-	level += k
-	return level
+	return reader.ReadCDF4HighTokenUnchecked(&arr[context])
 }
 
 func readCoeffGolombCursor(reader *entropy.Cursor) (int, error) {
