@@ -127,6 +127,22 @@ func BenchmarkDecodePostFilteredProfileClipGCMetrics(b *testing.B) {
 	benchmarkDecodeHighLevelProfileClipGCMetrics(b, postFilterBenchVectorPath, 4)
 }
 
+func BenchmarkDecodeSuperResInterProfileClipGCMetrics(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClipGCMetrics(b, superResInterBenchVectorPath, 8)
+}
+
+func BenchmarkDecodeSuperResInterHighBDProfileClipGCMetrics(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClipGCMetrics(b, superResInterHighBDProfileBenchVectorPath, 8)
+}
+
+func BenchmarkDecodeSuperResRestorationProfileClipGCMetrics(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClipGCMetrics(b, superResRestorationBenchVectorPath, 4)
+}
+
+func BenchmarkDecodeFilmGrainProfileClipGCMetrics(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClipGCMetrics(b, filmGrainProfileBenchVectorPath, 3)
+}
+
 // BenchmarkDecodeSuperResInterProfileClip measures the high-level Decoder path
 // on a profile-1 super-res inter stream. Later frames reference the upscaled
 // external output surface, covering the output-pool publication path that plain
@@ -629,6 +645,8 @@ type gcBenchMetrics struct {
 	cpuTotalSeconds     float64
 	cpuAssistSeconds    float64
 	cpuDedicatedSeconds float64
+	cpuIdleSeconds      float64
+	cpuPauseSeconds     float64
 }
 
 func readGCBenchMetrics(forceGC bool) gcBenchMetrics {
@@ -644,6 +662,8 @@ func readGCBenchMetrics(forceGC bool) gcBenchMetrics {
 		{Name: "/cpu/classes/gc/total:cpu-seconds"},
 		{Name: "/cpu/classes/gc/mark/assist:cpu-seconds"},
 		{Name: "/cpu/classes/gc/mark/dedicated:cpu-seconds"},
+		{Name: "/cpu/classes/gc/mark/idle:cpu-seconds"},
+		{Name: "/cpu/classes/gc/pause:cpu-seconds"},
 	}
 	metrics.Read(samples)
 
@@ -666,6 +686,10 @@ func readGCBenchMetrics(forceGC bool) gcBenchMetrics {
 			out.cpuAssistSeconds = metricFloat64(samples[i])
 		case "/cpu/classes/gc/mark/dedicated:cpu-seconds":
 			out.cpuDedicatedSeconds = metricFloat64(samples[i])
+		case "/cpu/classes/gc/mark/idle:cpu-seconds":
+			out.cpuIdleSeconds = metricFloat64(samples[i])
+		case "/cpu/classes/gc/pause:cpu-seconds":
+			out.cpuPauseSeconds = metricFloat64(samples[i])
 		}
 	}
 	return out
@@ -683,6 +707,8 @@ func reportGCBenchMetrics(b *testing.B, before gcBenchMetrics, after gcBenchMetr
 	b.ReportMetric((after.cpuTotalSeconds-before.cpuTotalSeconds)/ops, "gc_cpu_total_s/op")
 	b.ReportMetric((after.cpuAssistSeconds-before.cpuAssistSeconds)/ops, "gc_assist_s/op")
 	b.ReportMetric((after.cpuDedicatedSeconds-before.cpuDedicatedSeconds)/ops, "gc_dedicated_s/op")
+	b.ReportMetric((after.cpuIdleSeconds-before.cpuIdleSeconds)/ops, "gc_idle_s/op")
+	b.ReportMetric((after.cpuPauseSeconds-before.cpuPauseSeconds)/ops, "gc_pause_s/op")
 }
 
 func metricUint64(sample metrics.Sample) uint64 {

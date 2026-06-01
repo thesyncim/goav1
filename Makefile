@@ -38,7 +38,7 @@ bench-cross:
 	GOAV1_CROSS_BENCH=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
 
 gc-metrics:
-	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecodeFullVectorGCMetrics|BenchmarkDecodePostFilteredProfileClipGCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
+	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
