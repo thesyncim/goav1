@@ -790,6 +790,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	baseEOBArr := &cdfs.CoeffBaseEOB[txCtx][req.Plane]
 	brArr := &cdfs.CoeffBR[txBR][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
+	reader := s.Reader.Cursor()
 
 	lastC := eob.Position - 1
 	lastPos := int(scan[lastC])
@@ -797,22 +798,23 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	lastCtx := coeffLowerLevelsCtxEOBFast(maxEOB, lastC)
-	lastLevel := s.Reader.ReadCDF3Unchecked(&baseEOBArr[lastCtx]) + 1
+	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastCtx]) + 1
 	if lastLevel > NumBaseLevels {
 		brCtx := coeffBRContextEOBFast(posSlice, req.Class, lastPos)
-		extra := s.readBaseRangeFromArr(brArr, brCtx)
+		extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 		lastLevel += extra
 	}
 	if eob.Position == 1 {
 		if coeffTraceEnabled {
 			coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eob.Position)
 		}
-		negative := s.Reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+		negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 		baseLevel := lastLevel
 		golombExtra := 0
 		if lastLevel >= MaxBaseBRRange {
-			tail, err := s.readCoeffGolomb()
+			tail, err := readCoeffGolombCursor(&reader)
 			if err != nil {
+				reader.CommitTo(&s.Reader)
 				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
@@ -826,6 +828,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			coeffTraceCoeff(0, lastPos, baseLevel, golombExtra, lastLevel, signBit)
 		}
 		if lastLevel > int(^uint16(0)>>1) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(lastLevel)
@@ -846,6 +849,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if coeffTraceEnabled {
 			coeffTraceCulLevel(culLevel)
 		}
+		reader.CommitTo(&s.Reader)
 		return TXBDecodeResult{
 			EOB:         1,
 			MaxScanLine: lastPos,
@@ -856,6 +860,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	clear(levelsScratch[:scratchLen])
 	lastPadded := int(posSlice[lastPos].padded)
 	if lastPadded < 0 || lastPadded >= len(levelsScratch) {
+		reader.CommitTo(&s.Reader)
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
@@ -870,6 +875,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
 		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		// pos is now proven in range, so this posSlice read and the matching
@@ -880,6 +886,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		p := posSlice[pos]
 		padded := int(p.padded)
 		if padded < 0 || padded >= len(levelsScratch) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := 0
@@ -897,7 +904,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			level = s.Reader.ReadCDF4Unchecked(&baseArr[ctx])
+			level = reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
 				s1 := padded + geoPtr.stride
 				s1p1 := s1 + 1
@@ -905,15 +912,15 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				_ = levelsScratch[s1p1]
 				mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
 				brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
-				extra := s.readBaseRangeFromArr(brArr, brCtx)
+				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 				level += extra
 			}
 		} else {
 			ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, req.Class, pos)
-			level = s.Reader.ReadCDF4Unchecked(&baseArr[ctx])
+			level = reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
 				brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, req.Class, pos)
-				extra := s.readBaseRangeFromArr(brArr, brCtx)
+				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 				level += extra
 			}
 		}
@@ -937,15 +944,18 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		// whenever pos<len(posSlice); the extra disjunct never fires but lets the
 		// prover drop the bounds check on the coeffs[pos] store below.
 		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		nextC := int(coeffs[pos]) - 1
 		padded := int(posSlice[pos].padded)
 		if padded < 0 || padded >= len(levelsScratch) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := int(levelsScratch[padded])
 		if level == 0 {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		if pos > maxScanLine {
@@ -953,16 +963,17 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 		negative := false
 		if c == 0 {
-			negative = s.Reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+			negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 		} else {
-			bit := s.Reader.ReadBitTrusted()
+			bit := reader.ReadBitTrusted()
 			negative = bit != 0
 		}
 		baseLevel := level
 		golombExtra := 0
 		if level >= MaxBaseBRRange {
-			tail, err := s.readCoeffGolomb()
+			tail, err := readCoeffGolombCursor(&reader)
 			if err != nil {
+				reader.CommitTo(&s.Reader)
 				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
@@ -977,6 +988,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 		culLevel += level
 		if level > int(^uint16(0)>>1) {
+			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(level)
@@ -1002,6 +1014,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if coeffTraceEnabled {
 		coeffTraceCulLevel(culLevel)
 	}
+	reader.CommitTo(&s.Reader)
 	return TXBDecodeResult{
 		EOB:         eob.Position,
 		MaxScanLine: maxScanLine,
@@ -1037,6 +1050,28 @@ func (s *DecodeState) readBaseRangeFromArr(arr *[CoeffBRContexts]entropy.CDF, co
 	return level
 }
 
+func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) int {
+	cdf := &arr[context]
+	k := reader.ReadCDF4Unchecked(cdf)
+	level := k
+	if k < BRCDFSize-1 {
+		return level
+	}
+	k = reader.ReadCDF4Unchecked(cdf)
+	level += k
+	if k < BRCDFSize-1 {
+		return level
+	}
+	k = reader.ReadCDF4Unchecked(cdf)
+	level += k
+	if k < BRCDFSize-1 {
+		return level
+	}
+	k = reader.ReadCDF4Unchecked(cdf)
+	level += k
+	return level
+}
+
 func (s *DecodeState) readCoeffGolomb() (int, error) {
 	x := 1
 	length := 0
@@ -1052,6 +1087,26 @@ func (s *DecodeState) readCoeffGolomb() (int, error) {
 	}
 	if length > 1 {
 		suffix := s.Reader.ReadBitsTrusted(uint8(length - 1))
+		x = (1 << (length - 1)) | int(suffix)
+	}
+	return x - 1, nil
+}
+
+func readCoeffGolombCursor(reader *entropy.Cursor) (int, error) {
+	x := 1
+	length := 0
+	for {
+		bit := reader.ReadBitTrusted()
+		length++
+		if length > 20 {
+			return 0, ErrInvalidDecodeState
+		}
+		if bit != 0 {
+			break
+		}
+	}
+	if length > 1 {
+		suffix := reader.ReadBitsTrusted(uint8(length - 1))
 		x = (1 << (length - 1)) | int(suffix)
 	}
 	return x - 1, nil

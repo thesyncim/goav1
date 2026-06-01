@@ -266,6 +266,70 @@ func TestReaderReadSmallCDFTrustedMatchesReadCDF(t *testing.T) {
 	}
 }
 
+func TestCursorTrustedReadsMatchReader(t *testing.T) {
+	src := []byte{0xa5, 0x5a, 0xc3, 0x3c, 0xf0, 0x0f, 0x99}
+	for _, allowUpdate := range []bool{true, false} {
+		t.Run("allow_update", func(t *testing.T) {
+			ref := NewReaderWithCDFUpdate(src, allowUpdate)
+			gotReader := NewReaderWithCDFUpdate(src, allowUpdate)
+			got := gotReader.Cursor()
+
+			var ref2, got2 CDF
+			if err := ref2.InitUniform(2); err != nil {
+				t.Fatal(err)
+			}
+			got2 = ref2
+			var ref3, got3 CDF
+			if err := ref3.InitUniform(3); err != nil {
+				t.Fatal(err)
+			}
+			got3 = ref3
+			var ref4, got4 CDF
+			if err := ref4.InitUniform(4); err != nil {
+				t.Fatal(err)
+			}
+			got4 = ref4
+
+			for i := 0; i < 16; i++ {
+				want4 := ref.ReadCDF4Unchecked(&ref4)
+				if got4Symbol := got.ReadCDF4Unchecked(&got4); got4Symbol != want4 {
+					t.Fatalf("cdf4[%d]=%d want %d", i, got4Symbol, want4)
+				}
+				want3 := ref.ReadCDF3Unchecked(&ref3)
+				if got3Symbol := got.ReadCDF3Unchecked(&got3); got3Symbol != want3 {
+					t.Fatalf("cdf3[%d]=%d want %d", i, got3Symbol, want3)
+				}
+				want2 := ref.ReadBinaryCDFUnchecked(&ref2)
+				if got2Symbol := got.ReadBinaryCDFUnchecked(&got2); got2Symbol != want2 {
+					t.Fatalf("cdf2[%d]=%d want %d", i, got2Symbol, want2)
+				}
+				wantBit := ref.ReadBitTrusted()
+				if gotBit := got.ReadBitTrusted(); gotBit != wantBit {
+					t.Fatalf("bit[%d]=%d want %d", i, gotBit, wantBit)
+				}
+				wantBits := ref.ReadBitsTrusted(3)
+				if gotBits := got.ReadBitsTrusted(3); gotBits != wantBits {
+					t.Fatalf("bits[%d]=%d want %d", i, gotBits, wantBits)
+				}
+			}
+			got.CommitTo(&gotReader)
+
+			if gotReader.pos != ref.pos || gotReader.dif != ref.dif || gotReader.rng != ref.rng ||
+				gotReader.cnt != ref.cnt || gotReader.tellOffs != ref.tellOffs ||
+				gotReader.allowCDFUpdate != ref.allowCDFUpdate {
+				t.Fatalf("reader state mismatch: got pos=%d dif=%08x rng=%08x cnt=%d tell=%d allow=%v want pos=%d dif=%08x rng=%08x cnt=%d tell=%d allow=%v",
+					gotReader.pos, gotReader.dif, gotReader.rng, gotReader.cnt, gotReader.tellOffs, gotReader.allowCDFUpdate,
+					ref.pos, ref.dif, ref.rng, ref.cnt, ref.tellOffs, ref.allowCDFUpdate)
+			}
+			if got2 != ref2 || got3 != ref3 || got4 != ref4 {
+				t.Fatalf("cdf mismatch: got %v/%v/%v want %v/%v/%v",
+					got2.Values(), got3.Values(), got4.Values(),
+					ref2.Values(), ref3.Values(), ref4.Values())
+			}
+		})
+	}
+}
+
 func TestReaderReadSignedDeltaZero(t *testing.T) {
 	var cdf CDF
 	if err := cdf.InitDefaultDelta(); err != nil {

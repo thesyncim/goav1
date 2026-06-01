@@ -30,6 +30,44 @@ type Reader struct {
 	allowCDFUpdate bool
 }
 
+// Cursor is a stack-local copy of Reader state for tight decode loops. Callers
+// must CommitTo the source Reader before continuing with non-cursor reads.
+type Cursor struct {
+	src []byte
+	pos int
+
+	dif      uint32
+	rng      uint32
+	cnt      int
+	tellOffs int
+
+	allowCDFUpdate bool
+}
+
+// Cursor snapshots r for a run of trusted hot-path reads.
+func (r *Reader) Cursor() Cursor {
+	return Cursor{
+		src:            r.src,
+		pos:            r.pos,
+		dif:            r.dif,
+		rng:            r.rng,
+		cnt:            r.cnt,
+		tellOffs:       r.tellOffs,
+		allowCDFUpdate: r.allowCDFUpdate,
+	}
+}
+
+// CommitTo writes cursor state back to r.
+func (c *Cursor) CommitTo(r *Reader) {
+	r.src = c.src
+	r.pos = c.pos
+	r.dif = c.dif
+	r.rng = c.rng
+	r.cnt = c.cnt
+	r.tellOffs = c.tellOffs
+	r.allowCDFUpdate = c.allowCDFUpdate
+}
+
 // NewReader initializes an AV1 entropy reader with CDF adaptation enabled.
 func NewReader(src []byte) Reader {
 	return NewReaderWithCDFUpdate(src, true)
@@ -222,6 +260,51 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	r.rng = rng
 	r.cnt = cnt
 	r.tellOffs = tellOffs
+	return v
+}
+
+// ReadBitTrusted decodes one equiprobable bit from cursor state.
+//
+//go:nosplit
+func (c *Cursor) ReadBitTrusted() uint8 {
+	rangeValue := c.rng
+	dif := c.dif
+	split := (rangeValue >> 8) << 7
+	split += ecMinProb
+	window := split << (ecWindow - 16)
+
+	bit := uint8(1)
+	nextRange := split
+	if dif >= window {
+		dif -= window
+		nextRange = rangeValue - split
+		bit = 0
+	}
+
+	if traceEntropyReads {
+		traceBoolRead(CDFProbTop/2, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+	}
+	shift := 16 - bits.Len32(nextRange)
+	c.cnt -= shift
+	c.dif = ((dif + 1) << uint(shift)) - 1
+	c.rng = nextRange << uint(shift)
+	if c.cnt < 0 {
+		c.refill()
+	}
+	return bit
+}
+
+// ReadBitsTrusted decodes n equiprobable bits MSB-first from cursor state.
+//
+//go:nosplit
+func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
+	if n == 0 {
+		return 0
+	}
+	var v uint32
+	for range n {
+		v = (v << 1) | uint32(c.ReadBitTrusted())
+	}
 	return v
 }
 
@@ -555,6 +638,13 @@ func (r *Reader) ReadCDF3Unchecked(cdf *CDF) int {
 	return r.readCDF3Known(&cdf.values)
 }
 
+// ReadCDF3Unchecked decodes one symbol from a three-symbol CDF using cursor
+// state. The caller must prove c and cdf are non-nil and cdf has exactly three
+// symbols.
+func (c *Cursor) ReadCDF3Unchecked(cdf *CDF) int {
+	return c.readCDF3Known(&cdf.values)
+}
+
 //go:nosplit
 func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	rangeValue := r.rng
@@ -593,6 +683,44 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	return symbol
 }
 
+//go:nosplit
+func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
+	rangeValue := c.rng
+	rngHi := rangeValue >> 8
+	coded := c.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := values[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		c1 := values[1]
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		if coded < lower {
+			symbol = 2
+			upper = lower
+			lower = 0
+		}
+	}
+	if traceEntropyReads {
+		traceCDFRead(c0, 3, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+	}
+	dif := c.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	c.cnt -= shift
+	c.dif = ((dif + 1) << uint(shift)) - 1
+	c.rng = rng << uint(shift)
+	if c.cnt < 0 {
+		c.refill()
+	}
+	if c.allowCDFUpdate {
+		updateCDF3(values, symbol)
+	}
+	return symbol
+}
+
 // ReadCDF4Trusted decodes one symbol from a four-symbol CDF without the
 // generic symbol-search loop. The CDF must be valid by construction.
 func (r *Reader) ReadCDF4Trusted(cdf *CDF) (int, error) {
@@ -606,6 +734,13 @@ func (r *Reader) ReadCDF4Trusted(cdf *CDF) (int, error) {
 // prove r and cdf are non-nil and that cdf has exactly four symbols.
 func (r *Reader) ReadCDF4Unchecked(cdf *CDF) int {
 	return r.readCDF4Known(&cdf.values)
+}
+
+// ReadCDF4Unchecked decodes one symbol from a four-symbol CDF using cursor
+// state. The caller must prove c and cdf are non-nil and cdf has exactly four
+// symbols.
+func (c *Cursor) ReadCDF4Unchecked(cdf *CDF) int {
+	return c.readCDF4Known(&cdf.values)
 }
 
 //go:nosplit
@@ -677,6 +812,75 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	return symbol
 }
 
+//go:nosplit
+func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
+	rangeValue := c.rng
+	rngHi := rangeValue >> 8
+	coded := c.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := values[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		c1 := values[1]
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		if coded < lower {
+			symbol = 2
+			upper = lower
+			c2 := values[2]
+			lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+			if coded < lower {
+				symbol = 3
+				upper = lower
+				lower = 0
+			}
+		}
+	}
+	if traceEntropyReads {
+		traceCDFRead(c0, 4, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+	}
+	dif := c.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	c.cnt -= shift
+	c.dif = ((dif + 1) << uint(shift)) - 1
+	c.rng = rng << uint(shift)
+	if c.cnt < 0 {
+		c.refill()
+	}
+	if c.allowCDFUpdate {
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		c2 := uint32(values[2])
+		switch symbol {
+		case 0:
+			values[0] = uint16(c0 - (c0 >> rate))
+			values[1] = uint16(c1 - (c1 >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
+		case 1:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 - (c1 >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
+		case 2:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
+		default:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
+	}
+	return symbol
+}
+
 // ReadBinaryCDFTrusted decodes one symbol from a two-symbol CDF without taking
 // the generic symbol-search path. The CDF must be valid by construction.
 func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
@@ -713,6 +917,45 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
+		updateCDF2(values, symbol)
+	}
+	return symbol
+}
+
+// ReadBinaryCDFUnchecked decodes one symbol from a two-symbol CDF using cursor
+// state. The caller must prove c and cdf are non-nil and cdf has exactly two
+// symbols.
+func (c *Cursor) ReadBinaryCDFUnchecked(cdf *CDF) int {
+	return c.readBinaryCDFKnown(&cdf.values)
+}
+
+//go:nosplit
+func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
+	rangeValue := c.rng
+	rngHi := rangeValue >> 8
+	coded := c.dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := values[0]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		lower = 0
+	}
+	if traceEntropyReads {
+		traceCDFRead(c0, 2, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+	}
+	dif := c.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	c.cnt -= shift
+	c.dif = ((dif + 1) << uint(shift)) - 1
+	c.rng = rng << uint(shift)
+	if c.cnt < 0 {
+		c.refill()
+	}
+	if c.allowCDFUpdate {
 		updateCDF2(values, symbol)
 	}
 	return symbol
@@ -845,5 +1088,19 @@ func (r *Reader) refill() {
 	if r.pos >= len(r.src) {
 		r.tellOffs += ecLotsBits - r.cnt
 		r.cnt = ecLotsBits
+	}
+}
+
+func (c *Cursor) refill() {
+	shift := ecWindow - 9 - (c.cnt + 15)
+	for shift >= 0 && c.pos < len(c.src) {
+		c.dif ^= uint32(c.src[c.pos]) << uint(shift)
+		c.cnt += 8
+		shift -= 8
+		c.pos++
+	}
+	if c.pos >= len(c.src) {
+		c.tellOffs += ecLotsBits - c.cnt
+		c.cnt = ecLotsBits
 	}
 }
