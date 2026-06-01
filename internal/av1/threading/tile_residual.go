@@ -57,13 +57,12 @@ const (
 
 // frameWorkReconEvent records one deferred reconstruction step captured during
 // pass 1 (entropy decode) and replayed in pass 2 (predict+reconstruct) in
-// decode order. blockBegin events carry the block-loop visit so pass 2 runs the
-// predict portion of BeforeBlockCoefficients; txb events carry a decoded
-// transform block whose Coeffs have been deep-copied into the scratch arena.
+// decode order. blockBegin events index reconVisits so pass 2 runs the predict
+// portion of BeforeBlockCoefficients; txb events index reconBlocks, whose
+// Coeffs have been deep-copied into the scratch arena.
 type frameWorkReconEvent struct {
+	index         int32
 	kind          frameWorkReconEventKind
-	visit         tile.BlockLoopVisit
-	block         tile.BlockCoeffBlock
 	currentQIndex uint8
 }
 
@@ -77,7 +76,7 @@ const (
 // complete. Keeping the binding out of frameWorkReconEvent avoids growing every
 // non-palette event for a rare screen-content path.
 type frameWorkReconPaletteBinding struct {
-	eventIndex   int
+	visitIndex   int
 	paletteIndex int
 	mask         uint8
 }
@@ -276,12 +275,14 @@ type FrameWorkTileResidualScratch struct {
 	stats            FrameWorkTileResidualStats
 	geomCache        frameWorkJobGeometryCache
 
-	// reconEvents and coeffArena back the deferred two-pass reconstruction path
-	// (frameWorkDeferReconstruction). reconEvents records the in-order predict
-	// and reconstruct steps captured during entropy decode; coeffArena holds the
-	// deep-copied coefficients each TXB event references (the live decode reuses
-	// one scratch coefficient slice per TXB, so the buffered slice must not alias
-	// it). paletteArena holds deep-copied palette colour maps for buffered visits
+	// reconEvents, reconVisits, reconBlocks, and coeffArena back the deferred
+	// two-pass reconstruction path (frameWorkDeferReconstruction). reconEvents
+	// records the in-order predict/reconstruct op stream; reconVisits holds the
+	// block-loop visits referenced by block-begin events; reconBlocks holds the
+	// transform blocks referenced by TXB events; coeffArena holds the deep-copied
+	// coefficients each TXB block references (the live decode reuses one scratch
+	// coefficient slice per TXB, so the buffered slice must not alias it).
+	// paletteArena holds deep-copied palette colour maps for buffered visits
 	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
 	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
 	// later blocks overwrite, so a buffered visit must own its own copy. Palette
@@ -290,6 +291,8 @@ type FrameWorkTileResidualScratch struct {
 	// retain capacity across tiles and are sliced to zero length per job by
 	// resetDeferredReconBuffers.
 	reconEvents     []frameWorkReconEvent
+	reconVisits     []tile.BlockLoopVisit
+	reconBlocks     []tile.BlockCoeffBlock
 	coeffArena      []int16
 	paletteArena    []tile.PaletteModeScratch
 	paletteBindings []frameWorkReconPaletteBinding
@@ -326,6 +329,8 @@ type frameWorkReconWavefront struct {
 	rowStart       []int
 	sbSpans        []frameWorkReconSB
 	events         []frameWorkReconEvent
+	visits         []tile.BlockLoopVisit
+	blocks         []tile.BlockCoeffBlock
 	done           []atomic.Int32
 	states         []frameWorkReconState
 	predict        []FrameWorkPredictionScratch
@@ -432,6 +437,8 @@ func (wf *frameWorkReconWavefront) workerResidual(worker int) []int16 {
 // across jobs never replays a previous job's events or coefficients.
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconEvents = s.reconEvents[:0]
+	s.reconVisits = s.reconVisits[:0]
+	s.reconBlocks = s.reconBlocks[:0]
 	s.coeffArena = s.coeffArena[:0]
 	s.paletteArena = s.paletteArena[:0]
 	s.paletteBindings = s.paletteBindings[:0]
@@ -480,12 +487,12 @@ func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoop
 	return visit, paletteIndex, mask
 }
 
-func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(eventIndex int, paletteIndex int, mask uint8) {
+func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, mask uint8) {
 	if mask == 0 {
 		return
 	}
 	s.paletteBindings = append(s.paletteBindings, frameWorkReconPaletteBinding{
-		eventIndex:   eventIndex,
+		visitIndex:   visitIndex,
 		paletteIndex: paletteIndex,
 		mask:         mask,
 	})
@@ -494,12 +501,12 @@ func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(eventIndex int, p
 func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
 	for i := range s.paletteBindings {
 		binding := &s.paletteBindings[i]
-		if binding.eventIndex < 0 || binding.eventIndex >= len(s.reconEvents) || binding.paletteIndex < 0 || binding.paletteIndex >= len(s.paletteArena) {
+		if binding.visitIndex < 0 || binding.visitIndex >= len(s.reconVisits) || binding.paletteIndex < 0 || binding.paletteIndex >= len(s.paletteArena) {
 			return ErrInvalidBatch
 		}
-		ev := &s.reconEvents[binding.eventIndex]
+		visit := &s.reconVisits[binding.visitIndex]
 		store := &s.paletteArena[binding.paletteIndex]
-		pal := &ev.visit.Prediction.Palette
+		pal := &visit.Prediction.Palette
 		if binding.mask&frameWorkReconPaletteY != 0 {
 			pal.YMap = &store.Y
 		}
@@ -1178,12 +1185,13 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 	}
 	if c.deferReconstruction {
 		bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
-		eventIndex := len(c.scratch.reconEvents)
+		visitIndex := len(c.scratch.reconVisits)
+		c.scratch.reconVisits = append(c.scratch.reconVisits, bufferedVisit)
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			visit: bufferedVisit,
+			index: int32(visitIndex),
 		})
-		c.scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
+		c.scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask)
 		return nil
 	}
 	return c.fusedReconState().predictBlockBegin(visit)
@@ -1418,15 +1426,13 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 		buffered.Coeffs = nil
 	}
 	buffered.Scan = nil
-	bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
-	eventIndex := len(c.scratch.reconEvents)
+	blockIndex := len(c.scratch.reconBlocks)
+	c.scratch.reconBlocks = append(c.scratch.reconBlocks, buffered)
 	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 		kind:          frameWorkReconEventTXB,
-		visit:         bufferedVisit,
-		block:         buffered,
+		index:         int32(blockIndex),
 		currentQIndex: currentQIndex,
 	})
-	c.scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
 }
 
 // replayDeferredReconstruction runs the buffered predict and reconstruct events
@@ -1435,22 +1441,32 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 // the CfL luma-first state machine and intra neighbor reads observe identical
 // inputs, producing byte-identical output.
 func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
-	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents)
+	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconBlocks)
 }
 
 // frameWorkReplayReconEvents runs a span of buffered reconstruction events in
 // decode order on one reconstruction state. It is the shared inner loop of both
 // the serial deferred replay and each wavefront goroutine's per-SB-row work.
-func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent) error {
+func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, blocks []tile.BlockCoeffBlock) error {
+	var visit *tile.BlockLoopVisit
 	for i := range events {
 		ev := &events[i]
 		switch ev.kind {
 		case frameWorkReconEventBlockBegin:
-			if err := s.predictBlockBegin(&ev.visit); err != nil {
+			idx := int(ev.index)
+			if ev.index < 0 || idx >= len(visits) {
+				return ErrInvalidBatch
+			}
+			visit = &visits[idx]
+			if err := s.predictBlockBegin(visit); err != nil {
 				return err
 			}
 		case frameWorkReconEventTXB:
-			if err := s.reconstructTXB(&ev.visit, &ev.block, ev.currentQIndex); err != nil {
+			idx := int(ev.index)
+			if visit == nil || ev.index < 0 || idx >= len(blocks) {
+				return ErrInvalidBatch
+			}
+			if err := s.reconstructTXB(visit, &blocks[idx], ev.currentQIndex); err != nil {
 				return err
 			}
 		default:
@@ -1512,8 +1528,13 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		if ev.kind != frameWorkReconEventBlockBegin {
 			continue
 		}
-		sbRow := int((ev.visit.Block.MIRow - region.MIRowStart) / sbSizeMIB)
-		sbCol := int((ev.visit.Block.MICol - region.MIColStart) / sbSizeMIB)
+		idx := int(ev.index)
+		if ev.index < 0 || idx >= len(c.scratch.reconVisits) {
+			return ErrInvalidBatch
+		}
+		visit := &c.scratch.reconVisits[idx]
+		sbRow := int((visit.Block.MIRow - region.MIRowStart) / sbSizeMIB)
+		sbCol := int((visit.Block.MICol - region.MIColStart) / sbSizeMIB)
 		if sbRow < 0 || sbRow >= rowCount || sbCol < 0 {
 			return ErrInvalidBatch
 		}
@@ -1542,6 +1563,8 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	wf.commitSBs(sbs)
 
 	wf.events = c.scratch.reconEvents
+	wf.visits = c.scratch.reconVisits
+	wf.blocks = c.scratch.reconBlocks
 	wf.aborted.Store(false)
 	wf.ensureDone(rowCount)
 	for r := range rowCount {
@@ -1637,7 +1660,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 				runtime.Gosched()
 			}
 		}
-		if err := frameWorkReplayReconEvents(st, wf.eventSpan(sb.start, sb.end)); err != nil {
+		if err := frameWorkReplayReconEvents(st, wf.eventSpan(sb.start, sb.end), wf.visits, wf.blocks); err != nil {
 			return err
 		}
 		doneCur.Store(int32(sb.col + 1))

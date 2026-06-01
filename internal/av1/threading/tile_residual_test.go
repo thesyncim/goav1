@@ -1155,12 +1155,13 @@ func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
 
 	appendVisit := func(visit tile.BlockLoopVisit) {
 		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(visit)
-		eventIndex := len(scratch.reconEvents)
+		visitIndex := len(scratch.reconVisits)
+		scratch.reconVisits = append(scratch.reconVisits, buffered)
 		scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			visit: buffered,
+			index: int32(visitIndex),
 		})
-		scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
+		scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask)
 	}
 	appendVisit(tile.BlockLoopVisit{
 		Prediction: tile.BlockPredictionModeResult{
@@ -1191,25 +1192,25 @@ func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
 	secondMaps.Y[0] = 99
 	secondMaps.UV[0] = 99
 
-	for i := range scratch.reconEvents {
-		pal := scratch.reconEvents[i].visit.Prediction.Palette
+	for i := range scratch.reconVisits {
+		pal := scratch.reconVisits[i].Prediction.Palette
 		if pal.YMap != nil || pal.UVMap != nil {
-			t.Fatalf("event %d retained append-unstable palette pointers", i)
+			t.Fatalf("visit %d retained append-unstable palette pointers", i)
 		}
 	}
 	if err := scratch.finalizeDeferredPalettes(); err != nil {
 		t.Fatal(err)
 	}
-	if got := scratch.reconEvents[0].visit.Prediction.Palette.YMap[0]; got != 7 {
+	if got := scratch.reconVisits[0].Prediction.Palette.YMap[0]; got != 7 {
 		t.Fatalf("first Y map = %d, want 7", got)
 	}
-	if got := scratch.reconEvents[0].visit.Prediction.Palette.UVMap[0]; got != 9 {
+	if got := scratch.reconVisits[0].Prediction.Palette.UVMap[0]; got != 9 {
 		t.Fatalf("first UV map = %d, want 9", got)
 	}
-	if got := scratch.reconEvents[1].visit.Prediction.Palette.YMap[0]; got != 11 {
+	if got := scratch.reconVisits[1].Prediction.Palette.YMap[0]; got != 11 {
 		t.Fatalf("second Y map = %d, want 11", got)
 	}
-	if got := scratch.reconEvents[1].visit.Prediction.Palette.UVMap[0]; got != 13 {
+	if got := scratch.reconVisits[1].Prediction.Palette.UVMap[0]; got != 13 {
 		t.Fatalf("second UV map = %d, want 13", got)
 	}
 }
