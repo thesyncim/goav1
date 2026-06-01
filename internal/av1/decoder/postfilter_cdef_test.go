@@ -734,7 +734,7 @@ func testFrameWorkCDEFPlaneChanged(plane frame.Plane, before []byte) bool {
 	return false
 }
 
-func TestFrameWorkFillCDEFInputSentinelsFillsActiveWindowOnly(t *testing.T) {
+func TestFrameWorkFillCDEFInputSentinelsFillsHaloOnly(t *testing.T) {
 	input := make([]uint16, cdef.InputBufferSize)
 	for i := range input {
 		input[i] = 0x7777
@@ -747,12 +747,20 @@ func TestFrameWorkFillCDEFInputSentinelsFillsActiveWindowOnly(t *testing.T) {
 
 	fillW := unitW + 2*cdef.HorizontalBorder
 	fillH := unitH + 2*cdef.VerticalBorder
-	fillLen := (fillH-1)*cdef.BStride + fillW
-	for i := range fillLen {
-		if got := input[i]; got != cdef.VeryLarge {
-			t.Fatalf("filled index=%d got=%d want VeryLarge", i, got)
+	for row := range fillH {
+		for col := range fillW {
+			got := input[row*cdef.BStride+col]
+			want := uint16(0x7777)
+			if row < cdef.VerticalBorder || row >= cdef.VerticalBorder+unitH ||
+				col < cdef.HorizontalBorder || col >= cdef.HorizontalBorder+unitW {
+				want = cdef.VeryLarge
+			}
+			if got != want {
+				t.Fatalf("input row=%d col=%d got=%d want=%d", row, col, got, want)
+			}
 		}
 	}
+	fillLen := (fillH-1)*cdef.BStride + fillW
 	if got := input[fillLen]; got != 0x7777 {
 		t.Fatalf("inactive next row got=%d want marker", got)
 	}

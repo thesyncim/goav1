@@ -361,11 +361,27 @@ func frameWorkFillCDEFInputSentinels(input []uint16, unitW int, unitH int) error
 		!cdefInputRectFits(len(input), fillW, fillH) {
 		return threading.ErrInvalidBatch
 	}
-	fillLen := (fillH-1)*cdef.BStride + fillW
-	for i := range input[:fillLen] {
-		input[i] = cdef.VeryLarge
+
+	for row := 0; row < cdef.VerticalBorder; row++ {
+		frameWorkFillCDEFInputSentinelRow(input[row*cdef.BStride:], fillW)
+	}
+	midEnd := cdef.VerticalBorder + unitH
+	rightStart := cdef.HorizontalBorder + unitW
+	for row := cdef.VerticalBorder; row < midEnd; row++ {
+		rowBuf := input[row*cdef.BStride:]
+		frameWorkFillCDEFInputSentinelRow(rowBuf, cdef.HorizontalBorder)
+		frameWorkFillCDEFInputSentinelRow(rowBuf[rightStart:], cdef.HorizontalBorder)
+	}
+	for row := midEnd; row < fillH; row++ {
+		frameWorkFillCDEFInputSentinelRow(input[row*cdef.BStride:], fillW)
 	}
 	return nil
+}
+
+func frameWorkFillCDEFInputSentinelRow(row []uint16, width int) {
+	for i := range row[:width] {
+		row[i] = cdef.VeryLarge
+	}
 }
 
 func cdefInputRectFits(length int, width int, height int) bool {
