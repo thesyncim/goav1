@@ -144,20 +144,36 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	}
 
 	const surfaceCount = RefFrames + 1
-	pool, err := newDecoderFramePool(format, surfaceCount)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: frame pool: %w", err)
-	}
-
 	useExternal, outputFormat, err := decoderExternalOutputFormat(payloads, 64)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: super-res output format: %w", err)
 	}
+	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBound(payloads, probeEvents)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
+	}
+	postArena, err := decoderPostFilterScratchArenaUpperBound(payloads, 64, probeEvents)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
+	}
+	arenaSize, err := decoderArenaSizeFor(format, outputFormat, useExternal, surfaceCount, plan.Size, postArena)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: arena size: %w", err)
+	}
+	arena := newDecoderArena(arenaSize)
+
+	pool, err := newDecoderFramePool(format, surfaceCount, &arena)
+	if err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: frame pool: %w", err)
+	}
 	var outputPool FramePool
 	if useExternal {
-		outputPool, err = newDecoderFramePool(outputFormat, surfaceCount)
+		outputPool, err = newDecoderFramePool(outputFormat, surfaceCount, &arena)
 		if err != nil {
 			workerPool.Close()
 			return nil, fmt.Errorf("goav1: output frame pool: %w", err)
@@ -175,34 +191,24 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}
-	d.scratch = newDecoderStreamScratch(plan.Size)
+	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
 	if cap(d.scratch.Outputs) > 0 {
 		d.visible = d.scratch.Outputs[:0]
 	} else {
 		d.visible = d.visibleOne[:0]
 	}
-	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBound(payloads, d.scratch.Events)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
-	}
 	if err := d.state.PreallocTemporalMotionScratch(motionSize); err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: temporal motion scratch: %w", err)
 	}
-	postArena, err := decoderPostFilterScratchArenaUpperBound(payloads, 64, d.scratch.Events)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
-	}
 	if d.useExternal {
 		d.external.size = postArena
-		d.external.scratch = decoderPostFilterScratch(postArena)
+		d.external.scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 		d.external.supported.size = postArena
-		d.external.supported.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(postArena)
+		d.external.supported.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 	} else {
 		d.postFilter.size = postArena
-		d.postFilter.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(postArena)
+		d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 	}
 
 	runtime := DecoderFrameWorkResidualEventRuntime{
@@ -464,41 +470,41 @@ func copyPlane(p FramePlane, bytesPerSample int) []byte {
 
 // newDecoderFramePool allocates and binds a frame pool sized for the given
 // format and surface count using the public sizing helper.
-func newDecoderFramePool(format FrameFormat, count int) (FramePool, error) {
+func newDecoderFramePool(format FrameFormat, count int, arena *decoderArena) (FramePool, error) {
 	_, backingSize, err := FramePoolRequiredSize(format, count)
 	if err != nil {
 		return FramePool{}, err
 	}
-	return BindFramePool(make([]byte, backingSize), format,
-		make([]Frame, count), make([]int, count), make([]bool, count))
+	return BindFramePool(arena.takeBytes(backingSize), format,
+		make([]Frame, count), arena.takeInts(count), arena.takeBools(count))
 }
 
 // newDecoderStreamScratch allocates every scratch arena the residual stream
 // runner needs, sized from the probed plan. It mirrors the binding performed by
 // cmd/aom-go-dec and the conformance harness so the convenience path is the
 // same byte-exact path.
-func newDecoderStreamScratch(size DecoderFrameWorkResidualStreamScratchSize) DecoderFrameWorkResidualStreamScratch {
+func newDecoderStreamScratch(size DecoderFrameWorkResidualStreamScratchSize, arena *decoderArena) DecoderFrameWorkResidualStreamScratch {
 	return DecoderFrameWorkResidualStreamScratch{
 		Events:    make([]DecoderEvent, size.Events),
-		Event:     newDecoderEventScratch(size.Event),
-		SideData:  newDecoderSideDataScratch(size.Event.SideData),
+		Event:     newDecoderEventScratch(size.Event, arena),
+		SideData:  newDecoderSideDataScratch(size.Event.SideData, arena),
 		Outputs:   make([]*Frame, size.Event.Outputs),
-		RTPBuffer: make([]byte, size.RTPBuffer),
+		RTPBuffer: arena.takeBytes(size.RTPBuffer),
 		RTPSpans:  make([]RTPObuSpan, size.RTPSpans),
 	}
 }
 
-func newDecoderEventScratch(size DecoderFrameWorkResidualEventScratchSize) DecoderFrameWorkResidualEventScratch {
+func newDecoderEventScratch(size DecoderFrameWorkResidualEventScratchSize, arena *decoderArena) DecoderFrameWorkResidualEventScratch {
 	return DecoderFrameWorkResidualEventScratch{
-		Runner:   newDecoderBatchRunnerScratch(size.Runner),
-		SideData: newDecoderSideDataScratch(size.SideData),
+		Runner:   newDecoderBatchRunnerScratch(size.Runner, arena),
+		SideData: newDecoderSideDataScratch(size.SideData, arena),
 		Spans:    make([]TileSpan, size.Plan.SpanCount),
 		Jobs:     make([]TileJob, size.Plan.JobCount),
 		Batches:  make([]TileBatch, size.Plan.BatchCount),
 	}
 }
 
-func newDecoderBatchRunnerScratch(size DecoderFrameWorkBatchResidualRunnerScratchSize) DecoderFrameWorkBatchResidualRunnerScratch {
+func newDecoderBatchRunnerScratch(size DecoderFrameWorkBatchResidualRunnerScratchSize, arena *decoderArena) DecoderFrameWorkBatchResidualRunnerScratch {
 	return DecoderFrameWorkBatchResidualRunnerScratch{
 		States:                  make([]TileDecodeState, size.Workers),
 		Storages:                make([]DecoderFrameWorkTileResidualCDFStorage, size.Workers),
@@ -507,19 +513,238 @@ func newDecoderBatchRunnerScratch(size DecoderFrameWorkBatchResidualRunnerScratc
 		PredictionScratch:       make([]DecoderFrameWorkPredictionScratch, size.Workers),
 		InterPredictionScratch:  make([]DecoderFrameWorkInterPredictionScratch, size.Workers),
 		Stats:                   make([]DecoderFrameWorkTileResidualStats, size.Workers),
-		Int32Scratch:            make([]int32, size.Int32Scratch),
-		ResidualScratch:         make([]int16, size.ResidualScratch),
+		Int32Scratch:            arena.takeInt32s(size.Int32Scratch),
+		ResidualScratch:         arena.takeInt16s(size.ResidualScratch),
 		LoopContextAboveScratch: make([]TileBlockLoopRootAboveContext, size.LoopContextAbove),
 	}
 }
 
-func newDecoderSideDataScratch(size DecoderFrameWorkSideDataScratchSize) DecoderFrameWorkSideDataScratch {
+func newDecoderSideDataScratch(size DecoderFrameWorkSideDataScratchSize, arena *decoderArena) DecoderFrameWorkSideDataScratch {
 	return DecoderFrameWorkSideDataScratch{
-		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
-		CDEFReadMap:              make([]bool, size.CDEFReadMap),
+		CDEFIndexMap:             arena.takeUint8s(size.CDEFIndexMap),
+		CDEFReadMap:              arena.takeBools(size.CDEFReadMap),
 		LoopFilterMap:            make([]DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
 		RestorationRecords:       make([]TileRestorationUnitRecord, size.RestorationRecords),
-		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
-		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
+		RestorationBoundaryAbove: arena.takeUint16s(size.RestorationBoundaryAbove),
+		RestorationBoundaryBelow: arena.takeUint16s(size.RestorationBoundaryBelow),
+	}
+}
+
+type decoderArenaSize struct {
+	bytes   int
+	uint16s int
+	int16s  int
+	int32s  int
+	ints    int
+	bools   int
+}
+
+func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExternal bool, surfaceCount int, stream DecoderFrameWorkResidualStreamScratchSize, post DecoderFrameWorkPostFilterRequestScratchSize) (decoderArenaSize, error) {
+	var size decoderArenaSize
+	if err := size.addFramePool(format, surfaceCount); err != nil {
+		return decoderArenaSize{}, err
+	}
+	if useExternal {
+		if err := size.addFramePool(outputFormat, surfaceCount); err != nil {
+			return decoderArenaSize{}, err
+		}
+	}
+	if err := size.addStream(stream); err != nil {
+		return decoderArenaSize{}, err
+	}
+	postCopies := 1
+	if useExternal {
+		postCopies = 2
+	}
+	for range postCopies {
+		if err := size.addPostFilter(post); err != nil {
+			return decoderArenaSize{}, err
+		}
+	}
+	return size, nil
+}
+
+func (s *decoderArenaSize) addFramePool(format FrameFormat, count int) error {
+	_, backingSize, err := FramePoolRequiredSize(format, count)
+	if err != nil {
+		return err
+	}
+	if err := s.addBytes(backingSize); err != nil {
+		return err
+	}
+	if err := s.addInts(count); err != nil {
+		return err
+	}
+	return s.addBools(count)
+}
+
+func (s *decoderArenaSize) addStream(size DecoderFrameWorkResidualStreamScratchSize) error {
+	if err := s.addBytes(size.RTPBuffer); err != nil {
+		return err
+	}
+	if err := s.addEvent(size.Event); err != nil {
+		return err
+	}
+	return s.addSideData(size.Event.SideData)
+}
+
+func (s *decoderArenaSize) addEvent(size DecoderFrameWorkResidualEventScratchSize) error {
+	if err := s.addBatchRunner(size.Runner); err != nil {
+		return err
+	}
+	return s.addSideData(size.SideData)
+}
+
+func (s *decoderArenaSize) addBatchRunner(size DecoderFrameWorkBatchResidualRunnerScratchSize) error {
+	if err := s.addInt32s(size.Int32Scratch); err != nil {
+		return err
+	}
+	return s.addInt16s(size.ResidualScratch)
+}
+
+func (s *decoderArenaSize) addSideData(size DecoderFrameWorkSideDataScratchSize) error {
+	if err := s.addBytes(size.CDEFIndexMap); err != nil {
+		return err
+	}
+	if err := s.addBools(size.CDEFReadMap); err != nil {
+		return err
+	}
+	totalBoundary, ok := decoderArenaAdd2(size.RestorationBoundaryAbove, size.RestorationBoundaryBelow)
+	if !ok {
+		return ErrFrameShortBuffer
+	}
+	return s.addUint16s(totalBoundary)
+}
+
+func (s *decoderArenaSize) addPostFilter(size DecoderFrameWorkPostFilterRequestScratchSize) error {
+	if err := s.addBytes(size.ByteScratch); err != nil {
+		return err
+	}
+	if err := s.addUint16s(size.Uint16Scratch); err != nil {
+		return err
+	}
+	if err := s.addInt16s(size.Int16Scratch); err != nil {
+		return err
+	}
+	return s.addInt32s(size.Int32Scratch)
+}
+
+func (s *decoderArenaSize) addBytes(n int) error   { return decoderArenaAdd(&s.bytes, n) }
+func (s *decoderArenaSize) addUint16s(n int) error { return decoderArenaAdd(&s.uint16s, n) }
+func (s *decoderArenaSize) addInt16s(n int) error  { return decoderArenaAdd(&s.int16s, n) }
+func (s *decoderArenaSize) addInt32s(n int) error  { return decoderArenaAdd(&s.int32s, n) }
+func (s *decoderArenaSize) addInts(n int) error    { return decoderArenaAdd(&s.ints, n) }
+func (s *decoderArenaSize) addBools(n int) error   { return decoderArenaAdd(&s.bools, n) }
+
+func decoderArenaAdd(dst *int, n int) error {
+	if n < 0 {
+		return ErrFrameShortBuffer
+	}
+	sum, ok := decoderArenaAdd2(*dst, n)
+	if !ok {
+		return ErrFrameShortBuffer
+	}
+	*dst = sum
+	return nil
+}
+
+func decoderArenaAdd2(a int, b int) (int, bool) {
+	if a < 0 || b < 0 {
+		return 0, false
+	}
+	maxInt := int(^uint(0) >> 1)
+	if a > maxInt-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+type decoderArena struct {
+	bytes   []byte
+	uint16s []uint16
+	int16s  []int16
+	int32s  []int32
+	ints    []int
+	bools   []bool
+}
+
+func newDecoderArena(size decoderArenaSize) decoderArena {
+	return decoderArena{
+		bytes:   make([]byte, size.bytes),
+		uint16s: make([]uint16, size.uint16s),
+		int16s:  make([]int16, size.int16s),
+		int32s:  make([]int32, size.int32s),
+		ints:    make([]int, size.ints),
+		bools:   make([]bool, size.bools),
+	}
+}
+
+func (a *decoderArena) takeBytes(n int) []byte {
+	if n == 0 {
+		return nil
+	}
+	out := a.bytes[:n]
+	a.bytes = a.bytes[n:]
+	return out
+}
+
+func (a *decoderArena) takeUint8s(n int) []uint8 {
+	return a.takeBytes(n)
+}
+
+func (a *decoderArena) takeUint16s(n int) []uint16 {
+	if n == 0 {
+		return nil
+	}
+	out := a.uint16s[:n]
+	a.uint16s = a.uint16s[n:]
+	return out
+}
+
+func (a *decoderArena) takeInt16s(n int) []int16 {
+	if n == 0 {
+		return nil
+	}
+	out := a.int16s[:n]
+	a.int16s = a.int16s[n:]
+	return out
+}
+
+func (a *decoderArena) takeInt32s(n int) []int32 {
+	if n == 0 {
+		return nil
+	}
+	out := a.int32s[:n]
+	a.int32s = a.int32s[n:]
+	return out
+}
+
+func (a *decoderArena) takeInts(n int) []int {
+	if n == 0 {
+		return nil
+	}
+	out := a.ints[:n]
+	a.ints = a.ints[n:]
+	return out
+}
+
+func (a *decoderArena) takeBools(n int) []bool {
+	if n == 0 {
+		return nil
+	}
+	out := a.bools[:n]
+	a.bools = a.bools[n:]
+	return out
+}
+
+func decoderPostFilterScratchFromArena(size DecoderFrameWorkPostFilterRequestScratchSize, arena *decoderArena) DecoderFrameWorkPostFilterRequestScratch {
+	return DecoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:   make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		CDEFDirectionGrid: make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:  make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:       arena.takeBytes(size.ByteScratch),
+		Uint16Scratch:     arena.takeUint16s(size.Uint16Scratch),
+		Int16Scratch:      arena.takeInt16s(size.Int16Scratch),
+		Int32Scratch:      arena.takeInt32s(size.Int32Scratch),
 	}
 }
