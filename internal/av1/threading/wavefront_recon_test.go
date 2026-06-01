@@ -16,6 +16,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
+var wavefrontEnsureStatesBenchSink int
+
 // buildWavefrontReconController builds a controller whose deferred event list is
 // pre-filled with one 64x64 intra-DC skip-transform block per superblock of an
 // sbCols x sbRows single-tile frame, in SB-raster order. Skip-transform intra
@@ -128,6 +130,63 @@ func TestReconWavefrontByteIdenticalToSerial(t *testing.T) {
 		if !equalFramePlanes(serialOut, wavefrontOut) {
 			t.Fatalf("workers=%d wavefront output differs from serial replay", workers)
 		}
+	}
+}
+
+func TestReconWavefrontScratchUsesFlatArenas(t *testing.T) {
+	var wf frameWorkReconWavefront
+	c := frameWorkTileResidualLoopController{
+		req: FrameWorkTileResidualRequest{
+			Int32Scratch:    make([]int32, 7),
+			ResidualScratch: make([]int16, 11),
+		},
+	}
+	if err := wf.ensureStates(3, &c); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(wf.int32Arena), 21; got != want {
+		t.Fatalf("int32 arena len=%d want %d", got, want)
+	}
+	if got, want := len(wf.residualArena), 33; got != want {
+		t.Fatalf("residual arena len=%d want %d", got, want)
+	}
+	for w := range 3 {
+		st := &wf.states[w]
+		if got, want := len(st.int32Scratch), 7; got != want {
+			t.Fatalf("worker %d int32 len=%d want %d", w, got, want)
+		}
+		if got, want := len(st.residualScratch), 11; got != want {
+			t.Fatalf("worker %d residual len=%d want %d", w, got, want)
+		}
+		if &st.int32Scratch[0] != &wf.int32Arena[w*7] {
+			t.Fatalf("worker %d int32 scratch is not arena-backed", w)
+		}
+		if &st.residualScratch[0] != &wf.residualArena[w*11] {
+			t.Fatalf("worker %d residual scratch is not arena-backed", w)
+		}
+		if w > 0 && &wf.states[w-1].int32Scratch[6] == &st.int32Scratch[0] {
+			t.Fatalf("worker %d int32 scratch overlaps previous worker", w)
+		}
+		if w > 0 && &wf.states[w-1].residualScratch[10] == &st.residualScratch[0] {
+			t.Fatalf("worker %d residual scratch overlaps previous worker", w)
+		}
+	}
+}
+
+func BenchmarkReconWavefrontEnsureStates(b *testing.B) {
+	c := frameWorkTileResidualLoopController{
+		req: FrameWorkTileResidualRequest{
+			Int32Scratch:    make([]int32, 4096),
+			ResidualScratch: make([]int16, 4096),
+		},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		var wf frameWorkReconWavefront
+		if err := wf.ensureStates(8, &c); err != nil {
+			b.Fatal(err)
+		}
+		wavefrontEnsureStatesBenchSink += len(wf.states) + len(wf.int32Arena) + len(wf.residualArena)
 	}
 }
 

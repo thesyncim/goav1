@@ -302,20 +302,23 @@ func (s *FrameWorkTileResidualScratch) PreallocCallbackScratch() {
 // the upper-right neighbor. states holds one reconstruction state per wavefront
 // goroutine (each with its own CFL state machine, prediction/residual scratch,
 // and geometry cache) so the goroutines never share mutable reconstruction
-// state. All buffers retain capacity across frames.
+// state. Numeric per-worker scratch is carved from flat arenas to avoid one
+// backing allocation per worker. All buffers retain capacity across frames.
 type frameWorkReconWavefront struct {
-	rowStart  []int
-	sbSpans   []frameWorkReconSB
-	events    []frameWorkReconEvent
-	done      []atomic.Int32
-	states    []frameWorkReconState
-	predict   []FrameWorkPredictionScratch
-	inter     []FrameWorkInterPredictionScratch
-	cfl       []FrameWorkCFLPredictionScratch
-	int32     [][]int32
-	residual  [][]int16
-	doneAlloc []atomic.Int32
-	aborted   atomic.Bool
+	rowStart       []int
+	sbSpans        []frameWorkReconSB
+	events         []frameWorkReconEvent
+	done           []atomic.Int32
+	states         []frameWorkReconState
+	predict        []FrameWorkPredictionScratch
+	inter          []FrameWorkInterPredictionScratch
+	cfl            []FrameWorkCFLPredictionScratch
+	int32Arena     []int32
+	residualArena  []int16
+	int32Stride    int
+	residualStride int
+	doneAlloc      []atomic.Int32
+	aborted        atomic.Bool
 }
 
 func (wf *frameWorkReconWavefront) reuseSBs() []frameWorkReconSB {
@@ -358,19 +361,21 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		wf.predict = make([]FrameWorkPredictionScratch, workers)
 		wf.inter = make([]FrameWorkInterPredictionScratch, workers)
 		wf.cfl = make([]FrameWorkCFLPredictionScratch, workers)
-		wf.int32 = make([][]int32, workers)
-		wf.residual = make([][]int16, workers)
 	}
 	wf.states = wf.states[:workers]
+	wf.int32Stride = int32Len
+	wf.residualStride = residualLen
+	int32Total := workers * int32Len
+	residualTotal := workers * residualLen
+	if cap(wf.int32Arena) < int32Total {
+		wf.int32Arena = make([]int32, int32Total)
+	}
+	wf.int32Arena = wf.int32Arena[:int32Total]
+	if cap(wf.residualArena) < residualTotal {
+		wf.residualArena = make([]int16, residualTotal)
+	}
+	wf.residualArena = wf.residualArena[:residualTotal]
 	for w := range workers {
-		if cap(wf.int32[w]) < int32Len {
-			wf.int32[w] = make([]int32, int32Len)
-		}
-		wf.int32[w] = wf.int32[w][:int32Len]
-		if cap(wf.residual[w]) < residualLen {
-			wf.residual[w] = make([]int16, residualLen)
-		}
-		wf.residual[w] = wf.residual[w][:residualLen]
 		wf.predict[w].Inter = &wf.inter[w]
 		// Each goroutine reconstructs through its own batch copy whose geometry
 		// cache is private, so the per-block JobRegion/JobOutputPlane memoization
@@ -385,13 +390,23 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.predict = c.req.Predict
 		st.predictionScratch = &wf.predict[w]
 		st.cflScratch = &wf.cfl[w]
-		st.int32Scratch = wf.int32[w]
-		st.residualScratch = wf.residual[w]
+		st.int32Scratch = wf.workerInt32(w)
+		st.residualScratch = wf.workerResidual(w)
 		st.pendingCFLPrediction = false
 		st.cflPredictionDone = false
 		st.cflVisit = tile.BlockLoopVisit{}
 	}
 	return nil
+}
+
+func (wf *frameWorkReconWavefront) workerInt32(worker int) []int32 {
+	off := worker * wf.int32Stride
+	return wf.int32Arena[off : off+wf.int32Stride]
+}
+
+func (wf *frameWorkReconWavefront) workerResidual(worker int) []int16 {
+	off := worker * wf.residualStride
+	return wf.residualArena[off : off+wf.residualStride]
 }
 
 // resetDeferredReconBuffers slices the deferred reconstruction buffers back to
