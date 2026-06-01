@@ -1,0 +1,77 @@
+internal/av1/decoder/postfilter_filmgrain.go:614:2: moved to heap: output
+internal/av1/decoder/postfilter_superres.go:311:2: moved to heap: result
+internal/av1/decoder/postfilter_superres.go:364:2: moved to heap: output
+internal/av1/decoder/svc.go:202:20: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap
+internal/av1/decoder/svc.go:202:20: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap in (*SharedFrameContextStore).store:
+internal/av1/decoder/svc.go:233:19: func literal escapes to heap
+internal/av1/decoder/svc.go:233:19: func literal escapes to heap in (*FrameWorkState).RunEventWithContextAndExternalReferencesWithPostPublisher:
+internal/av1/decoder/work.go:360:30: make([]tile.ReferenceMVEntry, need) escapes to heap
+internal/av1/decoder/work.go:360:30: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
+internal/av1/decoder/work.go:363:27: make([]tile.TemporalMotionEntry, need) escapes to heap
+internal/av1/decoder/work.go:363:27: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
+internal/av1/decoder/work.go:367:35: make([]tile.ReferenceMVEntry, need) escapes to heap
+internal/av1/decoder/work.go:367:35: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
+internal/av1/decoder/work.go:570:30: make([]tile.ReferenceMVEntry, need) escapes to heap
+internal/av1/decoder/work.go:570:30: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).prepareTemporalMotionField:
+internal/av1/decoder/work.go:609:27: make([]tile.TemporalMotionEntry, need) escapes to heap
+internal/av1/decoder/work.go:609:27: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).prepareTemporalMotionField:
+internal/av1/decoder/work.go:651:35: make([]tile.ReferenceMVEntry, need) escapes to heap
+internal/av1/decoder/work.go:651:35: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).publishTemporalMotionFrame:
+internal/av1/decoder/work.go:686:30: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap
+internal/av1/decoder/work.go:686:30: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap in (*FrameWorkState).finishTileResidualCDFs:
+internal/av1/motion/compound.go:426:10: func literal escapes to heap
+internal/av1/motion/compound.go:426:10: func literal escapes to heap in compoundPixelStorer:
+internal/av1/motion/compound.go:431:9: func literal escapes to heap
+internal/av1/motion/compound.go:431:9: func literal escapes to heap in compoundPixelStorer:
+internal/av1/motion/scale_scratch.go:18:13: new(scaledHighBDIM) escapes to heap
+internal/av1/motion/scale_scratch.go:18:13: new(scaledHighBDIM) escapes to heap in init.func1:
+internal/av1/threading/pool.go:955:16: make([]poolWorker, workers) escapes to heap
+internal/av1/threading/pool.go:955:16: make([]poolWorker, workers) escapes to heap in NewPool:
+internal/av1/threading/pool.go:961:3: func literal escapes to heap in NewPool:
+internal/av1/threading/tile_residual.go:1569:15: make([]atomic.Int32, rowCount) escapes to heap
+internal/av1/threading/tile_residual.go:1569:15: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).replayDeferredReconstructionWavefront:
+internal/av1/threading/tile_residual.go:1578:6: moved to heap: wg
+internal/av1/threading/tile_residual.go:1579:6: moved to heap: firstErr
+internal/av1/threading/tile_residual.go:1582:3: func literal escapes to heap in (*frameWorkTileResidualLoopController).replayDeferredReconstructionWavefront:
+internal/av1/threading/tile_residual.go:1582:6: func literal escapes to heap
+internal/av1/threading/tile_residual.go:1582:6: func literal escapes to heap in (*frameWorkTileResidualLoopController).replayDeferredReconstructionWavefront:
+internal/av1/threading/tile_residual.go:369:22: make([]atomic.Int32, rowCount) escapes to heap
+internal/av1/threading/tile_residual.go:369:22: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkReconWavefront).ensureDone:
+internal/av1/threading/tile_residual.go:383:19: make([]frameWorkReconState, workers) escapes to heap
+internal/av1/threading/tile_residual.go:383:19: make([]frameWorkReconState, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:384:20: make([]FrameWorkPredictionScratch, workers) escapes to heap
+internal/av1/threading/tile_residual.go:384:20: make([]FrameWorkPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:385:18: make([]FrameWorkInterPredictionScratch, workers) escapes to heap
+internal/av1/threading/tile_residual.go:385:18: make([]FrameWorkInterPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:386:16: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap
+internal/av1/threading/tile_residual.go:386:16: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:394:23: make([]int32, int32Total) escapes to heap
+internal/av1/threading/tile_residual.go:394:23: make([]int32, int32Total) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:398:26: make([]int16, residualTotal) escapes to heap
+internal/av1/threading/tile_residual.go:398:26: make([]int16, residualTotal) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/tile/block_loop.go:373:31: make([]diagonalCornerSlot, rootColumns) escapes to heap
+internal/av1/tile/block_loop.go:373:31: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.7f1f46313746b019a6b1e00788ca1b87711e6cf6d0ec1723667865b91823ad38]:
+internal/av1/tile/block_loop.go:373:31: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
+internal/av1/tile/block_loop.go:373:31: make([]tile.diagonalCornerSlot, tile.rootColumns) escapes to heap
+internal/av1/tile/block_loop.go:373:31: make([]tile.diagonalCornerSlot, tile.rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.*uint8]:
+internal/av1/tile/block_loop.go:375:33: make([]diagonalCornerSlot, n) escapes to heap
+internal/av1/tile/block_loop.go:375:33: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.7f1f46313746b019a6b1e00788ca1b87711e6cf6d0ec1723667865b91823ad38]:
+internal/av1/tile/block_loop.go:375:33: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
+internal/av1/tile/block_loop.go:375:33: make([]tile.diagonalCornerSlot, tile.n) escapes to heap
+internal/av1/tile/block_loop.go:375:33: make([]tile.diagonalCornerSlot, tile.n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.*uint8]:
+internal/av1/tile/block_loop.go:653:40: make([]diagonalCornerSlot, rootColumns) escapes to heap
+internal/av1/tile/block_loop.go:653:40: make([]diagonalCornerSlot, rootColumns) escapes to heap in ensureIntrabcDiagonalCarriers:
+internal/av1/tile/block_loop.go:664:26: make([]diagonalCornerSlot, rootColumns) escapes to heap
+internal/av1/tile/block_loop.go:664:26: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
+internal/av1/tile/block_loop.go:667:33: make([]diagonalCornerSlot, rootColumns) escapes to heap
+internal/av1/tile/block_loop.go:667:33: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
+internal/av1/tile/block_loop.go:684:26: make([]diagonalCornerSlot, n) escapes to heap
+internal/av1/tile/block_loop.go:684:26: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
+internal/av1/tile/coeff.go:218:20: make([]coeffPos, maxEOB) escapes to heap
+internal/av1/tile/coeff.go:218:20: make([]coeffPos, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:256:16: make([]int16, maxEOB) escapes to heap
+internal/av1/tile/coeff.go:256:16: make([]int16, maxEOB) escapes to heap in init.0:
+internal/av1/transform/precompute.go:139:16: make([]int16, total) escapes to heap
+internal/av1/transform/precompute.go:139:16: make([]int16, total) escapes to heap in init.1:
+internal/av1/transform/precompute.go:140:19: make([]int16, total) escapes to heap
+internal/av1/transform/precompute.go:140:19: make([]int16, total) escapes to heap in init.1:

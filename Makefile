@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross gc-metrics fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -39,6 +39,9 @@ bench-cross:
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
+
+compiler-reports:
+	./scripts/check_compiler_reports.sh
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
@@ -281,7 +284,7 @@ dryrun-external-corpus:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
-ci-local: fmt-check vet test alloc trace-zero
+ci-local: fmt-check vet test alloc compiler-reports trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
 # `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
@@ -310,6 +313,7 @@ help:
 	@echo "  bench-public               run public benchmarks"
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
+	@echo "  compiler-reports           fail on new hot-package heap escapes; report BCE sites"
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  trace-zero                 prove entropy tracing compiles out of release hot paths"
 	@echo "  vet                        go vet ./..."
@@ -329,7 +333,7 @@ help:
 	@echo "  dryrun-external-corpus     byte-exact local external IVF corpus (requires GOAV1_EXTERNAL_CORPUS_DIR(S))"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
-	@echo "  ci-local                   run fmt-check + vet + test + alloc"
+	@echo "  ci-local                   run fmt-check + vet + test + alloc + compiler-reports + trace-zero"
 	@echo "  build-cmd                  build the aom-go-dec CLI into ./bin"
 	@echo "  install-cmd                go install the aom-go-dec CLI"
 

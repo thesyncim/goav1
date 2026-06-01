@@ -130,6 +130,8 @@ jobs:
           fi
       - name: make alloc
         run: make alloc
+      - name: compiler reports
+        run: make compiler-reports
 
   fuzz-smoke:
     name: fuzz smoke
