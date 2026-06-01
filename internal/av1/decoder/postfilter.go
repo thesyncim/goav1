@@ -304,7 +304,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 			Optimized: options.RestorationOptimized,
 		},
 	}
-	size, err := ctx.SupportedPostFilterScratchLen(probe)
+	size, err := ctx.boundSupportedPostFilterScratchLen(probe, r.Scratch)
 	if err != nil {
 		return err
 	}
@@ -325,6 +325,52 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	r.Result = result
 	r.DisplayOutput = display
 	return nil
+}
+
+// boundSupportedPostFilterScratchLen sizes a bound runner from the scratch it
+// already owns. Loop-filter edge planning is intentionally deferred to
+// ApplyLoopFilterEdges: that path computes the exact edge count and reports a
+// short buffer before mutating the output, so the bound runner does not need to
+// pay a duplicate full planning pass just to learn the same count.
+func (ctx FrameWorkPostFilterContext) boundSupportedPostFilterScratchLen(req FrameWorkPostFilterRequest, scratch FrameWorkPostFilterScratch) (FrameWorkPostFilterScratchSize, error) {
+	remaining := ctx.RemainingPostFilters()
+	supported, err := ctx.supportedPostFilterStages(remaining)
+	if err != nil {
+		return FrameWorkPostFilterScratchSize{}, err
+	}
+	if remaining&^supported != 0 {
+		return FrameWorkPostFilterScratchSize{}, ErrUnsupportedPostFilter
+	}
+	var size FrameWorkPostFilterScratchSize
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		size.LoopFilter = FrameWorkLoopFilterPostFilterScratchSize{Edges: len(scratch.LoopFilterEdges)}
+	}
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.CDEF = cdefSize
+	}
+	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
+		records := req.Restoration.Records
+		if frameWorkRestorationRecordsEmpty(records) && ctx.RestorationFrameBuffers != nil {
+			records = ctx.RestorationFrameBuffers.Records
+		}
+		restorationSize, err := ctx.LoopRestorationPostFilterScratchLen(records, req.Restoration.Optimized)
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.Restoration = restorationSize
+	}
+	if remaining.Has(FrameWorkPostFilterFilmGrain) {
+		filmGrainSize, err := ctx.FilmGrainPostFilterScratchLen()
+		if err != nil {
+			return FrameWorkPostFilterScratchSize{}, err
+		}
+		size.FilmGrain = filmGrainSize
+	}
+	return size, nil
 }
 
 // ScratchLen reports caller-owned scratch needed by Apply for the runner's

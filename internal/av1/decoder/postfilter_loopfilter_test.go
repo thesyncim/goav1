@@ -1414,7 +1414,7 @@ func TestFrameWorkBoundSupportedPostFilterRunnerDoesNotRetainDefaultSideMaps(t *
 	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
 	runner := FrameWorkBoundSupportedPostFilterRunner{
 		Scratch: FrameWorkPostFilterScratch{
-			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 1),
+			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 7),
 		},
 	}
 	if err := runner.Apply(FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}); err != nil {
@@ -1425,6 +1425,9 @@ func TestFrameWorkBoundSupportedPostFilterRunnerDoesNotRetainDefaultSideMaps(t *
 	}
 	if !frameWorkLoopFilterMapEmpty(runner.Options.LoopFilterMap) {
 		t.Fatalf("runner retained defaulted loop-filter map: %+v", runner.Options.LoopFilterMap)
+	}
+	if runner.Size.LoopFilter.Edges != len(runner.Scratch.LoopFilterEdges) {
+		t.Fatalf("bound runner loop-filter size=%+v want owned edge capacity %d", runner.Size.LoopFilter, len(runner.Scratch.LoopFilterEdges))
 	}
 
 	err = runner.Apply(FrameWorkPostFilterContext{Event: event, Output: output})

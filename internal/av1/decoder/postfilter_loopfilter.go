@@ -555,6 +555,9 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx
 	if err != nil {
 		return err
 	}
+	if !record.TransformTree.Variable {
+		return frameWorkAppendLoopFilterFixedLumaTXBs(ctx, levelCtx, filterMap, record, plan, edges, bounds, req, currentVertical, currentHorizontal)
+	}
 	block := record.Block
 	return record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
 		plan.LumaTXBs++
@@ -572,6 +575,45 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx
 		}
 		return nil
 	})
+}
+
+func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, req tile.TransformTreeRequest, currentVertical uint8, currentHorizontal uint8) error {
+	if !record.TransformTree.Y.Valid() {
+		return threading.ErrInvalidBatch
+	}
+	dims, ok := record.TransformTree.Y.Dimensions()
+	if !ok {
+		return threading.ErrInvalidBatch
+	}
+	block := record.Block
+	xEnd := req.X4 + int(req.VisibleW4)
+	yEnd := req.Y4 + int(req.VisibleH4)
+	for y4 := req.Y4; y4 < yEnd; y4 += int(dims.H4) {
+		visibleH4 := minInt(int(dims.H4), yEnd-y4)
+		if visibleH4 <= 0 {
+			return threading.ErrInvalidBatch
+		}
+		for x4 := req.X4; x4 < xEnd; x4 += int(dims.W4) {
+			visibleW4 := minInt(int(dims.W4), xEnd-x4)
+			if visibleW4 <= 0 {
+				return threading.ErrInvalidBatch
+			}
+			plan.LumaTXBs++
+			frameX4 := int(block.MICol) + x4 - block.X4
+			frameY4 := int(block.MIRow) + y4 - block.Y4
+			if frameX4 > 0 {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameX4, frameY4, visibleH4, record.TransformTree.Y, currentVertical); err != nil {
+					return err
+				}
+			}
+			if frameY4 > 0 {
+				if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeHorizontal, frameX4, frameY4, visibleW4, record.TransformTree.Y, currentHorizontal); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // frameWorkAppendLoopFilterLumaEdgeSegments splits one TX-block-aligned luma
