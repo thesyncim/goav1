@@ -30,6 +30,21 @@ type LumaCoeffTreeScratch struct {
 	Scan        [maxCoeffScanLen]int16
 	InverseScan [maxCoeffScanLen]int16
 	Levels      [maxCoeffScratchLen]uint8
+
+	coeffDirtyLen int
+}
+
+func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
+	if s == nil {
+		return
+	}
+	for i := 0; i < s.coeffDirtyLen; i++ {
+		pos := int(s.InverseScan[i])
+		if uint(pos) < uint(len(s.Coeffs)) {
+			s.Coeffs[pos] = 0
+		}
+	}
+	s.coeffDirtyLen = 0
 }
 
 type LumaCoeffBlock struct {
@@ -446,10 +461,14 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("prepare coeff buffers size=%v class=%v: %w", ctxReq.Size, selectedClass, err)
 	}
+	scratch.clearCoeffDirty()
 	req.Class = selectedClass
 	req.EOBMultiContext = eobMultiContextForClass(selectedClass)
 	req.TXBSkipKnown = true
 	req.TXBSkip = allZero
+	req.skipNonZeroCoeffClear = req.SkipAllZeroCoeffClear
+	req.coeffDirtyPos = &scratch.InverseScan
+	req.coeffDirtyLen = &scratch.coeffDirtyLen
 	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)

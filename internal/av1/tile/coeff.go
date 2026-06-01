@@ -80,11 +80,15 @@ type TXBDecodeRequest struct {
 	TXBSkip         bool
 	DCSignContext   int
 	EOBMultiContext int
-	// SkipAllZeroCoeffClear lets fused internal callers avoid clearing the
-	// reusable coefficient scratch for txb_skip blocks that will not expose the
-	// coefficient buffer to user code. The default remains false so public
-	// callers still observe a zero-filled coefficient slice for AllZero TXBs.
+	// SkipAllZeroCoeffClear lets fused internal callers avoid full reusable
+	// coefficient-scratch clears when they consume coefficients before reuse.
+	// The default remains false so public callers still observe a zero-filled
+	// coefficient slice for skipped TXBs.
 	SkipAllZeroCoeffClear bool
+
+	skipNonZeroCoeffClear bool
+	coeffDirtyPos         *[maxCoeffScanLen]int16
+	coeffDirtyLen         *int
 }
 
 type TXBDecodeResult struct {
@@ -751,7 +755,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 		return TXBDecodeResult{AllZero: true}, nil
 	}
-	clear(coeffs[:maxEOB])
+	if !req.skipNonZeroCoeffClear {
+		clear(coeffs[:maxEOB])
+	}
 
 	eob, err := s.ReadEOB(cdfs, EOBRequest{
 		Size:            req.Size,
@@ -843,6 +849,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			signed = -signed
 		}
 		coeffs[lastPos] = signed
+		req.recordCoeffDirty(lastPos)
 
 		culLevel := lastLevel
 		if culLevel > CoeffContextMask {
@@ -1002,6 +1009,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			dcValue = int(signed)
 		}
 		coeffs[pos] = signed
+		req.recordCoeffDirty(pos)
 		c = nextC
 	}
 
@@ -1023,6 +1031,18 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		MaxScanLine: maxScanLine,
 		CulLevel:    culLevel,
 	}, nil
+}
+
+func (req *TXBDecodeRequest) recordCoeffDirty(pos int) {
+	if req == nil || req.coeffDirtyPos == nil || req.coeffDirtyLen == nil {
+		return
+	}
+	n := *req.coeffDirtyLen
+	if n >= len(req.coeffDirtyPos) || uint(pos) >= uint(len(req.coeffDirtyPos)) {
+		return
+	}
+	req.coeffDirtyPos[n] = int16(pos)
+	*req.coeffDirtyLen = n + 1
 }
 
 func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) int {

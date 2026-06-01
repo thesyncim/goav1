@@ -63,10 +63,10 @@ internal/av1/tile/block_loop.go:667:33: make([]diagonalCornerSlot, rootColumns) 
 internal/av1/tile/block_loop.go:667:33: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
 internal/av1/tile/block_loop.go:684:26: make([]diagonalCornerSlot, n) escapes to heap
 internal/av1/tile/block_loop.go:684:26: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
-internal/av1/tile/coeff.go:218:20: make([]coeffPos, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:218:20: make([]coeffPos, maxEOB) escapes to heap in init.0:
-internal/av1/tile/coeff.go:256:16: make([]int16, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:256:16: make([]int16, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:222:20: make([]coeffPos, maxEOB) escapes to heap
+internal/av1/tile/coeff.go:222:20: make([]coeffPos, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:260:16: make([]int16, maxEOB) escapes to heap
+internal/av1/tile/coeff.go:260:16: make([]int16, maxEOB) escapes to heap in init.0:
 internal/av1/transform/precompute.go:139:16: make([]int16, total) escapes to heap
 internal/av1/transform/precompute.go:139:16: make([]int16, total) escapes to heap in init.1:
 internal/av1/transform/precompute.go:140:19: make([]int16, total) escapes to heap

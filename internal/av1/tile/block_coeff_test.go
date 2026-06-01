@@ -170,6 +170,63 @@ func TestDecodeBlockCoefficientsSkipAllZeroClearFastPath(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockCoefficientsDirtyCoeffClearFastPath(t *testing.T) {
+	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var modeCtx BlockModeContext
+	var coeffCtx CoeffEntropyContext
+	var scratch BlockCoeffScratch
+	scratch.Coeff.Coeffs[0] = 9
+	scratch.Coeff.Coeffs[17] = 11
+	scratch.Coeff.InverseScan[0] = 0
+	scratch.Coeff.InverseScan[1] = 17
+	scratch.Coeff.coeffDirtyLen = 2
+
+	result, err := state.DecodeBlockCoefficients(BlockCoeffCDFs{
+		Transform: &transformCDFs,
+		Coeff:     &coeffCDFs,
+	}, &modeCtx, &coeffCtx, &scratch, BlockCoeffRequest{
+		Transform: TransformTreeRequest{
+			Size:          BlockSize4x4,
+			VisibleW4:     1,
+			VisibleH4:     1,
+			Color:         parser.ColorConfig{MonoChrome: true},
+			TransformMode: parser.TransformModeLargest,
+		},
+		LumaType:              transform.TypeDCTDCT,
+		SkipAllZeroCoeffClear: true,
+	}, func(block BlockCoeffBlock) error {
+		if block.Result.EOB != 1 || len(block.Coeffs) != 16 {
+			t.Fatalf("block=%+v coeffs=%d want eob=1 len=16", block, len(block.Coeffs))
+		}
+		for i, coeff := range block.Coeffs {
+			want := int16(0)
+			if i == 0 {
+				want = 1
+			}
+			if coeff != want {
+				t.Fatalf("coeff[%d]=%d want %d", i, coeff, want)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total := result.TotalStats(); total.TXBs != 1 || total.NonZero != 1 || total.EOBTotal != 1 {
+		t.Fatalf("stats=%+v want one nonzero txb", total)
+	}
+	if scratch.Coeff.Coeffs[17] != 0 {
+		t.Fatalf("stale coeff[17]=%d want dirty clear", scratch.Coeff.Coeffs[17])
+	}
+	if scratch.Coeff.coeffDirtyLen != 1 || scratch.Coeff.InverseScan[0] != 0 {
+		t.Fatalf("dirtyLen=%d dirty0=%d want only coeff 0 tracked", scratch.Coeff.coeffDirtyLen, scratch.Coeff.InverseScan[0])
+	}
+}
+
 func TestDecodeBlockCoefficientsRejectsInvalidInputs(t *testing.T) {
 	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 	valid := BlockCoeffRequest{
