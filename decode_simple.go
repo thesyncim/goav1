@@ -51,8 +51,9 @@ type Decoder struct {
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
 	external   decoderExternalPostFilterRunner
 
-	payloads [][]byte
-	format   FrameFormat
+	payloadSource decoderPayloadSource
+	payloadBuf    []byte
+	format        FrameFormat
 
 	next        int
 	closed      bool
@@ -99,11 +100,15 @@ func resolveConfig(opts []Option) decoderConfig {
 // in order with DecodeNext or all at once with DecodeAll. Always Close the
 // Decoder to release its worker goroutines.
 func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
+	return newDecoderFromPayloadSource(newSliceDecoderPayloadSource(payloads), opts...)
+}
+
+func newDecoderFromPayloadSource(source decoderPayloadSource, opts ...Option) (*Decoder, error) {
 	cfg := resolveConfig(opts)
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
 	}
-	if len(payloads) == 0 {
+	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
 
@@ -116,14 +121,15 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	// bind the sequence/frame headers used to derive the pool format.
 	var probeStream DecoderStream
 	const eventsPerFrame = 16
-	probeEventBudget := len(payloads)*eventsPerFrame + 64
+	probeEventBudget := source.len()*eventsPerFrame + 64
 	probeEvents := make([]DecoderEvent, probeEventBudget)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
+	probePayload := source.makeProbeBuffer()
 
-	plan, err := DecoderFrameWorkResidualLowOverheadStreamsPlan(
-		probeStream, payloads, cfg.workers,
+	plan, err := decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
+		probeStream, source, cfg.workers, probePayload,
 		probeEvents, probeSpans, probeJobs, probeBatches,
 	)
 	if err != nil {
@@ -144,17 +150,17 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	}
 
 	const surfaceCount = RefFrames + 1
-	useExternal, outputFormat, err := decoderExternalOutputFormat(payloads, 64)
+	useExternal, outputFormat, err := decoderExternalOutputFormatFromSource(source, 64, probePayload)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: super-res output format: %w", err)
 	}
-	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBound(payloads, probeEvents)
+	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source, probeEvents, probePayload)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
 	}
-	postArena, err := decoderPostFilterScratchArenaUpperBound(payloads, 64, probeEvents)
+	postArena, err := decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, probeEvents, probePayload)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
@@ -163,6 +169,10 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: arena size: %w", err)
+	}
+	if err := arenaSize.addBytes(source.payloadBufferLen()); err != nil {
+		workerPool.Close()
+		return nil, fmt.Errorf("goav1: payload buffer size: %w", err)
 	}
 	arena := newDecoderArena(arenaSize)
 
@@ -181,12 +191,13 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	}
 
 	d := &Decoder{
-		pool:        pool,
-		outputPool:  outputPool,
-		workerPool:  workerPool,
-		payloads:    payloads,
-		format:      format,
-		useExternal: useExternal,
+		pool:          pool,
+		outputPool:    outputPool,
+		workerPool:    workerPool,
+		payloadSource: source,
+		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
+		format:        format,
+		useExternal:   useExternal,
 	}
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
@@ -293,18 +304,22 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	if d.closed {
 		return nil, false, errors.New("goav1: decoder closed")
 	}
-	if d.next >= len(d.payloads) {
+	if d.next >= d.payloadSource.len() {
 		return nil, false, nil
 	}
 	i := d.next
 	d.next++
+	payload, err := d.payloadSource.payloadAt(i, d.payloadBuf)
+	if err != nil {
+		return nil, false, fmt.Errorf("goav1: frame %d payload: %w", i, err)
+	}
 
 	var result DecoderFrameWorkResidualStreamResult
 	postFilter := DecoderFrameWorkPostFilterRunner(&d.postFilter)
 	if d.useExternal {
 		postFilter = &d.external
 	}
-	if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, d.payloads[i], postFilter); err != nil {
+	if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter); err != nil {
 		return nil, false, fmt.Errorf("goav1: frame %d: %w", i, err)
 	}
 

@@ -14,23 +14,18 @@ import (
 // caller-owned postfilter publication path when superres needs a detached
 // upscaled reference surface.
 type decoder struct {
-	dec      *av1.Decoder
-	payloads [][]byte
+	dec *av1.Decoder
 }
 
-func newDecoder(frames []av1.IVFFrame, workers int) (*decoder, error) {
+func newDecoder(src io.ReaderAt, size int64, workers int) (*decoder, av1.IVFHeader, error) {
 	if workers < 1 {
-		return nil, fmt.Errorf("workers must be >= 1, got %d", workers)
+		return nil, av1.IVFHeader{}, fmt.Errorf("workers must be >= 1, got %d", workers)
 	}
-	payloads := make([][]byte, len(frames))
-	for i, f := range frames {
-		payloads[i] = f.Payload
-	}
-	dec, err := av1.NewDecoder(payloads, av1.WithWorkers(workers))
+	dec, header, err := av1.NewDecoderFromIVFReaderAt(src, size, av1.WithWorkers(workers))
 	if err != nil {
-		return nil, err
+		return nil, header, err
 	}
-	return &decoder{dec: dec, payloads: payloads}, nil
+	return &decoder{dec: dec}, header, nil
 }
 
 // Close releases the worker goroutine pool. It is safe to call more than once.
@@ -55,14 +50,14 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 
 	var totalBytes int64
 	completed := 0
-	for i, payload := range d.payloads {
+	for i := 0; ; i++ {
 		start := time.Now()
 		frames, ok, err := d.dec.DecodeNext()
 		if err != nil {
 			return totalBytes, completed, fmt.Errorf("frame %d: %w", i, err)
 		}
 		if !ok {
-			return totalBytes, completed, fmt.Errorf("frame %d: decoder ended before payload", i)
+			break
 		}
 		elapsed := time.Since(start)
 
@@ -78,8 +73,8 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 			completed++
 		}
 		if !quiet {
-			fmt.Fprintf(log, "frame %d payload=%d ms=%.3f outputs=%d completed_frames=%d\n",
-				i, len(payload), float64(elapsed.Microseconds())/1000.0, len(frames), completed)
+			fmt.Fprintf(log, "frame %d ms=%.3f outputs=%d completed_frames=%d\n",
+				i, float64(elapsed.Microseconds())/1000.0, len(frames), completed)
 		}
 	}
 	return totalBytes, completed, nil

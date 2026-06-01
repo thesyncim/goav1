@@ -30,8 +30,6 @@ import (
 	"io"
 	"os"
 	"time"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 func main() {
@@ -63,21 +61,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 
 	inputPath := fs.Arg(0)
-	ivfBytes, err := os.ReadFile(inputPath)
+	input, err := os.Open(inputPath)
 	if err != nil {
-		return fmt.Errorf("read %q: %w", inputPath, err)
+		return fmt.Errorf("open %q: %w", inputPath, err)
 	}
-
-	// Collect every IVF frame payload up-front. The public stream runner
-	// accepts a slice of payloads in display order; for small/medium files
-	// this is the simplest end-to-end driver. A streaming reader could push
-	// payloads through RunLowOverheadInto one at a time.
-	frames, header, err := collectIVFFrames(ivfBytes)
+	defer input.Close()
+	info, err := input.Stat()
 	if err != nil {
-		return fmt.Errorf("ivf parse: %w", err)
-	}
-	if len(frames) == 0 {
-		return errors.New("ivf contains no frames")
+		return fmt.Errorf("stat %q: %w", inputPath, err)
 	}
 
 	var writer io.WriteCloser
@@ -92,7 +83,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	defer writer.Close()
 
-	dec, err := newDecoder(frames, *workers)
+	dec, header, err := newDecoder(input, info.Size(), *workers)
 	if err != nil {
 		return fmt.Errorf("decoder bind: %w", err)
 	}
@@ -110,31 +101,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	elapsed := time.Since(start)
 
 	fps := float64(decoded) / elapsed.Seconds()
-	mbps := float64(len(ivfBytes)) / (1024 * 1024) / elapsed.Seconds()
+	mbps := float64(info.Size()) / (1024 * 1024) / elapsed.Seconds()
 	fmt.Fprintf(stderr,
 		"aom-go-dec: decoded %d frames in %s (%.2f fps, %.2f MB/s in, %d YUV bytes out)\n",
 		decoded, elapsed.Round(time.Microsecond), fps, mbps, totalBytes)
 	return nil
-}
-
-func collectIVFFrames(ivfBytes []byte) ([]av1.IVFFrame, av1.IVFHeader, error) {
-	it, err := av1.NewIVFIterator(ivfBytes)
-	if err != nil {
-		return nil, av1.IVFHeader{}, err
-	}
-	header := it.Header()
-	frames := make([]av1.IVFFrame, 0, header.FrameCount)
-	for {
-		frame, ok, nextErr := it.Next()
-		if nextErr != nil {
-			return nil, header, nextErr
-		}
-		if !ok {
-			break
-		}
-		frames = append(frames, frame)
-	}
-	return frames, header, nil
 }
 
 // nopWriteCloser wraps an io.Writer with a no-op Close so we can treat

@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
@@ -493,6 +494,46 @@ func TestSimpleDecoderSuperResProfileClipsMatchGolden(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromIVFReaderAtSuperResMatchesGolden(t *testing.T) {
+	clip := superResProfileClips[1]
+	ivf, err := os.ReadFile(profileClipPath(clip.file))
+	if err != nil {
+		t.Fatalf("read clip: %v", err)
+	}
+
+	dec, header, err := av1.NewDecoderFromIVFReaderAt(bytes.NewReader(ivf), int64(len(ivf)))
+	if err != nil {
+		t.Fatalf("NewDecoderFromIVFReaderAt: %v", err)
+	}
+	defer dec.Close()
+	if header.FrameCount != uint32(len(clip.frameMD5Hex)) {
+		t.Fatalf("reader header frame count=%d want %d", header.FrameCount, len(clip.frameMD5Hex))
+	}
+
+	var got []string
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, f := range frames {
+			sum := frameMD5Visible(f)
+			got = append(got, hex.EncodeToString(sum[:]))
+		}
+	}
+	if len(got) != len(clip.frameMD5Hex) {
+		t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+	}
+	for i, want := range clip.frameMD5Hex {
+		if got[i] != want {
+			t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, got[i], want)
+		}
+	}
+}
+
 // TestDecodeIVFMatchesGolden exercises the one-shot DecodeIVF helper and asserts
 // each returned independent frame copy hashes to the libaom golden.
 func TestDecodeIVFMatchesGolden(t *testing.T) {
@@ -587,6 +628,15 @@ func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
 			}
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("NewDecoderFromIVF err=%v want %v", err, tc.wantErr)
+			}
+		})
+		t.Run(tc.name+"/NewDecoderFromIVFReaderAt", func(t *testing.T) {
+			dec, _, err := av1.NewDecoderFromIVFReaderAt(bytes.NewReader(tc.ivf), int64(len(tc.ivf)))
+			if dec != nil {
+				dec.Close()
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("NewDecoderFromIVFReaderAt err=%v want %v", err, tc.wantErr)
 			}
 		})
 		t.Run(tc.name+"/DecodeIVF", func(t *testing.T) {
