@@ -398,7 +398,7 @@ type coeffTransformRecorder interface {
 }
 
 func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
-	if ctx == nil {
+	if cdfs == nil || ctx == nil {
 		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
 	}
 	plane, err := CoeffPlaneTypeForPlane(ctxReq.Plane)
@@ -417,10 +417,11 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	req.Plane = plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
 	req.DCSignContext = txbCtx.DCSignContext
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
-	if err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read txb skip: %w", err)
+	geo, ok := coeffGeo(req.Size)
+	if !ok || txbCtx.TXBSkipContext < 0 || txbCtx.TXBSkipContext >= TXBSkipContexts {
+		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
 	}
+	allZero := s.Reader.ReadBinaryCDFUnchecked(&cdfs.TXBSkip[geo.txCtx][txbCtx.TXBSkipContext]) != 0
 
 	selected := transform.TypeDCTDCT
 	selectedClass := transform.Class2D

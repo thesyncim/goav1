@@ -729,10 +729,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if len(coeffs) < maxEOB || len(scan) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
+	coeffs = coeffs[:maxEOB]
+	scan = scan[:maxEOB]
 	scratchLen := geo.scratchLen
 	if len(levelsScratch) < scratchLen {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
+	levelsScratch = levelsScratch[:scratchLen]
 
 	allZero := req.TXBSkip
 	if !req.TXBSkipKnown {
@@ -774,6 +777,10 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 	geoPtr := &coeffGeometryTable[req.Size]
 	posSlice := coeffPosTable[req.Size]
+	if len(posSlice) < maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	posSlice = posSlice[:maxEOB]
 	// Hoist the CoeffBase/CoeffBR CDF-array selection out of the per-coefficient
 	// loop. CoeffBaseCDF/CoeffBRCDF re-derive the transform-size context (a
 	// Dimensions() lookup) and re-validate the plane on every symbol read; here
@@ -794,7 +801,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 	lastC := eob.Position - 1
 	lastPos := int(scan[lastC])
-	if lastPos < 0 || lastPos >= len(posSlice) || lastPos >= len(coeffs) {
+	if lastPos < 0 || lastPos >= maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	lastCtx := coeffLowerLevelsCtxEOBFast(maxEOB, lastC)
@@ -874,7 +881,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
-		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
+		if pos < 0 || pos >= maxEOB {
 			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
@@ -939,11 +946,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	maxScanLine := 0
 	for c := headC; c >= 0; {
 		pos := int(scan[c])
-		// Bound pos against both posSlice and coeffs here. len(posSlice)==maxEOB
-		// and len(coeffs)>=maxEOB (checked above), so on valid input pos<len(coeffs)
-		// whenever pos<len(posSlice); the extra disjunct never fires but lets the
-		// prover drop the bounds check on the coeffs[pos] store below.
-		if pos < 0 || pos >= len(posSlice) || pos >= len(coeffs) {
+		if pos < 0 || pos >= maxEOB {
 			reader.CommitTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
