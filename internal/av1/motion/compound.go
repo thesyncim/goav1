@@ -26,7 +26,18 @@ const (
 	compoundBlendA64MaxAlpha  = 64
 	// CONV_BUF intermediate scratch sizing.
 	compoundMaxConvSamples = maxBlockSize * maxBlockSize
+	compoundIMMaxSamples   = (maxBlockSize + filterTaps - 1) * maxBlockSize
 )
+
+type compoundIM [compoundIMMaxSamples]int32
+
+// CompoundConvolveScratch carries reusable temporary storage for compound
+// two-dimensional interpolation. The 2D path overwrites every sample it reads,
+// so framework callers keep this scratch live across blocks to avoid clearing a
+// large stack array on every compound reference.
+type CompoundConvolveScratch struct {
+	im compoundIM
+}
 
 // compoundRound0 ports get_conv_params_no_round() round_0 selection for the
 // compound (is_compound) convolve. round_0 = ROUND0_BITS (3) for bd <= 10 and
@@ -65,6 +76,12 @@ func compoundConvBufView(buf *CompoundConvBuf, width int, height int) ([]uint16,
 // The block origin (refX, refY) and subpel phases match the single-prediction
 // path; the result is later combined by a compound blend.
 func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
+	return PredictInterCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters, nil)
+}
+
+// PredictInterCompoundRefToConvBufWithScratch is PredictInterCompoundRefToConvBuf
+// using optional caller-owned scratch for the large 2D intermediate block.
+func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	if buf == nil || !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
 	}
@@ -93,7 +110,7 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	offsetBits := bd + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
 	if bytesPerSample == 1 {
-		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset)
+		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, scratch)
 		return nil
 	}
 	load := func(x, y int) int {
@@ -101,26 +118,11 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	}
 	switch {
 	case subX != 0 && subY != 0:
-		const imStride = maxBlockSize
-		var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
-		imH := height + filterTaps - 1
-		for y := range imH {
-			for x := range width {
-				sum := 1 << (bd + filterBits - 1)
-				for k := range filterTaps {
-					sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
-				}
-				im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
-			}
-		}
-		for y := range height {
-			for x := range width {
-				sum := 1 << offsetBits
-				for k := range filterTaps {
-					sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
-				}
-				out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
-			}
+		if scratch != nil {
+			predictInterCompoundRefHighBDToConvBuf2D(out, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bd, load, &scratch.im)
+		} else {
+			var im compoundIM
+			predictInterCompoundRefHighBDToConvBuf2D(out, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bd, load, &im)
 		}
 	case subX != 0:
 		// av1_dist_wtd_convolve_x: bits = FILTER_BITS - round_1.
@@ -164,10 +166,35 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	return nil
 }
 
-func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, subX int, subY int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, roundOffset int) {
+func predictInterCompoundRefHighBDToConvBuf2D(out []uint16, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, load func(int, int) int, im *compoundIM) {
+	const imStride = maxBlockSize
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	imH := height + filterTaps - 1
+	for y := range imH {
+		for x := range width {
+			sum := 1 << (bitDepth + filterBits - 1)
+			for k := range filterTaps {
+				sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
+			}
+			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
+		}
+	}
+	for y := range height {
+		for x := range width {
+			sum := 1 << offsetBits
+			for k := range filterTaps {
+				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+			}
+			out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
+		}
+	}
+}
+
+func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, subX int, subY int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, roundOffset int, scratch *CompoundConvolveScratch) {
 	switch {
 	case subX != 0 && subY != 0:
-		predictInterCompoundRef8ToConvBuf2D(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits)
+		predictInterCompoundRef8ToConvBuf2D(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, scratch)
 	case subX != 0:
 		predictInterCompoundRef8ToConvBufX(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
 	case subY != 0:
@@ -177,9 +204,17 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	}
 }
 
-func predictInterCompoundRef8ToConvBuf2D(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int) {
+func predictInterCompoundRef8ToConvBuf2D(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, scratch *CompoundConvolveScratch) {
+	if scratch != nil {
+		predictInterCompoundRef8ToConvBuf2DWithIM(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, &scratch.im)
+		return
+	}
+	var im compoundIM
+	predictInterCompoundRef8ToConvBuf2DWithIM(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, &im)
+}
+
+func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, im *compoundIM) {
 	const imStride = maxBlockSize
-	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1

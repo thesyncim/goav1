@@ -373,20 +373,27 @@ func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var got CompoundConvBuf
+			var got, gotScratch CompoundConvBuf
 			if err := PredictInterCompoundRefToConvBuf(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
+			}
+			var scratch CompoundConvolveScratch
+			if err := PredictInterCompoundRefToConvBufWithScratch(&gotScratch, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
+				t.Fatalf("PredictInterCompoundRefToConvBufWithScratch: %v", err)
 			}
 			want, err := referenceCompoundConvBuf8(ref, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters)
 			if err != nil {
 				t.Fatalf("reference: %v", err)
 			}
-			if got.Width != tc.width || got.Height != tc.height {
-				t.Fatalf("dims=%dx%d want %dx%d", got.Width, got.Height, tc.width, tc.height)
+			if got.Width != tc.width || got.Height != tc.height || gotScratch.Width != tc.width || gotScratch.Height != tc.height {
+				t.Fatalf("dims default=%dx%d scratch=%dx%d want %dx%d", got.Width, got.Height, gotScratch.Width, gotScratch.Height, tc.width, tc.height)
 			}
 			for i := range tc.width * tc.height {
 				if got.Data[i] != want[i] {
-					t.Fatalf("convbuf[%d]=%d want %d", i, got.Data[i], want[i])
+					t.Fatalf("convbuf default[%d]=%d want %d", i, got.Data[i], want[i])
+				}
+				if gotScratch.Data[i] != want[i] {
+					t.Fatalf("convbuf scratch[%d]=%d want %d", i, gotScratch.Data[i], want[i])
 				}
 			}
 		})

@@ -99,6 +99,9 @@ type FrameWorkInterPredictionScratch struct {
 	// Scaled keeps the high-bit-depth scaled-convolve intermediate block
 	// caller-owned for hot inter-prediction paths.
 	Scaled motion.ScaledConvolveScratch
+	// Compound keeps the translational 2D compound intermediate block
+	// caller-owned for hot inter-prediction paths.
+	Compound motion.CompoundConvolveScratch
 }
 
 func frameWorkScaledConvolveScratch(scratch *FrameWorkInterPredictionScratch) *motion.ScaledConvolveScratch {
@@ -1564,10 +1567,10 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	warp := geom.Width >= 8 && geom.Height >= 8
 	warp0 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[0]
 	warp1 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[1]
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, visit.Prediction.GlobalWarpedMotionCompound[0], &scratch.Scaled); err != nil {
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, visit.Prediction.GlobalWarpedMotionCompound[0], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, visit.Prediction.GlobalWarpedMotionCompound[1], &scratch.Scaled); err != nil {
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, visit.Prediction.GlobalWarpedMotionCompound[1], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
 	switch blend.Type {
@@ -1617,7 +1620,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 // predictBlockInterCompoundRefToConvBuf fills a CONV_BUF with one translational
 // reference predictor at compound precision, mirroring the origin/subpel
 // derivation of predictBlockInterReferencePlaneToScratch.
-func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.CompoundConvBuf, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters, useWarp bool, model tile.WarpedMotionModel, scratch *motion.ScaledConvolveScratch) error {
+func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.CompoundConvBuf, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, filters motion.InterpFilters, useWarp bool, model tile.WarpedMotionModel, scaledScratch *motion.ScaledConvolveScratch, compoundScratch *motion.CompoundConvolveScratch) error {
 	reference, ok := frameWorkReferenceFromTile(refFrame)
 	if !ok {
 		return ErrInvalidBatch
@@ -1637,7 +1640,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, b.Sequence.ColorConfig.BitDepth, mv, filters, scratch)
+		return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, b.Sequence.ColorConfig.BitDepth, mv, filters, scaledScratch)
 	}
 	if useWarp {
 		if err := motion.PredictWarpedCompoundToConvBuf(buf, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -1649,7 +1652,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterCompoundRefToConvBuf(buf, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, refX, refY, geom.Width, geom.Height, subX, subY, filters); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf, ref, geom.BytesPerSample, b.Sequence.ColorConfig.BitDepth, refX, refY, geom.Width, geom.Height, subX, subY, filters, compoundScratch); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
