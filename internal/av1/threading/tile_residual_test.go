@@ -1142,6 +1142,78 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 	}
 }
 
+func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
+	var scratch FrameWorkTileResidualScratch
+	scratch.paletteArena = make([]tile.PaletteModeScratch, 0, 1)
+
+	var firstMaps tile.PaletteModeScratch
+	firstMaps.Y[0] = 7
+	firstMaps.UV[0] = 9
+	var secondMaps tile.PaletteModeScratch
+	secondMaps.Y[0] = 11
+	secondMaps.UV[0] = 13
+
+	appendVisit := func(visit tile.BlockLoopVisit) {
+		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(visit)
+		eventIndex := len(scratch.reconEvents)
+		scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
+			kind:  frameWorkReconEventBlockBegin,
+			visit: buffered,
+		})
+		scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
+	}
+	appendVisit(tile.BlockLoopVisit{
+		Prediction: tile.BlockPredictionModeResult{
+			Valid: true,
+			Intra: true,
+			Palette: tile.PaletteModeResult{
+				YSize:  2,
+				UVSize: 2,
+				YMap:   &firstMaps.Y,
+				UVMap:  &firstMaps.UV,
+			},
+		},
+	})
+	firstMaps.Y[0] = 99
+	firstMaps.UV[0] = 99
+	appendVisit(tile.BlockLoopVisit{
+		Prediction: tile.BlockPredictionModeResult{
+			Valid: true,
+			Intra: true,
+			Palette: tile.PaletteModeResult{
+				YSize:  2,
+				UVSize: 2,
+				YMap:   &secondMaps.Y,
+				UVMap:  &secondMaps.UV,
+			},
+		},
+	})
+	secondMaps.Y[0] = 99
+	secondMaps.UV[0] = 99
+
+	for i := range scratch.reconEvents {
+		pal := scratch.reconEvents[i].visit.Prediction.Palette
+		if pal.YMap != nil || pal.UVMap != nil {
+			t.Fatalf("event %d retained append-unstable palette pointers", i)
+		}
+	}
+	if err := scratch.finalizeDeferredPalettes(); err != nil {
+		t.Fatal(err)
+	}
+	if got := scratch.reconEvents[0].visit.Prediction.Palette.YMap[0]; got != 7 {
+		t.Fatalf("first Y map = %d, want 7", got)
+	}
+	if got := scratch.reconEvents[0].visit.Prediction.Palette.UVMap[0]; got != 9 {
+		t.Fatalf("first UV map = %d, want 9", got)
+	}
+	if got := scratch.reconEvents[1].visit.Prediction.Palette.YMap[0]; got != 11 {
+		t.Fatalf("second Y map = %d, want 11", got)
+	}
+	if got := scratch.reconEvents[1].visit.Prediction.Palette.UVMap[0]; got != 13 {
+		t.Fatalf("second UV map = %d, want 13", got)
+	}
+}
+
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsAllocs(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	allocs := testing.AllocsPerRun(1000, func() {

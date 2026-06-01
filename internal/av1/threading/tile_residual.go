@@ -67,6 +67,21 @@ type frameWorkReconEvent struct {
 	currentQIndex uint8
 }
 
+const (
+	frameWorkReconPaletteY uint8 = 1 << iota
+	frameWorkReconPaletteUV
+)
+
+// frameWorkReconPaletteBinding records which buffered reconstruction event
+// should be rebound to which value-arena palette maps once event collection is
+// complete. Keeping the binding out of frameWorkReconEvent avoids growing every
+// non-palette event for a rare screen-content path.
+type frameWorkReconPaletteBinding struct {
+	eventIndex   int
+	paletteIndex int
+	mask         uint8
+}
+
 // FrameWorkTileResidualCDFs groups the caller-owned entropy states needed to
 // walk block syntax, decode transform trees, and decode residual coefficients.
 type FrameWorkTileResidualCDFs struct {
@@ -269,12 +284,15 @@ type FrameWorkTileResidualScratch struct {
 	// it). paletteArena holds deep-copied palette colour maps for buffered visits
 	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
 	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
-	// later blocks overwrite, so a buffered visit must own its own copy. All
-	// three retain capacity across tiles and are sliced to zero length per job by
+	// later blocks overwrite, so a buffered visit must own its own copy. Palette
+	// events store indexes while the arena is still appendable; pointers into the
+	// final value arena are installed immediately before replay. All buffers
+	// retain capacity across tiles and are sliced to zero length per job by
 	// resetDeferredReconBuffers.
-	reconEvents  []frameWorkReconEvent
-	coeffArena   []int16
-	paletteArena []*tile.PaletteModeScratch
+	reconEvents     []frameWorkReconEvent
+	coeffArena      []int16
+	paletteArena    []tile.PaletteModeScratch
+	paletteBindings []frameWorkReconPaletteBinding
 
 	// wavefront holds the reusable SB-row wavefront scheduling state used when
 	// the deferred reconstruction replay runs across multiple goroutines. It is
@@ -415,29 +433,21 @@ func (wf *frameWorkReconWavefront) workerResidual(worker int) []int16 {
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconEvents = s.reconEvents[:0]
 	s.coeffArena = s.coeffArena[:0]
-	// Retain the previously allocated palette scratch backings (they live in the
-	// slice's capacity beyond the reset length) so a worker reusing this scratch
-	// across jobs allocates a palette backing at most once per arena slot.
 	s.paletteArena = s.paletteArena[:0]
+	s.paletteBindings = s.paletteBindings[:0]
 }
 
-// nextPaletteScratch returns a per-block palette map backing from the arena,
-// reusing a previously allocated entry from the slice's retained capacity when
-// available and allocating a fresh one otherwise. The returned pointer is
-// stable for the lifetime of the buffered events because the arena stores
-// pointers (slice growth never moves the pointed-to backings).
-func (s *FrameWorkTileResidualScratch) nextPaletteScratch() *tile.PaletteModeScratch {
+// nextPaletteScratch returns the value-arena index for a per-block palette map
+// backing. Callers must store the index, not a pointer, while event collection
+// is still appending: slice growth may move value elements.
+func (s *FrameWorkTileResidualScratch) nextPaletteScratch() int {
 	n := len(s.paletteArena)
 	if n < cap(s.paletteArena) {
 		s.paletteArena = s.paletteArena[:n+1]
-		if s.paletteArena[n] == nil {
-			s.paletteArena[n] = &tile.PaletteModeScratch{}
-		}
-		return s.paletteArena[n]
+		return n
 	}
-	store := &tile.PaletteModeScratch{}
-	s.paletteArena = append(s.paletteArena, store)
-	return store
+	s.paletteArena = append(s.paletteArena, tile.PaletteModeScratch{})
+	return n
 }
 
 // captureDeferredVisit returns a copy of visit safe to buffer for deferred
@@ -446,24 +456,58 @@ func (s *FrameWorkTileResidualScratch) nextPaletteScratch() *tile.PaletteModeScr
 // overwrite during pass 1; the fused path reads them immediately, but the
 // deferred path replays prediction after the whole tile has decoded, by which
 // time the shared scratch holds a later block's map. Deep-copy the referenced
-// map(s) into the scratch palette arena and repoint the buffered visit so pass
-// 2 reads this block's own indices. Non-palette visits (the overwhelming
-// majority) are returned unchanged and pay no copy.
-func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoopVisit) tile.BlockLoopVisit {
+// map(s) into the scratch palette arena and return an index binding so pass 2
+// can install stable pointers after event collection completes. Non-palette
+// visits (the overwhelming majority) are returned unchanged and pay no copy.
+func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoopVisit) (tile.BlockLoopVisit, int, uint8) {
 	pal := &visit.Prediction.Palette
 	if pal.YMap == nil && pal.UVMap == nil {
-		return visit
+		return visit, -1, 0
 	}
-	store := s.nextPaletteScratch()
+	paletteIndex := s.nextPaletteScratch()
+	store := &s.paletteArena[paletteIndex]
+	mask := uint8(0)
 	if pal.YMap != nil {
 		store.Y = *pal.YMap
-		pal.YMap = &store.Y
+		pal.YMap = nil
+		mask |= frameWorkReconPaletteY
 	}
 	if pal.UVMap != nil {
 		store.UV = *pal.UVMap
-		pal.UVMap = &store.UV
+		pal.UVMap = nil
+		mask |= frameWorkReconPaletteUV
 	}
-	return visit
+	return visit, paletteIndex, mask
+}
+
+func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(eventIndex int, paletteIndex int, mask uint8) {
+	if mask == 0 {
+		return
+	}
+	s.paletteBindings = append(s.paletteBindings, frameWorkReconPaletteBinding{
+		eventIndex:   eventIndex,
+		paletteIndex: paletteIndex,
+		mask:         mask,
+	})
+}
+
+func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
+	for i := range s.paletteBindings {
+		binding := &s.paletteBindings[i]
+		if binding.eventIndex < 0 || binding.eventIndex >= len(s.reconEvents) || binding.paletteIndex < 0 || binding.paletteIndex >= len(s.paletteArena) {
+			return ErrInvalidBatch
+		}
+		ev := &s.reconEvents[binding.eventIndex]
+		store := &s.paletteArena[binding.paletteIndex]
+		pal := &ev.visit.Prediction.Palette
+		if binding.mask&frameWorkReconPaletteY != 0 {
+			pal.YMap = &store.Y
+		}
+		if binding.mask&frameWorkReconPaletteUV != 0 {
+			pal.UVMap = &store.UV
+		}
+	}
+	return nil
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -971,6 +1015,9 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		return scratch.stats, err
 	}
 	if scratch.controller.deferReconstruction {
+		if err := scratch.finalizeDeferredPalettes(); err != nil {
+			return scratch.stats, err
+		}
 		if scratch.controller.wavefrontWorkers > 1 {
 			if err := scratch.controller.replayDeferredReconstructionWavefront(); err != nil {
 				return scratch.stats, err
@@ -1130,10 +1177,13 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 		c.stats.CoefficientBlocks++
 	}
 	if c.deferReconstruction {
+		bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
+		eventIndex := len(c.scratch.reconEvents)
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			visit: c.scratch.captureDeferredVisit(*visit),
+			visit: bufferedVisit,
 		})
+		c.scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
 		return nil
 	}
 	return c.fusedReconState().predictBlockBegin(visit)
@@ -1368,12 +1418,15 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 		buffered.Coeffs = nil
 	}
 	buffered.Scan = nil
+	bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
+	eventIndex := len(c.scratch.reconEvents)
 	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 		kind:          frameWorkReconEventTXB,
-		visit:         c.scratch.captureDeferredVisit(*visit),
+		visit:         bufferedVisit,
 		block:         buffered,
 		currentQIndex: currentQIndex,
 	})
+	c.scratch.rememberDeferredPalette(eventIndex, paletteIndex, paletteMask)
 }
 
 // replayDeferredReconstruction runs the buffered predict and reconstruct events
