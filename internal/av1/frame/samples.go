@@ -42,6 +42,20 @@ func SamplePlaneLen(plane Plane, bytesPerSample int) (int, error) {
 	return need, err
 }
 
+// BindSamplePlane binds caller-owned uint16 storage without loading visible
+// samples. The returned view is suitable for output buffers that will be fully
+// written before being stored.
+func BindSamplePlane(dst []uint16, plane Plane, bytesPerSample int) (SamplePlane, error) {
+	strideSamples, need, err := samplePlaneLayout(plane, bytesPerSample, false)
+	if err != nil {
+		return SamplePlane{}, err
+	}
+	if len(dst) < need {
+		return SamplePlane{}, ErrShortBuffer
+	}
+	return SamplePlane{Pix: dst[:need], Stride: strideSamples, Width: plane.Width, Height: plane.Height}, nil
+}
+
 // BorderedSamplePlaneLen reports the caller-owned uint16 scratch layout
 // required to hold plane plus horizontal and vertical sample borders. align is
 // a power-of-two sample alignment for the returned stride; values <= 1 mean no

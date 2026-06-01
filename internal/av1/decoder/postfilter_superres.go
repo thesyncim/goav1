@@ -267,7 +267,7 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		if err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres coded scratch plane %d: %w", plane, err)
 		}
-		dstSamples, err := frame.LoadSamplePlane(req.OutputScratch[plane], dstPlane, output.Layout.BytesPerSample)
+		dstSamples, err := frame.BindSamplePlane(req.OutputScratch[plane], dstPlane, output.Layout.BytesPerSample)
 		if err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres output scratch plane %d: %w", plane, err)
 		}

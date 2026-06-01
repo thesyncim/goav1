@@ -608,7 +608,45 @@ func BenchmarkFrameWorkSuperResPostFilterScratchSizeBindRequest(b *testing.B) {
 	}
 }
 
-func testFrameWorkSuperResPostFilterRequest(t *testing.T, ctx FrameWorkPostFilterContext) FrameWorkSuperResPostFilterRequest {
+func BenchmarkApplySuperResPostFilter(b *testing.B) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          960,
+			UpscaledWidth:       1280,
+			Height:              720,
+			SuperResEnabled:     true,
+			SuperResDenominator: 12,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 64)
+	if err != nil {
+		b.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(b, codedFormat)
+	for y := 0; y < output.Y.Height; y++ {
+		row := output.Y.Pix[y*output.Y.Stride:]
+		for x := 0; x < output.Y.Width; x++ {
+			row[x] = byte((x + y) & 0xff)
+		}
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := testFrameWorkSuperResPostFilterRequest(b, ctx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := ctx.ApplySuperResPostFilter(req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Planes != 3 {
+			b.Fatalf("planes=%d want 3", result.Planes)
+		}
+	}
+}
+
+func testFrameWorkSuperResPostFilterRequest(t testing.TB, ctx FrameWorkPostFilterContext) FrameWorkSuperResPostFilterRequest {
 	t.Helper()
 	size, err := ctx.SuperResPostFilterScratchLen()
 	if err != nil {

@@ -168,6 +168,25 @@ func TestSamplePlaneLoadStoreHighBitDepth(t *testing.T) {
 	}
 }
 
+func TestBindSamplePlane(t *testing.T) {
+	plane := Plane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
+	need, err := SamplePlaneLen(plane, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := make([]uint16, need+3)
+	samples, err := BindSamplePlane(scratch, plane, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if samples.Stride != 8 || samples.Width != 5 || samples.Height != 3 || len(samples.Pix) != need || cap(samples.Pix) != cap(scratch) {
+		t.Fatalf("samples=%+v len/cap=%d/%d want len %d cap %d", samples, len(samples.Pix), cap(samples.Pix), need, cap(scratch))
+	}
+	if _, err := BindSamplePlane(scratch[:need-1], plane, 1); !errors.Is(err, ErrShortBuffer) {
+		t.Fatalf("short bind err=%v want %v", err, ErrShortBuffer)
+	}
+}
+
 func TestBorderedSamplePlaneLoadStore8Bit(t *testing.T) {
 	plane := Plane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
 	for y := 0; y < plane.Height; y++ {
@@ -363,6 +382,23 @@ func TestSamplePlaneAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("sample plane helpers allocated: %f", allocs)
+	}
+}
+
+func TestBindSamplePlaneAllocs(t *testing.T) {
+	plane := Plane{Pix: make([]byte, 32*16), Stride: 32, Width: 16, Height: 16}
+	scratch := make([]uint16, 32*16)
+	allocs := testing.AllocsPerRun(1000, func() {
+		samples, err := BindSamplePlane(scratch, plane, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if samples.Stride != 32 || samples.Width != 16 || samples.Height != 16 {
+			t.Fatalf("samples=%+v", samples)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("BindSamplePlane allocated: %f", allocs)
 	}
 }
 
