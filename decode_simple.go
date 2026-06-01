@@ -42,9 +42,9 @@ type Decoder struct {
 	sideData DecoderFrameWorkSideData
 	batch    DecoderFrameWorkBatchResidualRunner
 
-	refSurface []int
-	refFrames  []*Frame
-	releases   []int
+	refSurface [InterRefsPerFrame]int
+	refFrames  [InterRefsPerFrame]*Frame
+	releases   [RefFrames]int
 
 	scratch    DecoderFrameWorkResidualStreamScratch
 	runner     DecoderFrameWorkResidualStreamRunner
@@ -58,6 +58,7 @@ type Decoder struct {
 	closed      bool
 	useExternal bool
 	visible     []*Frame
+	visibleOne  [1]*Frame
 }
 
 // decoderConfig holds resolved construction options.
@@ -167,18 +168,19 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		pool:        pool,
 		outputPool:  outputPool,
 		workerPool:  workerPool,
-		refSurface:  make([]int, InterRefsPerFrame),
-		refFrames:   make([]*Frame, InterRefsPerFrame),
-		releases:    make([]int, RefFrames),
 		payloads:    payloads,
 		format:      format,
 		useExternal: useExternal,
-		visible:     make([]*Frame, 0, plan.Size.Event.Outputs),
 	}
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size)
+	if cap(d.scratch.Outputs) > 0 {
+		d.visible = d.scratch.Outputs[:0]
+	} else {
+		d.visible = d.visibleOne[:0]
+	}
 	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBound(payloads, d.scratch.Events)
 	if err != nil {
 		workerPool.Close()
@@ -208,9 +210,9 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		Refs:              &d.refs,
 		FramePool:         &d.pool,
 		Align:             64,
-		ReferenceSurfaces: d.refSurface,
-		ReferenceFrames:   d.refFrames,
-		Releases:          d.releases,
+		ReferenceSurfaces: d.refSurface[:],
+		ReferenceFrames:   d.refFrames[:],
+		Releases:          d.releases[:],
 		WorkerPool:        d.workerPool,
 		SideData:          &d.sideData,
 		Stats:             &d.stats,
@@ -231,9 +233,6 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)
 	}
 	d.runner = runner
-	if cap(d.visible) == 0 {
-		d.visible = make([]*Frame, 0, 1)
-	}
 	return d, nil
 }
 
