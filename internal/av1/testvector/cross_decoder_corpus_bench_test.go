@@ -29,8 +29,9 @@ package testvector
 //   - SAME WORK. goav1 runs the FULL decode INCLUDING the post-filter chain
 //     (loop-filter / CDEF / loop-restoration / super-res / film-grain) for
 //     every visible frame, via the exact FrameWork plumbing the oracle
-//     conformance harness uses (RunEventWithContextAndExternalReferences plus
-//     the libaomFrameWork* runners/scratch helpers in oracle_enabled.go).
+//     conformance harness uses. Timed runs discard output just like the C
+//     decoders; MD5 verification is performed once while loading the corpus so
+//     hashing does not pollute the throughput number.
 //   - CORRECTNESS GATE / CONFORMANCE PROBE. For every clip goav1 accumulates a
 //     stream MD5 over the concatenated visible-frame planes (the libaom
 //     test/md5_helper.h layout: visible Y rows, then U, then V, no stride
@@ -68,6 +69,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
@@ -372,6 +374,14 @@ type corpusDecodeResult struct {
 // motion store suffice; we still honor show_frame / show_existing_frame so the
 // emitted-frame set matches aomdec/dav1d exactly.
 func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
+	return decodeCorpusClipWithMode(ivfData, true)
+}
+
+func decodeCorpusClipDiscard(ivfData []byte) (corpusDecodeResult, error) {
+	return decodeCorpusClipWithMode(ivfData, false)
+}
+
+func decodeCorpusClipWithMode(ivfData []byte, verify bool) (corpusDecodeResult, error) {
 	var res corpusDecodeResult
 	it, err := ivf.NewIterator(ivfData)
 	if err != nil {
@@ -384,10 +394,13 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 	defer workerPool.Close()
 
 	state := &corpusDecodeState{
-		streamHash: md5.New(),
+		verify:     verify,
 		workerPool: workerPool,
 		layers:     newCorpusLayers(),
 		allIntra:   true,
+	}
+	if verify {
+		state.streamHash = md5.New()
 	}
 	defer state.layers.keepAlive()
 
@@ -412,7 +425,9 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 	}
 
 	var sum MD5
-	state.streamHash.Sum(sum[:0])
+	if verify {
+		state.streamHash.Sum(sum[:0])
+	}
 	res.streamMD5 = sum
 	res.frameMD5s = append(res.frameMD5s, state.frameMD5s...)
 	res.frames = state.visibleFrames
@@ -431,9 +446,12 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 // corpusDecodeState carries the running decode across IVF frames: the shared
 // per-layer pools, the streaming MD5 accumulator, and observed metadata.
 type corpusDecodeState struct {
-	streamHash hash.Hash
-	workerPool *threading.Pool
-	layers     *corpusSpatialLayers
+	verify      bool
+	streamHash  hash.Hash
+	workerPool  *threading.Pool
+	layers      *corpusSpatialLayers
+	sideData    corpusFrameWorkSideDataRunner
+	postScratch corpusPostFilterScratch
 
 	ivfFrames     int
 	visibleFrames int
@@ -477,7 +495,7 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 			&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32,
 			referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:],
 			s.workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts,
-			libaomFrameWorkSideDataRunner{},
+			&s.sideData,
 			libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				return corpusRunTileWork(ctx, layer, layers, referenceSurfaces[:], &currentMVSurface)
 			}),
@@ -487,7 +505,7 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 				if err != nil {
 					return fmt.Errorf("supported postfilter scratch: %w", err)
 				}
-				post.Scratch = libaomPostFilterScratchStorage(size)
+				post.Scratch = s.postScratch.bind(size)
 				if err := post.Apply(ctx); err != nil {
 					return fmt.Errorf("apply postfilters: %w", err)
 				}
@@ -525,42 +543,203 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 			if event.FrameHeader.FrameType != parser.FrameTypeKey {
 				s.allIntra = false
 			}
-			// Cache the post-filtered surface MD5 for show_existing_frame reuse.
-			surface := -1
-			switch result.Step.Kind {
-			case decoder.FrameWorkStepBegin:
-				surface = result.Step.Begin.Surface
-			case decoder.FrameWorkStepTile:
-				surface = result.Step.Tile.Surface
-			}
-			if surface >= 0 && surface < len(layer.md5BySurface) {
-				digest, err := FrameMD5(*postOutput)
-				if err != nil {
-					return err
-				}
-				layer.md5BySurface[surface] = digest
-				layer.md5Valid[surface] = true
-			}
 			// Only show_frame=true frames are emitted by aomdec/dav1d.
 			if event.FrameHeader.ShowFrame {
-				if err := s.hashVisibleFrame(*postOutput); err != nil {
+				if err := s.emitVisibleFrame(*postOutput); err != nil {
 					return err
 				}
 			}
 		} else if event.Kind == decoder.EventExistingFrame && result.Step.Kind == decoder.FrameWorkStepShowExisting {
 			// show_existing_frame re-displays a retained reference surface; the
 			// emitted pixels are the cached surface, so re-hash its plane bytes.
+			if !s.verify {
+				s.visibleFrames++
+				continue
+			}
 			surface := result.Step.ShowExisting.Surface
 			f, err := layer.pool.Frame(surface)
 			if err != nil {
 				return fmt.Errorf("show_existing surface=%d: %w", surface, err)
 			}
-			if err := s.hashVisibleFrame(*f); err != nil {
+			if err := s.emitVisibleFrame(*f); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func (s *corpusDecodeState) emitVisibleFrame(f frame.Frame) error {
+	if !s.verify {
+		s.visibleFrames++
+		return nil
+	}
+	return s.hashVisibleFrame(f)
+}
+
+type corpusFrameWorkSideDataRunner struct {
+	scratch decoder.FrameWorkSideDataScratch
+}
+
+func (r *corpusFrameWorkSideDataRunner) BindFrameWorkSideData(state *decoder.FrameWorkState, ctx decoder.FrameWorkBatch) error {
+	size, err := decoder.FrameWorkSideDataScratchLen(ctx)
+	if err != nil {
+		return err
+	}
+	r.ensure(size)
+	side, err := size.BindRunner(r.scratch)
+	if err != nil {
+		return err
+	}
+	return side.BindFrameWorkSideData(state, ctx)
+}
+
+func (r *corpusFrameWorkSideDataRunner) ensure(size decoder.FrameWorkSideDataScratchSize) {
+	if len(r.scratch.CDEFIndex) < size.CDEF {
+		r.scratch.CDEFIndex = make([]uint8, size.CDEF)
+	}
+	if len(r.scratch.CDEFRead) < size.CDEF {
+		r.scratch.CDEFRead = make([]bool, size.CDEF)
+	}
+	if len(r.scratch.LoopFilterRecords) < size.LoopFilterRecords {
+		r.scratch.LoopFilterRecords = make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords)
+	}
+	if len(r.scratch.RestorationRecords) < size.RestorationRecords {
+		r.scratch.RestorationRecords = make([]tile.RestorationUnitRecord, size.RestorationRecords)
+	}
+	if len(r.scratch.RestorationAbove) < size.RestorationBoundary {
+		r.scratch.RestorationAbove = make([]uint16, size.RestorationBoundary)
+	}
+	if len(r.scratch.RestorationBelow) < size.RestorationBoundary {
+		r.scratch.RestorationBelow = make([]uint16, size.RestorationBoundary)
+	}
+}
+
+type corpusPostFilterScratch struct {
+	scratch decoder.FrameWorkPostFilterScratch
+}
+
+func (s *corpusPostFilterScratch) bind(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
+	s.ensure(size)
+	return decoder.FrameWorkPostFilterScratch{
+		LoopFilterEdges: s.scratch.LoopFilterEdges[:libaomMaxInt(size.LoopFilter.Edges, 0)],
+
+		CDEFSamples:       corpusUint16PlaneScratch(s.scratch.CDEFSamples, size.CDEF.Samples),
+		CDEFDst:           corpusUint16PlaneScratch(s.scratch.CDEFDst, size.CDEF.Dst),
+		CDEFDirectionGrid: s.scratch.CDEFDirectionGrid[:libaomMaxInt(size.CDEF.DirectionGrid, 0)],
+		CDEFVarianceGrid:  s.scratch.CDEFVarianceGrid[:libaomMaxInt(size.CDEF.VarianceGrid, 0)],
+		CDEFInput:         s.scratch.CDEFInput[:libaomMaxInt(size.CDEF.Input, 0)],
+		CDEFUnitDst:       s.scratch.CDEFUnitDst[:libaomMaxInt(size.CDEF.UnitDst, 0)],
+
+		SuperResOutputFrame: s.scratch.SuperResOutputFrame[:libaomMaxInt(size.SuperRes.OutputFrame, 0)],
+		SuperResCoded:       corpusUint16PlaneScratch(s.scratch.SuperResCoded, size.SuperRes.CodedSamples),
+		SuperResOutput:      corpusUint16PlaneScratch(s.scratch.SuperResOutput, size.SuperRes.OutputSamples),
+
+		RestorationData:   s.scratch.RestorationData[:libaomMaxInt(size.Restoration.Samples.DataLen, 0)],
+		RestorationDst:    s.scratch.RestorationDst[:libaomMaxInt(size.Restoration.Samples.DstLen, 0)],
+		RestorationWiener: s.scratch.RestorationWiener[:libaomMaxInt(size.Restoration.Apply.Unit.Wiener, 0)],
+		RestorationSGR:    s.scratch.RestorationSGR[:libaomMaxInt(size.Restoration.Apply.Unit.SGRProj, 0)],
+		RestorationAbove:  s.scratch.RestorationAbove[:libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)],
+		RestorationBelow:  s.scratch.RestorationBelow[:libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)],
+
+		FilmGrainOutputFrame:   s.scratch.FilmGrainOutputFrame[:libaomMaxInt(size.FilmGrain.OutputFrame, 0)],
+		FilmGrainLumaGrain:     s.scratch.FilmGrainLumaGrain[:libaomMaxInt(size.FilmGrain.LumaGrain, 0)],
+		FilmGrainChromaGrain:   corpusInt16ChromaScratch(s.scratch.FilmGrainChromaGrain, size.FilmGrain.ChromaGrain),
+		FilmGrainLumaSamples:   s.scratch.FilmGrainLumaSamples[:libaomMaxInt(size.FilmGrain.LumaSamples, 0)],
+		FilmGrainChromaSamples: corpusUint16ChromaScratch(s.scratch.FilmGrainChromaSamples, size.FilmGrain.ChromaSamples),
+	}
+}
+
+func (s *corpusPostFilterScratch) ensure(size decoder.FrameWorkPostFilterScratchSize) {
+	if len(s.scratch.LoopFilterEdges) < size.LoopFilter.Edges {
+		s.scratch.LoopFilterEdges = make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.LoopFilter.Edges)
+	}
+	for plane := 0; plane < 3; plane++ {
+		if len(s.scratch.CDEFSamples[plane]) < size.CDEF.Samples[plane] {
+			s.scratch.CDEFSamples[plane] = make([]uint16, size.CDEF.Samples[plane])
+		}
+		if len(s.scratch.CDEFDst[plane]) < size.CDEF.Dst[plane] {
+			s.scratch.CDEFDst[plane] = make([]uint16, size.CDEF.Dst[plane])
+		}
+		if len(s.scratch.SuperResCoded[plane]) < size.SuperRes.CodedSamples[plane] {
+			s.scratch.SuperResCoded[plane] = make([]uint16, size.SuperRes.CodedSamples[plane])
+		}
+		if len(s.scratch.SuperResOutput[plane]) < size.SuperRes.OutputSamples[plane] {
+			s.scratch.SuperResOutput[plane] = make([]uint16, size.SuperRes.OutputSamples[plane])
+		}
+	}
+	if len(s.scratch.CDEFDirectionGrid) < size.CDEF.DirectionGrid {
+		s.scratch.CDEFDirectionGrid = make([]cdef.DirectionGrid, size.CDEF.DirectionGrid)
+	}
+	if len(s.scratch.CDEFVarianceGrid) < size.CDEF.VarianceGrid {
+		s.scratch.CDEFVarianceGrid = make([]cdef.VarianceGrid, size.CDEF.VarianceGrid)
+	}
+	if len(s.scratch.CDEFInput) < size.CDEF.Input {
+		s.scratch.CDEFInput = make([]uint16, size.CDEF.Input)
+	}
+	if len(s.scratch.CDEFUnitDst) < size.CDEF.UnitDst {
+		s.scratch.CDEFUnitDst = make([]uint16, size.CDEF.UnitDst)
+	}
+	if len(s.scratch.SuperResOutputFrame) < size.SuperRes.OutputFrame {
+		s.scratch.SuperResOutputFrame = make([]byte, size.SuperRes.OutputFrame)
+	}
+	if len(s.scratch.RestorationData) < size.Restoration.Samples.DataLen {
+		s.scratch.RestorationData = make([]uint16, size.Restoration.Samples.DataLen)
+	}
+	if len(s.scratch.RestorationDst) < size.Restoration.Samples.DstLen {
+		s.scratch.RestorationDst = make([]uint16, size.Restoration.Samples.DstLen)
+	}
+	if len(s.scratch.RestorationWiener) < size.Restoration.Apply.Unit.Wiener {
+		s.scratch.RestorationWiener = make([]uint16, size.Restoration.Apply.Unit.Wiener)
+	}
+	if len(s.scratch.RestorationSGR) < size.Restoration.Apply.Unit.SGRProj {
+		s.scratch.RestorationSGR = make([]int32, size.Restoration.Apply.Unit.SGRProj)
+	}
+	if len(s.scratch.RestorationAbove) < size.Restoration.Apply.Boundary.Above {
+		s.scratch.RestorationAbove = make([]uint16, size.Restoration.Apply.Boundary.Above)
+	}
+	if len(s.scratch.RestorationBelow) < size.Restoration.Apply.Boundary.Below {
+		s.scratch.RestorationBelow = make([]uint16, size.Restoration.Apply.Boundary.Below)
+	}
+	if len(s.scratch.FilmGrainOutputFrame) < size.FilmGrain.OutputFrame {
+		s.scratch.FilmGrainOutputFrame = make([]byte, size.FilmGrain.OutputFrame)
+	}
+	if len(s.scratch.FilmGrainLumaGrain) < size.FilmGrain.LumaGrain {
+		s.scratch.FilmGrainLumaGrain = make([]int16, size.FilmGrain.LumaGrain)
+	}
+	for plane := 0; plane < 2; plane++ {
+		if len(s.scratch.FilmGrainChromaGrain[plane]) < size.FilmGrain.ChromaGrain[plane] {
+			s.scratch.FilmGrainChromaGrain[plane] = make([]int16, size.FilmGrain.ChromaGrain[plane])
+		}
+		if len(s.scratch.FilmGrainChromaSamples[plane]) < size.FilmGrain.ChromaSamples[plane] {
+			s.scratch.FilmGrainChromaSamples[plane] = make([]uint16, size.FilmGrain.ChromaSamples[plane])
+		}
+	}
+	if len(s.scratch.FilmGrainLumaSamples) < size.FilmGrain.LumaSamples {
+		s.scratch.FilmGrainLumaSamples = make([]uint16, size.FilmGrain.LumaSamples)
+	}
+}
+
+func corpusUint16PlaneScratch(scratch [3][]uint16, size [3]int) [3][]uint16 {
+	return [3][]uint16{
+		scratch[0][:libaomMaxInt(size[0], 0)],
+		scratch[1][:libaomMaxInt(size[1], 0)],
+		scratch[2][:libaomMaxInt(size[2], 0)],
+	}
+}
+
+func corpusInt16ChromaScratch(scratch [2][]int16, size [2]int) [2][]int16 {
+	return [2][]int16{
+		scratch[0][:libaomMaxInt(size[0], 0)],
+		scratch[1][:libaomMaxInt(size[1], 0)],
+	}
+}
+
+func corpusUint16ChromaScratch(scratch [2][]uint16, size [2]int) [2][]uint16 {
+	return [2][]uint16{
+		scratch[0][:libaomMaxInt(size[0], 0)],
+		scratch[1][:libaomMaxInt(size[1], 0)],
+	}
 }
 
 func corpusChromaName(monochrome, subsamplingX, subsamplingY bool) string {
@@ -741,9 +920,6 @@ type corpusSpatialLayerState struct {
 	mvFrames             []tile.ReferenceMVFrame
 	mvStore              []tile.TemporalMotionReferenceFrame
 	mvLength             int
-
-	md5BySurface []MD5
-	md5Valid     []bool
 }
 
 type corpusSpatialLayers struct {
@@ -808,8 +984,6 @@ func (s *corpusSpatialLayers) layer(event decoder.Event) *corpusSpatialLayerStat
 	layer := &corpusSpatialLayerState{spatialID: id}
 	layer.pool, layer.format, layer.backing, layer.frameSlots, layer.free, layer.used = bindCorpusFramePool(event, 16)
 	layer.mvEntryBacking, layer.temporalEntryBacking, layer.mvFrames, layer.mvStore, layer.mvLength = bindCorpusMotionStore(event, len(layer.frameSlots))
-	layer.md5BySurface = make([]MD5, len(layer.frameSlots))
-	layer.md5Valid = make([]bool, len(layer.frameSlots))
 	s.byID[id] = layer
 	return layer
 }
@@ -1159,16 +1333,14 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	if len(failed) > 0 {
 		var b strings.Builder
 		fmt.Fprintf(&b, "\n!!! CONFORMANCE BUGS: %d corpus clip(s) FAILED goav1 byte-exact decode !!!\n", len(failed))
-		fmt.Fprintf(&b, "    (excluded from timing; these are real decoder bugs on the noted config)\n")
+		fmt.Fprintf(&b, "    (not timed; throughput requires a fully passing corpus)\n")
 		for _, f := range failed {
 			fmt.Fprintf(&b, "    - %-26s %s\n", f.name, f.reason)
 		}
 		t.Log(b.String())
+		t.Fatalf("cross-corpus: %d corpus clip(s) failed goav1 byte-exact decode", len(failed))
 	}
 	if len(clips) == 0 {
-		if len(failed) > 0 {
-			t.Fatalf("cross-corpus: every clip failed goav1 decode (%d failures) -- see conformance report above", len(failed))
-		}
 		t.Skip("cross-corpus: no usable clips")
 	}
 
@@ -1177,7 +1349,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	for _, clip := range clips {
 		clip := clip
 		best, err := minDuration(1, crossBenchRuns, func() error {
-			_, err := decodeCorpusClip(clip.ivfData)
+			result, err := decodeCorpusClipDiscard(clip.ivfData)
+			if err == nil && result.frames != clip.frames {
+				err = fmt.Errorf("decoded %d visible frames, want %d", result.frames, clip.frames)
+			}
 			return err
 		})
 		if err != nil {
@@ -1242,8 +1417,8 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, " goav1 multi-config cross-decoder throughput  (steady-state; PERF TRACKING)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " clips: %d generated (256x144/640x360/1280x720; cq 20/32/55; intra/inter; tiles; 8/10/12-bit; 4:2:0/4:2:2)\n", len(clips))
-	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter.\n", crossBenchRuns)
-	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified (stream MD5 == aomdec; dav1d cross-checks 8-bit 4:2:0).\n")
+	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter; output discarded.\n", crossBenchRuns)
+	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified once while loading corpus; timed path discards output.\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw includes process startup,\n")
 	fmt.Fprintf(&b, "         adj subtracts one measured startup baseline per invocation. At ~48 frames/clip\n")
 	fmt.Fprintf(&b, "         the startup share is small, so raw≈adj (that's the point of the longer clips).\n")

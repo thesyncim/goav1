@@ -294,8 +294,8 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 			if len(blocks) == 0 {
 				continue
 			}
-			for i := range input {
-				input[i] = cdef.VeryLarge
+			if err := frameWorkFillCDEFInputSentinels(input, unitW, unitH); err != nil {
+				return units, blocksTotal, err
 			}
 			if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
@@ -352,6 +352,28 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+func frameWorkFillCDEFInputSentinels(input []uint16, unitW int, unitH int) error {
+	fillW := unitW + 2*cdef.HorizontalBorder
+	fillH := unitH + 2*cdef.VerticalBorder
+	if unitW <= 0 || unitH <= 0 || fillW <= 0 || fillW > cdef.BStride || fillH <= 0 ||
+		!cdefInputRectFits(len(input), fillW, fillH) {
+		return threading.ErrInvalidBatch
+	}
+	fillLen := (fillH-1)*cdef.BStride + fillW
+	for i := range input[:fillLen] {
+		input[i] = cdef.VeryLarge
+	}
+	return nil
+}
+
+func cdefInputRectFits(length int, width int, height int) bool {
+	if width <= 0 || height <= 0 || width > cdef.BStride {
+		return false
+	}
+	last := (height-1)*cdef.BStride + width
+	return last >= 0 && last <= length
 }
 
 func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, unitY int, unitW int, unitH int) error {

@@ -342,6 +342,137 @@ func TestPredictInterCompoundRefToConvBufCopyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T) {
+	const (
+		refW   = 23
+		refH   = 19
+		stride = 32
+	)
+	ref := frame.Plane{Pix: make([]byte, stride*refH), Stride: stride, Width: refW, Height: refH}
+	for y := range refH {
+		for x := range refW {
+			ref.Pix[y*stride+x] = byte((x*37 + y*53 + x*y*3 + 11) & 0xff)
+		}
+	}
+
+	cases := []struct {
+		name          string
+		refX, refY    int
+		width, height int
+		subX, subY    int
+		filters       InterpFilters
+	}{
+		{"copy interior", 3, 4, 16, 8, 0, 0, RegularFilters},
+		{"copy edge", -2, 16, 16, 8, 0, 0, RegularFilters},
+		{"x regular interior", 2, 4, 16, 8, 5, 0, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
+		{"x smooth right edge", 13, 5, 8, 8, 7, 0, InterpFilters{X: InterpEightTapSmooth, Y: InterpEightTapRegular}},
+		{"y sharp top edge", 4, -3, 16, 8, 0, 11, InterpFilters{X: InterpEightTapRegular, Y: InterpMultiTapSharp}},
+		{"2d regular interior", 4, 4, 16, 16, 3, 9, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}},
+		{"2d fourtap left edge", -2, 3, 4, 16, 4, 12, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
+		{"2d bilinear bottom edge", 9, 14, 8, 4, 8, 8, InterpFilters{X: InterpBilinear, Y: InterpBilinear}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got CompoundConvBuf
+			if err := PredictInterCompoundRefToConvBuf(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
+				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
+			}
+			want, err := referenceCompoundConvBuf8(ref, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters)
+			if err != nil {
+				t.Fatalf("reference: %v", err)
+			}
+			if got.Width != tc.width || got.Height != tc.height {
+				t.Fatalf("dims=%dx%d want %dx%d", got.Width, got.Height, tc.width, tc.height)
+			}
+			for i := range tc.width * tc.height {
+				if got.Data[i] != want[i] {
+					t.Fatalf("convbuf[%d]=%d want %d", i, got.Data[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+func referenceCompoundConvBuf8(ref frame.Plane, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) ([]uint16, error) {
+	xKernel, err := interpKernel(filters.X, width, subX)
+	if err != nil {
+		return nil, err
+	}
+	yKernel, err := interpKernel(filters.Y, height, subY)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint16, width*height)
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	round0 := compoundRound0(8)
+	offsetBits := 8 + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	load := func(x, y int) int {
+		return int(loadSample8Clamped(ref, x, y))
+	}
+	switch {
+	case subX != 0 && subY != 0:
+		const imStride = maxBlockSize
+		var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
+		imH := height + filterTaps - 1
+		for y := range imH {
+			for x := range width {
+				sum := 1 << (8 + filterBits - 1)
+				for k := range filterTaps {
+					sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
+				}
+				im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
+			}
+		}
+		for y := range height {
+			for x := range width {
+				sum := 1 << offsetBits
+				for k := range filterTaps {
+					sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
+				}
+				out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
+			}
+		}
+	case subX != 0:
+		bits := filterBits - compoundRound1Bits
+		for y := range height {
+			for x := range width {
+				res := 0
+				for k := range filterTaps {
+					res += int(xKernel[k]) * load(refX+x-foX+k, refY+y)
+				}
+				res = (1 << bits) * roundPowerOfTwo(res, round0)
+				res += roundOffset
+				out[y*width+x] = uint16(res)
+			}
+		}
+	case subY != 0:
+		bits := filterBits - round0
+		for y := range height {
+			for x := range width {
+				res := 0
+				for k := range filterTaps {
+					res += int(yKernel[k]) * load(refX+x, refY+y-foY+k)
+				}
+				res *= 1 << bits
+				res = roundPowerOfTwo(res, compoundRound1Bits) + roundOffset
+				out[y*width+x] = uint16(res)
+			}
+		}
+	default:
+		bits := 2*filterBits - compoundRound1Bits - round0
+		for y := range height {
+			for x := range width {
+				res := load(refX+x, refY+y) << bits
+				res += roundOffset
+				out[y*width+x] = uint16(res)
+			}
+		}
+	}
+	return out, nil
+}
+
 func TestPredictScaledCompoundRefToConvBufIdentityMatchesUnscaled(t *testing.T) {
 	cases := []struct {
 		name     string

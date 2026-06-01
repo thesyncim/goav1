@@ -734,6 +734,30 @@ func testFrameWorkCDEFPlaneChanged(plane frame.Plane, before []byte) bool {
 	return false
 }
 
+func TestFrameWorkFillCDEFInputSentinelsFillsActiveWindowOnly(t *testing.T) {
+	input := make([]uint16, cdef.InputBufferSize)
+	for i := range input {
+		input[i] = 0x7777
+	}
+	const unitW = 32
+	const unitH = 32
+	if err := frameWorkFillCDEFInputSentinels(input, unitW, unitH); err != nil {
+		t.Fatalf("frameWorkFillCDEFInputSentinels: %v", err)
+	}
+
+	fillW := unitW + 2*cdef.HorizontalBorder
+	fillH := unitH + 2*cdef.VerticalBorder
+	fillLen := (fillH-1)*cdef.BStride + fillW
+	for i := range fillLen {
+		if got := input[i]; got != cdef.VeryLarge {
+			t.Fatalf("filled index=%d got=%d want VeryLarge", i, got)
+		}
+	}
+	if got := input[fillLen]; got != 0x7777 {
+		t.Fatalf("inactive next row got=%d want marker", got)
+	}
+}
+
 // TestFrameWorkCopyCDEFInputBottomEdgeReplicatesLastRow pins libaom's CDEF
 // bot_linebuf behavior for chroma planes whose visible height ends inside a
 // non-final CDEF unit. The chroma 33-tall plane in the libaom 66x66 vector hits

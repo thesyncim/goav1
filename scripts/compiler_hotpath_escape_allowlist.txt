@@ -19,10 +19,6 @@ internal/av1/decoder/work.go:651:35: make([]tile.ReferenceMVEntry, need) escapes
 internal/av1/decoder/work.go:651:35: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).publishTemporalMotionFrame:
 internal/av1/decoder/work.go:686:30: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap
 internal/av1/decoder/work.go:686:30: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap in (*FrameWorkState).finishTileResidualCDFs:
-internal/av1/motion/compound.go:426:10: func literal escapes to heap
-internal/av1/motion/compound.go:426:10: func literal escapes to heap in compoundPixelStorer:
-internal/av1/motion/compound.go:431:9: func literal escapes to heap
-internal/av1/motion/compound.go:431:9: func literal escapes to heap in compoundPixelStorer:
 internal/av1/motion/scale_scratch.go:18:13: new(scaledHighBDIM) escapes to heap
 internal/av1/motion/scale_scratch.go:18:13: new(scaledHighBDIM) escapes to heap in init.func1:
 internal/av1/threading/pool.go:955:16: make([]poolWorker, workers) escapes to heap

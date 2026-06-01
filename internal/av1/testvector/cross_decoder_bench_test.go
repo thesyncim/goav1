@@ -74,6 +74,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,7 +125,7 @@ func crossBenchExternalDecoders() []externalDecoder {
 			decodeArgs: func(_ string, input string) []string {
 				// --muxer null discards output but still runs the full decode
 				// + post-filter (film grain defaults on for the null muxer).
-				return []string{"--muxer", "null", "-o", os.DevNull, "--threads", "1", "-i", input}
+				return []string{"--quiet", "--muxer", "null", "-o", os.DevNull, "--threads", "1", "-i", input}
 			},
 			startupArgs: func(_ string) []string { return []string{"--version"} },
 		},
@@ -244,13 +245,25 @@ func minDuration(warmup int, runs int, fn func() error) (time.Duration, error) {
 	return best, nil
 }
 
-// runExternal executes one decoder invocation, discarding stdout/stderr.
+// runExternal executes one decoder invocation, discarding stdout/stderr on the
+// timed success path. On failure it reruns once with captured output so normal
+// benchmark timing never pays progress/log buffering overhead.
 func runExternal(bin string, args []string) error {
 	cmd := exec.Command(bin, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+
+	cmd = exec.Command(bin, args...)
 	var sink bytes.Buffer
 	cmd.Stdout = &sink
 	cmd.Stderr = &sink
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(sink.String()))
+	}
+	return nil
 }
 
 // decoderResult holds aggregated timing for one decoder across all vectors.

@@ -29,9 +29,9 @@ func CopyRect16To16(dst []uint16, dstStride int, src []uint16, srcStride int, wi
 		return ErrInvalidCDEF
 	}
 	for row := range height {
-		for col := range width {
-			dst[row*dstStride+col] = src[row*srcStride+col]
-		}
+		dstOff := row * dstStride
+		srcOff := row * srcStride
+		copy(dst[dstOff:dstOff+width], src[srcOff:srcOff+width])
 	}
 	return nil
 }
