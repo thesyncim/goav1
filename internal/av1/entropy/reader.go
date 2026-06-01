@@ -301,10 +301,55 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
 	}
+	src := c.src
+	pos := c.pos
+	dif := c.dif
+	rng := c.rng
+	cnt := c.cnt
+	tellOffs := c.tellOffs
 	var v uint32
 	for range n {
-		v = (v << 1) | uint32(c.ReadBitTrusted())
+		rangeValue := rng
+		traceDif := dif
+		split := (rangeValue >> 8) << 7
+		split += ecMinProb
+		window := split << (ecWindow - 16)
+
+		bit := uint8(1)
+		nextRange := split
+		if dif >= window {
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
+		}
+
+		if traceEntropyReads {
+			traceBoolRead(CDFProbTop/2, traceDif, rng, pos*8-cnt+tellOffs)
+		}
+		shift := 16 - bits.Len32(nextRange)
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng = nextRange << uint(shift)
+		if cnt < 0 {
+			refillShift := ecWindow - 9 - (cnt + 15)
+			for refillShift >= 0 && pos < len(src) {
+				dif ^= uint32(src[pos]) << uint(refillShift)
+				cnt += 8
+				refillShift -= 8
+				pos++
+			}
+			if pos >= len(src) {
+				tellOffs += ecLotsBits - cnt
+				cnt = ecLotsBits
+			}
+		}
+		v = (v << 1) | uint32(bit)
 	}
+	c.pos = pos
+	c.dif = dif
+	c.rng = rng
+	c.cnt = cnt
+	c.tellOffs = tellOffs
 	return v
 }
 

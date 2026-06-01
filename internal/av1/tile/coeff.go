@@ -1022,34 +1022,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}, nil
 }
 
-// readBaseRangeFromArr mirrors readBaseRange but reads from the pre-selected
-// CoeffBR CDF array (cdfs.CoeffBR[txBR][plane]). The original re-derived the
-// transform-size context inside the inner loop on every iteration (up to four
-// reads per coefficient); hoisting the array selection out makes the per-symbol
-// work a single context-bounded array index. Byte-identical for the same
-// context.
-func (s *DecodeState) readBaseRangeFromArr(arr *[CoeffBRContexts]entropy.CDF, context int) int {
-	cdf := &arr[context]
-	k := s.Reader.ReadCDF4Unchecked(cdf)
-	level := k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = s.Reader.ReadCDF4Unchecked(cdf)
-	level += k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = s.Reader.ReadCDF4Unchecked(cdf)
-	level += k
-	if k < BRCDFSize-1 {
-		return level
-	}
-	k = s.Reader.ReadCDF4Unchecked(cdf)
-	level += k
-	return level
-}
-
 func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) int {
 	cdf := &arr[context]
 	k := reader.ReadCDF4Unchecked(cdf)
@@ -1070,26 +1042,6 @@ func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]en
 	k = reader.ReadCDF4Unchecked(cdf)
 	level += k
 	return level
-}
-
-func (s *DecodeState) readCoeffGolomb() (int, error) {
-	x := 1
-	length := 0
-	for {
-		bit := s.Reader.ReadBitTrusted()
-		length++
-		if length > 20 {
-			return 0, ErrInvalidDecodeState
-		}
-		if bit != 0 {
-			break
-		}
-	}
-	if length > 1 {
-		suffix := s.Reader.ReadBitsTrusted(uint8(length - 1))
-		x = (1 << (length - 1)) | int(suffix)
-	}
-	return x - 1, nil
 }
 
 func readCoeffGolombCursor(reader *entropy.Cursor) (int, error) {
