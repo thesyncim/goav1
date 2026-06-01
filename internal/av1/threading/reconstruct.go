@@ -113,10 +113,6 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	scanSize, err := transform.ScanSize(geom.size)
-	if err != nil {
-		return ErrInvalidBatch
-	}
 
 	dst := frameWorkPlaneFromWindow(geom.window)
 	cfg := reconstruct.Block{
@@ -127,9 +123,9 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 		Lossless:       lossless,
 		EOB:            block.Result.EOB,
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisible(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometry(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
-		block.Coeffs, scanSize.Height, int32Scratch, residualScratch, cfg); err != nil {
+		block.Coeffs, geom.scanSize.Height, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -141,6 +137,8 @@ type frameWorkBlockCoeffGeometry struct {
 	x             int
 	y             int
 	size          transform.Size
+	scanSize      transform.Size
+	txScale       uint8
 	visibleWidth  int
 	visibleHeight int
 }
@@ -178,6 +176,14 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 	if _, _, err := frameWorkBlockCoeffVisibleSize(block.Block, size); err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
+	scanSize, err := transform.ScanSize(size)
+	if err != nil {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	txScale, err := quantize.TransformScale(size.Width, size.Height)
+	if err != nil {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
 	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, size.Width, size.Height)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
@@ -187,11 +193,13 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 				}
 			}
 			return frameWorkBlockCoeffGeometry{
-				plane:  plane,
-				window: window,
-				x:      x,
-				y:      y,
-				size:   size,
+				plane:    plane,
+				window:   window,
+				x:        x,
+				y:        y,
+				size:     size,
+				scanSize: scanSize,
+				txScale:  txScale,
 			}, nil
 		}
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
@@ -202,6 +210,8 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 		x:             x,
 		y:             y,
 		size:          size,
+		scanSize:      scanSize,
+		txScale:       txScale,
 		visibleWidth:  visibleWidth,
 		visibleHeight: visibleHeight,
 	}, nil

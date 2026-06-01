@@ -57,6 +57,13 @@ func ReconstructPlaneBlockVisible(dst frame.Plane, bytesPerSample int, bitDepth 
 	return reconstructPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, quantized, quantizedStride, int32Scratch, residualScratch, cfg)
 }
 
+// ReconstructPlaneBlockVisibleWithGeometry is the hot-path variant of
+// ReconstructPlaneBlockVisible for callers that already resolved the adjusted
+// coefficient scan size and transform scale while deriving block geometry.
+func ReconstructPlaneBlockVisibleWithGeometry(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	return reconstructPlaneBlockWithGeometry(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, quantized, quantizedStride, scanSize, txScale, int32Scratch, residualScratch, cfg)
+}
+
 func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	int32Len, residualLen, err := ScratchLen(cfg)
 	if err != nil ||
@@ -100,6 +107,60 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 			return ErrInvalidBlock
 		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, coeffSize.Height, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
+		return ErrInvalidBlock
+	}
+	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, residual, width); err != nil {
+		return ErrInvalidBlock
+	}
+	return nil
+}
+
+func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	width := cfg.Size.Width
+	height := cfg.Size.Height
+	if width <= 0 || height <= 0 ||
+		visibleWidth <= 0 || visibleHeight <= 0 || visibleWidth > width || visibleHeight > height ||
+		scanSize.Width <= 0 || scanSize.Height <= 0 || scanSize.Width > width || scanSize.Height > height ||
+		txScale > 2 {
+		return ErrInvalidBlock
+	}
+	if cfg.Lossless && !losslessWHTSupported(cfg) {
+		return ErrInvalidBlock
+	}
+	blockLen, ok := checkedMul(width, height)
+	if !ok || len(residualScratch) < blockLen || len(int32Scratch) < blockLen {
+		return ErrInvalidBlock
+	}
+	dequantLen, ok := checkedMul(scanSize.Width, scanSize.Height)
+	if !ok || dequantLen > blockLen {
+		return ErrInvalidBlock
+	}
+	needed32 := blockLen
+	if !cfg.Lossless && cfg.Transform != transform.TypeIDTX {
+		needed32 += blockLen
+	}
+	if len(int32Scratch) < needed32 {
+		return ErrInvalidBlock
+	}
+
+	dequant := int32Scratch[:dequantLen]
+	transformScratch := int32Scratch[blockLen:needed32]
+	residual := residualScratch[:blockLen]
+
+	if cfg.InverseQMatrix != nil {
+		if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, scanSize.Height, quantized, quantizedStride, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+	} else {
+		if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanSize.Height, quantized, quantizedStride, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+	}
+	if cfg.Lossless {
+		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanSize.Height, cfg.EOB); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanSize.Height, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
 		return ErrInvalidBlock
 	}
 	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, residual, width); err != nil {

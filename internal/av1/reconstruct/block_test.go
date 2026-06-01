@@ -1,6 +1,7 @@
 package reconstruct
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -138,6 +139,46 @@ func TestReconstructPlaneBlockVisibleClipsFrameEdge(t *testing.T) {
 				t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
 			}
 		}
+	}
+}
+
+func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
+	cfg := Block{
+		Size:      transform.Size{Width: 8, Height: 8},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+		EOB:       4,
+	}
+	scanSize, err := transform.ScanSize(cfg.Size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txScale, err := quantize.TransformScale(cfg.Size.Width, cfg.Size.Height)
+	if err != nil {
+		t.Fatal(err)
+	}
+	int32Len, int16Len, err := ScratchLen(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quantized := make([]int16, cfg.Size.Width*cfg.Size.Height)
+	quantized[0] = 8
+	quantized[1] = -3
+	quantized[8] = 5
+	quantized[9] = -2
+
+	want, _ := testPlane(10, 10, 1, 10)
+	got, _ := testPlane(10, 10, 1, 10)
+	fillPlane(want, 1, 100)
+	fillPlane(got, 1, 100)
+	if err := ReconstructPlaneBlockVisible(want, 1, 8, 2, 1, 6, 7, quantized, scanSize.Height, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconstructPlaneBlockVisibleWithGeometry(got, 1, 8, 2, 1, 6, 7, quantized, scanSize.Height, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Pix, want.Pix) {
+		t.Fatalf("geometry path output differs from default")
 	}
 }
 
