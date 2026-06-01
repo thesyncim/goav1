@@ -222,8 +222,9 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 			return err
 		}
 		frameWorkAccumulateLoopFilterLevelStats(levelCtx, levels, &plan)
-		if err := frameWorkAccumulateLoopFilterTransformStats(ctx, record, &plan); err != nil {
-			return err
+		plan.TransformReadyBlocks++
+		if record.SkipTransform {
+			plan.SkipTransformBlocks++
 		}
 		if err := frameWorkAppendLoopFilterLumaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning.bounds[loopfilter.PlaneY], levels); err != nil {
 			return err
@@ -532,34 +533,6 @@ func frameWorkValidateLoopFilterMap(filterMap FrameWorkLoopFilterMap, cols int, 
 	return nil
 }
 
-func frameWorkAccumulateLoopFilterTransformStats(ctx FrameWorkPostFilterContext, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan) error {
-	req, err := frameWorkLoopFilterTransformTreeRequest(ctx.Event.SequenceHeader.ColorConfig, record)
-	if err != nil {
-		return err
-	}
-	plan.TransformReadyBlocks++
-	if record.SkipTransform {
-		plan.SkipTransformBlocks++
-		return nil
-	}
-	if err := record.TransformTree.ForEachLumaTXB(req, func(tile.TransformBlock) error {
-		plan.LumaTXBs++
-		return nil
-	}); err != nil {
-		return err
-	}
-	if !record.TransformTree.HasUV {
-		return nil
-	}
-	color := ctx.Event.SequenceHeader.ColorConfig
-	count, err := frameWorkLoopFilterCountChromaTXBsWithShifts(color, record, frameWorkLoopFilterSubsamplingShift(color.SubsamplingX), frameWorkLoopFilterSubsamplingShift(color.SubsamplingY))
-	if err != nil {
-		return err
-	}
-	plan.ChromaTXBs += count
-	return nil
-}
-
 func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, levels [3][2]uint8) error {
 	currentVertical := levels[loopfilter.PlaneY][loopfilter.EdgeVertical]
 	currentHorizontal := levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal]
@@ -584,6 +557,7 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx
 	}
 	block := record.Block
 	return record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
+		plan.LumaTXBs++
 		frameX4 := int(block.MICol) + tx.X4 - block.X4
 		frameY4 := int(block.MIRow) + tx.Y4 - block.Y4
 		if frameX4 > 0 {
@@ -979,16 +953,20 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, levelC
 	if ctx.Event.LoopFilter.LevelY[0] == 0 && ctx.Event.LoopFilter.LevelY[1] == 0 {
 		return nil
 	}
+	if !record.SkipTransform && record.TransformTree.HasUV {
+		count, err := frameWorkLoopFilterCountChromaTXBsWithShifts(planning.color, record, planning.ssX, planning.ssY)
+		if err != nil {
+			return err
+		}
+		plan.ChromaTXBs += count
+	}
 	var planes [2]loopfilter.Plane
 	var bounds [2]frameWorkLoopFilterBounds
 	var vertical [2]uint8
 	var horizontal [2]uint8
 	active := 0
 	for plane := loopfilter.PlaneU; plane <= loopfilter.PlaneV; plane++ {
-		base, err := loopfilter.BaseLevel(ctx.Event.LoopFilter, plane, loopfilter.EdgeVertical)
-		if err != nil {
-			return err
-		}
+		base := levelCtx.base[plane][loopfilter.EdgeVertical]
 		if base == 0 {
 			continue
 		}
