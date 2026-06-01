@@ -781,6 +781,9 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersForPublication(re
 // pass that captures pre-CDEF (afterCDEF=false) and post-CDEF (afterCDEF=true)
 // boundary samples from ctx.Output for use during restoration application.
 func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req FrameWorkRestorationPostFilterRequest, afterCDEF bool) error {
+	if req.Optimized {
+		return nil
+	}
 	if ctx.Output == nil {
 		return frame.ErrInvalidSlot
 	}

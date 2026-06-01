@@ -154,6 +154,46 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterDefaultsBuffers
 	}
 }
 
+func TestFrameWorkPostFilterContextSaveRestorationBoundariesSkipsOptimized(t *testing.T) {
+	const width = 64
+	const height = 64
+
+	pool := testFramePoolForSize(t, width, height, 1)
+	_, output, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := Event{
+		SequenceHeader: testSequence(),
+		FrameSize: parser.FrameSize{
+			CodedWidth:          width,
+			UpscaledWidth:       width,
+			Height:              height,
+			SuperResDenominator: 8,
+		},
+		Restoration: parser.RestorationParams{
+			Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			UnitSizeY: 64,
+		},
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	req := FrameWorkRestorationPostFilterRequest{
+		Boundaries: [3]tile.RestorationStripeBoundaries{
+			{Above: []uint16{1}},
+		},
+	}
+	if err := ctx.saveRestorationBoundariesForRequest(req, false); !errors.Is(err, tile.ErrInvalidPlan) {
+		t.Fatalf("saveRestorationBoundariesForRequest err=%v want %v", err, tile.ErrInvalidPlan)
+	}
+	req.Optimized = true
+	if err := ctx.saveRestorationBoundariesForRequest(req, false); err != nil {
+		t.Fatalf("optimized saveRestorationBoundariesForRequest err=%v", err)
+	}
+	if err := ctx.saveRestorationBoundariesForRequest(req, true); err != nil {
+		t.Fatalf("optimized after-CDEF saveRestorationBoundariesForRequest err=%v", err)
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterRejectsEarlierActiveStages(t *testing.T) {
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{

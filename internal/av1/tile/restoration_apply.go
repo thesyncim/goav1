@@ -393,6 +393,41 @@ func ApplyRestorationFramePlane(grid RestorationPlaneGrid, records []Restoration
 	return result, nil
 }
 
+func applyRestorationFramePlaneToDst(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationPlaneApplyResult, error) {
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return RestorationPlaneApplyResult{}, ErrInvalidPlan
+		}
+		return RestorationPlaneApplyResult{}, nil
+	}
+	if err := ExtendRestorationFrame(data, dataStride, dataOrigin, int(grid.PlaneWidth), int(grid.PlaneHeight), restorationBorder, restorationBorder); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+}
+
+func applyRestorationFrameToDst(planes []RestorationFramePlane, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
+	if err := validateRestorationFramePlanes(planes); err != nil {
+		return RestorationFrameApplyResult{}, err
+	}
+	var result RestorationFrameApplyResult
+	for i := range planes {
+		planeResult, err := applyRestorationFramePlaneToDst(planes[i].Grid, planes[i].Records, planes[i].Boundaries, planes[i].Data, planes[i].DataStride, planes[i].DataOrigin, planes[i].Dst, planes[i].DstStride, planes[i].DstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+		result.PlaneResults[i] = planeResult
+		if planes[i].Grid.Type == parser.RestorationNone {
+			continue
+		}
+		result.Planes++
+		if err := accumulateRestorationFrameResult(&result, planeResult); err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+	}
+	return result, nil
+}
+
 // ApplyRestorationFrame ports libaom's frame-level loop-restoration
 // orchestration for a one-plane monochrome frame or a three-plane color frame.
 // The scratch buffer is reused across planes.

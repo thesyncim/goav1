@@ -93,7 +93,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 	}
 
 	var planes [3]RestorationFramePlane
-	var dataViews [3]av1frame.BorderedSamplePlane
+	var dstViews [3]av1frame.BorderedSamplePlane
 	dataOffset := 0
 	dstOffset := 0
 	for plane := 0; plane < int(plan.Planes); plane++ {
@@ -120,7 +120,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
-		dataViews[plane] = dataView
+		dstViews[plane] = dstView
 		planes[plane].Data = dataView.Pix
 		planes[plane].DataStride = dataView.Stride
 		planes[plane].DataOrigin = dataView.Origin
@@ -131,7 +131,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		dstOffset += dstLayout.Len
 	}
 
-	result, err := ApplyRestorationFrame(planes[:int(plan.Planes)], bitDepth, scratch, optimized)
+	result, err := applyRestorationFrameToDst(planes[:int(plan.Planes)], bitDepth, scratch, optimized)
 	if err != nil {
 		return RestorationFrameApplyResult{}, err
 	}
@@ -143,7 +143,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
-		if err := av1frame.StoreBorderedSamplePlane(buffer, bytesPerSample, dataViews[plane]); err != nil {
+		if err := av1frame.StoreBorderedSamplePlane(buffer, bytesPerSample, dstViews[plane]); err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
 	}
