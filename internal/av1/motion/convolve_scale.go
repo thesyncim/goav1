@@ -364,14 +364,32 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	startRow := int(scaledIntFloor(startY)) - foY
 	for y := range imH {
 		srcRow := startRow + y
+		clampedRowBase := clampInt(srcRow, 0, ref.Height-1) * ref.Stride
 		xPos := startX
 		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
-			sum := 1 << (8 + filterBits - 1)
-			for k := range filterTaps {
-				sum += int(kernel[k]) * int(loadSample8Clamped(ref, xInt+k, srcRow))
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+			sum := 0
+			if uint(srcRow) < uint(ref.Height) && xInt >= 0 && xInt+filterTaps <= ref.Width {
+				off := srcRow*ref.Stride + xInt
+				src := ref.Pix[off : off+filterTaps : off+filterTaps]
+				_ = src[7]
+				sum = (1 << (8 + filterBits - 1)) +
+					k0*int(src[0]) + k1*int(src[1]) + k2*int(src[2]) + k3*int(src[3]) +
+					k4*int(src[4]) + k5*int(src[5]) + k6*int(src[6]) + k7*int(src[7])
+			} else {
+				sum = (1 << (8 + filterBits - 1)) +
+					k0*int(loadSample8ClampedRow(ref, xInt, clampedRowBase)) +
+					k1*int(loadSample8ClampedRow(ref, xInt+1, clampedRowBase)) +
+					k2*int(loadSample8ClampedRow(ref, xInt+2, clampedRowBase)) +
+					k3*int(loadSample8ClampedRow(ref, xInt+3, clampedRowBase)) +
+					k4*int(loadSample8ClampedRow(ref, xInt+4, clampedRowBase)) +
+					k5*int(loadSample8ClampedRow(ref, xInt+5, clampedRowBase)) +
+					k6*int(loadSample8ClampedRow(ref, xInt+6, clampedRowBase)) +
+					k7*int(loadSample8ClampedRow(ref, xInt+7, clampedRowBase))
 			}
 			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
 			xPos += xStep
