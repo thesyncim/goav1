@@ -155,6 +155,119 @@ func convolveScale2DHighBDIdentityStep(dst frame.Plane, ref frame.Plane, bitDept
 	return true
 }
 
+func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
+	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
+	const xBias = 1 << (8 + filterBits - 1)
+	offsetBits := 8 + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	foX := filterTaps/2 - 1
+	baseY := int(scaledIntFloor(startY))
+	for y := range height {
+		srcRow := baseY + y
+		rowBase := srcRow * ref.Stride
+		if clamped {
+			rowBase = clampInt(srcRow, 0, ref.Height-1) * ref.Stride
+		}
+		xPos := startX
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX : (dstY+y)*dst.Stride+dstX+width : (dstY+y)*dst.Stride+dstX+width]
+		for x := range width {
+			xInt := int(scaledIntFloor(xPos)) - foX
+			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
+			kernel := xTable[xFilterIdx]
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+			sum := xBias
+			if !clamped || xInt >= 0 && xInt+filterTaps <= ref.Width {
+				off := rowBase + xInt
+				src := ref.Pix[off : off+filterTaps : off+filterTaps]
+				_ = src[7]
+				sum += k0*int(src[0]) + k1*int(src[1]) + k2*int(src[2]) + k3*int(src[3]) +
+					k4*int(src[4]) + k5*int(src[5]) + k6*int(src[6]) + k7*int(src[7])
+			} else {
+				sum += k0*int(loadSample8ClampedRow(ref, xInt, rowBase)) +
+					k1*int(loadSample8ClampedRow(ref, xInt+1, rowBase)) +
+					k2*int(loadSample8ClampedRow(ref, xInt+2, rowBase)) +
+					k3*int(loadSample8ClampedRow(ref, xInt+3, rowBase)) +
+					k4*int(loadSample8ClampedRow(ref, xInt+4, rowBase)) +
+					k5*int(loadSample8ClampedRow(ref, xInt+5, rowBase)) +
+					k6*int(loadSample8ClampedRow(ref, xInt+6, rowBase)) +
+					k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
+			}
+			imVal := roundPowerOfTwo(sum, round0Bits)
+			vSum := (1 << offsetBits) + 128*imVal
+			res := roundPowerOfTwo(vSum, round1Bits) - roundOffset
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			xPos += xStep
+		}
+	}
+}
+
+func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
+	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
+	xBias := 1 << (int(bitDepth) + filterBits - 1)
+	round0Bias := 1 << (round0Bits - 1)
+	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
+	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+	bits := 2*filterBits - round0Bits - round1Bits
+	foX := filterTaps/2 - 1
+	baseY := int(scaledIntFloor(startY))
+	for y := range height {
+		srcRow := baseY + y
+		rowBase := srcRow * ref.Stride
+		if clamped {
+			rowBase = clampInt(srcRow, 0, ref.Height-1) * ref.Stride
+		}
+		xPos := startX
+		dstOff := (dstY+y)*dst.Stride + dstX*2
+		dstRow := dst.Pix[dstOff : dstOff+width*2 : dstOff+width*2]
+		for x := range width {
+			xInt := int(scaledIntFloor(xPos)) - foX
+			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
+			kernel := xTable[xFilterIdx]
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+			sum := xBias
+			if !clamped || xInt >= 0 && xInt+filterTaps <= ref.Width {
+				src := ref.Pix[rowBase+xInt*2 : rowBase+(xInt+filterTaps)*2 : rowBase+(xInt+filterTaps)*2]
+				sum += k0*int(uint16(src[0])|uint16(src[1])<<8) +
+					k1*int(uint16(src[2])|uint16(src[3])<<8) +
+					k2*int(uint16(src[4])|uint16(src[5])<<8) +
+					k3*int(uint16(src[6])|uint16(src[7])<<8) +
+					k4*int(uint16(src[8])|uint16(src[9])<<8) +
+					k5*int(uint16(src[10])|uint16(src[11])<<8) +
+					k6*int(uint16(src[12])|uint16(src[13])<<8) +
+					k7*int(uint16(src[14])|uint16(src[15])<<8)
+			} else {
+				o0 := rowBase + clampInt(xInt+0, 0, ref.Width-1)*2
+				o1 := rowBase + clampInt(xInt+1, 0, ref.Width-1)*2
+				o2 := rowBase + clampInt(xInt+2, 0, ref.Width-1)*2
+				o3 := rowBase + clampInt(xInt+3, 0, ref.Width-1)*2
+				o4 := rowBase + clampInt(xInt+4, 0, ref.Width-1)*2
+				o5 := rowBase + clampInt(xInt+5, 0, ref.Width-1)*2
+				o6 := rowBase + clampInt(xInt+6, 0, ref.Width-1)*2
+				o7 := rowBase + clampInt(xInt+7, 0, ref.Width-1)*2
+				sum += k0*int(uint16(ref.Pix[o0])|uint16(ref.Pix[o0+1])<<8) +
+					k1*int(uint16(ref.Pix[o1])|uint16(ref.Pix[o1+1])<<8) +
+					k2*int(uint16(ref.Pix[o2])|uint16(ref.Pix[o2+1])<<8) +
+					k3*int(uint16(ref.Pix[o3])|uint16(ref.Pix[o3+1])<<8) +
+					k4*int(uint16(ref.Pix[o4])|uint16(ref.Pix[o4+1])<<8) +
+					k5*int(uint16(ref.Pix[o5])|uint16(ref.Pix[o5+1])<<8) +
+					k6*int(uint16(ref.Pix[o6])|uint16(ref.Pix[o6+1])<<8) +
+					k7*int(uint16(ref.Pix[o7])|uint16(ref.Pix[o7+1])<<8)
+			}
+			imVal := (sum + round0Bias) >> round0Bits
+			vSum := (1 << offsetBits) + 128*imVal
+			res := roundPowerOfTwo(vSum, round1Bits) - roundOffset
+			v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
+			o := x * 2
+			dstRow[o] = byte(v)
+			dstRow[o+1] = byte(v >> 8)
+			xPos += xStep
+		}
+	}
+}
+
 // ConvolveScale2D8 performs AV1 scaled 8-bit 8-tap 2D interpolation on a
 // rectangular block. dst is the output plane; (dstX, dstY) is the top-left
 // destination sample. ref is the reference plane.
@@ -202,6 +315,13 @@ func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dst
 		convolveScale2D8IdentityStep(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
 		return nil
 	}
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			convolveScale2D8YIdentity(dst, ref, dstX, dstY, width, height, startX, startY, xStep, xTable, false)
+			return nil
+		}
+	}
 	if scratch != nil {
 		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
 		return nil
@@ -244,6 +364,13 @@ func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX i
 	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
 		convolveScale2D8IdentityStep(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, true) {
 		return nil
+	}
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			convolveScale2D8YIdentity(dst, ref, dstX, dstY, width, height, startX, startY, xStep, xTable, true)
+			return nil
+		}
 	}
 	if scratch != nil {
 		if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
@@ -299,6 +426,13 @@ func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth
 		convolveScale2DHighBDIdentityStep(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
 		return nil
 	}
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			convolveScale2DHighBDYIdentity(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xStep, xTable, false)
+			return nil
+		}
+	}
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
 	putScaledHighBDIM(im, pooled)
@@ -339,6 +473,13 @@ func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, b
 	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
 		convolveScale2DHighBDIdentityStep(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xTable, yTable, true) {
 		return nil
+	}
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			convolveScale2DHighBDYIdentity(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xStep, xTable, true)
+			return nil
+		}
 	}
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {

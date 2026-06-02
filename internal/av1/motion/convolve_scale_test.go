@@ -715,6 +715,45 @@ func BenchmarkConvolveScale2D8ClampedInterior32WithScratch(b *testing.B) {
 	}
 }
 
+func BenchmarkConvolveScale2D8ClampedYIdentity32WithScratch(b *testing.B) {
+	src := scaledTestSourcePlane(96, 96, 1, 0x55)
+	dst, _ := testPlane(32, 32, 1, 32)
+	xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	startX := int64(16)*ScaleSubpelScale + ScaleSubpelScale/4
+	startY := int64(16) * ScaleSubpelScale
+	xStep := int64(ScaleSubpelScale * 3 / 4)
+	var scratch ScaledConvolveScratch
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ConvolveScale2D8ClampedWithScratch(dst, src, 0, 0, 32, 32, startX, xStep, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkConvolveScale2DHighBDClampedYIdentity32WithScratch(b *testing.B) {
+	const bd = 10
+	src := highBDPlane(96, 96, 0xace, bd)
+	dst, _ := testPlane(32, 32, 2, 64)
+	xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	startX := int64(16)*ScaleSubpelScale + ScaleSubpelScale/4
+	startY := int64(16) * ScaleSubpelScale
+	xStep := int64(ScaleSubpelScale * 3 / 4)
+	var scratch ScaledConvolveScratch
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ConvolveScale2DHighBDClampedWithScratch(dst, src, bd, 0, 0, 32, 32, startX, xStep, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func filterName(f InterpFilter) string {
 	switch f {
 	case InterpEightTapRegular:
