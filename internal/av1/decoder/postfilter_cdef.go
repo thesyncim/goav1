@@ -103,7 +103,6 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 			return FrameWorkCDEFPostFilterScratchSize{}, err
 		}
 		size.Samples[plane] = need
-		size.Dst[plane] = need
 	}
 	if !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF) {
 		cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
@@ -178,16 +177,9 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
-		dst, err := frame.LoadSamplePlane(req.DstScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
-		if err != nil {
-			return FrameWorkCDEFPostFilterResult{}, err
-		}
 		xDec, yDec := xDec0, yDec0
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, skipMap, cols, rows, src, dst, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, skipMap, cols, rows, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
-			return FrameWorkCDEFPostFilterResult{}, err
-		}
-		if err := frame.StoreSamplePlaneTrusted(planeFrame, ctx.Output.Layout.BytesPerSample, dst); err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
 		result.Units += planeUnits
@@ -245,7 +237,7 @@ func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWor
 		if err != nil {
 			return err
 		}
-		if len(req.SampleScratch[plane]) < need || len(req.DstScratch[plane]) < need {
+		if len(req.SampleScratch[plane]) < need {
 			return frame.ErrShortBuffer
 		}
 	}
@@ -257,7 +249,7 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.SamplePlane, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {
+func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {
 	units := 0
 	blocksTotal := 0
 	unitSizeX := cdef.BlockSize >> xDec
@@ -343,8 +335,7 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 			if directionOnly {
 				continue
 			}
-			dstOffset := unitY*dst.Stride + unitX
-			if err := cdef.CopyRect16To16(dst.Pix[dstOffset:], dst.Stride, unitDst, cdef.BStride, unitW, unitH); err != nil {
+			if err := frameWorkStoreCDEFUnit(dst, bytesPerSample, unitX, unitY, unitW, unitH, unitDst); err != nil {
 				return units, blocksTotal, err
 			}
 			units++
@@ -352,6 +343,45 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+func frameWorkStoreCDEFUnit(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, src []uint16) error {
+	if bytesPerSample != 1 && bytesPerSample != 2 {
+		return frame.ErrInvalidPlane
+	}
+	if x < 0 || y < 0 || width <= 0 || height <= 0 ||
+		x+width > dst.Width || y+height > dst.Height ||
+		dst.Stride < dst.Width*bytesPerSample ||
+		len(src) < (height-1)*cdef.BStride+width {
+		return frame.ErrInvalidPlane
+	}
+	lastRow := (y + height - 1) * dst.Stride
+	rowBytes := width * bytesPerSample
+	rowStart := lastRow + x*bytesPerSample
+	if rowStart < 0 || rowStart+rowBytes > len(dst.Pix) {
+		return frame.ErrInvalidPlane
+	}
+	switch bytesPerSample {
+	case 1:
+		for row := range height {
+			dstOff := (y+row)*dst.Stride + x
+			srcOff := row * cdef.BStride
+			for col, sample := range src[srcOff : srcOff+width] {
+				dst.Pix[dstOff+col] = byte(sample)
+			}
+		}
+	case 2:
+		for row := range height {
+			dstOff := (y+row)*dst.Stride + x*2
+			srcOff := row * cdef.BStride
+			for col, sample := range src[srcOff : srcOff+width] {
+				off := dstOff + col*2
+				dst.Pix[off] = byte(sample)
+				dst.Pix[off+1] = byte(sample >> 8)
+			}
+		}
+	}
+	return nil
 }
 
 func frameWorkFillCDEFInputSentinels(input []uint16, unitW int, unitH int) error {

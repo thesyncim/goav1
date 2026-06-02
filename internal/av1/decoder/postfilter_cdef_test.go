@@ -522,8 +522,8 @@ func TestFrameWorkPostFilterContextApplyCDEFPostFilterFiltersSVCEnhancementLayer
 	if err != nil {
 		t.Fatalf("CDEFPostFilterScratchLen err=%v", err)
 	}
-	if size.Samples[0] < width*height || size.Dst[0] < width*height {
-		t.Fatalf("luma scratch=%d/%d want >= %d", size.Samples[0], size.Dst[0], width*height)
+	if size.Samples[0] < width*height || size.Dst != [3]int{} {
+		t.Fatalf("luma scratch=%d dst=%v want samples >= %d and no dst scratch", size.Samples[0], size.Dst, width*height)
 	}
 	chromaSize := (width / 2) * (height / 2)
 	if size.Samples[1] < chromaSize || size.Samples[2] < chromaSize {
