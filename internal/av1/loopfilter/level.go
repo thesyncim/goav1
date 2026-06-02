@@ -45,8 +45,8 @@ type LevelRequest struct {
 	Plane Plane
 	Edge  Edge
 
-	SegmentID int
-	RefFrame  int
+	SegmentID uint8
+	RefFrame  uint8
 	Mode      ModeDeltaClass
 
 	DeltaLF int8
@@ -113,8 +113,8 @@ func SelectDelta(params parser.DeltaParams, fromBase int8, multi [DeltaCount]int
 }
 
 // SegmentDelta returns the segmentation loop-filter delta for a plane and edge.
-func SegmentDelta(seg parser.SegmentationParams, segmentID int, plane Plane, edge Edge) (int16, error) {
-	if segmentID < 0 || segmentID >= parser.MaxSegments || !validEdge(edge) {
+func SegmentDelta(seg parser.SegmentationParams, segmentID uint8, plane Plane, edge Edge) (int16, error) {
+	if segmentID >= parser.MaxSegments || !validEdge(edge) {
 		return 0, ErrInvalidFilter
 	}
 	if !seg.Enabled {
@@ -139,7 +139,7 @@ func SegmentDelta(seg parser.SegmentationParams, segmentID int, plane Plane, edg
 // ResolveLevel applies block delta-lf, segmentation, and mode/ref deltas to
 // produce the AV1 loop-filter level used by edge-mask construction.
 func ResolveLevel(params parser.LoopFilterParams, seg parser.SegmentationParams, req LevelRequest) (uint8, error) {
-	if req.RefFrame < 0 || req.RefFrame >= parser.RefFrames || !validMode(req.Mode) {
+	if req.SegmentID >= parser.MaxSegments || req.RefFrame >= parser.RefFrames || !validMode(req.Mode) {
 		return 0, ErrInvalidFilter
 	}
 

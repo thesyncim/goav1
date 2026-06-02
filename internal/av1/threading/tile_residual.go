@@ -528,7 +528,7 @@ type FrameWorkBlockTransforms struct {
 	TransformSelect tile.CoeffTransformSelector
 	ReadIntraTX     bool
 	ReadInterTX     bool
-	EOBMultiContext [3]int
+	EOBMultiContext [3]uint8
 }
 
 // FrameWorkBlockTransformSelector returns transform syntax decisions for one

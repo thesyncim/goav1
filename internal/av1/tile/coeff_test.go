@@ -987,7 +987,7 @@ func FuzzReadCoeffPrimitives(f *testing.F) {
 		if _, err := state.ReadEOB(&cdfs, EOBRequest{
 			Size:            size,
 			Plane:           plane,
-			EOBMultiContext: int(rawEOBCtx % maxEOBFlagContexts),
+			EOBMultiContext: rawEOBCtx % maxEOBFlagContexts,
 		}); err != nil {
 			t.Fatalf("ReadEOB err=%v", err)
 		}

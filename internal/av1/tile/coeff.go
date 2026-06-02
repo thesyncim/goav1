@@ -55,14 +55,14 @@ type TXBSkipRequest struct {
 type EOBRequest struct {
 	Size            TransformSize
 	Plane           CoeffPlaneType
-	EOBMultiContext int
+	EOBMultiContext uint8
 }
 
 type EOBResult struct {
-	Token      int
-	Extra      int
-	Position   int
-	OffsetBits int
+	Token      uint8
+	OffsetBits uint8
+	Extra      uint16
+	Position   uint16
 }
 
 type CoeffTokenRequest struct {
@@ -640,10 +640,10 @@ func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error
 	if s == nil {
 		return EOBResult{}, ErrInvalidDecodeState
 	}
-	if !req.Plane.Valid() || req.EOBMultiContext < 0 || req.EOBMultiContext >= maxEOBFlagContexts {
+	if !req.Plane.Valid() || req.EOBMultiContext >= maxEOBFlagContexts {
 		return EOBResult{}, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.EOBFlagCDF(req.Size, req.Plane, req.EOBMultiContext)
+	cdf, err := cdfs.EOBFlagCDF(req.Size, req.Plane, int(req.EOBMultiContext))
 	if err != nil {
 		return EOBResult{}, err
 	}
@@ -681,7 +681,7 @@ func (s *DecodeState) ReadEOB(cdfs *CoeffCDFs, req EOBRequest) (EOBResult, error
 	if err != nil {
 		return EOBResult{}, err
 	}
-	return EOBResult{Token: token, Extra: extra, Position: pos, OffsetBits: offsetBits}, nil
+	return EOBResult{Token: uint8(token), Extra: uint16(extra), Position: uint16(pos), OffsetBits: uint8(offsetBits)}, nil
 }
 
 func (s *DecodeState) ReadCoeffBaseEOB(cdfs *CoeffCDFs, req CoeffTokenRequest) (int, error) {
@@ -779,12 +779,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	eob, err := s.ReadEOB(cdfs, EOBRequest{
 		Size:            req.Size,
 		Plane:           req.Plane,
-		EOBMultiContext: int(req.EOBMultiContext),
+		EOBMultiContext: req.EOBMultiContext,
 	})
 	if err != nil {
 		return TXBDecodeResult{}, err
 	}
-	if eob.Position <= 0 || eob.Position > maxEOB {
+	eobPos := int(eob.Position)
+	if eobPos <= 0 || eobPos > maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 
@@ -829,7 +830,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		dirtyNext = *dirtyLen
 	}
 
-	lastC := eob.Position - 1
+	lastC := eobPos - 1
 	lastPos := int(scan[lastC])
 	if lastPos < 0 || lastPos >= maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
@@ -841,9 +842,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 		lastLevel += extra
 	}
-	if eob.Position == 1 {
+	if eobPos == 1 {
 		if coeffTraceEnabled {
-			coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eob.Position)
+			coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
 		}
 		negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 		baseLevel := lastLevel
@@ -921,7 +922,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 	if req.Class == transform.Class2D {
 		stride := geo.stride
-		for c := eob.Position - 2; c >= 0; c-- {
+		for c := eobPos - 2; c >= 0; c-- {
 			pos := int(scan[c])
 			if pos < 0 || pos >= maxEOB {
 				reader.CommitStateTo(&s.Reader)
@@ -970,7 +971,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 	} else {
 		class := req.Class
-		for c := eob.Position - 2; c >= 0; c-- {
+		for c := eobPos - 2; c >= 0; c-- {
 			pos := int(scan[c])
 			if pos < 0 || pos >= maxEOB {
 				reader.CommitStateTo(&s.Reader)
@@ -1002,7 +1003,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 
 	if coeffTraceEnabled {
-		coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eob.Position)
+		coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
 	}
 	culLevel := 0
 	dcValue := 0
@@ -1010,7 +1011,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if useDirtyScanList {
 		for i := nonzeroScanLen - 1; i >= 0; i-- {
 			c := int((*dirtyPos)[i])
-			if c < 0 || c >= eob.Position {
+			if c < 0 || c >= eobPos {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
@@ -1157,7 +1158,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 	reader.CommitStateTo(&s.Reader)
 	return TXBDecodeResult{
-		EOB:         uint16(eob.Position),
+		EOB:         uint16(eobPos),
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}, nil

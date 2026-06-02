@@ -174,7 +174,7 @@ func TestEOBMultiContextForClassMatchesLibaom(t *testing.T) {
 	tests := []struct {
 		name  string
 		class transform.Class
-		want  int
+		want  uint8
 	}{
 		{name: "2d", class: transform.Class2D, want: 0},
 		{name: "horizontal", class: transform.ClassHoriz, want: 1},

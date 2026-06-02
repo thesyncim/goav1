@@ -63,6 +63,66 @@ func TestReaderReadBitsFastPathBoundaries(t *testing.T) {
 	}
 }
 
+func TestReaderReadBitsMatchesBitByBit(t *testing.T) {
+	src := []byte{
+		0x01, 0x23, 0x45, 0x67,
+		0x89, 0xab, 0xcd, 0xef,
+		0x55, 0xaa, 0x00, 0xff,
+	}
+	for offset := 0; offset < 8; offset++ {
+		for n := 0; n <= 64; n++ {
+			ref := NewReader(src)
+			gotReader := NewReader(src)
+			if err := ref.SkipBits(offset); err != nil {
+				t.Fatal(err)
+			}
+			if err := gotReader.SkipBits(offset); err != nil {
+				t.Fatal(err)
+			}
+			var want uint64
+			for i := 0; i < n; i++ {
+				bit, err := ref.ReadBit()
+				if err != nil {
+					t.Fatalf("ref offset=%d n=%d i=%d err=%v", offset, n, i, err)
+				}
+				want = (want << 1) | uint64(bit)
+			}
+			got, err := gotReader.ReadBits(uint8(n))
+			if err != nil {
+				t.Fatalf("ReadBits offset=%d n=%d err=%v", offset, n, err)
+			}
+			if got != want || gotReader.BitsRead() != offset+n {
+				t.Fatalf("ReadBits offset=%d n=%d got=%x bits=%d want=%x bits=%d", offset, n, got, gotReader.BitsRead(), want, offset+n)
+			}
+		}
+	}
+}
+
+func TestReaderErrorsDoNotAdvance(t *testing.T) {
+	r := NewReader([]byte{0x80})
+	if _, err := r.ReadBits(65); !errors.Is(err, ErrInvalidBitCount) {
+		t.Fatalf("ReadBits invalid err=%v want %v", err, ErrInvalidBitCount)
+	}
+	if r.BitsRead() != 0 {
+		t.Fatalf("invalid bit count advanced to %d", r.BitsRead())
+	}
+	if _, err := r.ReadBits(9); !errors.Is(err, ErrNotEnoughBits) {
+		t.Fatalf("ReadBits short err=%v want %v", err, ErrNotEnoughBits)
+	}
+	if r.BitsRead() != 0 {
+		t.Fatalf("short read advanced to %d", r.BitsRead())
+	}
+	if err := r.SkipBits(8); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadBit(); !errors.Is(err, ErrNotEnoughBits) {
+		t.Fatalf("ReadBit EOF err=%v want %v", err, ErrNotEnoughBits)
+	}
+	if r.BitsRead() != 8 {
+		t.Fatalf("EOF bit read advanced to %d", r.BitsRead())
+	}
+}
+
 func TestReaderUVLC(t *testing.T) {
 	tests := []struct {
 		in   byte

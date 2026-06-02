@@ -1095,7 +1095,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := loopfilter.FilterEdgeByWidth(int32(edge.Width), wantPlane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+		if err := loopfilter.FilterEdgeByWidth(edge.Width, wantPlane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2159,7 +2159,7 @@ func testApplyFrameWorkLoopFilterEdgeDirect(t *testing.T, output frame.Frame, sh
 	if !ok {
 		t.Fatalf("missing output plane for edge=%+v", edge)
 	}
-	if err := loopfilter.FilterEdgeByWidth(int32(edge.Width), plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+	if err := loopfilter.FilterEdgeByWidth(edge.Width, plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
 		t.Fatal(err)
 	}
 }

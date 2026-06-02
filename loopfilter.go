@@ -90,7 +90,10 @@ func SelectLoopFilterDelta(params DeltaParams, fromBase int8, multi [LoopFilterD
 // LoopFilterSegmentDelta returns the per-segment delta (in level units) for
 // the (segmentID, plane, edge) combination from seg.
 func LoopFilterSegmentDelta(seg SegmentationParams, segmentID int, plane LoopFilterPlane, edge LoopFilterEdge) (int16, error) {
-	return internalloopfilter.SegmentDelta(seg, segmentID, plane, edge)
+	if segmentID < 0 || segmentID >= MaxSegments {
+		return 0, ErrLoopFilterInvalidFilter
+	}
+	return internalloopfilter.SegmentDelta(seg, uint8(segmentID), plane, edge)
 }
 
 // ResolveLoopFilterLevel resolves the effective loop-filter level for req by
@@ -134,7 +137,12 @@ func ApplyLoopFilter14Edge(dst FramePlane, bytesPerSample int, bitDepth uint8, e
 // ApplyLoopFilterEdgeByWidth dispatches to ApplyLoopFilter4/6/8/14Edge based
 // on width (4, 6, 8, or 14).
 func ApplyLoopFilterEdgeByWidth(width int, dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.FilterEdgeByWidth(int32(width), dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
+	switch width {
+	case 4, 6, 8, 14:
+		return internalloopfilter.FilterEdgeByWidth(uint8(width), dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
+	default:
+		return ErrLoopFilterInvalidFilter
+	}
 }
 
 // ApplyLoopFilter4BlockEdge resolves the 4-tap edge filter parameters for

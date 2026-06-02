@@ -162,7 +162,7 @@ func TestPublicApplyLoopFilterBlockEdges(t *testing.T) {
 		t.Fatalf("resolved edge did not filter expected samples")
 	}
 
-	for _, width := range []int32{6, 8, 14} {
+	for _, width := range []uint8{6, 8, 14} {
 		req := av1.LoopFilterEdgeRequest{
 			LevelRequest: av1.LoopFilterLevelRequest{Plane: av1.LoopFilterPlaneY, Edge: av1.LoopFilterEdgeHorizontal, SegmentID: 0, RefFrame: 0},
 			X:            0,

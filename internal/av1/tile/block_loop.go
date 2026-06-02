@@ -219,7 +219,7 @@ type BlockLoopRequest struct {
 	LumaTransformType   transform.Type
 	ChromaTransformType [2]transform.Type
 	TransformSelect     CoeffTransformSelector
-	EOBMultiContext     [3]int
+	EOBMultiContext     [3]uint8
 	CoeffController     BlockLoopCoeffController
 	CoeffRequest        BlockLoopCoeffRequestSelector
 	BeforeSuperblock    BlockLoopSuperblockVisitor

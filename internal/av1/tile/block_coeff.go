@@ -22,7 +22,7 @@ type BlockCoeffRequest struct {
 	LumaType        transform.Type
 	ChromaType      [2]transform.Type
 	TransformSelect CoeffTransformSelector
-	EOBMultiContext [3]int
+	EOBMultiContext [3]uint8
 
 	SkipAllZeroCoeffClear bool
 }

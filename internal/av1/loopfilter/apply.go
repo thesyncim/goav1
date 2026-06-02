@@ -33,7 +33,7 @@ type Filter4Request = FilterEdgeRequest
 type FilterBlockRequest struct {
 	FilterEdgeRequest
 
-	Width int32
+	Width uint8
 }
 
 // FilterResult reports the resolved setup used for one edge filter call.
@@ -125,7 +125,7 @@ func filterBlockEdgeWidth(dst frame.Plane, bytesPerSample int, bitDepth uint8, p
 }
 
 // FilterEdgeByWidth applies one AV1 deblocking edge with precomputed thresholds.
-func FilterEdgeByWidth(width int32, dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int32, y int32, length int32, thresholds Thresholds) error {
+func FilterEdgeByWidth(width uint8, dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int32, y int32, length int32, thresholds Thresholds) error {
 	switch width {
 	case 4:
 		return Filter4Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
@@ -140,6 +140,6 @@ func FilterEdgeByWidth(width int32, dst frame.Plane, bytesPerSample int, bitDept
 	}
 }
 
-func validFilterWidth(width int32) bool {
+func validFilterWidth(width uint8) bool {
 	return width == 4 || width == 6 || width == 8 || width == 14
 }

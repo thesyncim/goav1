@@ -20,7 +20,7 @@ type LumaCoeffTreeRequest struct {
 	TransformType    transform.Type
 	UseTransformType bool
 	TransformSelect  CoeffTransformSelector
-	EOBMultiContext  int
+	EOBMultiContext  uint8
 
 	SkipAllZeroCoeffClear bool
 }
@@ -65,8 +65,8 @@ type LumaCoeffStats struct {
 
 type LumaCoeffVisitor func(LumaCoeffBlock) error
 
-func coeffEOBMultiContext8(context int) (uint8, error) {
-	if context < 0 || context >= maxEOBFlagContexts {
+func coeffEOBMultiContext8(context uint8) (uint8, error) {
+	if context >= maxEOBFlagContexts {
 		return 0, ErrInvalidDecodeState
 	}
 	return uint8(context), nil
@@ -83,7 +83,7 @@ type ChromaCoeffTreeRequest struct {
 	TransformType    transform.Type
 	UseTransformType bool
 	TransformSelect  CoeffTransformSelector
-	EOBMultiContext  int
+	EOBMultiContext  uint8
 
 	SkipAllZeroCoeffClear bool
 }
@@ -515,7 +515,7 @@ func recordCoeffTransform(selector CoeffTransformSelector, req CoeffTransformReq
 	}
 }
 
-func eobMultiContextForClass(class transform.Class) int {
+func eobMultiContextForClass(class transform.Class) uint8 {
 	if class == transform.Class2D {
 		return 0
 	}

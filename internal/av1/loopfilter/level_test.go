@@ -197,7 +197,7 @@ func TestResolveLevelRejectsInvalidInputs(t *testing.T) {
 	}{
 		{name: "plane", req: LevelRequest{Plane: Plane(9), Edge: EdgeVertical, RefFrame: 0, SegmentID: 0}},
 		{name: "edge", req: LevelRequest{Plane: PlaneY, Edge: Edge(9), RefFrame: 0, SegmentID: 0}},
-		{name: "segment", req: LevelRequest{Plane: PlaneY, Edge: EdgeVertical, RefFrame: 0, SegmentID: -1}},
+		{name: "segment", req: LevelRequest{Plane: PlaneY, Edge: EdgeVertical, RefFrame: 0, SegmentID: parser.MaxSegments}},
 		{name: "ref", req: LevelRequest{Plane: PlaneY, Edge: EdgeVertical, RefFrame: parser.RefFrames, SegmentID: 0}},
 		{name: "mode", req: LevelRequest{Plane: PlaneY, Edge: EdgeVertical, RefFrame: 0, SegmentID: 0, Mode: ModeDeltaClass(9)}},
 	}

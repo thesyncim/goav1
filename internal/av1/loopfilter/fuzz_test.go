@@ -10,7 +10,7 @@ func FuzzResolveLevel(f *testing.F) {
 	f.Add(uint8(40), uint8(20), uint8(17), int8(-3), int16(-5), int8(-2), int8(3), uint8(0), uint8(4), uint8(1))
 	f.Fuzz(func(t *testing.T, levelYV uint8, levelYH uint8, levelU uint8, deltaLF int8, segDelta int16, refDelta int8, modeDelta int8, edgeRaw uint8, refRaw uint8, modeRaw uint8) {
 		edge := Edge(edgeRaw & 1)
-		ref := int(refRaw % parser.RefFrames)
+		ref := refRaw % parser.RefFrames
 		mode := ModeDeltaClass(modeRaw & 1)
 
 		params := parser.LoopFilterParams{
