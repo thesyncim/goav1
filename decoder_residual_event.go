@@ -219,11 +219,11 @@ func DecoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []De
 		EventIndex: -1,
 	}
 	for i := range events {
-		event := events[i]
-		sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-		if decoderFrameWorkResidualEventBindCandidate(event) {
+		event := &events[i]
+		sequence = decoderFrameWorkResidualEventSequencePtr(sequence, event)
+		if decoderFrameWorkResidualEventBindCandidatePtr(event) {
 			plan.Sequence = sequence
-			plan.Event = event
+			plan.Event = *event
 			plan.EventIndex = i
 		}
 	}
@@ -370,19 +370,23 @@ func (r DecoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(seque
 // caller-owned spans/jobs/batches and reports both residual-runner scratch and
 // frame-level side-data scratch for the event.
 func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
+	return decoderFrameWorkResidualEventScratchLenPtr(sequence, &event, workers, spans, jobs, batches)
+}
+
+func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
 	size := DecoderFrameWorkResidualEventScratchSize{
-		Outputs: decoderFrameWorkResidualEventOutputLen(event),
+		Outputs: decoderFrameWorkResidualEventOutputLenPtr(event),
 	}
-	if decoderFrameWorkResidualEventHasTilePayload(event) {
-		runner, plan, err := DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, workers, spans, jobs, batches)
+	if decoderFrameWorkResidualEventHasTilePayloadPtr(event) {
+		runner, plan, err := decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 		if err != nil {
 			return DecoderFrameWorkResidualEventScratchSize{}, err
 		}
 		size.Runner = runner
 		size.Plan = plan
 	}
-	if decoderFrameWorkResidualEventNeedsSideData(event) {
-		sideData, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
+	if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
+		sideData, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
 		if err != nil {
 			return DecoderFrameWorkResidualEventScratchSize{}, err
 		}
@@ -396,18 +400,18 @@ func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event Deco
 func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
 	var size DecoderFrameWorkResidualEventScratchSize
 	for i := range events {
-		event := events[i]
-		sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-		size.Outputs += decoderFrameWorkResidualEventOutputLen(event)
-		if decoderFrameWorkResidualEventNeedsSideData(event) {
-			side, err := DecoderFrameWorkResidualEventSideDataScratchLen(sequence, event)
+		event := &events[i]
+		sequence = decoderFrameWorkResidualEventSequencePtr(sequence, event)
+		size.Outputs += decoderFrameWorkResidualEventOutputLenPtr(event)
+		if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
+			side, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
 			if err != nil {
 				return DecoderFrameWorkResidualEventScratchSize{}, err
 			}
 			size.SideData = size.SideData.Max(side)
 		}
-		if decoderFrameWorkResidualEventHasTilePayload(event) {
-			runner, plan, err := DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, workers, spans, jobs, batches)
+		if decoderFrameWorkResidualEventHasTilePayloadPtr(event) {
+			runner, plan, err := decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 			if err != nil {
 				return DecoderFrameWorkResidualEventScratchSize{}, err
 			}
@@ -422,12 +426,16 @@ func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 // caller-owned spans/jobs/batches and reports the residual runner scratch
 // required to execute the planned event.
 func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
-	plan, err := PlanDecoderTileWork(event, workers, spans, jobs, batches)
+	return decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, &event, workers, spans, jobs, batches)
+}
+
+func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
+	plan, err := planDecoderTileWorkPtr(event, workers, spans, jobs, batches)
 	if err != nil {
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
 	}
 	batch := DecoderFrameWorkBatch{
-		FrameWorkFrameContext: decoderFrameWorkResidualEventContext(sequence, event),
+		FrameWorkFrameContext: decoderFrameWorkResidualEventContextPtr(sequence, event),
 		Jobs:                  jobs[:plan.JobCount],
 	}
 	size, err := DecoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
@@ -440,12 +448,20 @@ func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, even
 // DecoderFrameWorkResidualEventSideDataScratchLen reports frame-level side-data
 // scratch for the event's frame size, CDEF, and restoration parameters.
 func DecoderFrameWorkResidualEventSideDataScratchLen(sequence SequenceHeader, event DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
+	return decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, &event)
+}
+
+func decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence SequenceHeader, event *DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
 	return DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, event.Restoration)
 }
 
 // BindDecoderFrameWorkResidualEventSideData binds frame-level side data using
 // the event's frame size, CDEF, and restoration parameters.
 func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualEventSideDataPtr(sequence, &event, scratch)
+}
+
+func bindDecoderFrameWorkResidualEventSideDataPtr(sequence SequenceHeader, event *DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
 	return BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch)
 }
 
@@ -535,6 +551,13 @@ func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
 		return 1
 	}
 	return 0
+}
+
+func decoderFrameWorkResidualEventOutputLenPtr(event *DecoderEvent) int {
+	if event == nil {
+		return 0
+	}
+	return decoderFrameWorkResidualEventOutputLen(*event)
 }
 
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
@@ -777,9 +800,16 @@ func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWor
 }
 
 func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event DecoderEvent) SequenceHeader {
+	return decoderFrameWorkResidualEventSequencePtr(sequence, &event)
+}
+
+func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *DecoderEvent) SequenceHeader {
+	if event == nil {
+		return sequence
+	}
 	switch event.Kind {
 	case DecoderEventSequenceHeader:
-		if decoderFrameWorkResidualEventHasSequence(event) {
+		if decoderFrameWorkResidualEventHasSequencePtr(event) {
 			return event.SequenceHeader
 		}
 		return sequence
@@ -788,7 +818,7 @@ func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event Decode
 		DecoderEventFrame,
 		DecoderEventTileGroup,
 		DecoderEventExistingFrame:
-		if decoderFrameWorkResidualEventHasSequence(event) {
+		if decoderFrameWorkResidualEventHasSequencePtr(event) {
 			return event.SequenceHeader
 		}
 		return sequence
@@ -798,10 +828,24 @@ func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event Decode
 }
 
 func decoderFrameWorkResidualEventHasSequence(event DecoderEvent) bool {
+	return decoderFrameWorkResidualEventHasSequencePtr(&event)
+}
+
+func decoderFrameWorkResidualEventHasSequencePtr(event *DecoderEvent) bool {
+	if event == nil {
+		return false
+	}
 	return event.SequenceHeader.ColorConfig.BitDepth != 0
 }
 
 func decoderFrameWorkResidualEventNeedsSideData(event DecoderEvent) bool {
+	return decoderFrameWorkResidualEventNeedsSideDataPtr(&event)
+}
+
+func decoderFrameWorkResidualEventNeedsSideDataPtr(event *DecoderEvent) bool {
+	if event == nil {
+		return false
+	}
 	switch event.Kind {
 	case DecoderEventFrameHeader, DecoderEventFrame, DecoderEventTileGroup:
 		return true
@@ -811,6 +855,13 @@ func decoderFrameWorkResidualEventNeedsSideData(event DecoderEvent) bool {
 }
 
 func decoderFrameWorkResidualEventHasTilePayload(event DecoderEvent) bool {
+	return decoderFrameWorkResidualEventHasTilePayloadPtr(&event)
+}
+
+func decoderFrameWorkResidualEventHasTilePayloadPtr(event *DecoderEvent) bool {
+	if event == nil {
+		return false
+	}
 	switch event.Kind {
 	case DecoderEventFrame, DecoderEventTileGroup:
 		return true
@@ -820,9 +871,13 @@ func decoderFrameWorkResidualEventHasTilePayload(event DecoderEvent) bool {
 }
 
 func decoderFrameWorkResidualEventBindCandidate(event DecoderEvent) bool {
-	return decoderFrameWorkResidualEventNeedsSideData(event) ||
-		decoderFrameWorkResidualEventHasTilePayload(event) ||
-		DecoderEventOutputsFrame(event)
+	return decoderFrameWorkResidualEventBindCandidatePtr(&event)
+}
+
+func decoderFrameWorkResidualEventBindCandidatePtr(event *DecoderEvent) bool {
+	return decoderFrameWorkResidualEventNeedsSideDataPtr(event) ||
+		decoderFrameWorkResidualEventHasTilePayloadPtr(event) ||
+		(event != nil && DecoderEventOutputsFrame(*event))
 }
 
 func decoderFrameWorkResidualEventPlanMax(a DecoderTileWorkPlan, b DecoderTileWorkPlan) DecoderTileWorkPlan {
@@ -847,6 +902,15 @@ func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPl
 }
 
 func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event DecoderEvent) DecoderFrameWorkFrameContext {
+	return decoderFrameWorkResidualEventContextPtr(sequence, &event)
+}
+
+func decoderFrameWorkResidualEventContextPtr(sequence SequenceHeader, event *DecoderEvent) DecoderFrameWorkFrameContext {
+	if event == nil {
+		return DecoderFrameWorkFrameContext{
+			Sequence: DecoderFrameWorkSequenceContextFromHeader(sequence),
+		}
+	}
 	return DecoderFrameWorkFrameContext{
 		Sequence:            DecoderFrameWorkSequenceContextFromHeader(sequence),
 		FrameHeader:         event.FrameHeader,

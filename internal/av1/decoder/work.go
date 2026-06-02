@@ -1767,7 +1767,14 @@ func PlanFrameTileWork(event Event, surface int, referenceCount int, workers int
 // tile jobs, and deterministic worker batches. All output storage is
 // caller-owned.
 func PlanTileWork(event Event, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (TileWorkPlan, error) {
-	if event.Kind != EventFrame && event.Kind != EventTileGroup {
+	return PlanTileWorkPtr(&event, workers, spans, jobs, batches)
+}
+
+// PlanTileWorkPtr is the pointer-shaped twin of PlanTileWork for internal
+// callers that scan parsed event slices and should not copy Event values just
+// to plan tile payload spans.
+func PlanTileWorkPtr(event *Event, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (TileWorkPlan, error) {
+	if event == nil || (event.Kind != EventFrame && event.Kind != EventTileGroup) {
 		return TileWorkPlan{}, ErrInvalidTileWork
 	}
 

@@ -532,6 +532,10 @@ func PlanDecoderTileWork(event DecoderEvent, workers int, spans []TileSpan, jobs
 	return internaldecoder.PlanTileWork(event, workers, spans, jobs, batches)
 }
 
+func planDecoderTileWorkPtr(event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileWorkPlan, error) {
+	return internaldecoder.PlanTileWorkPtr(event, workers, spans, jobs, batches)
+}
+
 // BeginDecoderFrameWork acquires an output surface from pool, validates the
 // reference set, and returns a DecoderFrameWorkPlan together with the
 // acquired *Frame. align is the surface alignment requirement.
