@@ -15,6 +15,7 @@ func TestHotStructSizes(t *testing.T) {
 	}{
 		{name: "Event", size: unsafe.Sizeof(Event{}), max: 6 * hotStructKiB},
 		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 576 * hotStructKiB},
+		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 32},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)

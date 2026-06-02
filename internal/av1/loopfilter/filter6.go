@@ -11,8 +11,9 @@ import "github.com/thesyncim/goav1/internal/av1/frame"
 // Filter6Edge applies AV1's six-sample deblocking filter along one horizontal
 // or vertical edge. The x/y coordinate identifies q0, the first sample on the
 // current block side of the edge.
-func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int, thresholds Thresholds) error {
-	if err := validateFilter6Edge(dst, bytesPerSample, bitDepth, edge, x, y, length); err != nil {
+func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int32, y int32, length int32, thresholds Thresholds) error {
+	xi, yi, lengthi := int(x), int(y), int(length)
+	if err := validateFilter6Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
 	shift := int(bitDepth - 8)
@@ -26,14 +27,14 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		center: 128 * scale,
 	}
 
-	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		filter6EdgeImpl(pix, q0Base, step, outer, length, scale, params)
+		filter6EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
 		return nil
 	}
-	for i := range length {
+	for i := range lengthi {
 		q0 := q0Base + i*outer
 		p2 := readSample(pix, bytesPerSample, q0-3*step)
 		p1 := readSample(pix, bytesPerSample, q0-2*step)

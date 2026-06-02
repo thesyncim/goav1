@@ -143,13 +143,13 @@ func applyCReferenceFilterByWidth(plane frame.Plane, bytesPerSample int, bitDept
 func applyLoopFilterByWidth(width int, plane frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int, thresholds Thresholds) error {
 	switch width {
 	case 4:
-		return Filter4Edge(plane, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+		return Filter4Edge(plane, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 	case 6:
-		return Filter6Edge(plane, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+		return Filter6Edge(plane, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 	case 8:
-		return Filter8Edge(plane, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+		return Filter8Edge(plane, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 	case 14:
-		return Filter14Edge(plane, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+		return Filter14Edge(plane, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 	default:
 		return ErrInvalidFilter
 	}

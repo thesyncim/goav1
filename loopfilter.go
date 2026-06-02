@@ -113,28 +113,28 @@ func ResolveLoopFilterBlockLevel(params LoopFilterParams, seg SegmentationParams
 
 // ApplyLoopFilter4Edge applies the 4-tap loop filter to one edge in dst.
 func ApplyLoopFilter4Edge(dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	return internalloopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 }
 
 // ApplyLoopFilter6Edge applies the 6-tap loop filter to one edge in dst.
 func ApplyLoopFilter6Edge(dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	return internalloopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 }
 
 // ApplyLoopFilter8Edge applies the 8-tap loop filter to one edge in dst.
 func ApplyLoopFilter8Edge(dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	return internalloopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 }
 
 // ApplyLoopFilter14Edge applies the 14-tap loop filter to one edge in dst.
 func ApplyLoopFilter14Edge(dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	return internalloopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 }
 
 // ApplyLoopFilterEdgeByWidth dispatches to ApplyLoopFilter4/6/8/14Edge based
 // on width (4, 6, 8, or 14).
 func ApplyLoopFilterEdgeByWidth(width int, dst FramePlane, bytesPerSample int, bitDepth uint8, edge LoopFilterEdge, x int, y int, length int, thresholds LoopFilterThresholds) error {
-	return internalloopfilter.FilterEdgeByWidth(width, dst, bytesPerSample, bitDepth, edge, x, y, length, thresholds)
+	return internalloopfilter.FilterEdgeByWidth(int32(width), dst, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), thresholds)
 }
 
 // ApplyLoopFilter4BlockEdge resolves the 4-tap edge filter parameters for

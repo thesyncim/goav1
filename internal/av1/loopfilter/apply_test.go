@@ -88,7 +88,7 @@ func TestFilter4BlockEdgeAppliesResolvedLevel(t *testing.T) {
 }
 
 func TestFilterBlockEdgeDispatchesResolvedWidths(t *testing.T) {
-	for _, width := range []int{4, 6, 8, 14} {
+	for _, width := range []int32{4, 6, 8, 14} {
 		plane := testPlane(32, 32, 1, 32)
 		for y := 0; y < plane.Height; y++ {
 			for x := 0; x < plane.Width; x++ {
@@ -132,7 +132,7 @@ func TestFilterBlockEdgeDispatchesResolvedWidths(t *testing.T) {
 }
 
 func TestSpecificBlockEdgeWrappersMatchGenericDispatcher(t *testing.T) {
-	for _, width := range []int{6, 8, 14} {
+	for _, width := range []int32{6, 8, 14} {
 		plane := testPlane(32, 32, 1, 32)
 		for y := 0; y < plane.Height; y++ {
 			for x := 0; x < plane.Width; x++ {
@@ -297,9 +297,9 @@ func FuzzFilter4BlockEdge(f *testing.F) {
 			DeltaState{FromBase: rawDelta},
 			Filter4Request{
 				LevelRequest: LevelRequest{Plane: PlaneY, Edge: edge, SegmentID: 0, RefFrame: 0},
-				X:            x,
-				Y:            y,
-				Length:       length,
+				X:            int32(x),
+				Y:            int32(y),
+				Length:       int32(length),
 			},
 		)
 		if err != nil {
@@ -336,7 +336,7 @@ func BenchmarkFilter4BlockEdge(b *testing.B) {
 func BenchmarkFilterBlockEdge(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	params := parser.LoopFilterParams{LevelY: [2]uint8{16, 16}}
-	for _, width := range []int{4, 6, 8, 14} {
+	for _, width := range []int32{4, 6, 8, 14} {
 		req := FilterBlockRequest{
 			FilterEdgeRequest: FilterEdgeRequest{
 				LevelRequest: LevelRequest{Plane: PlaneY, Edge: EdgeHorizontal, SegmentID: 0, RefFrame: 0},
@@ -346,7 +346,7 @@ func BenchmarkFilterBlockEdge(b *testing.B) {
 			},
 			Width: width,
 		}
-		b.Run("width="+strconv.Itoa(width), func(b *testing.B) {
+		b.Run("width="+strconv.Itoa(int(width)), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_, _ = FilterBlockEdge(plane, 1, 8, params, parser.SegmentationParams{}, parser.DeltaParams{}, DeltaState{}, req)
@@ -446,8 +446,8 @@ func TestFilterEdgeByWidthAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, width := range []int{4, 6, 8, 14} {
-		t.Run("width="+strconv.Itoa(width), func(t *testing.T) {
+	for _, width := range []int32{4, 6, 8, 14} {
+		t.Run("width="+strconv.Itoa(int(width)), func(t *testing.T) {
 			if err := FilterEdgeByWidth(width, plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds); err != nil {
 				t.Fatalf("warm-up err=%v", err)
 			}

@@ -388,9 +388,9 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaSubsamplingGeom
 			wantU := FrameWorkLoopFilterPostFilterEdge{
 				Plane:      loopfilter.PlaneU,
 				Edge:       loopfilter.EdgeVertical,
-				X4:         tt.wantX4,
-				Y4:         tt.wantY4,
-				Length4:    tt.wantLen,
+				X4:         int32(tt.wantX4),
+				Y4:         int32(tt.wantY4),
+				Length4:    int32(tt.wantLen),
 				Level:      7,
 				Transform:  tile.TransformSize8x8,
 				Width:      6,
@@ -447,7 +447,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSchedulesLumaEdgeWidt
 		t.Fatalf("plan=%+v edges=%+v", plan, edges)
 	}
 	for i, want := range []int{4, 4, 8} {
-		if edges[i].Width != want {
+		if int(edges[i].Width) != want {
 			t.Fatalf("edge[%d]=%+v want width %d", i, edges[i], want)
 		}
 	}
@@ -572,7 +572,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsHorizontalLumaW
 		t.Fatalf("plan=%+v edges=%+v", plan, edges)
 	}
 	for i, want := range []int{4, 4, 8} {
-		if edges[i].Width != want {
+		if int(edges[i].Width) != want {
 			t.Fatalf("edge[%d]=%+v want width %d", i, edges[i], want)
 		}
 	}

@@ -131,7 +131,7 @@ func TestFilter14EdgeMatchesCReference(t *testing.T) {
 			writeFilter14ReferenceSample(want, bytesPerSample, tt.edge, i, ref)
 		}
 
-		x, y, length := 0, 7, len(tt.samples)
+		x, y, length := int32(0), int32(7), int32(len(tt.samples))
 		if tt.edge == EdgeVertical {
 			x, y = 7, 0
 		}
@@ -152,9 +152,9 @@ func TestFilter14EdgeRejectsInvalidInputs(t *testing.T) {
 		bytesPerSample int
 		bitDepth       uint8
 		edge           Edge
-		x              int
-		y              int
-		length         int
+		x              int32
+		y              int32
+		length         int32
 	}{
 		{name: "sample width", plane: plane, bytesPerSample: 2, bitDepth: 8, edge: EdgeHorizontal, x: 0, y: 7, length: 4},
 		{name: "edge", plane: plane, bytesPerSample: 1, bitDepth: 8, edge: Edge(9), x: 0, y: 7, length: 4},
@@ -222,7 +222,7 @@ func FuzzFilter14Edge(f *testing.F) {
 		if edge == EdgeVertical {
 			length = height - y
 		}
-		err := Filter14Edge(plane, bytesPerSample, bitDepth, edge, x, y, length, Thresholds{
+		err := Filter14Edge(plane, bytesPerSample, bitDepth, edge, int32(x), int32(y), int32(length), Thresholds{
 			Limit:            rawLimit,
 			BlockLimit:       rawBlockLimit,
 			HighEdgeVariance: rawHEV,
