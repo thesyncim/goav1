@@ -889,13 +889,18 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
-	// While the levels map is being filled, coeffs[pos] carries a temporary
-	// next pointer through the nonzero coefficients in scan order. The final
-	// sign/Golomb pass captures the pointer before overwriting coeffs[pos] with
-	// the signed output coefficient, so the public output shape stays unchanged
-	// and no extra per-TXB scratch is required.
 	headC := lastC
-	coeffs[lastPos] = 0
+	// Internal scratch callers can reuse the dirty-position array as a temporary
+	// scan-index stack, then rewrite it to coefficient positions after signs are
+	// decoded. Public callers keep the coeffs[pos] linked-list fallback below.
+	useDirtyScanList := trackDirty && dirtyNext == 0
+	nonzeroScanLen := 0
+	if useDirtyScanList {
+		(*dirtyPos)[0] = int16(lastC)
+		nonzeroScanLen = 1
+	} else {
+		coeffs[lastPos] = 0
+	}
 
 	if req.Class == transform.Class2D {
 		stride := geo.stride
@@ -937,8 +942,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			levelsScratch[padded] = uint8(level)
 			if level != 0 {
-				coeffs[pos] = int16(headC + 1)
-				headC = c
+				if useDirtyScanList {
+					(*dirtyPos)[nonzeroScanLen] = int16(c)
+					nonzeroScanLen++
+				} else {
+					coeffs[pos] = int16(headC + 1)
+					headC = c
+				}
 			}
 		}
 	} else {
@@ -963,8 +973,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			levelsScratch[padded] = uint8(level)
 			if level != 0 {
-				coeffs[pos] = int16(headC + 1)
-				headC = c
+				if useDirtyScanList {
+					(*dirtyPos)[nonzeroScanLen] = int16(c)
+					nonzeroScanLen++
+				} else {
+					coeffs[pos] = int16(headC + 1)
+					headC = c
+				}
 			}
 		}
 	}
@@ -975,72 +990,140 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
-	for c := headC; c >= 0; {
-		pos := int(scan[c])
-		if pos < 0 || pos >= maxEOB {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		nextC := int(coeffs[pos]) - 1
-		padded := int(posSlice[pos].padded)
-		if padded < 0 || padded >= len(levelsScratch) {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		level := int(levelsScratch[padded])
-		if level == 0 {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		if pos > maxScanLine {
-			maxScanLine = pos
-		}
-		negative := false
-		if c == 0 {
-			negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
-		} else {
-			bit := reader.ReadBitTrusted()
-			negative = bit != 0
-		}
-		baseLevel := level
-		golombExtra := 0
-		if level >= MaxBaseBRRange {
-			tail, err := readCoeffGolombCursor(&reader)
-			if err != nil {
+	if useDirtyScanList {
+		for i := nonzeroScanLen - 1; i >= 0; i-- {
+			c := int((*dirtyPos)[i])
+			if c < 0 || c >= eob.Position {
 				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, err
+				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
-			golombExtra = tail
-			level += tail
+			pos := int(scan[c])
+			if pos < 0 || pos >= maxEOB {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			padded := int(posSlice[pos].padded)
+			if padded < 0 || padded >= len(levelsScratch) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			level := int(levelsScratch[padded])
+			if level == 0 {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			negative := false
+			if c == 0 {
+				negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+			} else {
+				bit := reader.ReadBitTrusted()
+				negative = bit != 0
+			}
+			baseLevel := level
+			golombExtra := 0
+			if level >= MaxBaseBRRange {
+				tail, err := readCoeffGolombCursor(&reader)
+				if err != nil {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, err
+				}
+				golombExtra = tail
+				level += tail
+			}
+			signBit := 0
+			if negative {
+				signBit = 1
+			}
+			if coeffTraceEnabled {
+				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+			}
+			culLevel += level
+			if level > int(^uint16(0)>>1) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			if c == 0 {
+				dcValue = int(signed)
+			}
+			coeffs[pos] = signed
+			(*dirtyPos)[i] = int16(pos)
 		}
-		signBit := 0
-		if negative {
-			signBit = 1
+		*dirtyLen = nonzeroScanLen
+	} else {
+		for c := headC; c >= 0; {
+			pos := int(scan[c])
+			if pos < 0 || pos >= maxEOB {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			nextC := int(coeffs[pos]) - 1
+			padded := int(posSlice[pos].padded)
+			if padded < 0 || padded >= len(levelsScratch) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			level := int(levelsScratch[padded])
+			if level == 0 {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			negative := false
+			if c == 0 {
+				negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+			} else {
+				bit := reader.ReadBitTrusted()
+				negative = bit != 0
+			}
+			baseLevel := level
+			golombExtra := 0
+			if level >= MaxBaseBRRange {
+				tail, err := readCoeffGolombCursor(&reader)
+				if err != nil {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, err
+				}
+				golombExtra = tail
+				level += tail
+			}
+			signBit := 0
+			if negative {
+				signBit = 1
+			}
+			if coeffTraceEnabled {
+				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+			}
+			culLevel += level
+			if level > int(^uint16(0)>>1) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			if c == 0 {
+				dcValue = int(signed)
+			}
+			coeffs[pos] = signed
+			if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
+				(*dirtyPos)[dirtyNext] = int16(pos)
+				dirtyNext++
+			}
+			c = nextC
 		}
-		if coeffTraceEnabled {
-			coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+		if trackDirty {
+			*dirtyLen = dirtyNext
 		}
-		culLevel += level
-		if level > int(^uint16(0)>>1) {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		signed := int16(level)
-		if negative {
-			signed = -signed
-		}
-		if c == 0 {
-			dcValue = int(signed)
-		}
-		coeffs[pos] = signed
-		if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
-			(*dirtyPos)[dirtyNext] = int16(pos)
-			dirtyNext++
-		}
-		c = nextC
-	}
-	if trackDirty {
-		*dirtyLen = dirtyNext
 	}
 
 	if culLevel > CoeffContextMask {
