@@ -204,7 +204,7 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	case subX != 0 && subY != 0:
 		predictInterCompoundRef8ToConvBuf2D(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
 	case subX != 0:
-		predictInterCompoundRef8ToConvBufX(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
+		predictInterCompoundRef8ToConvBufX(out, ref, refX, refY, width, height, xKernel, roundOffset)
 	case subY != 0:
 		predictInterCompoundRef8ToConvBufY(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 	default:
@@ -328,10 +328,8 @@ func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, re
 	}
 }
 
-func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
-	bits := filterBits - compoundRound1Bits
-	scale := 1 << bits
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
 	firstTap := refX - fo
@@ -347,7 +345,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 			}
 			if xHi > xLo {
 				srcRow := ref.Pix[rowBase+firstTap+xLo:]
@@ -355,7 +353,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 					i := x - xLo
 					s := srcRow[i : i+filterTaps]
 					sum := k2*int(s[2]) + k3*int(s[3]) + k4*int(s[4]) + k5*int(s[5])
-					outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+					outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 				}
 			}
 			for x := xHi; x < width; x++ {
@@ -364,7 +362,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 			}
 			continue
 		}
@@ -378,7 +376,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 		}
 		if xHi > xLo {
 			srcRow := ref.Pix[rowBase+firstTap+xLo:]
@@ -387,7 +385,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 				s := srcRow[i : i+filterTaps]
 				sum := k0*int(s[0]) + k1*int(s[1]) + k2*int(s[2]) + k3*int(s[3]) +
 					k4*int(s[4]) + k5*int(s[5]) + k6*int(s[6]) + k7*int(s[7])
-				outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 			}
 		}
 		for x := xHi; x < width; x++ {
@@ -400,7 +398,7 @@ func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int,
 				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			outRow[x] = uint16(scale*roundPowerOfTwo(sum, round0) + roundOffset)
+			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 		}
 	}
 }
