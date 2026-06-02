@@ -276,11 +276,11 @@ type FrameWorkBatch struct {
 // results (the cache returns exactly what the original computation would).
 type frameWorkJobGeometryCache struct {
 	regionValid bool
-	regionIndex int
+	regionIndex uint32
 	region      FrameWorkJobRegion
 
 	planeValid [3]bool
-	planeIndex [3]int
+	planeIndex [3]uint32
 	plane      [3]FrameWorkPlaneRegion
 }
 
@@ -346,20 +346,21 @@ func (b *FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) erro
 // memoized per index so the pure integer recompute is amortized across the
 // many transform blocks of one job.
 func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
-	if c := b.geomCache; c != nil && c.regionValid && c.regionIndex == index {
+	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
+	if c := b.geomCache; c != nil && cacheIndexOK && c.regionValid && c.regionIndex == cacheIndex {
 		return c.region, nil
 	}
 	region, err := b.computeJobRegion(index)
 	if err != nil {
 		return region, err
 	}
-	if c := b.geomCache; c != nil {
+	if c := b.geomCache; c != nil && cacheIndexOK {
 		// A new index invalidates any plane windows cached for the old one.
-		if !c.regionValid || c.regionIndex != index {
+		if !c.regionValid || c.regionIndex != cacheIndex {
 			c.planeValid = [3]bool{}
 		}
 		c.region = region
-		c.regionIndex = index
+		c.regionIndex = cacheIndex
 		c.regionValid = true
 	}
 	return region, nil
@@ -529,20 +530,28 @@ func (b *FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane
 // transform blocks regardless of the visible boundary, and later blocks read
 // those past-visible samples as predictor neighbors).
 func (b *FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
+	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
 	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV &&
-		c.planeValid[plane] && c.planeIndex[plane] == index {
+		cacheIndexOK && c.planeValid[plane] && c.planeIndex[plane] == cacheIndex {
 		return c.plane[plane], nil
 	}
 	window, err := b.computeJobOutputPlane(index, plane)
 	if err != nil {
 		return window, err
 	}
-	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV {
+	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV && cacheIndexOK {
 		c.plane[plane] = window
-		c.planeIndex[plane] = index
+		c.planeIndex[plane] = cacheIndex
 		c.planeValid[plane] = true
 	}
 	return window, nil
+}
+
+func frameWorkJobCacheIndex(index int) (uint32, bool) {
+	if index < 0 || uint64(index) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(index), true
 }
 
 func (b *FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
@@ -1004,7 +1013,10 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 		var firstErr error
 		for i := range batches {
 			batch := batches[i]
-			err := fn(batch, jobs[batch.FirstJob:batch.FirstJob+batch.Count])
+			batchJobs, err := batch.jobSlice(jobs)
+			if err == nil {
+				err = fn(batch, batchJobs)
+			}
 			if firstErr == nil && err != nil {
 				firstErr = err
 			}
@@ -1020,10 +1032,15 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 
 	for i := range batches {
 		batch := batches[i]
+		batchJobs, err := batch.jobSlice(jobs)
+		if err != nil {
+			p.mu.Unlock()
+			return err
+		}
 		p.workers[batch.Worker].tasks <- poolTask{
 			fn:    fn,
 			batch: batch,
-			jobs:  jobs[batch.FirstJob : batch.FirstJob+batch.Count],
+			jobs:  batchJobs,
 		}
 	}
 
@@ -1069,9 +1086,13 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		var firstErr error
 		for i := range batches {
 			batch := batches[i]
+			batchJobs, err := batch.jobSlice(jobs)
+			if err != nil {
+				return err
+			}
 			ctx := base
 			ctx.Batch = batch
-			ctx.Jobs = jobs[batch.FirstJob : batch.FirstJob+batch.Count]
+			ctx.Jobs = batchJobs
 			if err := fn(ctx); firstErr == nil && err != nil {
 				firstErr = err
 			}
@@ -1092,13 +1113,18 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 
 	for i := range batches {
 		batch := batches[i]
+		batchJobs, err := batch.jobSlice(jobs)
+		if err != nil {
+			p.mu.Unlock()
+			return err
+		}
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameFn:    fn,
 			frameBatch: ctx,
 			batch:      batch,
-			jobs:       jobs[batch.FirstJob : batch.FirstJob+batch.Count],
+			jobs:       batchJobs,
 		}
 	}
 
@@ -1144,9 +1170,13 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 		var firstErr error
 		for i := range batches {
 			batch := batches[i]
+			batchJobs, err := batch.jobSlice(jobs)
+			if err != nil {
+				return err
+			}
 			ctx := base
 			ctx.Batch = batch
-			ctx.Jobs = jobs[batch.FirstJob : batch.FirstJob+batch.Count]
+			ctx.Jobs = batchJobs
 			if err := runner.Run(ctx); firstErr == nil && err != nil {
 				firstErr = err
 			}
@@ -1172,13 +1202,18 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 
 	for i := range batches {
 		batch := batches[i]
+		batchJobs, err := batch.jobSlice(jobs)
+		if err != nil {
+			p.mu.Unlock()
+			return err
+		}
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameRunner: runner,
 			frameBatch:  ctx,
 			batch:       batch,
-			jobs:        jobs[batch.FirstJob : batch.FirstJob+batch.Count],
+			jobs:        batchJobs,
 		}
 	}
 
@@ -1212,14 +1247,12 @@ func (p *Pool) Close() {
 func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 	for i := range batches {
 		batch := batches[i]
-		if int(batch.Worker) >= workers ||
-			batch.FirstJob < 0 ||
-			batch.Count <= 0 ||
-			batch.FirstJob+batch.Count > len(jobs) {
+		start, end, err := batch.jobRange(len(jobs))
+		if err != nil || int(batch.Worker) >= workers {
 			return ErrInvalidBatch
 		}
-		if batch.FirstTile != jobs[batch.FirstJob].Tile ||
-			batch.LastTile != jobs[batch.FirstJob+batch.Count-1].Tile {
+		if batch.FirstTile != jobs[start].Tile ||
+			batch.LastTile != jobs[end-1].Tile {
 			return ErrInvalidBatch
 		}
 	}

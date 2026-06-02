@@ -44,7 +44,7 @@ func TestBuildBatchesCapsWorkersToJobs(t *testing.T) {
 		t.Fatalf("n=%d want %d", n, len(jobs))
 	}
 	for i := range n {
-		if batches[i].Worker != uint16(i) || batches[i].Count != 1 || batches[i].FirstJob != i {
+		if batches[i].Worker != uint16(i) || batches[i].Count != 1 || int(batches[i].FirstJob) != i {
 			t.Fatalf("batch[%d]=%+v", i, batches[i])
 		}
 	}
@@ -1761,10 +1761,12 @@ func FuzzBuildBatches(f *testing.F) {
 		next := 0
 		for i := range n {
 			batch := batches[i]
-			if batch.FirstJob != next || batch.Count <= 0 || batch.FirstJob+batch.Count > count || batch.Units == 0 {
+			firstJob := int(batch.FirstJob)
+			batchCount := int(batch.Count)
+			if firstJob != next || batchCount <= 0 || firstJob+batchCount > count || batch.Units == 0 {
 				t.Fatalf("batch[%d]=%+v next=%d count=%d", i, batch, next, count)
 			}
-			next += batch.Count
+			next += batchCount
 		}
 		if next != count {
 			t.Fatalf("covered=%d count=%d", next, count)

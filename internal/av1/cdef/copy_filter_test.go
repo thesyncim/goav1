@@ -117,7 +117,7 @@ func TestFilterFrameBlocksMatchesLibaomReference(t *testing.T) {
 		bx := int(block.BX)
 		srcOrigin := cdefBlockOrigin() + (by*BStride)<<3 + (bx << 3)
 		dir, variance := findDirectionLibaomReference(input[srcOrigin:], BStride, coeffShift)
-		dirs[by][bx] = dir
+		dirs[by][bx] = uint8(dir)
 		vars[by][bx] = variance
 		strength := adjustStrengthReference(params.Level<<coeffShift, variance)
 		filterBlockLibaomReference(want, 16, (by<<3)*16+(bx<<3), input, srcOrigin, BlockFilterParams{
@@ -155,7 +155,7 @@ func TestFilterFrameBlocksConvertsChromaDirections(t *testing.T) {
 	var dirs DirectionGrid
 	var vars VarianceGrid
 	for i, block := range blocks {
-		dirs[block.BY][block.BX] = i
+		dirs[block.BY][block.BX] = uint8(i)
 	}
 	dst := make([]uint16, 16*8)
 	err := FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
@@ -168,7 +168,7 @@ func TestFilterFrameBlocksConvertsChromaDirections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []int{7, 0, 2, 4}
+	want := []uint8{7, 0, 2, 4}
 	for i, block := range blocks {
 		if got := dirs[block.BY][block.BX]; got != want[i] {
 			t.Fatalf("dir[%d]=%d want %d", i, got, want[i])

@@ -695,7 +695,7 @@ func TestExecuteTileWorkUsesPlanRanges(t *testing.T) {
 
 	err = ExecuteTileWork(plan, workerPool, jobs[:], batches[:], func(batch threading.Batch, batchJobs []tile.Job) error {
 		for i := range batchJobs {
-			seen[batch.FirstJob+i] = batchJobs[i].Tile
+			seen[int(batch.FirstJob)+i] = batchJobs[i].Tile
 		}
 		return nil
 	})

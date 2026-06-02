@@ -25,11 +25,11 @@ func TestPoolExecute(t *testing.T) {
 
 	var seen [4]uint16
 	err = pool.Execute(batches[:n], jobs[:], func(batch Batch, batchJobs []tile.Job) error {
-		if len(batchJobs) != batch.Count {
+		if len(batchJobs) != int(batch.Count) {
 			t.Fatalf("jobs len=%d count=%d", len(batchJobs), batch.Count)
 		}
 		for i := range batchJobs {
-			seen[batch.FirstJob+i] = batchJobs[i].Tile + 1
+			seen[int(batch.FirstJob)+i] = batchJobs[i].Tile + 1
 		}
 		return nil
 	})
@@ -77,11 +77,11 @@ func TestPoolExecuteFrameWork(t *testing.T) {
 		if len(ctx.Payload) != len(payload) || ctx.Payload[0] != payload[0] || ctx.Payload[1] != payload[1] {
 			t.Fatalf("payload=%v want %v", ctx.Payload, payload)
 		}
-		if len(ctx.Jobs) != ctx.Batch.Count {
+		if len(ctx.Jobs) != int(ctx.Batch.Count) {
 			t.Fatalf("jobs len=%d count=%d", len(ctx.Jobs), ctx.Batch.Count)
 		}
 		for i := 0; i < len(ctx.Jobs); i++ {
-			seen[ctx.Batch.FirstJob+i] = ctx.Jobs[i].Tile + 1
+			seen[int(ctx.Batch.FirstJob)+i] = ctx.Jobs[i].Tile + 1
 		}
 		return nil
 	})

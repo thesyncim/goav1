@@ -5,14 +5,13 @@ import "github.com/thesyncim/goav1/internal/av1/tile"
 // Batch is a deterministic contiguous range of tile jobs assigned to one
 // worker lane. It is a plan, not a goroutine; execution policy stays separate.
 type Batch struct {
-	Worker uint16
+	FirstJob uint32
+	Count    uint32
+	Units    uint32
 
-	FirstJob int
-	Count    int
-
+	Worker    uint16
 	FirstTile uint16
 	LastTile  uint16
-	Units     uint32
 }
 
 // BuildBatches partitions jobs into deterministic contiguous worker batches.
@@ -25,10 +24,16 @@ func BuildBatches(dst []Batch, jobs []tile.Job, workers int) (int, error) {
 	if jobCount == 0 {
 		return 0, nil
 	}
+	if uint64(jobCount) > uint64(^uint32(0)) {
+		return 0, ErrInvalidJobs
+	}
 
 	batchCount := min(workers, jobCount)
 	if len(dst) < batchCount {
 		return 0, ErrBatchBufferTooSmall
+	}
+	if batchCount > int(^uint16(0))+1 {
+		return 0, ErrInvalidWorkerCount
 	}
 
 	totalUnits := uint32(0)
@@ -59,17 +64,34 @@ func BuildBatches(dst []Batch, jobs []tile.Job, workers int) (int, error) {
 		}
 
 		dst[batch] = Batch{
+			FirstJob:  uint32(first),
+			Count:     uint32(count),
+			Units:     units,
 			Worker:    uint16(batch),
-			FirstJob:  first,
-			Count:     count,
 			FirstTile: jobs[first].Tile,
 			LastTile:  jobs[first+count-1].Tile,
-			Units:     units,
 		}
 		first += count
 		remainingUnits -= units
 	}
 	return batchCount, nil
+}
+
+func (b Batch) jobRange(jobCount int) (int, int, error) {
+	start64 := uint64(b.FirstJob)
+	end64 := start64 + uint64(b.Count)
+	if b.Count == 0 || end64 > uint64(jobCount) || end64 > uint64(^uint(0)>>1) {
+		return 0, 0, ErrInvalidBatch
+	}
+	return int(start64), int(end64), nil
+}
+
+func (b Batch) jobSlice(jobs []tile.Job) ([]tile.Job, error) {
+	start, end, err := b.jobRange(len(jobs))
+	if err != nil {
+		return nil, err
+	}
+	return jobs[start:end], nil
 }
 
 func chooseBatchCount(jobs []tile.Job, target uint32, remainingBatches int) int {

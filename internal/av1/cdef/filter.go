@@ -23,7 +23,7 @@ type BlockPosition struct {
 	BX uint8
 }
 
-type DirectionGrid [NBlocks][NBlocks]int
+type DirectionGrid [NBlocks][NBlocks]uint8
 type VarianceGrid [NBlocks][NBlocks]int32
 
 type BlockFilterParams struct {
@@ -273,9 +273,9 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 				if err != nil {
 					return err
 				}
-				directions[by][bx] = dir1
+				directions[by][bx] = uint8(dir1)
 				variances[by][bx] = variance1
-				directions[by][bx+1] = dir2
+				directions[by][bx+1] = uint8(dir2)
 				variances[by][bx+1] = variance2
 				i += 2
 				continue
@@ -284,7 +284,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			if err != nil {
 				return err
 			}
-			directions[by][bx] = dir
+			directions[by][bx] = uint8(dir)
 			variances[by][bx] = variance
 			i++
 		}
@@ -304,7 +304,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 		dir := 0
 		if primaryStrength != 0 {
-			dir = directions[by][bx]
+			dir = int(directions[by][bx])
 		}
 		srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
 		dstOrigin := (by<<bhLog2)*dstStride + (bx << bwLog2)
@@ -424,15 +424,15 @@ func adjustStrength(strength int, variance int32) int {
 }
 
 func convertChromaDirections(blocks []BlockPosition, directions *DirectionGrid, xdec int) bool {
-	conv422 := [8]int{7, 0, 2, 4, 5, 6, 6, 6}
-	conv440 := [8]int{1, 2, 2, 2, 3, 4, 6, 0}
+	conv422 := [8]uint8{7, 0, 2, 4, 5, 6, 6, 6}
+	conv440 := [8]uint8{1, 2, 2, 2, 3, 4, 6, 0}
 	for _, block := range blocks {
 		by := int(block.BY)
 		bx := int(block.BX)
 		if by >= NBlocks || bx >= NBlocks {
 			return false
 		}
-		if directions[by][bx] < 0 || directions[by][bx] > 7 {
+		if directions[by][bx] > 7 {
 			return false
 		}
 		if xdec != 0 {
