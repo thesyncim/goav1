@@ -78,6 +78,15 @@ func scaledKernelIsIdentity(kernel [filterTaps]int16) bool {
 func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	return ConvolveScale2D8WithScratch(dst, ref, dstX, dstY, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, nil)
+}
+
+// ConvolveScale2D8WithScratch is ConvolveScale2D8 using optional caller-owned
+// scratch for the large intermediate block.
+func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -97,7 +106,12 @@ func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
 		return ErrInvalidMotion
 	}
-	convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+	if scratch != nil {
+		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
+		return nil
+	}
+	var im scaledIM
+	convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &im)
 	return nil
 }
 
@@ -106,6 +120,15 @@ func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	return ConvolveScale2D8ClampedWithScratch(dst, ref, dstX, dstY, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, nil)
+}
+
+// ConvolveScale2D8ClampedWithScratch is ConvolveScale2D8Clamped using optional
+// caller-owned scratch for the large intermediate block.
+func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -122,11 +145,20 @@ func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
-	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
-		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+	if scratch != nil {
+		if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
+			convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
+			return nil
+		}
+		convolveScale2D8Clamped(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
 		return nil
 	}
-	convolveScale2D8Clamped(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+	var im scaledIM
+	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
+		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &im)
+		return nil
+	}
+	convolveScale2D8Clamped(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &im)
 	return nil
 }
 
@@ -285,9 +317,10 @@ func scaledRefRegionFits(ref frame.Plane, width int, imH int,
 
 func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int) {
+	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, imBuf *scaledIM) {
 	const imStride = maxBlockSize
-	var im [scaledIMMaxHeight * maxBlockSize]int16
+	const xBias = 1 << (8 + filterBits - 1)
+	im := imBuf[:]
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
@@ -295,16 +328,20 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 		srcRow := startRow + y
 		base := srcRow * ref.Stride
 		xPos := startX
+		imRow := im[y*imStride:]
 		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
 			kernel := xTable[xFilterIdx]
-			sum := 1 << (8 + filterBits - 1)
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 			off := base + xInt
-			for k := range filterTaps {
-				sum += int(kernel[k]) * int(ref.Pix[off+k])
-			}
-			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
+			src := ref.Pix[off : off+filterTaps : off+filterTaps]
+			_ = src[7]
+			sum := xBias +
+				k0*int(src[0]) + k1*int(src[1]) + k2*int(src[2]) + k3*int(src[3]) +
+				k4*int(src[4]) + k5*int(src[5]) + k6*int(src[6]) + k7*int(src[7])
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
 			xPos += xStep
 		}
 	}
@@ -356,9 +393,9 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 
 func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int) {
+	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, imBuf *scaledIM) {
 	const imStride = maxBlockSize
-	var im [scaledIMMaxHeight * maxBlockSize]int16
+	im := imBuf[:]
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
@@ -366,6 +403,7 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 		srcRow := startRow + y
 		clampedRowBase := clampInt(srcRow, 0, ref.Height-1) * ref.Stride
 		xPos := startX
+		imRow := im[y*imStride:]
 		for x := range width {
 			xInt := int(scaledIntFloor(xPos)) - foX
 			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
@@ -391,7 +429,7 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 					k6*int(loadSample8ClampedRow(ref, xInt+6, clampedRowBase)) +
 					k7*int(loadSample8ClampedRow(ref, xInt+7, clampedRowBase))
 			}
-			im[y*imStride+x] = int16(roundPowerOfTwo(sum, round0Bits))
+			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
 			xPos += xStep
 		}
 	}

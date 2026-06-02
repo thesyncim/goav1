@@ -629,10 +629,14 @@ func TestConvolveScale2D8ZeroAllocation(t *testing.T) {
 	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 16)
 	startX := int64(8) * ScaleSubpelScale
 	startY := int64(8) * ScaleSubpelScale
+	var scratch ScaledConvolveScratch
 
 	allocs := testing.AllocsPerRun(50, func() {
 		if err := ConvolveScale2D8(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
 			t.Fatalf("ConvolveScale2D8: %v", err)
+		}
+		if err := ConvolveScale2D8WithScratch(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			t.Fatalf("ConvolveScale2D8WithScratch: %v", err)
 		}
 	})
 	if allocs != 0 {
@@ -688,6 +692,24 @@ func BenchmarkConvolveScale2D8ClampedInterior32(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := ConvolveScale2D8Clamped(dst, src, 0, 0, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkConvolveScale2D8ClampedInterior32WithScratch(b *testing.B) {
+	src := scaledTestSourcePlane(96, 96, 1, 0x55)
+	dst, _ := testPlane(32, 32, 1, 32)
+	xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	startX := int64(16) * ScaleSubpelScale
+	startY := int64(16) * ScaleSubpelScale
+	var scratch ScaledConvolveScratch
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ConvolveScale2D8ClampedWithScratch(dst, src, 0, 0, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	}

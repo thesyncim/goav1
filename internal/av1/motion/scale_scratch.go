@@ -5,11 +5,13 @@ import "sync"
 const scaledIMMaxSamples = scaledIMMaxHeight * maxBlockSize
 
 type scaledHighBDIM [scaledIMMaxSamples]int32
+type scaledIM [scaledIMMaxSamples]int16
 
 // ScaledConvolveScratch carries reusable temporary storage for scaled
-// high-bit-depth interpolation. It keeps the large intermediate block out of
-// the heap on framework decode hot paths.
+// interpolation. It keeps the large intermediate blocks out of hot call frames
+// on framework decode paths.
 type ScaledConvolveScratch struct {
+	im     scaledIM
 	highBD scaledHighBDIM
 }
 

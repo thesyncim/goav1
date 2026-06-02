@@ -229,7 +229,7 @@ func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst frame.
 	}
 	switch bytesPerSample {
 	case 1:
-		if err := motion.ConvolveScale2D8Clamped(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+		if err := motion.ConvolveScale2D8ClampedWithScratch(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
 			return ErrInvalidBatch
 		}
 	case 2:
