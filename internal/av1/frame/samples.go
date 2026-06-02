@@ -200,6 +200,25 @@ func StoreSamplePlane(dst Plane, bytesPerSample int, src SamplePlane) error {
 	return nil
 }
 
+// StoreSamplePlaneTrusted writes visible samples from src like StoreSamplePlane,
+// but assumes every sample already fits the destination bit depth. It still
+// validates plane geometry and buffer sizes. Internal postfilter callers use
+// this after kernels that already clip their output.
+func StoreSamplePlaneTrusted(dst Plane, bytesPerSample int, src SamplePlane) error {
+	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
+		return err
+	}
+	if !samplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
+		return ErrInvalidPlane
+	}
+	for y := 0; y < dst.Height; y++ {
+		dstLine := dst.Pix[y*dst.Stride : y*dst.Stride+dst.Width*bytesPerSample]
+		srcLine := src.Pix[y*src.Stride : y*src.Stride+src.Width]
+		storeSampleLineTrusted(dstLine, srcLine, bytesPerSample)
+	}
+	return nil
+}
+
 // StoreBorderedSamplePlane writes the visible region from src into an 8-bit or
 // little-endian 16-bit byte plane.
 func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSamplePlane) error {
@@ -384,4 +403,19 @@ func storeSampleLine(dst []byte, src []uint16, bytesPerSample int) error {
 		}
 	}
 	return nil
+}
+
+func storeSampleLineTrusted(dst []byte, src []uint16, bytesPerSample int) {
+	switch bytesPerSample {
+	case 1:
+		for x, sample := range src {
+			dst[x] = byte(sample)
+		}
+	case 2:
+		for x, sample := range src {
+			off := x * 2
+			dst[off] = byte(sample)
+			dst[off+1] = byte(sample >> 8)
+		}
+	}
 }

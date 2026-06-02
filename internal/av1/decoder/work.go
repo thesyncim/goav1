@@ -1336,16 +1336,17 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		r.CDEFIndexMap = cdefMap
 	}
 	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.LoopFilterMapShape()
+		cols, rows, length, err := b.LoopFilterMapShape()
 		if err != nil {
 			return err
 		}
 		if len(r.LoopFilterRecords) < length {
 			return threading.ErrInvalidBatch
 		}
-		lfMap, err := b.BindLoopFilterMap(r.LoopFilterRecords)
-		if err != nil {
-			return err
+		lfMap := threading.FrameWorkLoopFilterMap{
+			Records: r.LoopFilterRecords[:length],
+			Stride:  cols,
+			Rows:    rows,
 		}
 		if err := s.SetLoopFilterMap(lfMap); err != nil {
 			return err

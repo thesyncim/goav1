@@ -274,7 +274,7 @@ func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuper
 		if err := superres.UpscalePlaneCoded(srcSamples, dstSamples, codedWidth, plan.OutputFormat.BitDepth); err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres upscale plane %d: %w", plane, err)
 		}
-		if err := frame.StoreSamplePlane(dstPlane, output.Layout.BytesPerSample, dstSamples); err != nil {
+		if err := frame.StoreSamplePlaneTrusted(dstPlane, output.Layout.BytesPerSample, dstSamples); err != nil {
 			return FrameWorkSuperResPostFilterResult{}, fmt.Errorf("decoder: superres store plane %d: %w", plane, err)
 		}
 		result.Planes++

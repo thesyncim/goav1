@@ -102,6 +102,10 @@ func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
+	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
+		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
+		return nil
+	}
 	convolveScale2D8Clamped(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH)
 	return nil
 }
@@ -177,7 +181,11 @@ func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, b
 		return ErrInvalidMotion
 	}
 	im, pooled := scaledHighBDIMForScratch(scratch)
-	convolveScale2DHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
+	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
+		convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
+	} else {
+		convolveScale2DHighBDClamped(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
+	}
 	putScaledHighBDIM(im, pooled)
 	return nil
 }

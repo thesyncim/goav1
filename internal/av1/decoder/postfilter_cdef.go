@@ -187,7 +187,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
-		if err := frame.StoreSamplePlane(planeFrame, ctx.Output.Layout.BytesPerSample, dst); err != nil {
+		if err := frame.StoreSamplePlaneTrusted(planeFrame, ctx.Output.Layout.BytesPerSample, dst); err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
 		result.Units += planeUnits

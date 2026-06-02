@@ -31,7 +31,9 @@ type Reader struct {
 }
 
 // Cursor is a stack-local copy of Reader state for tight decode loops. Callers
-// must CommitTo the source Reader before continuing with non-cursor reads.
+// must CommitTo the source Reader before continuing with non-cursor reads, or
+// CommitStateTo when the cursor was created from that same reader and immutable
+// reader configuration cannot change during the cursor scope.
 type Cursor struct {
 	src []byte
 	pos int
@@ -66,6 +68,17 @@ func (c *Cursor) CommitTo(r *Reader) {
 	r.cnt = c.cnt
 	r.tellOffs = c.tellOffs
 	r.allowCDFUpdate = c.allowCDFUpdate
+}
+
+// CommitStateTo writes cursor range-decoder state back to r without touching
+// immutable reader configuration. Use it only for cursors created from the same
+// reader when src and CDF-update mode cannot change during the cursor scope.
+func (c *Cursor) CommitStateTo(r *Reader) {
+	r.pos = c.pos
+	r.dif = c.dif
+	r.rng = c.rng
+	r.cnt = c.cnt
+	r.tellOffs = c.tellOffs
 }
 
 // NewReader initializes an AV1 entropy reader with CDF adaptation enabled.

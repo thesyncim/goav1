@@ -827,7 +827,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if lastLevel >= MaxBaseBRRange {
 			tail, err := readCoeffGolombCursor(&reader)
 			if err != nil {
-				reader.CommitTo(&s.Reader)
+				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
@@ -841,7 +841,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			coeffTraceCoeff(0, lastPos, baseLevel, golombExtra, lastLevel, signBit)
 		}
 		if lastLevel > int(^uint16(0)>>1) {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(lastLevel)
@@ -863,7 +863,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if coeffTraceEnabled {
 			coeffTraceCulLevel(culLevel)
 		}
-		reader.CommitTo(&s.Reader)
+		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{
 			EOB:         1,
 			MaxScanLine: lastPos,
@@ -874,7 +874,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	clear(levelsScratch[:scratchLen])
 	lastPadded := int(posSlice[lastPos].padded)
 	if lastPadded < 0 || lastPadded >= len(levelsScratch) {
-		reader.CommitTo(&s.Reader)
+		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
@@ -889,7 +889,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	for c := eob.Position - 2; c >= 0; c-- {
 		pos := int(scan[c])
 		if pos < 0 || pos >= maxEOB {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		// pos is now proven in range, so this posSlice read and the matching
@@ -900,7 +900,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		p := posSlice[pos]
 		padded := int(p.padded)
 		if padded < 0 || padded >= len(levelsScratch) {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := 0
@@ -954,18 +954,18 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	for c := headC; c >= 0; {
 		pos := int(scan[c])
 		if pos < 0 || pos >= maxEOB {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		nextC := int(coeffs[pos]) - 1
 		padded := int(posSlice[pos].padded)
 		if padded < 0 || padded >= len(levelsScratch) {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		level := int(levelsScratch[padded])
 		if level == 0 {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		if pos > maxScanLine {
@@ -983,7 +983,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if level >= MaxBaseBRRange {
 			tail, err := readCoeffGolombCursor(&reader)
 			if err != nil {
-				reader.CommitTo(&s.Reader)
+				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, err
 			}
 			golombExtra = tail
@@ -998,7 +998,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}
 		culLevel += level
 		if level > int(^uint16(0)>>1) {
-			reader.CommitTo(&s.Reader)
+			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
 		signed := int16(level)
@@ -1025,7 +1025,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if coeffTraceEnabled {
 		coeffTraceCulLevel(culLevel)
 	}
-	reader.CommitTo(&s.Reader)
+	reader.CommitStateTo(&s.Reader)
 	return TXBDecodeResult{
 		EOB:         eob.Position,
 		MaxScanLine: maxScanLine,
