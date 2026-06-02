@@ -886,30 +886,25 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	headC := lastC
 	coeffs[lastPos] = 0
 
-	for c := eob.Position - 2; c >= 0; c-- {
-		pos := int(scan[c])
-		if pos < 0 || pos >= maxEOB {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		// pos is now proven in range, so this posSlice read and the matching
-		// levelsScratch store below drop their bounds checks. padded is fetched
-		// once and reused for the store (coeffLowerLevelsCtxFast/coeffBRContextFast
-		// re-derive it internally, but hoisting it here removes the second
-		// posSlice index from the hot store path).
-		p := posSlice[pos]
-		padded := int(p.padded)
-		if padded < 0 || padded >= len(levelsScratch) {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		level := 0
-		if req.Class == transform.Class2D {
+	if req.Class == transform.Class2D {
+		stride := geo.stride
+		for c := eob.Position - 2; c >= 0; c-- {
+			pos := int(scan[c])
+			if pos < 0 || pos >= maxEOB {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			p := posSlice[pos]
+			padded := int(p.padded)
+			if padded < 0 || padded >= len(levelsScratch) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
 			ctx := 0
 			if pos != 0 {
-				s1 := padded + geoPtr.stride
+				s1 := padded + stride
 				s1p1 := s1 + 1
-				s2 := s1 + geoPtr.stride
+				s2 := s1 + stride
 				p1 := padded + 1
 				p2 := padded + 2
 				_ = levelsScratch[s2]
@@ -918,9 +913,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			level = reader.ReadCDF4Unchecked(&baseArr[ctx])
+			level := reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
-				s1 := padded + geoPtr.stride
+				s1 := padded + stride
 				s1p1 := s1 + 1
 				p1 := padded + 1
 				_ = levelsScratch[s1p1]
@@ -929,19 +924,37 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 				level += extra
 			}
-		} else {
-			ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, req.Class, pos)
-			level = reader.ReadCDF4Unchecked(&baseArr[ctx])
+			levelsScratch[padded] = uint8(level)
+			if level != 0 {
+				coeffs[pos] = int16(headC + 1)
+				headC = c
+			}
+		}
+	} else {
+		class := req.Class
+		for c := eob.Position - 2; c >= 0; c-- {
+			pos := int(scan[c])
+			if pos < 0 || pos >= maxEOB {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			padded := int(posSlice[pos].padded)
+			if padded < 0 || padded >= len(levelsScratch) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
+			level := reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
-				brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, req.Class, pos)
+				brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
 				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 				level += extra
 			}
-		}
-		levelsScratch[padded] = uint8(level)
-		if level != 0 {
-			coeffs[pos] = int16(headC + 1)
-			headC = c
+			levelsScratch[padded] = uint8(level)
+			if level != 0 {
+				coeffs[pos] = int16(headC + 1)
+				headC = c
+			}
 		}
 	}
 
