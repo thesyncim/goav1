@@ -8,7 +8,10 @@
 
 package entropy
 
-import "math/bits"
+import (
+	"math/bits"
+	"unsafe"
+)
 
 const (
 	ecMinProb   = 4
@@ -16,6 +19,13 @@ const (
 	ecWindow    = 32
 	ecLotsBits  = 0x4000
 )
+
+// byteAtUnchecked loads src[pos] after the caller has proven pos < len(src).
+// Refill loops already carry that branch; this keeps the hot byte load free of
+// a second slice-bounds edge.
+func byteAtUnchecked(src []byte, pos int) byte {
+	return *(*byte)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), pos))
+}
 
 // Reader is an allocation-free AV1 entropy range decoder over one tile payload.
 type Reader struct {
@@ -256,7 +266,7 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 		if cnt < 0 {
 			refillShift := ecWindow - 9 - (cnt + 15)
 			for refillShift >= 0 && pos < len(src) {
-				dif ^= uint32(src[pos]) << uint(refillShift)
+				dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
 				cnt += 8
 				refillShift -= 8
 				pos++
@@ -346,7 +356,7 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		if cnt < 0 {
 			refillShift := ecWindow - 9 - (cnt + 15)
 			for refillShift >= 0 && pos < len(src) {
-				dif ^= uint32(src[pos]) << uint(refillShift)
+				dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
 				cnt += 8
 				refillShift -= 8
 				pos++
@@ -887,24 +897,25 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	rng := c.rng
 	cnt := c.cnt
 	tellOffs := c.tellOffs
+	allowCDFUpdate := c.allowCDFUpdate
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
 	coded := dif >> (ecWindow - 16)
 	upper := rangeValue
-	c0 := values[0]
-	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	c0 := uint32(values[0])
+	c1 := uint32(values[1])
+	c2 := uint32(values[2])
+	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
 	symbol := 0
 	if coded < lower {
 		symbol = 1
 		upper = lower
-		c1 := values[1]
-		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 		if coded < lower {
 			symbol = 2
 			upper = lower
-			c2 := values[2]
-			lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 			if coded < lower {
 				symbol = 3
 				upper = lower
@@ -913,7 +924,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(c0, 4, dif, rng, pos*8-cnt+tellOffs)
+		traceCDFRead(uint16(c0), 4, dif, rng, pos*8-cnt+tellOffs)
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
@@ -924,7 +935,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	if cnt < 0 {
 		refillShift := ecWindow - 9 - (cnt + 15)
 		for refillShift >= 0 && pos < len(src) {
-			dif ^= uint32(src[pos]) << uint(refillShift)
+			dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
 			cnt += 8
 			refillShift -= 8
 			pos++
@@ -934,12 +945,9 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 			cnt = ecLotsBits
 		}
 	}
-	if c.allowCDFUpdate {
+	if allowCDFUpdate {
 		count := values[4]
 		rate := uint(5 + (count >> 4))
-		c0 := uint32(values[0])
-		c1 := uint32(values[1])
-		c2 := uint32(values[2])
 		switch symbol {
 		case 0:
 			values[0] = uint16(c0 - (c0 >> rate))
@@ -986,19 +994,19 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 		rngHi := rangeValue >> 8
 		coded := dif >> (ecWindow - 16)
 		upper := rangeValue
-		c0 := values[0]
-		lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		c2 := uint32(values[2])
+		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
 		symbol := 0
 		if coded < lower {
 			symbol = 1
 			upper = lower
-			c1 := values[1]
-			lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+			lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 			if coded < lower {
 				symbol = 2
 				upper = lower
-				c2 := values[2]
-				lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+				lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 				if coded < lower {
 					symbol = 3
 					upper = lower
@@ -1007,7 +1015,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 			}
 		}
 		if traceEntropyReads {
-			traceCDFRead(c0, 4, dif, rng, pos*8-cnt+tellOffs)
+			traceCDFRead(uint16(c0), 4, dif, rng, pos*8-cnt+tellOffs)
 		}
 		dif -= lower << (ecWindow - 16)
 		rng = upper - lower
@@ -1018,7 +1026,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 		if cnt < 0 {
 			refillShift := ecWindow - 9 - (cnt + 15)
 			for refillShift >= 0 && pos < len(src) {
-				dif ^= uint32(src[pos]) << uint(refillShift)
+				dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
 				cnt += 8
 				refillShift -= 8
 				pos++
@@ -1031,9 +1039,6 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 		if allowCDFUpdate {
 			count := values[4]
 			rate := uint(5 + (count >> 4))
-			c0 := uint32(values[0])
-			c1 := uint32(values[1])
-			c2 := uint32(values[2])
 			switch symbol {
 			case 0:
 				values[0] = uint16(c0 - (c0 >> rate))
@@ -1269,7 +1274,7 @@ func invRecenterNonNeg(ref uint32, v uint32) uint32 {
 func (r *Reader) refill() {
 	shift := ecWindow - 9 - (r.cnt + 15)
 	for shift >= 0 && r.pos < len(r.src) {
-		r.dif ^= uint32(r.src[r.pos]) << uint(shift)
+		r.dif ^= uint32(byteAtUnchecked(r.src, r.pos)) << uint(shift)
 		r.cnt += 8
 		shift -= 8
 		r.pos++
@@ -1283,7 +1288,7 @@ func (r *Reader) refill() {
 func (c *Cursor) refill() {
 	shift := ecWindow - 9 - (c.cnt + 15)
 	for shift >= 0 && c.pos < len(c.src) {
-		c.dif ^= uint32(c.src[c.pos]) << uint(shift)
+		c.dif ^= uint32(byteAtUnchecked(c.src, c.pos)) << uint(shift)
 		c.cnt += 8
 		shift -= 8
 		c.pos++
