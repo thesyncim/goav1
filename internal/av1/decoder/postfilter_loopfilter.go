@@ -995,13 +995,6 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, levelC
 	if ctx.Event.LoopFilter.LevelY[0] == 0 && ctx.Event.LoopFilter.LevelY[1] == 0 {
 		return nil
 	}
-	if !record.SkipTransform && record.TransformTree.HasUV {
-		count, err := frameWorkLoopFilterCountChromaTXBsWithShifts(planning.color, record, planning.ssX, planning.ssY)
-		if err != nil {
-			return err
-		}
-		plan.ChromaTXBs += count
-	}
 	var planes [2]loopfilter.Plane
 	var bounds [2]frameWorkLoopFilterBounds
 	var vertical [2]uint8
@@ -1019,6 +1012,13 @@ func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, levelC
 		active++
 	}
 	if active == 0 {
+		if !record.SkipTransform && record.TransformTree.HasUV {
+			count, err := frameWorkLoopFilterCountChromaTXBsWithShifts(planning.color, record, planning.ssX, planning.ssY)
+			if err != nil {
+				return err
+			}
+			plan.ChromaTXBs += count
+		}
 		return nil
 	}
 	fuseUV := active == 2 && planes[0] == loopfilter.PlaneU && planes[1] == loopfilter.PlaneV && bounds[0] == bounds[1]
@@ -1051,6 +1051,7 @@ func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCt
 	}
 	for y := 0; y < int(block.VisibleH4); y += int(uvDims.H4) {
 		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
+			plan.ChromaTXBs++
 			tx := tile.TransformBlock{
 				X4:        block.X4 + x,
 				Y4:        block.Y4 + y,
