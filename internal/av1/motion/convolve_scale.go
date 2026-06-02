@@ -312,20 +312,45 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := range width {
-		yPos := startY
-		for y := range height {
-			yInt := int(scaledIntFloor(yPos)) - baseY
-			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
-			kernel := yTable[yFilterIdx]
-			sum := 1 << offsetBits
-			for k := range filterTaps {
-				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			for y := range height {
+				row := im[(y+filterTaps/2-1)*imStride:]
+				dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX : (dstY+y)*dst.Stride+dstX+width : (dstY+y)*dst.Stride+dstX+width]
+				for x := range width {
+					sum := (1 << offsetBits) + 128*int(row[x])
+					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+				}
 			}
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
-			yPos += yStep
+			return
 		}
+	}
+	yPos := startY
+	for y := range height {
+		yInt := int(scaledIntFloor(yPos)) - baseY
+		yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
+		kernel := yTable[yFilterIdx]
+		k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+		k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+		row0 := im[(yInt+0)*imStride:]
+		row1 := im[(yInt+1)*imStride:]
+		row2 := im[(yInt+2)*imStride:]
+		row3 := im[(yInt+3)*imStride:]
+		row4 := im[(yInt+4)*imStride:]
+		row5 := im[(yInt+5)*imStride:]
+		row6 := im[(yInt+6)*imStride:]
+		row7 := im[(yInt+7)*imStride:]
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX : (dstY+y)*dst.Stride+dstX+width : (dstY+y)*dst.Stride+dstX+width]
+		for x := range width {
+			sum := (1 << offsetBits) +
+				k0*int(row0[x]) + k1*int(row1[x]) + k2*int(row2[x]) + k3*int(row3[x]) +
+				k4*int(row4[x]) + k5*int(row5[x]) + k6*int(row6[x]) + k7*int(row7[x])
+			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		}
+		yPos += yStep
 	}
 }
 
@@ -356,20 +381,45 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
-	for x := range width {
-		yPos := startY
-		for y := range height {
-			yInt := int(scaledIntFloor(yPos)) - baseY
-			yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
-			kernel := yTable[yFilterIdx]
-			sum := 1 << offsetBits
-			for k := range filterTaps {
-				sum += int(kernel[k]) * int(im[(yInt+k)*imStride+x])
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			for y := range height {
+				row := im[(y+filterTaps/2-1)*imStride:]
+				dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX : (dstY+y)*dst.Stride+dstX+width : (dstY+y)*dst.Stride+dstX+width]
+				for x := range width {
+					sum := (1 << offsetBits) + 128*int(row[x])
+					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+				}
 			}
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
-			yPos += yStep
+			return
 		}
+	}
+	yPos := startY
+	for y := range height {
+		yInt := int(scaledIntFloor(yPos)) - baseY
+		yFilterIdx := int(scaledSubpel(yPos) >> ScaleExtraBits)
+		kernel := yTable[yFilterIdx]
+		k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+		k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+		row0 := im[(yInt+0)*imStride:]
+		row1 := im[(yInt+1)*imStride:]
+		row2 := im[(yInt+2)*imStride:]
+		row3 := im[(yInt+3)*imStride:]
+		row4 := im[(yInt+4)*imStride:]
+		row5 := im[(yInt+5)*imStride:]
+		row6 := im[(yInt+6)*imStride:]
+		row7 := im[(yInt+7)*imStride:]
+		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX : (dstY+y)*dst.Stride+dstX+width : (dstY+y)*dst.Stride+dstX+width]
+		for x := range width {
+			sum := (1 << offsetBits) +
+				k0*int(row0[x]) + k1*int(row1[x]) + k2*int(row2[x]) + k3*int(row3[x]) +
+				k4*int(row4[x]) + k5*int(row5[x]) + k6*int(row6[x]) + k7*int(row7[x])
+			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		}
+		yPos += yStep
 	}
 }
 
