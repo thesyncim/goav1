@@ -72,6 +72,13 @@ func ReconstructPlaneBlockVisibleWithGeometryAndScan(dst frame.Plane, bytesPerSa
 	return reconstructPlaneBlockWithGeometry(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, quantized, quantizedStride, scan, scanSize, txScale, int32Scratch, residualScratch, cfg)
 }
 
+// ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan is the decoder hot
+// path after FrameWorkBatch has resolved and validated block geometry, plane
+// windows, transform shape, scratch capacity, and visible extents.
+func ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	return reconstructPlaneBlockTrustedWithGeometry(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, quantized, quantizedStride, scan, scanSize, txScale, int32Scratch, residualScratch, cfg)
+}
+
 func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	int32Len, residualLen, err := ScratchLen(cfg)
 	if err != nil ||
@@ -120,6 +127,53 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	if err := dsp.AddResidualPlaneBlock(dst, bytesPerSample, bitDepth, x, y, visibleWidth, visibleHeight, residual, width); err != nil {
 		return ErrInvalidBlock
 	}
+	return nil
+}
+
+func reconstructPlaneBlockTrustedWithGeometry(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	width := cfg.Size.Width
+	height := cfg.Size.Height
+	blockLen := width * height
+	dequantLen := scanSize.Width * scanSize.Height
+	needed32 := blockLen
+	if !cfg.Lossless && cfg.Transform != transform.TypeIDTX {
+		needed32 += blockLen
+	}
+
+	dequant := int32Scratch[:dequantLen:dequantLen]
+	transformScratch := int32Scratch[blockLen:needed32:needed32]
+	residual := residualScratch[:blockLen:blockLen]
+
+	useSparseDequant := cfg.EOB > 0 && len(scan) >= cfg.EOB && cfg.EOB*4 <= dequantLen
+	if cfg.InverseQMatrix != nil {
+		if useSparseDequant {
+			if err := quantize.DequantizeBlockScaledQMatrixBitDepthEOB(dequant, scanSize.Height, quantized, quantizedStride, scan, cfg.EOB, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
+				return ErrInvalidBlock
+			}
+		} else if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, scanSize.Height, quantized, quantizedStride, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+	} else {
+		if useSparseDequant {
+			if err := quantize.DequantizeBlockScaledBitDepthEOB(dequant, scanSize.Height, quantized, quantizedStride, scan, cfg.EOB, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, bitDepth); err != nil {
+				return ErrInvalidBlock
+			}
+		} else if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanSize.Height, quantized, quantizedStride, scanSize.Width, scanSize.Height, cfg.Quantizer, txScale, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+	}
+	if cfg.Lossless {
+		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanSize.Height, cfg.EOB); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanSize.Height, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
+		return ErrInvalidBlock
+	}
+	dstOffset := y*dst.Stride + x*bytesPerSample
+	rowBytes := visibleWidth * bytesPerSample
+	dstLen := (visibleHeight-1)*dst.Stride + rowBytes
+	max := uint16((1 << bitDepth) - 1)
+	dsp.AddResidualPlaneBlockTrusted(dst.Pix[dstOffset:dstOffset+dstLen:dstOffset+dstLen], dst.Stride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
 	return nil
 }
 

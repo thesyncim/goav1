@@ -415,6 +415,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.cflScratch = &wf.cfl[w]
 		st.int32Scratch = wf.workerInt32(w)
 		st.residualScratch = wf.workerResidual(w)
+		st.quant = frameWorkReconQuantCache{}
 		st.pendingCFLPrediction = false
 		st.cflPredictionDone = false
 		st.cflVisit = tile.BlockLoopVisit{}
@@ -1130,6 +1131,7 @@ type frameWorkReconState struct {
 	cflScratch        *FrameWorkCFLPredictionScratch
 	int32Scratch      []int32
 	residualScratch   []int16
+	quant             frameWorkReconQuantCache
 
 	// geom is this goroutine's private job-geometry cache; batch.geomCache
 	// points at it on the wavefront path so the per-block memoization never
@@ -1701,7 +1703,7 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
 	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
 	// reads exactly the fields the struct path forwarded.
-	if err := s.batch.reconstructBlockCoeffCore(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch); err != nil {
+	if err := s.batch.reconstructBlockCoeffCoreTrusted(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	s.stats.Residuals++

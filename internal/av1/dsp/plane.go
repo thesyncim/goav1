@@ -94,6 +94,21 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 	return nil
 }
 
+// AddResidualPlaneBlockTrusted is AddResidualPlaneBlock after the caller has
+// already validated the destination window, sample width, bit-depth maximum,
+// residual extent, and residual stride. dst must start at the block origin and
+// contain every row touched by height/stride.
+func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual []int16, residualStride int) {
+	block := planeBlock{
+		pix:      dst,
+		stride:   dstStride,
+		width:    width,
+		height:   height,
+		rowBytes: width * bytesPerSample,
+	}
+	addResidualPlaneBlockImpl(block, bytesPerSample, max, width, residual, residualStride)
+}
+
 // addResidualPlaneBlockPureGo is the portable reference for the residual-add
 // inner loop. Every SIMD variant the dispatcher selects MUST produce bit-exact
 // output relative to this function. AddResidualPlaneBlock has already validated
