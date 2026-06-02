@@ -450,17 +450,19 @@ func (r *DecoderFrameWorkReusableCallerPostFilterRunner) decoderFrameWorkReusabl
 	return decoderFrameWorkPostFilterArenaTooSmall(r.runner.Scratch, arena)
 }
 
-func (r *DecoderFrameWorkReusableCallerPostFilterRunner) ensureScratch(ctx DecoderFrameWorkPostFilterContext) error {
+func (r *DecoderFrameWorkReusableCallerPostFilterRunner) ensureScratch(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, bool, error) {
+	byteScratchLen := len(r.runner.Scratch.ByteScratch)
 	exact, err := r.runner.ScratchLen(ctx)
 	if err != nil {
-		return err
+		return DecoderFrameWorkPostFilterScratchSize{}, false, err
 	}
+	superResBootstrap := exact.SuperRes.OutputFrame != 0 && byteScratchLen < exact.SuperRes.OutputFrame
 	arena := DecoderFrameWorkPostFilterRequestScratchLen(exact)
 	if r.decoderFrameWorkReusablePostFilterArenaTooSmall(arena) {
 		r.size = r.size.Max(arena)
 		r.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(r.size)
 	}
-	return nil
+	return exact, superResBootstrap, nil
 }
 
 // Apply sizes scratch for ctx, grows the caller-owned arena if needed, and runs
@@ -472,13 +474,17 @@ func (r *DecoderFrameWorkReusableCallerPostFilterRunner) Apply(ctx DecoderFrameW
 		return ErrDecoderInvalidFrameWorkState
 	}
 	r.runner.RestorationOptimized = r.RestorationOptimized
-	if err := r.ensureScratch(ctx); err != nil {
+	exact, superResBootstrap, err := r.ensureScratch(ctx)
+	if err != nil {
 		return err
 	}
-	if err := r.ensureScratch(ctx); err != nil {
-		return err
+	if superResBootstrap {
+		exact, _, err = r.ensureScratch(ctx)
+		if err != nil {
+			return err
+		}
 	}
-	return r.runner.Apply(ctx)
+	return r.runner.applyWithScratchSize(ctx, exact)
 }
 
 // PostFilterOutput returns the final display output after Apply.
@@ -536,6 +542,13 @@ func (r *DecoderFrameWorkCallerPostFilterScratchRunner) Apply(ctx DecoderFrameWo
 	size, err := r.ScratchLen(ctx)
 	if err != nil {
 		return err
+	}
+	return r.applyWithScratchSize(ctx, size)
+}
+
+func (r *DecoderFrameWorkCallerPostFilterScratchRunner) applyWithScratchSize(ctx DecoderFrameWorkPostFilterContext, size DecoderFrameWorkPostFilterScratchSize) error {
+	if r == nil {
+		return ErrDecoderInvalidFrameWorkState
 	}
 	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
 	side.RestorationOptimized = r.RestorationOptimized

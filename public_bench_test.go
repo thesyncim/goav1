@@ -637,6 +637,67 @@ func BenchmarkPublicDecoderCallerPostFilterScratchRunner(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecoderReusableCallerPostFilterRunner(b *testing.B) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{
+		CodedWidth:          8,
+		UpscaledWidth:       13,
+		Height:              32,
+		SuperResEnabled:     true,
+		SuperResDenominator: 13,
+	}
+	event := av1.DecoderEvent{
+		Kind:           av1.DecoderEventTileGroup,
+		SequenceHeader: sequence,
+		FrameSize:      size,
+		TileGroup:      av1.TileGroup{Final: true},
+		FilmGrain: av1.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	var scratchOutput av1.Frame
+	_, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	if err != nil {
+		b.Fatal(err)
+	}
+	output := publicBenchmarkDecoderFrame(b, scratchOutput.Format)
+	for i := range output.Y.Pix {
+		output.Y.Pix[i] = 100
+	}
+	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
+	var runner av1.DecoderFrameWorkReusableCallerPostFilterRunner
+	if err := runner.Apply(ctx); err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(int64(size.CodedWidth*size.Height + size.UpscaledWidth*size.Height))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		if err := runner.Apply(ctx); err != nil {
+			b.Fatal(err)
+		}
+		out, ok := runner.PostFilterOutput()
+		if !ok || out.Format.Width != int(size.UpscaledWidth) {
+			b.Fatalf("post output ok=%v output=%+v", ok, out)
+		}
+		sum += int(out.Y.Pix[i%len(out.Y.Pix)])
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicDecoderResidualState(b *testing.B) {
 	var initial av1.DecoderFrameWorkTileResidualCDFStorage
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {

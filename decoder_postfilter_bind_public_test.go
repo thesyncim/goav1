@@ -587,6 +587,69 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderFrameWorkReusableCallerPostFilterRunner(t *testing.T) {
+	sequence := publicDecoderPostFilterSequence()
+	sequence.ColorConfig.MonoChrome = true
+	sequence.ColorConfig.SubsamplingX = false
+	sequence.ColorConfig.SubsamplingY = false
+	size := av1.FrameSize{
+		CodedWidth:          8,
+		UpscaledWidth:       13,
+		Height:              32,
+		SuperResEnabled:     true,
+		SuperResDenominator: 13,
+	}
+	event := av1.DecoderEvent{
+		Kind:           av1.DecoderEventTileGroup,
+		SequenceHeader: sequence,
+		FrameSize:      size,
+		TileGroup:      av1.TileGroup{Final: true},
+		FilmGrain: av1.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	var scratchOutput av1.Frame
+	_, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := publicDecoderPostFilterFrame(t, scratchOutput.Format)
+	for i := range output.Y.Pix {
+		output.Y.Pix[i] = 100
+	}
+	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
+
+	var runner av1.DecoderFrameWorkReusableCallerPostFilterRunner
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	postOutput, ok := runner.PostFilterOutput()
+	if !ok || postOutput.Format.Width != int(size.UpscaledWidth) {
+		t.Fatalf("post output ok=%v output=%+v", ok, postOutput)
+	}
+	var nilRunner *av1.DecoderFrameWorkReusableCallerPostFilterRunner
+	if err := nilRunner.Apply(ctx); !errors.Is(err, av1.ErrDecoderInvalidFrameWorkState) {
+		t.Fatalf("nil reusable caller runner err=%v want %v", err, av1.ErrDecoderInvalidFrameWorkState)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		err = runner.Apply(ctx)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs != 0 {
+		t.Fatalf("reusable caller runner allocated: %f", allocs)
+	}
+}
+
 func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
