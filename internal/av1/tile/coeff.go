@@ -804,6 +804,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	brArr := &cdfs.CoeffBR[txBR][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
 	reader := s.Reader.Cursor()
+	dirtyPos := req.coeffDirtyPos
+	dirtyLen := req.coeffDirtyLen
+	trackDirty := dirtyPos != nil && dirtyLen != nil
+	dirtyNext := 0
+	if trackDirty {
+		dirtyNext = *dirtyLen
+	}
 
 	lastC := eob.Position - 1
 	lastPos := int(scan[lastC])
@@ -849,7 +856,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			signed = -signed
 		}
 		coeffs[lastPos] = signed
-		req.recordCoeffDirty(lastPos)
+		if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
+			(*dirtyPos)[dirtyNext] = int16(lastPos)
+			dirtyNext++
+			*dirtyLen = dirtyNext
+		}
 
 		culLevel := lastLevel
 		if culLevel > CoeffContextMask {
@@ -1022,8 +1033,14 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			dcValue = int(signed)
 		}
 		coeffs[pos] = signed
-		req.recordCoeffDirty(pos)
+		if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
+			(*dirtyPos)[dirtyNext] = int16(pos)
+			dirtyNext++
+		}
 		c = nextC
+	}
+	if trackDirty {
+		*dirtyLen = dirtyNext
 	}
 
 	if culLevel > CoeffContextMask {
@@ -1044,18 +1061,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		MaxScanLine: maxScanLine,
 		CulLevel:    culLevel,
 	}, nil
-}
-
-func (req *TXBDecodeRequest) recordCoeffDirty(pos int) {
-	if req == nil || req.coeffDirtyPos == nil || req.coeffDirtyLen == nil {
-		return
-	}
-	n := *req.coeffDirtyLen
-	if n >= len(req.coeffDirtyPos) || uint(pos) >= uint(len(req.coeffDirtyPos)) {
-		return
-	}
-	req.coeffDirtyPos[n] = int16(pos)
-	*req.coeffDirtyLen = n + 1
 }
 
 func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) int {
