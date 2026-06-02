@@ -400,6 +400,91 @@ func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T
 	}
 }
 
+func TestPredictInterCompoundRefToConvBufHighBDOptimizedMatchesClamped(t *testing.T) {
+	const (
+		refW   = 37
+		refH   = 31
+		stride = 96
+	)
+	cases := []struct {
+		name          string
+		refX, refY    int
+		width, height int
+		subX, subY    int
+		filters       InterpFilters
+	}{
+		{"copy interior", 5, 6, 16, 8, 0, 0, RegularFilters},
+		{"copy edge", -1, 27, 16, 4, 0, 0, RegularFilters},
+		{"x regular interior", 5, 6, 16, 8, 5, 0, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
+		{"x smooth edge", 28, 8, 8, 8, 7, 0, InterpFilters{X: InterpEightTapSmooth, Y: InterpEightTapRegular}},
+		{"y sharp interior", 6, 6, 16, 8, 0, 11, InterpFilters{X: InterpEightTapRegular, Y: InterpMultiTapSharp}},
+		{"y bilinear edge", 4, -2, 16, 8, 0, 8, InterpFilters{X: InterpEightTapRegular, Y: InterpBilinear}},
+		{"2d regular interior", 6, 6, 16, 16, 3, 9, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}},
+		{"2d fourtap edge", -2, 3, 4, 16, 4, 12, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
+	}
+	for _, bitDepth := range []uint8{10, 12} {
+		ref := frame.Plane{Pix: make([]byte, stride*refH), Stride: stride, Width: refW, Height: refH}
+		mask := (1 << bitDepth) - 1
+		for y := range refH {
+			for x := range refW {
+				p := (x*43 + y*59 + x*y*5 + 17) & mask
+				off := y*stride + x*2
+				ref.Pix[off] = byte(p)
+				ref.Pix[off+1] = byte(p >> 8)
+			}
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var got, gotScratch, want CompoundConvBuf
+				if err := PredictInterCompoundRefToConvBuf(&got, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
+					t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
+				}
+				var scratch CompoundConvolveScratch
+				if err := PredictInterCompoundRefToConvBufWithScratch(&gotScratch, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
+					t.Fatalf("PredictInterCompoundRefToConvBufWithScratch: %v", err)
+				}
+				wantOut, ok := compoundConvBufView(&want, tc.width, tc.height)
+				if !ok {
+					t.Fatal("invalid reference convbuf dims")
+				}
+				xKernel, err := interpKernel(tc.filters.X, tc.width, tc.subX)
+				if err != nil {
+					t.Fatalf("x kernel: %v", err)
+				}
+				yKernel, err := interpKernel(tc.filters.Y, tc.height, tc.subY)
+				if err != nil {
+					t.Fatalf("y kernel: %v", err)
+				}
+				round0 := compoundRound0(bitDepth)
+				offsetBits := int(bitDepth) + 2*filterBits - round0
+				roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+				switch {
+				case tc.subX != 0 && tc.subY != 0:
+					var im compoundIM
+					predictInterCompoundRefHighBDToConvBuf2DClamped(wantOut, ref, tc.refX, tc.refY, tc.width, tc.height, xKernel, yKernel, round0, offsetBits, int(bitDepth), &im)
+				case tc.subX != 0:
+					predictInterCompoundRefHighBDToConvBufXClamped(wantOut, ref, tc.refX, tc.refY, tc.width, tc.height, xKernel, round0, roundOffset)
+				case tc.subY != 0:
+					predictInterCompoundRefHighBDToConvBufYClamped(wantOut, ref, tc.refX, tc.refY, tc.width, tc.height, yKernel, round0, roundOffset)
+				default:
+					predictInterCompoundRefHighBDToConvBufCopyClamped(wantOut, ref, tc.refX, tc.refY, tc.width, tc.height, round0, roundOffset)
+				}
+				if got.Width != tc.width || got.Height != tc.height || gotScratch.Width != tc.width || gotScratch.Height != tc.height {
+					t.Fatalf("dims default=%dx%d scratch=%dx%d want %dx%d", got.Width, got.Height, gotScratch.Width, gotScratch.Height, tc.width, tc.height)
+				}
+				for i := range tc.width * tc.height {
+					if got.Data[i] != want.Data[i] {
+						t.Fatalf("convbuf default[%d]=%d want %d", i, got.Data[i], want.Data[i])
+					}
+					if gotScratch.Data[i] != want.Data[i] {
+						t.Fatalf("convbuf scratch[%d]=%d want %d", i, gotScratch.Data[i], want.Data[i])
+					}
+				}
+			})
+		}
+	}
+}
+
 func referenceCompoundConvBuf8(ref frame.Plane, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) ([]uint16, error) {
 	xKernel, err := interpKernel(filters.X, width, subX)
 	if err != nil {

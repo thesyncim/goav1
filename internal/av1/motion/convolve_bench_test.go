@@ -146,6 +146,58 @@ func BenchmarkCompoundConvBufCopy8_32(b *testing.B) {
 	})
 }
 
+func BenchmarkCompoundConvBuf2DHighBD_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBuf2DHighBDClamped_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, 0, 0, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBufXHighBD_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 3, 0, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBufYHighBD_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 0, 5, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBufCopyHighBD_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 0, 0, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
 // Clamped 2D, 16x16 (forces edge-clamped loads).
 func BenchmarkConvolve2D8Clamped_16(b *testing.B) {
 	dst, _ := testPlane(16, 16, 1, 16)

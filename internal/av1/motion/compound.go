@@ -112,8 +112,6 @@ func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame
 	if err != nil {
 		return err
 	}
-	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
 	round0 := compoundRound0(bitDepth)
 	offsetBits := bd + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
@@ -121,60 +119,117 @@ func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame
 		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, scratch)
 		return nil
 	}
-	load := func(x, y int) int {
-		return int(loadHighBDSampleClamped(ref, x, y))
-	}
-	switch {
-	case subX != 0 && subY != 0:
-		if scratch != nil {
-			predictInterCompoundRefHighBDToConvBuf2D(out, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bd, load, &scratch.im)
-		} else {
-			var im compoundIM
-			predictInterCompoundRefHighBDToConvBuf2D(out, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bd, load, &im)
-		}
-	case subX != 0:
-		// av1_dist_wtd_convolve_x: bits = FILTER_BITS - round_1.
-		bits := filterBits - compoundRound1Bits
-		for y := range height {
-			for x := range width {
-				res := 0
-				for k := range filterTaps {
-					res += int(xKernel[k]) * load(refX+x-foX+k, refY+y)
-				}
-				res = (1 << bits) * roundPowerOfTwo(res, round0)
-				res += roundOffset
-				out[y*width+x] = uint16(res)
-			}
-		}
-	case subY != 0:
-		// av1_dist_wtd_convolve_y: bits = FILTER_BITS - round_0.
-		bits := filterBits - round0
-		for y := range height {
-			for x := range width {
-				res := 0
-				for k := range filterTaps {
-					res += int(yKernel[k]) * load(refX+x, refY+y-foY+k)
-				}
-				res *= (1 << bits)
-				res = roundPowerOfTwo(res, compoundRound1Bits) + roundOffset
-				out[y*width+x] = uint16(res)
-			}
-		}
-	default:
-		// av1_dist_wtd_convolve_2d_copy: bits = 2*FILTER_BITS - round_1 - round_0.
-		bits := 2*filterBits - compoundRound1Bits - round0
-		for y := range height {
-			for x := range width {
-				res := load(refX+x, refY+y) << bits
-				res += roundOffset
-				out[y*width+x] = uint16(res)
-			}
-		}
-	}
+	predictInterCompoundRefHighBDToConvBuf(out, ref, bd, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, scratch)
 	return nil
 }
 
-func predictInterCompoundRefHighBDToConvBuf2D(out []uint16, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, load func(int, int) int, im *compoundIM) {
+func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDepth int, refX int, refY int, width int, height int, subX int, subY int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, roundOffset int, scratch *CompoundConvolveScratch) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	switch {
+	case subX != 0 && subY != 0:
+		if scratch != nil {
+			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+				predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
+			} else {
+				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
+			}
+		} else {
+			var im compoundIM
+			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+				predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
+			} else {
+				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
+			}
+		}
+	case subX != 0:
+		if planeRegionFits(ref, 2, refX-foX, refY, width+filterTaps-1, height) {
+			predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
+		} else {
+			predictInterCompoundRefHighBDToConvBufXClamped(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
+		}
+	case subY != 0:
+		if planeRegionFits(ref, 2, refX, refY-foY, width, height+filterTaps-1) {
+			predictInterCompoundRefHighBDToConvBufYResident(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
+		} else {
+			predictInterCompoundRefHighBDToConvBufYClamped(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
+		}
+	default:
+		if planeRegionFits(ref, 2, refX, refY, width, height) {
+			predictInterCompoundRefHighBDToConvBufCopyResident(out, ref, refX, refY, width, height, round0, roundOffset)
+		} else {
+			predictInterCompoundRefHighBDToConvBufCopyClamped(out, ref, refX, refY, width, height, round0, roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBuf2DResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
+	const imStride = maxBlockSize
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	imH := height + filterTaps - 1
+	xBias := 1 << (bitDepth + filterBits - 1)
+	round0Bias := 1 << (round0 - 1)
+	stride := ref.Stride
+
+	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
+	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	for y := range imH {
+		base := (refY-foY+y)*stride + (refX-foX)*2
+		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
+		imRow := im[y*imStride:]
+		if xFourTap {
+			for x := range width {
+				o := x * 2
+				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
+				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
+				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
+				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
+				sum := xBias + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5
+				imRow[x] = int32((sum + round0Bias) >> round0)
+			}
+			continue
+		}
+		for x := range width {
+			o := x * 2
+			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
+			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
+			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
+			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
+			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
+			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
+			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
+			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
+			sum := xBias + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			imRow[x] = int32((sum + round0Bias) >> round0)
+		}
+	}
+
+	yBias := 1 << offsetBits
+	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
+	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	for y := range height {
+		outRow := out[y*width:]
+		if yFourTap {
+			col := im[(y+2)*imStride : (y+6)*imStride+width]
+			for x := range width {
+				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
+					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
+				outRow[x] = uint16(roundPowerOfTwo7(sum))
+			}
+			continue
+		}
+		col := im[y*imStride : (y+7)*imStride+width]
+		for x := range width {
+			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
+				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
+				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
+			outRow[x] = uint16(roundPowerOfTwo7(sum))
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBuf2DClamped(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
@@ -183,7 +238,7 @@ func predictInterCompoundRefHighBDToConvBuf2D(out []uint16, refX int, refY int, 
 		for x := range width {
 			sum := 1 << (bitDepth + filterBits - 1)
 			for k := range filterTaps {
-				sum += int(xKernel[k]) * load(refX+x-foX+k, refY-foY+y)
+				sum += int(xKernel[k]) * int(loadHighBDSampleClamped(ref, refX+x-foX+k, refY-foY+y))
 			}
 			im[y*imStride+x] = int32(roundPowerOfTwo(sum, round0))
 		}
@@ -195,6 +250,182 @@ func predictInterCompoundRefHighBDToConvBuf2D(out []uint16, refX int, refY int, 
 				sum += int(yKernel[k]) * int(im[(y+k)*imStride+x])
 			}
 			out[y*width+x] = uint16(roundPowerOfTwo(sum, compoundRound1Bits))
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufXResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	bits := filterBits - compoundRound1Bits
+	scale := 1 << bits
+	round0Bias := 1 << (round0 - 1)
+	stride := ref.Stride
+	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	firstTap := refX - fo
+	for y := range height {
+		base := (refY+y)*stride + firstTap*2
+		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
+		outRow := out[y*width:]
+		if fourTap {
+			for x := range width {
+				o := x * 2
+				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
+				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
+				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
+				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
+				res := ((k2*s2 + k3*s3 + k4*s4 + k5*s5 + round0Bias) >> round0) * scale
+				outRow[x] = uint16(res + roundOffset)
+			}
+			continue
+		}
+		for x := range width {
+			o := x * 2
+			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
+			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
+			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
+			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
+			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
+			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
+			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
+			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
+			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
+			outRow[x] = uint16(((sum+round0Bias)>>round0)*scale + roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufXClamped(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	bits := filterBits - compoundRound1Bits
+	scale := 1 << bits
+	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	for y := range height {
+		outRow := out[y*width:]
+		if fourTap {
+			for x := range width {
+				sx := refX + x - fo
+				sum := k2*int(loadHighBDSampleClamped(ref, sx+2, refY+y)) +
+					k3*int(loadHighBDSampleClamped(ref, sx+3, refY+y)) +
+					k4*int(loadHighBDSampleClamped(ref, sx+4, refY+y)) +
+					k5*int(loadHighBDSampleClamped(ref, sx+5, refY+y))
+				outRow[x] = uint16(roundPowerOfTwo(sum, round0)*scale + roundOffset)
+			}
+			continue
+		}
+		for x := range width {
+			sx := refX + x - fo
+			sum := k0*int(loadHighBDSampleClamped(ref, sx, refY+y)) +
+				k1*int(loadHighBDSampleClamped(ref, sx+1, refY+y)) +
+				k2*int(loadHighBDSampleClamped(ref, sx+2, refY+y)) +
+				k3*int(loadHighBDSampleClamped(ref, sx+3, refY+y)) +
+				k4*int(loadHighBDSampleClamped(ref, sx+4, refY+y)) +
+				k5*int(loadHighBDSampleClamped(ref, sx+5, refY+y)) +
+				k6*int(loadHighBDSampleClamped(ref, sx+6, refY+y)) +
+				k7*int(loadHighBDSampleClamped(ref, sx+7, refY+y))
+			outRow[x] = uint16(roundPowerOfTwo(sum, round0)*scale + roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufYResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	bits := filterBits - round0
+	scale := 1 << bits
+	stride := ref.Stride
+	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	for y := range height {
+		sy := refY + y - fo
+		base := sy*stride + refX*2
+		col := ref.Pix[base : base+(filterTaps-1)*stride+width*2]
+		outRow := out[y*width:]
+		if fourTap {
+			for x := range width {
+				o := x * 2
+				s2 := int(uint16(col[o+2*stride]) | uint16(col[o+2*stride+1])<<8)
+				s3 := int(uint16(col[o+3*stride]) | uint16(col[o+3*stride+1])<<8)
+				s4 := int(uint16(col[o+4*stride]) | uint16(col[o+4*stride+1])<<8)
+				s5 := int(uint16(col[o+5*stride]) | uint16(col[o+5*stride+1])<<8)
+				outRow[x] = uint16(roundPowerOfTwo7((k2*s2+k3*s3+k4*s4+k5*s5)*scale) + roundOffset)
+			}
+			continue
+		}
+		for x := range width {
+			o := x * 2
+			s0 := int(uint16(col[o]) | uint16(col[o+1])<<8)
+			s1 := int(uint16(col[o+stride]) | uint16(col[o+stride+1])<<8)
+			s2 := int(uint16(col[o+2*stride]) | uint16(col[o+2*stride+1])<<8)
+			s3 := int(uint16(col[o+3*stride]) | uint16(col[o+3*stride+1])<<8)
+			s4 := int(uint16(col[o+4*stride]) | uint16(col[o+4*stride+1])<<8)
+			s5 := int(uint16(col[o+5*stride]) | uint16(col[o+5*stride+1])<<8)
+			s6 := int(uint16(col[o+6*stride]) | uint16(col[o+6*stride+1])<<8)
+			s7 := int(uint16(col[o+7*stride]) | uint16(col[o+7*stride+1])<<8)
+			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
+			outRow[x] = uint16(roundPowerOfTwo7(sum*scale) + roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufYClamped(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	bits := filterBits - round0
+	scale := 1 << bits
+	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
+	for y := range height {
+		sy := refY + y - fo
+		outRow := out[y*width:]
+		if fourTap {
+			for x := range width {
+				sx := refX + x
+				sum := k2*int(loadHighBDSampleClamped(ref, sx, sy+2)) +
+					k3*int(loadHighBDSampleClamped(ref, sx, sy+3)) +
+					k4*int(loadHighBDSampleClamped(ref, sx, sy+4)) +
+					k5*int(loadHighBDSampleClamped(ref, sx, sy+5))
+				outRow[x] = uint16(roundPowerOfTwo7(sum*scale) + roundOffset)
+			}
+			continue
+		}
+		for x := range width {
+			sx := refX + x
+			sum := k0*int(loadHighBDSampleClamped(ref, sx, sy)) +
+				k1*int(loadHighBDSampleClamped(ref, sx, sy+1)) +
+				k2*int(loadHighBDSampleClamped(ref, sx, sy+2)) +
+				k3*int(loadHighBDSampleClamped(ref, sx, sy+3)) +
+				k4*int(loadHighBDSampleClamped(ref, sx, sy+4)) +
+				k5*int(loadHighBDSampleClamped(ref, sx, sy+5)) +
+				k6*int(loadHighBDSampleClamped(ref, sx, sy+6)) +
+				k7*int(loadHighBDSampleClamped(ref, sx, sy+7))
+			outRow[x] = uint16(roundPowerOfTwo7(sum*scale) + roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufCopyResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
+	bits := 2*filterBits - compoundRound1Bits - round0
+	scale := 1 << bits
+	stride := ref.Stride
+	for y := range height {
+		base := (refY+y)*stride + refX*2
+		srcRow := ref.Pix[base : base+width*2]
+		outRow := out[y*width:]
+		for x := range width {
+			o := x * 2
+			s := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
+			outRow[x] = uint16(s*scale + roundOffset)
+		}
+	}
+}
+
+func predictInterCompoundRefHighBDToConvBufCopyClamped(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
+	bits := 2*filterBits - compoundRound1Bits - round0
+	scale := 1 << bits
+	for y := range height {
+		outRow := out[y*width:]
+		for x := range width {
+			outRow[x] = uint16(int(loadHighBDSampleClamped(ref, refX+x, refY+y))*scale + roundOffset)
 		}
 	}
 }
