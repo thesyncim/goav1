@@ -851,6 +851,24 @@ func TestCoeffAllocs(t *testing.T) {
 	}
 }
 
+var coeffBenchmarkSink int
+
+func BenchmarkCoeffCDFsInitDefault(b *testing.B) {
+	var cdfs CoeffCDFs
+	q := uint8(0)
+	sum := 0
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := cdfs.InitDefault(q); err != nil {
+			b.Fatal(err)
+		}
+		sum += int(cdfs.TXBSkip[0][0].Values()[0])
+		q += 73
+	}
+	coeffBenchmarkSink = sum
+}
+
 func TestReadCoefficientsTXBAllocs(t *testing.T) {
 	txSize, err := TransformSize4x4.TransformSize()
 	if err != nil {

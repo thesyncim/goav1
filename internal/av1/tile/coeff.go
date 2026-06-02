@@ -435,11 +435,19 @@ func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Clas
 	return nil
 }
 
-func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
-	if c == nil {
-		return entropy.ErrInvalidCDF
+var defaultCoeffCDFs = makeDefaultCoeffCDFs()
+
+func makeDefaultCoeffCDFs() [CoeffQContexts]CoeffCDFs {
+	var defaults [CoeffQContexts]CoeffCDFs
+	for q := range defaults {
+		if err := initCoeffCDFsForQ(&defaults[q], q); err != nil {
+			panic(err)
+		}
 	}
-	q := CoeffQContext(baseQIndex)
+	return defaults
+}
+
+func initCoeffCDFsForQ(c *CoeffCDFs, q int) error {
 	var next CoeffCDFs
 	for tx := range CoeffTxSizeContexts {
 		for ctx := range TXBSkipContexts {
@@ -501,6 +509,14 @@ func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 		}
 	}
 	*c = next
+	return nil
+}
+
+func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultCoeffCDFs[CoeffQContext(baseQIndex)]
 	return nil
 }
 
