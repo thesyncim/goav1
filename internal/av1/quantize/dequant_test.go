@@ -274,6 +274,78 @@ func TestDequantizeBlockScaledQMatrixUsesRowMajorMatrixPosition(t *testing.T) {
 	}
 }
 
+func TestDequantizeBlockScaledBitDepthEOBMatchesFull(t *testing.T) {
+	const width, height = 4, 4
+	scan := []int16{0, 1, 4, 5, 2, 8, 6, 9, 3, 7, 10, 12, 11, 13, 14, 15}
+	const eob = 5
+	coeff := make([]int16, width*height)
+	coeff[0] = 3
+	coeff[1] = -2
+	coeff[4] = 5
+	coeff[5] = -1
+	coeff[2] = 4
+	q := Quantizer{DC: 91, AC: 137}
+
+	want := make([]int32, width*height)
+	if err := DequantizeBlockScaledBitDepth(want, height, coeff, height, width, height, q, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]int32, width*height)
+	for i := range got {
+		got[i] = 999
+	}
+	if err := DequantizeBlockScaledBitDepthEOB(got, height, coeff, height, scan, eob, width, height, q, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDequantizeBlockScaledQMatrixBitDepthEOBMatchesFull(t *testing.T) {
+	const width, height = 3, 2
+	scan := []int16{0, 3, 1, 4, 2, 5}
+	const eob = 4
+	coeff := make([]int16, width*height)
+	coeff[0] = 2
+	coeff[3] = -3
+	coeff[1] = 5
+	coeff[4] = -1
+	q := Quantizer{DC: 128, AC: 64}
+	iqMatrix := []uint16{
+		32, 40, 48,
+		56, 64, 72,
+	}
+
+	want := make([]int32, width*height)
+	if err := DequantizeBlockScaledQMatrixBitDepth(want, height, coeff, height, width, height, q, 0, iqMatrix, 8); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]int32, width*height)
+	for i := range got {
+		got[i] = -999
+	}
+	if err := DequantizeBlockScaledQMatrixBitDepthEOB(got, height, coeff, height, scan, eob, width, height, q, 0, iqMatrix, 8); err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDequantizeBlockScaledBitDepthEOBRejectsInvalidScan(t *testing.T) {
+	dst := make([]int32, 4)
+	coeff := make([]int16, 4)
+	q := Quantizer{DC: 4, AC: 8}
+	if err := DequantizeBlockScaledBitDepthEOB(dst, 2, coeff, 2, []int16{0, 4}, 2, 2, 2, q, 0, 8); !errors.Is(err, ErrInvalidQuantizer) {
+		t.Fatalf("invalid scan err=%v want %v", err, ErrInvalidQuantizer)
+	}
+}
+
 func TestDequantizeBlockRejectsInvalidInputs(t *testing.T) {
 	dst := make([]int32, 4)
 	coeff := make([]int16, 4)
@@ -598,5 +670,23 @@ func BenchmarkDequantizeBlock(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = DequantizeBlock(dst, 64, coeff, 64, 64, 64, q)
+	}
+}
+
+func BenchmarkDequantizeBlockEOB16(b *testing.B) {
+	const width, height = 64, 64
+	coeff := make([]int16, width*height)
+	scan := make([]int16, width*height)
+	for i := range scan {
+		scan[i] = int16(i)
+	}
+	for i := 0; i < 16; i++ {
+		coeff[i] = int16(i + 1)
+	}
+	dst := make([]int32, width*height)
+	q := Quantizer{DC: 80, AC: 97}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = DequantizeBlockScaledBitDepthEOB(dst, height, coeff, height, scan, 16, width, height, q, 2, 8)
 	}
 }

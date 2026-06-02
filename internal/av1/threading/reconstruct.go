@@ -123,9 +123,9 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 		Lossless:       lossless,
 		EOB:            block.Result.EOB,
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometry(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
+	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
 		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
-		block.Coeffs, geom.scanSize.Height, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
+		block.Coeffs, geom.scanSize.Height, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

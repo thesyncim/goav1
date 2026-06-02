@@ -146,6 +146,19 @@ func DequantizeBlockScaledQMatrixBitDepth(dst []int32, dstStride int, coeff []in
 	return dequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth)
 }
 
+// DequantizeBlockScaledBitDepthEOB dequantizes only the scan-prefix
+// coefficients [0, eob), clearing the destination block first so unvisited
+// positions remain zero for the inverse transform.
+func DequantizeBlockScaledBitDepthEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) error {
+	return dequantizeBlockScaledEOB(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, nil, bitDepth)
+}
+
+// DequantizeBlockScaledQMatrixBitDepthEOB is
+// DequantizeBlockScaledBitDepthEOB with inverse quantization matrix weighting.
+func DequantizeBlockScaledQMatrixBitDepthEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
+	return dequantizeBlockScaledEOB(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
+}
+
 func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if width <= 0 || height <= 0 {
 		return ErrInvalidQuantizer
@@ -212,6 +225,55 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
 			dstCol[row] = dequantScalar(int32(coeffCol[row]), scale, txScale, dqMin, dqMax)
 		}
+	}
+	return nil
+}
+
+func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
+	if q.DC <= 0 || q.AC <= 0 ||
+		txScale > 2 ||
+		width <= 0 ||
+		height <= 0 ||
+		dstStride < height ||
+		coeffStride < height ||
+		eob < 0 ||
+		len(scan) < eob {
+		return ErrInvalidQuantizer
+	}
+	samples, ok := checkedMul(width, height)
+	if !ok {
+		return ErrInvalidQuantizer
+	}
+	if !coeffBlockFits(len(dst), dstStride, width, height) ||
+		!coeffBlockFits(len(coeff), coeffStride, width, height) {
+		return ErrInvalidQuantizer
+	}
+	if iqMatrix != nil && len(iqMatrix) < samples {
+		return ErrInvalidQuantizer
+	}
+	dqMin, dqMax, ok := dqCoeffBounds(bitDepth)
+	if !ok {
+		return ErrInvalidQuantizer
+	}
+
+	for col := range width {
+		clear(dst[col*dstStride : col*dstStride+height])
+	}
+	for i := 0; i < eob; i++ {
+		pos := int(scan[i])
+		if pos < 0 || pos >= samples {
+			return ErrInvalidQuantizer
+		}
+		col := pos / height
+		row := pos - col*height
+		scale := q.AC
+		if pos == 0 {
+			scale = q.DC
+		}
+		if iqMatrix != nil {
+			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+		}
+		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
 	return nil
 }
