@@ -35,14 +35,14 @@ func TestFilterBlockDispatchMatchesPureGo(t *testing.T) {
 						for _, sec := range cdefSecondaryStrengthCorpus(coeffShift) {
 							for _, damping := range []int{3 + coeffShift, 5 + coeffShift, 6 + coeffShift} {
 								params := BlockFilterParams{
-									PrimaryStrength:   pri,
-									SecondaryStrength: sec,
-									Direction:         dir,
-									PrimaryDamping:    damping,
-									SecondaryDamping:  damping,
-									CoeffShift:        coeffShift,
-									Width:             shape.width,
-									Height:            shape.height,
+									PrimaryStrength:   uint8(pri),
+									SecondaryStrength: uint8(sec),
+									Direction:         uint8(dir),
+									PrimaryDamping:    uint8(damping),
+									SecondaryDamping:  uint8(damping),
+									CoeffShift:        uint8(coeffShift),
+									Width:             uint8(shape.width),
+									Height:            uint8(shape.height),
 								}
 								want := make([]uint16, dstStride*8)
 								got := make([]uint16, dstStride*8)

@@ -65,7 +65,7 @@ func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 	if params.Width == 4 {
 		var tmp [8 * 8]uint16
 		filterBlockNEONWide(tmp[:], 8, 0, input, inputOrigin, params)
-		for row := 0; row < params.Height; row++ {
+		for row := 0; row < int(params.Height); row++ {
 			copy(dst[dstOrigin+row*dstStride:dstOrigin+row*dstStride+4], tmp[row*8:row*8+4])
 		}
 		return
@@ -78,10 +78,16 @@ func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 }
 
 func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	enablePrimary := params.PrimaryStrength != 0
-	enableSecondary := params.SecondaryStrength != 0
+	primaryStrength := int(params.PrimaryStrength)
+	secondaryStrength := int(params.SecondaryStrength)
+	direction := int(params.Direction)
+	primaryDamping := int(params.PrimaryDamping)
+	secondaryDamping := int(params.SecondaryDamping)
+	coeffShift := int(params.CoeffShift)
+	enablePrimary := primaryStrength != 0
+	enableSecondary := secondaryStrength != 0
 	clippingRequired := enablePrimary && enableSecondary
-	priTaps := cdefPrimaryTaps[(params.PrimaryStrength>>params.CoeffShift)&1]
+	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
 
 	ctx := filterBlockNEONCtx{
 		dst:    &dst[dstOrigin],
@@ -89,22 +95,22 @@ func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uin
 		dstStr: uintptr(dstStride),
 		height: uintptr(params.Height),
 
-		pri0: int64(cdefDirections[params.Direction+2][0]),
-		pri1: int64(cdefDirections[params.Direction+2][1]),
-		sec0: int64(cdefDirections[params.Direction+4][0]),
-		sec1: int64(cdefDirections[params.Direction+4][1]),
-		sec2: int64(cdefDirections[params.Direction][0]),
-		sec3: int64(cdefDirections[params.Direction][1]),
+		pri0: int64(cdefDirections[direction+2][0]),
+		pri1: int64(cdefDirections[direction+2][1]),
+		sec0: int64(cdefDirections[direction+4][0]),
+		sec1: int64(cdefDirections[direction+4][1]),
+		sec2: int64(cdefDirections[direction][0]),
+		sec3: int64(cdefDirections[direction][1]),
 
 		priTap0: int64(priTaps[0]),
 		priTap1: int64(priTaps[1]),
 		secTap0: int64(cdefSecondaryTaps[0]),
 		secTap1: int64(cdefSecondaryTaps[1]),
 
-		priStrength: int64(params.PrimaryStrength),
-		secStrength: int64(params.SecondaryStrength),
-		priShift:    int64(constrainShift(params.PrimaryStrength, params.PrimaryDamping)),
-		secShift:    int64(constrainShift(params.SecondaryStrength, params.SecondaryDamping)),
+		priStrength: int64(primaryStrength),
+		secStrength: int64(secondaryStrength),
+		priShift:    int64(constrainShift(primaryStrength, primaryDamping)),
+		secShift:    int64(constrainShift(secondaryStrength, secondaryDamping)),
 
 		enablePrimary:   boolToInt64(enablePrimary),
 		enableSecondary: boolToInt64(enableSecondary),

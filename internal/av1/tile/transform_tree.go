@@ -37,11 +37,9 @@ type TransformTreeResult struct {
 
 // TransformBlock identifies one transform block emitted by a transform tree.
 type TransformBlock struct {
-	X4 int
-	Y4 int
-
-	Size TransformSize
-
+	X4        uint8
+	Y4        uint8
+	Size      TransformSize
 	VisibleW4 uint8
 	VisibleH4 uint8
 }
@@ -366,7 +364,8 @@ func transformChildVisible(req TransformTreeRequest, x4 int, y4 int) bool {
 
 func emitTransformBlock(req TransformTreeRequest, x4 int, y4 int, size TransformSize, visit TransformBlockVisitor) error {
 	dims, ok := size.Dimensions()
-	if !ok || !transformChildVisible(req, x4, y4) {
+	if !ok || !transformChildVisible(req, x4, y4) ||
+		x4 < 0 || y4 < 0 || x4 > int(^uint8(0)) || y4 > int(^uint8(0)) {
 		return ErrInvalidDecodeState
 	}
 	visibleW := minInt(int(dims.W4), req.X4+int(req.VisibleW4)-x4)
@@ -375,8 +374,8 @@ func emitTransformBlock(req TransformTreeRequest, x4 int, y4 int, size Transform
 		return ErrInvalidDecodeState
 	}
 	return visit(TransformBlock{
-		X4:        x4,
-		Y4:        y4,
+		X4:        uint8(x4),
+		Y4:        uint8(y4),
 		Size:      size,
 		VisibleW4: uint8(visibleW),
 		VisibleH4: uint8(visibleH),

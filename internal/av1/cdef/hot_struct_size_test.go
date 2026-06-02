@@ -11,6 +11,7 @@ func TestHotStructSizes(t *testing.T) {
 		size uintptr
 		max  uintptr
 	}{
+		{name: "BlockFilterParams", size: unsafe.Sizeof(BlockFilterParams{}), max: 8},
 		{name: "DirectionGrid", size: unsafe.Sizeof(DirectionGrid{}), max: 256},
 		{name: "VarianceGrid", size: unsafe.Sizeof(VarianceGrid{}), max: 1024},
 	}

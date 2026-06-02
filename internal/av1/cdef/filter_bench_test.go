@@ -12,7 +12,7 @@ func benchFilterBlockParams() ([]uint16, []uint16, int, BlockFilterParams) {
 	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 12, 0, 0)
 	dst := make([]uint16, 64)
 	params := BlockFilterParams{
-		PrimaryStrength:   19 << 4,
+		PrimaryStrength:   15 << 4,
 		SecondaryStrength: 4 << 4,
 		Direction:         4,
 		PrimaryDamping:    7,

@@ -317,7 +317,7 @@ func FuzzCoeffEntropyContext(f *testing.F) {
 		if txbCtx.TXBSkipContext < 0 || txbCtx.TXBSkipContext >= TXBSkipContexts || txbCtx.DCSignContext < 0 || txbCtx.DCSignContext > 2 {
 			t.Fatalf("txb context out of range: %+v", txbCtx)
 		}
-		if err := ctx.ResetBlock(plane, block, req.X4, req.Y4); err != nil {
+		if err := ctx.ResetBlock(plane, block, int(req.X4), int(req.Y4)); err != nil {
 			t.Fatalf("ResetBlock err=%v", err)
 		}
 	})
@@ -325,10 +325,10 @@ func FuzzCoeffEntropyContext(f *testing.F) {
 
 func coeffContextReq(plane int, block BlockSize, tx TransformSize, x4 int, y4 int) CoeffContextRequest {
 	return CoeffContextRequest{
-		Plane:      plane,
+		Plane:      uint8(plane),
 		PlaneBlock: block,
 		Size:       tx,
-		X4:         x4,
-		Y4:         y4,
+		X4:         uint8(x4),
+		Y4:         uint8(y4),
 	}
 }

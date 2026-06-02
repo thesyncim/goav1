@@ -178,8 +178,8 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 					return stats, ErrInvalidDecodeState
 				}
 				block := TransformBlock{
-					X4:        x,
-					Y4:        y,
+					X4:        uint8(x),
+					Y4:        uint8(y),
 					Size:      req.Tree.Y,
 					VisibleW4: uint8(visibleW),
 					VisibleH4: uint8(visibleH),
@@ -376,14 +376,14 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 	for y := cyStart; y < cyEnd; y += int(uvDims.H4) {
 		for x := cxStart; x < cxEnd; x += int(uvDims.W4) {
 			block := TransformBlock{
-				X4:        x4 + x,
-				Y4:        y4 + y,
+				X4:        uint8(x4 + x),
+				Y4:        uint8(y4 + y),
 				Size:      req.Tree.UV,
 				VisibleW4: uint8(minInt(int(uvDims.W4), visibleW4-x)),
 				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
 			}
 			ctxReq := CoeffContextRequest{
-				Plane:      req.Plane,
+				Plane:      uint8(req.Plane),
 				PlaneBlock: planeBlock,
 				Size:       block.Size,
 				X4:         block.X4,
@@ -431,7 +431,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if cdfs == nil || ctx == nil {
 		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
 	}
-	plane, err := CoeffPlaneTypeForPlane(ctxReq.Plane)
+	plane, err := CoeffPlaneTypeForPlane(int(ctxReq.Plane))
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, err
 	}

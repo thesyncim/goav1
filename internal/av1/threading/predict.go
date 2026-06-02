@@ -491,7 +491,9 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	dst := frameWorkPlaneFromWindow(window)
 	x := absX - window.X
 	y := absY - window.Y
-	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, tx.X4, tx.Y4)
+	txX4 := int(tx.X4)
+	txY4 := int(tx.Y4)
+	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, txX4, txY4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
 	if visit.Prediction.Palette.YSize > 0 {
 		baseX, baseY, err := frameWorkBlockLumaPosition(visit.Block)
@@ -626,8 +628,10 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	}
 	baseX4 := visit.Block.X4 >> int(frameWorkSubsampleShift(geom.SubsamplingX))
 	baseY4 := visit.Block.Y4 >> int(frameWorkSubsampleShift(geom.SubsamplingY))
-	offX4 := tx.X4 - baseX4
-	offY4 := tx.Y4 - baseY4
+	txX4 := int(tx.X4)
+	txY4 := int(tx.Y4)
+	offX4 := txX4 - baseX4
+	offY4 := txY4 - baseY4
 	if offX4 < 0 || offY4 < 0 {
 		return ErrInvalidBatch
 	}
@@ -647,7 +651,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	x := absX
 	y := absY
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
-	edgeBlock = frameWorkPredictionTransformEdgeBlock(edgeBlock, baseX4, baseY4, tx.X4, tx.Y4)
+	edgeBlock = frameWorkPredictionTransformEdgeBlock(edgeBlock, baseX4, baseY4, txX4, txY4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, geom.Window)
 
 	if visit.Prediction.Palette.UVSize > 0 {
@@ -3803,20 +3807,22 @@ func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {
 }
 
 func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.TransformBlock) (int, int, error) {
-	if tx.X4 < block.X4 || tx.Y4 < block.Y4 ||
-		tx.X4+int(tx.VisibleW4) > block.X4+int(block.VisibleW4) ||
-		tx.Y4+int(tx.VisibleH4) > block.Y4+int(block.VisibleH4) {
+	txX4 := int(tx.X4)
+	txY4 := int(tx.Y4)
+	if txX4 < block.X4 || txY4 < block.Y4 ||
+		txX4+int(tx.VisibleW4) > block.X4+int(block.VisibleW4) ||
+		txY4+int(tx.VisibleH4) > block.Y4+int(block.VisibleH4) {
 		return 0, 0, ErrInvalidBatch
 	}
 	baseX, baseY, err := frameWorkBlockLumaPosition(block)
 	if err != nil {
 		return 0, 0, err
 	}
-	offX, ok := frameWorkInt64Mul4(int64(tx.X4 - block.X4))
+	offX, ok := frameWorkInt64Mul4(int64(txX4 - block.X4))
 	if !ok {
 		return 0, 0, ErrInvalidBatch
 	}
-	offY, ok := frameWorkInt64Mul4(int64(tx.Y4 - block.Y4))
+	offY, ok := frameWorkInt64Mul4(int64(txY4 - block.Y4))
 	if !ok {
 		return 0, 0, ErrInvalidBatch
 	}

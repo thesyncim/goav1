@@ -70,14 +70,14 @@ func TestFilterBlockMatchesLibaomCorpus(t *testing.T) {
 								got := make([]uint16, 8*8)
 								want := make([]uint16, 8*8)
 								params := BlockFilterParams{
-									PrimaryStrength:   pri,
-									SecondaryStrength: sec,
-									Direction:         dir,
-									PrimaryDamping:    3 + shift + boundary%3,
-									SecondaryDamping:  4 + shift + (boundary>>2)%3,
-									CoeffShift:        shift,
-									Width:             size.width,
-									Height:            size.height,
+									PrimaryStrength:   uint8(pri),
+									SecondaryStrength: uint8(sec),
+									Direction:         uint8(dir),
+									PrimaryDamping:    uint8(3 + shift + boundary%3),
+									SecondaryDamping:  uint8(4 + shift + (boundary>>2)%3),
+									CoeffShift:        uint8(shift),
+									Width:             uint8(size.width),
+									Height:            uint8(size.height),
 								}
 								filterBlockLibaomReference(want, 8, 0, input, cdefBlockOrigin(), params)
 								if err := FilterBlock(got, 8, 0, input, cdefBlockOrigin(), params); err != nil {
@@ -121,12 +121,12 @@ func TestFilterFrameBlocksMatchesLibaomReference(t *testing.T) {
 		vars[by][bx] = variance
 		strength := adjustStrengthReference(params.Level<<coeffShift, variance)
 		filterBlockLibaomReference(want, 16, (by<<3)*16+(bx<<3), input, srcOrigin, BlockFilterParams{
-			PrimaryStrength:   strength,
-			SecondaryStrength: params.SecondaryStrength << coeffShift,
-			Direction:         dir,
-			PrimaryDamping:    params.Damping + coeffShift,
-			SecondaryDamping:  params.Damping + coeffShift,
-			CoeffShift:        coeffShift,
+			PrimaryStrength:   uint8(strength),
+			SecondaryStrength: uint8(params.SecondaryStrength << coeffShift),
+			Direction:         uint8(dir),
+			PrimaryDamping:    uint8(params.Damping + coeffShift),
+			SecondaryDamping:  uint8(params.Damping + coeffShift),
+			CoeffShift:        uint8(coeffShift),
 			Width:             8,
 			Height:            8,
 		})
@@ -200,7 +200,7 @@ func TestFilterBlockRejectsInvalidInputs(t *testing.T) {
 		{name: "short-input", dst: make([]uint16, 64), stride: 8, input: input[:cdefBlockOrigin()], inOff: cdefBlockOrigin(), params: valid},
 		{name: "bad-dir", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFDirection(valid, 8)},
 		{name: "bad-size", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFSize(valid, 6, 8)},
-		{name: "negative-strength", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFPrimary(valid, -1)},
+		{name: "bad-coeff-shift", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFCoeffShift(valid, 5)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,7 +226,7 @@ func TestCDEFAllocs(t *testing.T) {
 	var dirs DirectionGrid
 	var vars VarianceGrid
 	params := BlockFilterParams{
-		PrimaryStrength:   19 << 4,
+		PrimaryStrength:   15 << 4,
 		SecondaryStrength: 4 << 4,
 		Direction:         3,
 		PrimaryDamping:    7,
@@ -287,14 +287,14 @@ func FuzzFilterBlock(f *testing.F) {
 		}
 		applyCDEFBoundary(input, rawBoundary&15)
 		params := BlockFilterParams{
-			PrimaryStrength:   int(rawDir%20) << shift,
-			SecondaryStrength: cdefSecondaryStrengthCorpus(shift)[int(rawBoundary)%4],
-			Direction:         int(rawDir % 8),
-			PrimaryDamping:    3 + shift + int(rawBoundary%3),
-			SecondaryDamping:  3 + shift + int((rawBoundary>>2)%3),
-			CoeffShift:        shift,
-			Width:             width,
-			Height:            height,
+			PrimaryStrength:   uint8(int(rawDir%16) << shift),
+			SecondaryStrength: uint8(cdefSecondaryStrengthCorpus(shift)[int(rawBoundary)%4]),
+			Direction:         uint8(rawDir % 8),
+			PrimaryDamping:    uint8(3 + shift + int(rawBoundary%3)),
+			SecondaryDamping:  uint8(3 + shift + int((rawBoundary>>2)%3)),
+			CoeffShift:        uint8(shift),
+			Width:             uint8(width),
+			Height:            uint8(height),
 		}
 		got := make([]uint16, 64)
 		want := make([]uint16, 64)
@@ -346,7 +346,7 @@ func BenchmarkFilterBlock(b *testing.B) {
 	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 12, 0, 0)
 	dst := make([]uint16, 64)
 	params := BlockFilterParams{
-		PrimaryStrength:   19 << 4,
+		PrimaryStrength:   15 << 4,
 		SecondaryStrength: 4 << 4,
 		Direction:         4,
 		PrimaryDamping:    7,
@@ -437,21 +437,30 @@ func copyRect16To16Reference(dst []uint16, dstStride int, src []uint16, srcStrid
 }
 
 func filterBlockLibaomReference(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	clippingRequired := params.PrimaryStrength != 0 && params.SecondaryStrength != 0
-	priTaps := referenceCDEFPrimaryTaps[(params.PrimaryStrength>>params.CoeffShift)&1]
-	for row := 0; row < params.Height; row++ {
-		for col := 0; col < params.Width; col++ {
+	primaryStrength := int(params.PrimaryStrength)
+	secondaryStrength := int(params.SecondaryStrength)
+	direction := int(params.Direction)
+	primaryDamping := int(params.PrimaryDamping)
+	secondaryDamping := int(params.SecondaryDamping)
+	coeffShift := int(params.CoeffShift)
+	width := int(params.Width)
+	height := int(params.Height)
+
+	clippingRequired := primaryStrength != 0 && secondaryStrength != 0
+	priTaps := referenceCDEFPrimaryTaps[(primaryStrength>>coeffShift)&1]
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
 			base := inputOrigin + row*BStride + col
 			sum := 0
 			x := int(input[base])
 			maxSample := x
 			minSample := x
 			for k := range 2 {
-				if params.PrimaryStrength != 0 {
-					p0 := int(input[base+referenceCDEFDirections[params.Direction][k]])
-					p1 := int(input[base-referenceCDEFDirections[params.Direction][k]])
-					sum += priTaps[k] * constrainReference(p0-x, params.PrimaryStrength, params.PrimaryDamping)
-					sum += priTaps[k] * constrainReference(p1-x, params.PrimaryStrength, params.PrimaryDamping)
+				if primaryStrength != 0 {
+					p0 := int(input[base+referenceCDEFDirections[direction][k]])
+					p1 := int(input[base-referenceCDEFDirections[direction][k]])
+					sum += priTaps[k] * constrainReference(p0-x, primaryStrength, primaryDamping)
+					sum += priTaps[k] * constrainReference(p1-x, primaryStrength, primaryDamping)
 					if clippingRequired {
 						if p0 != VeryLarge && p0 > maxSample {
 							maxSample = p0
@@ -467,11 +476,11 @@ func filterBlockLibaomReference(dst []uint16, dstStride int, dstOrigin int, inpu
 						}
 					}
 				}
-				if params.SecondaryStrength != 0 {
-					s0 := int(input[base+referenceCDEFDirections[(params.Direction+2)&7][k]])
-					s1 := int(input[base-referenceCDEFDirections[(params.Direction+2)&7][k]])
-					s2 := int(input[base+referenceCDEFDirections[(params.Direction+6)&7][k]])
-					s3 := int(input[base-referenceCDEFDirections[(params.Direction+6)&7][k]])
+				if secondaryStrength != 0 {
+					s0 := int(input[base+referenceCDEFDirections[(direction+2)&7][k]])
+					s1 := int(input[base-referenceCDEFDirections[(direction+2)&7][k]])
+					s2 := int(input[base+referenceCDEFDirections[(direction+6)&7][k]])
+					s3 := int(input[base-referenceCDEFDirections[(direction+6)&7][k]])
 					if clippingRequired {
 						for _, v := range []int{s0, s1, s2, s3} {
 							if v != VeryLarge && v > maxSample {
@@ -482,10 +491,10 @@ func filterBlockLibaomReference(dst []uint16, dstStride int, dstOrigin int, inpu
 							}
 						}
 					}
-					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s0-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s1-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s2-x, params.SecondaryStrength, params.SecondaryDamping)
-					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s3-x, params.SecondaryStrength, params.SecondaryDamping)
+					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s0-x, secondaryStrength, secondaryDamping)
+					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s1-x, secondaryStrength, secondaryDamping)
+					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s2-x, secondaryStrength, secondaryDamping)
+					sum += referenceCDEFSecondaryTaps[k] * constrainReference(s3-x, secondaryStrength, secondaryDamping)
 				}
 			}
 			y := x + ((8 + sum - boolToIntReference(sum < 0)) >> 4)
@@ -559,7 +568,7 @@ func cdefBlockOrigin() int {
 }
 
 func cdefPrimaryStrengthCorpus(shift int) []int {
-	return []int{0, 1 << shift, 4 << shift, 8 << shift, 19 << shift}
+	return []int{0, 1 << shift, 4 << shift, 8 << shift, 15 << shift}
 }
 
 func cdefSecondaryStrengthCorpus(shift int) []int {
@@ -656,17 +665,17 @@ func assertUint16SlicesEqual(t *testing.T, got []uint16, want []uint16) {
 }
 
 func withCDEFDirection(params BlockFilterParams, dir int) BlockFilterParams {
-	params.Direction = dir
+	params.Direction = uint8(dir)
 	return params
 }
 
 func withCDEFSize(params BlockFilterParams, width int, height int) BlockFilterParams {
-	params.Width = width
-	params.Height = height
+	params.Width = uint8(width)
+	params.Height = uint8(height)
 	return params
 }
 
-func withCDEFPrimary(params BlockFilterParams, primary int) BlockFilterParams {
-	params.PrimaryStrength = primary
+func withCDEFCoeffShift(params BlockFilterParams, coeffShift int) BlockFilterParams {
+	params.CoeffShift = uint8(coeffShift)
 	return params
 }

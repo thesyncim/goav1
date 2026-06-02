@@ -142,9 +142,11 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 					got.EOB = int(block.Result.EOB)
 					copy(got.Coeffs[:], block.Coeffs[:16])
 					copy(got.Residual[:], residual[:16])
+					blockX := int(block.Block.X4) * 4
+					blockY := int(block.Block.Y4) * 4
 					for yy := 0; yy < 4; yy++ {
-						row := (block.Block.Y4*4 + yy - plane.Y) * plane.Stride
-						col := block.Block.X4*4 - plane.X
+						row := (blockY + yy - plane.Y) * plane.Stride
+						col := blockX - plane.X
 						copy(got.Final[yy*4:yy*4+4], plane.Pix[row+col:row+col+4])
 					}
 					return nil

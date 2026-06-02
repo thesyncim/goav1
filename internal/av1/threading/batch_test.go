@@ -2098,8 +2098,8 @@ func FuzzFrameWorkBatchReconstructBlockCoeff(f *testing.F) {
 			Block: tile.BlockCoeffBlock{
 				Plane: planeID,
 				Block: tile.TransformBlock{
-					X4:        int(rawX4) % (xLimit + 1),
-					Y4:        int(rawY4) % (yLimit + 1),
+					X4:        uint8(int(rawX4) % (xLimit + 1)),
+					Y4:        uint8(int(rawY4) % (yLimit + 1)),
 					Size:      size,
 					VisibleW4: dims.W4,
 					VisibleH4: dims.H4,

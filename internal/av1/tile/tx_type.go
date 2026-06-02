@@ -211,15 +211,17 @@ func (m *InterTransformTypeMap) Set(block TransformBlock, typ transform.Type) er
 		return ErrInvalidDecodeState
 	}
 	dims, ok := block.Size.Dimensions()
-	if !ok || block.X4 < 0 || block.Y4 < 0 ||
-		block.X4+int(dims.W4) > MaxBlockModeSlots ||
-		block.Y4+int(dims.H4) > MaxBlockModeSlots {
+	x4 := int(block.X4)
+	y4 := int(block.Y4)
+	if !ok ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
 	for y := 0; y < int(dims.H4); y++ {
 		for x := 0; x < int(dims.W4); x++ {
-			m.Type[block.Y4+y][block.X4+x] = typ
-			m.Valid[block.Y4+y][block.X4+x] = 1
+			m.Type[y4+y][x4+x] = typ
+			m.Valid[y4+y][x4+x] = 1
 		}
 	}
 	return nil
@@ -234,8 +236,8 @@ func (m *InterTransformTypeMap) At(x4 int, y4 int) (transform.Type, error) {
 }
 
 func (m *InterTransformTypeMap) ChromaType(block TransformBlock, color parser.ColorConfig) (transform.Type, error) {
-	x4 := block.X4
-	y4 := block.Y4
+	x4 := int(block.X4)
+	y4 := int(block.Y4)
 	if color.SubsamplingX {
 		x4 <<= 1
 	}

@@ -547,8 +547,8 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx
 	blockY4 := int(block.Y4)
 	return record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
 		plan.LumaTXBs++
-		frameX4 := int(block.MICol) + tx.X4 - blockX4
-		frameY4 := int(block.MIRow) + tx.Y4 - blockY4
+		frameX4 := int(block.MICol) + int(tx.X4) - blockX4
+		frameY4 := int(block.MIRow) + int(tx.Y4) - blockY4
 		if frameX4 > 0 {
 			if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVertical); err != nil {
 				return err
@@ -1087,13 +1087,13 @@ func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCt
 		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
 			plan.ChromaTXBs++
 			tx := tile.TransformBlock{
-				X4:        int(block.X4) + x,
-				Y4:        int(block.Y4) + y,
+				X4:        uint8(int(block.X4) + x),
+				Y4:        uint8(int(block.Y4) + y),
 				Size:      record.TransformTree.UV,
 				VisibleW4: uint8(minInt(int(uvDims.W4), int(block.VisibleW4)-x)),
 				VisibleH4: uint8(minInt(int(uvDims.H4), int(block.VisibleH4)-y)),
 			}
-			frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, tx.X4, tx.Y4, planning.ssX, planning.ssY)
+			frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, int(tx.X4), int(tx.Y4), planning.ssX, planning.ssY)
 			if fuseUV {
 				if frameX4 > 0 {
 					if verticalEqualUV {
@@ -1145,7 +1145,7 @@ func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCt
 }
 
 func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, plane loopfilter.Plane, tx tile.TransformBlock, currentVertical uint8, currentHorizontal uint8, ssX int, ssY int) error {
-	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, tx.X4, tx.Y4, ssX, ssY)
+	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, int(tx.X4), int(tx.Y4), ssX, ssY)
 	if frameX4 > 0 {
 		if err := frameWorkAppendLoopFilterChromaEdgeSegments(ctx, levelCtx, filterMap, color, record, plan, edges, bounds, plane, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVertical, ssX, ssY); err != nil {
 			return err
@@ -1160,7 +1160,7 @@ func frameWorkAppendLoopFilterChromaTXBEdges(ctx FrameWorkPostFilterContext, lev
 }
 
 func frameWorkAppendLoopFilterChromaTXBEdgesUV(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, tx tile.TransformBlock, currentVerticalU uint8, currentVerticalV uint8, currentHorizontalU uint8, currentHorizontalV uint8, ssX int, ssY int) error {
-	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, tx.X4, tx.Y4, ssX, ssY)
+	frameX4, frameY4 := frameWorkLoopFilterChromaFrame4WithShifts(record, int(tx.X4), int(tx.Y4), ssX, ssY)
 	if frameX4 > 0 {
 		if err := frameWorkAppendLoopFilterChromaEdgeSegmentsUV(ctx, levelCtx, filterMap, color, record, plan, edges, bounds, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVerticalU, currentVerticalV, ssX, ssY); err != nil {
 			return err
@@ -2061,9 +2061,11 @@ func frameWorkLoopFilterChromaTransformAt(ctx FrameWorkPostFilterContext, record
 }
 
 func frameWorkLoopFilterTransformBlockContains(tx tile.TransformBlock, x4 int, y4 int) bool {
-	return x4 >= tx.X4 && y4 >= tx.Y4 &&
-		x4 < tx.X4+int(tx.VisibleW4) &&
-		y4 < tx.Y4+int(tx.VisibleH4)
+	txX4 := int(tx.X4)
+	txY4 := int(tx.Y4)
+	return x4 >= txX4 && y4 >= txY4 &&
+		x4 < txX4+int(tx.VisibleW4) &&
+		y4 < txY4+int(tx.VisibleH4)
 }
 
 func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx tile.TransformSize) (uint8, error) {
@@ -2269,8 +2271,8 @@ func frameWorkLoopFilterChromaBlockWithShifts(color parser.ColorConfig, record *
 		return tile.TransformBlock{}, false, threading.ErrInvalidBatch
 	}
 	return tile.TransformBlock{
-		X4:        x4,
-		Y4:        y4,
+		X4:        uint8(x4),
+		Y4:        uint8(y4),
 		Size:      record.TransformTree.UV,
 		VisibleW4: uint8(visibleW4),
 		VisibleH4: uint8(visibleH4),

@@ -6,13 +6,12 @@ type TXBContext struct {
 }
 
 type CoeffContextRequest struct {
-	Plane      int
+	Plane      uint8
 	PlaneBlock BlockSize
 	Size       TransformSize
 
-	X4 int
-	Y4 int
-
+	X4        uint8
+	Y4        uint8
 	VisibleW4 uint8
 	VisibleH4 uint8
 }
@@ -43,8 +42,11 @@ func (c *CoeffEntropyContext) TXBContext(req CoeffContextRequest) (TXBContext, e
 
 func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) (TXBContext, error) {
 	dcSign := 0
+	plane := int(req.Plane)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	for k := 0; k < int(txDims.W4); k++ {
-		sign := c.Above[req.Plane][req.X4+k] >> CoeffContextBits
+		sign := c.Above[plane][x4+k] >> CoeffContextBits
 		switch sign {
 		case 0:
 		case 1:
@@ -56,7 +58,7 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 		}
 	}
 	for k := 0; k < int(txDims.H4); k++ {
-		sign := c.Left[req.Plane][req.Y4+k] >> CoeffContextBits
+		sign := c.Left[plane][y4+k] >> CoeffContextBits
 		switch sign {
 		case 0:
 		case 1:
@@ -71,13 +73,13 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 	txbSkipCtx := 0
 	if req.Plane == 0 {
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
-			top := coeffContextMagnitude(c.Above[req.Plane][req.X4 : req.X4+int(txDims.W4)])
-			left := coeffContextMagnitude(c.Left[req.Plane][req.Y4 : req.Y4+int(txDims.H4)])
+			top := coeffContextMagnitude(c.Above[plane][x4 : x4+int(txDims.W4)])
+			left := coeffContextMagnitude(c.Left[plane][y4 : y4+int(txDims.H4)])
 			txbSkipCtx = int(coeffSkipContexts[top][left])
 		}
 	} else {
-		ctxBase := coeffEntropyBase(c.Above[req.Plane][req.X4:req.X4+int(txDims.W4)],
-			c.Left[req.Plane][req.Y4:req.Y4+int(txDims.H4)])
+		ctxBase := coeffEntropyBase(c.Above[plane][x4:x4+int(txDims.W4)],
+			c.Left[plane][y4:y4+int(txDims.H4)])
 		ctxOffset := 7
 		if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
 			ctxOffset = 10
@@ -154,7 +156,7 @@ func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	if ctx == nil {
 		return TXBDecodeRequest{}, false, ErrInvalidDecodeState
 	}
-	plane, err := CoeffPlaneTypeForPlane(ctxReq.Plane)
+	plane, err := CoeffPlaneTypeForPlane(int(ctxReq.Plane))
 	if err != nil {
 		return TXBDecodeRequest{}, false, err
 	}
@@ -186,19 +188,22 @@ func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8
 }
 
 func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, value uint8) {
+	plane := int(req.Plane)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	for k := 0; k < int(txDims.W4); k++ {
 		next := uint8(0)
 		if k < visibleW {
 			next = value
 		}
-		c.Above[req.Plane][req.X4+k] = next
+		c.Above[plane][x4+k] = next
 	}
 	for k := 0; k < int(txDims.H4); k++ {
 		next := uint8(0)
 		if k < visibleH {
 			next = value
 		}
-		c.Left[req.Plane][req.Y4+k] = next
+		c.Left[plane][y4+k] = next
 	}
 }
 
@@ -208,7 +213,7 @@ func validateCoeffContextRequest(req CoeffContextRequest) (TransformDimensions, 
 }
 
 func validateCoeffContextRequestWithSpan(req CoeffContextRequest) (TransformDimensions, BlockDimensions, int, int, error) {
-	if req.Plane < 0 || req.Plane >= 3 || req.X4 < 0 || req.Y4 < 0 {
+	if req.Plane >= 3 {
 		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
 	txDims, ok := req.Size.Dimensions()
@@ -216,9 +221,11 @@ func validateCoeffContextRequestWithSpan(req CoeffContextRequest) (TransformDime
 		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
 	blockDims, ok := req.PlaneBlock.Dimensions()
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	if !ok ||
-		req.X4+int(txDims.W4) > MaxBlockModeSlots ||
-		req.Y4+int(txDims.H4) > MaxBlockModeSlots {
+		x4+int(txDims.W4) > MaxBlockModeSlots ||
+		y4+int(txDims.H4) > MaxBlockModeSlots {
 		return TransformDimensions{}, BlockDimensions{}, 0, 0, ErrInvalidDecodeState
 	}
 	visibleW, visibleH, err := coeffVisibleSpan(req, txDims)

@@ -27,14 +27,14 @@ type DirectionGrid [NBlocks][NBlocks]uint8
 type VarianceGrid [NBlocks][NBlocks]int32
 
 type BlockFilterParams struct {
-	PrimaryStrength   int
-	SecondaryStrength int
-	Direction         int
-	PrimaryDamping    int
-	SecondaryDamping  int
-	CoeffShift        int
-	Width             int
-	Height            int
+	PrimaryStrength   uint8
+	SecondaryStrength uint8
+	Direction         uint8
+	PrimaryDamping    uint8
+	SecondaryDamping  uint8
+	CoeffShift        uint8
+	Width             uint8
+	Height            uint8
 }
 
 type FrameFilterParams struct {
@@ -81,34 +81,43 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 // filter_dispatch.go defaults to this function so every build has a working
 // reference path.
 func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	enablePrimary := params.PrimaryStrength != 0
-	enableSecondary := params.SecondaryStrength != 0
+	primaryStrength := int(params.PrimaryStrength)
+	secondaryStrength := int(params.SecondaryStrength)
+	direction := int(params.Direction)
+	primaryDamping := int(params.PrimaryDamping)
+	secondaryDamping := int(params.SecondaryDamping)
+	coeffShift := int(params.CoeffShift)
+	width := int(params.Width)
+	height := int(params.Height)
+
+	enablePrimary := primaryStrength != 0
+	enableSecondary := secondaryStrength != 0
 	clippingRequired := enablePrimary && enableSecondary
-	priTaps := cdefPrimaryTaps[(params.PrimaryStrength>>params.CoeffShift)&1]
+	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
 
 	// Hoist the per-call invariants out of the per-pixel loop: direction
 	// offsets, primary taps, and the constrain() shift amounts (which depend
 	// only on threshold/damping). This keeps the inner loop free of repeated
 	// table lookups and bits.Len calls.
-	pri0 := cdefDirections[params.Direction+2][0]
-	pri1 := cdefDirections[params.Direction+2][1]
-	sec0a := cdefDirections[params.Direction+4][0]
-	sec0b := cdefDirections[params.Direction+4][1]
-	sec1a := cdefDirections[params.Direction][0]
-	sec1b := cdefDirections[params.Direction][1]
+	pri0 := cdefDirections[direction+2][0]
+	pri1 := cdefDirections[direction+2][1]
+	sec0a := cdefDirections[direction+4][0]
+	sec0b := cdefDirections[direction+4][1]
+	sec1a := cdefDirections[direction][0]
+	sec1b := cdefDirections[direction][1]
 	priTap0 := priTaps[0]
 	priTap1 := priTaps[1]
 	secTap0 := cdefSecondaryTaps[0]
 	secTap1 := cdefSecondaryTaps[1]
-	priStrength := params.PrimaryStrength
-	secStrength := params.SecondaryStrength
-	priShift := constrainShift(priStrength, params.PrimaryDamping)
-	secShift := constrainShift(secStrength, params.SecondaryDamping)
+	priStrength := primaryStrength
+	secStrength := secondaryStrength
+	priShift := constrainShift(priStrength, primaryDamping)
+	secShift := constrainShift(secStrength, secondaryDamping)
 
-	for row := 0; row < params.Height; row++ {
+	for row := 0; row < height; row++ {
 		rowBase := inputOrigin + row*BStride
 		dstRow := dstOrigin + row*dstStride
-		for col := 0; col < params.Width; col++ {
+		for col := 0; col < width; col++ {
 			base := rowBase + col
 			sum := 0
 			x := int(input[base])
@@ -308,15 +317,23 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 		srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
 		dstOrigin := (by<<bhLog2)*dstStride + (bx << bwLog2)
+		if strength > int(^uint8(0)) ||
+			secondaryStrength > int(^uint8(0)) ||
+			damping > int(^uint8(0)) ||
+			params.CoeffShift > int(^uint8(0)) ||
+			blockWidth > int(^uint8(0)) ||
+			blockHeight > int(^uint8(0)) {
+			return ErrInvalidCDEF
+		}
 		err := FilterBlock(dst, dstStride, dstOrigin, input, srcOrigin, BlockFilterParams{
-			PrimaryStrength:   strength,
-			SecondaryStrength: secondaryStrength,
-			Direction:         dir,
-			PrimaryDamping:    damping,
-			SecondaryDamping:  damping,
-			CoeffShift:        params.CoeffShift,
-			Width:             blockWidth,
-			Height:            blockHeight,
+			PrimaryStrength:   uint8(strength),
+			SecondaryStrength: uint8(secondaryStrength),
+			Direction:         uint8(dir),
+			PrimaryDamping:    uint8(damping),
+			SecondaryDamping:  uint8(damping),
+			CoeffShift:        uint8(params.CoeffShift),
+			Width:             uint8(blockWidth),
+			Height:            uint8(blockHeight),
 		})
 		if err != nil {
 			return err
@@ -326,12 +343,12 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 }
 
 func validateBlockFilter(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) error {
-	if params.PrimaryStrength < 0 || params.SecondaryStrength < 0 ||
-		params.PrimaryDamping < 0 || params.SecondaryDamping < 0 ||
-		params.CoeffShift < 0 || params.CoeffShift > 4 ||
-		params.Direction < 0 || params.Direction > 7 ||
-		!validBlockDimension(params.Width) || !validBlockDimension(params.Height) ||
-		!blockFitsAt(len(dst), dstOrigin, dstStride, params.Width, params.Height) {
+	width := int(params.Width)
+	height := int(params.Height)
+	if params.CoeffShift > 4 ||
+		params.Direction > 7 ||
+		!validBlockDimension(width) || !validBlockDimension(height) ||
+		!blockFitsAt(len(dst), dstOrigin, dstStride, width, height) {
 		return ErrInvalidCDEF
 	}
 	if !cdefInputFits(len(input), inputOrigin, params) {
@@ -364,6 +381,9 @@ func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 	}
 	enablePrimary := params.PrimaryStrength != 0
 	enableSecondary := params.SecondaryStrength != 0
+	width := int(params.Width)
+	height := int(params.Height)
+	direction := int(params.Direction)
 
 	// The block touches input[base+off] and input[base-off] for a fixed set of
 	// direction offsets, where base ranges linearly over
@@ -372,18 +392,18 @@ func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 	// highest is hiBase+maxOff. Checking just those two extremes is exact and
 	// equivalent to walking every pixel, but O(1) instead of O(Width*Height).
 	loBase := origin
-	hiBase := origin + (params.Height-1)*BStride + (params.Width - 1)
+	hiBase := origin + (height-1)*BStride + (width - 1)
 
 	maxOff := 0
 	if enablePrimary {
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+2][0])
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+2][1])
+		maxOff = maxAbs(maxOff, cdefDirections[direction+2][0])
+		maxOff = maxAbs(maxOff, cdefDirections[direction+2][1])
 	}
 	if enableSecondary {
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+4][0])
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction+4][1])
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction][0])
-		maxOff = maxAbs(maxOff, cdefDirections[params.Direction][1])
+		maxOff = maxAbs(maxOff, cdefDirections[direction+4][0])
+		maxOff = maxAbs(maxOff, cdefDirections[direction+4][1])
+		maxOff = maxAbs(maxOff, cdefDirections[direction][0])
+		maxOff = maxAbs(maxOff, cdefDirections[direction][1])
 	}
 
 	return indexFits(length, loBase-maxOff) && indexFits(length, hiBase+maxOff)
