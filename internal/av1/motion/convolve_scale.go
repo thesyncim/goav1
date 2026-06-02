@@ -32,15 +32,24 @@ func SubpelKernelTableFor(filter InterpFilter, blockSize int) (SubpelKernelTable
 	if !filter.Valid() {
 		return SubpelKernelTable{}, ErrInvalidMotion
 	}
-	var table SubpelKernelTable
-	for k := range len(table) {
-		kern, err := interpKernel(filter, blockSize, k)
-		if err != nil {
-			return SubpelKernelTable{}, err
+	if blockSize <= 4 && filter != InterpBilinear {
+		if filter == InterpEightTapSmooth {
+			return SubpelKernelTable(subpelFilters4Smooth), nil
 		}
-		table[k] = kern
+		return SubpelKernelTable(subpelFilters4), nil
 	}
-	return table, nil
+	switch filter {
+	case InterpEightTapRegular:
+		return SubpelKernelTable(subpelFilters8), nil
+	case InterpEightTapSmooth:
+		return SubpelKernelTable(subpelFilters8Smooth), nil
+	case InterpMultiTapSharp:
+		return SubpelKernelTable(subpelFilters8Sharp), nil
+	case InterpBilinear:
+		return SubpelKernelTable(bilinearFilters), nil
+	default:
+		return SubpelKernelTable{}, ErrInvalidMotion
+	}
 }
 
 // ConvolveScale2D8 performs AV1 scaled 8-bit 8-tap 2D interpolation on a
