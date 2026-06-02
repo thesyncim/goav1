@@ -119,25 +119,43 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	// Stage the row inputs into scratch, then run the row pass. The input
 	// staging is kept separate from the transform so the transform can batch
 	// two already-staged rows through the SIMD-accelerated inverse1DRow2.
-	for row := range height {
-		tmpLine := scratch[row*width : row*width+width : row*width+width]
-		if row < coeffH {
-			for col := range tmpLine {
-				v := int32(0)
-				if col < coeffW {
-					v = coeff[col*coeffStride+row]
+	if coeffW == width && coeffH == height {
+		if rect2 {
+			for row := range height {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := range tmpLine {
+					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
 				}
-				if rect2 {
-					v = rect2Scale(v)
-				}
-				tmpLine[col] = clipRange(int64(v), rowMin, rowMax)
 			}
 		} else {
-			// Rows beyond the coded coefficient height contribute no input;
-			// rect2Scale(0)==0 and clipRange(0) keeps zero, so just zero them.
-			for col := range tmpLine {
-				tmpLine[col] = 0
+			for row := range height {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := range tmpLine {
+					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
+				}
 			}
+		}
+	} else {
+		if rect2 {
+			for row := 0; row < coeffH; row++ {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := 0; col < coeffW; col++ {
+					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
+				}
+				clear(tmpLine[coeffW:])
+			}
+		} else {
+			for row := 0; row < coeffH; row++ {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := 0; col < coeffW; col++ {
+					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
+				}
+				clear(tmpLine[coeffW:])
+			}
+		}
+		for row := coeffH; row < height; row++ {
+			tmpLine := scratch[row*width : row*width+width : row*width+width]
+			clear(tmpLine)
 		}
 	}
 
