@@ -213,6 +213,10 @@ type DecoderFrameWorkCDEFPostFilterResult = internaldecoder.FrameWorkCDEFPostFil
 // post-filter stage.
 type DecoderFrameWorkLoopFilterMap = internaldecoder.FrameWorkLoopFilterMap
 
+// DecoderFrameWorkLoopFilterBlock stores the subset of a decoded tile block
+// needed by the loop-filter map.
+type DecoderFrameWorkLoopFilterBlock = internalthreading.FrameWorkLoopFilterBlock
+
 // DecoderFrameWorkLoopFilterBlockRecord is one entry of
 // DecoderFrameWorkLoopFilterMap, recording the per-block edge state used
 // by the loop-filter stage.

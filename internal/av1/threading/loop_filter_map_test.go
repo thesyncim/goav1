@@ -9,6 +9,15 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
+func testFrameWorkLoopFilterBlock(t testing.TB, block tile.BlockVisit) FrameWorkLoopFilterBlock {
+	t.Helper()
+	out, err := FrameWorkLoopFilterBlockFromVisit(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestFrameWorkBatchLoopFilterMapShapeAndBind(t *testing.T) {
 	ctx := testFrameWorkLoopFilterBatch(130, 65)
 	cols, rows, length, err := ctx.LoopFilterMapShape()
@@ -84,11 +93,12 @@ func TestFrameWorkLoopFilterMapMarkBlockRecordsInterMetadata(t *testing.T) {
 	if err := filterMap.MarkBlock(visit, state); err != nil {
 		t.Fatal(err)
 	}
+	wantBlock := testFrameWorkLoopFilterBlock(t, visit.Block)
 
 	for miRow := uint32(2); miRow < 5; miRow++ {
 		for miCol := uint32(4); miCol < 7; miCol++ {
 			got := filterMap.Records[int(miRow)*filterMap.Stride+int(miCol)]
-			if !got.Valid || got.Block != visit.Block || got.TransformTree != visit.Coefficients.Tree {
+			if !got.Valid || got.Block != wantBlock || got.TransformTree != visit.Coefficients.Tree {
 				t.Fatalf("record[%d,%d]=%+v", miCol, miRow, got)
 			}
 			if got.SegmentID != 5 || !got.SkipTransform || got.Intra {
@@ -238,19 +248,20 @@ func TestFrameWorkLoopFilterMapRecordAtAndForEachBlock(t *testing.T) {
 	if err := filterMap.MarkBlock(visit, state); err != nil {
 		t.Fatal(err)
 	}
+	wantBlock := testFrameWorkLoopFilterBlock(t, visit.Block)
 
 	record, ok, err := filterMap.RecordAt(2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || !record.Valid || record.Block != visit.Block {
+	if !ok || !record.Valid || record.Block != wantBlock {
 		t.Fatalf("top-left record=%+v ok=%v", record, ok)
 	}
 	record, ok, err = filterMap.RecordAt(5, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || record.Block != visit.Block {
+	if !ok || record.Block != wantBlock {
 		t.Fatalf("covered record=%+v ok=%v", record, ok)
 	}
 	if _, ok, err = filterMap.RecordAt(0, 0); err != nil || ok {
@@ -270,8 +281,8 @@ func TestFrameWorkLoopFilterMapRecordAtAndForEachBlock(t *testing.T) {
 	var blocks int
 	if err := filterMap.ForEachBlock(func(got FrameWorkLoopFilterBlockRecord) error {
 		blocks++
-		if got.Block != visit.Block {
-			t.Fatalf("visited block=%+v want %+v", got.Block, visit.Block)
+		if got.Block != wantBlock {
+			t.Fatalf("visited block=%+v want %+v", got.Block, wantBlock)
 		}
 		return nil
 	}); err != nil {
@@ -288,7 +299,7 @@ func TestFrameWorkLoopFilterMapGridHelpersIgnorePadding(t *testing.T) {
 		Stride:  4,
 		Rows:    2,
 	}
-	block := tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 2, MIRowEnd: 2}
+	block := testFrameWorkLoopFilterBlock(t, tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 2, MIRowEnd: 2})
 	record := FrameWorkLoopFilterBlockRecord{Valid: true, Block: block}
 	filterMap.Records[0] = record
 	filterMap.Records[1] = record
@@ -296,7 +307,7 @@ func TestFrameWorkLoopFilterMapGridHelpersIgnorePadding(t *testing.T) {
 	filterMap.Records[5] = record
 	filterMap.Records[2] = FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: tile.BlockVisit{MICol: 2, MIRow: 0, MIColEnd: 4, MIRowEnd: 2},
+		Block: testFrameWorkLoopFilterBlock(t, tile.BlockVisit{MICol: 2, MIRow: 0, MIColEnd: 4, MIRowEnd: 2}),
 	}
 
 	stats, err := filterMap.CoverageStats(2, 2)
@@ -335,7 +346,7 @@ func TestFrameWorkLoopFilterMapForEachBlockRejectsInvalidInputs(t *testing.T) {
 	}
 	filterMap.Records[0] = FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 5, MIRowEnd: 1},
+		Block: testFrameWorkLoopFilterBlock(t, tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 5, MIRowEnd: 1}),
 	}
 	if err := filterMap.ForEachBlock(func(FrameWorkLoopFilterBlockRecord) error { return nil }); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad record err=%v want %v", err, ErrInvalidBatch)
@@ -383,6 +394,45 @@ func TestFrameWorkLoopFilterMapAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("FrameWorkLoopFilterMap allocated: %f", allocs)
+	}
+}
+
+func BenchmarkFrameWorkLoopFilterMapMarkBlock(b *testing.B) {
+	ctx := testFrameWorkLoopFilterBatch(64, 64)
+	_, _, length, err := ctx.LoopFilterMapShape()
+	if err != nil {
+		b.Fatal(err)
+	}
+	filterMap, err := ctx.BindLoopFilterMap(make([]FrameWorkLoopFilterBlockRecord, length))
+	if err != nil {
+		b.Fatal(err)
+	}
+	state := &tile.DecodeState{DeltaLF: [tile.FrameLoopFilterCount]int8{1, -1, 2, -2}}
+	visit := tile.BlockLoopVisit{
+		Block: tile.BlockVisit{
+			MICol:     0,
+			MIRow:     0,
+			MIColEnd:  16,
+			MIRowEnd:  16,
+			Size:      tile.BlockSize64x64,
+			VisibleW4: 16,
+			VisibleH4: 16,
+		},
+		Prediction: tile.BlockPredictionModeResult{
+			Valid:                true,
+			InterReferencesValid: true,
+			InterReferences: tile.InterReferencesResult{
+				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone},
+			},
+			InterModeValid: true,
+			InterMode:      tile.InterModeResult{Mode: tile.InterModeNearestMV},
+		},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := filterMap.MarkBlock(visit, state); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

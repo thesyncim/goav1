@@ -6,10 +6,47 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
+// FrameWorkLoopFilterBlock stores the subset of tile.BlockVisit needed to build
+// loop-filter edge masks. The block-walk-only fields stay out of the per-MI
+// loop-filter map because this record is copied into every covered MI cell.
+type FrameWorkLoopFilterBlock struct {
+	MICol    uint32
+	MIRow    uint32
+	MIColEnd uint32
+	MIRowEnd uint32
+
+	X4        uint8
+	Y4        uint8
+	Size      tile.BlockSize
+	VisibleW4 uint8
+	VisibleH4 uint8
+}
+
+// FrameWorkLoopFilterBlockFromVisit narrows a decoded block visit to the
+// loop-filter map representation.
+func FrameWorkLoopFilterBlockFromVisit(block tile.BlockVisit) (FrameWorkLoopFilterBlock, error) {
+	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow ||
+		block.X4 < 0 || block.Y4 < 0 ||
+		block.X4 > int(^uint8(0)) || block.Y4 > int(^uint8(0)) {
+		return FrameWorkLoopFilterBlock{}, ErrInvalidBatch
+	}
+	return FrameWorkLoopFilterBlock{
+		MICol:     block.MICol,
+		MIRow:     block.MIRow,
+		MIColEnd:  block.MIColEnd,
+		MIRowEnd:  block.MIRowEnd,
+		X4:        uint8(block.X4),
+		Y4:        uint8(block.Y4),
+		Size:      block.Size,
+		VisibleW4: block.VisibleW4,
+		VisibleH4: block.VisibleH4,
+	}, nil
+}
+
 // FrameWorkLoopFilterBlockRecord stores the block-local syntax needed to build
 // loop-filter edge masks after tile reconstruction.
 type FrameWorkLoopFilterBlockRecord struct {
-	Block         tile.BlockVisit
+	Block         FrameWorkLoopFilterBlock
 	TransformTree tile.TransformTreeResult
 
 	DeltaLF [tile.FrameLoopFilterCount]int8
@@ -107,12 +144,16 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 	if visit == nil || state == nil {
 		return ErrInvalidBatch
 	}
-	block := visit.Block
-	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow {
+	blockVisit := visit.Block
+	if blockVisit.MIColEnd <= blockVisit.MICol || blockVisit.MIRowEnd <= blockVisit.MIRow {
 		return ErrInvalidBatch
 	}
-	if block.MIColEnd > uint32(m.Stride) || block.MIRowEnd > uint32(m.Rows) {
+	if blockVisit.MIColEnd > uint32(m.Stride) || blockVisit.MIRowEnd > uint32(m.Rows) {
 		return ErrInvalidBatch
+	}
+	block, err := FrameWorkLoopFilterBlockFromVisit(blockVisit)
+	if err != nil {
+		return err
 	}
 	refFrame, mode, err := frameWorkLoopFilterRefModePtr(visit)
 	if err != nil {

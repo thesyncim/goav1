@@ -1349,13 +1349,13 @@ func publicDecoderPostFilterRequestScratch(size av1.DecoderFrameWorkPostFilterRe
 func publicDecoderLoopFilterRecordAt(col0 int, row0 int, col1 int, row1 int) av1.DecoderFrameWorkLoopFilterBlockRecord {
 	return av1.DecoderFrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: av1.TileBlockVisit{
+		Block: av1.DecoderFrameWorkLoopFilterBlock{
 			MICol:     uint32(col0),
 			MIRow:     uint32(row0),
 			MIColEnd:  uint32(col1),
 			MIRowEnd:  uint32(row1),
-			X4:        col0,
-			Y4:        row0,
+			X4:        uint8(col0),
+			Y4:        uint8(row0),
 			Size:      av1.TileBlockSize16x16,
 			VisibleW4: uint8(col1 - col0),
 			VisibleH4: uint8(row1 - row0),

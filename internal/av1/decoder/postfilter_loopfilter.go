@@ -543,10 +543,12 @@ func frameWorkAppendLoopFilterLumaEdges(ctx FrameWorkPostFilterContext, levelCtx
 		return frameWorkAppendLoopFilterFixedLumaTXBs(ctx, levelCtx, filterMap, record, plan, edges, bounds, req, currentVertical, currentHorizontal)
 	}
 	block := record.Block
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	return record.TransformTree.ForEachLumaTXB(req, func(tx tile.TransformBlock) error {
 		plan.LumaTXBs++
-		frameX4 := int(block.MICol) + tx.X4 - block.X4
-		frameY4 := int(block.MIRow) + tx.Y4 - block.Y4
+		frameX4 := int(block.MICol) + tx.X4 - blockX4
+		frameY4 := int(block.MIRow) + tx.Y4 - blockY4
 		if frameX4 > 0 {
 			if err := frameWorkAppendLoopFilterLumaEdgeSegments(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameX4, frameY4, int(tx.VisibleH4), tx.Size, currentVertical); err != nil {
 				return err
@@ -575,6 +577,8 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	haveVerticalWidth := false
 	haveHorizontalWidth := false
 	block := record.Block
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	xEnd := req.X4 + int(req.VisibleW4)
 	yEnd := req.Y4 + int(req.VisibleH4)
 	for y4 := req.Y4; y4 < yEnd; y4 += int(dims.H4) {
@@ -588,8 +592,8 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 				return threading.ErrInvalidBatch
 			}
 			plan.LumaTXBs++
-			frameX4 := int(block.MICol) + x4 - block.X4
-			frameY4 := int(block.MIRow) + y4 - block.Y4
+			frameX4 := int(block.MICol) + x4 - blockX4
+			frameY4 := int(block.MIRow) + y4 - blockY4
 			if frameX4 > 0 {
 				if !haveVerticalWidth {
 					verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
@@ -828,10 +832,10 @@ func frameWorkLoopFilterPreviousLumaRunInRequest(record *threading.FrameWorkLoop
 	if err != nil {
 		return false
 	}
-	startLocalX4 := record.Block.X4 + startX4 - int(record.Block.MICol)
-	startLocalY4 := record.Block.Y4 + startY4 - int(record.Block.MIRow)
-	endLocalX4 := record.Block.X4 + endX4 - int(record.Block.MICol)
-	endLocalY4 := record.Block.Y4 + endY4 - int(record.Block.MIRow)
+	startLocalX4 := int(record.Block.X4) + startX4 - int(record.Block.MICol)
+	startLocalY4 := int(record.Block.Y4) + startY4 - int(record.Block.MIRow)
+	endLocalX4 := int(record.Block.X4) + endX4 - int(record.Block.MICol)
+	endLocalY4 := int(record.Block.Y4) + endY4 - int(record.Block.MIRow)
 	return startLocalX4 >= req.X4 && startLocalY4 >= req.Y4 &&
 		startLocalX4 < req.X4+int(req.VisibleW4) &&
 		startLocalY4 < req.Y4+int(req.VisibleH4) &&
@@ -894,8 +898,8 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 			width:  width,
 		}
 	}
-	localX4 := c.record.Block.X4 + targetX4 - int(c.record.Block.MICol)
-	localY4 := c.record.Block.Y4 + targetY4 - int(c.record.Block.MIRow)
+	localX4 := int(c.record.Block.X4) + targetX4 - int(c.record.Block.MICol)
+	localY4 := int(c.record.Block.Y4) + targetY4 - int(c.record.Block.MIRow)
 	if localX4 < c.req.X4 || localY4 < c.req.Y4 ||
 		localX4 >= c.req.X4+int(c.req.VisibleW4) ||
 		localY4 >= c.req.Y4+int(c.req.VisibleH4) {
@@ -1083,8 +1087,8 @@ func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCt
 		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
 			plan.ChromaTXBs++
 			tx := tile.TransformBlock{
-				X4:        block.X4 + x,
-				Y4:        block.Y4 + y,
+				X4:        int(block.X4) + x,
+				Y4:        int(block.Y4) + y,
 				Size:      record.TransformTree.UV,
 				VisibleW4: uint8(minInt(int(uvDims.W4), int(block.VisibleW4)-x)),
 				VisibleH4: uint8(minInt(int(uvDims.H4), int(block.VisibleH4)-y)),
@@ -1649,10 +1653,10 @@ func frameWorkLoopFilterPreviousChromaRunInBlock(record *threading.FrameWorkLoop
 	if err != nil {
 		return false
 	}
-	startLocalX4 := (record.Block.X4 >> ssX) + startX4 - (int(record.Block.MICol) >> ssX)
-	startLocalY4 := (record.Block.Y4 >> ssY) + startY4 - (int(record.Block.MIRow) >> ssY)
-	endLocalX4 := (record.Block.X4 >> ssX) + endX4 - (int(record.Block.MICol) >> ssX)
-	endLocalY4 := (record.Block.Y4 >> ssY) + endY4 - (int(record.Block.MIRow) >> ssY)
+	startLocalX4 := (int(record.Block.X4) >> ssX) + startX4 - (int(record.Block.MICol) >> ssX)
+	startLocalY4 := (int(record.Block.Y4) >> ssY) + startY4 - (int(record.Block.MIRow) >> ssY)
+	endLocalX4 := (int(record.Block.X4) >> ssX) + endX4 - (int(record.Block.MICol) >> ssX)
+	endLocalY4 := (int(record.Block.Y4) >> ssY) + endY4 - (int(record.Block.MIRow) >> ssY)
 	return frameWorkLoopFilterTransformBlockContains(block, startLocalX4, startLocalY4) &&
 		frameWorkLoopFilterTransformBlockContains(block, endLocalX4, endLocalY4)
 }
@@ -1707,8 +1711,8 @@ func (c *frameWorkLoopFilterChromaPreviousCache) lookup(levelCtx frameWorkLoopFi
 	if !c.blockOK {
 		return 0, false, 0, nil
 	}
-	localX4 := (c.record.Block.X4 >> ssX) + targetX4 - (int(c.record.Block.MICol) >> ssX)
-	localY4 := (c.record.Block.Y4 >> ssY) + targetY4 - (int(c.record.Block.MIRow) >> ssY)
+	localX4 := (int(c.record.Block.X4) >> ssX) + targetX4 - (int(c.record.Block.MICol) >> ssX)
+	localY4 := (int(c.record.Block.Y4) >> ssY) + targetY4 - (int(c.record.Block.MIRow) >> ssY)
 	if !frameWorkLoopFilterTransformBlockContains(c.block, localX4, localY4) {
 		return 0, false, 0, nil
 	}
@@ -1997,8 +2001,8 @@ func frameWorkLoopFilterLumaTransformAt(ctx FrameWorkPostFilterContext, record *
 	if err != nil {
 		return 0, false, err
 	}
-	localX4 := record.Block.X4 + frameX4 - int(record.Block.MICol)
-	localY4 := record.Block.Y4 + frameY4 - int(record.Block.MIRow)
+	localX4 := int(record.Block.X4) + frameX4 - int(record.Block.MICol)
+	localY4 := int(record.Block.Y4) + frameY4 - int(record.Block.MIRow)
 	if localX4 < req.X4 || localY4 < req.Y4 ||
 		localX4 >= req.X4+int(req.VisibleW4) ||
 		localY4 >= req.Y4+int(req.VisibleH4) {
@@ -2048,8 +2052,8 @@ func frameWorkLoopFilterChromaTransformAt(ctx FrameWorkPostFilterContext, record
 	color := ctx.Event.SequenceHeader.ColorConfig
 	ssX := frameWorkLoopFilterSubsamplingShift(color.SubsamplingX)
 	ssY := frameWorkLoopFilterSubsamplingShift(color.SubsamplingY)
-	localX4 := (record.Block.X4 >> ssX) + frameX4 - (int(record.Block.MICol) >> ssX)
-	localY4 := (record.Block.Y4 >> ssY) + frameY4 - (int(record.Block.MIRow) >> ssY)
+	localX4 := (int(record.Block.X4) >> ssX) + frameX4 - (int(record.Block.MICol) >> ssX)
+	localY4 := (int(record.Block.Y4) >> ssY) + frameY4 - (int(record.Block.MIRow) >> ssY)
 	if !frameWorkLoopFilterTransformBlockContains(block, localX4, localY4) {
 		return 0, false, nil
 	}
@@ -2281,8 +2285,8 @@ func frameWorkLoopFilterChromaFrame4(ctx FrameWorkPostFilterContext, record *thr
 }
 
 func frameWorkLoopFilterChromaFrame4WithShifts(record *threading.FrameWorkLoopFilterBlockRecord, x4 int, y4 int, ssX int, ssY int) (int, int) {
-	return (int(record.Block.MICol) >> ssX) + x4 - (record.Block.X4 >> ssX),
-		(int(record.Block.MIRow) >> ssY) + y4 - (record.Block.Y4 >> ssY)
+	return (int(record.Block.MICol) >> ssX) + x4 - (int(record.Block.X4) >> ssX),
+		(int(record.Block.MIRow) >> ssY) + y4 - (int(record.Block.Y4) >> ssY)
 }
 
 func frameWorkLoopFilterSubsamplingShift(subsampled bool) int {
@@ -2296,14 +2300,13 @@ func frameWorkLoopFilterTransformTreeRequest(color parser.ColorConfig, record *t
 	block := record.Block
 	dims, ok := block.Size.Dimensions()
 	if !ok || block.VisibleW4 == 0 || block.VisibleH4 == 0 ||
-		block.VisibleW4 > dims.W4 || block.VisibleH4 > dims.H4 ||
-		block.X4 < 0 || block.Y4 < 0 {
+		block.VisibleW4 > dims.W4 || block.VisibleH4 > dims.H4 {
 		return tile.TransformTreeRequest{}, threading.ErrInvalidBatch
 	}
 	return tile.TransformTreeRequest{
 		Size:          block.Size,
-		X4:            block.X4,
-		Y4:            block.Y4,
+		X4:            int(block.X4),
+		Y4:            int(block.Y4),
 		VisibleW4:     block.VisibleW4,
 		VisibleH4:     block.VisibleH4,
 		Color:         color,

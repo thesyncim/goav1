@@ -150,7 +150,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells
 	}
 	filterMap.Records[cols] = threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: tile.BlockVisit{MICol: uint32(cols), MIRow: 0, MIColEnd: uint32(cols + 1), MIRowEnd: 1},
+		Block: threading.FrameWorkLoopFilterBlock{MICol: uint32(cols), MIRow: 0, MIColEnd: uint32(cols + 1), MIRowEnd: 1},
 	}
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{
@@ -2173,13 +2173,13 @@ func testFrameWorkLoopFilterPostFilterRecordAt(col0 int, row0 int, col1 int, row
 	visibleH4 := uint8(row1 - row0)
 	return threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: tile.BlockVisit{
+		Block: threading.FrameWorkLoopFilterBlock{
 			MICol:     uint32(col0),
 			MIRow:     uint32(row0),
 			MIColEnd:  uint32(col1),
 			MIRowEnd:  uint32(row1),
-			X4:        col0,
-			Y4:        row0,
+			X4:        uint8(col0),
+			Y4:        uint8(row0),
 			Size:      tile.BlockSize16x16,
 			VisibleW4: visibleW4,
 			VisibleH4: visibleH4,
@@ -2437,7 +2437,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolutio
 func testFrameWorkLoopFilterEnhancementLayerRecord(miCol int, miRow int, miCols int, miRows int) threading.FrameWorkLoopFilterBlockRecord {
 	return threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: tile.BlockVisit{
+		Block: threading.FrameWorkLoopFilterBlock{
 			MICol:     uint32(miCol),
 			MIRow:     uint32(miRow),
 			MIColEnd:  uint32(miCol + miCols),
