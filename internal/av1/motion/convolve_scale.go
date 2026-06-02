@@ -52,6 +52,17 @@ func SubpelKernelTableFor(filter InterpFilter, blockSize int) (SubpelKernelTable
 	}
 }
 
+func scaledKernelIsIdentity(kernel [filterTaps]int16) bool {
+	return kernel[0] == 0 &&
+		kernel[1] == 0 &&
+		kernel[2] == 0 &&
+		kernel[3] == 128 &&
+		kernel[4] == 0 &&
+		kernel[5] == 0 &&
+		kernel[6] == 0 &&
+		kernel[7] == 0
+}
+
 // ConvolveScale2D8 performs AV1 scaled 8-bit 8-tap 2D interpolation on a
 // rectangular block. dst is the output plane; (dstX, dstY) is the top-left
 // destination sample. ref is the reference plane.
@@ -400,6 +411,25 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			for y := range height {
+				row := im[(y+filterTaps/2-1)*imStride:]
+				dstOff := (dstY+y)*dst.Stride + dstX*2
+				dstRow := dst.Pix[dstOff : dstOff+width*2 : dstOff+width*2]
+				for x := range width {
+					sum := (1 << offsetBits) + 128*int(row[x])
+					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
+					o := x * 2
+					dstRow[o] = byte(v)
+					dstRow[o+1] = byte(v >> 8)
+				}
+			}
+			return
+		}
+	}
 	yPos := startY
 	for y := range height {
 		yInt := int(scaledIntFloor(yPos)) - baseY
@@ -476,6 +506,25 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	bits := 2*filterBits - round0Bits - round1Bits
 	baseY := int(scaledIntFloor(startY))
+	if yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			for y := range height {
+				row := im[(y+filterTaps/2-1)*imStride:]
+				dstOff := (dstY+y)*dst.Stride + dstX*2
+				dstRow := dst.Pix[dstOff : dstOff+width*2 : dstOff+width*2]
+				for x := range width {
+					sum := (1 << offsetBits) + 128*int(row[x])
+					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
+					o := x * 2
+					dstRow[o] = byte(v)
+					dstRow[o+1] = byte(v >> 8)
+				}
+			}
+			return
+		}
+	}
 	yPos := startY
 	for y := range height {
 		yInt := int(scaledIntFloor(yPos)) - baseY
