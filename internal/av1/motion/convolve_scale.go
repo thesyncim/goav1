@@ -8,7 +8,10 @@
 
 package motion
 
-import "github.com/thesyncim/goav1/internal/av1/frame"
+import (
+	"github.com/thesyncim/goav1/internal/av1/dsp"
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
 
 // scaledIMMaxHeight bounds the per-block intermediate row count consumed by
 // the scaled 2D 8-tap convolver. AV1 caps downscaling at 2x (libaom: max
@@ -63,6 +66,95 @@ func scaledKernelIsIdentity(kernel [filterTaps]int16) bool {
 		kernel[7] == 0
 }
 
+func scaledIdentityStepOrigin(startX int64, startY int64) (refX int, refY int, subX int, subY int, ok bool) {
+	refX64, subX := SplitScaledPosition(startX)
+	refY64, subY := SplitScaledPosition(startY)
+	if refX64 < int64(minInt) || refX64 > int64(maxInt) || refY64 < int64(minInt) || refY64 > int64(maxInt) {
+		return 0, 0, 0, 0, false
+	}
+	return int(refX64), int(refY64), subX, subY, true
+}
+
+func convolveScale2D8IdentityStep(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
+	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, clamped bool) bool {
+	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
+	if !ok {
+		return false
+	}
+	xKernel := xTable[subX]
+	yKernel := yTable[subY]
+	xIdentity := scaledKernelIsIdentity(xKernel)
+	yIdentity := scaledKernelIsIdentity(yKernel)
+	if xIdentity && yIdentity {
+		if planeRegionFits(ref, 1, refX, refY, width, height) {
+			return dsp.CopyPlaneBlock(dst, ref, 1, dstX, dstY, refX, refY, width, height) == nil
+		}
+		return clamped && copyPlaneBlockClamped(dst, ref, 1, dstX, dstY, refX, refY, width, height) == nil
+	}
+	if xIdentity {
+		if clamped {
+			convolveY8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
+		} else {
+			convolveY8Impl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
+		}
+		return true
+	}
+	if yIdentity {
+		if clamped {
+			convolveX8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
+		} else {
+			convolveX8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
+		}
+		return true
+	}
+	if clamped {
+		convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	} else {
+		convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	}
+	return true
+}
+
+func convolveScale2DHighBDIdentityStep(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
+	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, clamped bool) bool {
+	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
+	if !ok {
+		return false
+	}
+	xKernel := xTable[subX]
+	yKernel := yTable[subY]
+	xIdentity := scaledKernelIsIdentity(xKernel)
+	yIdentity := scaledKernelIsIdentity(yKernel)
+	if xIdentity && yIdentity {
+		if planeRegionFits(ref, 2, refX, refY, width, height) {
+			return dsp.CopyPlaneBlock(dst, ref, 2, dstX, dstY, refX, refY, width, height) == nil
+		}
+		return clamped && copyPlaneBlockClamped(dst, ref, 2, dstX, dstY, refX, refY, width, height) == nil
+	}
+	if xIdentity {
+		if clamped {
+			convolveYHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, yKernel)
+		} else {
+			convolveYHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, yKernel)
+		}
+		return true
+	}
+	if yIdentity {
+		if clamped {
+			convolveXHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
+		} else {
+			convolveXHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel)
+		}
+		return true
+	}
+	if clamped {
+		convolve2DHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	} else {
+		convolve2DHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	}
+	return true
+}
+
 // ConvolveScale2D8 performs AV1 scaled 8-bit 8-tap 2D interpolation on a
 // rectangular block. dst is the output plane; (dstX, dstY) is the top-left
 // destination sample. ref is the reference plane.
@@ -106,6 +198,10 @@ func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dst
 	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
 		return ErrInvalidMotion
 	}
+	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
+		convolveScale2D8IdentityStep(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
+		return nil
+	}
 	if scratch != nil {
 		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
 		return nil
@@ -144,6 +240,10 @@ func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX i
 	}
 	if !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
+	}
+	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
+		convolveScale2D8IdentityStep(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, true) {
+		return nil
 	}
 	if scratch != nil {
 		if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
@@ -195,6 +295,10 @@ func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth
 	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
 		return ErrInvalidMotion
 	}
+	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
+		convolveScale2DHighBDIdentityStep(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
+		return nil
+	}
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
 	putScaledHighBDIM(im, pooled)
@@ -231,6 +335,10 @@ func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, b
 	}
 	if !planeRegionFits(ref, 2, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
+	}
+	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
+		convolveScale2DHighBDIdentityStep(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xTable, yTable, true) {
+		return nil
 	}
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
