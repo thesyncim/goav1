@@ -30,6 +30,40 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSkipsInactive(t *test
 	if size != (FrameWorkLoopFilterPostFilterScratchSize{}) {
 		t.Fatalf("scratch=%+v want zero", size)
 	}
+	upper, err := (FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchUpperBound()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upper != (FrameWorkLoopFilterPostFilterScratchSize{}) {
+		t.Fatalf("upper=%+v want zero", upper)
+	}
+}
+
+func TestFrameWorkPostFilterContextLoopFilterPostFilterScratchUpperBound(t *testing.T) {
+	size := parser.FrameSize{
+		CodedWidth:          16,
+		UpscaledWidth:       16,
+		Height:              16,
+		SuperResDenominator: 8,
+	}
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8}},
+		},
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper, err := ctx.LoopFilterPostFilterScratchUpperBound()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upper.Edges != cols*rows*8 {
+		t.Fatalf("upper edges=%d want %d", upper.Edges, cols*rows*8)
+	}
 }
 
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolvesLevels(t *testing.T) {
@@ -1364,7 +1398,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRunsLoopFilterThenCD
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scratchSize.LoopFilter.Edges != 1 || scratchSize.CDEF.Input != cdef.InputBufferSize {
+	if scratchSize.LoopFilter.Edges < 1 || scratchSize.CDEF.Input != cdef.InputBufferSize {
 		t.Fatalf("scratch=%+v", scratchSize)
 	}
 
@@ -1475,7 +1509,7 @@ func TestFrameWorkPostFilterContextApplyPreSuperResPostFiltersRunsLoopFilterThen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scratchSize.LoopFilter.Edges != 1 || scratchSize.CDEF.Input != cdef.InputBufferSize || scratchSize.Restoration != (FrameWorkRestorationPostFilterScratchSize{}) {
+	if scratchSize.LoopFilter.Edges < 1 || scratchSize.CDEF.Input != cdef.InputBufferSize || scratchSize.Restoration != (FrameWorkRestorationPostFilterScratchSize{}) {
 		t.Fatalf("scratch=%+v", scratchSize)
 	}
 
@@ -1549,7 +1583,7 @@ func TestFrameWorkPostFilterContextApplyCallerPostFiltersRunsPreSuperResAndSuper
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sizeReq.LoopFilter.Edges != 1 || sizeReq.CDEF.Input != cdef.InputBufferSize || sizeReq.SuperRes.OutputFrame == 0 {
+	if sizeReq.LoopFilter.Edges < 1 || sizeReq.CDEF.Input != cdef.InputBufferSize || sizeReq.SuperRes.OutputFrame == 0 {
 		t.Fatalf("scratch=%+v", sizeReq)
 	}
 	req.LoopFilter.Edges = make([]FrameWorkLoopFilterPostFilterEdge, sizeReq.LoopFilter.Edges)

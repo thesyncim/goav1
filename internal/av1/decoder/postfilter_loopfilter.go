@@ -184,6 +184,29 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchLen(req FrameWo
 	}, nil
 }
 
+// LoopFilterPostFilterScratchUpperBound reports a sufficient edge buffer size
+// without walking decoded loop-filter side data. ApplyLoopFilterEdges still
+// computes the exact edge count before mutating output and returns short-buffer
+// errors if a caller supplies less than the exact count.
+func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchUpperBound() (FrameWorkLoopFilterPostFilterScratchSize, error) {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, nil
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, err
+	}
+	maxInt := int(^uint(0) >> 1)
+	if rows != 0 && cols > maxInt/rows {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, frame.ErrInvalidFormat
+	}
+	cells := cols * rows
+	if cells > maxInt/8 {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, frame.ErrInvalidFormat
+	}
+	return FrameWorkLoopFilterPostFilterScratchSize{Edges: cells * 8}, nil
+}
+
 // LoopFilterPostFilterPlan validates decoded loop-filter side data and resolves
 // the block-local filter levels that will feed edge-mask construction. It does
 // not mutate ctx.Output; full frame-order edge scheduling remains unsupported.
