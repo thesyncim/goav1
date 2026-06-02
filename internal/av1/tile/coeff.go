@@ -72,14 +72,17 @@ type CoeffTokenRequest struct {
 }
 
 type TXBDecodeRequest struct {
+	coeffDirtyPos *[maxCoeffScanLen]int16
+	coeffDirtyLen *int
+
 	Size            TransformSize
 	Plane           CoeffPlaneType
 	Class           transform.Class
-	TXBSkipContext  int
+	TXBSkipContext  uint8
+	DCSignContext   uint8
+	EOBMultiContext uint8
 	TXBSkipKnown    bool
 	TXBSkip         bool
-	DCSignContext   int
-	EOBMultiContext int
 	// SkipAllZeroCoeffClear lets fused internal callers avoid full reusable
 	// coefficient-scratch clears when they consume coefficients before reuse.
 	// The default remains false so public callers still observe a zero-filled
@@ -87,14 +90,12 @@ type TXBDecodeRequest struct {
 	SkipAllZeroCoeffClear bool
 
 	skipNonZeroCoeffClear bool
-	coeffDirtyPos         *[maxCoeffScanLen]int16
-	coeffDirtyLen         *int
 }
 
 type TXBDecodeResult struct {
-	EOB         int
-	MaxScanLine int
-	CulLevel    int
+	EOB         uint16
+	MaxScanLine uint16
+	CulLevel    uint8
 	AllZero     bool
 }
 
@@ -760,7 +761,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	allZero := req.TXBSkip
 	if !req.TXBSkipKnown {
 		var err error
-		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
+		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: int(req.TXBSkipContext)})
 		if err != nil {
 			return TXBDecodeResult{}, err
 		}
@@ -778,7 +779,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	eob, err := s.ReadEOB(cdfs, EOBRequest{
 		Size:            req.Size,
 		Plane:           req.Plane,
-		EOBMultiContext: req.EOBMultiContext,
+		EOBMultiContext: int(req.EOBMultiContext),
 	})
 	if err != nil {
 		return TXBDecodeResult{}, err
@@ -812,7 +813,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	txCtx := int(geo.txCtx)
 	txBR := int(geo.txBRCtx)
 	if txCtx < 0 || txCtx >= CoeffTxSizeContexts || txBR < 0 || txBR >= CoeffTxSizeContexts ||
-		!req.Plane.Valid() || cdfs == nil || req.DCSignContext < 0 || req.DCSignContext >= 3 {
+		!req.Plane.Valid() || cdfs == nil || req.DCSignContext >= 3 {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	baseArr := &cdfs.CoeffBase[txCtx][req.Plane]
@@ -893,8 +894,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{
 			EOB:         1,
-			MaxScanLine: lastPos,
-			CulLevel:    culLevel,
+			MaxScanLine: uint16(lastPos),
+			CulLevel:    uint8(culLevel),
 		}, nil
 	}
 
@@ -1156,9 +1157,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 	reader.CommitStateTo(&s.Reader)
 	return TXBDecodeResult{
-		EOB:         eob.Position,
-		MaxScanLine: maxScanLine,
-		CulLevel:    culLevel,
+		EOB:         uint16(eob.Position),
+		MaxScanLine: uint16(maxScanLine),
+		CulLevel:    uint8(culLevel),
 	}, nil
 }
 

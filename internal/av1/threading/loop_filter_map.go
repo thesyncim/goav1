@@ -2,25 +2,26 @@ package threading
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 // FrameWorkLoopFilterBlockRecord stores the block-local syntax needed to build
 // loop-filter edge masks after tile reconstruction.
 type FrameWorkLoopFilterBlockRecord struct {
-	Valid bool
-
 	Block         tile.BlockVisit
 	TransformTree tile.TransformTreeResult
 
+	DeltaLF [tile.FrameLoopFilterCount]int8
+
+	Valid         bool
 	SegmentID     uint8
 	SkipTransform bool
 	Intra         bool
-	RefFrame      int
+	RefFrame      uint8
 	Mode          loopfilter.ModeDeltaClass
 
 	DeltaLFFromBase int8
-	DeltaLF         [tile.FrameLoopFilterCount]int8
 }
 
 // FrameWorkLoopFilterMap stores block-local loop-filter data in frame-level MI
@@ -117,6 +118,9 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 	if err != nil {
 		return err
 	}
+	if refFrame < 0 || refFrame >= parser.RefFrames {
+		return ErrInvalidBatch
+	}
 	record := FrameWorkLoopFilterBlockRecord{
 		Valid:           true,
 		Block:           block,
@@ -124,7 +128,7 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 		SegmentID:       visit.SegmentID,
 		SkipTransform:   visit.Prefix.SkipTransform,
 		Intra:           !visit.Prediction.Valid || visit.Prediction.Intra,
-		RefFrame:        refFrame,
+		RefFrame:        uint8(refFrame),
 		Mode:            mode,
 		DeltaLFFromBase: state.DeltaLFFromBase,
 		DeltaLF:         state.DeltaLF,

@@ -2125,7 +2125,7 @@ func FuzzFrameWorkBatchReconstructBlockCoeff(f *testing.F) {
 			Transform: req.Transform,
 			Quantizer: q,
 			Lossless:  lossless,
-			EOB:       req.Block.Result.EOB,
+			EOB:       int(req.Block.Result.EOB),
 		})
 		if err != nil {
 			return
@@ -2471,7 +2471,7 @@ func testBlockCoeffScratch(t *testing.T, ctx FrameWorkBatch, req FrameWorkBlockC
 		Quantizer:      q,
 		InverseQMatrix: iqMatrix,
 		Lossless:       lossless,
-		EOB:            req.Block.Result.EOB,
+		EOB:            int(req.Block.Result.EOB),
 	}
 	int32Len, int16Len, err := reconstruct.ScratchLen(cfg)
 	if err != nil {
@@ -2499,7 +2499,7 @@ func testReconstructBlockCoeffDirect(t *testing.T, ctx FrameWorkBatch, dst *fram
 		Transform: req.Transform,
 		Quantizer: q,
 		Lossless:  lossless,
-		EOB:       req.Block.Result.EOB,
+		EOB:       int(req.Block.Result.EOB),
 	}
 	int32Scratch, residualScratch := testBlockCoeffScratch(t, ctx, req, plane)
 	dstPlane, _, _, ok := frameWorkFramePlane(dst, plane)

@@ -94,7 +94,7 @@ func TestFrameWorkLoopFilterMapMarkBlockRecordsInterMetadata(t *testing.T) {
 			if got.SegmentID != 5 || !got.SkipTransform || got.Intra {
 				t.Fatalf("record[%d,%d] flags=%+v", miCol, miRow, got)
 			}
-			if got.RefFrame != int(tile.ReferenceFrameGolden)+1 || got.Mode != loopfilter.ModeDeltaClassMotion {
+			if int(got.RefFrame) != int(tile.ReferenceFrameGolden)+1 || got.Mode != loopfilter.ModeDeltaClassMotion {
 				t.Fatalf("record[%d,%d] ref/mode=%d/%d", miCol, miRow, got.RefFrame, got.Mode)
 			}
 			if got.DeltaLFFromBase != state.DeltaLFFromBase || got.DeltaLF != state.DeltaLF {
@@ -149,7 +149,7 @@ func TestFrameWorkLoopFilterMapMarkBlockHandlesIntraAndCompound(t *testing.T) {
 	if err := filterMap.MarkBlock(compound, state); err != nil {
 		t.Fatal(err)
 	}
-	if got := filterMap.Records[2]; !got.Valid || got.Intra || got.RefFrame != int(tile.ReferenceFrameLast)+1 || got.Mode != loopfilter.ModeDeltaClassMotion {
+	if got := filterMap.Records[2]; !got.Valid || got.Intra || int(got.RefFrame) != int(tile.ReferenceFrameLast)+1 || got.Mode != loopfilter.ModeDeltaClassMotion {
 		t.Fatalf("compound record=%+v", got)
 	}
 

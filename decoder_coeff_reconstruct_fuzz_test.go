@@ -164,7 +164,7 @@ func publicFuzzTransformType(raw uint8) av1.TransformType {
 
 func publicAssertTXBDecodeInvariants(t *testing.T, result av1.TileTXBDecodeResult, coeffs []int16, scan []int16) {
 	t.Helper()
-	if result.EOB < 0 || result.EOB > len(coeffs) || result.EOB > len(scan) {
+	if int(result.EOB) > len(coeffs) || int(result.EOB) > len(scan) {
 		t.Fatalf("invalid eob=%d coeffs=%d scan=%d", result.EOB, len(coeffs), len(scan))
 	}
 	if result.AllZero && result.EOB != 0 {

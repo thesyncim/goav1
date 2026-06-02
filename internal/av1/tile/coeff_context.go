@@ -1,8 +1,8 @@
 package tile
 
 type TXBContext struct {
-	TXBSkipContext int
-	DCSignContext  int
+	TXBSkipContext uint8
+	DCSignContext  uint8
 }
 
 type CoeffContextRequest struct {
@@ -86,8 +86,8 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 	}
 
 	return TXBContext{
-		TXBSkipContext: txbSkipCtx,
-		DCSignContext:  coeffDCSignContext(dcSign),
+		TXBSkipContext: uint8(txbSkipCtx),
+		DCSignContext:  uint8(coeffDCSignContext(dcSign)),
 	}, nil
 }
 
@@ -97,7 +97,7 @@ func (c *CoeffEntropyContext) MarkTXB(req CoeffContextRequest, result TXBDecodeR
 		if !validCoeffEntropyValue(result.CulLevel) {
 			return ErrInvalidDecodeState
 		}
-		value = uint8(result.CulLevel)
+		value = result.CulLevel
 	}
 	return c.setTXBContext(req, value)
 }
@@ -108,7 +108,7 @@ func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims Trans
 		if !validCoeffEntropyValue(result.CulLevel) {
 			return ErrInvalidDecodeState
 		}
-		value = uint8(result.CulLevel)
+		value = result.CulLevel
 	}
 	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
 	return nil
@@ -166,7 +166,7 @@ func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	req.Plane = plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
 	req.DCSignContext = txbCtx.DCSignContext
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
+	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: int(req.TXBSkipContext)})
 	if err != nil {
 		return TXBDecodeRequest{}, false, err
 	}
@@ -174,7 +174,7 @@ func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 }
 
 func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8) error {
-	if c == nil || !validCoeffEntropyValue(int(value)) {
+	if c == nil || !validCoeffEntropyValue(value) {
 		return ErrInvalidDecodeState
 	}
 	txDims, _, visibleW, visibleH, err := validateCoeffContextRequestWithSpan(req)
@@ -283,8 +283,8 @@ func coeffDCSignContext(dcSign int) int {
 	}
 }
 
-func validCoeffEntropyValue(value int) bool {
-	if value < 0 || value > CoeffContextMask+(2<<CoeffContextBits) {
+func validCoeffEntropyValue(value uint8) bool {
+	if value > CoeffContextMask+(2<<CoeffContextBits) {
 		return false
 	}
 	return value>>CoeffContextBits <= 2

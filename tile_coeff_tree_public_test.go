@@ -43,7 +43,7 @@ func TestPublicDecodeTileLumaCoefficients(t *testing.T) {
 		if len(block.Coeffs) != 16 || len(block.Scan) != 16 {
 			t.Fatalf("buffer lens coeffs=%d scan=%d want 16", len(block.Coeffs), len(block.Scan))
 		}
-		if block.Result.EOB < 0 || block.Result.EOB > len(block.Coeffs) {
+		if int(block.Result.EOB) > len(block.Coeffs) {
 			t.Fatalf("invalid eob=%d coeffs=%d", block.Result.EOB, len(block.Coeffs))
 		}
 		return nil

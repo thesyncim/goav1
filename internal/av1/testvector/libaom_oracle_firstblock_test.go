@@ -139,7 +139,7 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 					got.Prediction = visit.Prediction
 					got.Block = block.Block
 					got.Transform = block.Transform
-					got.EOB = block.Result.EOB
+					got.EOB = int(block.Result.EOB)
 					copy(got.Coeffs[:], block.Coeffs[:16])
 					copy(got.Residual[:], residual[:16])
 					for yy := 0; yy < 4; yy++ {
@@ -214,7 +214,7 @@ func libaomResidualForBlock(ctx decoder.FrameWorkBatch, qIndex uint8, visit tile
 	}
 	residual := make([]int16, size.Width*size.Height)
 	if lossless {
-		if err := transform.InverseWHT4x4Block(residual, size.Width, dequant, scanSize.Height, block.Result.EOB); err != nil {
+		if err := transform.InverseWHT4x4Block(residual, size.Width, dequant, scanSize.Height, int(block.Result.EOB)); err != nil {
 			return nil, err
 		}
 		return residual, nil

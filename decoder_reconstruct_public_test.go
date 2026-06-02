@@ -492,7 +492,7 @@ func publicReconstructDecoderFrameWorkBlockCoeffDirect(tb publicDecoderBlockCoef
 		Transform: req.Transform,
 		Quantizer: q,
 		Lossless:  lossless,
-		EOB:       req.Block.Result.EOB,
+		EOB:       int(req.Block.Result.EOB),
 	}
 	int32Len, int16Len, err := av1.ReconstructBlockScratchLen(cfg)
 	if err != nil {

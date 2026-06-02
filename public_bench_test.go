@@ -330,7 +330,7 @@ func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
 		}
 		ctx.Reset()
 		stats, err := av1.DecodeTileLumaCoefficients(&state, &cdfs, &ctx, &scratch, req, func(block av1.TileLumaCoeffBlock) error {
-			sum += block.Result.EOB
+			sum += int(block.Result.EOB)
 			return nil
 		})
 		if err != nil {
@@ -380,7 +380,7 @@ func BenchmarkPublicTileBlockCoefficientDecode(b *testing.B) {
 		transformCtx.Reset()
 		coeffCtx.Reset()
 		result, err := av1.DecodeTileBlockCoefficients(&state, av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
-			sum += block.Result.EOB + block.Plane
+			sum += int(block.Result.EOB) + block.Plane
 			return nil
 		})
 		if err != nil {
@@ -1526,7 +1526,7 @@ func BenchmarkPublicDecoderBlockCoeffDecodeReconstruction(b *testing.B) {
 		coeffCtx.Reset()
 		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
 		result, err := av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
-			sum += block.Result.EOB + block.Plane
+			sum += int(block.Result.EOB) + block.Plane
 			return nil
 		})
 		if err != nil {

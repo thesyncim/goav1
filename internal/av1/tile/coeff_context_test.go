@@ -296,7 +296,7 @@ func FuzzCoeffEntropyContext(f *testing.F) {
 		req.VisibleW4 = 1 + rawVisibleW%dims.W4
 		req.VisibleH4 = 1 + rawVisibleH%dims.H4
 
-		cul := int(rawCul % uint8(CoeffContextMask+(2<<CoeffContextBits)+1))
+		cul := rawCul % uint8(CoeffContextMask+(2<<CoeffContextBits)+1)
 		for !validCoeffEntropyValue(cul) {
 			cul--
 		}

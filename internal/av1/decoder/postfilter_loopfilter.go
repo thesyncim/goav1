@@ -2298,7 +2298,7 @@ func frameWorkResolveLoopFilterLevel(levelCtx frameWorkLoopFilterLevelContext, r
 		return 0, threading.ErrInvalidBatch
 	}
 	if plane > loopfilter.PlaneV || edge > loopfilter.EdgeHorizontal ||
-		record.RefFrame < 0 || record.RefFrame >= parser.RefFrames ||
+		record.RefFrame >= parser.RefFrames ||
 		(record.Mode != loopfilter.ModeDeltaClassZero && record.Mode != loopfilter.ModeDeltaClassMotion) {
 		return 0, loopfilter.ErrInvalidFilter
 	}

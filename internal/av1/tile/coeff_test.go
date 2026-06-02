@@ -1050,9 +1050,9 @@ func FuzzReadCoefficientsTXB(f *testing.F) {
 			Size:            size,
 			Plane:           plane,
 			Class:           class,
-			TXBSkipContext:  int(rawSkipCtx % TXBSkipContexts),
-			DCSignContext:   int(rawDCSignCtx % 3),
-			EOBMultiContext: int(rawEOBCtx % maxEOBFlagContexts),
+			TXBSkipContext:  rawSkipCtx % TXBSkipContexts,
+			DCSignContext:   rawDCSignCtx % 3,
+			EOBMultiContext: rawEOBCtx % maxEOBFlagContexts,
 		}, coeffs, scan, scratch)
 		if err != nil {
 			if errors.Is(err, ErrInvalidDecodeState) {
@@ -1181,7 +1181,7 @@ func (r *coeffContextRandom) u16() uint16 {
 
 func assertTXBDecodeInvariants(t *testing.T, result TXBDecodeResult, coeffs []int16, scan []int16) {
 	t.Helper()
-	if result.CulLevel < 0 || result.CulLevel > CoeffContextMask+(2<<CoeffContextBits) {
+	if result.CulLevel > CoeffContextMask+(2<<CoeffContextBits) {
 		t.Fatalf("cul_level=%d outside context range", result.CulLevel)
 	}
 	if result.AllZero {
@@ -1195,17 +1195,17 @@ func assertTXBDecodeInvariants(t *testing.T, result TXBDecodeResult, coeffs []in
 		}
 		return
 	}
-	if result.EOB <= 0 || result.EOB > len(scan) {
+	if result.EOB == 0 || int(result.EOB) > len(scan) {
 		t.Fatalf("eob=%d outside scan len %d", result.EOB, len(scan))
 	}
-	if result.MaxScanLine < 0 || result.MaxScanLine >= len(coeffs) {
+	if int(result.MaxScanLine) >= len(coeffs) {
 		t.Fatalf("max_scan_line=%d outside coeff len %d", result.MaxScanLine, len(coeffs))
 	}
-	last := int(scan[result.EOB-1])
+	last := int(scan[int(result.EOB)-1])
 	if coeffs[last] == 0 {
 		t.Fatalf("last non-zero scan coeff[%d]=0", last)
 	}
-	for c := result.EOB; c < len(scan); c++ {
+	for c := int(result.EOB); c < len(scan); c++ {
 		pos := int(scan[c])
 		if coeffs[pos] != 0 {
 			t.Fatalf("coeff after eob scan=%d pos=%d value=%d want 0", c, pos, coeffs[pos])
