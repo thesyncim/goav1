@@ -659,6 +659,23 @@ func BenchmarkConvolveScale2DHighBDClampedInterior32(b *testing.B) {
 	}
 }
 
+func BenchmarkConvolveScale2DHighBDClampedEdge32(b *testing.B) {
+	const bd = 10
+	src := highBDPlane(40, 40, 0xace, bd)
+	dst, _ := testPlane(32, 32, 2, 64)
+	xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	var scratch ScaledConvolveScratch
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ConvolveScale2DHighBDClampedWithScratch(dst, src, bd, 0, 0, 32, 32, 0, ScaleSubpelScale, 0, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkConvolveScale2D8ClampedInterior32(b *testing.B) {
 	src := scaledTestSourcePlane(96, 96, 1, 0x55)
 	dst, _ := testPlane(32, 32, 1, 32)
