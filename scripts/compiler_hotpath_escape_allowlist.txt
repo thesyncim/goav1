@@ -3,8 +3,6 @@ internal/av1/decoder/postfilter_superres.go:311:2: moved to heap: result
 internal/av1/decoder/postfilter_superres.go:364:2: moved to heap: output
 internal/av1/decoder/svc.go:202:20: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap
 internal/av1/decoder/svc.go:202:20: make(map[int]threading.FrameWorkTileResidualCDFStorage) escapes to heap in (*SharedFrameContextStore).store:
-internal/av1/decoder/svc.go:233:19: func literal escapes to heap
-internal/av1/decoder/svc.go:233:19: func literal escapes to heap in (*FrameWorkState).RunEventWithContextAndExternalReferencesWithPostPublisher:
 internal/av1/decoder/work.go:360:30: make([]tile.ReferenceMVEntry, need) escapes to heap
 internal/av1/decoder/work.go:360:30: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
 internal/av1/decoder/work.go:363:27: make([]tile.TemporalMotionEntry, need) escapes to heap

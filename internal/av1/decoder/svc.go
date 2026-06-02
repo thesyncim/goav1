@@ -204,6 +204,8 @@ func (s *SharedFrameContextStore) store(globalID int, ctx threading.FrameWorkTil
 	s.contexts[globalID] = ctx
 }
 
+func frameWorkIdentityGlobalSurface(local int) int { return local }
+
 // RunEventWithContextAndExternalReferences is the SVC-friendly counterpart of
 // RunEventWithContextAndSideDataAndPostFilterRunners. The caller is
 // responsible for retaining decoded surfaces across spatial-layer pools and
@@ -230,7 +232,7 @@ func (s *FrameWorkState) RunEventWithContextAndExternalReferencesWithPostPublish
 	}
 	if globalSurface == nil {
 		// Identity: the caller is not using a global namespace.
-		globalSurface = func(local int) int { return local }
+		globalSurface = frameWorkIdentityGlobalSurface
 	}
 	// Route entropy (CDF) frame-context save/restore through the shared,
 	// global-surface-keyed store for the duration of this event so that the
