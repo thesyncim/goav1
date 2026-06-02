@@ -17,6 +17,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "LumaCoeffBlock", got: unsafe.Sizeof(LumaCoeffBlock{}), max: 80},
 		{name: "ChromaCoeffBlock", got: unsafe.Sizeof(ChromaCoeffBlock{}), max: 88},
 		{name: "BlockCoeffBlock", got: unsafe.Sizeof(BlockCoeffBlock{}), max: 88},
+		{name: "chromaCoeffPlanePrep", got: unsafe.Sizeof(chromaCoeffPlanePrep{}), max: 16},
 	}
 	for _, tt := range tests {
 		t.Logf("%s size=%d max=%d", tt.name, tt.got, tt.max)

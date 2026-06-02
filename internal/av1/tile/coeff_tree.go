@@ -269,10 +269,10 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 type chromaCoeffPlanePrep struct {
 	HasChroma  bool
 	PlaneBlock BlockSize
-	X4         int
-	Y4         int
-	VisibleW4  int
-	VisibleH4  int
+	X4         uint8
+	Y4         uint8
+	VisibleW4  uint8
+	VisibleH4  uint8
 	UVDims     TransformDimensions
 }
 
@@ -319,10 +319,10 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 	return chromaCoeffPlanePrep{
 		HasChroma:  true,
 		PlaneBlock: planeBlock,
-		X4:         x4,
-		Y4:         y4,
-		VisibleW4:  visibleW4,
-		VisibleH4:  visibleH4,
+		X4:         uint8(x4),
+		Y4:         uint8(y4),
+		VisibleW4:  uint8(visibleW4),
+		VisibleH4:  uint8(visibleH4),
 		UVDims:     uvDims,
 	}, nil
 }
@@ -348,8 +348,8 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 // blk_row/blk_col range [row>>ss, ROUND_POWER_OF_TWO(min(row+mu,max),ss)).
 func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, window coeffUnitWindow, prep chromaCoeffPlanePrep, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
 	planeBlock := prep.PlaneBlock
-	x4, y4 := prep.X4, prep.Y4
-	visibleW4, visibleH4 := prep.VisibleW4, prep.VisibleH4
+	x4, y4 := int(prep.X4), int(prep.Y4)
+	visibleW4, visibleH4 := int(prep.VisibleW4), int(prep.VisibleH4)
 	uvDims := prep.UVDims
 
 	ssX := int(boolToShift(req.Color.SubsamplingX))
