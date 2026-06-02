@@ -495,7 +495,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		return ErrInvalidDecodeState
 	}
 	if haveTop {
-		above := carrier.Above[rootColIndex]
+		above := &carrier.Above[rootColIndex]
 		scratch.Partition.Above = above.Partition
 		scratch.Mode.AboveSkip = above.mode.Skip
 		scratch.Mode.AboveSkipMode = above.mode.SkipMode
@@ -536,7 +536,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		extendAboveContextFromRightCarrier(&scratch.Mode, carrier, rootColIndex+1, sbSizeMIB)
 	}
 	if haveLeft {
-		left := carrier.Left
+		left := &carrier.Left
 		scratch.Partition.Left = left.Partition
 		scratch.Mode.LeftSkip = left.mode.Skip
 		scratch.Mode.LeftSkipMode = left.mode.SkipMode
@@ -743,7 +743,7 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 	if rightColIndex <= 0 || rightColIndex >= len(carrier.Above) {
 		return
 	}
-	right := carrier.Above[rightColIndex]
+	right := &carrier.Above[rightColIndex]
 	start := int(sbSizeMIB)
 	for off := 0; off < int(sbSizeMIB); off++ {
 		dst := start + off
