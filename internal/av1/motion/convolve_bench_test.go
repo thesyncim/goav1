@@ -94,6 +94,28 @@ func BenchmarkConvolveY8_32(b *testing.B) {
 	})
 }
 
+func BenchmarkCompoundConvBuf2D8_32(b *testing.B) {
+	_, ref := benchPlanes(32, 8)
+	var buf CompoundConvBuf
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBuf2D8_8(b *testing.B) {
+	_, ref := benchPlanes(8, 8)
+	var buf CompoundConvBuf
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 8, 8, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 8, 8, 3, 5, RegularFilters, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
 // Clamped 2D, 16x16 (forces edge-clamped loads).
 func BenchmarkConvolve2D8Clamped_16(b *testing.B) {
 	dst, _ := testPlane(16, 16, 1, 16)
