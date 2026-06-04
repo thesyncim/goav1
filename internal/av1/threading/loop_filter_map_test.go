@@ -35,7 +35,7 @@ func TestFrameWorkBatchLoopFilterMapShapeAndBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stride != uint32(cols) || got.Rows != uint32(rows) || len(got.Records) != length {
+	if got.Stride != uint16(cols) || got.Rows != uint16(rows) || len(got.Records) != length {
 		t.Fatalf("map=%+v len(records)=%d", got, len(got.Records))
 	}
 	if got.Records[0].Valid {

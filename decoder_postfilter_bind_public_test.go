@@ -24,7 +24,7 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filterMap.Stride != uint32(cols) || filterMap.Rows != uint32(rows) || len(filterMap.Records) != length {
+	if filterMap.Stride != uint16(cols) || filterMap.Rows != uint16(rows) || len(filterMap.Records) != length {
 		t.Fatalf("map=%+v", filterMap)
 	}
 	if filterMap.Records[0].Valid {
@@ -1350,10 +1350,10 @@ func publicDecoderLoopFilterRecordAt(col0 int, row0 int, col1 int, row1 int) av1
 	return av1.DecoderFrameWorkLoopFilterBlockRecord{
 		Valid: true,
 		Block: av1.DecoderFrameWorkLoopFilterBlock{
-			MICol:     uint32(col0),
-			MIRow:     uint32(row0),
-			MIColEnd:  uint32(col1),
-			MIRowEnd:  uint32(row1),
+			MICol:     uint16(col0),
+			MIRow:     uint16(row0),
+			MIColEnd:  uint16(col1),
+			MIRowEnd:  uint16(row1),
 			X4:        uint8(col0),
 			Y4:        uint8(row0),
 			Size:      av1.TileBlockSize16x16,

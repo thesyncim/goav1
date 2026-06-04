@@ -139,8 +139,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells
 	record := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, (cols+2)*(rows+1)),
-		Stride:  uint32(cols + 2),
-		Rows:    uint32(rows + 1),
+		Stride:  uint16(cols + 2),
+		Rows:    uint16(rows + 1),
 	}
 	stride := int(filterMap.Stride)
 	for miRow := record.Block.MIRow; miRow < record.Block.MIRowEnd; miRow++ {
@@ -151,7 +151,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells
 	}
 	filterMap.Records[cols] = threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
-		Block: threading.FrameWorkLoopFilterBlock{MICol: uint32(cols), MIRow: 0, MIColEnd: uint32(cols + 1), MIRowEnd: 1},
+		Block: threading.FrameWorkLoopFilterBlock{MICol: uint16(cols), MIRow: 0, MIColEnd: uint16(cols + 1), MIRowEnd: 1},
 	}
 	ctx := FrameWorkPostFilterContext{
 		Event: Event{
@@ -1979,8 +1979,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 	}
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, cols*rows),
-		Stride:  uint32(cols),
-		Rows:    uint32(rows),
+		Stride:  uint16(cols),
+		Rows:    uint16(rows),
 	}
 	filterMap.Records[0] = testFrameWorkLoopFilterPostFilterRecord(cols, rows)
 	ctx := FrameWorkPostFilterContext{
@@ -2175,10 +2175,10 @@ func testFrameWorkLoopFilterPostFilterRecordAt(col0 int, row0 int, col1 int, row
 	return threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
 		Block: threading.FrameWorkLoopFilterBlock{
-			MICol:     uint32(col0),
-			MIRow:     uint32(row0),
-			MIColEnd:  uint32(col1),
-			MIRowEnd:  uint32(row1),
+			MICol:     uint16(col0),
+			MIRow:     uint16(row0),
+			MIColEnd:  uint16(col1),
+			MIRowEnd:  uint16(row1),
 			X4:        uint8(col0),
 			Y4:        uint8(row0),
 			Size:      tile.BlockSize16x16,
@@ -2200,8 +2200,8 @@ func testFrameWorkLoopFilterPostFilterMap(t testing.TB, size parser.FrameSize, r
 	}
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, cols*rows),
-		Stride:  uint32(cols),
-		Rows:    uint32(rows),
+		Stride:  uint16(cols),
+		Rows:    uint16(rows),
 	}
 	stride := int(filterMap.Stride)
 	for _, record := range records {
@@ -2440,10 +2440,10 @@ func testFrameWorkLoopFilterEnhancementLayerRecord(miCol int, miRow int, miCols 
 	return threading.FrameWorkLoopFilterBlockRecord{
 		Valid: true,
 		Block: threading.FrameWorkLoopFilterBlock{
-			MICol:     uint32(miCol),
-			MIRow:     uint32(miRow),
-			MIColEnd:  uint32(miCol + miCols),
-			MIRowEnd:  uint32(miRow + miRows),
+			MICol:     uint16(miCol),
+			MIRow:     uint16(miRow),
+			MIColEnd:  uint16(miCol + miCols),
+			MIRowEnd:  uint16(miRow + miRows),
 			X4:        0,
 			Y4:        0,
 			Size:      tile.BlockSize64x64,

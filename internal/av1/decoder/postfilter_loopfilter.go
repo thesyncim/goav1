@@ -276,7 +276,7 @@ func frameWorkLoopFilterForEachValidatedBlock(filterMap FrameWorkLoopFilterMap, 
 				return err
 			}
 			plan.Cells++
-			if record.Block.MICol != uint32(col) || record.Block.MIRow != uint32(row) {
+			if int(record.Block.MICol) != col || int(record.Block.MIRow) != row {
 				continue
 			}
 			plan.Blocks++
@@ -506,8 +506,9 @@ func frameWorkLoopFilterMIExtent(pixels uint32) (uint32, bool) {
 }
 
 func frameWorkValidateLoopFilterMap(filterMap FrameWorkLoopFilterMap, cols int, rows int) error {
-	if filterMap.Stride <= 0 || filterMap.Rows <= 0 ||
-		uint32(cols) > filterMap.Stride || uint32(rows) > filterMap.Rows {
+	if cols <= 0 || rows <= 0 ||
+		filterMap.Stride <= 0 || filterMap.Rows <= 0 ||
+		cols > int(filterMap.Stride) || rows > int(filterMap.Rows) {
 		return threading.ErrInvalidBatch
 	}
 	limit := int(^uint(0) >> 1)
@@ -854,8 +855,8 @@ func frameWorkLoopFilterPreviousLumaRunInRequest(record *threading.FrameWorkLoop
 
 type frameWorkLoopFilterLumaPreviousCache struct {
 	valid      bool
-	miCol      uint32
-	miRow      uint32
+	miCol      uint16
+	miRow      uint16
 	record     *threading.FrameWorkLoopFilterBlockRecord
 	req        tile.TransformTreeRequest
 	fixed      bool
@@ -1003,7 +1004,7 @@ func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge lo
 		return nil, false, nil
 	}
 	if prevCol >= cols || prevRow >= rows ||
-		uint32(prevRow) >= filterMap.Rows || uint32(prevCol) >= filterMap.Stride {
+		prevRow >= int(filterMap.Rows) || prevCol >= int(filterMap.Stride) {
 		return nil, false, threading.ErrInvalidBatch
 	}
 	record := &filterMap.Records[prevRow*int(filterMap.Stride)+prevCol]
@@ -1674,8 +1675,8 @@ func frameWorkLoopFilterPreviousChromaRunInBlock(record *threading.FrameWorkLoop
 
 type frameWorkLoopFilterChromaPreviousCache struct {
 	valid      bool
-	miCol      uint32
-	miRow      uint32
+	miCol      uint16
+	miRow      uint16
 	record     *threading.FrameWorkLoopFilterBlockRecord
 	block      tile.TransformBlock
 	blockOK    bool
@@ -1821,7 +1822,7 @@ func frameWorkLoopFilterPreviousChromaRecordWithShifts(filterMap FrameWorkLoopFi
 		return nil, false, nil
 	}
 	if prevCol >= cols || prevRow >= rows ||
-		uint32(prevRow) >= filterMap.Rows || uint32(prevCol) >= filterMap.Stride {
+		prevRow >= int(filterMap.Rows) || prevCol >= int(filterMap.Stride) {
 		return nil, false, threading.ErrInvalidBatch
 	}
 	record := &filterMap.Records[prevRow*int(filterMap.Stride)+prevCol]
@@ -2335,15 +2336,19 @@ func frameWorkLoopFilterTransformTreeRequest(color parser.ColorConfig, record *t
 
 func frameWorkValidateLoopFilterRecord(record *threading.FrameWorkLoopFilterBlockRecord, col int, row int, cols int, rows int) error {
 	block := record.Block
+	miCol := int(block.MICol)
+	miRow := int(block.MIRow)
+	miColEnd := int(block.MIColEnd)
+	miRowEnd := int(block.MIRowEnd)
 	if record.SegmentID >= parser.MaxSegments ||
-		block.MIColEnd <= block.MICol ||
-		block.MIRowEnd <= block.MIRow ||
-		block.MIColEnd > uint32(cols) ||
-		block.MIRowEnd > uint32(rows) ||
-		uint32(col) < block.MICol ||
-		uint32(col) >= block.MIColEnd ||
-		uint32(row) < block.MIRow ||
-		uint32(row) >= block.MIRowEnd {
+		miColEnd <= miCol ||
+		miRowEnd <= miRow ||
+		miColEnd > cols ||
+		miRowEnd > rows ||
+		col < miCol ||
+		col >= miColEnd ||
+		row < miRow ||
+		row >= miRowEnd {
 		return threading.ErrInvalidBatch
 	}
 	return nil
