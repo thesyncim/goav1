@@ -1033,6 +1033,20 @@ func (c *Cursor) ReadCDF4Unchecked(cdf *CDF) int {
 	return c.readCDF4Known(&cdf.values)
 }
 
+// ReadCDF4UpdateUnchecked decodes one four-symbol CDF and always adapts it.
+// Hot callers that already selected the update-enabled path use this to avoid a
+// per-symbol update-mode branch.
+func (c *Cursor) ReadCDF4UpdateUnchecked(cdf *CDF) int {
+	return c.readCDF4UpdateKnown(&cdf.values)
+}
+
+// ReadCDF4NoUpdateUnchecked decodes one four-symbol CDF without adapting it.
+// Hot callers that already selected the no-update path use this to avoid a
+// per-symbol update-mode branch.
+func (c *Cursor) ReadCDF4NoUpdateUnchecked(cdf *CDF) int {
+	return c.readCDF4Known(&cdf.values)
+}
+
 // ReadCDF4HighTokenUnchecked decodes the AV1 high-token base-range chain used
 // by coefficient BR syntax. It is equivalent to reading the same four-symbol
 // CDF up to four times, summing symbols, and stopping early when a symbol below
@@ -1042,6 +1056,18 @@ func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 	if c.allowCDFUpdate {
 		return c.readCDF4HighTokenUpdateKnown(&cdf.values)
 	}
+	return c.readCDF4HighTokenKnown(&cdf.values)
+}
+
+// ReadCDF4HighTokenUpdateUnchecked decodes a high-token chain and always adapts
+// the CDF row after each symbol.
+func (c *Cursor) ReadCDF4HighTokenUpdateUnchecked(cdf *CDF) uint8 {
+	return c.readCDF4HighTokenUpdateKnown(&cdf.values)
+}
+
+// ReadCDF4HighTokenNoUpdateUnchecked decodes a high-token chain without CDF
+// adaptation.
+func (c *Cursor) ReadCDF4HighTokenNoUpdateUnchecked(cdf *CDF) uint8 {
 	return c.readCDF4HighTokenKnown(&cdf.values)
 }
 

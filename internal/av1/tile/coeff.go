@@ -818,6 +818,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	eobCDF := eobFlagCDFKnown(cdfs, req.Size, req.Plane, req.EOBMultiContext)
 	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
+	cdfUpdate := s.Reader.AllowCDFUpdate()
 	reader := s.Reader.Cursor()
 	eob, err := readEOBCursorKnown(&reader, eobCDF, eobExtraArr)
 	if err != nil {
@@ -849,7 +850,12 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastCtx]) + 1
 	if lastLevel > NumBaseLevels {
 		brCtx := coeffBRContextEOBFast(posSlice, req.Class, lastPos)
-		extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
+		var extra uint8
+		if cdfUpdate {
+			extra = readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+		} else {
+			extra = readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+		}
 		lastLevel += int(extra)
 	}
 	if eobPos == 1 {
@@ -948,83 +954,167 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 	if req.Class == transform.Class2D {
 		stride := int(geo.stride)
-		for c := eobPos - 2; c >= 0; c-- {
-			pos := int(scan[c])
-			if pos < 0 || pos >= maxEOB {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
-			p := posSlice[pos]
-			padded := int(p.padded)
-			ctx := 0
-			if pos != 0 {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				s2 := s1 + stride
-				p1 := padded + 1
-				p2 := padded + 2
-				_ = levelsScratch[s2]
-				_ = levelsScratch[p2]
-				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
-			}
-			level := reader.ReadCDF4Unchecked(&baseArr[ctx])
-			if level > NumBaseLevels {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				p1 := padded + 1
-				_ = levelsScratch[s1p1]
-				mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-				brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
-				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
-				level += int(extra)
-			}
-			levelsScratch[padded] = uint8(level)
-			if level != 0 {
-				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
-					levelDirtyNext++
-					*levelDirtyLen = uint16(levelDirtyNext)
+		if cdfUpdate {
+			for c := eobPos - 2; c >= 0; c-- {
+				pos := int(scan[c])
+				if pos < 0 || pos >= maxEOB {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				if useDirtyScanList {
-					(*dirtyPos)[nonzeroScanLen] = int16(c)
-					nonzeroScanLen++
-				} else {
-					coeffs[pos] = int16(headC + 1)
-					headC = c
+				p := posSlice[pos]
+				padded := int(p.padded)
+				ctx := 0
+				if pos != 0 {
+					s1 := padded + stride
+					s1p1 := s1 + 1
+					s2 := s1 + stride
+					p1 := padded + 1
+					p2 := padded + 2
+					_ = levelsScratch[s2]
+					_ = levelsScratch[p2]
+					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				}
+				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+				if level > NumBaseLevels {
+					s1 := padded + stride
+					s1p1 := s1 + 1
+					p1 := padded + 1
+					_ = levelsScratch[s1p1]
+					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
+					brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
+					extra := readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+					level += int(extra)
+				}
+				levelsScratch[padded] = uint8(level)
+				if level != 0 {
+					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						*levelDirtyLen = uint16(levelDirtyNext)
+					}
+					if useDirtyScanList {
+						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						nonzeroScanLen++
+					} else {
+						coeffs[pos] = int16(headC + 1)
+						headC = c
+					}
+				}
+			}
+		} else {
+			for c := eobPos - 2; c >= 0; c-- {
+				pos := int(scan[c])
+				if pos < 0 || pos >= maxEOB {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, ErrInvalidDecodeState
+				}
+				p := posSlice[pos]
+				padded := int(p.padded)
+				ctx := 0
+				if pos != 0 {
+					s1 := padded + stride
+					s1p1 := s1 + 1
+					s2 := s1 + stride
+					p1 := padded + 1
+					p2 := padded + 2
+					_ = levelsScratch[s2]
+					_ = levelsScratch[p2]
+					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				}
+				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
+				if level > NumBaseLevels {
+					s1 := padded + stride
+					s1p1 := s1 + 1
+					p1 := padded + 1
+					_ = levelsScratch[s1p1]
+					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
+					brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
+					extra := readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+					level += int(extra)
+				}
+				levelsScratch[padded] = uint8(level)
+				if level != 0 {
+					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						*levelDirtyLen = uint16(levelDirtyNext)
+					}
+					if useDirtyScanList {
+						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						nonzeroScanLen++
+					} else {
+						coeffs[pos] = int16(headC + 1)
+						headC = c
+					}
 				}
 			}
 		}
 	} else {
 		class := req.Class
-		for c := eobPos - 2; c >= 0; c-- {
-			pos := int(scan[c])
-			if pos < 0 || pos >= maxEOB {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
-			padded := int(posSlice[pos].padded)
-			ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
-			level := reader.ReadCDF4Unchecked(&baseArr[ctx])
-			if level > NumBaseLevels {
-				brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
-				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
-				level += int(extra)
-			}
-			levelsScratch[padded] = uint8(level)
-			if level != 0 {
-				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
-					levelDirtyNext++
-					*levelDirtyLen = uint16(levelDirtyNext)
+		if cdfUpdate {
+			for c := eobPos - 2; c >= 0; c-- {
+				pos := int(scan[c])
+				if pos < 0 || pos >= maxEOB {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				if useDirtyScanList {
-					(*dirtyPos)[nonzeroScanLen] = int16(c)
-					nonzeroScanLen++
-				} else {
-					coeffs[pos] = int16(headC + 1)
-					headC = c
+				padded := int(posSlice[pos].padded)
+				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
+				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+				if level > NumBaseLevels {
+					brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
+					extra := readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+					level += int(extra)
+				}
+				levelsScratch[padded] = uint8(level)
+				if level != 0 {
+					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						*levelDirtyLen = uint16(levelDirtyNext)
+					}
+					if useDirtyScanList {
+						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						nonzeroScanLen++
+					} else {
+						coeffs[pos] = int16(headC + 1)
+						headC = c
+					}
+				}
+			}
+		} else {
+			for c := eobPos - 2; c >= 0; c-- {
+				pos := int(scan[c])
+				if pos < 0 || pos >= maxEOB {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, ErrInvalidDecodeState
+				}
+				padded := int(posSlice[pos].padded)
+				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
+				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
+				if level > NumBaseLevels {
+					brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
+					extra := readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+					level += int(extra)
+				}
+				levelsScratch[padded] = uint8(level)
+				if level != 0 {
+					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						*levelDirtyLen = uint16(levelDirtyNext)
+					}
+					if useDirtyScanList {
+						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						nonzeroScanLen++
+					} else {
+						coeffs[pos] = int16(headC + 1)
+						headC = c
+					}
 				}
 			}
 		}
@@ -1184,8 +1274,12 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}, nil
 }
 
-func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
-	return reader.ReadCDF4HighTokenUnchecked(&arr[context])
+func readBaseRangeFromArrCursorUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
+	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[context])
+}
+
+func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
+	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[context])
 }
 
 func eobFlagCDFKnown(cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, context uint8) *entropy.CDF {
