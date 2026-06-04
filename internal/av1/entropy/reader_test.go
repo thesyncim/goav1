@@ -12,8 +12,8 @@ func TestReaderHotStructSizes(t *testing.T) {
 		size uintptr
 		max  uintptr
 	}{
-		{name: "Reader", size: unsafe.Sizeof(Reader{}), max: 64},
-		{name: "Cursor", size: unsafe.Sizeof(Cursor{}), max: 64},
+		{name: "Reader", size: unsafe.Sizeof(Reader{}), max: 48},
+		{name: "Cursor", size: unsafe.Sizeof(Cursor{}), max: 48},
 	}
 	for _, tt := range tests {
 		if tt.size > tt.max {
