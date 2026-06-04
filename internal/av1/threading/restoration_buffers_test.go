@@ -33,8 +33,8 @@ func TestFrameWorkBatchBindRestorationFrameBuffers(t *testing.T) {
 		if len(buffers.Records[plane]) != int(plan.UnitRecords[plane]) {
 			t.Fatalf("plane %d records len=%d want %d", plane, len(buffers.Records[plane]), plan.UnitRecords[plane])
 		}
-		if len(buffers.Boundaries[plane].Above) != plan.Boundaries[plane].Len ||
-			len(buffers.Boundaries[plane].Below) != plan.Boundaries[plane].Len ||
+		if len(buffers.Boundaries[plane].Above) != int(plan.Boundaries[plane].Len) ||
+			len(buffers.Boundaries[plane].Below) != int(plan.Boundaries[plane].Len) ||
 			buffers.Boundaries[plane].Stride != int(plan.Boundaries[plane].Stride) {
 			t.Fatalf("plane %d boundaries=%+v plan=%+v", plane, buffers.Boundaries[plane], plan.Boundaries[plane])
 		}

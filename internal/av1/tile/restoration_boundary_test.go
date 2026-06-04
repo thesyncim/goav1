@@ -610,7 +610,7 @@ func FuzzSaveRestorationBoundaryLines(f *testing.F) {
 		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, afterCDEF); err != nil {
 			t.Fatalf("SaveRestorationBoundaryLines err=%v", err)
 		}
-		if len(boundaries.Above) < size.Len || len(boundaries.Below) < size.Len {
+		if len(boundaries.Above) < int(size.Len) || len(boundaries.Below) < int(size.Len) {
 			t.Fatalf("bad boundary lengths above=%d below=%d size=%+v", len(boundaries.Above), len(boundaries.Below), size)
 		}
 	})
@@ -717,7 +717,7 @@ func BenchmarkSaveRestorationBoundaryLines(b *testing.B) {
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0)
 	b.ReportAllocs()
-	b.SetBytes(int64(size.Len * 2))
+	b.SetBytes(int64(size.Len) * 2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, i&1 == 0); err != nil {
@@ -872,8 +872,8 @@ func makeRestorationStripeBoundaries(stride int, rows int) RestorationStripeBoun
 }
 
 func makeSentinelRestorationBoundaries(size RestorationStripeBoundaryBufferSize, sentinel uint16) RestorationStripeBoundaries {
-	above := make([]uint16, size.Len)
-	below := make([]uint16, size.Len)
+	above := make([]uint16, int(size.Len))
+	below := make([]uint16, int(size.Len))
 	for i := range above {
 		above[i] = sentinel
 		below[i] = sentinel

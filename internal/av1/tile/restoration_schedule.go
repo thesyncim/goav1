@@ -173,7 +173,7 @@ func (p RestorationFramePlan) UnitRecordLen() int {
 func (p RestorationFramePlan) BoundaryBufferLen() int {
 	total := 0
 	for i := 0; i < int(p.Planes) && i < len(p.Boundaries); i++ {
-		total += p.Boundaries[i].Len
+		total += int(p.Boundaries[i].Len)
 	}
 	return total
 }
@@ -225,12 +225,13 @@ func BindRestorationFrameBoundaryBuffers(plan RestorationFramePlan, above []uint
 		if size.Len == 0 {
 			continue
 		}
+		n := int(size.Len)
 		boundaries[plane] = RestorationStripeBoundaries{
-			Above:  above[offset : offset+size.Len],
-			Below:  below[offset : offset+size.Len],
+			Above:  above[offset : offset+n],
+			Below:  below[offset : offset+n],
 			Stride: int(size.Stride),
 		}
-		offset += size.Len
+		offset += n
 	}
 	return boundaries, nil
 }

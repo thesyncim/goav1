@@ -51,7 +51,7 @@ type RestorationStripeBoundaryScratch struct {
 type RestorationStripeBoundaryBufferSize struct {
 	Stride uint32
 	Rows   uint32
-	Len    int
+	Len    uint32
 }
 
 func RestorationStripeBoundaryBufferLen(grid RestorationPlaneGrid) (RestorationStripeBoundaryBufferSize, error) {
@@ -90,10 +90,12 @@ func RestorationStripeBoundaryBufferLen(grid RestorationPlaneGrid) (RestorationS
 	if !ok {
 		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
 	}
-	if uint64(stride) > uint64(^uint32(0)) || uint64(rows) > uint64(^uint32(0)) {
+	if uint64(stride) > uint64(^uint32(0)) ||
+		uint64(rows) > uint64(^uint32(0)) ||
+		uint64(n) > uint64(^uint32(0)) {
 		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
 	}
-	return RestorationStripeBoundaryBufferSize{Stride: uint32(stride), Rows: uint32(rows), Len: n}, nil
+	return RestorationStripeBoundaryBufferSize{Stride: uint32(stride), Rows: uint32(rows), Len: uint32(n)}, nil
 }
 
 func RestorationStripeBoundaryScratchLen(stripe RestorationProcessingStripe, optimized bool) (RestorationStripeBoundaryScratchSize, error) {
