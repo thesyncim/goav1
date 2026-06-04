@@ -106,7 +106,7 @@ func TestCollectSubChromaInterCellsBlockSize4x4Quadrant(t *testing.T) {
 		{2, 2, 1}, // self at offset (2,2), marker=1 (synthetic anchor MV)
 	}
 	for i, w := range want {
-		if got.Cells[i].OffsetX != w[0] || got.Cells[i].OffsetY != w[1] {
+		if int(got.Cells[i].OffsetX) != w[0] || int(got.Cells[i].OffsetY) != w[1] {
 			t.Errorf("cell %d offset=(%d,%d) want (%d,%d)", i, got.Cells[i].OffsetX, got.Cells[i].OffsetY, w[0], w[1])
 		}
 		if got.Cells[i].Width != 2 || got.Cells[i].Height != 2 {

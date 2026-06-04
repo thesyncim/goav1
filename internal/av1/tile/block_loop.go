@@ -1385,7 +1385,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				// cells come straight off the grid).
 				if hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color); hasChroma {
 					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
-						selfCell := &sub.Cells[sub.Count-1]
+						selfCell := &sub.Cells[int(sub.Count)-1]
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref[0]
 						selfCell.InterpFilters = filters

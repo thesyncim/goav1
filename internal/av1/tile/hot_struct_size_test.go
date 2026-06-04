@@ -30,6 +30,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TransformPartitionRequest", size: unsafe.Sizeof(TransformPartitionRequest{}), max: 7},
 		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 728},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 80},
+		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 784},
 		{name: "IntraFlagRequest", size: unsafe.Sizeof(IntraFlagRequest{}), max: 22},
 		{name: "LumaIntraModeRequest", size: unsafe.Sizeof(LumaIntraModeRequest{}), max: 4},
 		{name: "InterReferenceRequest", size: unsafe.Sizeof(InterReferenceRequest{}), max: 24},
@@ -53,6 +54,8 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "ReferenceMVEntry", size: unsafe.Sizeof(ReferenceMVEntry{}), max: 8},
 		{name: "TemporalMotionEntry", size: unsafe.Sizeof(TemporalMotionEntry{}), max: 6},
 		{name: "TemporalMotionSetupStats", size: unsafe.Sizeof(TemporalMotionSetupStats{}), max: 3},
+		{name: "SubChromaInterCell", size: unsafe.Sizeof(SubChromaInterCell{}), max: 12},
+		{name: "SubChromaInterResult", size: unsafe.Sizeof(SubChromaInterResult{}), max: 50},
 		{name: "BlockCoeffBlock", size: unsafe.Sizeof(BlockCoeffBlock{}), max: 64},
 		{name: "BlockLoopStats", size: unsafe.Sizeof(BlockLoopStats{}), max: 100},
 	}

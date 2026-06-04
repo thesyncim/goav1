@@ -1043,12 +1043,12 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 	if sub.Count <= 0 {
 		return ErrInvalidBatch
 	}
-	for i := 0; i < sub.Count; i++ {
+	for i := 0; i < int(sub.Count); i++ {
 		cell := sub.Cells[i]
-		cellX := geom.X + cell.OffsetX
-		cellY := geom.Y + cell.OffsetY
-		width := cell.Width
-		height := cell.Height
+		cellX := geom.X + int(cell.OffsetX)
+		cellY := geom.Y + int(cell.OffsetY)
+		width := int(cell.Width)
+		height := int(cell.Height)
 		filterW := width
 		filterH := height
 		if cellX < geom.X || cellY < geom.Y {

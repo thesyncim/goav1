@@ -6,10 +6,10 @@ import "github.com/thesyncim/goav1/internal/av1/motion"
 // the chroma block, expressed in chroma samples relative to the chroma
 // block's top-left.
 type SubChromaInterCell struct {
-	OffsetX int
-	OffsetY int
-	Width   int
-	Height  int
+	OffsetX uint8
+	OffsetY uint8
+	Width   uint8
+	Height  uint8
 	MV      motion.Vector
 	// Reference identifies the AV1 reference frame this sub-block uses.
 	// In libaom's sub8x8 path each sub-block reads its own this_mbmi
@@ -32,7 +32,7 @@ type SubChromaInterCell struct {
 // 4 entries (the NW/N/W/self quadrant for BlockSize4x4, two cells for
 // BlockSize4x8 or BlockSize8x4, one entry per other case).
 type SubChromaInterResult struct {
-	Count int
+	Count uint8
 	Cells [4]SubChromaInterCell
 }
 
@@ -95,10 +95,10 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				// MarkInterMotion. Record the offset and dims
 				// using the just-decoded anchor's filters.
 				result.Cells[result.Count] = SubChromaInterCell{
-					OffsetX:       (col - colStart) * cellW,
-					OffsetY:       (row - rowStart) * cellH,
-					Width:         cellW,
-					Height:        cellH,
+					OffsetX:       uint8((col - colStart) * cellW),
+					OffsetY:       uint8((row - rowStart) * cellH),
+					Width:         uint8(cellW),
+					Height:        uint8(cellH),
 					InterpFilters: filters,
 				}
 				result.Count++
@@ -125,10 +125,10 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				cellFilters = c.GridInterp[ny][nx]
 			}
 			result.Cells[result.Count] = SubChromaInterCell{
-				OffsetX:       (col - colStart) * cellW,
-				OffsetY:       (row - rowStart) * cellH,
-				Width:         cellW,
-				Height:        cellH,
+				OffsetX:       uint8((col - colStart) * cellW),
+				OffsetY:       uint8((row - rowStart) * cellH),
+				Width:         uint8(cellW),
+				Height:        uint8(cellH),
 				MV:            cell.MV[0],
 				Reference:     cell.References.Ref[0],
 				InterpFilters: cellFilters,
