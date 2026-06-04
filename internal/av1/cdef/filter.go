@@ -47,7 +47,7 @@ type FrameFilterParams struct {
 	CoeffShift        uint8
 }
 
-var cdefDirections = [12][2]int{
+var cdefDirections = [12][2]int16{
 	{1 * BStride, 2 * BStride},
 	{1 * BStride, 2*BStride - 1},
 	{-1*BStride + 1, -2*BStride + 2},
@@ -62,8 +62,8 @@ var cdefDirections = [12][2]int{
 	{1, -1*BStride + 2},
 }
 
-var cdefPrimaryTaps = [2][2]int{{4, 2}, {3, 3}}
-var cdefSecondaryTaps = [2]int{2, 1}
+var cdefPrimaryTaps = [2][2]uint8{{4, 2}, {3, 3}}
+var cdefSecondaryTaps = [2]uint8{2, 1}
 
 // FilterBlock ports libaom's cdef_filter_block_internal for 16-bit output.
 // inputOrigin and dstOrigin mirror the C pointer arguments; input is normally a
@@ -99,16 +99,16 @@ func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint1
 	// offsets, primary taps, and the constrain() shift amounts (which depend
 	// only on threshold/damping). This keeps the inner loop free of repeated
 	// table lookups and bits.Len calls.
-	pri0 := cdefDirections[direction+2][0]
-	pri1 := cdefDirections[direction+2][1]
-	sec0a := cdefDirections[direction+4][0]
-	sec0b := cdefDirections[direction+4][1]
-	sec1a := cdefDirections[direction][0]
-	sec1b := cdefDirections[direction][1]
-	priTap0 := priTaps[0]
-	priTap1 := priTaps[1]
-	secTap0 := cdefSecondaryTaps[0]
-	secTap1 := cdefSecondaryTaps[1]
+	pri0 := int(cdefDirections[direction+2][0])
+	pri1 := int(cdefDirections[direction+2][1])
+	sec0a := int(cdefDirections[direction+4][0])
+	sec0b := int(cdefDirections[direction+4][1])
+	sec1a := int(cdefDirections[direction][0])
+	sec1b := int(cdefDirections[direction][1])
+	priTap0 := int(priTaps[0])
+	priTap1 := int(priTaps[1])
+	secTap0 := int(cdefSecondaryTaps[0])
+	secTap1 := int(cdefSecondaryTaps[1])
 	priStrength := primaryStrength
 	secStrength := secondaryStrength
 	priShift := constrainShift(priStrength, primaryDamping)
@@ -400,14 +400,14 @@ func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 
 	maxOff := 0
 	if enablePrimary {
-		maxOff = maxAbs(maxOff, cdefDirections[direction+2][0])
-		maxOff = maxAbs(maxOff, cdefDirections[direction+2][1])
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction+2][0]))
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction+2][1]))
 	}
 	if enableSecondary {
-		maxOff = maxAbs(maxOff, cdefDirections[direction+4][0])
-		maxOff = maxAbs(maxOff, cdefDirections[direction+4][1])
-		maxOff = maxAbs(maxOff, cdefDirections[direction][0])
-		maxOff = maxAbs(maxOff, cdefDirections[direction][1])
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction+4][0]))
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction+4][1]))
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction][0]))
+		maxOff = maxAbs(maxOff, int(cdefDirections[direction][1]))
 	}
 
 	return indexFits(length, loBase-maxOff) && indexFits(length, hiBase+maxOff)

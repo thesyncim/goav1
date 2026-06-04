@@ -252,7 +252,7 @@ type BlockPredictionModeResult struct {
 	SubChromaInterValid bool
 }
 
-var yModeSizeContext = [blockSizeCount]int{
+var yModeSizeContext = [blockSizeCount]uint8{
 	BlockSize128x128: 3,
 	BlockSize128x64:  3,
 	BlockSize64x128:  3,
@@ -277,7 +277,7 @@ var yModeSizeContext = [blockSizeCount]int{
 	BlockSize4x4:     0,
 }
 
-var intraModeContext = [intraModeCount]int{
+var intraModeContext = [intraModeCount]uint8{
 	IntraModeDC:               0,
 	IntraModeVertical:         1,
 	IntraModeHorizontal:       2,
@@ -711,7 +711,7 @@ func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error
 	if !above.Valid() || !left.Valid() {
 		return 0, 0, ErrInvalidDecodeState
 	}
-	return intraModeContext[above], intraModeContext[left], nil
+	return int(intraModeContext[above]), int(intraModeContext[left]), nil
 }
 
 func intraModeIsSmooth(mode IntraMode) (bool, error) {
@@ -908,7 +908,7 @@ func (s *DecodeState) ReadLumaIntraMode(cdfs *IntraModeCDFs, ctx *BlockModeConte
 	var cdf *entropy.CDF
 	var err error
 	if frameTypeIsInterOrSwitch(req.FrameType) {
-		cdf, err = cdfs.YModeCDF(yModeSizeContext[req.Size])
+		cdf, err = cdfs.YModeCDF(int(yModeSizeContext[req.Size]))
 	} else {
 		above, left, ctxErr := ctx.KeyframeYModeContext(int(req.X4), int(req.Y4))
 		if ctxErr != nil {

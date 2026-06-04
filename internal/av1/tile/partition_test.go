@@ -43,7 +43,7 @@ func TestPartitionCDFsInitDefaultMatchesDav1d(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s CDF: %v", tt.name, err)
 		}
-		if cdf.Symbols() != partitionSymbolCount[tt.level] {
+		if cdf.Symbols() != int(partitionSymbolCount[tt.level]) {
 			t.Fatalf("%s symbols=%d want %d", tt.name, cdf.Symbols(), partitionSymbolCount[tt.level])
 		}
 		assertEntropyCDFValues(t, cdf.Values(), tt.want)

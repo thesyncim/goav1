@@ -764,7 +764,7 @@ func frameWorkFilmGrainChromaGrainParams(plan FrameWorkFilmGrainPostFilterPlan, 
 	params := plan.Params
 	out := filmgrain.ChromaGrainParams{
 		Seed:            params.Seed,
-		Plane:           plane,
+		Plane:           uint8(plane),
 		BitDepth:        plan.BitDepth,
 		NumYPoints:      params.NumYPoints,
 		GrainScaleShift: params.GrainScaleShift,

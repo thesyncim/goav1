@@ -298,7 +298,7 @@ func FuzzWalkBlocksScripted(f *testing.F) {
 				}
 				return PartitionSplit, nil
 			}
-			return Partition(int(b) % partitionSymbolCount[level]), nil
+			return Partition(int(b) % int(partitionSymbolCount[level])), nil
 		}
 
 		var ctx PartitionContext

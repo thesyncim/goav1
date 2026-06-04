@@ -89,9 +89,9 @@ type Reader struct {
 	pos uint32
 
 	dif      uint32
-	rng      uint32
-	cnt      int32
-	tellOffs int32
+	rng      uint16
+	cnt      int16
+	tellOffs int16
 
 	allowCDFUpdate bool
 }
@@ -105,9 +105,9 @@ type Cursor struct {
 	pos uint32
 
 	dif      uint32
-	rng      uint32
-	cnt      int32
-	tellOffs int32
+	rng      uint16
+	cnt      int16
+	tellOffs int16
 
 	allowCDFUpdate bool
 }
@@ -184,7 +184,7 @@ func (r *Reader) BitsRead() int {
 	if r == nil {
 		return 0
 	}
-	return readerTell(int(r.pos), r.cnt, r.tellOffs)
+	return readerTell(int(r.pos), int32(r.cnt), int32(r.tellOffs))
 }
 
 // ReadBit decodes one equiprobable bit.
@@ -200,7 +200,7 @@ func (r *Reader) ReadBit() (uint8, error) {
 //
 //go:nosplit
 func (r *Reader) ReadBitTrusted() uint8 {
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	dif := r.dif
 	split := (rangeValue >> 8) << 7
 	split += ecMinProb
@@ -215,13 +215,14 @@ func (r *Reader) ReadBitTrusted() uint8 {
 	}
 
 	if traceEntropyReads {
-		traceBoolRead(CDFProbTop/2, r.dif, r.rng, r.BitsRead())
+		traceBoolRead(CDFProbTop/2, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	shift := int32(16 - bits.Len32(nextRange))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = nextRange << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(nextRange << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	return bit
@@ -241,7 +242,7 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 		return 0, ErrInvalidProbability
 	}
 
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	dif := r.dif
 	split := ((rangeValue >> 8) * uint32(prob>>ecProbShift)) >> (7 - ecProbShift)
 	split += ecMinProb
@@ -256,13 +257,14 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 	}
 
 	if traceEntropyReads {
-		traceBoolRead(prob, r.dif, r.rng, r.BitsRead())
+		traceBoolRead(prob, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	shift := int32(16 - bits.Len32(nextRange))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = nextRange << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(nextRange << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	return bit, nil
@@ -293,9 +295,9 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	src := r.src
 	pos := int(r.pos)
 	dif := r.dif
-	rng := r.rng
-	cnt := r.cnt
-	tellOffs := r.tellOffs
+	rng := uint32(r.rng)
+	cnt := int32(r.cnt)
+	tellOffs := int32(r.tellOffs)
 	var v uint32
 	for range n {
 		rangeValue := rng
@@ -326,9 +328,9 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	}
 	r.pos = uint32(pos)
 	r.dif = dif
-	r.rng = rng
-	r.cnt = cnt
-	r.tellOffs = tellOffs
+	r.rng = uint16(rng)
+	r.cnt = int16(cnt)
+	r.tellOffs = int16(tellOffs)
 	return v
 }
 
@@ -336,7 +338,7 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 //
 //go:nosplit
 func (c *Cursor) ReadBitTrusted() uint8 {
-	rangeValue := c.rng
+	rangeValue := uint32(c.rng)
 	dif := c.dif
 	split := (rangeValue >> 8) << 7
 	split += ecMinProb
@@ -351,13 +353,14 @@ func (c *Cursor) ReadBitTrusted() uint8 {
 	}
 
 	if traceEntropyReads {
-		traceBoolRead(CDFProbTop/2, c.dif, c.rng, readerTell(int(c.pos), c.cnt, c.tellOffs))
+		traceBoolRead(CDFProbTop/2, c.dif, uint32(c.rng), readerTell(int(c.pos), int32(c.cnt), int32(c.tellOffs)))
 	}
 	shift := int32(16 - bits.Len32(nextRange))
-	c.cnt -= shift
+	cnt := int32(c.cnt) - shift
+	c.cnt = int16(cnt)
 	c.dif = ((dif + 1) << uint(shift)) - 1
-	c.rng = nextRange << uint(shift)
-	if c.cnt < 0 {
+	c.rng = uint16(nextRange << uint(shift))
+	if cnt < 0 {
 		c.refill()
 	}
 	return bit
@@ -373,9 +376,9 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 	var v uint32
 	for range n {
 		rangeValue := rng
@@ -406,9 +409,9 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	}
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return v
 }
 
@@ -525,7 +528,7 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	// updateCDFWindow indexes the trailing count at cdf[symbols].
 	cdf = cdf[:symbols+1]
 
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -564,7 +567,7 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	}
 
 	if traceEntropyReads {
-		traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+		traceCDFRead(head, symbols, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
 	// in registers for updateCDFWindow instead of spilling across a call. The
@@ -572,10 +575,11 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
@@ -628,7 +632,7 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	// is in bounds, exactly as ReadSymbol does.
 	cdf = cdf[:symbols+1]
 
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -661,7 +665,7 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	}
 
 	if traceEntropyReads {
-		traceCDFRead(head, symbols, r.dif, r.rng, r.BitsRead())
+		traceCDFRead(head, symbols, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	// Inline the normalize fast path so the no-refill case keeps cdf/symbol live
 	// in registers for updateCDFWindow instead of spilling across a call. The
@@ -669,10 +673,11 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
@@ -767,7 +772,7 @@ func (c *Cursor) ReadCDF3Unchecked(cdf *CDF) int {
 
 //go:nosplit
 func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) int {
-	rangeValue := c.rng
+	rangeValue := uint32(c.rng)
 	rngHi := rangeValue >> 8
 	coded := c.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -794,15 +799,16 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 	}
 
 	if traceEntropyReads {
-		traceCDFRead(head, symbols, c.dif, c.rng, readerTell(int(c.pos), c.cnt, c.tellOffs))
+		traceCDFRead(head, symbols, c.dif, uint32(c.rng), readerTell(int(c.pos), int32(c.cnt), int32(c.tellOffs)))
 	}
 	dif := c.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	c.cnt -= shift
+	cnt := int32(c.cnt) - shift
+	c.cnt = int16(cnt)
 	c.dif = ((dif + 1) << uint(shift)) - 1
-	c.rng = rng << uint(shift)
-	if c.cnt < 0 {
+	c.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		c.refill()
 	}
 	if c.allowCDFUpdate {
@@ -828,7 +834,7 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 
 //go:nosplit
 func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -847,15 +853,16 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(c0, 3, r.dif, r.rng, r.BitsRead())
+		traceCDFRead(c0, 3, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
@@ -885,9 +892,9 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -940,9 +947,9 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
@@ -985,7 +992,7 @@ func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) int {
 
 //go:nosplit
 func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -1010,15 +1017,16 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(c0, 4, r.dif, r.rng, r.BitsRead())
+		traceCDFRead(c0, 4, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
@@ -1054,9 +1062,9 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -1096,9 +1104,9 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
@@ -1107,9 +1115,9 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -1169,9 +1177,9 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
@@ -1180,9 +1188,9 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	level := 0
 	for i := 0; i < 4; i++ {
@@ -1230,9 +1238,9 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return level
 }
 
@@ -1241,9 +1249,9 @@ func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) in
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	level := 0
 	for i := 0; i < 4; i++ {
@@ -1311,9 +1319,9 @@ func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) in
 
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return level
 }
 
@@ -1328,7 +1336,7 @@ func (r *Reader) ReadBinaryCDFTrusted(cdf *CDF) (int, error) {
 
 //go:nosplit
 func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
-	rangeValue := r.rng
+	rangeValue := uint32(r.rng)
 	rngHi := rangeValue >> 8
 	coded := r.dif >> (ecWindow - 16)
 	upper := rangeValue
@@ -1341,15 +1349,16 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 		lower = 0
 	}
 	if traceEntropyReads {
-		traceCDFRead(c0, 2, r.dif, r.rng, r.BitsRead())
+		traceCDFRead(c0, 2, r.dif, uint32(r.rng), r.BitsRead())
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
 	shift := int32(16 - bits.Len32(rng))
-	r.cnt -= shift
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
-	r.rng = rng << uint(shift)
-	if r.cnt < 0 {
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
@@ -1370,9 +1379,9 @@ func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
-	rng := c.rng
-	cnt := c.cnt
-	tellOffs := c.tellOffs
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -1403,9 +1412,9 @@ func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.rng = rng
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
@@ -1480,17 +1489,17 @@ func invRecenterNonNeg(ref uint32, v uint32) uint32 {
 }
 
 func (r *Reader) refill() {
-	pos, dif, cnt, tellOffs := refillState(r.src, int(r.pos), r.dif, r.cnt, r.tellOffs)
+	pos, dif, cnt, tellOffs := refillState(r.src, int(r.pos), r.dif, int32(r.cnt), int32(r.tellOffs))
 	r.pos = uint32(pos)
 	r.dif = dif
-	r.cnt = cnt
-	r.tellOffs = tellOffs
+	r.cnt = int16(cnt)
+	r.tellOffs = int16(tellOffs)
 }
 
 func (c *Cursor) refill() {
-	pos, dif, cnt, tellOffs := refillState(c.src, int(c.pos), c.dif, c.cnt, c.tellOffs)
+	pos, dif, cnt, tellOffs := refillState(c.src, int(c.pos), c.dif, int32(c.cnt), int32(c.tellOffs))
 	c.pos = uint32(pos)
 	c.dif = dif
-	c.cnt = cnt
-	c.tellOffs = tellOffs
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
 }

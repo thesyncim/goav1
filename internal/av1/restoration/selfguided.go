@@ -31,30 +31,30 @@ const (
 )
 
 type SGRParams struct {
-	Radius [2]int
-	S      [2]int
+	Radius [2]uint8
+	S      [2]int16
 }
 
 var SGRParameterTable = [SGRProjParams]SGRParams{
-	{Radius: [2]int{2, 1}, S: [2]int{140, 3236}},
-	{Radius: [2]int{2, 1}, S: [2]int{112, 2158}},
-	{Radius: [2]int{2, 1}, S: [2]int{93, 1618}},
-	{Radius: [2]int{2, 1}, S: [2]int{80, 1438}},
-	{Radius: [2]int{2, 1}, S: [2]int{70, 1295}},
-	{Radius: [2]int{2, 1}, S: [2]int{58, 1177}},
-	{Radius: [2]int{2, 1}, S: [2]int{47, 1079}},
-	{Radius: [2]int{2, 1}, S: [2]int{37, 996}},
-	{Radius: [2]int{2, 1}, S: [2]int{30, 925}},
-	{Radius: [2]int{2, 1}, S: [2]int{25, 863}},
-	{Radius: [2]int{0, 1}, S: [2]int{-1, 2589}},
-	{Radius: [2]int{0, 1}, S: [2]int{-1, 1618}},
-	{Radius: [2]int{0, 1}, S: [2]int{-1, 1177}},
-	{Radius: [2]int{0, 1}, S: [2]int{-1, 925}},
-	{Radius: [2]int{2, 0}, S: [2]int{56, -1}},
-	{Radius: [2]int{2, 0}, S: [2]int{22, -1}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{140, 3236}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{112, 2158}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{93, 1618}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{80, 1438}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{70, 1295}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{58, 1177}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{47, 1079}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{37, 996}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{30, 925}},
+	{Radius: [2]uint8{2, 1}, S: [2]int16{25, 863}},
+	{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 2589}},
+	{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 1618}},
+	{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 1177}},
+	{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 925}},
+	{Radius: [2]uint8{2, 0}, S: [2]int16{56, -1}},
+	{Radius: [2]uint8{2, 0}, S: [2]int16{22, -1}},
 }
 
-var xByXPlus1 = [256]int32{
+var xByXPlus1 = [256]uint16{
 	1, 128, 171, 192, 205, 213, 219, 224, 228, 230, 233, 235, 236, 238, 239,
 	240, 241, 242, 243, 243, 244, 244, 245, 245, 246, 246, 247, 247, 247, 247,
 	248, 248, 248, 248, 249, 249, 249, 249, 249, 250, 250, 250, 250, 250, 250,
@@ -75,7 +75,7 @@ var xByXPlus1 = [256]int32{
 	256,
 }
 
-var oneByX = [25]int32{
+var oneByX = [25]uint16{
 	4096, 2048, 1365, 1024, 819, 683, 585, 512, 455, 410, 372, 341, 315,
 	293, 273, 256, 241, 228, 216, 205, 195, 186, 178, 171, 164,
 }
@@ -288,7 +288,7 @@ func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dg
 	clearInt32s(aBuf)
 	clearInt32s(bBuf)
 	params := SGRParameterTable[paramsIndex]
-	r := params.Radius[radiusIndex]
+	r := int(params.Radius[radiusIndex])
 	widthExt := width + 2*SGRProjBorderHorz
 	heightExt := height + 2*SGRProjBorderVert
 	srcOrigin := dgdOrigin - SGRProjBorderVert*dgdStride - SGRProjBorderHorz
@@ -356,7 +356,7 @@ func xByXPlus1Value(z uint32) int32 {
 	if z > 255 {
 		z = 255
 	}
-	return xByXPlus1[z]
+	return int32(xByXPlus1[z])
 }
 
 func minInt(a int, b int) int {

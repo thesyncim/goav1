@@ -4,28 +4,47 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"unsafe"
 )
 
 const restorationDeterministicSeed = 0xbaba
 
+func TestSGRHotTableSizes(t *testing.T) {
+	tests := []struct {
+		name string
+		size uintptr
+		max  uintptr
+	}{
+		{name: "SGRParams", size: unsafe.Sizeof(SGRParams{}), max: 6},
+		{name: "SGRParameterTable", size: unsafe.Sizeof(SGRParameterTable), max: 96},
+		{name: "xByXPlus1", size: unsafe.Sizeof(xByXPlus1), max: 512},
+		{name: "oneByX", size: unsafe.Sizeof(oneByX), max: 50},
+	}
+	for _, tc := range tests {
+		if tc.size > tc.max {
+			t.Fatalf("%s size=%d max=%d", tc.name, tc.size, tc.max)
+		}
+	}
+}
+
 func TestSGRParameterTableMatchesLibaom(t *testing.T) {
 	want := [SGRProjParams]SGRParams{
-		{Radius: [2]int{2, 1}, S: [2]int{140, 3236}},
-		{Radius: [2]int{2, 1}, S: [2]int{112, 2158}},
-		{Radius: [2]int{2, 1}, S: [2]int{93, 1618}},
-		{Radius: [2]int{2, 1}, S: [2]int{80, 1438}},
-		{Radius: [2]int{2, 1}, S: [2]int{70, 1295}},
-		{Radius: [2]int{2, 1}, S: [2]int{58, 1177}},
-		{Radius: [2]int{2, 1}, S: [2]int{47, 1079}},
-		{Radius: [2]int{2, 1}, S: [2]int{37, 996}},
-		{Radius: [2]int{2, 1}, S: [2]int{30, 925}},
-		{Radius: [2]int{2, 1}, S: [2]int{25, 863}},
-		{Radius: [2]int{0, 1}, S: [2]int{-1, 2589}},
-		{Radius: [2]int{0, 1}, S: [2]int{-1, 1618}},
-		{Radius: [2]int{0, 1}, S: [2]int{-1, 1177}},
-		{Radius: [2]int{0, 1}, S: [2]int{-1, 925}},
-		{Radius: [2]int{2, 0}, S: [2]int{56, -1}},
-		{Radius: [2]int{2, 0}, S: [2]int{22, -1}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{140, 3236}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{112, 2158}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{93, 1618}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{80, 1438}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{70, 1295}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{58, 1177}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{47, 1079}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{37, 996}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{30, 925}},
+		{Radius: [2]uint8{2, 1}, S: [2]int16{25, 863}},
+		{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 2589}},
+		{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 1618}},
+		{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 1177}},
+		{Radius: [2]uint8{0, 1}, S: [2]int16{-1, 925}},
+		{Radius: [2]uint8{2, 0}, S: [2]int16{56, -1}},
+		{Radius: [2]uint8{2, 0}, S: [2]int16{22, -1}},
 	}
 	if SGRParameterTable != want {
 		t.Fatalf("SGRParameterTable=%+v want %+v", SGRParameterTable, want)

@@ -89,12 +89,12 @@ type PartitionContext struct {
 	Left  [MaxPartitionSlots]uint8
 }
 
-var partitionSymbolCount = [blockLevelCount]int{
-	BlockLevel128x128: int(PartitionTRightSplit) + 1,
-	BlockLevel64x64:   int(PartitionV4) + 1,
-	BlockLevel32x32:   int(PartitionV4) + 1,
-	BlockLevel16x16:   int(PartitionV4) + 1,
-	BlockLevel8x8:     int(PartitionSplit) + 1,
+var partitionSymbolCount = [blockLevelCount]uint8{
+	BlockLevel128x128: uint8(PartitionTRightSplit) + 1,
+	BlockLevel64x64:   uint8(PartitionV4) + 1,
+	BlockLevel32x32:   uint8(PartitionV4) + 1,
+	BlockLevel16x16:   uint8(PartitionV4) + 1,
+	BlockLevel8x8:     uint8(PartitionSplit) + 1,
 }
 
 var blockDimensions = [blockSizeCount]BlockDimensions{
@@ -233,7 +233,7 @@ func (partition Partition) ValidForLevel(level BlockLevel) bool {
 	if !level.Valid() {
 		return false
 	}
-	return int(partition) < partitionSymbolCount[level]
+	return uint8(partition) < partitionSymbolCount[level]
 }
 
 // BlockSizes returns the block-size entries used by non-recursive partitions.
@@ -301,7 +301,7 @@ func (c *PartitionCDFs) CDF(level BlockLevel, ctx int) (*entropy.CDF, error) {
 		return nil, entropy.ErrInvalidCDF
 	}
 	cdf := &c.Partition[level][ctx]
-	if cdf.Symbols() != partitionSymbolCount[level] {
+	if cdf.Symbols() != int(partitionSymbolCount[level]) {
 		return nil, entropy.ErrInvalidCDF
 	}
 	return cdf, cdf.Validate()

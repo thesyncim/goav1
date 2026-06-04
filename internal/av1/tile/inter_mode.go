@@ -97,7 +97,7 @@ var compoundInterModeComponents = [compoundInterModeCount]CompoundInterModeCompo
 	CompoundInterModeNewNew:         {First: InterModeNewMV, Second: InterModeNewMV},
 }
 
-var compoundModeContextMap = [3][5]int{
+var compoundModeContextMap = [3][5]uint8{
 	{0, 1, 1, 1, 1},
 	{1, 2, 3, 4, 4},
 	{4, 4, 5, 6, 7},
@@ -221,7 +221,7 @@ func AnalyzeInterModeContext(raw uint16, compound bool) (int, error) {
 	if row < 0 || row >= len(compoundModeContextMap) {
 		return 0, ErrInvalidDecodeState
 	}
-	return compoundModeContextMap[row][newCtx], nil
+	return int(compoundModeContextMap[row][newCtx]), nil
 }
 
 func (s *DecodeState) ReadBlockInterMode(cdfs *InterModeCDFs, req InterModeRequest) (InterModeResult, error) {

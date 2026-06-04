@@ -267,7 +267,7 @@ func (s *DecodeState) ReadInterIntra(cdfs *CompoundBlendCDFs, req InterIntraRequ
 	if !InterIntraAllowed(req) {
 		return InterIntraResult{}, nil
 	}
-	group := yModeSizeContext[req.Size]
+	group := int(yModeSizeContext[req.Size])
 	cdf, err := cdfs.InterIntraCDF(group)
 	if err != nil {
 		return InterIntraResult{}, err

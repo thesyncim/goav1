@@ -10,7 +10,7 @@ package filmgrain
 // film-grain template before it is placed over a decoded chroma plane.
 type ChromaGrainParams struct {
 	Seed  uint16
-	Plane int
+	Plane uint8
 
 	BitDepth        uint8
 	NumYPoints      uint8
@@ -35,7 +35,7 @@ func GenerateChromaGrain(dst []int16, luma []int16, params ChromaGrainParams) er
 		grain[i] = 0
 	}
 
-	rng, err := NewPlaneRandom(params.Seed, params.Plane)
+	rng, err := NewPlaneRandom(params.Seed, int(params.Plane))
 	if err != nil {
 		return err
 	}

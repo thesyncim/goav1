@@ -3,7 +3,14 @@ package filmgrain
 import (
 	"errors"
 	"testing"
+	"unsafe"
 )
+
+func TestChromaGrainParamsHotSize(t *testing.T) {
+	if size := unsafe.Sizeof(ChromaGrainParams{}); size > 36 {
+		t.Fatalf("ChromaGrainParams size=%d max=36", size)
+	}
+}
 
 func TestGenerateChromaGrainWhiteNoise420(t *testing.T) {
 	grain := make([]int16, ChromaGrainSamples)
