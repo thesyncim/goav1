@@ -23,8 +23,8 @@ type ReferenceMVEntry struct {
 // ReferenceMVFrameBlockRequest describes one decoded block to copy into the
 // current-frame ref-MV side data.
 type ReferenceMVFrameBlockRequest struct {
-	MICol uint32
-	MIRow uint32
+	MICol uint16
+	MIRow uint16
 
 	VisibleW4 uint8
 	VisibleH4 uint8
@@ -86,7 +86,7 @@ func (f *ReferenceMVFrame) MarkBlock(req ReferenceMVFrameBlockRequest) error {
 }
 
 // MarkBlockPtr is MarkBlock without copying the large block prediction result.
-func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 uint8, visibleH4 uint8, prediction *BlockPredictionModeResult, refFrameSide [referenceFrameCount]int8) error {
+func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint16, miRow uint16, visibleW4 uint8, visibleH4 uint8, prediction *BlockPredictionModeResult, refFrameSide [referenceFrameCount]int8) error {
 	if err := f.Validate(); err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 ui
 	cols := int(f.Cols)
 	rows := int(f.Rows)
 	stride := int(f.Stride)
-	if col < 0 || row < 0 || w <= 0 || h <= 0 || col+w > cols || row+h > rows {
+	if w <= 0 || h <= 0 || col+w > cols || row+h > rows {
 		return ErrInvalidDecodeState
 	}
 

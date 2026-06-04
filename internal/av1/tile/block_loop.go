@@ -209,8 +209,8 @@ type BlockLoopRequest struct {
 	// FrameMIRows and FrameMICols are the frame's MI grid extent
 	// (ALIGN_POWER_OF_TWO(dim, 3) >> MI_SIZE_LOG2), used to clamp ref-MV stack
 	// candidates to the frame boundary exactly as libaom's clamp_mv_ref.
-	FrameMIRows uint32
-	FrameMICols uint32
+	FrameMIRows uint16
+	FrameMICols uint16
 
 	Color               parser.ColorConfig
 	TransformMode       parser.TransformMode
@@ -1005,7 +1005,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	visit.CoefficientsValid = false
 	visit.Delta = delta
 	if req.CurrentMVFrame != nil {
-		if err := req.CurrentMVFrame.MarkBlockPtr(block.MICol, block.MIRow, block.VisibleW4, block.VisibleH4, &visit.Prediction, req.RefFrameSide); err != nil {
+		if err := req.CurrentMVFrame.MarkBlockPtr(uint16(block.MICol), uint16(block.MIRow), block.VisibleW4, block.VisibleH4, &visit.Prediction, req.RefFrameSide); err != nil {
 			return nil, err
 		}
 	}
@@ -1127,37 +1127,26 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
-			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
-				Size:             block.Size,
-				References:       refs,
-				X4:               block.X4,
-				Y4:               block.Y4,
-				HaveTop:          block.HaveTop,
-				HaveLeft:         block.HaveLeft,
-				HaveTopRight:     blockHasTopRight(req.SBSizeMIB, block),
-				GlobalMVs:        globalMVs,
-				GlobalMotionType: globalMotionTypes,
-				RefSignBias:      req.RefSignBias,
-
-				MICol:          block.MICol,
-				MIRow:          block.MIRow,
-				TileMIColStart: req.Walk.MIColStart,
-				TileMIRowStart: req.Walk.MIRowStart,
-				TileMIColEnd:   req.Walk.MIColEnd,
-				TileMIRowEnd:   req.Walk.MIRowEnd,
-				FrameMIRows:    req.FrameMIRows,
-				FrameMICols:    req.FrameMICols,
-
-				TemporalMVs:          req.TemporalMVs,
-				OrderHintBits:        req.OrderHintBits,
-				CurrentOrderHint:     req.CurrentOrderHint,
-				ReferenceOrderHints:  req.ReferenceOrderHints,
-				AllowHighPrecisionMV: req.AllowHighPrecisionMV,
-				ForceIntegerMV:       req.ForceIntegerMV,
-
-				UseRefFrameMVS:              req.UseRefFrameMVS,
-				TemporalMVSampleUnavailable: req.TemporalMVSampleUnavailable,
-			})
+			stackReq := referenceMVStackRequestRegion(req, block)
+			stackReq.Size = block.Size
+			stackReq.References = refs
+			stackReq.X4 = block.X4
+			stackReq.Y4 = block.Y4
+			stackReq.HaveTop = block.HaveTop
+			stackReq.HaveLeft = block.HaveLeft
+			stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
+			stackReq.GlobalMVs = globalMVs
+			stackReq.GlobalMotionType = globalMotionTypes
+			stackReq.RefSignBias = req.RefSignBias
+			stackReq.TemporalMVs = req.TemporalMVs
+			stackReq.OrderHintBits = req.OrderHintBits
+			stackReq.CurrentOrderHint = req.CurrentOrderHint
+			stackReq.ReferenceOrderHints = req.ReferenceOrderHints
+			stackReq.AllowHighPrecisionMV = req.AllowHighPrecisionMV
+			stackReq.ForceIntegerMV = req.ForceIntegerMV
+			stackReq.UseRefFrameMVS = req.UseRefFrameMVS
+			stackReq.TemporalMVSampleUnavailable = req.TemporalMVSampleUnavailable
+			stack, err := ctx.BuildReferenceMVStack(stackReq)
 			if err != nil {
 				return BlockPredictionModeResult{}, fmt.Errorf("build ref mv stack: %w", err)
 			}
@@ -1653,6 +1642,9 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		req.Walk.MIRowEnd <= req.Walk.MIRowStart {
 		return ErrInvalidDecodeState
 	}
+	if req.Walk.MIColEnd > uint32(^uint16(0)) || req.Walk.MIRowEnd > uint32(^uint16(0)) {
+		return ErrInvalidDecodeState
+	}
 	if req.DecodeInterModes && !req.DecodePredictionModes {
 		return ErrInvalidDecodeState
 	}
@@ -1819,21 +1811,14 @@ func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block Block
 	if ctx == nil {
 		return motion.Vector{}, ErrInvalidDecodeState
 	}
-	stack, err := ctx.IntrabcReferenceDVStack(ReferenceMVStackRequest{
-		Size:         block.Size,
-		X4:           block.X4,
-		Y4:           block.Y4,
-		HaveTop:      block.HaveTop,
-		HaveLeft:     block.HaveLeft,
-		HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
-		MICol:        block.MICol,
-		MIRow:        block.MIRow,
-
-		TileMIColStart: req.Walk.MIColStart,
-		TileMIRowStart: req.Walk.MIRowStart,
-		TileMIColEnd:   req.Walk.MIColEnd,
-		TileMIRowEnd:   req.Walk.MIRowEnd,
-	})
+	stackReq := referenceMVStackRequestRegion(req, block)
+	stackReq.Size = block.Size
+	stackReq.X4 = block.X4
+	stackReq.Y4 = block.Y4
+	stackReq.HaveTop = block.HaveTop
+	stackReq.HaveLeft = block.HaveLeft
+	stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
+	stack, err := ctx.IntrabcReferenceDVStack(stackReq)
 	if err != nil {
 		return motion.Vector{}, err
 	}
@@ -1862,6 +1847,19 @@ func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, e
 		return motion.Vector{}, ErrInvalidDecodeState
 	}
 	return mv, nil
+}
+
+func referenceMVStackRequestRegion(req BlockLoopRequest, block BlockVisit) ReferenceMVStackRequest {
+	return ReferenceMVStackRequest{
+		MICol:          uint16(block.MICol),
+		MIRow:          uint16(block.MIRow),
+		TileMIColStart: uint16(req.Walk.MIColStart),
+		TileMIRowStart: uint16(req.Walk.MIRowStart),
+		TileMIColEnd:   uint16(req.Walk.MIColEnd),
+		TileMIRowEnd:   uint16(req.Walk.MIRowEnd),
+		FrameMIRows:    req.FrameMIRows,
+		FrameMICols:    req.FrameMICols,
+	}
 }
 
 func intrabcAlternateFallbackMV(req BlockLoopRequest, block BlockVisit, pred motion.Vector) (motion.Vector, bool) {

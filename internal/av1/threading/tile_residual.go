@@ -735,6 +735,9 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 	// extent stays zero, which disables the clamp rather than misbounding it.
 	frameMIRows, _ := frameWorkMIExtent(b.FrameSize.Height)
 	frameMICols, _ := frameWorkMIExtent(b.FrameSize.CodedWidth)
+	if frameMIRows > uint32(^uint16(0)) || frameMICols > uint32(^uint16(0)) {
+		return tile.BlockLoopRequest{}, ErrInvalidBatch
+	}
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
@@ -782,8 +785,8 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		CurrentOrderHint:            b.FrameHeader.OrderHint,
 		TemporalMVs:                 b.TemporalMVs,
 		CurrentMVFrame:              b.CurrentMVFrame,
-		FrameMIRows:                 frameMIRows,
-		FrameMICols:                 frameMICols,
+		FrameMIRows:                 uint16(frameMIRows),
+		FrameMICols:                 uint16(frameMICols),
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),

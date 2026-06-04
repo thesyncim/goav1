@@ -46,18 +46,18 @@ type ReferenceMVStack struct {
 type ReferenceMVStackRequest struct {
 	TemporalMVs *TemporalMotionField
 
-	MICol uint32
-	MIRow uint32
+	MICol uint16
+	MIRow uint16
 
-	TileMIColStart uint32
-	TileMIRowStart uint32
-	TileMIColEnd   uint32
-	TileMIRowEnd   uint32
+	TileMIColStart uint16
+	TileMIRowStart uint16
+	TileMIColEnd   uint16
+	TileMIRowEnd   uint16
 
 	// FrameMIRows and FrameMICols are the frame's MI grid extent, used to clamp
 	// stack candidates to the frame boundary (libaom clamp_mv_ref).
-	FrameMIRows uint32
-	FrameMICols uint32
+	FrameMIRows uint16
+	FrameMICols uint16
 
 	GlobalMVs  [2]motion.Vector
 	References InterReferencesResult
