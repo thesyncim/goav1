@@ -129,7 +129,7 @@ func frameWorkPredictScaledReferencePlaneToBuffer(dst frame.Plane, ref frame.Pla
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, mv motion.Vector, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst, ref, geom, bitDepth,
-		dstX, dstY, blockX, blockY, geom.Width, geom.Height, mv, filters)
+		dstX, dstY, blockX, blockY, geom.width(), geom.height(), mv, filters)
 }
 
 func frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst frame.Plane, ref frame.Plane,
@@ -148,7 +148,7 @@ func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame
 		return ErrInvalidBatch
 	}
 	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight,
-		geom.bytesPerSample(), bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height,
+		geom.bytesPerSample(), bitDepth, dstX, dstY, blockX, blockY, geom.width(), geom.height(),
 		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters, scratch)
 }
 
@@ -172,16 +172,16 @@ func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundCo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.Width)
+	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.width())
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.Height)
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.height())
 	if err != nil {
 		return ErrInvalidBatch
 	}
 	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), bitDepth,
-		geom.Width, geom.Height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
+		geom.width(), geom.height(), startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

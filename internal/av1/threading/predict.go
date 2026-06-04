@@ -572,26 +572,26 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 	// spill into the superblock-aligned padding and feed later reads (CfL luma
 	// subsample, CDEF/restoration bottom-edge input). Write the full extent
 	// clamped to the window's writable extent rather than the cropped-visible
-	// geom.Width/Height. predWidth/predHeight stay un-clipped for edge weighting.
+	// geom width/height. predWidth/predHeight stay un-clipped for edge weighting.
 	writeWidth, writeHeight, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, geom.X, geom.Y, predWidth, predHeight)
 	if !ok {
-		writeWidth, writeHeight = geom.Width, geom.Height
+		writeWidth, writeHeight = geom.width(), geom.height()
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if visit.Prediction.Palette.UVSize > 0 {
-		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.Width, geom.Height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, 0, 0); err != nil {
+		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, 0, 0); err != nil {
 			return err
 		}
 		return nil
 	}
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
 	if angle, ok := frameWorkChromaIntraDirectionalAngle(visit.Prediction.ChromaMode, visit.Prediction.ChromaAngleDelta); ok {
-		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, uint32(region.MIColEnd), uint32(region.MIRowEnd), geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, geom.SubsamplingX, geom.SubsamplingY)
-		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
+		allowTopRight, allowBottomLeft := frameWorkChromaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, uint32(region.MIColEnd), uint32(region.MIRowEnd), geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), geom.SubsamplingX, geom.SubsamplingY)
+		edges, err := frameWorkDirectionalPredictionEdges(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.ChromaIntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, geom.Width, geom.Height, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), geom.width(), geom.height(), angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -719,7 +719,7 @@ func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockL
 	// luma block (it has no boundary clamp; the trailing rows/cols of a
 	// transform crossing the cropped edge were genuinely reconstructed into the
 	// superblock-aligned padding). Subsample the full chroma extent
-	// (fullWidth x fullHeight) rather than the cropped-visible geom.Width/Height
+	// (fullWidth x fullHeight) rather than the cropped-visible geom width/height
 	// so the CfL AC matches libaom exactly. cfl_pad (PadCFLReconQ3) only
 	// replicates when a stored dimension is short of the full extent, which now
 	// happens solely on genuine overrun past the underlying allocation.
@@ -794,7 +794,7 @@ func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockL
 	// superblock-aligned writable window, matching libaom.
 	writeWidth, writeHeight, ok := frameWorkClipVisiblePixelsToWindow(geom.Window, geom.X, geom.Y, fullWidth, fullHeight)
 	if !ok {
-		writeWidth, writeHeight = geom.Width, geom.Height
+		writeWidth, writeHeight = geom.width(), geom.height()
 	}
 	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, false)
 	if err != nil {
@@ -1054,11 +1054,11 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if cellX < geom.X || cellY < geom.Y {
 			return ErrInvalidBatch
 		}
-		if cellX+width > geom.X+geom.Width {
-			width = geom.X + geom.Width - cellX
+		if cellX+width > geom.X+geom.width() {
+			width = geom.X + geom.width() - cellX
 		}
-		if cellY+height > geom.Y+geom.Height {
-			height = geom.Y + geom.Height - cellY
+		if cellY+height > geom.Y+geom.height() {
+			height = geom.Y + geom.height() - cellY
 		}
 		if width <= 0 || height <= 0 {
 			continue
@@ -1149,11 +1149,11 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFiltersPtr(index in
 			return ErrInvalidBatch
 		}
 		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
-			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
+			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
 	model := visit.Prediction.GlobalWarpedMotion
-	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1192,13 +1192,21 @@ func (b *FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoo
 	if outputSubX != subsamplingX || outputSubY != subsamplingY {
 		return ErrInvalidBatch
 	}
+	width8, ok := frameWorkPredictionBlockExtent(width)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	height8, ok := frameWorkPredictionBlockExtent(height)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	geom := frameWorkPredictionPlaneGeometry{
 		Output:         output,
 		Window:         window,
 		X:              x,
 		Y:              y,
-		Width:          width,
-		Height:         height,
+		Width:          width8,
+		Height:         height8,
 		SubsamplingX:   subsamplingX,
 		SubsamplingY:   subsamplingY,
 		BytesPerSample: bytesPerSample,
@@ -1217,14 +1225,14 @@ func (b *FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoo
 	}
 	srcX := geom.X + colOffset
 	srcY := geom.Y + rowOffset
-	if srcX < 0 || srcY < 0 || srcX+geom.Width > geom.Output.Width || srcY+geom.Height > geom.Output.Height {
+	if srcX < 0 || srcY < 0 || srcX+geom.width() > geom.Output.Width || srcY+geom.height() > geom.Output.Height {
 		return ErrInvalidBatch
 	}
-	rowBytes, ok := frameWorkCheckedMul(geom.Width, geom.bytesPerSample())
+	rowBytes, ok := frameWorkCheckedMul(geom.width(), geom.bytesPerSample())
 	if !ok {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < geom.Height; row++ {
+	for row := 0; row < geom.height(); row++ {
 		srcOff, ok := frameWorkPlaneSampleOffset(geom.Output, geom.bytesPerSample(), srcX, srcY+row)
 		if !ok {
 			return ErrInvalidBatch
@@ -1263,11 +1271,11 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	if err != nil || !ok {
 		return err
 	}
-	inter, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	inter, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		return err
 	}
-	intra, err := frameWorkInterScratchPlane(scratch.Second[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	intra, err := frameWorkInterScratchPlane(scratch.Second[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		return err
 	}
@@ -1277,7 +1285,7 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	// not disable the global-warp predictor. Stage the warp in the inter scratch,
 	// matching the non-inter-intra global-warp path; chroma planes < 8 and scaled
 	// references fall back to the translational predictor as libaom does.
-	if visit.Prediction.GlobalWarpedMotionValid && geom.Width >= 8 && geom.Height >= 8 {
+	if visit.Prediction.GlobalWarpedMotionValid && geom.width() >= 8 && geom.height() >= 8 {
 		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
 			return err
 		}
@@ -1291,7 +1299,7 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	// libaom av1_build_intra_predictors_for_interintra() builds the intra part at
 	// the full plane-block dimensions (pd->width/height, plane_bsize). When the
 	// block straddles the right/bottom frame edge the visible extent
-	// (geom.Width/Height) is not a valid intra block size, so the smooth/DC
+	// (geom width/height) is not a valid intra block size, so the smooth/DC
 	// weight tables and edge lengths must be selected from the full plane-block
 	// extent while only the visible sub-rectangle is written into the intra
 	// scratch (the blend below combines just that visible extent).
@@ -1301,15 +1309,15 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), predWidth, predHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, geom.Width, geom.Height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, geom.width(), geom.height(), predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	mask := scratch.Mask[:]
-	maskStride := geom.Width
+	maskStride := geom.width()
 	maskSubX := false
 	maskSubY := false
 	if visit.Prediction.InterIntra.UseWedge {
@@ -1344,7 +1352,7 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 		}
 		mask = mask[:predWidth*predHeight]
 	}
-	return frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask, maskStride, maskSubX, maskSubY)
+	return frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), mask, maskStride, maskSubX, maskSubY)
 }
 
 func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) bool {
@@ -1426,11 +1434,11 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFiltersPtr(index int, vis
 			return ErrInvalidBatch
 		}
 		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
-			geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
+			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
 	model := visit.Prediction.WarpedMotion
-	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1468,7 +1476,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	if err := b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
 		return err
 	}
-	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		return err
 	}
@@ -1478,9 +1486,9 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	// In 4:2:0 an 8x8 luma OBMC block has a 4x4 chroma plane, so its chroma
 	// above-blend is dropped while the luma above-blend (never <8x8 for OBMC)
 	// is kept. The left column is always predicted (dir==1 is never skipped).
-	skipAbove := (geom.Width == 4 && geom.Height == 4) ||
-		(geom.Width == 8 && geom.Height == 4) ||
-		(geom.Width == 4 && geom.Height == 8)
+	skipAbove := (geom.width() == 4 && geom.height() == 4) ||
+		(geom.width() == 8 && geom.height() == 4) ||
+		(geom.width() == 4 && geom.height() == 8)
 	if !skipAbove {
 		aboveCount := int(neighbors.AboveCount)
 		for i := 0; i < aboveCount; i++ {
@@ -1556,7 +1564,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	}
 	motionResult := visit.Prediction.InterMotion
 	bitDepth := b.Sequence.ColorConfig.BitDepth
-	warp := geom.Width >= 8 && geom.Height >= 8
+	warp := geom.width() >= 8 && geom.height() >= 8
 	warp0 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[0]
 	warp1 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[1]
 	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, visit.Prediction.GlobalWarpedMotionCompound[0], &scratch.Scaled, &scratch.Compound); err != nil {
@@ -1571,7 +1579,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		if err != nil {
 			return err
 		}
-		if err := motion.BlendCompoundAvg(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.Width, geom.Height, fwdOffset, bckOffset); err != nil {
+		if err := motion.BlendCompoundAvg(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), fwdOffset, bckOffset); err != nil {
 			return ErrInvalidBatch
 		}
 	case tile.CompoundTypeWedge:
@@ -1583,7 +1591,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		if err := frameWorkBuildWedgeMask(scratch.Mask[:], maskStride, visit.Block.Size, blend.WedgeIndex, blend.WedgeSign); err != nil {
 			return err
 		}
-		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 			return ErrInvalidBatch
 		}
 	case tile.CompoundTypeDiffWtd:
@@ -1596,11 +1604,11 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		}
 		maskStride := lumaWidth
 		if plane == FrameWorkPlaneY {
-			if err := motion.BuildDiffWtdMaskD16(scratch.Mask[:], maskStride, &scratch.Conv0, &scratch.Conv1, bitDepth, geom.Width, geom.Height, blend.MaskType == tile.DiffWtdMaskType38Inv); err != nil {
+			if err := motion.BuildDiffWtdMaskD16(scratch.Mask[:], maskStride, &scratch.Conv0, &scratch.Conv1, bitDepth, geom.width(), geom.height(), blend.MaskType == tile.DiffWtdMaskType38Inv); err != nil {
 				return ErrInvalidBatch
 			}
 		}
-		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.Width, geom.Height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 			return ErrInvalidBatch
 		}
 	default:
@@ -1630,7 +1638,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 		return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, b.Sequence.ColorConfig.BitDepth, mv, filters, scaledScratch)
 	}
 	if useWarp {
-		if err := motion.PredictWarpedCompoundToConvBuf(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		if err := motion.PredictWarpedCompoundToConvBuf(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -1639,7 +1647,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, refX, refY, geom.Width, geom.Height, subX, subY, filters, compoundScratch); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, refX, refY, geom.width(), geom.height(), subX, subY, filters, compoundScratch); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1726,11 +1734,11 @@ type frameWorkPredictionPlaneGeometry struct {
 
 	X      int
 	Y      int
-	Width  int
-	Height int
+	Width  uint8
+	Height uint8
 
-	WriteWidth  int
-	WriteHeight int
+	WriteWidth  uint8
+	WriteHeight uint8
 
 	// CodedWidth / CodedHeight are the current frame's coded (cropped) plane
 	// dimensions. They drive the reference same-size / scale-factor decision
@@ -1749,6 +1757,22 @@ type frameWorkPredictionPlaneGeometry struct {
 
 func (g frameWorkPredictionPlaneGeometry) bytesPerSample() int {
 	return int(g.BytesPerSample)
+}
+
+func (g frameWorkPredictionPlaneGeometry) width() int {
+	return int(g.Width)
+}
+
+func (g frameWorkPredictionPlaneGeometry) height() int {
+	return int(g.Height)
+}
+
+func (g frameWorkPredictionPlaneGeometry) writeWidth() int {
+	return int(g.WriteWidth)
+}
+
+func (g frameWorkPredictionPlaneGeometry) writeHeight() int {
+	return int(g.WriteHeight)
 }
 
 func (g frameWorkPredictionPlaneGeometry) codedDimensions() (int, int, bool) {
@@ -1787,6 +1811,13 @@ func frameWorkPredictionBytesPerSample(v int) (uint8, bool) {
 	return uint8(v), true
 }
 
+func frameWorkPredictionBlockExtent(v int) (uint8, bool) {
+	if v <= 0 || v > 128 {
+		return 0, false
+	}
+	return uint8(v), true
+}
+
 func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, block, plane)
 	if err != nil || !ok {
@@ -1809,13 +1840,13 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	writeWidth := geom.WriteWidth
-	writeHeight := geom.WriteHeight
+	writeWidth := geom.writeWidth()
+	writeHeight := geom.writeHeight()
 	if writeWidth <= 0 {
-		writeWidth = geom.Width
+		writeWidth = geom.width()
 	}
 	if writeHeight <= 0 {
-		writeHeight = geom.Height
+		writeHeight = geom.height()
 	}
 	if !sameSize {
 		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
@@ -1835,7 +1866,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	// stays wider, and libaom keeps the 8-tap filter; clipping the filter
 	// block size to the visible extent would wrongly switch to the 4-tap
 	// filter and diverge by +-1 on the edge chroma samples. For luma and
-	// interior chroma the un-clipped extent equals geom.Width/Height (no-op).
+	// interior chroma the un-clipped extent equals geom width/height (no-op).
 	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, writeWidth, writeHeight, filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
@@ -1884,7 +1915,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	// shrinks to <= 4 must still use the wide filter, or the staged inter
 	// predictor diverges by +-1 on the edge chroma samples (the surviving
 	// Class-B 10-bit reconstruction gap).
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.Width, geom.Height, filterW, filterH, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.width(), geom.height(), filterW, filterH, subX, subY, filters); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1911,10 +1942,10 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	}
 	if !sameSize {
 		return frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
-			0, 0, geom.X, geom.Y, geom.Width, geom.Height, mv, filters, frameWorkScaledConvolveScratch(scratch))
+			0, 0, geom.X, geom.Y, geom.width(), geom.height(), mv, filters, frameWorkScaledConvolveScratch(scratch))
 	}
 	return motion.PredictWarpedPlaneBlockToScratchBitDepth(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
-		geom.X, geom.Y, geom.Width, geom.Height, model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY)
+		geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY)
 }
 
 func (b *FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor, scratch *FrameWorkInterPredictionScratch) error {
@@ -1953,11 +1984,11 @@ func (b *FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fra
 	if err != nil {
 		return err
 	}
-	if height > geom.Height {
-		height = geom.Height
+	if height > geom.height() {
+		height = geom.height()
 	}
-	if width > geom.Width-relX {
-		width = geom.Width - relX
+	if width > geom.width()-relX {
+		width = geom.width() - relX
 	}
 	if width <= 0 || height <= 0 {
 		return ErrInvalidBatch
@@ -2007,11 +2038,11 @@ func (b *FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom fram
 	if err != nil {
 		return err
 	}
-	if width > geom.Width {
-		width = geom.Width
+	if width > geom.width() {
+		width = geom.width()
 	}
-	if height > geom.Height-relY {
-		height = geom.Height - relY
+	if height > geom.height()-relY {
+		height = geom.height() - relY
 	}
 	if width <= 0 || height <= 0 {
 		return ErrInvalidBatch
@@ -2143,16 +2174,32 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
+	width8, ok := frameWorkPredictionBlockExtent(width)
+	if !ok {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	height8, ok := frameWorkPredictionBlockExtent(height)
+	if !ok {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	writeWidth8, ok := frameWorkPredictionBlockExtent(writeWidth)
+	if !ok {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
+	writeHeight8, ok := frameWorkPredictionBlockExtent(writeHeight)
+	if !ok {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
 	output = frameWorkExtendPlaneToClip(output, window, int(bytesPerSample))
 	return frameWorkPredictionPlaneGeometry{
 		Output:         output,
 		Window:         window,
 		X:              x,
 		Y:              y,
-		Width:          width,
-		Height:         height,
-		WriteWidth:     writeWidth,
-		WriteHeight:    writeHeight,
+		Width:          width8,
+		Height:         height8,
+		WriteWidth:     writeWidth8,
+		WriteHeight:    writeHeight8,
 		CodedWidth:     codedWidth32,
 		CodedHeight:    codedHeight32,
 		SubsamplingX:   subsamplingX,
@@ -2850,7 +2897,7 @@ func frameWorkOBMCLeftWidth(size tile.BlockSize, geom frameWorkPredictionPlaneGe
 // bottom frame edge: there clippedSpan shrinks below libaom's op_mi_size and
 // would wrongly switch goav1 to the 4-tap filter. To keep the common (non-edge)
 // path byte-identical, only recompute when the plane is frame-clipped vertically
-// (geom.Height below the un-clipped plane extent); otherwise return clippedSpan
+// (geom.height() below the un-clipped plane extent); otherwise return clippedSpan
 // unchanged. The result drives kernel selection only; the blend write stays
 // clipped to the visible plane by the caller.
 func frameWorkOBMCLeftFilterHeight(block tile.BlockVisit, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, color parser.ColorConfig, plane FrameWorkPlane, relY int, clippedSpan int) (int, error) {
@@ -2858,7 +2905,7 @@ func frameWorkOBMCLeftFilterHeight(block tile.BlockVisit, neighbor tile.Overlapp
 	if err != nil {
 		return 0, err
 	}
-	if geom.Height >= extentH {
+	if geom.height() >= extentH {
 		// Not bottom-clipped: clippedSpan already matches libaom's op_mi_size.
 		return clippedSpan, nil
 	}
@@ -2893,7 +2940,7 @@ func frameWorkOBMCAboveFilterWidth(block tile.BlockVisit, neighbor tile.Overlapp
 	if err != nil {
 		return 0, err
 	}
-	if geom.Width >= extentW {
+	if geom.width() >= extentW {
 		return clippedSpan, nil
 	}
 	blockDims, ok := block.Size.Dimensions()

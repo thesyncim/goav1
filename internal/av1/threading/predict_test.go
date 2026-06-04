@@ -2868,11 +2868,11 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
 	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
-		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
 
-	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.width(), geom.height())
 }
 
 // TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation
@@ -2921,11 +2921,11 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
 	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
-		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
 
-	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.width(), geom.height())
 }
 
 // TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledConvolver
@@ -3000,25 +3000,25 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
 	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
-		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
+		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("base scaled-ref err=%v", err)
 	}
 	overlap, err := frameWorkOBMCLeftWidth(visit.Block.Size, geom)
 	if err != nil {
 		t.Fatalf("OBMC left width err=%v", err)
 	}
-	if overlap <= 0 || overlap > geom.Width {
-		t.Fatalf("unexpected overlap=%d width=%d", overlap, geom.Width)
+	if overlap <= 0 || overlap > geom.width() {
+		t.Fatalf("unexpected overlap=%d width=%d", overlap, geom.width())
 	}
 	height, ok := frameWorkOBMCPlaneSpan(visit.Prediction.OverlappableNeighbors.Left[0].Span4, geom.SubsamplingY)
 	if !ok {
 		t.Fatalf("OBMC plane span invalid")
 	}
-	if height > geom.Height {
-		height = geom.Height
+	if height > geom.height() {
+		height = geom.height()
 	}
 	var neighborScratch FrameWorkInterPredictionScratch
-	neighbor, err := frameWorkInterScratchPlane(neighborScratch.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	neighbor, err := frameWorkInterScratchPlane(neighborScratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		t.Fatalf("neighbor scratch err=%v", err)
 	}
@@ -3038,7 +3038,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 		t.Fatalf("blend OBMC H err=%v", err)
 	}
 
-	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.width(), geom.height())
 }
 
 // TestFrameWorkBatchPredictBlockInterWarpScaledAllocs locks the steady-state
@@ -3140,11 +3140,11 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	var interBuf, intraBuf FrameWorkInterPredictionScratch
-	inter, err := frameWorkInterScratchPlane(interBuf.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	inter, err := frameWorkInterScratchPlane(interBuf.First[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		t.Fatalf("inter scratch err=%v", err)
 	}
-	intra, err := frameWorkInterScratchPlane(intraBuf.Second[:], geom.bytesPerSample(), geom.Width, geom.Height)
+	intra, err := frameWorkInterScratchPlane(intraBuf.Second[:], geom.bytesPerSample(), geom.width(), geom.height())
 	if err != nil {
 		t.Fatalf("intra scratch err=%v", err)
 	}
@@ -3155,22 +3155,22 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	var intraScratch FrameWorkIntraPredictionScratch
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &intraScratch, true)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), edgeBlock, &intraScratch, true)
 	if err != nil {
 		t.Fatalf("intra edges err=%v", err)
 	}
-	if err := prediction.PredictIntraPlaneBlock(intra, geom.bytesPerSample(), want.Format.BitDepth, 0, 0, geom.Width, geom.Height, prediction.IntraModeSmooth, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlock(intra, geom.bytesPerSample(), want.Format.BitDepth, 0, 0, geom.width(), geom.height(), prediction.IntraModeSmooth, edges); err != nil {
 		t.Fatalf("intra predict err=%v", err)
 	}
 	var mask [frameWorkInterPredictionMaxMaskSamples]byte
-	if err := frameWorkBuildInterIntraMask(mask[:], geom.Width, geom.Width, geom.Height, tile.InterIntraModeSmooth); err != nil {
+	if err := frameWorkBuildInterIntraMask(mask[:], geom.width(), geom.width(), geom.height(), tile.InterIntraModeSmooth); err != nil {
 		t.Fatalf("build mask err=%v", err)
 	}
-	if err := frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask[:], geom.Width, false, false); err != nil {
+	if err := frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), mask[:], geom.width(), false, false); err != nil {
 		t.Fatalf("blend err=%v", err)
 	}
 
-	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.Width, geom.Height)
+	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, geom.X, geom.Y, geom.width(), geom.height())
 }
 
 // TestFrameWorkBatchPredictBlockInterIntraScaledAllocs locks the steady-state
