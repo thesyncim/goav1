@@ -302,7 +302,7 @@ func (b *FrameWorkBatch) PredictBlockChromaIntra(index int, visit tile.BlockLoop
 	if b.Sequence.ColorConfig.MonoChrome {
 		return nil
 	}
-	if !tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: visit.Block.X4, Y4: visit.Block.Y4}, b.Sequence.ColorConfig) {
+	if !tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: int(visit.Block.X4), Y4: int(visit.Block.Y4)}, b.Sequence.ColorConfig) {
 		return nil
 	}
 	if !visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL || visit.Prediction.CFLAlphaValid {
@@ -326,7 +326,7 @@ func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVi
 		return ErrInvalidBatch
 	}
 	if b.Sequence.ColorConfig.MonoChrome ||
-		!tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: visit.Block.X4, Y4: visit.Block.Y4}, b.Sequence.ColorConfig) {
+		!tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: int(visit.Block.X4), Y4: int(visit.Block.Y4)}, b.Sequence.ColorConfig) {
 		return ErrInvalidBatch
 	}
 	if err := b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneU, scratch); err != nil {
@@ -493,7 +493,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	y := absY - window.Y
 	txX4 := int(tx.X4)
 	txY4 := int(tx.Y4)
-	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, visit.Block.X4, visit.Block.Y4, txX4, txY4)
+	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, int(visit.Block.X4), int(visit.Block.Y4), txX4, txY4)
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
 	if visit.Prediction.Palette.YSize > 0 {
 		baseX, baseY, err := frameWorkBlockLumaPosition(visit.Block)
@@ -626,8 +626,8 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	if err != nil {
 		return err
 	}
-	baseX4 := visit.Block.X4 >> int(frameWorkSubsampleShift(geom.SubsamplingX))
-	baseY4 := visit.Block.Y4 >> int(frameWorkSubsampleShift(geom.SubsamplingY))
+	baseX4 := int(visit.Block.X4) >> int(frameWorkSubsampleShift(geom.SubsamplingX))
+	baseY4 := int(visit.Block.Y4) >> int(frameWorkSubsampleShift(geom.SubsamplingY))
 	txX4 := int(tx.X4)
 	txY4 := int(tx.Y4)
 	offX4 := txX4 - baseX4
@@ -3600,8 +3600,8 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 	}
 	req := tile.TransformTreeRequest{
 		Size:      block.Size,
-		X4:        block.X4,
-		Y4:        block.Y4,
+		X4:        int(block.X4),
+		Y4:        int(block.Y4),
 		VisibleW4: block.VisibleW4,
 		VisibleH4: block.VisibleH4,
 	}
@@ -3635,8 +3635,10 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 	}
 	x >>= ssX
 	y >>= ssY
-	visibleW4 := ((block.X4 + int(block.VisibleW4) + ssX) >> ssX) - (block.X4 >> ssX)
-	visibleH4 := ((block.Y4 + int(block.VisibleH4) + ssY) >> ssY) - (block.Y4 >> ssY)
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
+	visibleW4 := ((blockX4 + int(block.VisibleW4) + ssX) >> ssX) - (blockX4 >> ssX)
+	visibleH4 := ((blockY4 + int(block.VisibleH4) + ssY) >> ssY) - (blockY4 >> ssY)
 	if visibleW4 <= 0 || visibleH4 <= 0 {
 		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 	}
@@ -3809,20 +3811,22 @@ func frameWorkBlockLumaPosition(block tile.BlockVisit) (int, int, error) {
 func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.TransformBlock) (int, int, error) {
 	txX4 := int(tx.X4)
 	txY4 := int(tx.Y4)
-	if txX4 < block.X4 || txY4 < block.Y4 ||
-		txX4+int(tx.VisibleW4) > block.X4+int(block.VisibleW4) ||
-		txY4+int(tx.VisibleH4) > block.Y4+int(block.VisibleH4) {
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
+	if txX4 < blockX4 || txY4 < blockY4 ||
+		txX4+int(tx.VisibleW4) > blockX4+int(block.VisibleW4) ||
+		txY4+int(tx.VisibleH4) > blockY4+int(block.VisibleH4) {
 		return 0, 0, ErrInvalidBatch
 	}
 	baseX, baseY, err := frameWorkBlockLumaPosition(block)
 	if err != nil {
 		return 0, 0, err
 	}
-	offX, ok := frameWorkInt64Mul4(int64(txX4 - block.X4))
+	offX, ok := frameWorkInt64Mul4(int64(txX4 - blockX4))
 	if !ok {
 		return 0, 0, ErrInvalidBatch
 	}
-	offY, ok := frameWorkInt64Mul4(int64(txY4 - block.Y4))
+	offY, ok := frameWorkInt64Mul4(int64(txY4 - blockY4))
 	if !ok {
 		return 0, 0, ErrInvalidBatch
 	}

@@ -50,8 +50,10 @@ func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref Refe
 	if err != nil {
 		return 0, err
 	}
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	if doTL && count < maxWarpSamples && block.HaveTop && block.HaveLeft {
-		if _, ok, err := c.warpSampleGrid(block, ref, block.X4-1, block.Y4-1, 0, -1, 0, -1); err != nil {
+		if _, ok, err := c.warpSampleGrid(block, ref, blockX4-1, blockY4-1, 0, -1, 0, -1); err != nil {
 			return 0, err
 		} else if ok {
 			count++
@@ -75,7 +77,7 @@ func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref Refe
 			// the 3-symbol WARP CDF, desyncing the entropy decoder (av1-1-b10-00-quantizer-25
 			// frame 1 mi(62,64)). topRightInterMotion recovers the SB-above-right cell via
 			// the SBTopRight snapshot, matching libaom xd->mi[-stride + xd->width].
-			trReq := ReferenceMVStackRequest{X4: block.X4, Y4: block.Y4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+			trReq := ReferenceMVStackRequest{X4: blockX4, Y4: blockY4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
 			if motionResult, size, ok := c.topRightInterMotion(trReq, dims); ok {
 				if _, sok := warpSampleFromMotion(motionResult, size, ref, int(dims.W4), 1, 0, -1); sok {
 					count++
@@ -99,10 +101,12 @@ func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref Refer
 	if err != nil {
 		return WarpedMotionModel{}, false, err
 	}
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	if doTL && count < maxWarpSamples && block.HaveTop && block.HaveLeft {
 		// libaom: record_samples(mbmi, pts, pts_inref, 0, -1, 0, -1)
 		// args: row_offset=0, sign_r=-1, col_offset=0, sign_c=-1.
-		if sample, ok, err := c.warpSampleGrid(block, ref, block.X4-1, block.Y4-1, 0, -1, 0, -1); err != nil {
+		if sample, ok, err := c.warpSampleGrid(block, ref, blockX4-1, blockY4-1, 0, -1, 0, -1); err != nil {
 			return WarpedMotionModel{}, false, err
 		} else if ok {
 			samples[count] = sample
@@ -123,7 +127,7 @@ func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref Refer
 			// only snapshots the SB directly above. topRightInterMotion resolves
 			// the SB-above-and-to-the-right via the SBTopRight snapshot, matching
 			// libaom's frame-wide xd->mi[-stride + xd->width] read.
-			trReq := ReferenceMVStackRequest{X4: block.X4, Y4: block.Y4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+			trReq := ReferenceMVStackRequest{X4: blockX4, Y4: blockY4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
 			if motionResult, size, ok := c.topRightInterMotion(trReq, dims); ok {
 				if sample, sok := warpSampleFromMotion(motionResult, size, ref, int(dims.W4), 1, 0, -1); sok {
 					samples[count] = sample
@@ -161,7 +165,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 
 	// Above row: libaom's av1_findSamples scans the row at row_offset=-1.
 	if block.HaveTop {
-		startSlot := block.X4
+		startSlot := int(block.X4)
 		firstSize := c.AboveBlockSize[startSlot]
 		firstW4 := warpNeighborW4(firstSize)
 		if firstW4 <= 0 {
@@ -216,7 +220,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 
 	// Left column: libaom's av1_findSamples scans the column at col_offset=-1.
 	if block.HaveLeft && count < maxWarpSamples {
-		startSlot := block.Y4
+		startSlot := int(block.Y4)
 		firstSize := c.LeftBlockSize[startSlot]
 		firstH4 := warpNeighborH4(firstSize)
 		if firstH4 <= 0 {

@@ -807,7 +807,7 @@ func TestFrameWorkLumaTransformDirectionalExtendedEdgesMatchesLibaomCases(t *tes
 					X4: 24, Y4: 0, Partition: tile.PartitionTBottomSplit, Size: tile.BlockSize16x8,
 					VisibleW4: 4, VisibleH4: 2, HaveLeft: true,
 				}
-				return frameWorkPredictionTransformEdgeBlock(parent, parent.X4, parent.Y4, 24, 1)
+				return frameWorkPredictionTransformEdgeBlock(parent, int(parent.X4), int(parent.Y4), 24, 1)
 			}(),
 			miColEnd: 88, miRowEnd: 72,
 			absX: 96, absY: 4, width: 4, height: 4, wantTopRight: true, wantBottomLeft: true,
@@ -1032,7 +1032,7 @@ func TestFrameWorkChromaDirectionalExtendedEdgesMatchesLibaomCases(t *testing.T)
 					X4: 4, Y4: 0, Partition: tile.PartitionH, Size: tile.BlockSize16x8,
 					VisibleW4: 4, VisibleH4: 2, HaveLeft: true,
 				}
-				return frameWorkPredictionTransformEdgeBlock(parent, parent.X4>>1, parent.Y4>>1, 3, 0)
+				return frameWorkPredictionTransformEdgeBlock(parent, int(parent.X4)>>1, int(parent.Y4)>>1, 3, 0)
 			}(),
 			originX: 8, originY: 0,
 			absX: 12, absY: 0, width: 4, height: 4,

@@ -361,8 +361,7 @@ func (b *FrameWorkBatch) blockCoeffPlane(tilePlane uint8) (FrameWorkPlane, uint,
 func frameWorkBlockCoeffPosition(region FrameWorkJobRegion, visit tile.BlockVisit, block tile.TransformBlock, ssX uint, ssY uint) (int, int, error) {
 	if visit.MICol < region.MIColStart || visit.MIRow < region.MIRowStart ||
 		visit.MIColEnd > region.MIColEnd || visit.MIRowEnd > region.MIRowEnd ||
-		visit.MIColEnd <= visit.MICol || visit.MIRowEnd <= visit.MIRow ||
-		visit.X4 < 0 || visit.Y4 < 0 || block.X4 < 0 || block.Y4 < 0 {
+		visit.MIColEnd <= visit.MICol || visit.MIRowEnd <= visit.MIRow {
 		return 0, 0, ErrInvalidBatch
 	}
 	rootCol := int64(visit.MICol) - int64(visit.X4)

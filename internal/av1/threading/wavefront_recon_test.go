@@ -63,7 +63,7 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 				Block: tile.BlockVisit{
 					MICol: miCol, MIRow: miRow,
 					MIColEnd: miCol + sbMIB, MIRowEnd: miRow + sbMIB,
-					X4: int(miCol), Y4: int(miRow),
+					X4: uint8(miCol), Y4: uint8(miRow),
 					Size:      tile.BlockSize64x64,
 					VisibleW4: sbMIB, VisibleH4: sbMIB,
 					HaveTop:  r > 0,

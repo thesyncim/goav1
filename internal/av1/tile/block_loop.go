@@ -897,6 +897,8 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	}
 	ctx := &scratch.Mode
 	cdef := &scratch.CDEF
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	segmentID := uint8(0)
 	segment := defaultSegmentData()
 	segmentPredicted := false
@@ -914,8 +916,8 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		CDEF:                req.CDEF,
 		SegmentationEnabled: req.Segmentation.Enabled,
 		Segment:             segment,
-		X4:                  block.X4,
-		Y4:                  block.Y4,
+		X4:                  blockX4,
+		Y4:                  blockY4,
 	}
 	prefix, err := s.readBlockModePrefixSyntax(cdfs.Mode, ctx, prefixReq, segmentPredicted)
 	if err != nil {
@@ -936,7 +938,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		return nil, err
 	}
 	prefix.CDEFIndex = cdefIndex
-	if err := ctx.Mark(block.Size, block.X4, block.Y4, prefix); err != nil {
+	if err := ctx.Mark(block.Size, blockX4, blockY4, prefix); err != nil {
 		return nil, err
 	}
 
@@ -978,12 +980,12 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	// `selected_tx_size`, which propagates into a diverging adapted CDF
 	// across frame 0 → frame 1.
 	ctx.TxNeighborValid = false
-	if block.X4 >= 0 && block.X4 < MaxBlockModeSlots && block.Y4 >= 0 && block.Y4 < MaxBlockModeSlots {
+	if blockX4 < MaxBlockModeSlots && blockY4 < MaxBlockModeSlots {
 		ctx.TxNeighborValid = true
-		ctx.TxAboveNeighborIntra = ctx.AboveIntra[block.X4]
-		ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[block.X4]
-		ctx.TxLeftNeighborIntra = ctx.LeftIntra[block.Y4]
-		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[block.Y4]
+		ctx.TxAboveNeighborIntra = ctx.AboveIntra[blockX4]
+		ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[blockX4]
+		ctx.TxLeftNeighborIntra = ctx.LeftIntra[blockY4]
+		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[blockY4]
 	}
 
 	var prediction BlockPredictionModeResult
@@ -1059,14 +1061,16 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 }
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
+	blockX4 := int(block.X4)
+	blockY4 := int(block.Y4)
 	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
 		FrameType:           req.FrameType,
 		AllowIntrabc:        req.AllowIntrabc,
 		SkipMode:            prefix.SkipMode,
 		SegmentationEnabled: req.Segmentation.Enabled,
 		Segment:             segment,
-		X4:                  block.X4,
-		Y4:                  block.Y4,
+		X4:                  blockX4,
+		Y4:                  blockY4,
 		HaveTop:             block.HaveTop,
 		HaveLeft:            block.HaveLeft,
 	})
@@ -1097,7 +1101,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.InterMotionValid = true
 			result.MVResiduals = motionResult.Residuals
 			result.MVResidualValid = motionResult.ResidualValid
-			if err := ctx.MarkIntrabcMotion(block.Size, block.X4, block.Y4, result.InterMotion, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
+			if err := ctx.MarkIntrabcMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
 				return BlockPredictionModeResult{}, err
 			}
 		}
@@ -1111,8 +1115,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			SkipModeRefs:        req.SkipModeRefs,
 			SegmentationEnabled: req.Segmentation.Enabled,
 			Segment:             segment,
-			X4:                  block.X4,
-			Y4:                  block.Y4,
+			X4:                  blockX4,
+			Y4:                  blockY4,
 			HaveTop:             block.HaveTop,
 			HaveLeft:            block.HaveLeft,
 		})
@@ -1127,8 +1131,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			stack, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
 				Size:             block.Size,
 				References:       refs,
-				X4:               block.X4,
-				Y4:               block.Y4,
+				X4:               blockX4,
+				Y4:               blockY4,
 				HaveTop:          block.HaveTop,
 				HaveLeft:         block.HaveLeft,
 				HaveTopRight:     blockHasTopRight(req.SBSizeMIB, block),
@@ -1227,8 +1231,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				if req.DecodeMotionModes {
 					overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
 						Size:         block.Size,
-						X4:           block.X4,
-						Y4:           block.Y4,
+						X4:           blockX4,
+						Y4:           blockY4,
 						VisibleW4:    block.VisibleW4,
 						VisibleH4:    block.VisibleH4,
 						HaveTop:      block.HaveTop,
@@ -1341,8 +1345,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						OrderHintBits:         req.OrderHintBits,
 						CurrentOrderHint:      req.CurrentOrderHint,
 						RefOrderHint:          blockReferenceOrderHints(refs, req.ReferenceOrderHints),
-						X4:                    block.X4,
-						Y4:                    block.Y4,
+						X4:                    blockX4,
+						Y4:                    blockY4,
 						HaveTop:               block.HaveTop,
 						HaveLeft:              block.HaveLeft,
 					})
@@ -1361,8 +1365,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					MotionMode:       motionMode,
 					GlobalTypes:      blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes),
 					SkipMode:         prefix.SkipMode,
-					X4:               block.X4,
-					Y4:               block.Y4,
+					X4:               blockX4,
+					Y4:               blockY4,
 					HaveTop:          block.HaveTop,
 					HaveLeft:         block.HaveLeft,
 				})
@@ -1380,8 +1384,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				// the anchor cell with the just-decoded filters and the
 				// caller-supplied anchor MV/reference (the neighbor
 				// cells come straight off the grid).
-				if hasChroma := hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color); hasChroma {
-					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, block.X4, block.Y4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
+				if hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color); hasChroma {
+					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
 						selfCell := &sub.Cells[sub.Count-1]
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref[0]
@@ -1390,10 +1394,10 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotion(block.Size, block.X4, block.Y4, result.InterMotion, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
+				if err := ctx.MarkInterMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}
-				if err := ctx.MarkInterFilters(block.Size, block.X4, block.Y4, refs, filters); err != nil {
+				if err := ctx.MarkInterFilters(block.Size, blockX4, blockY4, refs, filters); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter filters: %w", err)
 				}
 				if result.InterIntraValid && result.InterIntra.Enabled {
@@ -1404,23 +1408,23 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					// INTRA_FRAME bookkeeping for inter-intra blocks). The
 					// fallback path below also calls MarkInterIntra after
 					// its MarkInter.
-					if err := ctx.MarkInterIntra(block.Size, block.X4, block.Y4); err != nil {
+					if err := ctx.MarkInterIntra(block.Size, blockX4, blockY4); err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("mark inter-intra neighbors: %w", err)
 					}
 				}
 				if result.CompoundBlendValid {
-					if err := ctx.MarkCompoundBlend(block.Size, block.X4, block.Y4, result.CompoundBlend); err != nil {
+					if err := ctx.MarkCompoundBlend(block.Size, blockX4, blockY4, result.CompoundBlend); err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("mark compound blend: %w", err)
 					}
 				}
 				return result, nil
 			}
 		}
-		if err := ctx.MarkInter(block.Size, block.X4, block.Y4, refs, hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)); err != nil {
+		if err := ctx.MarkInter(block.Size, blockX4, blockY4, refs, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
 			return BlockPredictionModeResult{}, fmt.Errorf("mark inter references: %w", err)
 		}
 		if result.InterIntraValid && result.InterIntra.Enabled {
-			if err := ctx.MarkInterIntra(block.Size, block.X4, block.Y4); err != nil {
+			if err := ctx.MarkInterIntra(block.Size, blockX4, blockY4); err != nil {
 				return BlockPredictionModeResult{}, fmt.Errorf("mark inter-intra neighbors: %w", err)
 			}
 		}
@@ -1430,18 +1434,18 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	mode, err := s.ReadLumaIntraMode(cdfs.Intra, ctx, LumaIntraModeRequest{
 		FrameType: req.FrameType,
 		Size:      block.Size,
-		X4:        block.X4,
-		Y4:        block.Y4,
+		X4:        blockX4,
+		Y4:        blockY4,
 	})
 	if err != nil {
 		return BlockPredictionModeResult{}, err
 	}
-	smoothNeighbor, err := ctx.IntraEdgeSmoothNeighbor(block.X4, block.Y4, block.HaveTop, block.HaveLeft)
+	smoothNeighbor, err := ctx.IntraEdgeSmoothNeighbor(blockX4, blockY4, block.HaveTop, block.HaveLeft)
 	if err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	result.IntraEdgeSmoothNeighbor = smoothNeighbor
-	if err := ctx.MarkIntra(block.Size, block.X4, block.Y4, true, mode); err != nil {
+	if err := ctx.MarkIntra(block.Size, blockX4, blockY4, true, mode); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	result.LumaMode = mode
@@ -1453,7 +1457,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		return BlockPredictionModeResult{}, err
 	}
 	result.LumaAngleDelta = lumaAngleDelta
-	hasChroma := hasChromaForBlock(block.Size, block.X4, block.Y4, req.Color)
+	hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
 	if hasChroma {
 		lossless := req.Lossless || req.Segmentation.Lossless[segmentID]
 		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, lossless)
@@ -1474,12 +1478,12 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		if err != nil {
 			return BlockPredictionModeResult{}, err
 		}
-		chromaSmoothNeighbor, err := ctx.ChromaIntraEdgeSmoothNeighbor(block.X4, block.Y4, chromaHaveTop, chromaHaveLeft, req.Color.SubsamplingX, req.Color.SubsamplingY)
+		chromaSmoothNeighbor, err := ctx.ChromaIntraEdgeSmoothNeighbor(blockX4, blockY4, chromaHaveTop, chromaHaveLeft, req.Color.SubsamplingX, req.Color.SubsamplingY)
 		if err != nil {
 			return BlockPredictionModeResult{}, err
 		}
 		result.ChromaIntraEdgeSmoothNeighbor = chromaSmoothNeighbor
-		if err := ctx.MarkChromaIntra(block.Size, block.X4, block.Y4, true, chromaMode); err != nil {
+		if err := ctx.MarkChromaIntra(block.Size, blockX4, blockY4, true, chromaMode); err != nil {
 			return BlockPredictionModeResult{}, err
 		}
 		if chromaMode == ChromaIntraModeCFL {
@@ -1504,8 +1508,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		AllowScreenContentTools: req.AllowScreenContentTools,
 		Size:                    block.Size,
 		LumaMode:                mode,
-		X4:                      block.X4,
-		Y4:                      block.Y4,
+		X4:                      blockX4,
+		Y4:                      blockY4,
 		HaveTop:                 block.HaveTop,
 		HaveLeft:                block.HaveLeft,
 		BitDepth:                req.Color.BitDepth,
@@ -1516,10 +1520,10 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	}, &result.Palette, paletteMap); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
-	if err := ctx.MarkPaletteY(block.Size, block.X4, block.Y4, result.Palette); err != nil {
+	if err := ctx.MarkPaletteY(block.Size, blockX4, blockY4, result.Palette); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
-	if err := ctx.MarkPaletteUV(block.Size, block.X4, block.Y4, result.Palette); err != nil {
+	if err := ctx.MarkPaletteUV(block.Size, blockX4, blockY4, result.Palette); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{
@@ -1537,8 +1541,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		AllowScreenContentTools: req.AllowScreenContentTools,
 		Size:                    block.Size,
 		LumaMode:                mode,
-		X4:                      block.X4,
-		Y4:                      block.Y4,
+		X4:                      blockX4,
+		Y4:                      blockY4,
 		HaveTop:                 block.HaveTop,
 		HaveLeft:                block.HaveLeft,
 		BitDepth:                req.Color.BitDepth,
@@ -1594,7 +1598,7 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 	predicted := false
 	if req.Segmentation.TemporalUpdate && !skip {
 		var err error
-		predicted, err = s.ReadSegmentPrediction(cdfs, ctx, block.X4, block.Y4)
+		predicted, err = s.ReadSegmentPrediction(cdfs, ctx, int(block.X4), int(block.Y4))
 		if err != nil {
 			return 0, false, parser.SegmentData{}, err
 		}
@@ -1727,8 +1731,8 @@ func blockLoopCoeffRequest[T BlockLoopCoeffController](req BlockLoopRequest, coe
 	return BlockCoeffRequest{
 		Transform: TransformTreeRequest{
 			Size:          block.Size,
-			X4:            block.X4,
-			Y4:            block.Y4,
+			X4:            int(block.X4),
+			Y4:            int(block.Y4),
 			VisibleW4:     block.VisibleW4,
 			VisibleH4:     block.VisibleH4,
 			HaveTop:       block.HaveTop,
@@ -1815,8 +1819,8 @@ func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block Block
 	}
 	stack, err := ctx.IntrabcReferenceDVStack(ReferenceMVStackRequest{
 		Size:         block.Size,
-		X4:           block.X4,
-		Y4:           block.Y4,
+		X4:           int(block.X4),
+		Y4:           int(block.Y4),
 		HaveTop:      block.HaveTop,
 		HaveLeft:     block.HaveLeft,
 		HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),

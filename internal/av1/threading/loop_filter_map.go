@@ -25,9 +25,7 @@ type FrameWorkLoopFilterBlock struct {
 // FrameWorkLoopFilterBlockFromVisit narrows a decoded block visit to the
 // loop-filter map representation.
 func FrameWorkLoopFilterBlockFromVisit(block tile.BlockVisit) (FrameWorkLoopFilterBlock, error) {
-	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow ||
-		block.X4 < 0 || block.Y4 < 0 ||
-		block.X4 > int(^uint8(0)) || block.Y4 > int(^uint8(0)) {
+	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow {
 		return FrameWorkLoopFilterBlock{}, ErrInvalidBatch
 	}
 	return FrameWorkLoopFilterBlock{
@@ -35,8 +33,8 @@ func FrameWorkLoopFilterBlockFromVisit(block tile.BlockVisit) (FrameWorkLoopFilt
 		MIRow:     block.MIRow,
 		MIColEnd:  block.MIColEnd,
 		MIRowEnd:  block.MIRowEnd,
-		X4:        uint8(block.X4),
-		Y4:        uint8(block.Y4),
+		X4:        block.X4,
+		Y4:        block.Y4,
 		Size:      block.Size,
 		VisibleW4: block.VisibleW4,
 		VisibleH4: block.VisibleH4,

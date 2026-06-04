@@ -633,8 +633,8 @@ func TestDecodeBlockLoopCoefficientSelectorDoesNotRequirePredictionModes(t *test
 			return BlockCoeffRequest{
 				Transform: TransformTreeRequest{
 					Size:          visit.Block.Size,
-					X4:            visit.Block.X4,
-					Y4:            visit.Block.Y4,
+					X4:            int(visit.Block.X4),
+					Y4:            int(visit.Block.Y4),
 					VisibleW4:     visit.Block.VisibleW4,
 					VisibleH4:     visit.Block.VisibleH4,
 					Color:         parser.ColorConfig{MonoChrome: true},

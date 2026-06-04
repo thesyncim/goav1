@@ -25,8 +25,8 @@ type BlockVisit struct {
 	MIRow    uint32
 	MIColEnd uint32
 	MIRowEnd uint32
-	X4       int
-	Y4       int
+	X4       uint8
+	Y4       uint8
 
 	Level     BlockLevel
 	Partition Partition
@@ -310,8 +310,8 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 	if miEndCol <= miCol || miEndRow <= miRow {
 		return nil
 	}
-	x4 := int(miCol - rootCol)
-	y4 := int(miRow - rootRow)
+	x4 := uint8(miCol - rootCol)
+	y4 := uint8(miRow - rootRow)
 	w.stats.Blocks++
 	return w.visit(BlockVisit{
 		MICol:     miCol,
