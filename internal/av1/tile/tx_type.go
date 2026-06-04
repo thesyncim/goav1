@@ -86,17 +86,15 @@ type InterTransformTypeMap struct {
 }
 
 func (s *IntraCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, qIndex uint8, lumaMode IntraMode, chromaMode ChromaIntraMode) {
-	*s = IntraCoeffTransformSelector{
-		State:         state,
-		CDFs:          cdfs,
-		ReducedTXSet:  reducedTXSet,
-		SkipTransform: skipTransform,
-		Lossless:      lossless,
-		QIndexKnown:   true,
-		QIndex:        qIndex,
-		LumaMode:      lumaMode,
-		ChromaMode:    chromaMode,
-	}
+	s.State = state
+	s.CDFs = cdfs
+	s.ReducedTXSet = reducedTXSet
+	s.SkipTransform = skipTransform
+	s.Lossless = lossless
+	s.QIndexKnown = true
+	s.QIndex = qIndex
+	s.LumaMode = lumaMode
+	s.ChromaMode = chromaMode
 }
 
 func (s *IntraCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformRequest) (transform.Type, error) {
