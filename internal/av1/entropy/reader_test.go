@@ -3,7 +3,24 @@ package entropy
 import (
 	"errors"
 	"testing"
+	"unsafe"
 )
+
+func TestReaderHotStructSizes(t *testing.T) {
+	tests := []struct {
+		name string
+		size uintptr
+		max  uintptr
+	}{
+		{name: "Reader", size: unsafe.Sizeof(Reader{}), max: 64},
+		{name: "Cursor", size: unsafe.Sizeof(Cursor{}), max: 64},
+	}
+	for _, tt := range tests {
+		if tt.size > tt.max {
+			t.Fatalf("%s size=%d max=%d", tt.name, tt.size, tt.max)
+		}
+	}
+}
 
 func TestReaderReadBitKnownValues(t *testing.T) {
 	r := NewReader([]byte{0x00})
@@ -719,6 +736,8 @@ func benchStream() []byte {
 // and each reported ns/op approximates one steady-state symbol decode.
 const benchSymbolsPerOp = 4096
 
+var benchmarkReaderSink int
+
 // BenchmarkReaderSymbolStream decodes a long run of CDF-adapted symbols from a
 // single Reader, isolating ReadSymbol's per-symbol cost (the decoder hot path).
 // CDF state is reset each batch so adaptation stays deterministic.
@@ -791,6 +810,64 @@ func BenchmarkReaderCDFStream3(b *testing.B) {
 
 func BenchmarkReaderCDFStream4(b *testing.B) {
 	benchmarkReaderCDFStreamSymbols(b, 4)
+}
+
+func BenchmarkCursorCDF4Stream(b *testing.B) {
+	benchmarkCursorCDF4Stream(b, true)
+}
+
+func BenchmarkCursorCDF4StreamNoUpdate(b *testing.B) {
+	benchmarkCursorCDF4Stream(b, false)
+}
+
+func benchmarkCursorCDF4Stream(b *testing.B, update bool) {
+	b.Helper()
+	src := benchStream()
+	sum := 0
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReaderWithCDFUpdate(src, update)
+		c := r.Cursor()
+		var cdf CDF
+		if err := cdf.InitUniform(4); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			sum += c.ReadCDF4Unchecked(&cdf)
+		}
+	}
+	benchmarkReaderSink = sum
+}
+
+func BenchmarkCursorCDF4HighTokenStream(b *testing.B) {
+	benchmarkCursorCDF4HighTokenStream(b, true)
+}
+
+func BenchmarkCursorCDF4HighTokenStreamNoUpdate(b *testing.B) {
+	benchmarkCursorCDF4HighTokenStream(b, false)
+}
+
+func benchmarkCursorCDF4HighTokenStream(b *testing.B, update bool) {
+	b.Helper()
+	src := benchStream()
+	sum := 0
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReaderWithCDFUpdate(src, update)
+		c := r.Cursor()
+		var cdf CDF
+		if err := cdf.InitUniform(4); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			sum += c.ReadCDF4HighTokenUnchecked(&cdf)
+		}
+	}
+	benchmarkReaderSink = sum
 }
 
 func benchmarkReaderCDFStreamSymbols(b *testing.B, symbols int) {
