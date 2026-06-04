@@ -746,7 +746,23 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 		r.refill()
 	}
 	if r.allowCDFUpdate {
-		updateCDF3(values, symbol)
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
+		}
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if count < MaxCDFCount {
+			values[3] = count + 1
+		}
 	}
 	return symbol
 }
@@ -784,7 +800,23 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 		c.refill()
 	}
 	if c.allowCDFUpdate {
-		updateCDF3(values, symbol)
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
+		}
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if count < MaxCDFCount {
+			values[3] = count + 1
+		}
 	}
 	return symbol
 }
@@ -1352,52 +1384,6 @@ func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
 	}
 	if count < MaxCDFCount {
 		cdf[2] = count + 1
-	}
-}
-
-func updateCDF3(cdf *[MaxSymbols + 1]uint16, symbol int) {
-	count := cdf[3]
-	rate := uint(4 + (count >> 4))
-	c0 := uint32(cdf[0])
-	c1 := uint32(cdf[1])
-	if symbol > 0 {
-		cdf[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-	} else {
-		cdf[0] = uint16(c0 - (c0 >> rate))
-	}
-	if symbol > 1 {
-		cdf[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-	} else {
-		cdf[1] = uint16(c1 - (c1 >> rate))
-	}
-	if count < MaxCDFCount {
-		cdf[3] = count + 1
-	}
-}
-
-func updateCDF4(cdf *[MaxSymbols + 1]uint16, symbol int) {
-	count := cdf[4]
-	rate := uint(5 + (count >> 4))
-	c0 := uint32(cdf[0])
-	c1 := uint32(cdf[1])
-	c2 := uint32(cdf[2])
-	if symbol > 0 {
-		cdf[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-	} else {
-		cdf[0] = uint16(c0 - (c0 >> rate))
-	}
-	if symbol > 1 {
-		cdf[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-	} else {
-		cdf[1] = uint16(c1 - (c1 >> rate))
-	}
-	if symbol > 2 {
-		cdf[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-	} else {
-		cdf[2] = uint16(c2 - (c2 >> rate))
-	}
-	if count < MaxCDFCount {
-		cdf[4] = count + 1
 	}
 }
 
