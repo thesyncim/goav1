@@ -63,21 +63,22 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 
 	var packetBytes [8][32]byte
 	var descriptors [8][16]byte
+	var descriptorLens [8]int
 	var payloads [8][]byte
 	payloadCount := 0
-	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+	control, err := EncoderWebRTCTemporalUnitControlForFrames(EncoderConfig{
 		Resolution: EncoderResolution{Width: 640, Height: 360},
-	})
+	}, []EncoderFrameEncodeSettings{{
+		Type:            EncoderFrameTypeKey,
+		Resolution:      EncoderResolution{Width: 640, Height: 360},
+		UpdateBuffer:    0,
+		UpdateBufferSet: true,
+		Output:          true,
+	}}, EncoderReferenceBufferState{}, EncoderFrameIDBufferState{}, 77)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := EncoderWebRTCGenericFrameInfo{
-		FrameID:    77,
-		SpatialID:  0,
-		TemporalID: 0,
-		DTINum:     1,
-	}
-	info.DTIs[0] = EncoderDecodeTargetSwitch
+	frameControl := control.Frames[0]
 	for {
 		if payloadCount >= len(payloads) {
 			t.Fatal("too many packets")
@@ -90,20 +91,21 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		if !ok || plan.PacketSize+1 != size {
 			t.Fatalf("packet %d plan=%+v ok=%v size=%d", payloadCount, plan, ok, size)
 		}
-		descriptorSize, ok, err := EncoderWebRTCRTPPacketDependencyDescriptorSize(&packetizer, structure, info, true)
+		descriptorSize, ok, err := EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSize(&packetizer, frameControl, control.DependencyStructure)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !ok {
 			t.Fatalf("packet %d missing dependency descriptor size", payloadCount)
 		}
-		descriptor, ok, err := AppendEncoderWebRTCRTPPacketDependencyDescriptor(descriptors[payloadCount][:0], &packetizer, structure, info, true)
+		descriptor, ok, err := AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptor(descriptors[payloadCount][:0], &packetizer, frameControl, control.DependencyStructure)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !ok || len(descriptor) != descriptorSize {
 			t.Fatalf("packet %d descriptor len=%d size=%d ok=%v", payloadCount, len(descriptor), descriptorSize, ok)
 		}
+		descriptorLens[payloadCount] = len(descriptor)
 		n, marker, ok, err := packetizer.NextPacket(packetBytes[payloadCount][:size])
 		if err != nil {
 			t.Fatal(err)
@@ -122,6 +124,9 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	}
 	if descriptors[0][0]&0xc0 != 0x80 || descriptors[payloadCount-1][0]&0xc0 != 0x40 {
 		t.Fatalf("descriptor flags first=%02x last=%02x", descriptors[0][0], descriptors[payloadCount-1][0])
+	}
+	if descriptorLens[0] == RTPDependencyDescriptorMandatorySize {
+		t.Fatal("first packet descriptor did not attach dependency structure")
 	}
 	if next, ok := packetizer.NextPacketSize(); ok || next != 0 {
 		t.Fatalf("done packet size=%d ok=%v want 0,false", next, ok)
@@ -173,23 +178,23 @@ func TestPublicRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+	control, err := EncoderWebRTCTemporalUnitControlForFrames(EncoderConfig{
 		Resolution: EncoderResolution{Width: 640, Height: 360},
-	})
+	}, []EncoderFrameEncodeSettings{{
+		Type:            EncoderFrameTypeKey,
+		Resolution:      EncoderResolution{Width: 640, Height: 360},
+		UpdateBuffer:    0,
+		UpdateBufferSet: true,
+		Output:          true,
+	}}, EncoderReferenceBufferState{}, EncoderFrameIDBufferState{}, 77)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := EncoderWebRTCGenericFrameInfo{
-		FrameID:    77,
-		SpatialID:  0,
-		TemporalID: 0,
-		DTINum:     1,
-	}
-	info.DTIs[0] = EncoderDecodeTargetSwitch
+	frameControl := control.Frames[0]
 	var buf [32]byte
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, _, _ = EncoderWebRTCRTPPacketDependencyDescriptorSize(&packetizer, structure, info, true)
-		_, _, _ = AppendEncoderWebRTCRTPPacketDependencyDescriptor(buf[:0], &packetizer, structure, info, true)
+		_, _, _ = EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSize(&packetizer, frameControl, control.DependencyStructure)
+		_, _, _ = AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptor(buf[:0], &packetizer, frameControl, control.DependencyStructure)
 	})
 	if allocs != 0 {
 		t.Fatalf("packet descriptor allocs=%f want 0", allocs)
