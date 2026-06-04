@@ -357,8 +357,8 @@ type frameWorkReconWavefront struct {
 	cfl            []FrameWorkCFLPredictionScratch
 	int32Arena     []int32
 	residualArena  []int16
-	int32Stride    int
-	residualStride int
+	int32Stride    uint16
+	residualStride uint16
 	doneAlloc      []atomic.Int32
 	aborted        atomic.Bool
 }
@@ -407,6 +407,9 @@ func (wf *frameWorkReconWavefront) ensureDone(rowCount int) {
 func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileResidualLoopController) error {
 	int32Len := len(c.req.Int32Scratch)
 	residualLen := len(c.req.ResidualScratch)
+	if int32Len > int(^uint16(0)) || residualLen > int(^uint16(0)) {
+		return ErrInvalidBatch
+	}
 	if cap(wf.states) < workers {
 		wf.states = make([]frameWorkReconState, workers)
 		wf.predict = make([]FrameWorkPredictionScratch, workers)
@@ -414,8 +417,8 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		wf.cfl = make([]FrameWorkCFLPredictionScratch, workers)
 	}
 	wf.states = wf.states[:workers]
-	wf.int32Stride = int32Len
-	wf.residualStride = residualLen
+	wf.int32Stride = uint16(int32Len)
+	wf.residualStride = uint16(residualLen)
 	int32Total := workers * int32Len
 	residualTotal := workers * residualLen
 	if cap(wf.int32Arena) < int32Total {
@@ -452,13 +455,15 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 }
 
 func (wf *frameWorkReconWavefront) workerInt32(worker int) []int32 {
-	off := worker * wf.int32Stride
-	return wf.int32Arena[off : off+wf.int32Stride]
+	stride := int(wf.int32Stride)
+	off := worker * stride
+	return wf.int32Arena[off : off+stride]
 }
 
 func (wf *frameWorkReconWavefront) workerResidual(worker int) []int16 {
-	off := worker * wf.residualStride
-	return wf.residualArena[off : off+wf.residualStride]
+	stride := int(wf.residualStride)
+	off := worker * stride
+	return wf.residualArena[off : off+stride]
 }
 
 // resetDeferredReconBuffers slices the deferred reconstruction buffers back to
