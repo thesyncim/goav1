@@ -21,9 +21,9 @@ type DeltaState struct {
 type FilterEdgeRequest struct {
 	LevelRequest
 
-	X      int32
-	Y      int32
-	Length int32
+	X      uint16
+	Y      uint16
+	Length uint16
 }
 
 // Filter4Request describes one narrow deblocking edge in plane coordinates.
@@ -114,7 +114,7 @@ func filterBlockEdgeWidth(dst frame.Plane, bytesPerSample int, bitDepth uint8, p
 	if err != nil {
 		return FilterResult{}, err
 	}
-	if err := FilterEdgeByWidth(req.Width, dst, bytesPerSample, bitDepth, req.Edge, req.X, req.Y, req.Length, thresholds); err != nil {
+	if err := FilterEdgeByWidth(req.Width, dst, bytesPerSample, bitDepth, req.Edge, int32(req.X), int32(req.Y), int32(req.Length), thresholds); err != nil {
 		return FilterResult{}, err
 	}
 	return FilterResult{

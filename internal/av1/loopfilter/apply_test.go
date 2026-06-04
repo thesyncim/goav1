@@ -297,9 +297,9 @@ func FuzzFilter4BlockEdge(f *testing.F) {
 			DeltaState{FromBase: rawDelta},
 			Filter4Request{
 				LevelRequest: LevelRequest{Plane: PlaneY, Edge: edge, SegmentID: 0, RefFrame: 0},
-				X:            int32(x),
-				Y:            int32(y),
-				Length:       int32(length),
+				X:            uint16(x),
+				Y:            uint16(y),
+				Length:       uint16(length),
 			},
 		)
 		if err != nil {
