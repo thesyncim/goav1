@@ -47,6 +47,36 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if _, err := av1.ValidateEncoderTemporalUnitFrames(frames[:], state, av1.EncoderRateControlCBR); err != nil {
 		t.Fatalf("ValidateEncoderTemporalUnitFrames: %v", err)
 	}
+
+	refConfig, err := av1.EncoderLibaomSVCRefFrameConfigForFrame(frames[0])
+	if err != nil {
+		t.Fatalf("EncoderLibaomSVCRefFrameConfigForFrame: %v", err)
+	}
+	if refConfig.Reference[0] != 1 || refConfig.RefIdx[0] != 0 {
+		t.Fatalf("libaom ref config = %+v", refConfig)
+	}
+
+	idState := av1.EncoderFrameIDBufferState{}
+	idState.Valid[0] = true
+	idState.FrameIDs[0] = 7
+	info, nextIDState, err := av1.EncoderWebRTCGenericFrameInfoForFrame(frames[0], 8, idState, cfg.SpatialLayerCount, cfg.TemporalLayerCount)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCGenericFrameInfoForFrame: %v", err)
+	}
+	if info.DependencyNum != 1 || info.Dependencies[0] != 7 || info.DTIs[1] != av1.EncoderDecodeTargetSwitch {
+		t.Fatalf("generic frame info = %+v", info)
+	}
+	if nextIDState.Valid[0] != idState.Valid[0] || nextIDState.FrameIDs[0] != idState.FrameIDs[0] {
+		t.Fatalf("unexpected id state mutation = %+v", nextIDState)
+	}
+
+	structure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(cfg)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	if structure.NumDecodeTargets != 2 || structure.TemplateNum != 4 {
+		t.Fatalf("dependency structure = %+v", structure)
+	}
 }
 
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {

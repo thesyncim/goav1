@@ -3,20 +3,23 @@ package goav1
 import internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
 
 const (
-	EncoderMaxLayers               = internalencoder.MaxLayers
-	EncoderMaxTemporalLayers       = internalencoder.MaxTemporalLayers
-	EncoderMaxSpatialLayers        = internalencoder.MaxSpatialLayers
-	EncoderWebRTCMaxSpatialLayers  = internalencoder.WebRTCMaxSpatialLayers
-	EncoderWebRTCMaxTemporalLayers = internalencoder.WebRTCMaxTemporalLayers
-	EncoderWebRTCReferenceBuffers  = internalencoder.WebRTCReferenceBuffers
-	EncoderWebRTCMaxReferences     = internalencoder.WebRTCMaxFrameReferences
-	EncoderWebRTCRtpTicksPerSecond = internalencoder.WebRTCRtpTicksPerSecond
-	EncoderWebRTCMinEffortLevel    = internalencoder.WebRTCMinEffortLevel
-	EncoderWebRTCMaxEffortLevel    = internalencoder.WebRTCMaxEffortLevel
-	EncoderWebRTCMaxQuantizer      = internalencoder.WebRTCMaxQuantizer
-	EncoderWebRTCMaxDimension      = internalencoder.WebRTCMaxDimension
-	EncoderWebRTCMaxFramePixels    = internalencoder.WebRTCMaxFramePixels
-	EncoderWebRTCMaxBitrateKbps    = internalencoder.WebRTCMaxBitrateKbps
+	EncoderMaxLayers                           = internalencoder.MaxLayers
+	EncoderMaxTemporalLayers                   = internalencoder.MaxTemporalLayers
+	EncoderMaxSpatialLayers                    = internalencoder.MaxSpatialLayers
+	EncoderWebRTCMaxSpatialLayers              = internalencoder.WebRTCMaxSpatialLayers
+	EncoderWebRTCMaxTemporalLayers             = internalencoder.WebRTCMaxTemporalLayers
+	EncoderWebRTCReferenceBuffers              = internalencoder.WebRTCReferenceBuffers
+	EncoderWebRTCMaxReferences                 = internalencoder.WebRTCMaxFrameReferences
+	EncoderWebRTCRtpTicksPerSecond             = internalencoder.WebRTCRtpTicksPerSecond
+	EncoderWebRTCMinEffortLevel                = internalencoder.WebRTCMinEffortLevel
+	EncoderWebRTCMaxEffortLevel                = internalencoder.WebRTCMaxEffortLevel
+	EncoderWebRTCMaxQuantizer                  = internalencoder.WebRTCMaxQuantizer
+	EncoderWebRTCMaxDimension                  = internalencoder.WebRTCMaxDimension
+	EncoderWebRTCMaxFramePixels                = internalencoder.WebRTCMaxFramePixels
+	EncoderWebRTCMaxBitrateKbps                = internalencoder.WebRTCMaxBitrateKbps
+	EncoderWebRTCRtpDependencyMaxDecodeTargets = internalencoder.WebRTCRtpDependencyMaxDecodeTargets
+	EncoderWebRTCRtpDependencyMaxTemplates     = internalencoder.WebRTCRtpDependencyMaxTemplates
+	EncoderLibaomSVCReferenceSlots             = internalencoder.LibaomSVCReferenceSlots
 )
 
 type EncoderProfile = internalencoder.Profile
@@ -75,6 +78,12 @@ type EncoderConfig = internalencoder.Config
 type EncoderFrameType = internalencoder.FrameType
 type EncoderFrameEncodeSettings = internalencoder.FrameEncodeSettings
 type EncoderReferenceBufferState = internalencoder.ReferenceBufferState
+type EncoderLibaomSVCRefFrameConfig = internalencoder.LibaomSVCRefFrameConfig
+type EncoderDecodeTargetIndication = internalencoder.DecodeTargetIndication
+type EncoderFrameIDBufferState = internalencoder.FrameIDBufferState
+type EncoderWebRTCGenericFrameInfo = internalencoder.WebRTCGenericFrameInfo
+type EncoderWebRTCFrameDependencyTemplate = internalencoder.WebRTCFrameDependencyTemplate
+type EncoderWebRTCFrameDependencyStructure = internalencoder.WebRTCFrameDependencyStructure
 type EncoderOBU = internalencoder.OBU
 type EncoderSequenceHeader = internalencoder.SequenceHeader
 type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
@@ -106,6 +115,11 @@ const (
 	EncoderSequenceSelectScreenContentTools    = internalencoder.SequenceSelectScreenContentTools
 	EncoderSequenceSelectIntegerMV             = internalencoder.SequenceSelectIntegerMV
 	EncoderSequenceLevelMax                    = internalencoder.SequenceLevelMax
+
+	EncoderDecodeTargetNotPresent  = internalencoder.DecodeTargetNotPresent
+	EncoderDecodeTargetDiscardable = internalencoder.DecodeTargetDiscardable
+	EncoderDecodeTargetSwitch      = internalencoder.DecodeTargetSwitch
+	EncoderDecodeTargetRequired    = internalencoder.DecodeTargetRequired
 )
 
 var (
@@ -140,6 +154,18 @@ func SetWebRTCEncoderSVCConfig(config EncoderConfig, requestedTemporalLayers uin
 
 func ValidateEncoderTemporalUnitFrames(frames []EncoderFrameEncodeSettings, state EncoderReferenceBufferState, rcMode EncoderRateControlMode) (EncoderReferenceBufferState, error) {
 	return internalencoder.ValidateTemporalUnitFrames(frames, state, rcMode)
+}
+
+func EncoderLibaomSVCRefFrameConfigForFrame(settings EncoderFrameEncodeSettings) (EncoderLibaomSVCRefFrameConfig, error) {
+	return internalencoder.LibaomSVCRefFrameConfigForFrame(settings)
+}
+
+func EncoderWebRTCGenericFrameInfoForFrame(settings EncoderFrameEncodeSettings, frameID uint64, state EncoderFrameIDBufferState, spatialLayers uint8, temporalLayers uint8) (EncoderWebRTCGenericFrameInfo, EncoderFrameIDBufferState, error) {
+	return internalencoder.WebRTCGenericFrameInfoForFrame(settings, frameID, state, spatialLayers, temporalLayers)
+}
+
+func EncoderWebRTCFrameDependencyStructureForConfig(config EncoderConfig) (EncoderWebRTCFrameDependencyStructure, error) {
+	return internalencoder.WebRTCFrameDependencyStructureForConfig(config)
 }
 
 func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolution) (EncoderRational, bool) {
