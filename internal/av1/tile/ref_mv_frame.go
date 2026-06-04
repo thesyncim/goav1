@@ -7,9 +7,9 @@ const refMVSLimit = (1 << 12) - 1
 // ReferenceMVFrame stores the current frame's ref-frame-MVS side data at the
 // half-MI granularity used by libaom's MV_REF array. Entries is caller-owned.
 type ReferenceMVFrame struct {
-	Rows    int
-	Cols    int
-	Stride  int
+	Rows    uint16
+	Cols    uint16
+	Stride  uint16
 	Entries []ReferenceMVEntry
 }
 
@@ -36,12 +36,24 @@ type ReferenceMVFrameBlockRequest struct {
 // ReferenceMVFrameEntries returns the number of entries needed for a frame with
 // miRows x miCols 4x4 units.
 func ReferenceMVFrameEntries(miRows uint32, miCols uint32) (int, error) {
+	_, _, need, err := referenceMVHalfMIGridShape(miRows, miCols)
+	return need, err
+}
+
+func referenceMVHalfMIGridShape(miRows uint32, miCols uint32) (uint16, uint16, int, error) {
 	if miRows == 0 || miCols == 0 {
-		return 0, ErrInvalidDecodeState
+		return 0, 0, 0, ErrInvalidDecodeState
 	}
-	rows := int((miRows + 1) >> 1)
-	cols := int((miCols + 1) >> 1)
-	return rows * cols, nil
+	rows32 := (miRows >> 1) + (miRows & 1)
+	cols32 := (miCols >> 1) + (miCols & 1)
+	if rows32 == 0 || cols32 == 0 || rows32 > uint32(^uint16(0)) || cols32 > uint32(^uint16(0)) {
+		return 0, 0, 0, ErrInvalidDecodeState
+	}
+	need64 := uint64(rows32) * uint64(cols32)
+	if need64 > uint64(^uint(0)>>1) {
+		return 0, 0, 0, ErrInvalidDecodeState
+	}
+	return uint16(rows32), uint16(cols32), int(need64), nil
 }
 
 // Init attaches caller-owned storage and clears it to NONE, matching libaom's
@@ -50,15 +62,13 @@ func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []Referenc
 	if f == nil {
 		return ErrInvalidDecodeState
 	}
-	need, err := ReferenceMVFrameEntries(miRows, miCols)
+	rows, cols, need, err := referenceMVHalfMIGridShape(miRows, miCols)
 	if err != nil {
 		return err
 	}
 	if len(entries) < need {
 		return ErrInvalidDecodeState
 	}
-	rows := int((miRows + 1) >> 1)
-	cols := int((miCols + 1) >> 1)
 	f.Rows = rows
 	f.Cols = cols
 	f.Stride = cols
@@ -87,7 +97,10 @@ func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 ui
 	row := int(miRow >> 1)
 	w := (int(visibleW4) + 1) >> 1
 	h := (int(visibleH4) + 1) >> 1
-	if col < 0 || row < 0 || w <= 0 || h <= 0 || col+w > f.Cols || row+h > f.Rows {
+	cols := int(f.Cols)
+	rows := int(f.Rows)
+	stride := int(f.Stride)
+	if col < 0 || row < 0 || w <= 0 || h <= 0 || col+w > cols || row+h > rows {
 		return ErrInvalidDecodeState
 	}
 
@@ -96,7 +109,7 @@ func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 ui
 		entry = referenceMVEntryForInter(prediction.InterMotion, refFrameSide)
 	}
 	for y := range h {
-		line := f.Entries[(row+y)*f.Stride+col : (row+y)*f.Stride+col+w]
+		line := f.Entries[(row+y)*stride+col : (row+y)*stride+col+w]
 		for x := range line {
 			line[x] = entry
 		}
@@ -107,7 +120,7 @@ func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint32, miRow uint32, visibleW4 ui
 // Validate checks that f carries a well-formed caller-owned MV_REF grid.
 func (f *ReferenceMVFrame) Validate() error {
 	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
-		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
+		len(f.Entries) < (int(f.Rows)-1)*int(f.Stride)+int(f.Cols) {
 		return ErrInvalidDecodeState
 	}
 	return nil

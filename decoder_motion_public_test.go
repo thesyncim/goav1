@@ -30,7 +30,7 @@ func TestPublicDecoderReferenceMVAndTemporalMotionBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mvFrame.Cols != cols || mvFrame.Rows != rows || mvFrame.Stride != cols || len(mvFrame.Entries) != length {
+	if int(mvFrame.Cols) != cols || int(mvFrame.Rows) != rows || int(mvFrame.Stride) != cols || len(mvFrame.Entries) != length {
 		t.Fatalf("mv frame=%+v len=%d", mvFrame, len(mvFrame.Entries))
 	}
 	for i, entry := range mvFrame.Entries {
@@ -57,7 +57,7 @@ func TestPublicDecoderReferenceMVAndTemporalMotionBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if temporal.Cols != cols || temporal.Rows != rows || temporal.Stride != cols || len(temporal.Entries) != length {
+	if int(temporal.Cols) != cols || int(temporal.Rows) != rows || int(temporal.Stride) != cols || len(temporal.Entries) != length {
 		t.Fatalf("temporal field=%+v len=%d", temporal, len(temporal.Entries))
 	}
 	for i, entry := range temporal.Entries {

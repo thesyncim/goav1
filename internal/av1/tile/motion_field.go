@@ -21,9 +21,9 @@ var motionFieldDivMult = [32]int16{
 // TemporalMotionField stores libaom's current-frame tpl_mvs side data at the
 // same half-MI granularity as ReferenceMVFrame.
 type TemporalMotionField struct {
-	Rows    int
-	Cols    int
-	Stride  int
+	Rows    uint16
+	Cols    uint16
+	Stride  uint16
 	Entries []TemporalMotionEntry
 }
 
@@ -81,15 +81,13 @@ func (f *TemporalMotionField) Init(miRows uint32, miCols uint32, entries []Tempo
 	if f == nil {
 		return ErrInvalidDecodeState
 	}
-	need, err := ReferenceMVFrameEntries(miRows, miCols)
+	rows, cols, need, err := referenceMVHalfMIGridShape(miRows, miCols)
 	if err != nil {
 		return err
 	}
 	if len(entries) < need {
 		return ErrInvalidDecodeState
 	}
-	rows := int((miRows + 1) >> 1)
-	cols := int((miCols + 1) >> 1)
 	f.Rows = rows
 	f.Cols = cols
 	f.Stride = cols
@@ -213,9 +211,15 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 		return false, err
 	}
 
-	for blkRow := 0; blkRow < start.Rows; blkRow++ {
-		for blkCol := 0; blkCol < start.Cols; blkCol++ {
-			mvRef := start.Entries[blkRow*start.Stride+blkCol]
+	startRows := int(start.Rows)
+	startCols := int(start.Cols)
+	startStride := int(start.Stride)
+	rows := int(f.Rows)
+	cols := int(f.Cols)
+	stride := int(f.Stride)
+	for blkRow := 0; blkRow < startRows; blkRow++ {
+		for blkCol := 0; blkCol < startCols; blkCol++ {
+			mvRef := start.Entries[blkRow*startStride+blkCol]
 			if !mvRef.Valid || !mvRef.Ref.Valid() {
 				continue
 			}
@@ -229,11 +233,11 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 			if err != nil {
 				return false, err
 			}
-			row, col, ok := motionFieldBlockPosition(f.Rows, f.Cols, blkRow, blkCol, projected, req.Backward)
+			row, col, ok := motionFieldBlockPosition(rows, cols, blkRow, blkCol, projected, req.Backward)
 			if !ok {
 				continue
 			}
-			f.Entries[row*f.Stride+col] = TemporalMotionEntry{
+			f.Entries[row*stride+col] = TemporalMotionEntry{
 				MV:             mvRef.MV,
 				RefFrameOffset: uint8(refFrameOffset),
 				Valid:          true,
@@ -260,7 +264,7 @@ func (f *TemporalMotionField) projectSetupReference(req TemporalMotionSetupReque
 
 func (f *TemporalMotionField) validate() error {
 	if f == nil || f.Rows <= 0 || f.Cols <= 0 || f.Stride < f.Cols ||
-		len(f.Entries) < (f.Rows-1)*f.Stride+f.Cols {
+		len(f.Entries) < (int(f.Rows)-1)*int(f.Stride)+int(f.Cols) {
 		return ErrInvalidDecodeState
 	}
 	return nil

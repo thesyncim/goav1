@@ -57,9 +57,9 @@ func TestTemporalMotionFieldProjectReferenceFrameMatchesLibaomPlacement(t *testi
 	if !applied {
 		t.Fatal("projection was not applied")
 	}
-	for row := 0; row < field.Rows; row++ {
-		for col := 0; col < field.Cols; col++ {
-			got := field.Entries[row*field.Stride+col]
+	for row := 0; row < int(field.Rows); row++ {
+		for col := 0; col < int(field.Cols); col++ {
+			got := field.Entries[row*int(field.Stride)+col]
 			if row == 3 && col == 2 {
 				want := TemporalMotionEntry{
 					MV:             motion.Vector{Row: 64, Col: 128},

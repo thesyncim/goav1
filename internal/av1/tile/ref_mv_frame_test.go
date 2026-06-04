@@ -1,6 +1,7 @@
 package tile
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -36,6 +37,15 @@ func TestReferenceMVFrameInitMatchesLibaomHalfMIGrid(t *testing.T) {
 	}
 }
 
+func TestReferenceMVFrameEntriesRejectsOversizedHalfMIGrid(t *testing.T) {
+	if _, err := ReferenceMVFrameEntries(1<<17, 8); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("ReferenceMVFrameEntries oversized rows err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, err := ReferenceMVFrameEntries(^uint32(0), 8); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("ReferenceMVFrameEntries wrapping rows err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 func TestReferenceMVFrameMarkBlockIntraClearsLibaomMVREFCells(t *testing.T) {
 	frame := newReferenceMVFrameForTest(t, 6, 8)
 	for i := range frame.Entries {
@@ -60,9 +70,9 @@ func TestReferenceMVFrameMarkBlockIntraClearsLibaomMVREFCells(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for row := 0; row < frame.Rows; row++ {
-		for col := 0; col < frame.Cols; col++ {
-			entry := frame.Entries[row*frame.Stride+col]
+	for row := 0; row < int(frame.Rows); row++ {
+		for col := 0; col < int(frame.Cols); col++ {
+			entry := frame.Entries[row*int(frame.Stride)+col]
 			inClearedBlock := row >= 1 && row <= 2 && col >= 1 && col <= 2
 			if inClearedBlock {
 				if entry != (ReferenceMVEntry{Ref: ReferenceFrameNone}) {
@@ -103,9 +113,9 @@ func TestReferenceMVFrameMarkBlockInterCopiesLibaomMVREFCells(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for row := 0; row < frame.Rows; row++ {
-		for col := 0; col < frame.Cols; col++ {
-			entry := frame.Entries[row*frame.Stride+col]
+	for row := 0; row < int(frame.Rows); row++ {
+		for col := 0; col < int(frame.Cols); col++ {
+			entry := frame.Entries[row*int(frame.Stride)+col]
 			if row >= 1 && row <= 2 && col >= 1 && col <= 2 {
 				if entry != want {
 					t.Fatalf("entry (%d,%d)=%+v want %+v", row, col, entry, want)

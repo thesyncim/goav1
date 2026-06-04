@@ -690,11 +690,14 @@ func (req ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int
 	}
 	sampleRow := int(absRow >> 1)
 	sampleCol := int(absCol >> 1)
-	if sampleRow < 0 || sampleRow >= req.TemporalMVs.Rows ||
-		sampleCol < 0 || sampleCol >= req.TemporalMVs.Cols {
+	rows := int(req.TemporalMVs.Rows)
+	cols := int(req.TemporalMVs.Cols)
+	stride := int(req.TemporalMVs.Stride)
+	if sampleRow < 0 || sampleRow >= rows ||
+		sampleCol < 0 || sampleCol >= cols {
 		return false, false, nil
 	}
-	sample := req.TemporalMVs.Entries[sampleRow*req.TemporalMVs.Stride+sampleCol]
+	sample := req.TemporalMVs.Entries[sampleRow*stride+sampleCol]
 	if !sample.Valid {
 		return false, false, nil
 	}
