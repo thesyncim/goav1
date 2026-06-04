@@ -150,7 +150,7 @@ func TestReadDRLIndex(t *testing.T) {
 	index, err := state.ReadDRLIndex(&cdfs, DRLRequest{
 		Mode:       InterModeNewMV,
 		RefMVCount: 3,
-		Contexts:   [3]int{0, 1, 2},
+		Contexts:   [3]uint8{0, 1, 2},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestReadDRLIndex(t *testing.T) {
 	index, err = state.ReadDRLIndex(&cdfs, DRLRequest{
 		Mode:       InterModeNearMV,
 		RefMVCount: 2,
-		Contexts:   [3]int{0, 1, 2},
+		Contexts:   [3]uint8{0, 1, 2},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestReadDRLIndex(t *testing.T) {
 		Compound:     true,
 		CompoundMode: CompoundInterModeNearestNew,
 		RefMVCount:   3,
-		Contexts:     [3]int{0, 1, 2},
+		Contexts:     [3]uint8{0, 1, 2},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestReadDRLIndex(t *testing.T) {
 		Compound:     true,
 		CompoundMode: CompoundInterModeNewNew,
 		RefMVCount:   3,
-		Contexts:     [3]int{0, 1, 2},
+		Contexts:     [3]uint8{0, 1, 2},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestInterModeRejectsInvalidInputs(t *testing.T) {
 	if _, err := state.ReadDRLIndex(&cdfs, DRLRequest{Mode: interModeCount}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad drl mode err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := state.ReadDRLIndex(&cdfs, DRLRequest{Mode: InterModeNewMV, RefMVCount: 3, Contexts: [3]int{3}}); !errors.Is(err, entropy.ErrInvalidCDF) {
+	if _, err := state.ReadDRLIndex(&cdfs, DRLRequest{Mode: InterModeNewMV, RefMVCount: 3, Contexts: [3]uint8{3}}); !errors.Is(err, entropy.ErrInvalidCDF) {
 		t.Fatalf("bad drl ctx err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
 }
@@ -262,7 +262,7 @@ func TestInterModeAllocs(t *testing.T) {
 		if _, err := state.ReadDRLIndex(&cdfs, DRLRequest{
 			Mode:       result.Mode,
 			RefMVCount: 3,
-			Contexts:   [3]int{0, 1, 2},
+			Contexts:   [3]uint8{0, 1, 2},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -304,8 +304,8 @@ func FuzzReadInterMode(f *testing.F) {
 			Mode:         result.Mode,
 			CompoundMode: result.CompoundMode,
 			Compound:     result.Compound,
-			RefMVCount:   int(rawRefMVCount % 5),
-			Contexts:     [3]int{int(rawCtx0 % DRLModeContexts), int(rawCtx1 % DRLModeContexts), int(rawCtx2 % DRLModeContexts)},
+			RefMVCount:   rawRefMVCount % 5,
+			Contexts:     [3]uint8{rawCtx0 % DRLModeContexts, rawCtx1 % DRLModeContexts, rawCtx2 % DRLModeContexts},
 		}
 		if _, err := state.ReadDRLIndex(&cdfs, drlReq); err != nil {
 			t.Fatalf("ReadDRLIndex err=%v req=%+v", err, drlReq)

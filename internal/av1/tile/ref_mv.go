@@ -84,7 +84,14 @@ type ReferenceMVStackRequest struct {
 type ReferenceMVStackResult struct {
 	Stack         ReferenceMVStack
 	ModeContext   uint16
-	NearestCount  int
+	NearestCount  uint8
+	RowMatches    uint8
+	ColumnMatches uint8
+	NewMVMatches  uint8
+}
+
+type referenceMVStackSearch struct {
+	Stack         ReferenceMVStack
 	RowMatches    int
 	ColumnMatches int
 	NewMVMatches  int
@@ -158,8 +165,8 @@ func (stack ReferenceMVStack) DRLContext(refIdx int) (int, error) {
 }
 
 // DRLContexts returns the three contexts read_drl_idx may consult.
-func (stack ReferenceMVStack) DRLContexts() ([3]int, error) {
-	var contexts [3]int
+func (stack ReferenceMVStack) DRLContexts() ([3]uint8, error) {
+	var contexts [3]uint8
 	if err := stack.validate(); err != nil {
 		return contexts, err
 	}
@@ -171,7 +178,7 @@ func (stack ReferenceMVStack) DRLContexts() ([3]int, error) {
 		if err != nil {
 			return contexts, err
 		}
-		contexts[i] = ctx
+		contexts[i] = uint8(ctx)
 	}
 	return contexts, nil
 }
@@ -193,7 +200,7 @@ func (stack ReferenceMVStack) DRLRequestForMode(mode InterModeResult) (DRLReques
 		Mode:         mode.Mode,
 		CompoundMode: mode.CompoundMode,
 		Compound:     mode.Compound,
-		RefMVCount:   int(stack.Count),
+		RefMVCount:   stack.Count,
 		Contexts:     contexts,
 	}, nil
 }
@@ -457,25 +464,25 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	searchMaxRowOffset, searchMaxColOffset, gridMaxRowOffset, gridMaxColOffset := referenceMVSearchOffsets(req, dims)
 	processedRows := 0
 	processedCols := 0
-	var result ReferenceMVStackResult
+	var search referenceMVStackSearch
 	if req.HaveTop && absInt(searchMaxRowOffset) >= 1 {
-		c.scanAboveReferenceMVs(req, dims, searchMaxRowOffset, &processedRows, &result)
+		c.scanAboveReferenceMVs(req, dims, searchMaxRowOffset, &processedRows, &search)
 	}
 	if req.HaveLeft && absInt(searchMaxColOffset) >= 1 {
-		c.scanLeftReferenceMVs(req, dims, searchMaxColOffset, &processedCols, &result)
+		c.scanLeftReferenceMVs(req, dims, searchMaxColOffset, &processedCols, &search)
 	}
 	if req.HaveTopRight {
-		c.scanTopRightReferenceMV(req, dims, &result)
+		c.scanTopRightReferenceMV(req, dims, &search)
 	}
-	nearestMatch := boolInt(result.RowMatches > 0) + boolInt(result.ColumnMatches > 0)
-	result.NearestCount = int(result.Stack.Count)
-	for i := 0; i < result.NearestCount; i++ {
-		result.Stack.Candidates[i].Weight += RefMVCategoryLevel
+	nearestMatch := boolInt(search.RowMatches > 0) + boolInt(search.ColumnMatches > 0)
+	nearestCount := search.Stack.Count
+	for i := 0; i < int(nearestCount); i++ {
+		search.Stack.Candidates[i].Weight += RefMVCategoryLevel
 	}
 	modeContextFlags := uint16(0)
 	temporalUnavailable := req.TemporalMVSampleUnavailable
 	if req.UseRefFrameMVS && req.TemporalMVs != nil {
-		temporal, err := req.temporalReferenceMVs(dims, &result.Stack)
+		temporal, err := req.temporalReferenceMVs(dims, &search.Stack)
 		if err != nil {
 			return ReferenceMVStackResult{}, err
 		}
@@ -487,23 +494,23 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	if req.UseRefFrameMVS && temporalUnavailable {
 		modeContextFlags |= 1 << globalMVOffset
 	}
-	c.scanOuterReferenceMVs(req, dims, gridMaxRowOffset, gridMaxColOffset, processedRows, processedCols, &result)
-	refMatchCount := boolInt(result.RowMatches > 0) + boolInt(result.ColumnMatches > 0)
-	result.ModeContext = referenceMVModeContext(nearestMatch, refMatchCount, result.NewMVMatches) | modeContextFlags
-	sortReferenceMVStack(&result.Stack, 0, result.NearestCount)
+	c.scanOuterReferenceMVs(req, dims, gridMaxRowOffset, gridMaxColOffset, processedRows, processedCols, &search)
+	refMatchCount := boolInt(search.RowMatches > 0) + boolInt(search.ColumnMatches > 0)
+	modeContext := referenceMVModeContext(nearestMatch, refMatchCount, search.NewMVMatches) | modeContextFlags
+	sortReferenceMVStack(&search.Stack, 0, int(nearestCount))
 
 	if req.References.Compound {
-		c.extendCompoundReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &result.Stack)
+		c.extendCompoundReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &search.Stack)
 	} else {
-		c.extendSingleReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &result.Stack)
+		c.extendSingleReferenceMVStack(req, dims, searchMaxRowOffset, searchMaxColOffset, &search.Stack)
 	}
-	sortReferenceMVStack(&result.Stack, result.NearestCount, int(result.Stack.Count))
+	sortReferenceMVStack(&search.Stack, int(nearestCount), int(search.Stack.Count))
 	// Clamp every finalized stack candidate to the frame boundary, mirroring
 	// libaom's clamp_mv_ref loop at the end of setup_ref_mv_list. This bounds
 	// predictors used by NEW/NEAREST/NEAR modes (and the single-ref mv_ref_list
 	// cache built next) so a spatial or temporal candidate pointing far past the
 	// frame edge cannot drift the reconstructed MV off libaom.
-	req.clampReferenceMVStack(dims, &result.Stack)
+	req.clampReferenceMVStack(dims, &search.Stack)
 	if !req.References.Compound {
 		// Refresh the single-ref MV cache from the post-sort stack so
 		// NEARESTMV/NEARMV decoders read the highest-weighted slot.
@@ -511,7 +518,15 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		// sorted ref_mv_stack; priming SingleRefMVs inside
 		// extendSingleReferenceMVStack let insertion order leak into the
 		// nearest/near cache, e.g. quantizer_00 frame 1 mi=(46,10).
-		result.Stack.setSingleRefMVs(req.GlobalMVs[0])
+		search.Stack.setSingleRefMVs(req.GlobalMVs[0])
+	}
+	result := ReferenceMVStackResult{
+		Stack:         search.Stack,
+		ModeContext:   modeContext,
+		NearestCount:  nearestCount,
+		RowMatches:    uint8(search.RowMatches),
+		ColumnMatches: uint8(search.ColumnMatches),
+		NewMVMatches:  uint8(search.NewMVMatches),
 	}
 	if debugRefMVEnabled {
 		debugReferenceMVStack(req, &result)
@@ -730,7 +745,7 @@ func absInt32(v int32) int32 {
 	return v
 }
 
-func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, result *ReferenceMVStackResult) {
+func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, result *referenceMVStackSearch) {
 	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
 	end = minInt(end, refMVMaxScanBlock4)
 	// libaom's scan_row_mbmi() caps the above-row sweep at
@@ -792,7 +807,7 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 	}
 }
 
-func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, result *ReferenceMVStackResult) {
+func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, result *referenceMVStackSearch) {
 	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
 	end = minInt(end, refMVMaxScanBlock4)
 	// libaom's scan_col_mbmi() caps the left-column sweep at
@@ -927,7 +942,7 @@ func (c *BlockModeContext) scanLeftIntrabcDVs(req ReferenceMVStackRequest, dims 
 	}
 }
 
-func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, dims BlockDimensions, result *ReferenceMVStackResult) {
+func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, dims BlockDimensions, result *referenceMVStackSearch) {
 	// libaom's av1_find_mv_refs gates the top-right scan_blk_mbmi() on
 	// is_inside(tile, mi_col + xd->width, mi_row - 1): the candidate at
 	// (mi_row-1, mi_col+W4) must lie inside the current tile. Blocks on the
@@ -1002,7 +1017,7 @@ func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions)
 	return maxRowOffset, maxColOffset, gridMaxRowOffset, gridMaxColOffset
 }
 
-func (c *BlockModeContext) scanOuterReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, processedRows int, processedCols int, result *ReferenceMVStackResult) {
+func (c *BlockModeContext) scanOuterReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, processedRows int, processedCols int, result *referenceMVStackSearch) {
 	var dummyNewMV int
 	c.scanGridBlockReferenceMV(req, -1, -1, &result.RowMatches, &dummyNewMV, &result.Stack)
 	rowAdj := 0

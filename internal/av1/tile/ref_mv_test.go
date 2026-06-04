@@ -107,10 +107,10 @@ func TestReferenceMVStackDRLRequestForMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Mode != InterModeNewMV || req.Compound || req.RefMVCount != int(stack.Count) {
+	if req.Mode != InterModeNewMV || req.Compound || req.RefMVCount != stack.Count {
 		t.Fatalf("req=%+v", req)
 	}
-	if req.Contexts != ([3]int{1, 0, 1}) {
+	if req.Contexts != ([3]uint8{1, 0, 1}) {
 		t.Fatalf("contexts=%v want [1 0 1]", req.Contexts)
 	}
 
@@ -785,7 +785,7 @@ func FuzzReferenceMVStack(f *testing.F) {
 			}
 			t.Fatalf("DRLRequestForMode err=%v", err)
 		}
-		if req.RefMVCount != int(stack.Count) {
+		if req.RefMVCount != stack.Count {
 			t.Fatalf("ref mv count=%d want %d", req.RefMVCount, stack.Count)
 		}
 

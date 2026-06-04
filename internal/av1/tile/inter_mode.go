@@ -82,8 +82,8 @@ type DRLRequest struct {
 	Mode         InterMode
 	CompoundMode CompoundInterMode
 	Compound     bool
-	RefMVCount   int
-	Contexts     [3]int
+	RefMVCount   uint8
+	Contexts     [3]uint8
 }
 
 var compoundInterModeComponents = [compoundInterModeCount]CompoundInterModeComponents{
@@ -323,7 +323,7 @@ func (s *DecodeState) ReadCompoundInterMode(cdfs *InterModeCDFs, context int) (C
 // mv-stack slot. Callers provide already-computed av1_drl_ctx()/get_drl_context
 // contexts from the reference-MV search.
 func (s *DecodeState) ReadDRLIndex(cdfs *InterModeCDFs, req DRLRequest) (int, error) {
-	if s == nil || req.RefMVCount < 0 {
+	if s == nil || req.RefMVCount > MaxRefMVStackSize {
 		return 0, ErrInvalidDecodeState
 	}
 	if req.Compound {
@@ -333,11 +333,12 @@ func (s *DecodeState) ReadDRLIndex(cdfs *InterModeCDFs, req DRLRequest) (int, er
 	} else if !req.Mode.Valid() {
 		return 0, ErrInvalidDecodeState
 	}
+	refMVCount := int(req.RefMVCount)
 
 	if req.usesNewMV() {
 		refMVIndex := 0
 		for idx := range 2 {
-			if req.RefMVCount <= idx+1 {
+			if refMVCount <= idx+1 {
 				return refMVIndex, nil
 			}
 			bit, err := s.readDRLBit(cdfs, req.Contexts[idx])
@@ -355,7 +356,7 @@ func (s *DecodeState) ReadDRLIndex(cdfs *InterModeCDFs, req DRLRequest) (int, er
 	if req.usesNearMV() {
 		refMVIndex := 0
 		for idx := 1; idx < 3; idx++ {
-			if req.RefMVCount <= idx+1 {
+			if refMVCount <= idx+1 {
 				return refMVIndex, nil
 			}
 			bit, err := s.readDRLBit(cdfs, req.Contexts[idx])
@@ -373,8 +374,8 @@ func (s *DecodeState) ReadDRLIndex(cdfs *InterModeCDFs, req DRLRequest) (int, er
 	return 0, nil
 }
 
-func (s *DecodeState) readDRLBit(cdfs *InterModeCDFs, context int) (bool, error) {
-	cdf, err := cdfs.DRLCDF(context)
+func (s *DecodeState) readDRLBit(cdfs *InterModeCDFs, context uint8) (bool, error) {
+	cdf, err := cdfs.DRLCDF(int(context))
 	if err != nil {
 		return false, err
 	}

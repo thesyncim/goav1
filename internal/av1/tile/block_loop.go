@@ -1184,7 +1184,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			result.InterModeValid = true
 			result.ReferenceMVStack = stack
 			result.ReferenceMVStackValid = true
-			result.DRLIndex = drlIndex
+			result.DRLIndex = uint8(drlIndex)
 			result.DRLIndexValid = drlReq.usesNewMV() || drlReq.usesNearMV()
 			if !interModeUsesGlobalOnly(mode) {
 				mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
@@ -1375,7 +1375,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				}
 				result.InterpFilters = filters
 				result.InterpFiltersValid = true
-				result.InterpFilterReads = filterReads
+				result.InterpFilterReads = uint8(filterReads)
 				// libaom's build_inter_predictors_sub8x8 path runs at the
 				// chroma anchor of any inter block whose luma block has
 				// width or height 4 under chroma subsampling. Collect

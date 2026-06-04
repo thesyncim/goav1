@@ -188,7 +188,7 @@ type BlockPredictionModeResult struct {
 	ReferenceMVStack      ReferenceMVStackResult
 	ReferenceMVStackValid bool
 
-	DRLIndex      int
+	DRLIndex      uint8
 	DRLIndexValid bool
 
 	InterMVReferences      InterMVReferenceSet
@@ -202,7 +202,7 @@ type BlockPredictionModeResult struct {
 
 	InterpFilters      motion.InterpFilters
 	InterpFiltersValid bool
-	InterpFilterReads  int
+	InterpFilterReads  uint8
 
 	InterIntra      InterIntraResult
 	InterIntraValid bool
