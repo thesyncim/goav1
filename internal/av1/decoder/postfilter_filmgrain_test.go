@@ -404,7 +404,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesChromaFilmGra
 	}
 	if result.Completed != FrameWorkPostFilterFilmGrain ||
 		result.FilmGrain.LumaRows != 1 ||
-		result.FilmGrain.ChromaRows != [2]int{1, 1} ||
+		result.FilmGrain.ChromaRows != [2]uint16{1, 1} ||
 		next.RemainingPostFilters() != 0 {
 		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
 	}
@@ -465,7 +465,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesHighBitDepthC
 	}
 	if result.Completed != FrameWorkPostFilterFilmGrain ||
 		result.FilmGrain.LumaRows != 1 ||
-		result.FilmGrain.ChromaRows != [2]int{1, 1} ||
+		result.FilmGrain.ChromaRows != [2]uint16{1, 1} ||
 		next.RemainingPostFilters() != 0 {
 		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
 	}
@@ -532,7 +532,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersChromaFilmGrainAlloc
 		}
 		if result.Completed != FrameWorkPostFilterFilmGrain ||
 			result.FilmGrain.LumaRows != 1 ||
-			result.FilmGrain.ChromaRows != [2]int{1, 1} ||
+			result.FilmGrain.ChromaRows != [2]uint16{1, 1} ||
 			next.RemainingPostFilters() != 0 {
 			t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
 		}
@@ -590,7 +590,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersAppliesPartialFinalC
 	}
 	if result.Completed != FrameWorkPostFilterFilmGrain ||
 		result.FilmGrain.LumaRows != 2 ||
-		result.FilmGrain.ChromaRows != [2]int{2, 2} ||
+		result.FilmGrain.ChromaRows != [2]uint16{2, 2} ||
 		next.RemainingPostFilters() != 0 {
 		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
 	}
