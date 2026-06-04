@@ -275,20 +275,31 @@ type FrameWorkBatch struct {
 // per-block recompute observed in profiling while producing bit-identical
 // results (the cache returns exactly what the original computation would).
 type frameWorkJobGeometryCache struct {
-	regionValid bool
-	regionIndex uint32
+	validMask   uint8
+	regionIndex uint16
 	region      FrameWorkJobRegion
 
-	planeValid [3]bool
-	planeIndex [3]uint32
+	planeIndex [3]uint16
 	plane      [3]FrameWorkPlaneRegion
 }
+
+const (
+	frameWorkJobGeometryRegionValid = uint8(1 << iota)
+	frameWorkJobGeometryPlaneYValid
+	frameWorkJobGeometryPlaneUValid
+	frameWorkJobGeometryPlaneVValid
+
+	frameWorkJobGeometryPlanesValid = frameWorkJobGeometryPlaneYValid |
+		frameWorkJobGeometryPlaneUValid |
+		frameWorkJobGeometryPlaneVValid
+
+	frameWorkMaxCacheIndex = 1<<16 - 1
+)
 
 // reset invalidates every cached entry. The per-job loop calls this before a
 // job runs so a reused cache never serves stale geometry for a new index.
 func (c *frameWorkJobGeometryCache) reset() {
-	c.regionValid = false
-	c.planeValid = [3]bool{}
+	c.validMask = 0
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
@@ -347,7 +358,8 @@ func (b *FrameWorkBatch) JobDecodeState(index int, state *tile.DecodeState) erro
 // many transform blocks of one job.
 func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
-	if c := b.geomCache; c != nil && cacheIndexOK && c.regionValid && c.regionIndex == cacheIndex {
+	if c := b.geomCache; c != nil && cacheIndexOK &&
+		c.validMask&frameWorkJobGeometryRegionValid != 0 && c.regionIndex == cacheIndex {
 		return c.region, nil
 	}
 	region, err := b.computeJobRegion(index)
@@ -356,12 +368,12 @@ func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 	}
 	if c := b.geomCache; c != nil && cacheIndexOK {
 		// A new index invalidates any plane windows cached for the old one.
-		if !c.regionValid || c.regionIndex != cacheIndex {
-			c.planeValid = [3]bool{}
+		if c.validMask&frameWorkJobGeometryRegionValid == 0 || c.regionIndex != cacheIndex {
+			c.validMask &^= frameWorkJobGeometryPlanesValid
 		}
 		c.region = region
 		c.regionIndex = cacheIndex
-		c.regionValid = true
+		c.validMask |= frameWorkJobGeometryRegionValid
 	}
 	return region, nil
 }
@@ -531,27 +543,34 @@ func (b *FrameWorkBatch) JobRestorationUnitRange(index int, plane FrameWorkPlane
 // those past-visible samples as predictor neighbors).
 func (b *FrameWorkBatch) JobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
 	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
-	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV &&
-		cacheIndexOK && c.planeValid[plane] && c.planeIndex[plane] == cacheIndex {
-		return c.plane[plane], nil
+	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV && cacheIndexOK {
+		planeMask := frameWorkJobGeometryPlaneMask(plane)
+		if c.validMask&planeMask != 0 && c.planeIndex[plane] == cacheIndex {
+			return c.plane[plane], nil
+		}
 	}
 	window, err := b.computeJobOutputPlane(index, plane)
 	if err != nil {
 		return window, err
 	}
 	if c := b.geomCache; c != nil && plane <= FrameWorkPlaneV && cacheIndexOK {
+		planeMask := frameWorkJobGeometryPlaneMask(plane)
 		c.plane[plane] = window
 		c.planeIndex[plane] = cacheIndex
-		c.planeValid[plane] = true
+		c.validMask |= planeMask
 	}
 	return window, nil
 }
 
-func frameWorkJobCacheIndex(index int) (uint32, bool) {
-	if index < 0 || uint64(index) > uint64(^uint32(0)) {
+func frameWorkJobGeometryPlaneMask(plane FrameWorkPlane) uint8 {
+	return uint8(1) << (uint8(plane) + 1)
+}
+
+func frameWorkJobCacheIndex(index int) (uint16, bool) {
+	if index < 0 || index > frameWorkMaxCacheIndex {
 		return 0, false
 	}
-	return uint32(index), true
+	return uint16(index), true
 }
 
 func (b *FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, error) {
