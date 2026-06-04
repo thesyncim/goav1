@@ -301,9 +301,14 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 }
 
 func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
-	plane, ssX, ssY, err := b.blockCoeffPlane(block.Plane)
-	if err != nil {
-		return frameWorkBlockCoeffGeometry{}, err
+	plane := FrameWorkPlaneY
+	ssX, ssY := uint(0), uint(0)
+	var err error
+	if block.Plane != 0 {
+		plane, ssX, ssY, err = b.blockCoeffPlane(block.Plane)
+		if err != nil {
+			return frameWorkBlockCoeffGeometry{}, err
+		}
 	}
 	region, regionOK := b.cachedJobRegionTrusted(index)
 	if !regionOK {
