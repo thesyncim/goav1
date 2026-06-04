@@ -49,8 +49,9 @@ type FrameWorkPostFilterScratchSize struct {
 // FrameWorkPostFilterBindOptions carries decoded side data that is not part of
 // the reusable scratch arena.
 type FrameWorkPostFilterBindOptions struct {
-	LoopFilterMap FrameWorkLoopFilterMap
-	CDEFIndexMap  FrameWorkCDEFIndexMap
+	LoopFilterMap             FrameWorkLoopFilterMap
+	LoopFilterTrustedCoverage bool
+	CDEFIndexMap              FrameWorkCDEFIndexMap
 
 	SuperResOutputView *frame.Frame
 
@@ -122,9 +123,10 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	}
 	return FrameWorkPostFilterRequest{
 		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
-			Map:      options.LoopFilterMap,
-			Edges:    edges,
-			Schedule: schedule,
+			Map:             options.LoopFilterMap,
+			Edges:           edges,
+			Schedule:        schedule,
+			TrustedCoverage: options.LoopFilterTrustedCoverage,
 		},
 		CDEF:        cdefReq,
 		SuperRes:    superResReq,
@@ -294,6 +296,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	options := r.Options
 	if frameWorkLoopFilterMapEmpty(options.LoopFilterMap) && ctx.LoopFilterMap != nil {
 		options.LoopFilterMap = *ctx.LoopFilterMap
+		options.LoopFilterTrustedCoverage = true
 	}
 	if frameWorkCDEFIndexMapEmpty(options.CDEFIndexMap) && ctx.CDEFIndexMap != nil {
 		options.CDEFIndexMap = *ctx.CDEFIndexMap
@@ -303,8 +306,11 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
 	}
 	probe := FrameWorkPostFilterRequest{
-		LoopFilter: FrameWorkLoopFilterPostFilterRequest{Map: options.LoopFilterMap},
-		CDEF:       FrameWorkCDEFPostFilterRequest{IndexMap: options.CDEFIndexMap},
+		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
+			Map:             options.LoopFilterMap,
+			TrustedCoverage: options.LoopFilterTrustedCoverage,
+		},
+		CDEF: FrameWorkCDEFPostFilterRequest{IndexMap: options.CDEFIndexMap},
 		Restoration: FrameWorkRestorationPostFilterRequest{
 			Records:   options.RestorationRecords,
 			Optimized: options.RestorationOptimized,

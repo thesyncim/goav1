@@ -20,9 +20,10 @@ type FrameWorkLoopFilterMap = threading.FrameWorkLoopFilterMap
 // FrameWorkLoopFilterPostFilterRequest carries decoded loop-filter side data
 // and optional caller-owned edge storage for postfilter planning.
 type FrameWorkLoopFilterPostFilterRequest struct {
-	Map      FrameWorkLoopFilterMap
-	Edges    []FrameWorkLoopFilterPostFilterEdge
-	Schedule []uint32
+	Map             FrameWorkLoopFilterMap
+	Edges           []FrameWorkLoopFilterPostFilterEdge
+	Schedule        []uint32
+	TrustedCoverage bool
 }
 
 // FrameWorkLoopFilterPostFilterEdge describes one deblocking edge candidate in
@@ -285,6 +286,9 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 		return plan, err
 	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+	if req.TrustedCoverage {
+		return ctx.loopFilterPostFilterPlanTrusted(filterMap, planning, levelCtx, plan, req.Edges)
+	}
 	stride := int(filterMap.Stride)
 	for row := 0; row < rows; row++ {
 		base := row * stride
@@ -317,6 +321,63 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 			if err := frameWorkAppendLoopFilterChromaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning, levels); err != nil {
 				return plan, err
 			}
+		}
+	}
+	if plan.Missing != 0 {
+		return plan, threading.ErrInvalidBatch
+	}
+	return plan, nil
+}
+
+func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrusted(filterMap FrameWorkLoopFilterMap, planning frameWorkLoopFilterPlanningContext, levelCtx frameWorkLoopFilterLevelContext, plan FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) (FrameWorkLoopFilterPostFilterPlan, error) {
+	cols := int(plan.MICols)
+	rows := int(plan.MIRows)
+	stride := int(filterMap.Stride)
+	for row := 0; row < rows; row++ {
+		base := row * stride
+		for col := 0; col < cols; {
+			record := &filterMap.Records[base+col]
+			if !record.Valid {
+				plan.Missing++
+				col++
+				continue
+			}
+			block := record.Block
+			miCol := int(block.MICol)
+			miRow := int(block.MIRow)
+			miColEnd := int(block.MIColEnd)
+			miRowEnd := int(block.MIRowEnd)
+			if miColEnd <= miCol || miRowEnd <= miRow ||
+				miColEnd > cols || miRowEnd > rows ||
+				col < miCol || col >= miColEnd || row < miRow || row >= miRowEnd {
+				return plan, threading.ErrInvalidBatch
+			}
+			nextCol := miColEnd
+			if nextCol <= col {
+				return plan, threading.ErrInvalidBatch
+			}
+			if miCol != col || miRow != row {
+				col = nextCol
+				continue
+			}
+			plan.Cells += int32((miColEnd - miCol) * (miRowEnd - miRow))
+			plan.Blocks++
+			levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, record)
+			if err != nil {
+				return plan, err
+			}
+			frameWorkAccumulateLoopFilterLevelStats(levelCtx, levels, &plan)
+			plan.TransformReadyBlocks++
+			if record.SkipTransform {
+				plan.SkipTransformBlocks++
+			}
+			if err := frameWorkAppendLoopFilterLumaEdges(ctx, levelCtx, filterMap, record, &plan, edges, planning.bounds[loopfilter.PlaneY], levels); err != nil {
+				return plan, err
+			}
+			if err := frameWorkAppendLoopFilterChromaEdges(ctx, levelCtx, filterMap, record, &plan, edges, planning, levels); err != nil {
+				return plan, err
+			}
+			col = nextCol
 		}
 	}
 	if plan.Missing != 0 {

@@ -293,6 +293,34 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *te
 	}
 }
 
+func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanTrustedMatchesValidated(t *testing.T) {
+	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(t)
+	validated, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:   filterMap,
+		Edges: edges,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustedEdges := make([]FrameWorkLoopFilterPostFilterEdge, len(edges))
+	trusted, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map:             filterMap,
+		Edges:           trustedEdges,
+		TrustedCoverage: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trusted != validated {
+		t.Fatalf("trusted plan=%+v want validated %+v", trusted, validated)
+	}
+	for i := range edges {
+		if trustedEdges[i] != edges[i] {
+			t.Fatalf("edge[%d]=%+v want %+v", i, trustedEdges[i], edges[i])
+		}
+	}
+}
+
 func TestFrameWorkLoopFilterPostFilterScratchSizeBindEdges(t *testing.T) {
 	size := FrameWorkLoopFilterPostFilterScratchSize{Edges: 3}
 	storage := make([]FrameWorkLoopFilterPostFilterEdge, 4)
@@ -2098,6 +2126,25 @@ func BenchmarkLoopFilterPostFilterPlan(b *testing.B) {
 	}
 }
 
+func BenchmarkLoopFilterPostFilterPlanTrusted(b *testing.B) {
+	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+			Map:             filterMap,
+			Edges:           edges,
+			TrustedCoverage: true,
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if plan.StoredEdges != 72 {
+			b.Fatalf("stored edges=%d want 72", plan.StoredEdges)
+		}
+	}
+}
+
 func BenchmarkApplyLoopFilterEdges(b *testing.B) {
 	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
 	b.ReportAllocs()
@@ -2328,7 +2375,7 @@ func testFrameWorkLoopFilterPostFilterMap(t testing.TB, size parser.FrameSize, r
 	return filterMap
 }
 
-func benchmarkLoopFilterPostFilterFixture(b *testing.B) (FrameWorkPostFilterContext, FrameWorkLoopFilterMap, []FrameWorkLoopFilterPostFilterEdge) {
+func benchmarkLoopFilterPostFilterFixture(b testing.TB) (FrameWorkPostFilterContext, FrameWorkLoopFilterMap, []FrameWorkLoopFilterPostFilterEdge) {
 	b.Helper()
 	const width = 64
 	const height = 64
