@@ -238,7 +238,7 @@ func TestWarpSamplesUseLibaomOffsetForWideAboveNeighbor(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("samples=%d want 1", count)
 	}
-	if want := -motion.SubpelScale; samples[0].X != want {
+	if want := -motion.SubpelScale; int(samples[0].X) != want {
 		t.Fatalf("sample x=%d want %d", samples[0].X, want)
 	}
 }

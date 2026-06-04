@@ -440,10 +440,11 @@ func findWarpAffineInt(samples []warpSample, block BlockVisit, mv motion.Vector)
 	var a00, a01, a11 int64
 	var bx0, bx1, by0, by1 int64
 	for i := range samples {
-		dx := samples[i].RefX - dux
-		dy := samples[i].RefY - duy
-		sx := samples[i].X - sux
-		sy := samples[i].Y - suy
+		sample := samples[i]
+		dx := int(sample.RefX) - dux
+		dy := int(sample.RefY) - duy
+		sx := int(sample.X) - sux
+		sy := int(sample.Y) - suy
 		if absInt(sx-dx) < warpLeastSquaresMVMax && absInt(sy-dy) < warpLeastSquaresMVMax {
 			a00 += int64(warpLeastSquaresSquare(sx))
 			a01 += int64(warpLeastSquaresProduct1(sx, sy))

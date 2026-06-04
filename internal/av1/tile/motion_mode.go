@@ -463,10 +463,10 @@ func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool 
 }
 
 type warpSample struct {
-	X      int
-	Y      int
-	RefX   int
-	RefY   int
+	X      int16
+	Y      int16
+	RefX   int16
+	RefY   int16
 	Motion motion.Vector
 }
 
@@ -632,10 +632,10 @@ func recordWarpSample(mv motion.Vector, colOffset4 int, rowOffset4 int, signC in
 	x := colOffset4*4 + signC*(w4*4)/2 - 1
 	y := rowOffset4*4 + signR*(h4*4)/2 - 1
 	return warpSample{
-		X:      x * motion.SubpelScale,
-		Y:      y * motion.SubpelScale,
-		RefX:   x*motion.SubpelScale + int(mv.Col),
-		RefY:   y*motion.SubpelScale + int(mv.Row),
+		X:      int16(x * motion.SubpelScale),
+		Y:      int16(y * motion.SubpelScale),
+		RefX:   int16(x*motion.SubpelScale + int(mv.Col)),
+		RefY:   int16(y*motion.SubpelScale + int(mv.Row)),
 		Motion: mv,
 	}
 }
@@ -649,8 +649,9 @@ func selectWarpSamples(samples []warpSample, size BlockSize, mv motion.Vector) i
 	thresh = minInt(maxInt(thresh, 16), 112)
 	ret := 0
 	for i := range samples {
-		diff := absInt(samples[i].RefX-samples[i].X-int(mv.Col)) +
-			absInt(samples[i].RefY-samples[i].Y-int(mv.Row))
+		sample := samples[i]
+		diff := absInt(int(sample.RefX)-int(sample.X)-int(mv.Col)) +
+			absInt(int(sample.RefY)-int(sample.Y)-int(mv.Row))
 		if diff > thresh {
 			continue
 		}

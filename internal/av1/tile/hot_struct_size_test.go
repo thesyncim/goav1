@@ -4,6 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -66,6 +67,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TemporalMotionSetupStats", size: unsafe.Sizeof(TemporalMotionSetupStats{}), max: 3},
 		{name: "SubChromaInterCell", size: unsafe.Sizeof(SubChromaInterCell{}), max: 12},
 		{name: "SubChromaInterResult", size: unsafe.Sizeof(SubChromaInterResult{}), max: 50},
+		{name: "warpSample", size: unsafe.Sizeof(warpSample{}), max: 12},
 		{name: "SGRProjInfo", size: unsafe.Sizeof(SGRProjInfo{}), max: 3},
 		{name: "RestorationReferences", size: unsafe.Sizeof(RestorationReferences{}), max: 36},
 		{name: "RestorationUnit", size: unsafe.Sizeof(RestorationUnit{}), max: 38},
@@ -78,5 +80,21 @@ func TestHotStructSizes(t *testing.T) {
 		if tc.size > tc.max {
 			t.Fatalf("%s grew to %d bytes, max %d", tc.name, tc.size, tc.max)
 		}
+	}
+}
+
+func TestWarpSampleCoordinateStorageBounds(t *testing.T) {
+	const (
+		minInt16 = -1 << 15
+		maxInt16 = 1<<15 - 1
+		// recordWarpSample stores SB-relative sample positions in Q3 units. The
+		// largest local offset comes from a 128x128 block's top-right sample:
+		// col_offset=32 MI plus half a 128-wide neighbor minus one sample.
+		maxLocal = (MaxBlockModeSlots*4 + MaxBlockModeSlots*2 - 1) * motion.SubpelScale
+		minRef   = -maxLocal + (MVLower + 1)
+		maxRef   = maxLocal + (MVUpper - 1)
+	)
+	if minRef < minInt16 || maxRef > maxInt16 {
+		t.Fatalf("warpSample int16 coordinate bounds [%d,%d] do not cover refs [%d,%d]", minInt16, maxInt16, minRef, maxRef)
 	}
 }
