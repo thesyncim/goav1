@@ -9,7 +9,14 @@ package filmgrain
 import (
 	"math/rand"
 	"testing"
+	"unsafe"
 )
+
+func TestApplyGrainSegmentNEONCtxSize(t *testing.T) {
+	if size := unsafe.Sizeof(applyGrainSegmentNEONCtx{}); size != 56 {
+		t.Fatalf("applyGrainSegmentNEONCtx size=%d want 56", size)
+	}
+}
 
 func TestApplyGrainSegmentNEONMatchesPureGo(t *testing.T) {
 	if !applyGrainSegmentUseNEON {

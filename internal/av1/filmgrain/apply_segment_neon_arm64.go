@@ -36,10 +36,10 @@ type applyGrainSegmentNEONCtx struct {
 
 	groups uintptr // number of full 8-sample groups
 
-	roundBias int64 // 1 << (scalingShift-1)
-	negShift  int64 // -scalingShift (for the arithmetic right shift)
-	minValue  int64
-	maxValue  int64
+	roundBias int32 // 1 << (scalingShift-1), broadcast to 4 dwords
+	negShift  int32 // -scalingShift (for the arithmetic right shift)
+	minValue  int32 // broadcast to 4 dwords
+	maxValue  int32 // broadcast to 4 dwords
 }
 
 //go:noescape
@@ -55,10 +55,10 @@ func applyGrainSegmentNEON(dst []uint16, src []uint16, scale []uint16, grain []i
 			scale:     &scale[0],
 			grain:     &grain[0],
 			groups:    uintptr(groups),
-			roundBias: int64(1) << (scalingShift - 1),
-			negShift:  int64(-scalingShift),
-			minValue:  int64(minValue),
-			maxValue:  int64(maxValue),
+			roundBias: int32(1) << (scalingShift - 1),
+			negShift:  int32(-scalingShift),
+			minValue:  int32(minValue),
+			maxValue:  int32(maxValue),
 		}
 		applyGrainSegmentNEONAsm(&ctx)
 	}

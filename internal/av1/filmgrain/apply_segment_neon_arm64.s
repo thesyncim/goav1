@@ -18,9 +18,9 @@
 #define GRAIN 24
 #define GROUPS 32
 #define ROUNDBIAS 40
-#define NEGSHIFT 48
-#define MINVALUE 56
-#define MAXVALUE 64
+#define NEGSHIFT 44
+#define MINVALUE 48
+#define MAXVALUE 52
 
 // func applyGrainSegmentNEONAsm(ctx *applyGrainSegmentNEONCtx)
 TEXT ·applyGrainSegmentNEONAsm(SB), NOSPLIT, $0-8
@@ -31,13 +31,13 @@ TEXT ·applyGrainSegmentNEONAsm(SB), NOSPLIT, $0-8
 	MOVD GRAIN(R0), R4
 	MOVD GROUPS(R0), R5
 
-	MOVD ROUNDBIAS(R0), R6
+	MOVW ROUNDBIAS(R0), R6
 	WORD $0x4e040cc4 // dup v4.4s, w6
-	MOVD NEGSHIFT(R0), R6
+	MOVW NEGSHIFT(R0), R6
 	WORD $0x4e040cc5 // dup v5.4s, w6
-	MOVD MINVALUE(R0), R6
+	MOVW MINVALUE(R0), R6
 	WORD $0x4e040cc6 // dup v6.4s, w6
-	MOVD MAXVALUE(R0), R6
+	MOVW MAXVALUE(R0), R6
 	WORD $0x4e040cc7 // dup v7.4s, w6
 
 loop:
