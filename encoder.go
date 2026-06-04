@@ -227,6 +227,45 @@ func AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptor(dst []byte, pa
 	return AppendEncoderWebRTCRTPPacketDependencyDescriptor(dst, packetizer, structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 }
 
+func EncoderWebRTCFrameControlRTPPacketSize(packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) (payloadSize int, descriptorSize int, ok bool, err error) {
+	payloadSize, ok = packetizer.NextPacketSize()
+	if !ok {
+		return 0, 0, false, nil
+	}
+	descriptorSize, ok, err = EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSize(packetizer, control, structure)
+	if err != nil {
+		return 0, 0, true, err
+	}
+	if !ok {
+		return 0, 0, false, nil
+	}
+	return payloadSize, descriptorSize, true, nil
+}
+
+func AppendEncoderWebRTCFrameControlRTPPacket(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
+	descriptor, ok, err = AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptor(descriptorDst, packetizer, control, structure)
+	if err != nil || !ok {
+		return payloadDst, descriptorDst, false, ok, err
+	}
+	payloadSize, sizeOK := packetizer.NextPacketSize()
+	if !sizeOK {
+		return payloadDst, descriptorDst, false, false, nil
+	}
+	if cap(payloadDst)-len(payloadDst) < payloadSize {
+		return payloadDst, descriptorDst, false, true, ErrRTPShortBuffer
+	}
+	off := len(payloadDst)
+	out := payloadDst[:off+payloadSize]
+	n, marker, ok, err := packetizer.NextPacket(out[off:])
+	if err != nil {
+		return payloadDst, descriptorDst, false, true, err
+	}
+	if !ok {
+		return payloadDst, descriptorDst, false, false, nil
+	}
+	return out[:off+n], descriptor, marker, true, nil
+}
+
 func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
 	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
 }
