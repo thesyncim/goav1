@@ -959,6 +959,75 @@ func TestReadCoefficientsTXBSkipClearPolicy(t *testing.T) {
 	}
 }
 
+func TestReadCoefficientsTXBTrackedLevelDirtyClearsScratch(t *testing.T) {
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, levelWindow := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+	var levelArena [maxCoeffScratchLen]uint8
+	levels := levelArena[:len(levelWindow)]
+	coeffs := make([]int16, len(scan))
+	stalePadded := len(levelArena) - 1
+	if stalePadded < 0 || stalePadded > int(^uint16(0)>>1) {
+		t.Fatalf("stale padded index=%d out of test range", stalePadded)
+	}
+
+	var levelDirty [maxCoeffScanLen]int16
+	var levelDirtyLen int
+	req := TXBDecodeRequest{
+		Size:              TransformSize8x8,
+		Plane:             CoeffPlaneY,
+		Class:             transform.Class2D,
+		TXBSkipContext:    0,
+		DCSignContext:     0,
+		EOBMultiContext:   0,
+		levelDirtyPos:     &levelDirty,
+		levelDirtyLen:     &levelDirtyLen,
+		levelDirtyScratch: &levelArena,
+	}
+
+	for seed := 0; seed < 256; seed++ {
+		for i := range coeffs {
+			coeffs[i] = 0
+		}
+		levelArena[stalePadded] = 77
+		levelDirty[0] = int16(stalePadded)
+		levelDirtyLen = 1
+
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			t.Fatal(err)
+		}
+		var state DecodeState
+		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), 0x5a}
+		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
+		if err != nil || result.AllZero || result.EOB <= 1 {
+			continue
+		}
+		if levelArena[stalePadded] != 0 {
+			t.Fatalf("stale padded level %d survived dirty clear: %d", stalePadded, levelArena[stalePadded])
+		}
+		if levelDirtyLen == 0 {
+			t.Fatal("levelDirtyLen=0 after nonzero eob decode")
+		}
+		for i := 0; i < levelDirtyLen; i++ {
+			padded := int(levelDirty[i])
+			if padded < 0 || padded >= len(levels) {
+				t.Fatalf("levelDirty[%d]=%d out of range len=%d", i, padded, len(levels))
+			}
+			if levels[padded] == 0 {
+				t.Fatalf("levelDirty[%d]=%d points at zero level", i, padded)
+			}
+		}
+		return
+	}
+	t.Fatal("test payload search did not produce an eob>1 TXB")
+}
+
 func FuzzReadCoeffPrimitives(f *testing.F) {
 	f.Add([]byte{0x00}, uint8(TransformSize4x4), uint8(0), uint8(0), uint8(0), uint8(0))
 	f.Add([]byte{0xff}, uint8(TransformSize16x16), uint8(1), uint8(2), uint8(7), uint8(20))

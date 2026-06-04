@@ -72,8 +72,11 @@ type CoeffTokenRequest struct {
 }
 
 type TXBDecodeRequest struct {
-	coeffDirtyPos *[maxCoeffScanLen]int16
-	coeffDirtyLen *int
+	coeffDirtyPos     *[maxCoeffScanLen]int16
+	coeffDirtyLen     *int
+	levelDirtyPos     *[maxCoeffScanLen]int16
+	levelDirtyLen     *int
+	levelDirtyScratch *[maxCoeffScratchLen]uint8
 
 	Size            TransformSize
 	Plane           CoeffPlaneType
@@ -829,6 +832,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if trackDirty {
 		dirtyNext = *dirtyLen
 	}
+	levelDirtyPos := req.levelDirtyPos
+	levelDirtyLen := req.levelDirtyLen
+	trackLevelDirty := levelDirtyPos != nil && levelDirtyLen != nil
 
 	lastC := eobPos - 1
 	lastPos := int(scan[lastC])
@@ -900,13 +906,33 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		}, nil
 	}
 
-	clear(levelsScratch[:scratchLen])
+	levelDirtyNext := 0
+	if trackLevelDirty {
+		levelClearScratch := levelsScratch
+		if req.levelDirtyScratch != nil {
+			levelClearScratch = req.levelDirtyScratch[:]
+		}
+		for i := 0; i < *levelDirtyLen; i++ {
+			padded := int((*levelDirtyPos)[i])
+			if uint(padded) < uint(len(levelClearScratch)) {
+				levelClearScratch[padded] = 0
+			}
+		}
+		*levelDirtyLen = 0
+	} else {
+		clear(levelsScratch[:scratchLen])
+	}
 	lastPadded := int(posSlice[lastPos].padded)
 	if lastPadded < 0 || lastPadded >= len(levelsScratch) {
 		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
+	if trackLevelDirty {
+		(*levelDirtyPos)[levelDirtyNext] = int16(lastPadded)
+		levelDirtyNext++
+		*levelDirtyLen = levelDirtyNext
+	}
 	headC := lastC
 	// Internal scratch callers can reuse the dirty-position array as a temporary
 	// scan-index stack, then rewrite it to coefficient positions after signs are
@@ -960,6 +986,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			levelsScratch[padded] = uint8(level)
 			if level != 0 {
+				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+					levelDirtyNext++
+					*levelDirtyLen = levelDirtyNext
+				}
 				if useDirtyScanList {
 					(*dirtyPos)[nonzeroScanLen] = int16(c)
 					nonzeroScanLen++
@@ -991,6 +1022,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			levelsScratch[padded] = uint8(level)
 			if level != 0 {
+				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
+					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+					levelDirtyNext++
+					*levelDirtyLen = levelDirtyNext
+				}
 				if useDirtyScanList {
 					(*dirtyPos)[nonzeroScanLen] = int16(c)
 					nonzeroScanLen++

@@ -29,9 +29,11 @@ type LumaCoeffTreeScratch struct {
 	Coeffs      [maxCoeffScanLen]int16
 	Scan        [maxCoeffScanLen]int16
 	InverseScan [maxCoeffScanLen]int16
+	LevelDirty  [maxCoeffScanLen]int16
 	Levels      [maxCoeffScratchLen]uint8
 
 	coeffDirtyLen int
+	levelDirtyLen int
 }
 
 func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
@@ -488,6 +490,9 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	req.skipNonZeroCoeffClear = req.SkipAllZeroCoeffClear
 	req.coeffDirtyPos = &scratch.InverseScan
 	req.coeffDirtyLen = &scratch.coeffDirtyLen
+	req.levelDirtyPos = &scratch.LevelDirty
+	req.levelDirtyLen = &scratch.levelDirtyLen
+	req.levelDirtyScratch = &scratch.Levels
 	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
