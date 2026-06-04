@@ -192,7 +192,6 @@ type BlockLoopRequest struct {
 	EnableInterIntraCompound bool
 	SwitchableMotionMode     bool
 	AllowWarpedMotion        bool
-	NumProjRef               int
 
 	EnableMaskedCompound  bool
 	EnableDistWtdCompound bool
@@ -1270,8 +1269,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						ForceIntegerMV:        req.ForceIntegerMV,
 						GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
 						ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
-						OverlappableNeighbors: overlappableNeighbors.MotionModeCount(),
-						NumProjRef:            numProjRef,
+						OverlappableNeighbors: uint8(overlappableNeighbors.MotionModeCount()),
+						NumProjRef:            uint8(numProjRef),
 					})
 					if err != nil {
 						return BlockPredictionModeResult{}, fmt.Errorf("read motion mode: %w", err)

@@ -198,7 +198,7 @@ func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
 		SwitchableMotionMode:  true,
 		AllowWarpedMotion:     true,
 		OverlappableNeighbors: 1,
-		NumProjRef:            got,
+		NumProjRef:            uint8(got),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -544,10 +544,10 @@ func TestMotionModeRejectsInvalidInputs(t *testing.T) {
 	if _, err := LastMotionModeAllowed(motionModeReq(valid, func(r *MotionModeRequest) { r.GlobalMotionType = parser.GlobalMotionAffine + 1 })); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad gm err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := LastMotionModeAllowed(motionModeReq(valid, func(r *MotionModeRequest) { r.OverlappableNeighbors = -1 })); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := LastMotionModeAllowed(motionModeReq(valid, func(r *MotionModeRequest) { r.OverlappableNeighbors = MaxOverlappableNeighbors + 1 })); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad neighbors err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := LastMotionModeAllowed(motionModeReq(valid, func(r *MotionModeRequest) { r.NumProjRef = -1 })); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := LastMotionModeAllowed(motionModeReq(valid, func(r *MotionModeRequest) { r.NumProjRef = maxWarpSamples + 1 })); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad proj refs err=%v want %v", err, ErrInvalidDecodeState)
 	}
 
@@ -618,8 +618,8 @@ func FuzzReadMotionMode(f *testing.F) {
 			ForceIntegerMV:        forceInteger,
 			GlobalMotionType:      parser.GlobalMotionType(rawGM % 4),
 			ScaledReference:       scaled,
-			OverlappableNeighbors: int(rawCount & 3),
-			NumProjRef:            int((rawCount >> 2) & 3),
+			OverlappableNeighbors: rawCount & 3,
+			NumProjRef:            (rawCount >> 2) & 3,
 		}
 		mode, err := state.ReadMotionMode(&cdfs, req)
 		if err != nil {

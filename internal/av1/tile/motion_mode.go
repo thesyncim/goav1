@@ -38,8 +38,8 @@ type MotionModeRequest struct {
 	GlobalMotionType     parser.GlobalMotionType
 	ScaledReference      bool
 
-	OverlappableNeighbors int
-	NumProjRef            int
+	OverlappableNeighbors uint8
+	NumProjRef            uint8
 }
 
 // OverlappableNeighborRequest describes the current block for libaom's
@@ -63,8 +63,8 @@ const MaxOverlappableNeighbors = 4
 
 // OverlappableNeighbor snapshots one already-decoded neighbor used by OBMC.
 type OverlappableNeighbor struct {
-	RelX4 int
-	RelY4 int
+	RelX4 int8
+	RelY4 int8
 	Span4 uint8
 
 	Size BlockSize
@@ -78,9 +78,9 @@ type OverlappableNeighbor struct {
 // OverlappableNeighborSet carries the above and left OBMC neighbor lists.
 type OverlappableNeighborSet struct {
 	Above         [MaxOverlappableNeighbors]OverlappableNeighbor
-	AboveCount    int
+	AboveCount    uint8
 	Left          [MaxOverlappableNeighbors]OverlappableNeighbor
-	LeftCount     int
+	LeftCount     uint8
 	TopLeft       OverlappableNeighbor
 	TopLeftValid  bool
 	TopRight      OverlappableNeighbor
@@ -89,9 +89,9 @@ type OverlappableNeighborSet struct {
 
 func (s OverlappableNeighborSet) MotionModeCount() int {
 	if s.AboveCount != 0 {
-		return s.AboveCount
+		return int(s.AboveCount)
 	}
-	return s.LeftCount
+	return int(s.LeftCount)
 }
 
 // WarpSampleCount returns the count of neighboring single-reference samples
@@ -101,12 +101,14 @@ func (s OverlappableNeighborSet) WarpSampleCount(ref ReferenceFrame) int {
 		return 0
 	}
 	count := 0
-	for i := 0; i < s.AboveCount && count < maxWarpSamples; i++ {
+	aboveCount := int(s.AboveCount)
+	for i := 0; i < aboveCount && count < maxWarpSamples; i++ {
 		if warpSampleNeighborMatches(s.Above[i], ref) {
 			count++
 		}
 	}
-	for i := 0; i < s.LeftCount && count < maxWarpSamples; i++ {
+	leftCount := int(s.LeftCount)
+	for i := 0; i < leftCount && count < maxWarpSamples; i++ {
 		if warpSampleNeighborMatches(s.Left[i], ref) {
 			count++
 		}
@@ -286,13 +288,13 @@ func MaxOBMCNeighborsForSize(size BlockSize) (above int, left int, err error) {
 	return maxOBMCNeighborCount(dims.Log2W), maxOBMCNeighborCount(dims.Log2H), nil
 }
 
-var maxOBMCNeighbors = [6]int{0, 1, 2, 3, 4, 4}
+var maxOBMCNeighbors = [6]uint8{0, 1, 2, 3, 4, 4}
 
 func maxOBMCNeighborCount(log2 uint8) int {
 	if int(log2) >= len(maxOBMCNeighbors) {
 		return MaxOverlappableNeighbors
 	}
-	return maxOBMCNeighbors[log2]
+	return int(maxOBMCNeighbors[log2])
 }
 
 func (c *BlockModeContext) validateOverlappableNeighborRequest(req OverlappableNeighborRequest) (int, int, error) {
@@ -366,7 +368,7 @@ func (c *BlockModeContext) countOverlappableLeft(y4 int, visibleH4 int) int {
 
 func (c *BlockModeContext) collectOverlappableAbove(x4 int, visibleW4 int, maxNeighbors int, set *OverlappableNeighborSet) {
 	end := x4 + visibleW4
-	for col := x4; col < end && set.AboveCount < maxNeighbors; {
+	for col := x4; col < end && int(set.AboveCount) < maxNeighbors; {
 		step := c.aboveOverlappableStep(col)
 		rel := col - x4
 		span := minInt(step, end-col)
@@ -381,7 +383,7 @@ func (c *BlockModeContext) collectOverlappableAbove(x4 int, visibleW4 int, maxNe
 			col += step
 		}
 		if c.aboveOverlappable(slot) {
-			set.Above[set.AboveCount] = c.aboveOverlappableNeighbor(slot, rel, span)
+			set.Above[int(set.AboveCount)] = c.aboveOverlappableNeighbor(slot, rel, span)
 			set.AboveCount++
 		}
 	}
@@ -389,7 +391,7 @@ func (c *BlockModeContext) collectOverlappableAbove(x4 int, visibleW4 int, maxNe
 
 func (c *BlockModeContext) collectOverlappableLeft(y4 int, visibleH4 int, maxNeighbors int, set *OverlappableNeighborSet) {
 	end := y4 + visibleH4
-	for row := y4; row < end && set.LeftCount < maxNeighbors; {
+	for row := y4; row < end && int(set.LeftCount) < maxNeighbors; {
 		step := c.leftOverlappableStep(row)
 		rel := row - y4
 		span := minInt(step, end-row)
@@ -404,7 +406,7 @@ func (c *BlockModeContext) collectOverlappableLeft(y4 int, visibleH4 int, maxNei
 			row += step
 		}
 		if c.leftOverlappable(slot) {
-			set.Left[set.LeftCount] = c.leftOverlappableNeighbor(slot, rel, span)
+			set.Left[int(set.LeftCount)] = c.leftOverlappableNeighbor(slot, rel, span)
 			set.LeftCount++
 		}
 	}
@@ -412,7 +414,7 @@ func (c *BlockModeContext) collectOverlappableLeft(y4 int, visibleH4 int, maxNei
 
 func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelX4:              rel,
+		RelX4:              int8(rel),
 		Span4:              uint8(maxInt(0, span)),
 		Size:               c.AboveBlockSize[slot],
 		Motion:             c.AboveInterMotion[slot],
@@ -424,7 +426,7 @@ func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int
 
 func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelY4:              rel,
+		RelY4:              int8(rel),
 		Span4:              uint8(maxInt(0, span)),
 		Size:               c.LeftBlockSize[slot],
 		Motion:             c.LeftInterMotion[slot],
@@ -440,8 +442,8 @@ func (c *BlockModeContext) gridOverlappableNeighbor(x4 int, y4 int, relX4 int, r
 		return OverlappableNeighbor{}, false
 	}
 	return OverlappableNeighbor{
-		RelX4:       relX4,
-		RelY4:       relY4,
+		RelX4:       int8(relX4),
+		RelY4:       int8(relY4),
 		Span4:       1,
 		Size:        size,
 		Motion:      motionResult,
@@ -514,7 +516,8 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 	}
 	count := 0
 	if block.HaveTop {
-		for i := 0; i < s.AboveCount && count < maxWarpSamples; i++ {
+		aboveCount := int(s.AboveCount)
+		for i := 0; i < aboveCount && count < maxWarpSamples; i++ {
 			sample, ok, err := warpSampleAbove(block, s.Above[i], ref)
 			if err != nil {
 				return 0, err
@@ -526,7 +529,8 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 		}
 	}
 	if block.HaveLeft {
-		for i := 0; i < s.LeftCount && count < maxWarpSamples; i++ {
+		leftCount := int(s.LeftCount)
+		for i := 0; i < leftCount && count < maxWarpSamples; i++ {
 			sample, ok, err := warpSampleLeft(block, s.Left[i], ref)
 			if err != nil {
 				return 0, err
@@ -718,7 +722,9 @@ func LastMotionModeAllowed(req MotionModeRequest) (MotionMode, error) {
 	if !req.Compound && !req.Mode.Valid() {
 		return 0, ErrInvalidDecodeState
 	}
-	if !globalMotionTypeValid(req.GlobalMotionType) || req.OverlappableNeighbors < 0 || req.NumProjRef < 0 {
+	if !globalMotionTypeValid(req.GlobalMotionType) ||
+		req.OverlappableNeighbors > MaxOverlappableNeighbors ||
+		req.NumProjRef > maxWarpSamples {
 		return 0, ErrInvalidDecodeState
 	}
 	// Caller-level frame gate (libaom skips motion_mode reads when the

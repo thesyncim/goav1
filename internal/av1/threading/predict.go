@@ -1496,13 +1496,15 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 		(geom.Width == 8 && geom.Height == 4) ||
 		(geom.Width == 4 && geom.Height == 8)
 	if !skipAbove {
-		for i := 0; i < neighbors.AboveCount; i++ {
+		aboveCount := int(neighbors.AboveCount)
+		for i := 0; i < aboveCount; i++ {
 			if err := b.predictAndBlendOBMCAbove(plane, geom, tmp, visit.Block, neighbors.Above[i], scratch); err != nil {
 				return err
 			}
 		}
 	}
-	for i := 0; i < neighbors.LeftCount; i++ {
+	leftCount := int(neighbors.LeftCount)
+	for i := 0; i < leftCount; i++ {
 		if err := b.predictAndBlendOBMCLeft(plane, geom, tmp, visit.Block, neighbors.Left[i], scratch); err != nil {
 			return err
 		}
@@ -1911,7 +1913,7 @@ func (b *FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fra
 	if !neighbor.InterpFiltersValid {
 		return ErrInvalidBatch
 	}
-	relX, ok := frameWorkOBMCPlaneOffset(neighbor.RelX4, geom.SubsamplingX)
+	relX, ok := frameWorkOBMCPlaneOffset(int(neighbor.RelX4), geom.SubsamplingX)
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -1962,7 +1964,7 @@ func (b *FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom fram
 	if !neighbor.InterpFiltersValid {
 		return ErrInvalidBatch
 	}
-	relY, ok := frameWorkOBMCPlaneOffset(neighbor.RelY4, geom.SubsamplingY)
+	relY, ok := frameWorkOBMCPlaneOffset(int(neighbor.RelY4), geom.SubsamplingY)
 	if !ok {
 		return ErrInvalidBatch
 	}

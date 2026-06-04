@@ -1598,7 +1598,6 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			EnableInterIntraCompound: rawCols&0x80 != 0,
 			SwitchableMotionMode:     rawRows&0x80 != 0,
 			AllowWarpedMotion:        rawRoot&0x20 != 0,
-			NumProjRef:               int(rawRows & 1),
 			EnableMaskedCompound:     rawRoot&0x10 != 0,
 			EnableDistWtdCompound:    rawCols&0x40 != 0,
 			EnableOrderHint:          true,
