@@ -21,7 +21,7 @@ func benchmarkInverseDCTBlockSquare(b *testing.B, side int) {
 	for i := range coeff {
 		coeff[i] = int32(i%17) - 8
 	}
-	size := Size{Width: side, Height: side}
+	size := Size{Width: uint8(side), Height: uint8(side)}
 	// 2 bytes per dst sample; 4 bytes per coefficient. Reporting the
 	// combined memory traffic keeps the MB/s column comparable across
 	// block sizes.
@@ -51,7 +51,7 @@ func BenchmarkInverseBlockHybrid16x16(b *testing.B) {
 	for i := range coeff {
 		coeff[i] = int32(i%13) - 6
 	}
-	size := Size{Width: side, Height: side}
+	size := Size{Width: uint8(side), Height: uint8(side)}
 	b.SetBytes(int64(side*side) * 6)
 	b.ReportAllocs()
 	b.ResetTimer()

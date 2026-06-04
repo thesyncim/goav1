@@ -74,7 +74,7 @@ func TestSizeFromDimensionsMatchesLibaomTable(t *testing.T) {
 		{Width: 64, Height: 16},
 	}
 	for _, size := range sizes {
-		got, err := SizeFromDimensions(size.Width, size.Height)
+		got, err := SizeFromDimensions(int(size.Width), int(size.Height))
 		if err != nil {
 			t.Fatalf("SizeFromDimensions(%d,%d): %v", size.Width, size.Height, err)
 		}
@@ -149,15 +149,17 @@ func TestInverseBlockHybridTransforms(t *testing.T) {
 		{name: "h dct", typ: TypeHDCT, size: Size{Width: 16, Height: 32}},
 	}
 	for _, tt := range tests {
-		coeffStride := tt.size.Height + 1
-		dstStride := tt.size.Width + 2
-		coeff := make([]int32, coeffStride*tt.size.Width)
-		for row := 0; row < tt.size.Height; row++ {
-			for col := 0; col < tt.size.Width; col++ {
+		width := int(tt.size.Width)
+		height := int(tt.size.Height)
+		coeffStride := height + 1
+		dstStride := width + 2
+		coeff := make([]int32, coeffStride*width)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				coeff[col*coeffStride+row] = int32(((row*11+col*19+7)%43)-21) * 2
 			}
 		}
-		dst := make([]int16, dstStride*tt.size.Height)
+		dst := make([]int16, dstStride*height)
 		scratchLen, err := ScratchLenForType(tt.typ, tt.size)
 		if err != nil {
 			t.Fatalf("%s ScratchLenForType err=%v", tt.name, err)
@@ -166,8 +168,8 @@ func TestInverseBlockHybridTransforms(t *testing.T) {
 		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, tt.size, tt.typ); err != nil {
 			t.Fatalf("%s InverseBlock err=%v", tt.name, err)
 		}
-		for row := 0; row < tt.size.Height; row++ {
-			for col := tt.size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != 0 {
 					t.Fatalf("%s dst padding row=%d col=%d overwritten with %d", tt.name, row, col, got)
 				}
@@ -263,25 +265,27 @@ func FuzzInverseBlock(f *testing.F) {
 				size = Size{Width: 32, Height: 32}
 			}
 		}
-		coeffStride := size.Height + 3
-		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Width)
-		dst := make([]int16, dstStride*size.Height)
+		width := int(size.Width)
+		height := int(size.Height)
+		coeffStride := height + 3
+		dstStride := width + 2
+		coeff := make([]int32, coeffStride*width)
+		dst := make([]int16, dstStride*height)
 		scratchLen, err := ScratchLenForType(typ, size)
 		if err != nil {
 			t.Fatalf("ScratchLenForType err=%v", err)
 		}
 		scratch := make([]int32, scratchLen+4)
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				coeff[col*coeffStride+row] = int32(coeffValue) + int32(delta)*int32((row+col)&3)
 			}
 		}
 		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, typ); err != nil {
 			t.Fatalf("InverseBlock err=%v", err)
 		}
-		for row := 0; row < size.Height; row++ {
-			for col := size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != 0 {
 					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
 				}

@@ -195,22 +195,24 @@ func TestInverseDCTBlockSupportedSizes(t *testing.T) {
 		{Width: 64, Height: 64},
 	}
 	for _, size := range sizes {
-		coeffStride := size.Height + 1
-		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Width)
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		width := int(size.Width)
+		height := int(size.Height)
+		coeffStride := height + 1
+		dstStride := width + 2
+		coeff := make([]int32, coeffStride*width)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				coeff[col*coeffStride+row] = int32(((row*13+col*7+5)%29)-14) * 3
 			}
 		}
-		dst := make([]int16, dstStride*size.Height)
-		scratchLen := size.Width * size.Height
+		dst := make([]int16, dstStride*height)
+		scratchLen := width * height
 		scratch := make([]int32, scratchLen+3)
 		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
 			t.Fatalf("%dx%d InverseDCTBlock err=%v", size.Width, size.Height, err)
 		}
-		for row := 0; row < size.Height; row++ {
-			for col := size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != 0 {
 					t.Fatalf("%dx%d dst padding row=%d col=%d overwritten with %d", size.Width, size.Height, row, col, got)
 				}
@@ -333,13 +335,16 @@ func FuzzInverseDCTBlock(f *testing.F) {
 		case 6:
 			size = Size{Width: 32, Height: 64}
 		}
-		coeffStride := size.Height + 3
-		dstStride := size.Width + 2
-		coeff := make([]int32, coeffStride*size.Width)
-		dst := make([]int16, dstStride*size.Height)
-		scratch := make([]int32, size.Width*size.Height+4)
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		width := int(size.Width)
+		height := int(size.Height)
+		blockLen := width * height
+		coeffStride := height + 3
+		dstStride := width + 2
+		coeff := make([]int32, coeffStride*width)
+		dst := make([]int16, dstStride*height)
+		scratch := make([]int32, blockLen+4)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				base := int32(dc) + int32(row*3-col*2)
 				switch (row + col) & 3 {
 				case 1:
@@ -355,14 +360,14 @@ func FuzzInverseDCTBlock(f *testing.F) {
 		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
 			t.Fatalf("InverseDCTBlock err=%v", err)
 		}
-		for row := 0; row < size.Height; row++ {
-			for col := size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != 0 {
 					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
 				}
 			}
 		}
-		for i := size.Width * size.Height; i < len(scratch); i++ {
+		for i := blockLen; i < len(scratch); i++ {
 			if scratch[i] != 0 {
 				t.Fatalf("scratch padding[%d]=%d want 0", i, scratch[i])
 			}

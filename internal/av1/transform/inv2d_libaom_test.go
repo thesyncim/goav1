@@ -32,7 +32,7 @@ func libaomInvShift(size Size) (shift0 int, shift1 int) {
 		{64, 16, 2},
 	}
 	for _, p := range table {
-		if p.w == size.Width && p.h == size.Height {
+		if p.w == int(size.Width) && p.h == int(size.Height) {
 			return p.s0, 4
 		}
 	}
@@ -106,8 +106,8 @@ func libaom1D(input []int32, output []int32, length int, typ tx1DType) {
 // pre-clamp) for direct comparison with InverseBlockBitDepth.
 func libaomInverseResidual(coeff []int32, coeffStride int, size Size, typ Type, bd int) []int32 {
 	vertical, horizontal, _ := typ.tx1DTypes()
-	width := size.Width
-	height := size.Height
+	width := int(size.Width)
+	height := int(size.Height)
 	rectType := 0
 	if width*2 == height || height*2 == width {
 		rectType = 1
@@ -244,17 +244,20 @@ func TestInverseBlockBitDepth2DMatchesLibaom2D(t *testing.T) {
 			}
 			for trial := range 3 {
 				coeffSize := adjustedScanSize(sz)
-				coeff := make([]int32, coeffSize.Width*coeffSize.Height)
+				coeffStride := int(coeffSize.Height)
+				coeff := make([]int32, int(coeffSize.Width)*coeffStride)
 				// 8-bit dq_coeff is up to ±(1<<15) per libaom decodetxb clamp.
 				for i := range coeff {
 					coeff[i] = int32(rng.Intn(1<<15) - (1 << 14))
 				}
-				wantResid := libaomInverseResidual(coeff, coeffSize.Height, sz, typ, 8)
+				wantResid := libaomInverseResidual(coeff, coeffStride, sz, typ, 8)
 
-				gotDst := make([]int16, sz.Width*sz.Height)
+				width := int(sz.Width)
+				height := int(sz.Height)
+				gotDst := make([]int16, width*height)
 				scratchLen, _ := ScratchLenForType(typ, sz)
 				scratch := make([]int32, scratchLen)
-				if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, coeffSize.Height, scratch, sz, typ, 8); err != nil {
+				if err := InverseBlockBitDepth(gotDst, width, coeff, coeffStride, scratch, sz, typ, 8); err != nil {
 					t.Fatalf("size=%v typ=%d trial=%d err=%v", sz, typ, trial, err)
 				}
 				for i := range gotDst {

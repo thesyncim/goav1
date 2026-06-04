@@ -51,24 +51,26 @@ func TestInverseDCT32x32MatchesLibaomFrame3Block(t *testing.T) {
 		-12, -12, -13, -13, -13, -14, -14, -14,
 	}
 
-	gotDst := make([]int16, sz.Width*sz.Height)
-	scratch := make([]int32, sz.Width*sz.Height)
-	if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, stride, scratch, sz, TypeDCTDCT, 8); err != nil {
+	width := int(sz.Width)
+	height := int(sz.Height)
+	gotDst := make([]int16, width*height)
+	scratch := make([]int32, width*height)
+	if err := InverseBlockBitDepth(gotDst, width, coeff, stride, scratch, sz, TypeDCTDCT, 8); err != nil {
 		t.Fatalf("InverseBlockBitDepth: %v", err)
 	}
-	for c := 0; c < sz.Width; c++ {
+	for c := 0; c < width; c++ {
 		if gotDst[c] != wantRow0[c] {
-			t.Fatalf("row 0 col %d: got=%d want=%d (full row got=%v)", c, gotDst[c], wantRow0[c], gotDst[:sz.Width])
+			t.Fatalf("row 0 col %d: got=%d want=%d (full row got=%v)", c, gotDst[c], wantRow0[c], gotDst[:width])
 		}
 	}
 
 	// Also cross-check against our portable libaom reference port for the
 	// full residual block.
 	wantResid := libaomInverseResidual(coeff, stride, sz, TypeDCTDCT, 8)
-	for i := 0; i < sz.Width*sz.Height; i++ {
+	for i := 0; i < width*height; i++ {
 		if int32(gotDst[i]) != wantResid[i] {
-			r := i / sz.Width
-			c := i % sz.Width
+			r := i / width
+			c := i % width
 			t.Fatalf("idx=%d (r=%d c=%d) goav1=%d libaomRef=%d", i, r, c, gotDst[i], wantResid[i])
 		}
 	}

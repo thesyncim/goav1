@@ -2514,7 +2514,7 @@ func testReconstructBlockCoeffDirect(t *testing.T, ctx FrameWorkBatch, dst *fram
 		t.Fatal("invalid frame plane")
 	}
 	if err := reconstruct.ReconstructPlaneBlock(dstPlane, dst.Layout.BytesPerSample, ctx.Sequence.ColorConfig.BitDepth,
-		x, y, req.Block.Coeffs, scanSize.Height, int32Scratch, residualScratch, cfg); err != nil {
+		x, y, req.Block.Coeffs, int(scanSize.Height), int32Scratch, residualScratch, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

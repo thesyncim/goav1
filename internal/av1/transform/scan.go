@@ -104,7 +104,9 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 	if !size.Valid() || !mode.Valid() {
 		return ErrInvalidTransform
 	}
-	total := size.Width * size.Height
+	width := int(size.Width)
+	height := int(size.Height)
+	total := width * height
 	if len(scan) < total || len(inverse) < total {
 		return ErrInvalidTransform
 	}
@@ -121,61 +123,63 @@ func FillScanOrder(scan []int16, inverse []int16, size Size, mode ScanMode) erro
 // fillScanOrderCompute is the canonical scan-order generator. It is invoked at
 // init to seed the precomputed tables and serves as a defensive fallback.
 func fillScanOrderCompute(scan []int16, inverse []int16, size Size, mode ScanMode) error {
+	width := int(size.Width)
+	height := int(size.Height)
 	si := 0
 	put := func(row int, col int) {
-		coeff := col*size.Height + row
+		coeff := col*height + row
 		scan[si] = int16(coeff)
 		inverse[coeff] = int16(si)
 		si++
 	}
 
-	dim := size.Width + size.Height - 1
+	dim := width + height - 1
 	switch mode {
 	case ScanModeZigZag:
 		for i := range dim {
 			if i%2 == 0 {
-				for col := 0; col < size.Width; col++ {
+				for col := 0; col < width; col++ {
 					row := i - col
-					if row >= 0 && row < size.Height {
+					if row >= 0 && row < height {
 						put(row, col)
 					}
 				}
 				continue
 			}
-			for row := 0; row < size.Height; row++ {
+			for row := 0; row < height; row++ {
 				col := i - row
-				if col >= 0 && col < size.Width {
+				if col >= 0 && col < width {
 					put(row, col)
 				}
 			}
 		}
 	case ScanModeColDiag:
 		for i := range dim {
-			for col := 0; col < size.Width; col++ {
+			for col := 0; col < width; col++ {
 				row := i - col
-				if row >= 0 && row < size.Height {
+				if row >= 0 && row < height {
 					put(row, col)
 				}
 			}
 		}
 	case ScanModeRowDiag:
 		for i := range dim {
-			for row := 0; row < size.Height; row++ {
+			for row := 0; row < height; row++ {
 				col := i - row
-				if col >= 0 && col < size.Width {
+				if col >= 0 && col < width {
 					put(row, col)
 				}
 			}
 		}
 	case ScanModeRow1D:
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				put(row, col)
 			}
 		}
 	case ScanModeCol1D:
-		for col := 0; col < size.Width; col++ {
-			for row := 0; row < size.Height; row++ {
+		for col := 0; col < width; col++ {
+			for row := 0; row < height; row++ {
 				put(row, col)
 			}
 		}

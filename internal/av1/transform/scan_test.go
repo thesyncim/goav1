@@ -23,12 +23,14 @@ func TestScanOrderDependencyMatchesLibaom(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DefaultScanMode(%+v,%d): %v", size, class, err)
 			}
-			scan := make([]int16, scanSize.Width*scanSize.Height)
+			scanWidth := int(scanSize.Width)
+			scanHeight := int(scanSize.Height)
+			scan := make([]int16, scanWidth*scanHeight)
 			inverse := make([]int16, len(scan))
 			if err := FillDefaultScan(scan, inverse, size, class); err != nil {
 				t.Fatalf("FillDefaultScan(%+v,%d): %v", size, class, err)
 			}
-			assertLibaomScanOrder(t, scan, inverse, scanSize.Width, scanSize.Height, mode)
+			assertLibaomScanOrder(t, scan, inverse, scanWidth, scanHeight, mode)
 		}
 	}
 }
@@ -143,7 +145,9 @@ func FuzzFillDefaultScan(f *testing.F) {
 		if err != nil {
 			t.Fatalf("ScanSize(%+v): %v", size, err)
 		}
-		scan := make([]int16, scanSize.Width*scanSize.Height)
+		scanWidth := int(scanSize.Width)
+		scanHeight := int(scanSize.Height)
+		scan := make([]int16, scanWidth*scanHeight)
 		inverse := make([]int16, len(scan))
 		mode, err := DefaultScanMode(size, class)
 		if err != nil {
@@ -152,7 +156,7 @@ func FuzzFillDefaultScan(f *testing.F) {
 		if err := FillDefaultScan(scan, inverse, size, class); err != nil {
 			t.Fatalf("FillDefaultScan(%+v,%d): %v", size, class, err)
 		}
-		assertLibaomScanOrder(t, scan, inverse, scanSize.Width, scanSize.Height, mode)
+		assertLibaomScanOrder(t, scan, inverse, scanWidth, scanHeight, mode)
 	})
 }
 

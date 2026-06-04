@@ -298,11 +298,13 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
-	txScale, err := quantize.TransformScale(size.Width, size.Height)
+	width := int(size.Width)
+	height := int(size.Height)
+	txScale, err := quantize.TransformScale(width, height)
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
-	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, size.Width, size.Height)
+	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
 			if plane == FrameWorkPlaneY {
@@ -365,7 +367,7 @@ func frameWorkBlockCoeffVisibleSize(block tile.TransformBlock, size transform.Si
 	if !ok {
 		return 0, 0, ErrInvalidBatch
 	}
-	if visibleWidth > size.Width || visibleHeight > size.Height {
+	if visibleWidth > int(size.Width) || visibleHeight > int(size.Height) {
 		return 0, 0, ErrInvalidBatch
 	}
 	return visibleWidth, visibleHeight, nil

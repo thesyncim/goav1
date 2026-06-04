@@ -225,8 +225,8 @@ func paramLibaom1D(input []int32, output []int32, length int, typ tx1DType, clam
 // content. Returns the post-final-shift residual values.
 func correctLibaom2D(coeff []int32, coeffStride int, size Size, typ Type, bd int) []int32 {
 	vertical, horizontal, _ := typ.tx1DTypes()
-	width := size.Width
-	height := size.Height
+	width := int(size.Width)
+	height := int(size.Height)
 	rectType := 0
 	if width*2 == height || height*2 == width {
 		rectType = 1
@@ -358,16 +358,19 @@ func TestInverseBlockBitDepth2DMatchesLibaomHBD(t *testing.T) {
 				}
 				for trial := range 3 {
 					coeffSize := adjustedScanSize(sz)
-					coeff := make([]int32, coeffSize.Width*coeffSize.Height)
+					coeffStride := int(coeffSize.Height)
+					coeff := make([]int32, int(coeffSize.Width)*coeffStride)
 					for i := range coeff {
 						coeff[i] = int32(rng.Intn(int(2*tc.coeffAbs)+1)) - tc.coeffAbs
 					}
-					wantResid := correctLibaom2D(coeff, coeffSize.Height, sz, typ, tc.bd)
+					wantResid := correctLibaom2D(coeff, coeffStride, sz, typ, tc.bd)
 
-					gotDst := make([]int16, sz.Width*sz.Height)
+					width := int(sz.Width)
+					height := int(sz.Height)
+					gotDst := make([]int16, width*height)
 					scratchLen, _ := ScratchLenForType(typ, sz)
 					scratch := make([]int32, scratchLen)
-					if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, coeffSize.Height, scratch, sz, typ, uint8(tc.bd)); err != nil {
+					if err := InverseBlockBitDepth(gotDst, width, coeff, coeffStride, scratch, sz, typ, uint8(tc.bd)); err != nil {
 						t.Fatalf("bd=%d size=%v typ=%d err=%v", tc.bd, sz, typ, err)
 					}
 					for i := range gotDst {
@@ -404,14 +407,17 @@ func TestInverseBlockBitDepthQ63WorstCaseDC(t *testing.T) {
 	for _, sz := range sizes {
 		for _, dc := range []int32{131071, -131072, 100000, -100000} {
 			coeffSize := adjustedScanSize(sz)
-			coeff := make([]int32, coeffSize.Width*coeffSize.Height)
+			coeffStride := int(coeffSize.Height)
+			coeff := make([]int32, int(coeffSize.Width)*coeffStride)
 			coeff[0] = dc
-			wantResid := correctLibaom2D(coeff, coeffSize.Height, sz, TypeDCTDCT, 10)
+			wantResid := correctLibaom2D(coeff, coeffStride, sz, TypeDCTDCT, 10)
 
-			gotDst := make([]int16, sz.Width*sz.Height)
+			width := int(sz.Width)
+			height := int(sz.Height)
+			gotDst := make([]int16, width*height)
 			scratchLen, _ := ScratchLenForType(TypeDCTDCT, sz)
 			scratch := make([]int32, scratchLen)
-			if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, coeffSize.Height, scratch, sz, TypeDCTDCT, 10); err != nil {
+			if err := InverseBlockBitDepth(gotDst, width, coeff, coeffStride, scratch, sz, TypeDCTDCT, 10); err != nil {
 				t.Fatalf("size=%v dc=%d err=%v", sz, dc, err)
 			}
 			for i := range gotDst {

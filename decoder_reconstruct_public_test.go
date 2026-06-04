@@ -498,7 +498,7 @@ func publicReconstructDecoderFrameWorkBlockCoeffDirect(tb publicDecoderBlockCoef
 	if err != nil {
 		tb.Fatalf("ReconstructBlockScratchLen err=%v", err)
 	}
-	if err := av1.ReconstructPlaneBlock(publicDecoderBlockCoeffPlane(dst, plane), dst.Layout.BytesPerSample, batch.Sequence.ColorConfig.BitDepth, x, y, req.Block.Coeffs, scanSize.Height, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := av1.ReconstructPlaneBlock(publicDecoderBlockCoeffPlane(dst, plane), dst.Layout.BytesPerSample, batch.Sequence.ColorConfig.BitDepth, x, y, req.Block.Coeffs, int(scanSize.Height), make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		tb.Fatalf("ReconstructPlaneBlock err=%v", err)
 	}
 }

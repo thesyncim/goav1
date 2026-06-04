@@ -471,7 +471,9 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		maxEOB := scanSize.Width * scanSize.Height
+		scanWidth := int(scanSize.Width)
+		scanHeight := int(scanSize.Height)
+		maxEOB := scanWidth * scanHeight
 		coeffs := make([]int16, maxEOB)
 		for i := range maxEOB {
 			switch i % 7 {
@@ -499,21 +501,21 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		stride := scanSize.Height + txPadHorizontal
-		for col := 0; col < scanSize.Width; col++ {
-			for row := 0; row < scanSize.Height; row++ {
-				idx := col*scanSize.Height + row
+		stride := scanHeight + txPadHorizontal
+		for col := 0; col < scanWidth; col++ {
+			for row := 0; row < scanHeight; row++ {
+				idx := col*scanHeight + row
 				if got, want := levels[col*stride+row], coeffAbsClamp127(coeffs[idx]); got != want {
 					t.Fatalf("size=%d level[%d,%d]=%d want %d", rawSize, row, col, got, want)
 				}
 			}
-			for row := scanSize.Height; row < scanSize.Height+txPadHorizontal; row++ {
+			for row := scanHeight; row < scanHeight+txPadHorizontal; row++ {
 				if got := levels[col*stride+row]; got != 0 {
 					t.Fatalf("size=%d horizontal pad[%d,%d]=%d want 0", rawSize, row, col, got)
 				}
 			}
 		}
-		for col := scanSize.Width; col < scanSize.Width+txPadHorizontal; col++ {
+		for col := scanWidth; col < scanWidth+txPadHorizontal; col++ {
 			for row := range stride {
 				if got := levels[col*stride+row]; got != 0 {
 					t.Fatalf("size=%d bottom pad[%d,%d]=%d want 0", rawSize, row, col, got)
@@ -545,7 +547,7 @@ func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				maxEOB := scanSize.Width * scanSize.Height
+				maxEOB := int(scanSize.Width) * int(scanSize.Height)
 				scan := make([]int16, maxEOB)
 				inverse := make([]int16, maxEOB)
 				if err := transform.FillDefaultScan(scan, inverse, txSize, class); err != nil {
@@ -1240,7 +1242,7 @@ func coeffScanAndScratch(t testing.TB, size TransformSize, txSize transform.Size
 	if err != nil {
 		t.Fatal(err)
 	}
-	scan := make([]int16, scanSize.Width*scanSize.Height)
+	scan := make([]int16, int(scanSize.Width)*int(scanSize.Height))
 	inverse := make([]int16, len(scan))
 	if err := transform.FillDefaultScan(scan, inverse, txSize, class); err != nil {
 		t.Fatal(err)

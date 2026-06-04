@@ -71,8 +71,8 @@ func (t Type) Supported(size Size) bool {
 		vertical, horizontal, ok := t.tx1DTypes()
 		return ok &&
 			size.Valid() &&
-			tx1DSupported(horizontal, size.Width) &&
-			tx1DSupported(vertical, size.Height)
+			tx1DSupported(horizontal, int(size.Width)) &&
+			tx1DSupported(vertical, int(size.Height))
 	}
 }
 
@@ -84,7 +84,7 @@ func ScratchLenForType(t Type, size Size) (int, error) {
 	if t == TypeIDTX {
 		return 0, nil
 	}
-	return size.Width * size.Height, nil
+	return int(size.Width) * int(size.Height), nil
 }
 
 // InverseBlock writes a transform residual block to dst using t. IDTX keeps

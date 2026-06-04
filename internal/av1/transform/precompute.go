@@ -57,8 +57,8 @@ func dimSlot(d int) int {
 // not valid AV1 transforms (e.g. 4x32); per-index validity is tracked in
 // sizeValidTable.
 func sizeIndex(s Size) int {
-	w := dimSlot(s.Width)
-	h := dimSlot(s.Height)
+	w := dimSlot(int(s.Width))
+	h := dimSlot(int(s.Height))
 	if w < 0 || h < 0 {
 		return invalidSize
 	}
@@ -134,7 +134,7 @@ func init() {
 	for _, vs := range valid {
 		idx := sizeIndex(vs.size)
 		scanSize := adjustedScanSizeTable[idx]
-		total := scanSize.Width * scanSize.Height
+		total := int(scanSize.Width) * int(scanSize.Height)
 		for mode := range numScanModes {
 			scan := make([]int16, total)
 			inverse := make([]int16, total)

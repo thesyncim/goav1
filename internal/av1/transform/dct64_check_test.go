@@ -149,24 +149,27 @@ func TestInverseBlockBitDepth64x64DCTDCTRandom(t *testing.T) {
 
 	rng := rand.New(rand.NewSource(20260527))
 	for trial := range 20 {
-		coeff := make([]int32, coeffSize.Width*coeffSize.Height)
+		coeffStride := int(coeffSize.Height)
+		coeff := make([]int32, int(coeffSize.Width)*coeffStride)
 		for i := range coeff {
 			if rng.Intn(10) == 0 {
 				coeff[i] = int32(rng.Intn(1<<15) - (1 << 14))
 			}
 		}
-		wantResid := libaomInverseResidual64x64(coeff, coeffSize.Height, 8)
+		wantResid := libaomInverseResidual64x64(coeff, coeffStride, 8)
 
-		gotDst := make([]int16, sz.Width*sz.Height)
+		width := int(sz.Width)
+		height := int(sz.Height)
+		gotDst := make([]int16, width*height)
 		scratchLen, _ := ScratchLenForType(TypeDCTDCT, sz)
 		scratch := make([]int32, scratchLen)
-		if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, coeffSize.Height, scratch, sz, TypeDCTDCT, 8); err != nil {
+		if err := InverseBlockBitDepth(gotDst, width, coeff, coeffStride, scratch, sz, TypeDCTDCT, 8); err != nil {
 			t.Fatalf("trial=%d err=%v", trial, err)
 		}
 		for i := range gotDst {
 			if int32(gotDst[i]) != wantResid[i] {
-				r := i / sz.Width
-				c := i % sz.Width
+				r := i / width
+				c := i % width
 				t.Fatalf("trial=%d idx=%d (r=%d c=%d) got=%d want=%d", trial, i, r, c, gotDst[i], wantResid[i])
 			}
 		}
@@ -183,9 +186,9 @@ func TestInverseBlockBitDepth64x64DCTDCTRandom(t *testing.T) {
 func TestInverseBlockBitDepth64x64DCTDCTSparseFrame3(t *testing.T) {
 	sz := Size{Width: 64, Height: 64}
 	coeffSize := adjustedScanSize(sz) // 32x32
-	stride := coeffSize.Height
+	stride := int(coeffSize.Height)
 
-	coeff := make([]int32, coeffSize.Width*coeffSize.Height)
+	coeff := make([]int32, int(coeffSize.Width)*stride)
 	// Three non-zero coefficients mimicking the sparse residual that
 	// produced the row 64 residual error in frame 3 of the monochrome
 	// vector. The exact coefficient indices/values are chosen to
@@ -196,16 +199,18 @@ func TestInverseBlockBitDepth64x64DCTDCTSparseFrame3(t *testing.T) {
 	coeff[1*stride+2] = -80  // (col=1,row=2)
 	wantResid := libaomInverseResidual64x64(coeff, stride, 8)
 
-	gotDst := make([]int16, sz.Width*sz.Height)
+	width := int(sz.Width)
+	height := int(sz.Height)
+	gotDst := make([]int16, width*height)
 	scratchLen, _ := ScratchLenForType(TypeDCTDCT, sz)
 	scratch := make([]int32, scratchLen)
-	if err := InverseBlockBitDepth(gotDst, sz.Width, coeff, stride, scratch, sz, TypeDCTDCT, 8); err != nil {
+	if err := InverseBlockBitDepth(gotDst, width, coeff, stride, scratch, sz, TypeDCTDCT, 8); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	for i := range gotDst {
 		if int32(gotDst[i]) != wantResid[i] {
-			r := i / sz.Width
-			c := i % sz.Width
+			r := i / width
+			c := i % width
 			t.Fatalf("idx=%d (r=%d c=%d) got=%d want=%d", i, r, c, gotDst[i], wantResid[i])
 		}
 	}

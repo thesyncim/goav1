@@ -1,6 +1,15 @@
 package transform
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
+
+func TestHotStructSizes(t *testing.T) {
+	if size := unsafe.Sizeof(Size{}); size > 2 {
+		t.Fatalf("Size grew to %d bytes, max 2", size)
+	}
+}
 
 // allTransformSizes enumerates every supported AV1 transform shape so the
 // precompute equality checks cover the full domain.
@@ -79,7 +88,7 @@ func TestPrecomputedShiftMatchesReference(t *testing.T) {
 	dims := []int{4, 8, 16, 32, 64, 12, 0}
 	for _, w := range dims {
 		for _, h := range dims {
-			s := Size{Width: w, Height: h}
+			s := Size{Width: uint8(w), Height: uint8(h)}
 			wantShift, wantOK := referenceShift(s)
 			gotShift, gotOK := s.shift()
 			if gotOK != wantOK {
@@ -107,7 +116,7 @@ func TestPrecomputedAdjustedScanSizeMatchesReference(t *testing.T) {
 func TestPrecomputedScanOrdersMatchGenerator(t *testing.T) {
 	for _, s := range allTransformSizes {
 		scanSize := adjustedScanSize(s)
-		total := scanSize.Width * scanSize.Height
+		total := int(scanSize.Width) * int(scanSize.Height)
 		for mode := range numScanModes {
 			wantScan := make([]int16, total)
 			wantInverse := make([]int16, total)

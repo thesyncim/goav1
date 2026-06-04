@@ -90,9 +90,11 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		coeffSize = adjustedScanSizeTable[idx]
 	}
 	vertical, horizontal, okType := typ.tx1DTypes()
-	width := size.Width
-	height := size.Height
+	width := int(size.Width)
+	height := int(size.Height)
 	scratchLen := width * height
+	coeffW := int(coeffSize.Width)
+	coeffH := int(coeffSize.Height)
 	// Validate the transform shape without re-running typ.Supported(size),
 	// which would recompute tx1DTypes and the per-axis 1D support checks
 	// already implied by okType and the tx1DSupported() calls below.
@@ -102,10 +104,10 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		!tx1DSupported(horizontal, width) ||
 		!tx1DSupported(vertical, height) ||
 		dstStride < width ||
-		coeffStride < coeffSize.Height ||
+		coeffStride < coeffH ||
 		len(scratch) < scratchLen ||
 		!blockFits(len(dst), dstStride, width, height) ||
-		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
+		!coeffBlockFits(len(coeff), coeffStride, coeffW, coeffH) {
 		return ErrInvalidTransform
 	}
 
@@ -113,8 +115,6 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	// index a provably-bounded buffer.
 	scratch = scratch[:scratchLen]
 	rect2 := size.IsRect2()
-	coeffW := coeffSize.Width
-	coeffH := coeffSize.Height
 
 	// Stage the row inputs into scratch, then run the row pass. The input
 	// staging is kept separate from the transform so the transform can batch

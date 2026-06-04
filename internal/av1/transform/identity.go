@@ -8,13 +8,16 @@ package transform
 
 // Size identifies an AV1 transform block shape in pixels.
 type Size struct {
-	Width  int
-	Height int
+	Width  uint8
+	Height uint8
 }
 
 // SizeFromDimensions returns the AV1 transform size with the given dimensions.
 func SizeFromDimensions(width int, height int) (Size, error) {
-	size := Size{Width: width, Height: height}
+	if width < 0 || height < 0 || width > int(^uint8(0)) || height > int(^uint8(0)) {
+		return Size{}, ErrInvalidTransform
+	}
+	size := Size{Width: uint8(width), Height: uint8(height)}
 	if !size.Valid() {
 		return Size{}, ErrInvalidTransform
 	}
@@ -30,7 +33,9 @@ func (s Size) Valid() bool {
 // IsRect2 reports whether s is a 1:2 or 2:1 rectangular transform. AV1 applies
 // an extra scale before the first 1D pass for these shapes.
 func (s Size) IsRect2() bool {
-	return s.Width*2 == s.Height || s.Height*2 == s.Width
+	width := int(s.Width)
+	height := int(s.Height)
+	return width*2 == height || height*2 == width
 }
 
 // Shift returns the AV1 inverse-transform post-column shift for s.
@@ -139,17 +144,19 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 		shift = int(sizeShiftTable[idx])
 		coeffSize = adjustedScanSizeTable[idx]
 	}
+	width := int(size.Width)
+	height := int(size.Height)
+	coeffWidth := int(coeffSize.Width)
+	coeffHeight := int(coeffSize.Height)
 	if !ok ||
 		!identityBlockSupported(size) ||
-		dstStride < size.Width ||
-		coeffStride < coeffSize.Height ||
-		!blockFits(len(dst), dstStride, size.Width, size.Height) ||
-		!coeffBlockFits(len(coeff), coeffStride, coeffSize.Width, coeffSize.Height) {
+		dstStride < width ||
+		coeffStride < coeffHeight ||
+		!blockFits(len(dst), dstStride, width, height) ||
+		!coeffBlockFits(len(coeff), coeffStride, coeffWidth, coeffHeight) {
 		return ErrInvalidTransform
 	}
 
-	width := size.Width
-	height := size.Height
 	rect2 := size.IsRect2()
 	for row := range height {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]

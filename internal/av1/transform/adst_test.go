@@ -177,10 +177,12 @@ func FuzzInverseADSTBlock(f *testing.F) {
 			return
 		}
 
-		coeffStride := size.Height + 2
-		dstStride := size.Width + 3
-		coeff := make([]int32, coeffStride*size.Width)
-		dst := make([]int16, dstStride*size.Height)
+		width := int(size.Width)
+		height := int(size.Height)
+		coeffStride := height + 2
+		dstStride := width + 3
+		coeff := make([]int32, coeffStride*width)
+		dst := make([]int16, dstStride*height)
 		scratchLen, err := ScratchLenForType(typ, size)
 		if err != nil {
 			t.Fatalf("ScratchLenForType err=%v", err)
@@ -188,8 +190,8 @@ func FuzzInverseADSTBlock(f *testing.F) {
 		scratch := make([]int32, scratchLen+3)
 
 		seeds := [3]int16{c0, c1, c2}
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				base := int32(seeds[(row+col)%3])
 				if (row^col)&1 != 0 {
 					base = -base
@@ -199,8 +201,8 @@ func FuzzInverseADSTBlock(f *testing.F) {
 		}
 
 		const sentinel = int16(0x6c6c)
-		for row := 0; row < size.Height; row++ {
-			for col := size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				dst[row*dstStride+col] = sentinel
 			}
 		}
@@ -211,8 +213,8 @@ func FuzzInverseADSTBlock(f *testing.F) {
 		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, typ); err != nil {
 			t.Fatalf("InverseBlock size=%dx%d type=%d err=%v", size.Width, size.Height, typ, err)
 		}
-		for row := 0; row < size.Height; row++ {
-			for col := size.Width; col < dstStride; col++ {
+		for row := 0; row < height; row++ {
+			for col := width; col < dstStride; col++ {
 				if got := dst[row*dstStride+col]; got != sentinel {
 					t.Fatalf("dst padding row=%d col=%d overwritten with %d", row, col, got)
 				}

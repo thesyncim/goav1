@@ -18,7 +18,7 @@ func ScratchLen(size Size) (int, error) {
 	if !size.Valid() {
 		return 0, ErrInvalidTransform
 	}
-	return size.Width * size.Height, nil
+	return int(size.Width) * int(size.Height), nil
 }
 
 // InverseDCTBlock writes an AV1 DCT_DCT residual block to dst. The source

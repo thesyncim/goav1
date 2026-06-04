@@ -196,8 +196,10 @@ func init() {
 		if err != nil {
 			continue
 		}
-		stride := scanSize.Height + txPadHorizontal
-		maxEOB := scanSize.Width * scanSize.Height
+		scanWidth := int(scanSize.Width)
+		scanHeight := int(scanSize.Height)
+		stride := scanHeight + txPadHorizontal
+		maxEOB := scanWidth * scanHeight
 		var txWide, txTall bool
 		var txCtx uint8
 		if dims, ok := size.Dimensions(); ok {
@@ -217,7 +219,7 @@ func init() {
 			scanHeight: uint8(scanSize.Height),
 			stride:     uint8(stride),
 			maxEOB:     uint16(maxEOB),
-			scratchLen: uint16((scanSize.Width + txPadHorizontal) * stride),
+			scratchLen: uint16((scanWidth + txPadHorizontal) * stride),
 			txCtx:      txCtx,
 			txBRCtx:    txBRCtx,
 			txWide:     txWide,
@@ -225,8 +227,8 @@ func init() {
 		}
 		positions := make([]coeffPos, maxEOB)
 		for idx := range maxEOB {
-			col := idx / scanSize.Height
-			row := idx - col*scanSize.Height
+			col := idx / scanHeight
+			row := idx - col*scanHeight
 			positions[idx] = coeffPos{
 				padded: uint16(col*stride + row),
 				row:    uint8(row),
@@ -372,7 +374,9 @@ func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
 	if err != nil {
 		return ErrInvalidDecodeState
 	}
-	maxEOB := scanSize.Width * scanSize.Height
+	scanWidth := int(scanSize.Width)
+	scanHeight := int(scanSize.Height)
+	maxEOB := scanWidth * scanHeight
 	scratchLen, err := CoeffLevelsScratchLen(size)
 	if err != nil {
 		return err
@@ -383,11 +387,11 @@ func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
 	for i := range scratchLen {
 		levels[i] = 0
 	}
-	stride := scanSize.Height + txPadHorizontal
-	for col := 0; col < scanSize.Width; col++ {
-		src := col * scanSize.Height
+	stride := scanHeight + txPadHorizontal
+	for col := 0; col < scanWidth; col++ {
+		src := col * scanHeight
 		dst := col * stride
-		for row := 0; row < scanSize.Height; row++ {
+		for row := 0; row < scanHeight; row++ {
 			levels[dst+row] = coeffAbsClamp127(coeffs[src+row])
 		}
 	}
@@ -408,7 +412,7 @@ func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Clas
 	if err != nil {
 		return ErrInvalidDecodeState
 	}
-	maxEOB := scanSize.Width * scanSize.Height
+	maxEOB := int(scanSize.Width) * int(scanSize.Height)
 	scratchLen, err := CoeffLevelsScratchLen(size)
 	if err != nil {
 		return err

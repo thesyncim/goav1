@@ -351,12 +351,14 @@ func FuzzInverseIdentityBlock(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, rawSize uint8, coeffValue int16) {
 		size := sizes[int(rawSize)%len(sizes)]
-		coeffStride := size.Height + 3
-		dstStride := size.Width + 5
-		coeff := make([]int32, coeffStride*size.Width)
-		dst := make([]int16, dstStride*size.Height)
-		for row := 0; row < size.Height; row++ {
-			for col := 0; col < size.Width; col++ {
+		width := int(size.Width)
+		height := int(size.Height)
+		coeffStride := height + 3
+		dstStride := width + 5
+		coeff := make([]int32, coeffStride*width)
+		dst := make([]int16, dstStride*height)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
 				coeff[col*coeffStride+row] = int32(coeffValue) + int32(row-col)
 			}
 		}
@@ -364,11 +366,11 @@ func FuzzInverseIdentityBlock(f *testing.F) {
 		if err := InverseIdentityBlock(dst, dstStride, coeff, coeffStride, size); err != nil {
 			t.Fatalf("InverseIdentityBlock err=%v", err)
 		}
-		for row := 0; row < size.Height; row++ {
-			padding := dst[row*dstStride+size.Width : row*dstStride+dstStride]
+		for row := 0; row < height; row++ {
+			padding := dst[row*dstStride+width : row*dstStride+dstStride]
 			for i, got := range padding {
 				if got != 0 {
-					t.Fatalf("padding row=%d col=%d overwritten with %d", row, size.Width+i, got)
+					t.Fatalf("padding row=%d col=%d overwritten with %d", row, width+i, got)
 				}
 			}
 		}

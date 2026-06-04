@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/transform"
-	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 		coeffs := make([]int16, c.w*c.h)
 		coeffs[0] = 1
 		cfg := reconstruct.Block{
-			Size:      transform.Size{Width: c.w, Height: c.h},
+			Size:      transform.Size{Width: uint8(c.w), Height: uint8(c.h)},
 			Transform: c.typ,
 			Quantizer: q,
 			EOB:       1,

@@ -153,7 +153,7 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	txScale, err := quantize.TransformScale(cfg.Size.Width, cfg.Size.Height)
+	txScale, err := quantize.TransformScale(int(cfg.Size.Width), int(cfg.Size.Height))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quantized := make([]int16, cfg.Size.Width*cfg.Size.Height)
+	quantized := make([]int16, int(cfg.Size.Width)*int(cfg.Size.Height))
 	quantized[0] = 8
 	quantized[1] = -3
 	quantized[8] = 5
@@ -173,17 +173,17 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	fillPlane(want, 1, 100)
 	fillPlane(got, 1, 100)
 	fillPlane(gotSparse, 1, 100)
-	if err := ReconstructPlaneBlockVisible(want, 1, 8, 2, 1, 6, 7, quantized, scanSize.Height, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := ReconstructPlaneBlockVisible(want, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlockVisibleWithGeometry(got, 1, 8, 2, 1, 6, 7, quantized, scanSize.Height, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := ReconstructPlaneBlockVisibleWithGeometry(got, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got.Pix, want.Pix) {
 		t.Fatalf("geometry path output differs from default")
 	}
 	scan := []int16{0, 1, 8, 9}
-	if err := ReconstructPlaneBlockVisibleWithGeometryAndScan(gotSparse, 1, 8, 2, 1, 6, 7, quantized, scanSize.Height, scan, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := ReconstructPlaneBlockVisibleWithGeometryAndScan(gotSparse, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), scan, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(gotSparse.Pix, want.Pix) {
@@ -594,17 +594,21 @@ func FuzzReconstructPlaneBlock(f *testing.F) {
 			cfg.Size = transform.Size{Width: 16, Height: 16}
 			cfg.Transform = transform.TypeIDTX
 		}
-		plane, _ := testPlane(cfg.Size.Width+2, cfg.Size.Height+1, bytesPerSample, (cfg.Size.Width+5)*bytesPerSample)
+		width := int(cfg.Size.Width)
+		height := int(cfg.Size.Height)
+		plane, _ := testPlane(width+2, height+1, bytesPerSample, (width+5)*bytesPerSample)
 		fillPlane(plane, bytesPerSample, fill)
 		coeffSize, err := transform.ScanSize(cfg.Size)
 		if err != nil {
 			t.Fatalf("ScanSize err=%v", err)
 		}
-		quantizedStride := coeffSize.Height + 2
-		quantized := make([]int16, quantizedStride*coeffSize.Width)
-		for row := 0; row < cfg.Size.Height; row++ {
-			for col := 0; col < cfg.Size.Width; col++ {
-				if row < coeffSize.Height && col < coeffSize.Width {
+		coeffWidth := int(coeffSize.Width)
+		coeffHeight := int(coeffSize.Height)
+		quantizedStride := coeffHeight + 2
+		quantized := make([]int16, quantizedStride*coeffWidth)
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
+				if row < coeffHeight && col < coeffWidth {
 					quantized[col*quantizedStride+row] = dc + acDelta*int16((row+col)&3)
 				}
 			}
@@ -628,7 +632,7 @@ func FuzzReconstructPlaneBlock(f *testing.F) {
 				if got > max {
 					t.Fatalf("sample(%d,%d)=%d exceeds max %d", x, y, got, max)
 				}
-				if (x == 0 || x > cfg.Size.Width || y == cfg.Size.Height) && got != fill {
+				if (x == 0 || x > width || y == height) && got != fill {
 					t.Fatalf("padding sample(%d,%d)=%d want %d", x, y, got, fill)
 				}
 			}

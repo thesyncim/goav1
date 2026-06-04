@@ -18,7 +18,7 @@ func MaxEOB(size Size) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return scanSize.Width * scanSize.Height, nil
+	return int(scanSize.Width) * int(scanSize.Height), nil
 }
 
 // PaddedCoeffIndex returns libaom's get_padded_idx() coefficient index for
@@ -32,7 +32,7 @@ func PaddedCoeffIndex(size Size, coeffIndex int) (int, error) {
 		return 0, ErrInvalidTransform
 	}
 	scanSize, _ := ScanSize(size)
-	bhl, ok := log2PowerOfTwo(scanSize.Height)
+	bhl, ok := log2PowerOfTwo(int(scanSize.Height))
 	if !ok {
 		return 0, ErrInvalidTransform
 	}
