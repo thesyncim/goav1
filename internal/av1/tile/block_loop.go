@@ -1553,11 +1553,11 @@ func blockChromaNeighborAvailability(req BlockLoopRequest, block BlockVisit) (ha
 	haveLeft = block.HaveLeft
 	if req.Color.SubsamplingY && dims.H4 < 2 {
 		start := req.Walk.neighborMIRowStart()
-		haveTop = block.MIRow > 0 && block.MIRow-1 > start
+		haveTop = block.MIRow > 0 && uint32(block.MIRow)-1 > start
 	}
 	if req.Color.SubsamplingX && dims.W4 < 2 {
 		start := req.Walk.neighborMIColStart()
-		haveLeft = block.MICol > 0 && block.MICol-1 > start
+		haveLeft = block.MICol > 0 && uint32(block.MICol)-1 > start
 	}
 	return haveTop, haveLeft, nil
 }

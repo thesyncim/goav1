@@ -119,7 +119,7 @@ func (m FrameWorkCDEFIndexMap) MarkBlockPtr(params parser.CDEFParams, visit *til
 	unitRowStart := block.MIRow / frameWorkCDEFUnitMI
 	unitColEnd := (block.MIColEnd - 1) / frameWorkCDEFUnitMI
 	unitRowEnd := (block.MIRowEnd - 1) / frameWorkCDEFUnitMI
-	if unitColEnd >= uint32(m.Stride) || unitRowEnd >= uint32(m.Rows) {
+	if int(unitColEnd) >= int(m.Stride) || int(unitRowEnd) >= int(m.Rows) {
 		return ErrInvalidBatch
 	}
 	stride := int(m.Stride)

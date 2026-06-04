@@ -57,8 +57,8 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 	const sbMIB = 16 // 64x64 superblock = 16 4x4 MI units
 	for r := range sbRows {
 		for col := range sbCols {
-			miCol := uint32(col * sbMIB)
-			miRow := uint32(r * sbMIB)
+			miCol := uint16(col * sbMIB)
+			miRow := uint16(r * sbMIB)
 			visit := tile.BlockLoopVisit{
 				Block: tile.BlockVisit{
 					MICol: miCol, MIRow: miRow,

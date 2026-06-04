@@ -312,7 +312,7 @@ func FuzzWalkBlocksScripted(f *testing.F) {
 			if visit.MICol >= visit.MIColEnd || visit.MIRow >= visit.MIRowEnd {
 				t.Fatalf("empty visit=%+v", visit)
 			}
-			if visit.MIColEnd > cols || visit.MIRowEnd > rows {
+			if uint32(visit.MIColEnd) > cols || uint32(visit.MIRowEnd) > rows {
 				t.Fatalf("visit beyond region=%+v cols=%d rows=%d", visit, cols, rows)
 			}
 			if int(visit.VisibleW4) != int(visit.MIColEnd-visit.MICol) ||

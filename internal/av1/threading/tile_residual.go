@@ -1547,8 +1547,8 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 			return ErrInvalidBatch
 		}
 		visit := &c.scratch.reconVisits[idx]
-		sbRow := int((visit.Block.MIRow - uint32(region.MIRowStart)) / sbSizeMIB)
-		sbCol := int((visit.Block.MICol - uint32(region.MIColStart)) / sbSizeMIB)
+		sbRow := (int(visit.Block.MIRow) - int(region.MIRowStart)) / int(sbSizeMIB)
+		sbCol := (int(visit.Block.MICol) - int(region.MIColStart)) / int(sbSizeMIB)
 		if sbRow < 0 || sbRow >= rowCount || sbCol < 0 {
 			return ErrInvalidBatch
 		}

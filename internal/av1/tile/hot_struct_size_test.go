@@ -27,7 +27,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},
 		{name: "coeffUnitWindow", size: unsafe.Sizeof(coeffUnitWindow{}), max: 4},
-		{name: "BlockVisit", size: unsafe.Sizeof(BlockVisit{}), max: 28},
+		{name: "BlockVisit", size: unsafe.Sizeof(BlockVisit{}), max: 18},
 		{name: "TransformTreeRequest", size: unsafe.Sizeof(TransformTreeRequest{}), max: 24},
 		{name: "SelectedTransformRequest", size: unsafe.Sizeof(SelectedTransformRequest{}), max: 7},
 		{name: "TransformPartitionRequest", size: unsafe.Sizeof(TransformPartitionRequest{}), max: 7},

@@ -28,10 +28,6 @@ func FrameWorkLoopFilterBlockFromVisit(block tile.BlockVisit) (FrameWorkLoopFilt
 	if block.MIColEnd <= block.MICol || block.MIRowEnd <= block.MIRow {
 		return FrameWorkLoopFilterBlock{}, ErrInvalidBatch
 	}
-	const maxMI = uint32(^uint16(0))
-	if block.MIColEnd > maxMI || block.MIRowEnd > maxMI {
-		return FrameWorkLoopFilterBlock{}, ErrInvalidBatch
-	}
 	return FrameWorkLoopFilterBlock{
 		MICol:     uint16(block.MICol),
 		MIRow:     uint16(block.MIRow),
@@ -153,7 +149,7 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 	if blockVisit.MIColEnd <= blockVisit.MICol || blockVisit.MIRowEnd <= blockVisit.MIRow {
 		return ErrInvalidBatch
 	}
-	if blockVisit.MIColEnd > uint32(m.Stride) || blockVisit.MIRowEnd > uint32(m.Rows) {
+	if int(blockVisit.MIColEnd) > int(m.Stride) || int(blockVisit.MIRowEnd) > int(m.Rows) {
 		return ErrInvalidBatch
 	}
 	block, err := FrameWorkLoopFilterBlockFromVisit(blockVisit)

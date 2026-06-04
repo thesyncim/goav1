@@ -1638,7 +1638,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			Coeff:     &coeffCDFs,
 			Delta:     deltaCDFs,
 		}, &BlockLoopScratch{}, req, func(visit BlockLoopVisit) error {
-			if visit.Block.MIColEnd > cols || visit.Block.MIRowEnd > rows {
+			if uint32(visit.Block.MIColEnd) > cols || uint32(visit.Block.MIRowEnd) > rows {
 				t.Fatalf("visit beyond region=%+v cols=%d rows=%d", visit.Block, cols, rows)
 			}
 			return nil

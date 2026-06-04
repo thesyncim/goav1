@@ -492,7 +492,7 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 		}
 		aboveW4 := int(aboveDims.W4)
 		if blockW4 <= aboveW4 {
-			colOffset := -int(block.MICol % uint32(aboveW4))
+			colOffset := -int(block.MICol % uint16(aboveW4))
 			if colOffset < 0 {
 				doTopLeft = false
 			}
@@ -508,7 +508,7 @@ func (s OverlappableNeighborSet) warpSamples(block BlockVisit, ref ReferenceFram
 		}
 		leftH4 := int(leftDims.H4)
 		if blockH4 <= leftH4 {
-			rowOffset := -int(block.MIRow % uint32(leftH4))
+			rowOffset := -int(block.MIRow % uint16(leftH4))
 			if rowOffset < 0 {
 				doTopLeft = false
 			}
@@ -578,7 +578,7 @@ func warpSampleAbove(block BlockVisit, n OverlappableNeighbor, ref ReferenceFram
 	}
 	colOffset4 := int(n.RelX4)
 	if int(blockDims.W4) <= int(dims.W4) {
-		colOffset4 = -int(block.MICol % uint32(dims.W4))
+		colOffset4 = -int(block.MICol % uint16(dims.W4))
 	}
 	return recordWarpSample(n.Motion.MV[0], colOffset4, 0, 1, -1, int(dims.W4), int(dims.H4)), true, nil
 }
@@ -597,7 +597,7 @@ func warpSampleLeft(block BlockVisit, n OverlappableNeighbor, ref ReferenceFrame
 	}
 	rowOffset4 := int(n.RelY4)
 	if int(blockDims.H4) <= int(dims.H4) {
-		rowOffset4 = -int(block.MIRow % uint32(dims.H4))
+		rowOffset4 = -int(block.MIRow % uint16(dims.H4))
 	}
 	return recordWarpSample(n.Motion.MV[0], 0, rowOffset4, -1, 1, int(dims.W4), int(dims.H4)), true, nil
 }

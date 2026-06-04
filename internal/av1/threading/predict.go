@@ -2251,7 +2251,7 @@ func frameWorkHasTopRight(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB 
 	rowOff := rowOffPx >> 2
 	txW := width >> 2
 	if ssX < 0 || ssY < 0 || ssX > 1 || ssY > 1 ||
-		block.MICol+uint32((colOff+txW)<<ssX) >= miColEnd {
+		uint32(block.MICol)+uint32((colOff+txW)<<ssX) >= miColEnd {
 		return false
 	}
 	blockW := max(int(dims.W4)>>ssX, 1)
@@ -2275,8 +2275,8 @@ func frameWorkHasTopRight(block tile.BlockVisit, size tile.BlockSize, sbSizeMIB 
 	if sb <= 0 {
 		return false
 	}
-	blkRowInSB := int(block.MIRow&uint32(sb-1)) >> bhLog2
-	blkColInSB := int(block.MICol&uint32(sb-1)) >> bwLog2
+	blkRowInSB := (int(block.MIRow) & (sb - 1)) >> bhLog2
+	blkColInSB := (int(block.MICol) & (sb - 1)) >> bwLog2
 	if blkRowInSB == 0 {
 		return true
 	}
@@ -2306,7 +2306,7 @@ func frameWorkHasBottomLeft(block tile.BlockVisit, size tile.BlockSize, sbSizeMI
 	rowOff := rowOffPx >> 2
 	txH := height >> 2
 	if ssX < 0 || ssY < 0 || ssX > 1 || ssY > 1 ||
-		block.MIRow+uint32((rowOff+txH)<<ssY) >= miRowEnd {
+		uint32(block.MIRow)+uint32((rowOff+txH)<<ssY) >= miRowEnd {
 		return false
 	}
 	if int(dims.W4) > 16 && colOff > 0 {
@@ -2335,8 +2335,8 @@ func frameWorkHasBottomLeft(block tile.BlockVisit, size tile.BlockSize, sbSizeMI
 	if sb <= 0 {
 		return false
 	}
-	blkRowInSB := int(block.MIRow&uint32(sb-1)) >> bhLog2
-	blkColInSB := int(block.MICol&uint32(sb-1)) >> bwLog2
+	blkRowInSB := (int(block.MIRow) & (sb - 1)) >> bhLog2
+	blkColInSB := (int(block.MICol) & (sb - 1)) >> bwLog2
 	if blkColInSB == 0 {
 		rowOffInSB := (blkRowInSB << bhLog2 >> ssY) + rowOff
 		return rowOffInSB+txH < sb>>ssY
@@ -3550,10 +3550,10 @@ func frameWorkPlaneBlockStartsBeyondOutput(output *frame.Frame, plane FrameWorkP
 }
 
 func frameWorkBlockWithinJobRegion(region FrameWorkJobRegion, block tile.BlockVisit) bool {
-	return block.MICol >= uint32(region.MIColStart) &&
-		block.MIRow >= uint32(region.MIRowStart) &&
-		block.MIColEnd <= uint32(region.MIColEnd) &&
-		block.MIRowEnd <= uint32(region.MIRowEnd) &&
+	return block.MICol >= region.MIColStart &&
+		block.MIRow >= region.MIRowStart &&
+		block.MIColEnd <= region.MIColEnd &&
+		block.MIRowEnd <= region.MIRowEnd &&
 		block.MIColEnd > block.MICol &&
 		block.MIRowEnd > block.MIRow
 }

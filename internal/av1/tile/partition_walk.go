@@ -21,10 +21,10 @@ type BlockWalkRequest struct {
 
 // BlockVisit describes one decoded leaf block from AV1's partition tree.
 type BlockVisit struct {
-	MICol    uint32
-	MIRow    uint32
-	MIColEnd uint32
-	MIRowEnd uint32
+	MICol    uint16
+	MIRow    uint16
+	MIColEnd uint16
+	MIRowEnd uint16
 	X4       uint8
 	Y4       uint8
 
@@ -64,6 +64,9 @@ func (s *DecodeState) WalkBlocks(cdfs *PartitionCDFs, ctx *PartitionContext, req
 func walkBlocks(ctx *PartitionContext, req BlockWalkRequest, read partitionReadFunc, visit BlockVisitor) (BlockWalkStats, error) {
 	if ctx == nil || read == nil || visit == nil || !req.Root.Valid() ||
 		req.MIColEnd <= req.MIColStart || req.MIRowEnd <= req.MIRowStart {
+		return BlockWalkStats{}, ErrInvalidDecodeState
+	}
+	if req.MIColEnd > uint32(^uint16(0)) || req.MIRowEnd > uint32(^uint16(0)) {
 		return BlockWalkStats{}, ErrInvalidDecodeState
 	}
 	rootSize := uint32(req.Root.Size4x4())
@@ -314,10 +317,10 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 	y4 := uint8(miRow - rootRow)
 	w.stats.Blocks++
 	return w.visit(BlockVisit{
-		MICol:     miCol,
-		MIRow:     miRow,
-		MIColEnd:  miEndCol,
-		MIRowEnd:  miEndRow,
+		MICol:     uint16(miCol),
+		MIRow:     uint16(miRow),
+		MIColEnd:  uint16(miEndCol),
+		MIRowEnd:  uint16(miEndRow),
 		X4:        x4,
 		Y4:        y4,
 		Level:     level,
