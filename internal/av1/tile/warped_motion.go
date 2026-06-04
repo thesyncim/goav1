@@ -77,7 +77,7 @@ func (c *BlockModeContext) WarpSampleCountWithContext(block BlockVisit, ref Refe
 			// the 3-symbol WARP CDF, desyncing the entropy decoder (av1-1-b10-00-quantizer-25
 			// frame 1 mi(62,64)). topRightInterMotion recovers the SB-above-right cell via
 			// the SBTopRight snapshot, matching libaom xd->mi[-stride + xd->width].
-			trReq := ReferenceMVStackRequest{X4: blockX4, Y4: blockY4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+			trReq := ReferenceMVStackRequest{X4: block.X4, Y4: block.Y4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
 			if motionResult, size, ok := c.topRightInterMotion(trReq, dims); ok {
 				if _, sok := warpSampleFromMotion(motionResult, size, ref, int(dims.W4), 1, 0, -1); sok {
 					count++
@@ -127,7 +127,7 @@ func (c *BlockModeContext) WarpProjectionWithContext(block BlockVisit, ref Refer
 			// only snapshots the SB directly above. topRightInterMotion resolves
 			// the SB-above-and-to-the-right via the SBTopRight snapshot, matching
 			// libaom's frame-wide xd->mi[-stride + xd->width] read.
-			trReq := ReferenceMVStackRequest{X4: blockX4, Y4: blockY4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
+			trReq := ReferenceMVStackRequest{X4: block.X4, Y4: block.Y4, HaveTop: block.HaveTop, HaveLeft: block.HaveLeft}
 			if motionResult, size, ok := c.topRightInterMotion(trReq, dims); ok {
 				if sample, sok := warpSampleFromMotion(motionResult, size, ref, int(dims.W4), 1, 0, -1); sok {
 					samples[count] = sample

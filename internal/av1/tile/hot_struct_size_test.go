@@ -47,6 +47,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "MVResidualResult", size: unsafe.Sizeof(MVResidualResult{}), max: 28},
 		{name: "ReferenceMVCandidate", size: unsafe.Sizeof(ReferenceMVCandidate{}), max: 10},
 		{name: "ReferenceMVStack", size: unsafe.Sizeof(ReferenceMVStack{}), max: 92},
+		{name: "ReferenceMVStackRequest", size: unsafe.Sizeof(ReferenceMVStackRequest{}), max: 80},
 		{name: "ReferenceMVStackResult", size: unsafe.Sizeof(ReferenceMVStackResult{}), max: 98},
 		{name: "InterMVReferenceSet", size: unsafe.Sizeof(InterMVReferenceSet{}), max: 24},
 		{name: "ReferenceMVEntry", size: unsafe.Sizeof(ReferenceMVEntry{}), max: 8},

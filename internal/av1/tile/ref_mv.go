@@ -44,14 +44,7 @@ type ReferenceMVStack struct {
 
 // ReferenceMVStackRequest selects the spatial MV stack for one inter block.
 type ReferenceMVStackRequest struct {
-	Size       BlockSize
-	References InterReferencesResult
-
-	X4           int
-	Y4           int
-	HaveTop      bool
-	HaveLeft     bool
-	HaveTopRight bool
+	TemporalMVs *TemporalMotionField
 
 	MICol uint32
 	MIRow uint32
@@ -66,17 +59,24 @@ type ReferenceMVStackRequest struct {
 	FrameMIRows uint32
 	FrameMICols uint32
 
-	GlobalMVs        [2]motion.Vector
+	GlobalMVs  [2]motion.Vector
+	References InterReferencesResult
+
+	Size             BlockSize
+	X4               uint8
+	Y4               uint8
+	HaveTop          bool
+	HaveLeft         bool
+	HaveTopRight     bool
 	GlobalMotionType [2]parser.GlobalMotionType
 	RefSignBias      [referenceFrameCount]bool
 
-	TemporalMVs          *TemporalMotionField
 	OrderHintBits        uint8
 	CurrentOrderHint     uint8
 	ReferenceOrderHints  [referenceFrameCount]uint8
 	AllowHighPrecisionMV bool
-	ForceIntegerMV       bool
 
+	ForceIntegerMV              bool
 	UseRefFrameMVS              bool
 	TemporalMVSampleUnavailable bool
 }
@@ -746,7 +746,8 @@ func absInt32(v int32) int32 {
 }
 
 func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, result *referenceMVStackSearch) {
-	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	x4 := int(req.X4)
+	end := minInt(int(dims.W4), MaxBlockModeSlots-x4)
 	end = minInt(end, refMVMaxScanBlock4)
 	// libaom's scan_row_mbmi() caps the above-row sweep at
 	// end_mi = AOMMIN(xd->width, mi_cols - mi_col): a block flush against
@@ -767,7 +768,7 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 		end = minInt(end, int(req.TileMIColEnd-req.MICol))
 	}
 	for off := 0; off < end; {
-		slot := req.X4 + off
+		slot := x4 + off
 		size := c.AboveBlockSize[slot]
 		sizeW4 := blockSizeWidth4(size)
 		sizeH4 := blockSizeHeight4(size)
@@ -808,7 +809,8 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 }
 
 func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, result *referenceMVStackSearch) {
-	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.H4), MaxBlockModeSlots-y4)
 	end = minInt(end, refMVMaxScanBlock4)
 	// libaom's scan_col_mbmi() caps the left-column sweep at
 	// end_mi = AOMMIN(xd->height, mi_rows - mi_row): a block flush against the
@@ -837,7 +839,7 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 		loopEnd = minInt(loopEnd, int(req.TileMIRowEnd-req.MIRow))
 	}
 	for off := 0; off < loopEnd; {
-		slot := req.Y4 + off
+		slot := y4 + off
 		size := c.LeftBlockSize[slot]
 		sizeW4 := blockSizeWidth4(size)
 		sizeH4 := blockSizeHeight4(size)
@@ -879,10 +881,11 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 }
 
 func (c *BlockModeContext) scanAboveIntrabcDVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, processedRows *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	x4 := int(req.X4)
+	end := minInt(int(dims.W4), MaxBlockModeSlots-x4)
 	end = minInt(end, refMVMaxScanBlock4)
 	for off := 0; off < end; {
-		slot := req.X4 + off
+		slot := x4 + off
 		size := c.AboveBlockSize[slot]
 		step := c.aboveCandidateStep(slot, end-off)
 		weight := 2
@@ -911,10 +914,11 @@ func (c *BlockModeContext) scanAboveIntrabcDVs(req ReferenceMVStackRequest, dims
 }
 
 func (c *BlockModeContext) scanLeftIntrabcDVs(req ReferenceMVStackRequest, dims BlockDimensions, maxColOffset int, processedCols *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.H4), MaxBlockModeSlots-y4)
 	end = minInt(end, refMVMaxScanBlock4)
 	for off := 0; off < end; {
-		slot := req.Y4 + off
+		slot := y4 + off
 		size := c.LeftBlockSize[slot]
 		step := c.leftCandidateStep(slot, end-off)
 		weight := 2
@@ -1063,7 +1067,9 @@ func (c *BlockModeContext) scanOuterIntrabcDVs(req ReferenceMVStackRequest, dims
 }
 
 func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, rowOffset int, maxRowOffset int, processedRows *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.W4), MaxBlockModeSlots-x4)
 	end = minInt(end, refMVMaxScanBlock4)
 	colOffset := 0
 	if absInt(rowOffset) > 1 {
@@ -1073,8 +1079,8 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 		}
 	}
 	for i := 0; i < end; {
-		x := req.X4 + colOffset + i
-		y := req.Y4 + rowOffset
+		x := x4 + colOffset + i
+		y := y4 + rowOffset
 		// libaom's scan_row_mbmi always advances i += AOMMIN(xd->width,
 		// mi_size_wide[candidate->bsize]) regardless of whether the candidate
 		// is inter or intra. Use the recorded size for the step even when
@@ -1127,7 +1133,9 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 }
 
 func (c *BlockModeContext) scanGridRowIntrabcDVs(req ReferenceMVStackRequest, dims BlockDimensions, rowOffset int, maxRowOffset int, processedRows *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.W4), MaxBlockModeSlots-req.X4)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.W4), MaxBlockModeSlots-x4)
 	end = minInt(end, refMVMaxScanBlock4)
 	colOffset := 0
 	if absInt(rowOffset) > 1 {
@@ -1137,8 +1145,8 @@ func (c *BlockModeContext) scanGridRowIntrabcDVs(req ReferenceMVStackRequest, di
 		}
 	}
 	for i := 0; i < end; {
-		x := req.X4 + colOffset + i
-		y := req.Y4 + rowOffset
+		x := x4 + colOffset + i
+		y := y4 + rowOffset
 		candidate, size, ok := c.crossSBIntrabcGridInterMotion(req, x, y)
 		if !ok {
 			// Match libaom's scan_row_mbmi which advances by AOMMAX(len, 2)
@@ -1175,7 +1183,9 @@ func (c *BlockModeContext) scanGridRowIntrabcDVs(req ReferenceMVStackRequest, di
 }
 
 func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, colOffset int, maxColOffset int, processedCols *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.H4), MaxBlockModeSlots-y4)
 	end = minInt(end, refMVMaxScanBlock4)
 	rowOffset := 0
 	if absInt(colOffset) > 1 {
@@ -1185,8 +1195,8 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 		}
 	}
 	for i := 0; i < end; {
-		x := req.X4 + colOffset
-		y := req.Y4 + rowOffset + i
+		x := x4 + colOffset
+		y := y4 + rowOffset + i
 		// libaom's scan_col_mbmi always advances i += AOMMIN(xd->height,
 		// mi_size_high[candidate->bsize]) regardless of whether the candidate
 		// is inter or intra. Use the recorded size for the step even when
@@ -1237,7 +1247,9 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 }
 
 func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, dims BlockDimensions, colOffset int, maxColOffset int, processedCols *int, stack *ReferenceMVStack) {
-	end := minInt(int(dims.H4), MaxBlockModeSlots-req.Y4)
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	end := minInt(int(dims.H4), MaxBlockModeSlots-y4)
 	end = minInt(end, refMVMaxScanBlock4)
 	rowOffset := 0
 	if absInt(colOffset) > 1 {
@@ -1247,8 +1259,8 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 		}
 	}
 	for i := 0; i < end; {
-		x := req.X4 + colOffset
-		y := req.Y4 + rowOffset + i
+		x := x4 + colOffset
+		y := y4 + rowOffset + i
 		candidate, size, ok := c.crossSBIntrabcGridInterMotion(req, x, y)
 		if !ok {
 			// Match libaom's scan_col_mbmi which advances by AOMMAX(len, 2)
@@ -1285,8 +1297,8 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 }
 
 func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *int, newMatches *int, stack *ReferenceMVStack) {
-	x := req.X4 + colOffset
-	y := req.Y4 + rowOffset
+	x := int(req.X4) + colOffset
+	y := int(req.Y4) + rowOffset
 	candidate, size, ok := c.gridInterMotion(x, y)
 	if !ok {
 		// Fall back to the cross-SB snapshots when the lookup crosses the
@@ -1374,8 +1386,8 @@ func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest,
 }
 
 func (c *BlockModeContext) scanGridBlockIntrabcDV(req ReferenceMVStackRequest, rowOffset int, colOffset int, weight uint16, stack *ReferenceMVStack) {
-	x := req.X4 + colOffset
-	y := req.Y4 + rowOffset
+	x := int(req.X4) + colOffset
+	y := int(req.Y4) + rowOffset
 	if y < 0 && x < 0 {
 		// Diagonal cell across both SB borders: libaom's mi grid cell at
 		// (mi_col-1-e, mi_row-1-d). Recovered via SBDiagonalInterMotionGrid
@@ -1576,8 +1588,8 @@ func (c *BlockModeContext) crossSBIntrabcGridInterMotion(req ReferenceMVStackReq
 }
 
 func (c *BlockModeContext) topRightInterMotion(req ReferenceMVStackRequest, dims BlockDimensions) (InterMotionResult, BlockSize, bool) {
-	x := req.X4 + int(dims.W4)
-	y := req.Y4 - 1
+	x := int(req.X4) + int(dims.W4)
+	y := int(req.Y4) - 1
 	if y >= 0 {
 		candidate, size, ok := c.gridInterMotion(x, y)
 		return candidate, size, ok
@@ -1661,8 +1673,9 @@ func referenceMVExtensionSize(req ReferenceMVStackRequest, dims BlockDimensions)
 func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, stack *ReferenceMVStack) {
 	miSize := referenceMVExtensionSize(req, dims)
 	if req.HaveTop && absInt(maxRowOffset) >= 1 {
+		x4 := int(req.X4)
 		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
-			slot := req.X4 + off
+			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.AboveInterMotion[slot], req.References.Ref[0], req.RefSignBias)
@@ -1671,8 +1684,9 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req ReferenceMVStackRequ
 		}
 	}
 	if req.HaveLeft && absInt(maxColOffset) >= 1 {
+		y4 := int(req.Y4)
 		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
-			slot := req.Y4 + off
+			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
 			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.LeftInterMotion[slot], req.References.Ref[0], req.RefSignBias)
@@ -1712,8 +1726,9 @@ func (c *BlockModeContext) extendCompoundReferenceMVStack(req ReferenceMVStackRe
 func (c *BlockModeContext) collectCompoundReferenceLists(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, lists *compoundReferenceLists) {
 	miSize := referenceMVExtensionSize(req, dims)
 	if req.HaveTop && absInt(maxRowOffset) >= 1 {
+		x4 := int(req.X4)
 		for off := 0; off < miSize; {
-			slot := req.X4 + off
+			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				lists.add(c.AboveInterMotion[slot], req.References.Ref, req.RefSignBias)
@@ -1722,8 +1737,9 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req ReferenceMVStackReq
 		}
 	}
 	if req.HaveLeft && absInt(maxColOffset) >= 1 {
+		y4 := int(req.Y4)
 		for off := 0; off < miSize; {
-			slot := req.Y4 + off
+			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
 			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				lists.add(c.LeftInterMotion[slot], req.References.Ref, req.RefSignBias)
@@ -1764,10 +1780,12 @@ func validateReferenceMVStackRequest(req ReferenceMVStackRequest) (BlockDimensio
 	if !ok {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
-	if err := validateBlockModeSlot(req.X4, req.Y4); err != nil {
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return BlockDimensions{}, err
 	}
-	if req.X4+int(dims.W4) > MaxBlockModeSlots || req.Y4+int(dims.H4) > MaxBlockModeSlots {
+	if x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	if err := validateInterReferences(req.References); err != nil {
@@ -1793,10 +1811,12 @@ func validateIntrabcReferenceDVStackRequest(req ReferenceMVStackRequest) (BlockD
 	if !ok {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
-	if err := validateBlockModeSlot(req.X4, req.Y4); err != nil {
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return BlockDimensions{}, err
 	}
-	if req.X4+int(dims.W4) > MaxBlockModeSlots || req.Y4+int(dims.H4) > MaxBlockModeSlots {
+	if x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	return dims, nil
