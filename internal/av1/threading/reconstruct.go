@@ -138,7 +138,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 		Quantizer:      q,
 		InverseQMatrix: iqMatrix,
 		Lossless:       lossless,
-		EOB:            int(block.Result.EOB),
+		EOB:            int16(block.Result.EOB),
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
 		relX, relY, visibleWidth, visibleHeight,
@@ -188,7 +188,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 		Quantizer:      q,
 		InverseQMatrix: iqMatrix,
 		Lossless:       lossless,
-		EOB:            int(block.Result.EOB),
+		EOB:            int16(block.Result.EOB),
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
 		relX, relY, visibleWidth, visibleHeight,
