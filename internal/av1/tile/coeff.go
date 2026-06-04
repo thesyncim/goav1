@@ -939,7 +939,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if trackLevelDirty {
 		(*levelDirtyPos)[levelDirtyNext] = int16(lastPadded)
 		levelDirtyNext++
-		*levelDirtyLen = uint16(levelDirtyNext)
 	}
 	headC := lastC
 	// Internal scratch callers can reuse the dirty-position array as a temporary
@@ -994,7 +993,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
-						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
 						(*dirtyPos)[nonzeroScanLen] = int16(pos)
@@ -1043,7 +1041,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
-						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
 						(*dirtyPos)[nonzeroScanLen] = int16(pos)
@@ -1077,7 +1074,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
-						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
 						(*dirtyPos)[nonzeroScanLen] = int16(pos)
@@ -1108,7 +1104,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
-						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
 						(*dirtyPos)[nonzeroScanLen] = int16(pos)
@@ -1120,6 +1115,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				}
 			}
 		}
+	}
+	if trackLevelDirty {
+		*levelDirtyLen = uint16(levelDirtyNext)
 	}
 
 	if coeffTraceEnabled {
