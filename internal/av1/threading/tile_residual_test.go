@@ -1327,7 +1327,7 @@ func FuzzFrameWorkBatchDecodeAndReconstructJobResiduals(f *testing.F) {
 				Quantization: parser.QuantizationParams{BaseQIdx: rawQ | 1},
 				TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
 			},
-			Jobs: []tile.Job{{SBCols: 1, SBRows: 1, Offset: 0, Size: len(payload)}},
+			Jobs: []tile.Job{{SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(len(payload))}},
 		}
 		testFillFrame(ctx.Output, 128)
 		var state tile.DecodeState

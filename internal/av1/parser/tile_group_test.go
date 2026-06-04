@@ -16,7 +16,7 @@ func TestParseTileGroupHeaderSingleTile(t *testing.T) {
 	if group.StartTile != 0 || group.EndTile != 0 || group.TileCount != 1 || !group.Final {
 		t.Fatalf("group=%+v", group)
 	}
-	if group.HeaderBits != 0 || group.BitsRead != 0 || group.DataOffset != 0 || group.DataSize != len(payload) {
+	if group.HeaderBits != 0 || group.BitsRead != 0 || group.DataOffset != 0 || int(group.DataSize) != len(payload) {
 		t.Fatalf("header fields=%+v", group)
 	}
 

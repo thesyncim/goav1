@@ -14,8 +14,8 @@ type Job struct {
 	SBCols uint16
 	SBRows uint16
 
-	Offset int
-	Size   int
+	Offset uint32
+	Size   uint32
 
 	LastInRow bool
 	LastRow   bool
@@ -47,7 +47,7 @@ func BuildJobs(dst []Job, tiles parser.TileInfo, spans []parser.TileSpan) (int, 
 	var previous uint16
 	for i := range count {
 		span := spans[i]
-		if span.Tile >= numTiles || span.Offset < 0 || span.Size < 0 {
+		if span.Tile >= numTiles {
 			return 0, ErrInvalidPlan
 		}
 		if i != 0 && span.Tile != previous+1 {

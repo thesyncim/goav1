@@ -228,7 +228,9 @@ func FuzzParseTileGroupHeader(f *testing.F) {
 		if group.StartTile != 0 || group.StartTile > group.EndTile || group.EndTile >= 4 {
 			t.Fatalf("bad tile group=%+v", group)
 		}
-		if group.BitsRead&7 != 0 || group.DataOffset != int(group.BitsRead)>>3 || group.DataOffset > len(payload) {
+		if group.BitsRead&7 != 0 ||
+			int(group.DataOffset) != int(group.BitsRead)>>3 ||
+			int(group.DataOffset) > len(payload) {
 			t.Fatalf("bad tile group offsets=%+v len=%d", group, len(payload))
 		}
 		if group.TileCount != group.EndTile-group.StartTile+1 {
@@ -247,7 +249,8 @@ func FuzzParseTileGroupHeader(f *testing.F) {
 			if span.Tile != uint16(i) || span.Row >= tiles.Rows || span.Col >= tiles.Cols {
 				t.Fatalf("span[%d]=%+v group=%+v", i, span, group)
 			}
-			if span.Offset < group.DataOffset || span.Size < 0 || span.Offset+span.Size > len(payload) {
+			if span.Offset < uint32(group.DataOffset) ||
+				uint64(span.Offset)+uint64(span.Size) > uint64(len(payload)) {
 				t.Fatalf("span[%d]=%+v len=%d group=%+v", i, span, len(payload), group)
 			}
 		}

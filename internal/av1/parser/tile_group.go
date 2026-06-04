@@ -23,8 +23,8 @@ type TileGroup struct {
 	Final                  bool
 	HeaderBits             uint8
 	BitsRead               uint16
-	DataOffset             int
-	DataSize               int
+	DataOffset             uint16
+	DataSize               uint32
 }
 
 // TileSpan identifies one tile payload inside a tile group. Callers provide the
@@ -33,14 +33,17 @@ type TileSpan struct {
 	Tile   uint16
 	Row    uint8
 	Col    uint8
-	Offset int
-	Size   int
+	Offset uint32
+	Size   uint32
 }
 
 // ParseTileGroupHeader parses the header and byte-alignment bits of
 // tile_group_obu(). startBits is zero for OBU_TILE_GROUP and the frame header
 // bit count for OBU_FRAME.
 func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expectedStart uint16, frameOBU bool) (TileGroup, error) {
+	if uint64(len(payload)) > uint64(^uint32(0)) {
+		return TileGroup{}, ErrInvalidTileGroup
+	}
 	if tiles.Cols == 0 || tiles.Rows == 0 {
 		return TileGroup{}, ErrInvalidTileGroup
 	}
@@ -117,11 +120,12 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 		return TileGroup{}, err
 	}
 	group.BitsRead = bitsRead
-	group.DataOffset = int(group.BitsRead) >> 3
-	group.DataSize = len(payload) - group.DataOffset
-	if group.DataSize < 0 {
+	dataOffset := int(group.BitsRead) >> 3
+	if dataOffset > len(payload) {
 		return TileGroup{}, ErrInvalidTileGroup
 	}
+	group.DataOffset = uint16(dataOffset)
+	group.DataSize = uint32(len(payload) - dataOffset)
 	return group, nil
 }
 
@@ -129,14 +133,14 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 // number of spans written.
 func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []TileSpan) (int, error) {
 	count := int(group.TileCount)
-	if count == 0 || len(spans) < count || group.DataOffset < 0 || group.DataOffset > len(payload) {
+	offset := int(group.DataOffset)
+	if count == 0 || len(spans) < count || offset > len(payload) || uint64(len(payload)) > uint64(^uint32(0)) {
 		return 0, ErrInvalidTileGroup
 	}
-	offset := group.DataOffset
 	remaining := len(payload) - offset
 	for i := range count {
 		tile := group.StartTile + uint16(i)
-		size := remaining
+		size := uint32(remaining)
 		if i != count-1 {
 			if tiles.TileSizeBytes == 0 || remaining < int(tiles.TileSizeBytes) {
 				return 0, ErrInvalidTileGroup
@@ -147,8 +151,8 @@ func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []Til
 			}
 			offset += int(tiles.TileSizeBytes)
 			remaining -= int(tiles.TileSizeBytes)
-			size = int(v) + 1
-			if size > remaining {
+			size = v + 1
+			if size > uint32(remaining) {
 				return 0, ErrInvalidTileGroup
 			}
 		}
@@ -156,11 +160,11 @@ func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []Til
 			Tile:   tile,
 			Row:    uint8(tile / uint16(tiles.Cols)),
 			Col:    uint8(tile % uint16(tiles.Cols)),
-			Offset: offset,
+			Offset: uint32(offset),
 			Size:   size,
 		}
-		offset += size
-		remaining -= size
+		offset += int(size)
+		remaining -= int(size)
 	}
 	if remaining != 0 {
 		return 0, ErrInvalidTileGroup

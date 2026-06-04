@@ -99,7 +99,7 @@ func TestBeginFrameWorkFrameEventPlansTiles(t *testing.T) {
 	if output == nil || plan.Surface != 0 || plan.ReferenceCount != 0 || plan.Tile != (TileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) {
 		t.Fatalf("plan=%+v output=%p", plan, output)
 	}
-	if spans[0].Offset != len(reducedStillFrameHeaderPayload()) || spans[0].Size != 1 {
+	if int(spans[0].Offset) != len(reducedStillFrameHeaderPayload()) || spans[0].Size != 1 {
 		t.Fatalf("span=%+v", spans[0])
 	}
 	if jobs[0].Tile != 0 || batches[0].Count != 1 {
@@ -481,7 +481,7 @@ func TestFrameWorkStatePlanEventFrameOBU(t *testing.T) {
 		!state.Active() {
 		t.Fatalf("step=%+v output=%p active=%v", step, output, state.Active())
 	}
-	if spans[0].Offset != len(reducedStillFrameHeaderPayload()) || jobs[0].Size != 1 || batches[0].Count != 1 {
+	if int(spans[0].Offset) != len(reducedStillFrameHeaderPayload()) || jobs[0].Size != 1 || batches[0].Count != 1 {
 		t.Fatalf("span=%+v job=%+v batch=%+v", spans[0], jobs[0], batches[0])
 	}
 }
@@ -1612,7 +1612,7 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 			len(ctx.References) != 0 ||
 			len(ctx.Jobs) != 1 ||
 			len(ctx.Payload) != len(events[1].Unit.Payload) ||
-			ctx.Payload[ctx.Jobs[0].Offset] != 0xaa ||
+			ctx.Payload[int(ctx.Jobs[0].Offset)] != 0xaa ||
 			ctx.Sequence != wantSequence ||
 			ctx.FrameHeader != events[1].FrameHeader ||
 			ctx.FrameSize != events[1].FrameSize ||
@@ -2159,7 +2159,7 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 			len(ctx.Jobs) != 1 ||
 			len(ctx.Payload) != len(events[2].Unit.Payload) ||
 			ctx.Sequence != wantSequence ||
-			ctx.Payload[ctx.Jobs[0].Offset] != 0x80 {
+			ctx.Payload[int(ctx.Jobs[0].Offset)] != 0x80 {
 			t.Fatalf("ctx=%+v", ctx)
 		}
 		return nil
@@ -2806,7 +2806,7 @@ func TestFrameWorkStateRunEventWithContextInterFrameReferences(t *testing.T) {
 		if ctx.Output == nil || ctx.Output == referenceFrame {
 			t.Fatalf("output=%p reference=%p", ctx.Output, referenceFrame)
 		}
-		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xbb {
+		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[int(ctx.Jobs[0].Offset)] != 0xbb {
 			t.Fatalf("payload=%v", ctx.Payload)
 		}
 		if len(ctx.References) != parser.InterRefsPerFrame {
@@ -2885,7 +2885,7 @@ func TestFrameWorkStateRunEventWithContextSwitchFrameRefreshesAllReferences(t *t
 		if ctx.Output == nil || len(ctx.References) != 0 {
 			t.Fatalf("key ctx output=%p references=%d", ctx.Output, len(ctx.References))
 		}
-		if len(ctx.Payload) != len(events[1].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xaa {
+		if len(ctx.Payload) != len(events[1].Unit.Payload) || ctx.Payload[int(ctx.Jobs[0].Offset)] != 0xaa {
 			t.Fatalf("key payload=%v", ctx.Payload)
 		}
 		return nil
@@ -2912,7 +2912,7 @@ func TestFrameWorkStateRunEventWithContextSwitchFrameRefreshesAllReferences(t *t
 		if ctx.Output == nil || ctx.Output == keyOutput {
 			t.Fatalf("switch output=%p key=%p", ctx.Output, keyOutput)
 		}
-		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[ctx.Jobs[0].Offset] != 0xbb {
+		if len(ctx.Payload) != len(events[2].Unit.Payload) || ctx.Payload[int(ctx.Jobs[0].Offset)] != 0xbb {
 			t.Fatalf("switch payload=%v", ctx.Payload)
 		}
 		if len(ctx.References) != parser.InterRefsPerFrame {
@@ -3628,7 +3628,7 @@ func TestPlanTileWorkFrameEvent(t *testing.T) {
 	if plan.SpanCount != 1 || plan.JobCount != 1 || plan.BatchCount != 1 {
 		t.Fatalf("plan=%+v", plan)
 	}
-	if spans[0].Offset != len(reducedStillFrameHeaderPayload()) || spans[0].Size != 1 {
+	if int(spans[0].Offset) != len(reducedStillFrameHeaderPayload()) || spans[0].Size != 1 {
 		t.Fatalf("span=%+v", spans[0])
 	}
 }
@@ -5144,9 +5144,8 @@ func (r *frameWorkContextRunner) Run(ctx FrameWorkBatch) error {
 		len(ctx.References) != 0 ||
 		len(ctx.Jobs) != 1 ||
 		len(ctx.Payload) != len(r.wantEvent.Unit.Payload) ||
-		ctx.Jobs[0].Offset < 0 ||
-		ctx.Jobs[0].Offset >= len(ctx.Payload) ||
-		ctx.Payload[ctx.Jobs[0].Offset] != r.wantPayload ||
+		int(ctx.Jobs[0].Offset) >= len(ctx.Payload) ||
+		ctx.Payload[int(ctx.Jobs[0].Offset)] != r.wantPayload ||
 		ctx.Sequence != r.wantSequence ||
 		ctx.FrameHeader != r.wantEvent.FrameHeader ||
 		ctx.FrameSize != r.wantEvent.FrameSize ||

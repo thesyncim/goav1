@@ -1781,7 +1781,10 @@ func FuzzFrameWorkBatchJobPayload(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, payloadLen uint8, offset int16, size int16) {
 		payload := make([]byte, int(payloadLen%64))
-		job := tile.Job{Offset: int(offset), Size: int(size)}
+		job := tile.Job{Offset: uint32(offset), Size: uint32(size)}
+		if offset < 0 || size < 0 {
+			job = tile.Job{Offset: ^uint32(0), Size: 1}
+		}
 		ctx := FrameWorkBatch{Payload: payload, Jobs: []tile.Job{job}}
 
 		data, err := ctx.JobPayload(0)
@@ -1817,7 +1820,10 @@ func FuzzFrameWorkBatchJobEntropyReader(f *testing.F) {
 		if len(payload) > 64 {
 			return
 		}
-		job := tile.Job{Offset: int(offset), Size: int(size)}
+		job := tile.Job{Offset: uint32(offset), Size: uint32(size)}
+		if offset < 0 || size < 0 {
+			job = tile.Job{Offset: ^uint32(0), Size: 1}
+		}
 		delta := parser.DeltaParams{DeltaQPresent: deltaQPresent, DeltaQResLog2: deltaQResLog2 & 3}
 		ctx := FrameWorkBatch{
 			Payload: payload,

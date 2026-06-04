@@ -304,7 +304,7 @@ func TestCompoundBlendAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadInterIntra(&cdfs, req); err != nil {
@@ -332,7 +332,7 @@ func FuzzReadInterIntra(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadInterIntra(&cdfs, InterIntraRequest{
@@ -384,7 +384,7 @@ func FuzzReadCompoundBlend(f *testing.F) {
 		ctx.AboveRef[0][0] = ReferenceFrame(top % uint8(referenceFrameCount))
 		ctx.LeftRef[0][0] = ReferenceFrame(left % uint8(referenceFrameCount))
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadCompoundBlend(&cdfs, &ctx, CompoundBlendRequest{

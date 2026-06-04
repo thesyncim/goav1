@@ -128,7 +128,7 @@ func TestDecodeBlockCoefficientsSkipAllZeroClearFastPath(t *testing.T) {
 	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 	payload := mustTXBSkipPayload(t)
 	var state DecodeState
-	if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var modeCtx BlockModeContext
@@ -284,7 +284,7 @@ func TestDecodeBlockCoefficientsAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		modeCtx = BlockModeContext{}
 		coeffCtx = CoeffEntropyContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.DecodeBlockCoefficients(cdfs, &modeCtx, &coeffCtx, &scratch, req, visit); err != nil {
@@ -305,7 +305,7 @@ func mustTXBSkipPayload(t *testing.T) []byte {
 		}
 		var state DecodeState
 		payload := []byte{byte(i)}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		skip, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4, Context: 0})
@@ -348,7 +348,7 @@ func FuzzDecodeBlockCoefficients(f *testing.F) {
 		}
 		transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		var modeCtx BlockModeContext

@@ -233,7 +233,7 @@ func TestInterReferencesAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx = BlockModeContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadInterReferences(&cdfs, &ctx, InterReferenceRequest{
@@ -285,7 +285,7 @@ func FuzzReadInterReferences(f *testing.F) {
 			ctx.LeftRef[1][y4] = ReferenceFrameNone
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadInterReferences(&cdfs, &ctx, InterReferenceRequest{

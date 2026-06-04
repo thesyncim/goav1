@@ -156,12 +156,12 @@ func FuzzBuildJobs(f *testing.F) {
 		var spans [4]parser.TileSpan
 		for i := 0; i < count; i++ {
 			tile := start + uint16(i)
-			size := int(data[2+i])
+			size := uint32(data[2+i])
 			spans[i] = parser.TileSpan{
 				Tile:   tile,
 				Row:    uint8(tile / 2),
 				Col:    uint8(tile % 2),
-				Offset: i * 16,
+				Offset: uint32(i * 16),
 				Size:   size,
 			}
 		}

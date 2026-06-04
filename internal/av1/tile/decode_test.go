@@ -308,7 +308,10 @@ func FuzzDecodeStateReset(f *testing.F) {
 		if len(payload) > 64 {
 			return
 		}
-		job := Job{Offset: int(offset), Size: int(size), UpdatesFrameContext: updatesFrameContext}
+		job := Job{Offset: uint32(offset), Size: uint32(size), UpdatesFrameContext: updatesFrameContext}
+		if offset < 0 || size < 0 {
+			job = Job{Offset: ^uint32(0), Size: 1, UpdatesFrameContext: updatesFrameContext}
+		}
 		var state DecodeState
 		err := state.Reset(payload, job, DecodeOptions{DisableCDFUpdate: disableCDFUpdate})
 		if err != nil {
@@ -343,7 +346,7 @@ func FuzzDecodeStateBlockDeltas(f *testing.F) {
 			sbSize = 1
 		}
 		var state DecodeState
-		job := Job{Offset: 0, Size: len(payload)}
+		job := Job{Offset: 0, Size: uint32(len(payload))}
 		if err := state.Reset(payload, job, DecodeOptions{BaseQIdx: baseQ}); err != nil {
 			t.Fatal(err)
 		}

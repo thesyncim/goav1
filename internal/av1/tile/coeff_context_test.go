@@ -253,7 +253,7 @@ func TestReadCoefficientsTXBWithContextAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(0); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXBWithContext(&cdfs, &ctx, ctxReq, TXBDecodeRequest{

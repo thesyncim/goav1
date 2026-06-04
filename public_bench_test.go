@@ -305,7 +305,7 @@ func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 
 func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
 	payload := make([]byte, 16)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	req := av1.TileLumaCoeffTreeRequest{
 		TreeRequest: av1.TileTransformTreeRequest{Size: av1.TileBlockSize4x4, VisibleW4: 1, VisibleH4: 1},
 		Tree:        av1.TileTransformTreeResult{Y: av1.TileTransformSize4x4},
@@ -343,7 +343,7 @@ func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
 
 func BenchmarkPublicTileBlockCoefficientDecode(b *testing.B) {
 	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	req := av1.TileBlockCoeffRequest{
 		Transform: av1.TileTransformTreeRequest{
 			Size:          av1.TileBlockSize8x8,
@@ -1498,7 +1498,7 @@ func BenchmarkPublicDecoderBlockCoeffDecodeReconstruction(b *testing.B) {
 	batch := publicDecoderBlockCoeffSimpleBatch(output)
 	req := publicDecoderBlockCoeffDecodeRequest(b, batch, false)
 	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	var state av1.TileDecodeState
 	var transformCDFs av1.TileTransformCDFs
 	var coeffCDFs av1.TileCoeffCDFs

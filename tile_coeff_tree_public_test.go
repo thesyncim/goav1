@@ -279,7 +279,7 @@ func TestPublicDecodeTileCoefficientsRejectsInvalidInputs(t *testing.T) {
 
 func TestPublicDecodeTileCoefficientsAllocs(t *testing.T) {
 	payload := make([]byte, 16)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	req := av1.TileLumaCoeffTreeRequest{
 		TreeRequest: av1.TileTransformTreeRequest{Size: av1.TileBlockSize4x4, VisibleW4: 1, VisibleH4: 1},
 		Tree:        av1.TileTransformTreeResult{Y: av1.TileTransformSize4x4},
@@ -314,7 +314,7 @@ func TestPublicDecodeTileCoefficientsAllocs(t *testing.T) {
 
 func TestPublicDecodeTileBlockCoefficientsAllocs(t *testing.T) {
 	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	req := av1.TileBlockCoeffRequest{
 		Transform: av1.TileTransformTreeRequest{
 			Size:          av1.TileBlockSize8x8,

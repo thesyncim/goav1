@@ -38,10 +38,9 @@ func TestJobPayloadAllowsEmptyTile(t *testing.T) {
 
 func TestJobPayloadRejectsInvalidRanges(t *testing.T) {
 	tests := []Job{
-		{Offset: -1, Size: 1},
-		{Offset: 0, Size: -1},
 		{Offset: 3, Size: 1},
-		{Offset: int(^uint(0) >> 1), Size: 1},
+		{Offset: ^uint32(0), Size: 1},
+		{Offset: 2, Size: ^uint32(0)},
 	}
 	for _, job := range tests {
 		_, err := job.Payload([]byte{0, 1, 2})
@@ -160,7 +159,10 @@ func FuzzJobPayload(f *testing.F) {
 			return
 		}
 		payload := make([]byte, payloadLen)
-		job := Job{Offset: offset, Size: size}
+		job := Job{Offset: uint32(offset), Size: uint32(size)}
+		if offset < 0 || size < 0 {
+			job = Job{Offset: ^uint32(0), Size: 1}
+		}
 		data, err := job.Payload(payload)
 		if err != nil {
 			if data != nil {
@@ -187,7 +189,10 @@ func FuzzNewEntropyReader(f *testing.F) {
 		if len(payload) > 64 {
 			return
 		}
-		job := Job{Offset: int(offset), Size: int(size)}
+		job := Job{Offset: uint32(offset), Size: uint32(size)}
+		if offset < 0 || size < 0 {
+			job = Job{Offset: ^uint32(0), Size: 1}
+		}
 		r, err := NewEntropyReader(payload, job, DecodeOptions{DisableCDFUpdate: disableCDFUpdate})
 		if err != nil {
 			if _, _, rangeErr := job.PayloadRange(len(payload)); rangeErr == nil {

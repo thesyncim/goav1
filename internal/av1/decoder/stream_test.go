@@ -490,7 +490,7 @@ func TestStreamFrameOBUParsesImplicitTileGroup(t *testing.T) {
 		t.Fatalf("frame sequence=%+v want %+v", events[1].SequenceHeader, events[0].SequenceHeader)
 	}
 	if events[1].TileGroup.StartTile != 0 || events[1].TileGroup.EndTile != 0 ||
-		events[1].TileGroup.DataOffset != len(reducedStillFrameHeaderPayload()) ||
+		int(events[1].TileGroup.DataOffset) != len(reducedStillFrameHeaderPayload()) ||
 		events[1].TileGroup.DataSize != 1 || !events[1].TileGroup.Final {
 		t.Fatalf("frame tile group=%+v", events[1].TileGroup)
 	}

@@ -3,6 +3,8 @@ package tile
 import (
 	"testing"
 	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestHotStructSizes(t *testing.T) {
@@ -28,7 +30,9 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TransformTreeRequest", size: unsafe.Sizeof(TransformTreeRequest{}), max: 24},
 		{name: "SelectedTransformRequest", size: unsafe.Sizeof(SelectedTransformRequest{}), max: 7},
 		{name: "TransformPartitionRequest", size: unsafe.Sizeof(TransformPartitionRequest{}), max: 7},
-		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 720},
+		{name: "Job", size: unsafe.Sizeof(Job{}), max: 24},
+		{name: "TileSpan", size: unsafe.Sizeof(parser.TileSpan{}), max: 12},
+		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 680},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 80},
 		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 784},
 		{name: "IntraFlagRequest", size: unsafe.Sizeof(IntraFlagRequest{}), max: 22},

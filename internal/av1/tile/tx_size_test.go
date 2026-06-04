@@ -367,7 +367,7 @@ func TestTransformSizeAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx = BlockModeContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		tx, err := state.ReadSelectedTransformSize(&cdfs, &ctx, SelectedTransformRequest{
@@ -419,7 +419,7 @@ func FuzzReadSelectedTransformSize(f *testing.F) {
 			}
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		tx, err := state.ReadSelectedTransformSize(&cdfs, &ctx, SelectedTransformRequest{
@@ -479,7 +479,7 @@ func FuzzReadTransformPartitionSplit(f *testing.F) {
 			}
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadTransformPartitionSplit(&cdfs, &ctx, req); err != nil {

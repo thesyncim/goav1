@@ -54,7 +54,7 @@ func FuzzReadPaletteMode(f *testing.F) {
 		}
 
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 

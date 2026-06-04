@@ -450,7 +450,7 @@ func TestBlockModeAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx = BlockModeContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadBlockModePrefix(&cdfs, &ctx, req); err != nil {
@@ -485,7 +485,7 @@ func FuzzReadBlockModePrefix(f *testing.F) {
 		}
 		var ctx BlockModeContext
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		req := BlockModeRequest{

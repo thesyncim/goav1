@@ -30,7 +30,7 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
 				Quantization: av1.QuantizationParams{BaseQIdx: qIndex},
 				TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
 			},
-			Jobs: []av1.TileJob{{SBCols: 1, SBRows: 1, Offset: 0, Size: len(payload)}},
+			Jobs: []av1.TileJob{{SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(len(payload))}},
 		}
 		if sideMaps {
 			publicBindResidualFuzzSideMaps(t, &batch)
@@ -101,8 +101,8 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 				TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
 			},
 			Jobs: []av1.TileJob{
-				{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: firstSize},
-				{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: firstSize, Size: len(payload) - firstSize, UpdatesFrameContext: updateContext},
+				{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(firstSize)},
+				{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: uint32(firstSize), Size: uint32(len(payload) - firstSize), UpdatesFrameContext: updateContext},
 			},
 		}
 		var retained av1.DecoderFrameWorkTileResidualCDFStorage

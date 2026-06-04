@@ -30,7 +30,7 @@ func FuzzPublicDecodeTileBlockCoefficients(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state av1.TileDecodeState
-		if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: len(payload)}, av1.TileDecodeOptions{}); err != nil {
+		if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: uint32(len(payload))}, av1.TileDecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		var transformCtx av1.TileTransformContext
@@ -89,7 +89,7 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients(f *testing.
 			t.Fatal(err)
 		}
 		var state av1.TileDecodeState
-		if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: len(payload)}, av1.TileDecodeOptions{}); err != nil {
+		if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: uint32(len(payload))}, av1.TileDecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		var transformCtx av1.TileTransformContext

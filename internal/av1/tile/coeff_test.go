@@ -839,7 +839,7 @@ func TestCoeffAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(0); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4, Context: 0}); err != nil {
@@ -896,7 +896,7 @@ func BenchmarkReadCoefficientsTXB8x8Class2D(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			b.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
@@ -928,7 +928,7 @@ func coeffBenchmarkTXBPayload(b *testing.B, size TransformSize, class transform.
 			b.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			b.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
@@ -963,7 +963,7 @@ func TestReadCoefficientsTXBAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(0); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
@@ -1072,7 +1072,7 @@ func TestReadCoefficientsTXBTrackedLevelDirtyClearsScratch(t *testing.T) {
 		}
 		var state DecodeState
 		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), 0x5a}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
@@ -1115,7 +1115,7 @@ func FuzzReadCoeffPrimitives(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{
@@ -1183,7 +1183,7 @@ func FuzzReadCoefficientsTXB(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{
@@ -1217,7 +1217,7 @@ func readCoefficientsTXBForTest(t *testing.T, payload []byte, size TransformSize
 		t.Fatal(err)
 	}
 	var state DecodeState
-	if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{

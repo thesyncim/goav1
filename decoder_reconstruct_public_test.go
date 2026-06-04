@@ -250,7 +250,7 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficientsAllocs(t *te
 	var scratch av1.TileBlockCoeffScratch
 	req := publicDecoderBlockCoeffDecodeRequest(t, batch, false)
 	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: len(payload)}
+	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
 	var err error
 
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -410,7 +410,7 @@ func publicDecoderBlockCoeffDecodeDriver(tb publicDecoderBlockCoeffTB, batch av1
 	}
 	var state av1.TileDecodeState
 	payload := make([]byte, 32)
-	if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: len(payload)}, av1.TileDecodeOptions{}); err != nil {
+	if err := av1.ResetTileDecodeState(&state, payload, av1.TileJob{Offset: 0, Size: uint32(len(payload))}, av1.TileDecodeOptions{}); err != nil {
 		tb.Fatalf("ResetTileDecodeState err=%v", err)
 	}
 	req := publicDecoderBlockCoeffDecodeRequest(tb, batch, shortScratch)

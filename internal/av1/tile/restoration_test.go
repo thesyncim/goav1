@@ -178,7 +178,7 @@ func TestReadRestorationUnitAllocs(t *testing.T) {
 	cdfs := RestorationCDFs{Switchable: &switchable, Wiener: &wiener, SGRProj: &sgr}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := InitDefaultRestorationCDFs(cdfs); err != nil {
@@ -203,7 +203,7 @@ func FuzzDecodeStateRestorationUnit(f *testing.F) {
 			return
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		cdfs := initRestorationCDFs(t)
@@ -249,7 +249,7 @@ func BenchmarkReadRestorationUnit(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			b.Fatal(err)
 		}
 		if err := InitDefaultRestorationCDFs(cdfs); err != nil {

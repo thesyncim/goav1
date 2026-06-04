@@ -741,7 +741,7 @@ func TestDecodeBlockLoopReadsInterReferences(t *testing.T) {
 func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 	var state DecodeState
 	payload := make([]byte, 8)
-	if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
@@ -1516,7 +1516,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		}
 
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{BaseQIdx: 64}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{BaseQIdx: 64}); err != nil {
 			t.Fatal(err)
 		}
 		partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)

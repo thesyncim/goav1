@@ -2,11 +2,12 @@ package tile
 
 // PayloadRange returns the byte range in a tile-group payload occupied by job.
 func (j Job) PayloadRange(payloadLen int) (int, int, error) {
-	end := j.Offset + j.Size
-	if payloadLen < 0 || j.Offset < 0 || j.Size < 0 || end < j.Offset || end > payloadLen {
+	end := uint64(j.Offset) + uint64(j.Size)
+	maxInt := uint64(^uint(0) >> 1)
+	if payloadLen < 0 || end > uint64(payloadLen) || end > maxInt {
 		return 0, 0, ErrInvalidPlan
 	}
-	return j.Offset, end, nil
+	return int(j.Offset), int(end), nil
 }
 
 // Payload returns the exact tile payload bytes for job. The returned slice

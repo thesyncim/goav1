@@ -581,7 +581,7 @@ func TestMotionModeAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.ReadMotionMode(&cdfs, req); err != nil {
@@ -607,7 +607,7 @@ func FuzzReadMotionMode(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		req := MotionModeRequest{

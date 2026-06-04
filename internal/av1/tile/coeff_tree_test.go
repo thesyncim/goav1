@@ -430,7 +430,7 @@ func TestDecodeLumaCoefficientsAllocs(t *testing.T) {
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		ctx = CoeffEntropyContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := state.DecodeLumaCoefficients(&cdfs, &ctx, &scratch, req, visit); err != nil {
@@ -481,7 +481,7 @@ func FuzzDecodeLumaCoefficients(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		var ctx CoeffEntropyContext
@@ -538,7 +538,7 @@ func FuzzDecodeChromaCoefficients(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		var ctx CoeffEntropyContext

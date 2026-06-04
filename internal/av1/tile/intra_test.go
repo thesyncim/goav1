@@ -551,7 +551,7 @@ func TestIntraModeAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx = BlockModeContext{}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		intra, err := state.ReadIntraFlag(&cdfs, &ctx, IntraFlagRequest{
@@ -611,7 +611,7 @@ func FuzzReadIntraEntry(f *testing.F) {
 		}
 		var ctx BlockModeContext
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		intra, err := state.ReadIntraFlag(&cdfs, &ctx, IntraFlagRequest{

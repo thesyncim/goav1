@@ -252,7 +252,7 @@ func TestInterModeAllocs(t *testing.T) {
 		if err := cdfs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadBlockInterMode(&cdfs, InterModeRequest{ModeContext: 0})
@@ -286,7 +286,7 @@ func FuzzReadInterMode(f *testing.F) {
 			t.Fatal(err)
 		}
 		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		result, err := state.ReadBlockInterMode(&cdfs, InterModeRequest{
