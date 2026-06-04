@@ -30,7 +30,7 @@ type TemporalMotionField struct {
 // TemporalMotionEntry mirrors the TPL_MV_REF payload needed by add_tpl_ref_mv.
 type TemporalMotionEntry struct {
 	MV             motion.Vector
-	RefFrameOffset int
+	RefFrameOffset uint8
 	Valid          bool
 }
 
@@ -235,7 +235,7 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 			}
 			f.Entries[row*f.Stride+col] = TemporalMotionEntry{
 				MV:             mvRef.MV,
-				RefFrameOffset: refFrameOffset,
+				RefFrameOffset: uint8(refFrameOffset),
 				Valid:          true,
 			}
 		}

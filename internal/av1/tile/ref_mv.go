@@ -711,7 +711,7 @@ func (req ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntr
 	if err != nil {
 		return motion.Vector{}, err
 	}
-	projected, err := motionFieldProjectMV(sample.MV, currentOffset, sample.RefFrameOffset)
+	projected, err := motionFieldProjectMV(sample.MV, currentOffset, int(sample.RefFrameOffset))
 	if err != nil {
 		return motion.Vector{}, err
 	}
