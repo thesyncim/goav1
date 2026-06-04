@@ -103,6 +103,19 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if n != av1.RTPDependencyDescriptorMandatorySize || consumed != n || parsed != descriptor {
 		t.Fatalf("descriptor roundtrip n=%d consumed=%d parsed=%+v want=%+v", n, consumed, parsed, descriptor)
 	}
+
+	fullSize, err := av1.EncoderWebRTCDependencyDescriptorSize(structure, control.Frames[0].GenericFrameInfo, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDependencyDescriptorSize: %v", err)
+	}
+	var fullBuf [16]byte
+	full, err := av1.AppendEncoderWebRTCDependencyDescriptor(fullBuf[:0], structure, control.Frames[0].GenericFrameInfo, true, true, false)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor: %v", err)
+	}
+	if len(full) != fullSize || full[0] != descriptorBuf[0] || full[1] != descriptorBuf[1] || full[2] != descriptorBuf[2] {
+		t.Fatalf("full descriptor=% x size=%d mandatory=% x", full, fullSize, descriptorBuf)
+	}
 }
 
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {
