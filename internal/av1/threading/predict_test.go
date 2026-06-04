@@ -2867,7 +2867,7 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -2920,7 +2920,7 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -2999,7 +2999,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.BytesPerSample, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.Width, geom.Height, baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("base scaled-ref err=%v", err)
 	}
@@ -3018,7 +3018,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 		height = geom.Height
 	}
 	var neighborScratch FrameWorkInterPredictionScratch
-	neighbor, err := frameWorkInterScratchPlane(neighborScratch.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	neighbor, err := frameWorkInterScratchPlane(neighborScratch.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
 	if err != nil {
 		t.Fatalf("neighbor scratch err=%v", err)
 	}
@@ -3026,7 +3026,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 	// to the same geom.Output dimensions as the base prediction; this is
 	// what predictInterReferenceAreaToScratch must do under the fix.
 	if err := frameWorkPredictScaledReferencePlaneWithDims(neighbor, refPlane, geom.Output.Width, geom.Output.Height,
-		geom.BytesPerSample, want.Format.BitDepth, 0, 0, geom.X, geom.Y, overlap, height, leftMV,
+		geom.bytesPerSample(), want.Format.BitDepth, 0, 0, geom.X, geom.Y, overlap, height, leftMV,
 		geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("neighbor scaled-ref err=%v", err)
 	}
@@ -3034,7 +3034,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 	if !ok {
 		t.Fatalf("missing OBMC mask for overlap=%d", overlap)
 	}
-	if err := frameWorkBlendOBMCH(want.Y, neighbor, geom.BytesPerSample, geom.X, geom.Y, 0, 0, overlap, height, mask); err != nil {
+	if err := frameWorkBlendOBMCH(want.Y, neighbor, geom.bytesPerSample(), geom.X, geom.Y, 0, 0, overlap, height, mask); err != nil {
 		t.Fatalf("blend OBMC H err=%v", err)
 	}
 
@@ -3140,11 +3140,11 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	var interBuf, intraBuf FrameWorkInterPredictionScratch
-	inter, err := frameWorkInterScratchPlane(interBuf.First[:], geom.BytesPerSample, geom.Width, geom.Height)
+	inter, err := frameWorkInterScratchPlane(interBuf.First[:], geom.bytesPerSample(), geom.Width, geom.Height)
 	if err != nil {
 		t.Fatalf("inter scratch err=%v", err)
 	}
-	intra, err := frameWorkInterScratchPlane(intraBuf.Second[:], geom.BytesPerSample, geom.Width, geom.Height)
+	intra, err := frameWorkInterScratchPlane(intraBuf.Second[:], geom.bytesPerSample(), geom.Width, geom.Height)
 	if err != nil {
 		t.Fatalf("intra scratch err=%v", err)
 	}
@@ -3155,18 +3155,18 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	var intraScratch FrameWorkIntraPredictionScratch
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.BytesPerSample, want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &intraScratch, true)
+	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, edgeBlock, &intraScratch, true)
 	if err != nil {
 		t.Fatalf("intra edges err=%v", err)
 	}
-	if err := prediction.PredictIntraPlaneBlock(intra, geom.BytesPerSample, want.Format.BitDepth, 0, 0, geom.Width, geom.Height, prediction.IntraModeSmooth, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlock(intra, geom.bytesPerSample(), want.Format.BitDepth, 0, 0, geom.Width, geom.Height, prediction.IntraModeSmooth, edges); err != nil {
 		t.Fatalf("intra predict err=%v", err)
 	}
 	var mask [frameWorkInterPredictionMaxMaskSamples]byte
 	if err := frameWorkBuildInterIntraMask(mask[:], geom.Width, geom.Width, geom.Height, tile.InterIntraModeSmooth); err != nil {
 		t.Fatalf("build mask err=%v", err)
 	}
-	if err := frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.BytesPerSample, want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask[:], geom.Width, false, false); err != nil {
+	if err := frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.Width, geom.Height, mask[:], geom.Width, false, false); err != nil {
 		t.Fatalf("blend err=%v", err)
 	}
 

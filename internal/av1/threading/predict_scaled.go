@@ -50,11 +50,9 @@ func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, 
 	// reference same-size / scale-factor decision off the coded frame
 	// dimensions (av1_setup_scale_factors_for_frame), so a partial-superblock
 	// block must not be mistaken for a scaled-reference block.
-	curWidth := geom.CodedWidth
-	curHeight := geom.CodedHeight
-	if curWidth <= 0 || curHeight <= 0 {
-		curWidth = geom.Output.Width
-		curHeight = geom.Output.Height
+	curWidth, curHeight, ok := geom.codedDimensions()
+	if !ok {
+		return false, ErrInvalidBatch
 	}
 	if ref.Width == curWidth && ref.Height == curHeight {
 		return true, nil
@@ -99,7 +97,10 @@ func frameWorkPredictScaledReferencePlaneWithFilterSize(geom frameWorkPrediction
 func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters, scratch *motion.ScaledConvolveScratch) error {
-	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(geom.Output, ref, curWidth, curHeight, bytesPerSample, bitDepth,
 		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters, scratch)
 }
@@ -110,14 +111,8 @@ func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom frameWorkPre
 // not recorded. It mirrors frameWorkSameOrScaledReferencePlane's curWidth /
 // curHeight selection so the same-size / scaled decision and the scale-factor
 // computation stay consistent.
-func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) (int, int) {
-	curWidth := geom.CodedWidth
-	curHeight := geom.CodedHeight
-	if curWidth <= 0 || curHeight <= 0 {
-		curWidth = geom.Output.Width
-		curHeight = geom.Output.Height
-	}
-	return curWidth, curHeight
+func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) (int, int, bool) {
+	return geom.codedDimensions()
 }
 
 // frameWorkPredictScaledReferencePlaneToBuffer is the inter-intra / masked
@@ -148,9 +143,12 @@ func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters,
 	scratch *motion.ScaledConvolveScratch) error {
-	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight,
-		geom.BytesPerSample, bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height,
+		geom.bytesPerSample(), bitDepth, dstX, dstY, blockX, blockY, geom.Width, geom.Height,
 		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters, scratch)
 }
 
@@ -162,7 +160,10 @@ func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, 
 func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundConvBuf, ref frame.Plane,
 	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
 	scratch *motion.ScaledConvolveScratch) error {
-	curWidth, curHeight := frameWorkScaledReferenceCurrentDims(geom)
+	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
 	if err != nil {
 		return ErrInvalidBatch
@@ -179,7 +180,7 @@ func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundCo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.BytesPerSample, bitDepth,
+	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), bitDepth,
 		geom.Width, geom.Height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
 		return ErrInvalidBatch
 	}
