@@ -385,9 +385,9 @@ Notes on the layering:
     slices caller-owned scratch into the per-stage views.
 
 - **`internal/av1/encoder`** — WebRTC realtime AV1 encoder implementation
-  target. The package currently holds only `doc.go`; the encoder API has not
-  landed yet. The scope is WebRTC use cases and controls only, ported from
-  pinned libaom/libwebrtc behavior.
+  target. The control/configuration foundation is landed; bitstream emission is
+  the next implementation step. The scope is WebRTC use cases and controls only,
+  ported from pinned libaom/libwebrtc behavior.
 
 ### Conformance and oracle
 
@@ -1149,12 +1149,9 @@ roll-up.
 
 ### Not yet implemented
 
-- **Encoder.** Encoder implementation is in scope. The first target is a
-  realtime WebRTC AV1 encoder, not an offline/general-purpose encoder. Expected
-  controls include bitrate, framerate, resolution, keyframe requests,
-  temporal/spatial layers, SVC, camera/screen-content tuning, realtime
-  speed/quality controls, low-overhead OBU/RTP output, and
-  dependency/scalability metadata.
+- **Encoder bitstream emission.** Encoder implementation is in scope. The
+  WebRTC control surface is present; actual AV1 packet/tile/residual emission is
+  next. The target is realtime WebRTC AV1, not offline/general-purpose encoding.
 - **SIMD / assembly backends.** Every DSP path is pure Go. The dispatch
   in `internal/av1/dsp` is stable and ready to take SIMD variants once
   the conformance work is complete.
@@ -1165,19 +1162,20 @@ roll-up.
 
 ### Open Work
 
-1. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
+1. **Implement the WebRTC realtime encoder.** Build the in-scope encoder target
+   described in `README.md` and `internal/av1/encoder/doc.go`, starting from
+   bitstream emission behind the existing control surface.
+2. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
    malformed/adversarial, fuzz, and real-world corpus coverage beyond the
    committed vector gates.
-2. **Complete tile-list playback.** Tile-list OBUs parse today; anchor-frame
+3. **Complete tile-list playback.** Tile-list OBUs parse today; anchor-frame
    reuse, per-tile reconstruction, and output-frame blitting still need the
    end-to-end implementation.
-3. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
+4. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
    inverse transforms, deblocking edges, CDEF, restoration, and convolve
    filters. Each backend must clear `make alloc`,
    `make test-motion-conformance`, and `make test-transform-conformance`
    before dispatch.
-4. **Implement the WebRTC realtime encoder.** Build the in-scope encoder target
-   described in `README.md` and `internal/av1/encoder/doc.go`.
 
 ---
 

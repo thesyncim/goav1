@@ -295,8 +295,8 @@ ship under `internal/av1/testdata/libaom/`.
 
 - **Encoder.** Encoder implementation is in project scope. The first target is
   a WebRTC-focused realtime AV1 encoder with WebRTC controls and RTP/OBU
-  output, not an offline/general-purpose encoder. `internal/av1/encoder/`
-  currently contains only scope documentation.
+  output, not an offline/general-purpose encoder. The control foundation is
+  landed; AV1 bitstream emission remains in progress.
 - **SIMD / assembly backends.** Every DSP entry point is pure Go today.
   The `internal/av1/dsp` and `internal/av1/transform` dispatch shapes are
   stable; an amd64/arm64 backend will land behind them.

@@ -4,8 +4,8 @@
 [![lint](https://github.com/thesyncim/goav1/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/lint.yml)
 [![testvectors](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml)
 
-Pure-Go AV1 decoder and realtime bitstream toolkit, built toward dav1d-class
-decode performance with no cgo dependency.
+Pure-Go AV1 decoder and WebRTC-focused realtime encoder toolkit, built toward
+dav1d-class decode performance with no cgo dependency.
 
 The decoder path covers AV1 IVF/OBU/RTP input, sequence and frame headers, tile
 decode, prediction, inverse transforms, reconstruction, loop filter, CDEF,
