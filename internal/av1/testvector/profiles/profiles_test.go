@@ -1783,7 +1783,8 @@ func supportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext) (deco
 
 func postFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
 	scratch := decoder.FrameWorkPostFilterScratch{
-		LoopFilterEdges: make([]decoder.FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterEdges:    make([]decoder.FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterSchedule: make([]uint32, maxInt(size.LoopFilter.Schedule, 0)),
 
 		CDEFDirectionGrid: make([]cdef.DirectionGrid, maxInt(size.CDEF.DirectionGrid, 0)),
 		CDEFVarianceGrid:  make([]cdef.VarianceGrid, maxInt(size.CDEF.VarianceGrid, 0)),

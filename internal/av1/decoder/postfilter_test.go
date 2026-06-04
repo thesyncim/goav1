@@ -257,7 +257,7 @@ func TestFrameWorkPostFilterContextShouldSaveRestorationDeblockBoundaries(t *tes
 
 func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 	a := FrameWorkPostFilterScratchSize{
-		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 1},
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 1, Schedule: 2},
 		CDEF: FrameWorkCDEFPostFilterScratchSize{
 			Samples:       [3]int{1, 8, 3},
 			Dst:           [3]int{4, 2, 6},
@@ -295,7 +295,7 @@ func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 		},
 	}
 	b := FrameWorkPostFilterScratchSize{
-		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3},
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3, Schedule: 1},
 		CDEF: FrameWorkCDEFPostFilterScratchSize{
 			Samples:       [3]int{2, 4, 9},
 			Dst:           [3]int{5, 7, 1},
@@ -333,7 +333,7 @@ func TestFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 		},
 	}
 	want := FrameWorkPostFilterScratchSize{
-		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3},
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 3, Schedule: 2},
 		CDEF: FrameWorkCDEFPostFilterScratchSize{
 			Samples:       [3]int{2, 8, 9},
 			Dst:           [3]int{5, 7, 6},
@@ -403,6 +403,7 @@ func TestFrameWorkPostFilterScratchSizeBindRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(req.LoopFilter.Edges) != size.LoopFilter.Edges ||
+		len(req.LoopFilter.Schedule) != size.LoopFilter.Schedule ||
 		len(req.CDEF.SampleScratch[0]) != size.CDEF.Samples[0] ||
 		len(req.SuperRes.OutputFrame) != size.SuperRes.OutputFrame ||
 		req.SuperRes.OutputView != &outputView ||
@@ -425,7 +426,10 @@ func TestFrameWorkPostFilterScratchSizeBindRequestRejectsShortStageScratch(t *te
 		mutate func(*FrameWorkPostFilterScratch)
 		want   error
 	}{
-		{name: "loop-filter", mutate: func(s *FrameWorkPostFilterScratch) { s.LoopFilterEdges = s.LoopFilterEdges[:len(s.LoopFilterEdges)-1] }, want: frame.ErrShortBuffer},
+		{name: "loop-filter-edges", mutate: func(s *FrameWorkPostFilterScratch) { s.LoopFilterEdges = s.LoopFilterEdges[:len(s.LoopFilterEdges)-1] }, want: frame.ErrShortBuffer},
+		{name: "loop-filter-schedule", mutate: func(s *FrameWorkPostFilterScratch) {
+			s.LoopFilterSchedule = s.LoopFilterSchedule[:len(s.LoopFilterSchedule)-1]
+		}, want: frame.ErrShortBuffer},
 		{name: "cdef", mutate: func(s *FrameWorkPostFilterScratch) { s.CDEFInput = s.CDEFInput[:len(s.CDEFInput)-1] }, want: frame.ErrShortBuffer},
 		{name: "superres", mutate: func(s *FrameWorkPostFilterScratch) {
 			s.SuperResOutputFrame = s.SuperResOutputFrame[:len(s.SuperResOutputFrame)-1]
@@ -473,7 +477,7 @@ func BenchmarkFrameWorkPostFilterScratchSizeBindRequest(b *testing.B) {
 
 func testFrameWorkPostFilterScratchSize() FrameWorkPostFilterScratchSize {
 	return FrameWorkPostFilterScratchSize{
-		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 8},
+		LoopFilter: FrameWorkLoopFilterPostFilterScratchSize{Edges: 8, Schedule: 8},
 		CDEF: FrameWorkCDEFPostFilterScratchSize{
 			Samples:       [3]int{64, 32, 32},
 			Dst:           [3]int{64, 32, 32},
@@ -512,7 +516,8 @@ func testFrameWorkPostFilterScratchStorage(size FrameWorkPostFilterScratchSize) 
 	restorationData, restorationDst, restorationWiener, restorationSGR, restorationAbove, restorationBelow := testFrameWorkRestorationPostFilterScratchStorage(size.Restoration)
 	filmGrainOutput, lumaGrain, chromaGrain, lumaSamples, chromaSamples := testFrameWorkFilmGrainScratchStorage(size.FilmGrain)
 	return FrameWorkPostFilterScratch{
-		LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterEdges:    make([]FrameWorkLoopFilterPostFilterEdge, maxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterSchedule: make([]uint32, maxInt(size.LoopFilter.Schedule, 0)),
 
 		CDEFSamples:       cdefSamples,
 		CDEFDst:           cdefDst,

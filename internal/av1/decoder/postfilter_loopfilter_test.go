@@ -61,8 +61,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterScratchUpperBound(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upper.Edges != cols*rows*8 {
-		t.Fatalf("upper edges=%d want %d", upper.Edges, cols*rows*8)
+	if upper.Edges != cols*rows*8 || upper.Schedule != cols*rows*8 {
+		t.Fatalf("upper=%+v want %d edges/schedule", upper, cols*rows*8)
 	}
 }
 
@@ -232,8 +232,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scratchSize.Edges != len(edges) {
-		t.Fatalf("scratch=%+v want %d edges", scratchSize, len(edges))
+	if scratchSize.Edges != len(edges) || scratchSize.Schedule != len(edges) {
+		t.Fatalf("scratch=%+v want %d edges/schedule", scratchSize, len(edges))
 	}
 
 	plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
@@ -277,6 +277,24 @@ func TestFrameWorkLoopFilterPostFilterScratchSizeBindEdges(t *testing.T) {
 	}
 }
 
+func TestFrameWorkLoopFilterPostFilterScratchSizeBindSchedule(t *testing.T) {
+	size := FrameWorkLoopFilterPostFilterScratchSize{Schedule: 3}
+	storage := make([]uint32, 4)
+	got, err := size.BindSchedule(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || cap(got) != cap(storage) {
+		t.Fatalf("bound len/cap=%d/%d want len 3 cap %d", len(got), cap(got), cap(storage))
+	}
+	if _, err := size.BindSchedule(storage[:2]); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("short bind err=%v want %v", err, frame.ErrShortBuffer)
+	}
+	if _, err := (FrameWorkLoopFilterPostFilterScratchSize{Schedule: -1}).BindSchedule(storage); !errors.Is(err, frame.ErrShortBuffer) {
+		t.Fatalf("negative bind err=%v want %v", err, frame.ErrShortBuffer)
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
@@ -302,8 +320,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scratchSize.Edges != 3 {
-		t.Fatalf("scratch=%+v want 3 edges", scratchSize)
+	if scratchSize.Edges != 3 || scratchSize.Schedule != 3 {
+		t.Fatalf("scratch=%+v want 3 edges/schedule", scratchSize)
 	}
 	edges := make([]FrameWorkLoopFilterPostFilterEdge, scratchSize.Edges)
 
@@ -1317,6 +1335,34 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesUsesPlanePassOrder(t *tes
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLargeScheduleScratch(t *testing.T) {
+	ctx, edges := testLargeFrameWorkLoopFilterEdgeApplyFixture(t, frameWorkLoopFilterApplyScheduleCap+1)
+	scanFrame := testCloneFrameWorkLoopFilterFrame(ctx.Output)
+	scheduledFrame := testCloneFrameWorkLoopFilterFrame(ctx.Output)
+	scanCtx := ctx
+	scanCtx.Output = &scanFrame
+	scheduledCtx := ctx
+	scheduledCtx.Output = &scheduledFrame
+
+	var scanResult FrameWorkLoopFilterPostFilterApplyResult
+	if err := scanCtx.applyLoopFilterEdgesInPlanePassOrder(&scanResult, edges, nil, loopfilter.PlaneV); err != nil {
+		t.Fatal(err)
+	}
+	schedule := make([]uint32, len(edges))
+	var scheduledResult FrameWorkLoopFilterPostFilterApplyResult
+	if err := scheduledCtx.applyLoopFilterEdgesInPlanePassOrder(&scheduledResult, edges, schedule, loopfilter.PlaneV); err != nil {
+		t.Fatal(err)
+	}
+	if scheduledResult != scanResult {
+		t.Fatalf("scheduled result=%+v scan result=%+v", scheduledResult, scanResult)
+	}
+	if !bytes.Equal(scheduledFrame.Y.Pix, scanFrame.Y.Pix) ||
+		!bytes.Equal(scheduledFrame.U.Pix, scanFrame.U.Pix) ||
+		!bytes.Equal(scheduledFrame.V.Pix, scanFrame.V.Pix) {
+		t.Fatal("scheduled large-edge loop filter output did not match scan fallback")
+	}
+}
+
 func TestFrameWorkPostFilterContextApplyLoopFilterEdgesAllocs(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          32,
@@ -2037,6 +2083,39 @@ func BenchmarkApplyLoopFilterEdges(b *testing.B) {
 	}
 }
 
+func BenchmarkApplyLoopFilterEdgesLargeScanFallback(b *testing.B) {
+	ctx, edges := testLargeFrameWorkLoopFilterEdgeApplyFixture(b, frameWorkLoopFilterApplyScheduleCap+1024)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFillLoopFilterFrame(ctx.Output)
+		var result FrameWorkLoopFilterPostFilterApplyResult
+		if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, nil, loopfilter.PlaneV); err != nil {
+			b.Fatal(err)
+		}
+		if result.Applied != uint32(len(edges)) {
+			b.Fatalf("applied=%d want %d", result.Applied, len(edges))
+		}
+	}
+}
+
+func BenchmarkApplyLoopFilterEdgesLargeScheduleScratch(b *testing.B) {
+	ctx, edges := testLargeFrameWorkLoopFilterEdgeApplyFixture(b, frameWorkLoopFilterApplyScheduleCap+1024)
+	schedule := make([]uint32, len(edges))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkFillLoopFilterFrame(ctx.Output)
+		var result FrameWorkLoopFilterPostFilterApplyResult
+		if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, schedule, loopfilter.PlaneV); err != nil {
+			b.Fatal(err)
+		}
+		if result.Applied != uint32(len(edges)) {
+			b.Fatalf("applied=%d want %d", result.Applied, len(edges))
+		}
+	}
+}
+
 func BenchmarkApplySupportedPostFiltersLoopFilterCDEF(b *testing.B) {
 	ctx, filterMap, edges := benchmarkLoopFilterPostFilterFixture(b)
 	ctx.Event.SequenceHeader.EnableCDEF = true
@@ -2259,6 +2338,61 @@ func benchmarkLoopFilterPostFilterFixture(b *testing.B) (FrameWorkPostFilterCont
 		b.Fatalf("edge scratch=%d want 72", scratch.Edges)
 	}
 	return ctx, filterMap, edges
+}
+
+func testLargeFrameWorkLoopFilterEdgeApplyFixture(t testing.TB, count int) (FrameWorkPostFilterContext, []FrameWorkLoopFilterPostFilterEdge) {
+	t.Helper()
+	const width = 512
+	const height = 512
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	output := testFrameWorkCDEFFrame(t, frame.Format{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
+	benchmarkFillLoopFilterFrame(output)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter: parser.LoopFilterParams{
+				LevelY:    [2]uint8{32, 32},
+				LevelU:    32,
+				LevelV:    32,
+				Sharpness: 1,
+			},
+		},
+		Output: output,
+	}
+	edges := make([]FrameWorkLoopFilterPostFilterEdge, count)
+	for i := range edges {
+		plane := loopfilter.Plane(i % 3)
+		edgeKind := loopfilter.Edge((i / 3) & 1)
+		units := 128
+		if plane != loopfilter.PlaneY {
+			units = 64
+		}
+		x4 := uint16(i % (units - 1))
+		y4 := uint16(1 + ((i / units) % (units - 2)))
+		if edgeKind == loopfilter.EdgeVertical {
+			x4 = uint16(1 + (i % (units - 2)))
+			y4 = uint16((i / units) % units)
+		}
+		edges[i] = FrameWorkLoopFilterPostFilterEdge{
+			X4:         x4,
+			Y4:         y4,
+			Length4:    1,
+			BlockMICol: x4,
+			BlockMIRow: y4,
+			Plane:      plane,
+			Edge:       edgeKind,
+			Level:      32,
+			Width:      4,
+			Transform:  tile.TransformSize4x4,
+		}
+	}
+	return ctx, edges
 }
 
 func benchmarkFillLoopFilterFrame(output *frame.Frame) {

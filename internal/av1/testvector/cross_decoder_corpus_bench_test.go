@@ -622,7 +622,8 @@ type corpusPostFilterScratch struct {
 func (s *corpusPostFilterScratch) bind(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
 	s.ensure(size)
 	return decoder.FrameWorkPostFilterScratch{
-		LoopFilterEdges: s.scratch.LoopFilterEdges[:libaomMaxInt(size.LoopFilter.Edges, 0)],
+		LoopFilterEdges:    s.scratch.LoopFilterEdges[:libaomMaxInt(size.LoopFilter.Edges, 0)],
+		LoopFilterSchedule: s.scratch.LoopFilterSchedule[:libaomMaxInt(size.LoopFilter.Schedule, 0)],
 
 		CDEFSamples:       corpusUint16PlaneScratch(s.scratch.CDEFSamples, size.CDEF.Samples),
 		CDEFDst:           corpusUint16PlaneScratch(s.scratch.CDEFDst, size.CDEF.Dst),
@@ -653,6 +654,9 @@ func (s *corpusPostFilterScratch) bind(size decoder.FrameWorkPostFilterScratchSi
 func (s *corpusPostFilterScratch) ensure(size decoder.FrameWorkPostFilterScratchSize) {
 	if len(s.scratch.LoopFilterEdges) < size.LoopFilter.Edges {
 		s.scratch.LoopFilterEdges = make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.LoopFilter.Edges)
+	}
+	if len(s.scratch.LoopFilterSchedule) < size.LoopFilter.Schedule {
+		s.scratch.LoopFilterSchedule = make([]uint32, size.LoopFilter.Schedule)
 	}
 	for plane := 0; plane < 3; plane++ {
 		if len(s.scratch.CDEFSamples[plane]) < size.CDEF.Samples[plane] {

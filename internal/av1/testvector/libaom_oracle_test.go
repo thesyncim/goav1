@@ -900,7 +900,8 @@ func libaomSupportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext)
 
 func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
 	scratch := decoder.FrameWorkPostFilterScratch{
-		LoopFilterEdges: make([]decoder.FrameWorkLoopFilterPostFilterEdge, libaomMaxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterEdges:    make([]decoder.FrameWorkLoopFilterPostFilterEdge, libaomMaxInt(size.LoopFilter.Edges, 0)),
+		LoopFilterSchedule: make([]uint32, libaomMaxInt(size.LoopFilter.Schedule, 0)),
 
 		CDEFDirectionGrid: make([]cdef.DirectionGrid, libaomMaxInt(size.CDEF.DirectionGrid, 0)),
 		CDEFVarianceGrid:  make([]cdef.VarianceGrid, libaomMaxInt(size.CDEF.VarianceGrid, 0)),

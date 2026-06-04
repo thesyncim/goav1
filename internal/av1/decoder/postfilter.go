@@ -65,7 +65,8 @@ type FrameWorkPostFilterBindOptions struct {
 // postfilter request. Callers can reuse one instance across frames after sizing
 // it with FrameWorkPostFilterScratchSize.Max.
 type FrameWorkPostFilterScratch struct {
-	LoopFilterEdges []FrameWorkLoopFilterPostFilterEdge
+	LoopFilterEdges    []FrameWorkLoopFilterPostFilterEdge
+	LoopFilterSchedule []uint32
 
 	CDEFSamples       [3][]uint16
 	CDEFDst           [3][]uint16
@@ -99,6 +100,10 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
 	}
+	schedule, err := s.LoopFilter.BindSchedule(scratch.LoopFilterSchedule)
+	if err != nil {
+		return FrameWorkPostFilterRequest{}, err
+	}
 	cdefReq, err := s.CDEF.BindRequest(options.CDEFIndexMap, scratch.CDEFSamples, scratch.CDEFDst, scratch.CDEFDirectionGrid, scratch.CDEFVarianceGrid, scratch.CDEFInput, scratch.CDEFUnitDst)
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
@@ -117,8 +122,9 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	}
 	return FrameWorkPostFilterRequest{
 		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
-			Map:   options.LoopFilterMap,
-			Edges: edges,
+			Map:      options.LoopFilterMap,
+			Edges:    edges,
+			Schedule: schedule,
 		},
 		CDEF:        cdefReq,
 		SuperRes:    superResReq,
@@ -343,7 +349,10 @@ func (ctx FrameWorkPostFilterContext) boundSupportedPostFilterScratchLen(req Fra
 	}
 	var size FrameWorkPostFilterScratchSize
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
-		size.LoopFilter = FrameWorkLoopFilterPostFilterScratchSize{Edges: len(scratch.LoopFilterEdges)}
+		size.LoopFilter = FrameWorkLoopFilterPostFilterScratchSize{
+			Edges:    len(scratch.LoopFilterEdges),
+			Schedule: len(scratch.LoopFilterSchedule),
+		}
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		cdefSize, err := ctx.CDEFPostFilterScratchLen()

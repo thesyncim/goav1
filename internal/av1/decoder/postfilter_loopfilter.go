@@ -20,8 +20,9 @@ type FrameWorkLoopFilterMap = threading.FrameWorkLoopFilterMap
 // FrameWorkLoopFilterPostFilterRequest carries decoded loop-filter side data
 // and optional caller-owned edge storage for postfilter planning.
 type FrameWorkLoopFilterPostFilterRequest struct {
-	Map   FrameWorkLoopFilterMap
-	Edges []FrameWorkLoopFilterPostFilterEdge
+	Map      FrameWorkLoopFilterMap
+	Edges    []FrameWorkLoopFilterPostFilterEdge
+	Schedule []uint32
 }
 
 // FrameWorkLoopFilterPostFilterEdge describes one deblocking edge candidate in
@@ -49,7 +50,8 @@ type FrameWorkLoopFilterPostFilterEdge struct {
 // FrameWorkLoopFilterPostFilterScratchSize reports caller-owned scratch needed
 // for loop-filter planning and eventual application.
 type FrameWorkLoopFilterPostFilterScratchSize struct {
-	Edges int
+	Edges    int
+	Schedule int
 }
 
 // BindEdges validates and slices caller-owned edge storage for loop-filter
@@ -61,9 +63,21 @@ func (s FrameWorkLoopFilterPostFilterScratchSize) BindEdges(edges []FrameWorkLoo
 	return edges[:s.Edges], nil
 }
 
+// BindSchedule validates and slices caller-owned schedule storage for
+// loop-filter application.
+func (s FrameWorkLoopFilterPostFilterScratchSize) BindSchedule(schedule []uint32) ([]uint32, error) {
+	if s.Schedule < 0 || len(schedule) < s.Schedule {
+		return nil, frame.ErrShortBuffer
+	}
+	return schedule[:s.Schedule], nil
+}
+
 // Max returns the per-field maximum loop-filter scratch size.
 func (s FrameWorkLoopFilterPostFilterScratchSize) Max(other FrameWorkLoopFilterPostFilterScratchSize) FrameWorkLoopFilterPostFilterScratchSize {
-	return FrameWorkLoopFilterPostFilterScratchSize{Edges: maxInt(s.Edges, other.Edges)}
+	return FrameWorkLoopFilterPostFilterScratchSize{
+		Edges:    maxInt(s.Edges, other.Edges),
+		Schedule: maxInt(s.Schedule, other.Schedule),
+	}
 }
 
 // FrameWorkLoopFilterPostFilterLevelStats summarizes resolved levels for one
@@ -188,7 +202,8 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchLen(req FrameWo
 		return FrameWorkLoopFilterPostFilterScratchSize{}, frame.ErrInvalidFormat
 	}
 	return FrameWorkLoopFilterPostFilterScratchSize{
-		Edges: edgeCandidates,
+		Edges:    edgeCandidates,
+		Schedule: edgeCandidates,
 	}, nil
 }
 
@@ -212,7 +227,8 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchUpperBound() (F
 	if cells > maxInt/8 {
 		return FrameWorkLoopFilterPostFilterScratchSize{}, frame.ErrInvalidFormat
 	}
-	return FrameWorkLoopFilterPostFilterScratchSize{Edges: cells * 8}, nil
+	candidates := cells * 8
+	return FrameWorkLoopFilterPostFilterScratchSize{Edges: candidates, Schedule: candidates}, nil
 }
 
 // LoopFilterPostFilterPlan validates decoded loop-filter side data and resolves
@@ -312,7 +328,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 		return result, frame.ErrInvalidFormat
 	}
 	edges := req.Edges[:storedEdges]
-	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneV); err != nil {
+	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, req.Schedule, loopfilter.PlaneV); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -346,13 +362,13 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 		return result, frame.ErrInvalidFormat
 	}
 	edges := req.Edges[:storedEdges]
-	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneY); err != nil {
+	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, req.Schedule, loopfilter.PlaneY); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, maxPlane loopfilter.Plane) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, scheduleScratch []uint32, maxPlane loopfilter.Plane) error {
 	before := result.Edges
 	expected, ok := frameWorkLoopFilterCounter(len(edges))
 	if !ok {
@@ -360,52 +376,59 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 	}
 	if len(edges) <= frameWorkLoopFilterApplyScheduleCap {
 		var schedule [frameWorkLoopFilterApplyScheduleCap]uint32
-		var counts [3][2]uint32
-		var levelUsed [loopfilter.MaxLevel + 1]bool
-		for i := range edges {
-			edge := &edges[i]
-			if edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
-				edge.Length4 == 0 || edge.Level == 0 || edge.Level > loopfilter.MaxLevel {
-				return loopfilter.ErrInvalidFilter
-			}
-			counts[edge.Plane][edge.Edge]++
-			levelUsed[edge.Level] = true
-		}
-		var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
-		for level := uint8(1); level <= loopfilter.MaxLevel; level++ {
-			if !levelUsed[level] {
-				continue
-			}
-			th, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness)
-			if err != nil {
-				return err
-			}
-			thresholds[level] = th
-		}
-		var starts [3][2]uint32
-		next := uint32(0)
-		for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
-			for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
-				starts[plane][edgeKind] = next
-				next += counts[plane][edgeKind]
-			}
-		}
-		positions := starts
-		for i := range edges {
-			edge := &edges[i]
-			pos := positions[edge.Plane][edge.Edge]
-			schedule[pos] = uint32(i)
-			positions[edge.Plane][edge.Edge] = pos + 1
-		}
-		if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule[:len(edges)], starts, counts, maxPlane, &thresholds); err != nil {
-			return err
-		}
-		if result.Edges-before != expected {
-			return loopfilter.ErrInvalidFilter
-		}
-		return nil
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], maxPlane, before, expected)
+	}
+	if len(scheduleScratch) >= len(edges) {
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, scheduleScratch[:len(edges)], maxPlane, before, expected)
 	}
 	return ctx.applyLoopFilterEdgesInPlanePassOrderScan(result, edges, maxPlane, before, expected)
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedule(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
+	var counts [3][2]uint32
+	var levelUsed [loopfilter.MaxLevel + 1]bool
+	for i := range edges {
+		edge := &edges[i]
+		if edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
+			edge.Length4 == 0 || edge.Level == 0 || edge.Level > loopfilter.MaxLevel {
+			return loopfilter.ErrInvalidFilter
+		}
+		counts[edge.Plane][edge.Edge]++
+		levelUsed[edge.Level] = true
+	}
+	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
+	for level := uint8(1); level <= loopfilter.MaxLevel; level++ {
+		if !levelUsed[level] {
+			continue
+		}
+		th, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness)
+		if err != nil {
+			return err
+		}
+		thresholds[level] = th
+	}
+	var starts [3][2]uint32
+	next := uint32(0)
+	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+		for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
+			starts[plane][edgeKind] = next
+			next += counts[plane][edgeKind]
+		}
+	}
+	positions := starts
+	for i := range edges {
+		edge := &edges[i]
+		pos := positions[edge.Plane][edge.Edge]
+		schedule[pos] = uint32(i)
+		positions[edge.Plane][edge.Edge] = pos + 1
+	}
+	if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule, starts, counts, maxPlane, &thresholds); err != nil {
+		return err
+	}
+	if result.Edges-before != expected {
+		return loopfilter.ErrInvalidFilter
+	}
+	return nil
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
