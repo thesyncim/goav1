@@ -1127,18 +1127,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	dcValue := 0
 	maxScanLine := 0
 	if useDirtyScanList {
+		// The dirty-scan list is internal scratch populated above from already
+		// validated scan positions, and only non-zero levels are recorded. Replay
+		// it as trusted token state, like dav1d's compact coefficient links.
 		for i := nonzeroScanLen - 1; i >= 0; i-- {
 			pos := int((*dirtyPos)[i])
-			if pos < 0 || pos >= maxEOB {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			padded := int(posSlice[pos].padded)
 			level := int(levelsScratch[padded])
-			if level == 0 {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			if pos > maxScanLine {
 				maxScanLine = pos
 			}
