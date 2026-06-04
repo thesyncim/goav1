@@ -236,7 +236,6 @@ type FrameWorkBatch struct {
 	// per-request restoration request.
 	RestorationFrameBuffers *FrameWorkRestorationFrameBuffers
 	FrameWorkFrameContext
-	DisableCDFUpdate bool
 	// InitialTileResidualCDFs is the frame context selected by
 	// primary_ref_frame for this tile group. RetainedTileResidualCDFs receives
 	// the context_update_tile_id tile's adapted state when callbacks opt in via
@@ -245,6 +244,7 @@ type FrameWorkBatch struct {
 	RetainedTileResidualCDFs      *FrameWorkTileResidualCDFStorage
 	RetainedTileResidualCDFsValid *bool
 	Batch                         Batch
+	DisableCDFUpdate              bool
 	Jobs                          []tile.Job
 
 	// WavefrontWorkers is the number of idle pool goroutines that the per-tile
