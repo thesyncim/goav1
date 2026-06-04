@@ -18,6 +18,8 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 208},
+		{name: "FrameWorkSuperResPostFilterPlanePlan", size: unsafe.Sizeof(FrameWorkSuperResPostFilterPlanePlan{}), max: 24},
+		{name: "FrameWorkSuperResPostFilterPlan", size: unsafe.Sizeof(FrameWorkSuperResPostFilterPlan{}), max: 160},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)

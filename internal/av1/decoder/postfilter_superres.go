@@ -10,12 +10,12 @@ import (
 // FrameWorkSuperResPostFilterPlanePlan describes one plane's coded and
 // upscaled dimensions.
 type FrameWorkSuperResPostFilterPlanePlan struct {
-	CodedWidth   int
-	OutputWidth  int
-	Height       int
-	WidthDelta   int
-	BytesPerRow  int
-	OutputStride int
+	CodedWidth   uint32
+	OutputWidth  uint32
+	Height       uint32
+	WidthDelta   uint32
+	BytesPerRow  uint32
+	OutputStride uint32
 }
 
 // FrameWorkSuperResPostFilterPlan summarizes the geometry transition from the
@@ -182,7 +182,7 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkS
 		if err != nil {
 			return FrameWorkSuperResPostFilterScratchSize{}, err
 		}
-		outputSamples, err := frameWorkSuperResSampleScratchLen(planePlan.OutputWidth, planePlan.Height, planePlan.OutputStride, bytesPerSample)
+		outputSamples, err := frameWorkSuperResSampleScratchLen(int(planePlan.OutputWidth), int(planePlan.Height), int(planePlan.OutputStride), bytesPerSample)
 		if err != nil {
 			return FrameWorkSuperResPostFilterScratchSize{}, err
 		}
@@ -194,12 +194,12 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkS
 
 func frameWorkSuperResPlanePlan(codedWidth int, outputWidth int, height int, bytesPerSample int, outputStride int) FrameWorkSuperResPostFilterPlanePlan {
 	return FrameWorkSuperResPostFilterPlanePlan{
-		CodedWidth:   codedWidth,
-		OutputWidth:  outputWidth,
-		Height:       height,
-		WidthDelta:   outputWidth - codedWidth,
-		BytesPerRow:  outputWidth * bytesPerSample,
-		OutputStride: outputStride,
+		CodedWidth:   uint32(codedWidth),
+		OutputWidth:  uint32(outputWidth),
+		Height:       uint32(height),
+		WidthDelta:   uint32(outputWidth - codedWidth),
+		BytesPerRow:  uint32(outputWidth * bytesPerSample),
+		OutputStride: uint32(outputStride),
 	}
 }
 
