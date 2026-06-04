@@ -115,13 +115,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 	visibleWidth := int(geom.visibleWidth)
 	visibleHeight := int(geom.visibleHeight)
 	scanStride := int(geom.scanSize.Height)
-	// Resolve the quantize.Plane once and share it between the dequantizer and
-	// the inverse-quant matrix lookup (BlockQuantizer would otherwise re-derive
-	// it per transform block).
-	qPlane, ok := frameWorkQuantizePlane(geom.plane)
-	if !ok {
-		return ErrInvalidBatch
-	}
+	qPlane := quantize.Plane(geom.plane)
 	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
 	if err != nil {
 		return err
@@ -169,13 +163,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 	visibleWidth := int(geom.visibleWidth)
 	visibleHeight := int(geom.visibleHeight)
 	scanStride := int(geom.scanSize.Height)
-	// Resolve the quantize.Plane once and share it between the dequantizer and
-	// the inverse-quant matrix lookup (BlockQuantizer would otherwise re-derive
-	// it per transform block).
-	qPlane, ok := frameWorkQuantizePlane(geom.plane)
-	if !ok {
-		return ErrInvalidBatch
-	}
+	qPlane := quantize.Plane(geom.plane)
 	q, lossless, err := b.cachedBlockQuantizer(cache, currentQIndex, segmentID, qPlane)
 	if err != nil {
 		return err
