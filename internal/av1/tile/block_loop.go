@@ -1357,7 +1357,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					References:       refs,
 					Mode:             mode,
 					MotionMode:       motionMode,
-					GlobalTypes:      blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes),
+					GlobalTypes:      globalMotionTypes,
 					SkipMode:         prefix.SkipMode,
 					X4:               block.X4,
 					Y4:               block.Y4,
@@ -1378,7 +1378,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				// the anchor cell with the just-decoded filters and the
 				// caller-supplied anchor MV/reference (the neighbor
 				// cells come straight off the grid).
-				if hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color); hasChroma {
+				hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
+				if hasChroma {
 					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
 						selfCell := &sub.Cells[int(sub.Count)-1]
 						selfCell.MV = result.InterMotion.MV[0]
@@ -1388,7 +1389,7 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
+				if err := ctx.MarkInterMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChroma); err != nil {
 					return BlockPredictionModeResult{}, fmt.Errorf("mark inter motion: %w", err)
 				}
 				if err := ctx.MarkInterFilters(block.Size, blockX4, blockY4, refs, filters); err != nil {
