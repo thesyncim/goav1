@@ -189,3 +189,13 @@ func BenchmarkReaderReadBits(b *testing.B) {
 		_, _ = r.ReadBits(32)
 	}
 }
+
+func BenchmarkReaderReadBitsMisaligned64(b *testing.B) {
+	src := []byte{0x80, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadBit()
+		_, _ = r.ReadBits(64)
+	}
+}

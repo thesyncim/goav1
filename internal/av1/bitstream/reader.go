@@ -69,14 +69,24 @@ func (r *Reader) ReadBits(n uint8) (uint64, error) {
 	bitInByte := r.bit & 7
 	src := r.src
 
-	if bitInByte == 0 && n == 64 {
+	if bitInByte == 0 && len(src)-byteIndex >= 8 && n > 56 {
 		v := binary.BigEndian.Uint64(src[byteIndex:])
-		r.bit += 64
+		if n < 64 {
+			v >>= uint(64 - n)
+		}
+		r.bit += bits
 		return v, nil
 	}
 	if n <= 56 && len(src)-byteIndex >= 8 {
 		word := binary.BigEndian.Uint64(src[byteIndex:])
 		word <<= uint(bitInByte)
+		v := word >> uint(64-n)
+		r.bit += bits
+		return v, nil
+	}
+	if len(src)-byteIndex >= 9 {
+		word := binary.BigEndian.Uint64(src[byteIndex:])
+		word = (word << uint(bitInByte)) | uint64(src[byteIndex+8]>>(8-bitInByte))
 		v := word >> uint(64-n)
 		r.bit += bits
 		return v, nil
