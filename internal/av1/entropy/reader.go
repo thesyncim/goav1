@@ -27,6 +27,58 @@ func byteAtUnchecked(src []byte, pos int) byte {
 	return *(*byte)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), pos))
 }
 
+// refillState extends dif with the AV1 range decoder's next bytes. The common
+// range-decoder case needs two or three bytes, so keep that path branch-collapsed;
+// rare short-tail cases fall back to the byte loop.
+//
+//go:nosplit
+func refillState(src []byte, pos int, dif uint32, cnt int, tellOffs int) (int, uint32, int, int) {
+	shift := 8 - cnt
+	remaining := len(src) - pos
+	if shift >= 8 && shift < 16 {
+		if remaining >= 2 {
+			dif ^= uint32(byteAtUnchecked(src, pos)) << uint(shift)
+			dif ^= uint32(byteAtUnchecked(src, pos+1)) << uint(shift-8)
+			pos += 2
+			cnt += 16
+			if pos >= len(src) {
+				tellOffs += ecLotsBits - cnt
+				cnt = ecLotsBits
+			}
+			return pos, dif, cnt, tellOffs
+		}
+	} else if shift < 24 && remaining >= 3 {
+		dif ^= uint32(byteAtUnchecked(src, pos)) << uint(shift)
+		dif ^= uint32(byteAtUnchecked(src, pos+1)) << uint(shift-8)
+		dif ^= uint32(byteAtUnchecked(src, pos+2)) << uint(shift-16)
+		pos += 3
+		cnt += 24
+		if pos >= len(src) {
+			tellOffs += ecLotsBits - cnt
+			cnt = ecLotsBits
+		}
+		return pos, dif, cnt, tellOffs
+	}
+	return refillStateSlow(src, pos, dif, cnt, tellOffs)
+}
+
+//go:noinline
+//go:nosplit
+func refillStateSlow(src []byte, pos int, dif uint32, cnt int, tellOffs int) (int, uint32, int, int) {
+	shift := ecWindow - 9 - (cnt + 15)
+	for shift >= 0 && pos < len(src) {
+		dif ^= uint32(byteAtUnchecked(src, pos)) << uint(shift)
+		cnt += 8
+		shift -= 8
+		pos++
+	}
+	if pos >= len(src) {
+		tellOffs += ecLotsBits - cnt
+		cnt = ecLotsBits
+	}
+	return pos, dif, cnt, tellOffs
+}
+
 // Reader is an allocation-free AV1 entropy range decoder over one tile payload.
 type Reader struct {
 	src []byte
@@ -264,17 +316,7 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng = nextRange << uint(shift)
 		if cnt < 0 {
-			refillShift := ecWindow - 9 - (cnt + 15)
-			for refillShift >= 0 && pos < len(src) {
-				dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
-				cnt += 8
-				refillShift -= 8
-				pos++
-			}
-			if pos >= len(src) {
-				tellOffs += ecLotsBits - cnt
-				cnt = ecLotsBits
-			}
+			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 		}
 		v = (v << 1) | uint32(bit)
 	}
@@ -354,17 +396,7 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng = nextRange << uint(shift)
 		if cnt < 0 {
-			refillShift := ecWindow - 9 - (cnt + 15)
-			for refillShift >= 0 && pos < len(src) {
-				dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
-				cnt += 8
-				refillShift -= 8
-				pos++
-			}
-			if pos >= len(src) {
-				tellOffs += ecLotsBits - cnt
-				cnt = ecLotsBits
-			}
+			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 		}
 		v = (v << 1) | uint32(bit)
 	}
@@ -967,17 +999,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
-		refillShift := ecWindow - 9 - (cnt + 15)
-		for refillShift >= 0 && pos < len(src) {
-			dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
-			cnt += 8
-			refillShift -= 8
-			pos++
-		}
-		if pos >= len(src) {
-			tellOffs += ecLotsBits - cnt
-			cnt = ecLotsBits
-		}
+		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 	}
 	c.pos = pos
 	c.dif = dif
@@ -1030,17 +1052,7 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
-		refillShift := ecWindow - 9 - (cnt + 15)
-		for refillShift >= 0 && pos < len(src) {
-			dif ^= uint32(byteAtUnchecked(src, pos)) << uint(refillShift)
-			cnt += 8
-			refillShift -= 8
-			pos++
-		}
-		if pos >= len(src) {
-			tellOffs += ecLotsBits - cnt
-			cnt = ecLotsBits
-		}
+		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 	}
 	count := values[4]
 	rate := uint(5 + (count >> 4))
@@ -1383,29 +1395,9 @@ func invRecenterNonNeg(ref uint32, v uint32) uint32 {
 }
 
 func (r *Reader) refill() {
-	shift := ecWindow - 9 - (r.cnt + 15)
-	for shift >= 0 && r.pos < len(r.src) {
-		r.dif ^= uint32(byteAtUnchecked(r.src, r.pos)) << uint(shift)
-		r.cnt += 8
-		shift -= 8
-		r.pos++
-	}
-	if r.pos >= len(r.src) {
-		r.tellOffs += ecLotsBits - r.cnt
-		r.cnt = ecLotsBits
-	}
+	r.pos, r.dif, r.cnt, r.tellOffs = refillState(r.src, r.pos, r.dif, r.cnt, r.tellOffs)
 }
 
 func (c *Cursor) refill() {
-	shift := ecWindow - 9 - (c.cnt + 15)
-	for shift >= 0 && c.pos < len(c.src) {
-		c.dif ^= uint32(byteAtUnchecked(c.src, c.pos)) << uint(shift)
-		c.cnt += 8
-		shift -= 8
-		c.pos++
-	}
-	if c.pos >= len(c.src) {
-		c.tellOffs += ecLotsBits - c.cnt
-		c.cnt = ecLotsBits
-	}
+	c.pos, c.dif, c.cnt, c.tellOffs = refillState(c.src, c.pos, c.dif, c.cnt, c.tellOffs)
 }
