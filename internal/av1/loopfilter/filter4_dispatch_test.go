@@ -20,9 +20,9 @@ func filter4DispatchParamsCorpus() []filter4Params {
 	const scale = 1 // NEON path is 8-bit only.
 	mk := func(limit, blimit, hev int) filter4Params {
 		return filter4Params{
-			limit:  limit * scale,
-			blimit: blimit * scale,
-			hev:    hev * scale,
+			limit:  int16(limit * scale),
+			blimit: int16(blimit * scale),
+			hev:    int16(hev * scale),
 			min:    -128 * scale,
 			max:    128*scale - 1,
 			center: 128 * scale,
@@ -167,12 +167,12 @@ func filter4Dispatch16ParamsCorpus() []filter4Params {
 		scale := 1 << shift
 		mk := func(limit, blimit, hev int) filter4Params {
 			return filter4Params{
-				limit:  limit * scale,
-				blimit: blimit * scale,
-				hev:    hev * scale,
-				min:    -128 * scale,
-				max:    128*scale - 1,
-				center: 128 * scale,
+				limit:  int16(limit * scale),
+				blimit: int16(blimit * scale),
+				hev:    int16(hev * scale),
+				min:    int16(-128 * scale),
+				max:    int16(128*scale - 1),
+				center: int16(128 * scale),
 			}
 		}
 		out = append(out,
@@ -198,7 +198,7 @@ func runFilter4Kernel16(t *testing.T, seed int64, length int, params filter4Para
 	const rows = 8
 	rng := rand.New(rand.NewSource(seed))
 	base := make([]byte, stride*rows)
-	maxVal := params.center*2 - 1
+	maxVal := int(params.center)*2 - 1
 	for i := 0; i+1 < len(base); i += 2 {
 		v := rng.Intn(maxVal + 1)
 		base[i] = byte(v)

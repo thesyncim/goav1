@@ -16,16 +16,7 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	if err := validateFilter6Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
-	shift := int(bitDepth - 8)
-	scale := 1 << shift
-	params := filter4Params{
-		limit:  int(thresholds.Limit) * scale,
-		blimit: int(thresholds.BlockLimit) * scale,
-		hev:    int(thresholds.HighEdgeVariance) * scale,
-		min:    -128 * scale,
-		max:    128*scale - 1,
-		center: 128 * scale,
-	}
+	scale, params := filter4ParamsFor(bitDepth, thresholds)
 
 	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
@@ -34,6 +25,7 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		filter6EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
 		return nil
 	}
+	wide := params.widen()
 	for i := range lengthi {
 		q0 := q0Base + i*outer
 		p2 := readSample(pix, bytesPerSample, q0-3*step)
@@ -42,10 +34,10 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		q0Sample := readSample(pix, bytesPerSample, q0)
 		q1 := readSample(pix, bytesPerSample, q0+step)
 		q2 := readSample(pix, bytesPerSample, q0+2*step)
-		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
+		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, wide) {
 			continue
 		}
-		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
+		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, wide)
 		writeSample(pix, bytesPerSample, q0-2*step, p1)
 		writeSample(pix, bytesPerSample, q0-step, p0)
 		writeSample(pix, bytesPerSample, q0, q0Sample)
@@ -65,6 +57,7 @@ var filter6EdgeImpl = filter6EdgePureGo
 // step is the byte stride between adjacent taps, and outer is the byte stride
 // between successive positions along the edge.
 func filter6EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
+	wide := params.widen()
 	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
 		p2 := int(pix[q0-3*step])
@@ -73,10 +66,10 @@ func filter6EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, 
 		q0Sample := int(pix[q0])
 		q1 := int(pix[q0+step])
 		q2 := int(pix[q0+2*step])
-		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, params) {
+		if !needsFilter6(p2, p1, p0, q0Sample, q1, q2, wide) {
 			continue
 		}
-		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, params)
+		p1, p0, q0Sample, q1 = filter6Samples(p2, p1, p0, q0Sample, q1, q2, scale, wide)
 		pix[q0-2*step] = byte(p1)
 		pix[q0-step] = byte(p0)
 		pix[q0] = byte(q0Sample)
@@ -129,7 +122,7 @@ func validateFilter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, ed
 	return nil
 }
 
-func needsFilter6(p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, params filter4Params) bool {
+func needsFilter6(p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, params filter4KernelParams) bool {
 	return absInt(p2-p1) <= params.limit &&
 		absInt(p1-p0) <= params.limit &&
 		absInt(q1-q0) <= params.limit &&
@@ -137,7 +130,7 @@ func needsFilter6(p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, params filter4
 		absInt(p0-q0)*2+absInt(p1-q1)/2 <= params.blimit
 }
 
-func filter6Samples(p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, flatThreshold int, params filter4Params) (int, int, int, int) {
+func filter6Samples(p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, flatThreshold int, params filter4KernelParams) (int, int, int, int) {
 	flat := absInt(p1-p0) <= flatThreshold &&
 		absInt(q1-q0) <= flatThreshold &&
 		absInt(p2-p0) <= flatThreshold &&

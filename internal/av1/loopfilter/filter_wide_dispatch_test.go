@@ -17,9 +17,9 @@ import (
 func wideFilterParamsCorpus() []filter4Params {
 	mk := func(limit, blimit, hev int) filter4Params {
 		return filter4Params{
-			limit:  limit,
-			blimit: blimit,
-			hev:    hev,
+			limit:  int16(limit),
+			blimit: int16(blimit),
+			hev:    int16(hev),
 			min:    -128,
 			max:    127,
 			center: 128,

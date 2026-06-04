@@ -16,16 +16,7 @@ func Filter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge
 	if err := validateFilter14Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
-	shift := int(bitDepth - 8)
-	scale := 1 << shift
-	params := filter4Params{
-		limit:  int(thresholds.Limit) * scale,
-		blimit: int(thresholds.BlockLimit) * scale,
-		hev:    int(thresholds.HighEdgeVariance) * scale,
-		min:    -128 * scale,
-		max:    128*scale - 1,
-		center: 128 * scale,
-	}
+	scale, params := filter4ParamsFor(bitDepth, thresholds)
 
 	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
@@ -34,6 +25,7 @@ func Filter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge
 		filter14EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
 		return nil
 	}
+	wide := params.widen()
 	for i := range lengthi {
 		q0 := q0Base + i*outer
 		p6 := readSample(pix, bytesPerSample, q0-7*step)
@@ -47,7 +39,7 @@ func Filter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge
 		q1 := readSample(pix, bytesPerSample, q0+step)
 		q2 := readSample(pix, bytesPerSample, q0+2*step)
 		q3 := readSample(pix, bytesPerSample, q0+3*step)
-		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
+		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, wide) {
 			continue
 		}
 		q4 := readSample(pix, bytesPerSample, q0+4*step)
@@ -56,7 +48,7 @@ func Filter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge
 		p5, p4, p3, p2, p1, p0, q0Sample, q1, q2, q3, q4, q5 = filter14Samples(
 			p6, p5, p4, p3, p2, p1, p0,
 			q0Sample, q1, q2, q3, q4, q5, q6,
-			scale, params,
+			scale, wide,
 		)
 		writeSample(pix, bytesPerSample, q0-6*step, p5)
 		writeSample(pix, bytesPerSample, q0-5*step, p4)
@@ -85,6 +77,7 @@ var filter14EdgeImpl = filter14EdgePureGo
 // step is the byte stride between adjacent taps, and outer is the byte stride
 // between successive positions along the edge.
 func filter14EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
+	wide := params.widen()
 	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
 		p6 := int(pix[q0-7*step])
@@ -98,7 +91,7 @@ func filter14EdgePureGo(pix []byte, q0Base int, step int, outer int, length int,
 		q1 := int(pix[q0+step])
 		q2 := int(pix[q0+2*step])
 		q3 := int(pix[q0+3*step])
-		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, params) {
+		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, wide) {
 			continue
 		}
 		q4 := int(pix[q0+4*step])
@@ -107,7 +100,7 @@ func filter14EdgePureGo(pix []byte, q0Base int, step int, outer int, length int,
 		p5, p4, p3, p2, p1, p0, q0Sample, q1, q2, q3, q4, q5 = filter14Samples(
 			p6, p5, p4, p3, p2, p1, p0,
 			q0Sample, q1, q2, q3, q4, q5, q6,
-			scale, params,
+			scale, wide,
 		)
 		pix[q0-6*step] = byte(p5)
 		pix[q0-5*step] = byte(p4)
@@ -169,7 +162,7 @@ func validateFilter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, e
 	return nil
 }
 
-func filter14Samples(p6 int, p5 int, p4 int, p3 int, p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, q3 int, q4 int, q5 int, q6 int, flatThreshold int, params filter4Params) (int, int, int, int, int, int, int, int, int, int, int, int) {
+func filter14Samples(p6 int, p5 int, p4 int, p3 int, p2 int, p1 int, p0 int, q0 int, q1 int, q2 int, q3 int, q4 int, q5 int, q6 int, flatThreshold int, params filter4KernelParams) (int, int, int, int, int, int, int, int, int, int, int, int) {
 	flat := flatMask4(flatThreshold, p3, p2, p1, p0, q0, q1, q2, q3)
 	flat2 := flatMask4(flatThreshold, p6, p5, p4, p0, q0, q4, q5, q6)
 	if !flat || !flat2 {

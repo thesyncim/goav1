@@ -16,16 +16,7 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	if err := validateFilter4Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
-	shift := int(bitDepth - 8)
-	scale := 1 << shift
-	params := filter4Params{
-		limit:  int(thresholds.Limit) * scale,
-		blimit: int(thresholds.BlockLimit) * scale,
-		hev:    int(thresholds.HighEdgeVariance) * scale,
-		min:    -128 * scale,
-		max:    128*scale - 1,
-		center: 128 * scale,
-	}
+	_, params := filter4ParamsFor(bitDepth, thresholds)
 
 	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
@@ -39,12 +30,44 @@ func Filter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 }
 
 type filter4Params struct {
+	limit  int16
+	blimit int16
+	hev    int16
+	min    int16
+	max    int16
+	center int16
+}
+
+type filter4KernelParams struct {
 	limit  int
 	blimit int
 	hev    int
 	min    int
 	max    int
 	center int
+}
+
+func filter4ParamsFor(bitDepth uint8, thresholds Thresholds) (int, filter4Params) {
+	scale := 1 << int(bitDepth-8)
+	return scale, filter4Params{
+		limit:  int16(int(thresholds.Limit) * scale),
+		blimit: int16(int(thresholds.BlockLimit) * scale),
+		hev:    int16(int(thresholds.HighEdgeVariance) * scale),
+		min:    int16(-128 * scale),
+		max:    int16(128*scale - 1),
+		center: int16(128 * scale),
+	}
+}
+
+func (p filter4Params) widen() filter4KernelParams {
+	return filter4KernelParams{
+		limit:  int(p.limit),
+		blimit: int(p.blimit),
+		hev:    int(p.hev),
+		min:    int(p.min),
+		max:    int(p.max),
+		center: int(p.center),
+	}
 }
 
 func validateFilter4Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int) error {
@@ -120,16 +143,17 @@ var filter4EdgeImpl = filter4EdgePureGo
 // byte stride between adjacent taps (perpendicular to the edge), and outer is
 // the byte stride between successive positions along the edge.
 func filter4EdgePureGo(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	wide := params.widen()
 	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
 		p1 := int(pix[q0-2*step])
 		p0 := int(pix[q0-step])
 		q0Sample := int(pix[q0])
 		q1 := int(pix[q0+step])
-		if !needsFilter4(p1, p0, q0Sample, q1, params) {
+		if !needsFilter4(p1, p0, q0Sample, q1, wide) {
 			continue
 		}
-		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
+		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, wide)
 		pix[q0-2*step] = byte(p1)
 		pix[q0-step] = byte(p0)
 		pix[q0] = byte(q0Sample)
@@ -148,16 +172,17 @@ var filter4Edge16Impl = filter4Edge16PureGo
 // step is the byte stride between adjacent taps, and outer is the byte stride
 // between successive positions along the edge.
 func filter4Edge16PureGo(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	wide := params.widen()
 	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
 		p1 := readSample(pix, 2, q0-2*step)
 		p0 := readSample(pix, 2, q0-step)
 		q0Sample := readSample(pix, 2, q0)
 		q1 := readSample(pix, 2, q0+step)
-		if !needsFilter4(p1, p0, q0Sample, q1, params) {
+		if !needsFilter4(p1, p0, q0Sample, q1, wide) {
 			continue
 		}
-		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, params)
+		p1, p0, q0Sample, q1 = filter4Samples(p1, p0, q0Sample, q1, wide)
 		writeSample(pix, 2, q0-2*step, p1)
 		writeSample(pix, 2, q0-step, p0)
 		writeSample(pix, 2, q0, q0Sample)
@@ -165,13 +190,13 @@ func filter4Edge16PureGo(pix []byte, q0Base int, step int, outer int, length int
 	}
 }
 
-func needsFilter4(p1 int, p0 int, q0 int, q1 int, params filter4Params) bool {
+func needsFilter4(p1 int, p0 int, q0 int, q1 int, params filter4KernelParams) bool {
 	return absInt(p1-p0) <= params.limit &&
 		absInt(q1-q0) <= params.limit &&
 		absInt(p0-q0)*2+absInt(p1-q1)/2 <= params.blimit
 }
 
-func filter4Samples(p1 int, p0 int, q0 int, q1 int, params filter4Params) (int, int, int, int) {
+func filter4Samples(p1 int, p0 int, q0 int, q1 int, params filter4KernelParams) (int, int, int, int) {
 	ps1 := p1 - params.center
 	ps0 := p0 - params.center
 	qs0 := q0 - params.center
