@@ -58,13 +58,13 @@ type MVCDFs struct {
 }
 
 type MVComponentResult struct {
+	Diff          int16
+	IntegerPart   uint16
+	Class         uint8
+	Fraction      uint8
+	HighPrecision uint8
 	Sign          bool
-	Class         int
 	Class0        bool
-	IntegerPart   int
-	Fraction      int
-	HighPrecision int
-	Diff          int32
 }
 
 type MVResidualResult struct {
@@ -333,12 +333,13 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 
 	result := MVComponentResult{
 		Sign:          signSymbol != 0,
-		Class:         mvClass,
+		Class:         uint8(mvClass),
 		Class0:        mvClass == 0,
 		Fraction:      3,
 		HighPrecision: 1,
 	}
 	mag := 0
+	integerPart := 0
 	if result.Class0 {
 		class0CDF, err := cdfs.Class0CDF()
 		if err != nil {
@@ -348,7 +349,7 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 		if err != nil {
 			return 0, MVComponentResult{}, err
 		}
-		result.IntegerPart = d
+		integerPart = d
 	} else {
 		n := mvClass + MVClass0Bits - 1
 		for i := range n {
@@ -360,7 +361,7 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 			if err != nil {
 				return 0, MVComponentResult{}, err
 			}
-			result.IntegerPart |= bit << i
+			integerPart |= bit << i
 		}
 		mag = MVClass0Size << (mvClass + 2)
 	}
@@ -368,17 +369,18 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 	if precision.UsesSubpel() {
 		var fpCDF *entropy.CDF
 		if result.Class0 {
-			fpCDF, err = cdfs.Class0FPCDF(result.IntegerPart)
+			fpCDF, err = cdfs.Class0FPCDF(integerPart)
 		} else {
 			fpCDF, err = cdfs.FPCDF()
 		}
 		if err != nil {
 			return 0, MVComponentResult{}, err
 		}
-		result.Fraction, err = s.Reader.ReadCDF(fpCDF)
+		fraction, err := s.Reader.ReadCDF(fpCDF)
 		if err != nil {
 			return 0, MVComponentResult{}, err
 		}
+		result.Fraction = uint8(fraction)
 		if precision.UsesHighPrecision() {
 			var hpCDF *entropy.CDF
 			if result.Class0 {
@@ -389,19 +391,26 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 			if err != nil {
 				return 0, MVComponentResult{}, err
 			}
-			result.HighPrecision, err = s.Reader.ReadCDF(hpCDF)
+			highPrecision, err := s.Reader.ReadCDF(hpCDF)
 			if err != nil {
 				return 0, MVComponentResult{}, err
 			}
+			result.HighPrecision = uint8(highPrecision)
 		}
 	}
 
-	mag += ((result.IntegerPart << 3) | (result.Fraction << 1) | result.HighPrecision) + 1
-	result.Diff = int32(mag)
+	mag += ((integerPart << 3) | (int(result.Fraction) << 1) | int(result.HighPrecision)) + 1
+	diff := int32(mag)
 	if result.Sign {
-		result.Diff = -result.Diff
+		diff = -diff
 	}
-	return result.Diff, result, nil
+	componentDiff, ok := motionVectorComponentFromInt32(diff)
+	if !ok {
+		return 0, MVComponentResult{}, ErrInvalidDecodeState
+	}
+	result.IntegerPart = uint16(integerPart)
+	result.Diff = componentDiff
+	return diff, result, nil
 }
 
 func (s *DecodeState) ReadInterMotion(cdfs *MVCDFs, req InterMotionRequest) (InterMotionDecodeResult, error) {
