@@ -39,12 +39,12 @@ type SegmentationParams struct {
 	QIndex         [MaxSegments]uint8
 	Lossless       [MaxSegments]bool
 	AllLossless    bool
-	BitsRead       int
+	BitsRead       uint16
 }
 
 func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant QuantizationParams, previous *SegmentationData) (SegmentationParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(quant.BitsRead); err != nil {
+	if err := skipBitsRead(&r, quant.BitsRead); err != nil {
 		return SegmentationParams{}, err
 	}
 
@@ -87,7 +87,11 @@ func ParseSegmentationParams(payload []byte, prefix FrameHeaderPrefix, quant Qua
 	}
 
 	deriveSegmentationQIndex(&seg, quant)
-	seg.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return SegmentationParams{}, err
+	}
+	seg.BitsRead = bitsRead
 	return seg, nil
 }
 

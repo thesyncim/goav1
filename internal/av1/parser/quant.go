@@ -25,12 +25,12 @@ type QuantizationParams struct {
 	QMatrixLevelU uint8
 	QMatrixLevelV uint8
 
-	BitsRead int
+	BitsRead uint16
 }
 
 func ParseQuantizationParams(payload []byte, seq SequenceHeader, tiles TileInfo) (QuantizationParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(tiles.BitsRead); err != nil {
+	if err := skipBitsRead(&r, tiles.BitsRead); err != nil {
 		return QuantizationParams{}, err
 	}
 
@@ -94,7 +94,11 @@ func ParseQuantizationParams(payload []byte, seq SequenceHeader, tiles TileInfo)
 		}
 	}
 
-	quant.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return QuantizationParams{}, err
+	}
+	quant.BitsRead = bitsRead
 	return quant, nil
 }
 

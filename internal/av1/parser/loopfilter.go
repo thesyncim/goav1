@@ -28,12 +28,12 @@ type LoopFilterParams struct {
 	ModeRefDeltaUpdate  bool
 	Deltas              LoopFilterDeltas
 
-	BitsRead int
+	BitsRead uint16
 }
 
 func ParseLoopFilterParams(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, seg SegmentationParams, delta DeltaParams, previous *LoopFilterDeltas) (LoopFilterParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(delta.BitsRead); err != nil {
+	if err := skipBitsRead(&r, delta.BitsRead); err != nil {
 		return LoopFilterParams{}, err
 	}
 
@@ -42,7 +42,11 @@ func ParseLoopFilterParams(payload []byte, seq SequenceHeader, prefix FrameHeade
 		lf.ModeRefDeltaEnabled = true
 		lf.ModeRefDeltaUpdate = true
 		lf.Deltas = defaultLoopFilterDeltas()
-		lf.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return LoopFilterParams{}, err
+		}
+		lf.BitsRead = bitsRead
 		return lf, nil
 	}
 
@@ -97,7 +101,11 @@ func ParseLoopFilterParams(payload []byte, seq SequenceHeader, prefix FrameHeade
 		}
 	}
 
-	lf.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return LoopFilterParams{}, err
+	}
+	lf.BitsRead = bitsRead
 	return lf, nil
 }
 

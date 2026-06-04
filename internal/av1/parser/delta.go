@@ -15,12 +15,12 @@ type DeltaParams struct {
 	DeltaLFPresent bool
 	DeltaLFResLog2 uint8
 	DeltaLFMulti   bool
-	BitsRead       int
+	BitsRead       uint16
 }
 
 func ParseDeltaParams(payload []byte, size FrameSize, quant QuantizationParams, seg SegmentationParams) (DeltaParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(seg.BitsRead); err != nil {
+	if err := skipBitsRead(&r, seg.BitsRead); err != nil {
 		return DeltaParams{}, err
 	}
 
@@ -55,6 +55,10 @@ func ParseDeltaParams(payload []byte, size FrameSize, quant QuantizationParams, 
 		}
 	}
 
-	delta.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return DeltaParams{}, err
+	}
+	delta.BitsRead = bitsRead
 	return delta, nil
 }

@@ -7,7 +7,7 @@ import (
 
 type testBitWriter struct {
 	buf [128]byte
-	bit int
+	bit uint16
 }
 
 func (w *testBitWriter) writeBits(value uint64, n uint8) {
@@ -29,8 +29,8 @@ func (w *testBitWriter) writeBool(value bool) {
 	w.writeBits(0, 1)
 }
 
-func (w *testBitWriter) writeBitsFrom(src []byte, n int) {
-	for i := range n {
+func (w *testBitWriter) writeBitsFrom(src []byte, n uint16) {
+	for i := range int(n) {
 		bit := (src[i>>3] >> uint(7-(i&7))) & 1
 		w.writeBits(uint64(bit), 1)
 	}

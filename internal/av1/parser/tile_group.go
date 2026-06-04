@@ -22,7 +22,7 @@ type TileGroup struct {
 	TileStartAndEndPresent bool
 	Final                  bool
 	HeaderBits             uint8
-	BitsRead               int
+	BitsRead               uint16
 	DataOffset             int
 	DataSize               int
 }
@@ -112,8 +112,12 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 		group.NextTile = group.EndTile + 1
 	}
 	group.HeaderBits = uint8(r.BitsRead() - headerStart)
-	group.BitsRead = r.BitsRead()
-	group.DataOffset = group.BitsRead >> 3
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return TileGroup{}, err
+	}
+	group.BitsRead = bitsRead
+	group.DataOffset = int(group.BitsRead) >> 3
 	group.DataSize = len(payload) - group.DataOffset
 	if group.DataSize < 0 {
 		return TileGroup{}, ErrInvalidTileGroup

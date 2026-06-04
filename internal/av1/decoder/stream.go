@@ -309,7 +309,7 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			if err != nil {
 				return err
 			}
-			tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, tileInfo, filmGrain.BitsRead, 0, true)
+			tileGroup, err := parser.ParseTileGroupHeader(unit.Payload, tileInfo, int(filmGrain.BitsRead), 0, true)
 			if err != nil {
 				return err
 			}

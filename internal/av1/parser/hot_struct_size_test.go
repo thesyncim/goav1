@@ -11,12 +11,12 @@ func TestHotStructSizes(t *testing.T) {
 		size uintptr
 		max  uintptr
 	}{
-		{name: "FrameHeaderPrefix", size: unsafe.Sizeof(FrameHeaderPrefix{}), max: 32},
-		{name: "FrameSize", size: unsafe.Sizeof(FrameSize{}), max: 200},
-		{name: "ReferenceFrame", size: unsafe.Sizeof(ReferenceFrame{}), max: 720},
-		{name: "ReferenceState", size: unsafe.Sizeof(ReferenceState{}), max: 5760},
+		{name: "FrameHeaderPrefix", size: unsafe.Sizeof(FrameHeaderPrefix{}), max: 24},
+		{name: "FrameSize", size: unsafe.Sizeof(FrameSize{}), max: 192},
+		{name: "ReferenceFrame", size: unsafe.Sizeof(ReferenceFrame{}), max: 696},
+		{name: "ReferenceState", size: unsafe.Sizeof(ReferenceState{}), max: 5568},
 		{name: "shortRefInfo", size: unsafe.Sizeof(shortRefInfo{}), max: 4},
-		{name: "TileGroup", size: unsafe.Sizeof(TileGroup{}), max: 40},
+		{name: "TileGroup", size: unsafe.Sizeof(TileGroup{}), max: 32},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)

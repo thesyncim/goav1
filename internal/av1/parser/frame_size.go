@@ -42,7 +42,7 @@ type FrameSize struct {
 	UsedReferenceFrameSize  bool
 	ReferenceFrameSizeIdx   uint8
 
-	BitsRead int
+	BitsRead uint16
 }
 
 // ParseIntraFrameSize parses the frame-size path used by key and intra-only
@@ -66,7 +66,7 @@ func ParseFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix
 
 func parseFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, refs *ReferenceState, temporalID uint8, spatialID uint8) (FrameSize, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(prefix.BitsRead); err != nil {
+	if err := skipBitsRead(&r, prefix.BitsRead); err != nil {
 		return FrameSize{}, err
 	}
 
@@ -92,7 +92,11 @@ func parseFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix
 		} else if err := parseFrameDimensions(&r, seq, prefix, &size); err != nil {
 			return FrameSize{}, err
 		}
-		size.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return FrameSize{}, err
+		}
+		size.BitsRead = bitsRead
 		return size, nil
 	}
 
@@ -107,7 +111,11 @@ func parseFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix
 		size.AllowIntrabc = allow
 	}
 
-	size.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return FrameSize{}, err
+	}
+	size.BitsRead = bitsRead
 	return size, nil
 }
 

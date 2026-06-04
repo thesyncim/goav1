@@ -29,12 +29,12 @@ const (
 type TransformReferenceParams struct {
 	TransformMode TransformMode
 	ReferenceMode ReferenceMode
-	BitsRead      int
+	BitsRead      uint16
 }
 
 func ParseTransformReferenceParams(payload []byte, prefix FrameHeaderPrefix, seg SegmentationParams, restoration RestorationParams) (TransformReferenceParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(restoration.BitsRead); err != nil {
+	if err := skipBitsRead(&r, restoration.BitsRead); err != nil {
 		return TransformReferenceParams{}, err
 	}
 
@@ -64,6 +64,10 @@ func ParseTransformReferenceParams(payload []byte, prefix FrameHeaderPrefix, seg
 		}
 	}
 
-	params.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return TransformReferenceParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }

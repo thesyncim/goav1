@@ -39,7 +39,7 @@ type WarpedMotionParams struct {
 
 type GlobalMotionParams struct {
 	Ref      [InterRefsPerFrame]WarpedMotionParams
-	BitsRead int
+	BitsRead uint16
 }
 
 func DefaultWarpedMotionParams() WarpedMotionParams {
@@ -64,13 +64,17 @@ func DefaultGlobalMotionParams() GlobalMotionParams {
 
 func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size FrameSize, tiles TileInfo, refs *ReferenceState, frameMode FrameModeParams) (GlobalMotionParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(frameMode.BitsRead); err != nil {
+	if err := skipBitsRead(&r, frameMode.BitsRead); err != nil {
 		return GlobalMotionParams{}, err
 	}
 
 	params := DefaultGlobalMotionParams()
 	if !frameTypeIsInterOrSwitch(prefix.FrameType) {
-		params.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return GlobalMotionParams{}, err
+		}
+		params.BitsRead = bitsRead
 		return params, nil
 	}
 
@@ -85,7 +89,11 @@ func ParseGlobalMotionParams(payload []byte, prefix FrameHeaderPrefix, size Fram
 		}
 		params.Ref[i] = gm
 	}
-	params.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return GlobalMotionParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }
 

@@ -30,18 +30,22 @@ type RestorationParams struct {
 	UnitSizeY      uint16
 	UnitSizeUV     uint16
 
-	BitsRead int
+	BitsRead uint16
 }
 
 func ParseRestorationParams(payload []byte, seq SequenceHeader, size FrameSize, seg SegmentationParams, cdef CDEFParams) (RestorationParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(cdef.BitsRead); err != nil {
+	if err := skipBitsRead(&r, cdef.BitsRead); err != nil {
 		return RestorationParams{}, err
 	}
 
 	var restoration RestorationParams
 	if (seg.AllLossless && !size.SuperResEnabled) || !seq.EnableRestoration || size.AllowIntrabc {
-		restoration.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return RestorationParams{}, err
+		}
+		restoration.BitsRead = bitsRead
 		return restoration, nil
 	}
 
@@ -106,6 +110,10 @@ func ParseRestorationParams(payload []byte, seq SequenceHeader, size FrameSize, 
 		restoration.UnitSizeUV = RestorationUnitMax
 	}
 
-	restoration.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return RestorationParams{}, err
+	}
+	restoration.BitsRead = bitsRead
 	return restoration, nil
 }

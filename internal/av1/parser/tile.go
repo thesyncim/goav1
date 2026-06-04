@@ -50,7 +50,7 @@ type TileInfo struct {
 	Rows                 uint8
 	ColStartSB           [MaxTileCols + 1]uint16
 	RowStartSB           [MaxTileRows + 1]uint16
-	BitsRead             int
+	BitsRead             uint16
 }
 
 // ParseTileInfo parses post-size inter controls, refresh-context state, and
@@ -64,7 +64,7 @@ func ParseTileInfo(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix,
 	}
 
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(size.BitsRead); err != nil {
+	if err := skipBitsRead(&r, size.BitsRead); err != nil {
 		return TileInfo{}, err
 	}
 
@@ -82,7 +82,11 @@ func ParseTileInfo(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix,
 	if err := parseTileLayout(&r, seq, size, &tiles); err != nil {
 		return TileInfo{}, err
 	}
-	tiles.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return TileInfo{}, err
+	}
+	tiles.BitsRead = bitsRead
 	return tiles, nil
 }
 

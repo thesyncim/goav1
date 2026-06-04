@@ -47,7 +47,7 @@ type FrameHeaderPrefix struct {
 	OrderHint              uint8
 	PrimaryRefFrame        uint8
 
-	BitsRead int
+	BitsRead uint16
 }
 
 // ParseFrameHeaderPrefix parses the first control fields of AV1
@@ -73,7 +73,11 @@ func ParseFrameHeaderPrefix(payload []byte, seq SequenceHeader) (FrameHeaderPref
 		if err := parseShowExistingFrameHeader(&r, seq, &hdr); err != nil {
 			return FrameHeaderPrefix{}, err
 		}
-		hdr.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return FrameHeaderPrefix{}, err
+		}
+		hdr.BitsRead = bitsRead
 		return hdr, nil
 	}
 
@@ -93,7 +97,11 @@ func ParseFrameHeaderPrefix(payload []byte, seq SequenceHeader) (FrameHeaderPref
 		return FrameHeaderPrefix{}, err
 	}
 
-	hdr.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return FrameHeaderPrefix{}, err
+	}
+	hdr.BitsRead = bitsRead
 	return hdr, nil
 }
 

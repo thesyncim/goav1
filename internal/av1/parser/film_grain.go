@@ -52,21 +52,25 @@ type FilmGrainParams struct {
 
 	Overlap               bool
 	ClipToRestrictedRange bool
-	BitsRead              int
+	BitsRead              uint16
 }
 
 // ParseFilmGrainParams parses film_grain_params() after global_motion_params().
 func ParseFilmGrainParams(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, refs *ReferenceState, globalMotion GlobalMotionParams) (FilmGrainParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(globalMotion.BitsRead); err != nil {
+	if err := skipBitsRead(&r, globalMotion.BitsRead); err != nil {
 		return FilmGrainParams{}, err
 	}
 
 	params := FilmGrainParams{
 		ParamsPresent: seq.FilmGrainParamsPresent,
 		BitDepth:      seq.ColorConfig.BitDepth,
-		BitsRead:      r.BitsRead(),
 	}
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return FilmGrainParams{}, err
+	}
+	params.BitsRead = bitsRead
 	if prefix.ShowExistingFrame || !seq.FilmGrainParamsPresent || (!prefix.ShowFrame && !prefix.ShowableFrame) {
 		return params, nil
 	}
@@ -76,7 +80,11 @@ func ParseFilmGrainParams(payload []byte, seq SequenceHeader, prefix FrameHeader
 		return FilmGrainParams{}, err
 	}
 	params.Apply = apply
-	params.BitsRead = r.BitsRead()
+	bitsRead, err = readerBitsRead(&r)
+	if err != nil {
+		return FilmGrainParams{}, err
+	}
+	params.BitsRead = bitsRead
 	if !params.Apply {
 		return params, nil
 	}
@@ -99,7 +107,11 @@ func ParseFilmGrainParams(payload []byte, seq SequenceHeader, prefix FrameHeader
 	if err := parseFilmGrainUpdate(&r, seq, &params); err != nil {
 		return FilmGrainParams{}, err
 	}
-	params.BitsRead = r.BitsRead()
+	bitsRead, err = readerBitsRead(&r)
+	if err != nil {
+		return FilmGrainParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }
 
@@ -135,7 +147,11 @@ func parseFilmGrainReference(r *bitstream.Reader, seq SequenceHeader, size Frame
 	params.RefIdx = refIdx
 	params.ParamsPresent = seq.FilmGrainParamsPresent
 	params.BitDepth = seq.ColorConfig.BitDepth
-	params.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(r)
+	if err != nil {
+		return FilmGrainParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }
 

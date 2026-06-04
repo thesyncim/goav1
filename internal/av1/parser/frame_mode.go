@@ -13,12 +13,12 @@ import "github.com/thesyncim/goav1/internal/av1/bitstream"
 type FrameModeParams struct {
 	AllowWarpedMotion bool
 	ReducedTxSet      bool
-	BitsRead          int
+	BitsRead          uint16
 }
 
 func ParseFrameModeParams(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, skip SkipModeParams) (FrameModeParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(skip.BitsRead); err != nil {
+	if err := skipBitsRead(&r, skip.BitsRead); err != nil {
 		return FrameModeParams{}, err
 	}
 
@@ -36,6 +36,10 @@ func ParseFrameModeParams(payload []byte, seq SequenceHeader, prefix FrameHeader
 		return FrameModeParams{}, err
 	}
 	params.ReducedTxSet = reduced
-	params.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return FrameModeParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }

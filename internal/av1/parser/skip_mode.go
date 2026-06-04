@@ -14,16 +14,20 @@ type SkipModeParams struct {
 	Allowed     bool
 	Enabled     bool
 	RefFrameIdx [2]uint8
-	BitsRead    int
+	BitsRead    uint16
 }
 
 func ParseSkipModeParams(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, refs *ReferenceState, transformRef TransformReferenceParams) (SkipModeParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(transformRef.BitsRead); err != nil {
+	if err := skipBitsRead(&r, transformRef.BitsRead); err != nil {
 		return SkipModeParams{}, err
 	}
 
-	params := SkipModeParams{BitsRead: r.BitsRead()}
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return SkipModeParams{}, err
+	}
+	params := SkipModeParams{BitsRead: bitsRead}
 	if !seq.EnableOrderHint || !frameTypeIsInterOrSwitch(prefix.FrameType) || transformRef.ReferenceMode == ReferenceModeSingle {
 		return params, nil
 	}
@@ -43,7 +47,11 @@ func ParseSkipModeParams(payload []byte, seq SequenceHeader, prefix FrameHeaderP
 		return SkipModeParams{}, err
 	}
 	params.Enabled = enabled
-	params.BitsRead = r.BitsRead()
+	bitsRead, err = readerBitsRead(&r)
+	if err != nil {
+		return SkipModeParams{}, err
+	}
+	params.BitsRead = bitsRead
 	return params, nil
 }
 

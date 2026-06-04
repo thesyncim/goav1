@@ -17,18 +17,22 @@ type CDEFParams struct {
 	StrengthCount uint8
 	YStrength     [MaxCDEFStrengths]uint8
 	UVStrength    [MaxCDEFStrengths]uint8
-	BitsRead      int
+	BitsRead      uint16
 }
 
 func ParseCDEFParams(payload []byte, seq SequenceHeader, size FrameSize, seg SegmentationParams, lf LoopFilterParams) (CDEFParams, error) {
 	r := bitstream.NewReader(payload)
-	if err := r.SkipBits(lf.BitsRead); err != nil {
+	if err := skipBitsRead(&r, lf.BitsRead); err != nil {
 		return CDEFParams{}, err
 	}
 
 	var cdef CDEFParams
 	if seg.AllLossless || !seq.EnableCDEF || size.AllowIntrabc {
-		cdef.BitsRead = r.BitsRead()
+		bitsRead, err := readerBitsRead(&r)
+		if err != nil {
+			return CDEFParams{}, err
+		}
+		cdef.BitsRead = bitsRead
 		return cdef, nil
 	}
 
@@ -58,6 +62,10 @@ func ParseCDEFParams(payload []byte, seq SequenceHeader, size FrameSize, seg Seg
 		}
 	}
 
-	cdef.BitsRead = r.BitsRead()
+	bitsRead, err := readerBitsRead(&r)
+	if err != nil {
+		return CDEFParams{}, err
+	}
+	cdef.BitsRead = bitsRead
 	return cdef, nil
 }

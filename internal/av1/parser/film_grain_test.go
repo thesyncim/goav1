@@ -179,7 +179,7 @@ func filmGrainSequence() SequenceHeader {
 	}
 }
 
-func filmGrainMinimalUpdatePayload() ([]byte, int) {
+func filmGrainMinimalUpdatePayload() ([]byte, uint16) {
 	var w testBitWriter
 	w.writeBool(true)       // apply_grain
 	w.writeBits(0x1234, 16) // grain_seed

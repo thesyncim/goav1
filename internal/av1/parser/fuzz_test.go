@@ -43,7 +43,7 @@ func FuzzParseFrameHeaderPrefix(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if hdr.BitsRead < 0 || hdr.BitsRead > len(payload)*8 {
+		if int(hdr.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d len=%d", hdr.BitsRead, len(payload))
 		}
 		if hdr.PrimaryRefFrame > PrimaryRefNone {
@@ -71,7 +71,7 @@ func FuzzParseIntraFrameSize(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if size.BitsRead < prefix.BitsRead || size.BitsRead > len(payload)*8 {
+		if size.BitsRead < prefix.BitsRead || int(size.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d prefix=%d len=%d", size.BitsRead, prefix.BitsRead, len(payload))
 		}
 		if size.CodedWidth == 0 || size.UpscaledWidth == 0 || size.Height == 0 {
@@ -117,7 +117,7 @@ func FuzzParseFrameSize(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if size.BitsRead < prefix.BitsRead || size.BitsRead > len(payload)*8 {
+		if size.BitsRead < prefix.BitsRead || int(size.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d prefix=%d len=%d", size.BitsRead, prefix.BitsRead, len(payload))
 		}
 		if size.CodedWidth == 0 || size.UpscaledWidth == 0 || size.Height == 0 {
@@ -175,7 +175,7 @@ func FuzzParseTileInfo(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if tiles.BitsRead < size.BitsRead || tiles.BitsRead > len(payload)*8 {
+		if tiles.BitsRead < size.BitsRead || int(tiles.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d size=%d len=%d", tiles.BitsRead, size.BitsRead, len(payload))
 		}
 		if tiles.SBCols == 0 || tiles.SBRows == 0 || tiles.Cols == 0 || tiles.Rows == 0 {
@@ -228,7 +228,7 @@ func FuzzParseTileGroupHeader(f *testing.F) {
 		if group.StartTile != 0 || group.StartTile > group.EndTile || group.EndTile >= 4 {
 			t.Fatalf("bad tile group=%+v", group)
 		}
-		if group.BitsRead&7 != 0 || group.DataOffset != group.BitsRead>>3 || group.DataOffset > len(payload) {
+		if group.BitsRead&7 != 0 || group.DataOffset != int(group.BitsRead)>>3 || group.DataOffset > len(payload) {
 			t.Fatalf("bad tile group offsets=%+v len=%d", group, len(payload))
 		}
 		if group.TileCount != group.EndTile-group.StartTile+1 {
@@ -311,7 +311,7 @@ func FuzzParseQuantizationParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if quant.BitsRead < tiles.BitsRead || quant.BitsRead > len(payload)*8 {
+		if quant.BitsRead < tiles.BitsRead || int(quant.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d tile=%d len=%d", quant.BitsRead, tiles.BitsRead, len(payload))
 		}
 		if !seq.ColorConfig.MonoChrome && !quant.DiffUVDeltas {
@@ -389,7 +389,7 @@ func FuzzParseSegmentationParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if seg.BitsRead < quant.BitsRead || seg.BitsRead > len(payload)*8 {
+		if seg.BitsRead < quant.BitsRead || int(seg.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d quant=%d len=%d", seg.BitsRead, quant.BitsRead, len(payload))
 		}
 		if !seg.Enabled && (seg.UpdateMap || seg.UpdateData || seg.TemporalUpdate) {
@@ -477,7 +477,7 @@ func FuzzParseDeltaParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if delta.BitsRead < seg.BitsRead || delta.BitsRead > len(payload)*8 {
+		if delta.BitsRead < seg.BitsRead || int(delta.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d seg=%d len=%d", delta.BitsRead, seg.BitsRead, len(payload))
 		}
 		if !delta.DeltaQPresent && (delta.DeltaQResLog2 != 0 || delta.DeltaLFPresent || delta.DeltaLFResLog2 != 0 || delta.DeltaLFMulti) {
@@ -567,7 +567,7 @@ func FuzzParseLoopFilterParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if lf.BitsRead < delta.BitsRead || lf.BitsRead > len(payload)*8 {
+		if lf.BitsRead < delta.BitsRead || int(lf.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d delta=%d len=%d", lf.BitsRead, delta.BitsRead, len(payload))
 		}
 		if seg.AllLossless || size.AllowIntrabc {
@@ -667,7 +667,7 @@ func FuzzParseCDEFParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if cdef.BitsRead < lf.BitsRead || cdef.BitsRead > len(payload)*8 {
+		if cdef.BitsRead < lf.BitsRead || int(cdef.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d lf=%d len=%d", cdef.BitsRead, lf.BitsRead, len(payload))
 		}
 		if seg.AllLossless || !seq.EnableCDEF || size.AllowIntrabc {
@@ -781,7 +781,7 @@ func FuzzParseRestorationParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if restoration.BitsRead < cdef.BitsRead || restoration.BitsRead > len(payload)*8 {
+		if restoration.BitsRead < cdef.BitsRead || int(restoration.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d cdef=%d len=%d", restoration.BitsRead, cdef.BitsRead, len(payload))
 		}
 		if (seg.AllLossless && !size.SuperResEnabled) || !seq.EnableRestoration || size.AllowIntrabc {
@@ -896,7 +896,7 @@ func FuzzParseTransformReferenceParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if transformRef.BitsRead < restoration.BitsRead || transformRef.BitsRead > len(payload)*8 {
+		if transformRef.BitsRead < restoration.BitsRead || int(transformRef.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d restoration=%d len=%d", transformRef.BitsRead, restoration.BitsRead, len(payload))
 		}
 		if seg.AllLossless && transformRef.TransformMode != TransformMode4x4Only {
@@ -1010,7 +1010,7 @@ func FuzzParseSkipModeParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if skipMode.BitsRead < transformRef.BitsRead || skipMode.BitsRead > len(payload)*8 {
+		if skipMode.BitsRead < transformRef.BitsRead || int(skipMode.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d transform=%d len=%d", skipMode.BitsRead, transformRef.BitsRead, len(payload))
 		}
 		if !skipMode.Allowed {
@@ -1136,7 +1136,7 @@ func FuzzParseFrameModeParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if frameMode.BitsRead < skipMode.BitsRead || frameMode.BitsRead > len(payload)*8 {
+		if frameMode.BitsRead < skipMode.BitsRead || int(frameMode.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d skip=%d len=%d", frameMode.BitsRead, skipMode.BitsRead, len(payload))
 		}
 		if prefix.ErrorResilientMode || !frameTypeIsInterOrSwitch(prefix.FrameType) || !seq.EnableWarpedMotion {
@@ -1263,7 +1263,7 @@ func FuzzParseGlobalMotionParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if globalMotion.BitsRead < frameMode.BitsRead || globalMotion.BitsRead > len(payload)*8 {
+		if globalMotion.BitsRead < frameMode.BitsRead || int(globalMotion.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d frame mode=%d len=%d", globalMotion.BitsRead, frameMode.BitsRead, len(payload))
 		}
 		if !frameTypeIsInterOrSwitch(prefix.FrameType) && globalMotion.BitsRead != frameMode.BitsRead {
@@ -1401,7 +1401,7 @@ func FuzzParseFilmGrainParams(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if filmGrain.BitsRead < globalMotion.BitsRead || filmGrain.BitsRead > len(payload)*8 {
+		if filmGrain.BitsRead < globalMotion.BitsRead || int(filmGrain.BitsRead) > len(payload)*8 {
 			t.Fatalf("BitsRead=%d global=%d len=%d", filmGrain.BitsRead, globalMotion.BitsRead, len(payload))
 		}
 		if filmGrain.BitDepth != seq.ColorConfig.BitDepth {
