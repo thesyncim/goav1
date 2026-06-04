@@ -212,21 +212,29 @@ func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 	switch bytesPerSample {
 	case 1:
 		v := byte(value)
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := range line {
-				line[i] = v
-			}
+		if block.height == 0 {
+			return
+		}
+		first := block.pix[:block.rowBytes:block.rowBytes]
+		for i := range first {
+			first[i] = v
+		}
+		for row := 1; row < block.height; row++ {
+			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	case 2:
 		lo := byte(value)
 		hi := byte(value >> 8)
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := 0; i < len(line); i += 2 {
-				line[i] = lo
-				line[i+1] = hi
-			}
+		if block.height == 0 {
+			return
+		}
+		first := block.pix[:block.rowBytes:block.rowBytes]
+		for i := 0; i < len(first); i += 2 {
+			first[i] = lo
+			first[i+1] = hi
+		}
+		for row := 1; row < block.height; row++ {
+			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	}
 }
