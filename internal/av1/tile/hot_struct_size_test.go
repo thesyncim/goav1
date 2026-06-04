@@ -28,6 +28,12 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "CompoundBlendRequest", size: unsafe.Sizeof(CompoundBlendRequest{}), max: 24},
 		{name: "OverlappableNeighborRequest", size: unsafe.Sizeof(OverlappableNeighborRequest{}), max: 8},
 		{name: "PaletteModeRequest", size: unsafe.Sizeof(PaletteModeRequest{}), max: 24},
+		{name: "InterMotionResult", size: unsafe.Sizeof(InterMotionResult{}), max: 16},
+		{name: "ReferenceMVCandidate", size: unsafe.Sizeof(ReferenceMVCandidate{}), max: 10},
+		{name: "ReferenceMVStack", size: unsafe.Sizeof(ReferenceMVStack{}), max: 104},
+		{name: "InterMVReferenceSet", size: unsafe.Sizeof(InterMVReferenceSet{}), max: 24},
+		{name: "ReferenceMVEntry", size: unsafe.Sizeof(ReferenceMVEntry{}), max: 8},
+		{name: "TemporalMotionEntry", size: unsafe.Sizeof(TemporalMotionEntry{}), max: 24},
 		{name: "BlockCoeffBlock", size: unsafe.Sizeof(BlockCoeffBlock{}), max: 64},
 		{name: "BlockLoopStats", size: unsafe.Sizeof(BlockLoopStats{}), max: 100},
 	}

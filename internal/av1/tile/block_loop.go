@@ -1794,8 +1794,11 @@ func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req
 	}
 	if !intrabcDVTileValid(mv, req, block) {
 		if altPred, ok := intrabcAlternateFallbackMV(req, block, pred); ok {
-			altMV := motion.Vector{Row: altPred.Row + residual.Diff.Row, Col: altPred.Col + residual.Diff.Col}
-			if motionVectorValid(altMV) && intrabcDVTileValid(altMV, req, block) {
+			altMV, ok := motionVectorFromInt32(
+				int32(altPred.Row)+int32(residual.Diff.Row),
+				int32(altPred.Col)+int32(residual.Diff.Col),
+			)
+			if ok && intrabcDVTileValid(altMV, req, block) {
 				mv = altMV
 			}
 		}
@@ -1849,9 +1852,17 @@ func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, e
 	}
 	sbSize4 := int64(req.SBSizeMIB)
 	if int64(block.MIRow)-sbSize4 < int64(req.Walk.MIRowStart) {
-		return motion.Vector{Col: -int32((sbSize4*4 + intrabcDelayPixels) * 8)}, nil
+		mv, ok := motionVectorFromInt32(0, -int32((sbSize4*4+intrabcDelayPixels)*8))
+		if !ok {
+			return motion.Vector{}, ErrInvalidDecodeState
+		}
+		return mv, nil
 	}
-	return motion.Vector{Row: -int32(sbSize4 * 4 * 8)}, nil
+	mv, ok := motionVectorFromInt32(-int32(sbSize4*4*8), 0)
+	if !ok {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	return mv, nil
 }
 
 func intrabcAlternateFallbackMV(req BlockLoopRequest, block BlockVisit, pred motion.Vector) (motion.Vector, bool) {
@@ -1860,8 +1871,14 @@ func intrabcAlternateFallbackMV(req BlockLoopRequest, block BlockVisit, pred mot
 		return motion.Vector{}, false
 	}
 	sbSize4 := int64(req.SBSizeMIB)
-	horizontal := motion.Vector{Col: -int32((sbSize4*4 + intrabcDelayPixels) * 8)}
-	vertical := motion.Vector{Row: -int32(sbSize4 * 4 * 8)}
+	horizontal, ok := motionVectorFromInt32(0, -int32((sbSize4*4+intrabcDelayPixels)*8))
+	if !ok {
+		return motion.Vector{}, false
+	}
+	vertical, ok := motionVectorFromInt32(-int32(sbSize4*4*8), 0)
+	if !ok {
+		return motion.Vector{}, false
+	}
 	if pred == horizontal {
 		return vertical, true
 	}
@@ -1969,15 +1986,13 @@ func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV b
 	case parser.GlobalMotionIdentity:
 		return motion.Vector{}, true
 	case parser.GlobalMotionTranslation:
-		mv := motion.Vector{
-			Row: params.Matrix[0] >> globalMotionTransOnlyPrecDiff,
-			Col: params.Matrix[1] >> globalMotionTransOnlyPrecDiff,
-		}
+		row := params.Matrix[0] >> globalMotionTransOnlyPrecDiff
+		col := params.Matrix[1] >> globalMotionTransOnlyPrecDiff
 		if forceIntegerMV {
-			mv.Row = globalMotionIntegerMVPrecision(mv.Row)
-			mv.Col = globalMotionIntegerMVPrecision(mv.Col)
+			row = globalMotionIntegerMVPrecision(row)
+			col = globalMotionIntegerMVPrecision(col)
 		}
-		return mv, true
+		return motionVectorFromInt32(row, col)
 	case parser.GlobalMotionRotZoom, parser.GlobalMotionAffine:
 		dims, ok := block.Size.Dimensions()
 		if !ok {
@@ -1988,15 +2003,13 @@ func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV b
 		mat := params.Matrix
 		xc := int64(mat[2]-(1<<globalMotionWarpedModelPrecBits))*x + int64(mat[3])*y + int64(mat[0])
 		yc := int64(mat[4])*x + int64(mat[5]-(1<<globalMotionWarpedModelPrecBits))*y + int64(mat[1])
-		mv := motion.Vector{
-			Row: globalMotionConvertToTransPrec(yc, allowHighPrecisionMV),
-			Col: globalMotionConvertToTransPrec(xc, allowHighPrecisionMV),
-		}
+		row := globalMotionConvertToTransPrec(yc, allowHighPrecisionMV)
+		col := globalMotionConvertToTransPrec(xc, allowHighPrecisionMV)
 		if forceIntegerMV {
-			mv.Row = globalMotionIntegerMVPrecision(mv.Row)
-			mv.Col = globalMotionIntegerMVPrecision(mv.Col)
+			row = globalMotionIntegerMVPrecision(row)
+			col = globalMotionIntegerMVPrecision(col)
 		}
-		return mv, true
+		return motionVectorFromInt32(row, col)
 	default:
 		return motion.Vector{}, false
 	}

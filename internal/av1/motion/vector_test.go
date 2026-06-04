@@ -732,7 +732,7 @@ func TestPredictInterPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	if err := PredictInterPlaneBlockWithFilterBitDepth(dst, src, 2, 8, 1, 1, 1, 1, Vector{Col: 4}, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad highbd bitdepth err=%v want %v", err, ErrInvalidMotion)
 	}
-	if _, err := FullpelVector(int(maxInt32)/SubpelScale+1, 0); !errors.Is(err, ErrInvalidMotion) {
+	if _, err := FullpelVector(int(maxInt16)/SubpelScale+1, 0); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("overflow vector err=%v want %v", err, ErrInvalidMotion)
 	}
 }

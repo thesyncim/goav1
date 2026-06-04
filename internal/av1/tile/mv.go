@@ -279,7 +279,11 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 		if err != nil {
 			return motion.Vector{}, MVResidualResult{}, err
 		}
-		result.Diff.Row = diff
+		componentDiff, ok := motionVectorComponentFromInt32(diff)
+		if !ok {
+			return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
+		}
+		result.Diff.Row = componentDiff
 		result.Components[mvComponentRow] = component
 		result.ComponentValid[mvComponentRow] = true
 	}
@@ -288,11 +292,21 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 		if err != nil {
 			return motion.Vector{}, MVResidualResult{}, err
 		}
-		result.Diff.Col = diff
+		componentDiff, ok := motionVectorComponentFromInt32(diff)
+		if !ok {
+			return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
+		}
+		result.Diff.Col = componentDiff
 		result.Components[mvComponentCol] = component
 		result.ComponentValid[mvComponentCol] = true
 	}
-	mv := motion.Vector{Row: ref.Row + result.Diff.Row, Col: ref.Col + result.Diff.Col}
+	mv, ok := motionVectorFromInt32(
+		int32(ref.Row)+int32(result.Diff.Row),
+		int32(ref.Col)+int32(result.Diff.Col),
+	)
+	if !ok {
+		return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
+	}
 	return mv, result, nil
 }
 
@@ -468,5 +482,21 @@ func mvCDF(cdf *entropy.CDF, symbols int) (*entropy.CDF, error) {
 }
 
 func motionVectorValid(v motion.Vector) bool {
-	return v.Row > MVLower && v.Row < MVUpper && v.Col > MVLower && v.Col < MVUpper
+	return int32(v.Row) > MVLower && int32(v.Row) < MVUpper &&
+		int32(v.Col) > MVLower && int32(v.Col) < MVUpper
+}
+
+func motionVectorFromInt32(row int32, col int32) (motion.Vector, bool) {
+	if row <= MVLower || row >= MVUpper || col <= MVLower || col >= MVUpper {
+		return motion.Vector{}, false
+	}
+	return motion.Vector{Row: int16(row), Col: int16(col)}, true
+}
+
+func motionVectorComponentFromInt32(v int32) (int16, bool) {
+	const storageUpper = 1 << 15
+	if v < -storageUpper || v >= storageUpper {
+		return 0, false
+	}
+	return int16(v), true
 }

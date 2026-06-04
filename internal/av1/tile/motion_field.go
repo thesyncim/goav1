@@ -326,8 +326,8 @@ func motionFieldProjectMV(ref motion.Vector, num int, den int) (motion.Vector, e
 	row := roundPowerOfTwoSigned(int64(ref.Row)*int64(num)*int64(motionFieldDivMult[den]), 14)
 	col := roundPowerOfTwoSigned(int64(ref.Col)*int64(num)*int64(motionFieldDivMult[den]), 14)
 	return motion.Vector{
-		Row: int32(clampInt64(row, motionFieldMVLower+1, motionFieldMVUpper-1)),
-		Col: int32(clampInt64(col, motionFieldMVLower+1, motionFieldMVUpper-1)),
+		Row: int16(clampInt64(row, motionFieldMVLower+1, motionFieldMVUpper-1)),
+		Col: int16(clampInt64(col, motionFieldMVLower+1, motionFieldMVUpper-1)),
 	}, nil
 }
 
@@ -356,7 +356,7 @@ func motionFieldBlockPosition(rows int, cols int, blkRow int, blkCol int, mv mot
 	return row, col, true
 }
 
-func motionFieldBlockOffset(v int32) int {
+func motionFieldBlockOffset(v int16) int {
 	if v < 0 {
 		return -int((-int64(v)) >> (4 + 2))
 	}

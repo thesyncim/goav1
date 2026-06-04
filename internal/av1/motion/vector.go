@@ -23,8 +23,8 @@ const (
 // Vector stores an AV1-style motion vector as row/column offsets in eighth
 // sample units.
 type Vector struct {
-	Row int32
-	Col int32
+	Row int16
+	Col int16
 }
 
 // FullpelVector converts a full-sample column/row offset into a subpel motion
@@ -1385,21 +1385,21 @@ func bitDepthMatchesSampleWidth(bytesPerSample int, bitDepth uint8) bool {
 		(bytesPerSample == 2 && (bitDepth == 10 || bitDepth == 12))
 }
 
-func scaleFullpel(v int) (int32, bool) {
+func scaleFullpel(v int) (int16, bool) {
 	scaled := int64(v) * SubpelScale
-	if scaled < minInt32 || scaled > maxInt32 {
+	if scaled < minInt16 || scaled > maxInt16 {
 		return 0, false
 	}
-	return int32(scaled), true
+	return int16(scaled), true
 }
 
-func lowerIntegerPrecision(v int32) int32 {
+func lowerIntegerPrecision(v int16) int16 {
 	mod := v % SubpelScale
 	if mod == 0 {
 		return v
 	}
 	v -= mod
-	if absInt32(mod) > SubpelScale/2 {
+	if absInt16(mod) > SubpelScale/2 {
 		if mod > 0 {
 			v += SubpelScale
 		} else {
@@ -1409,7 +1409,7 @@ func lowerIntegerPrecision(v int32) int32 {
 	return v
 }
 
-func absInt32(v int32) int32 {
+func absInt16(v int16) int16 {
 	if v < 0 {
 		return -v
 	}
@@ -1441,8 +1441,8 @@ func checkedMulNonNegative(a int, b int) (int, bool) {
 }
 
 const (
-	maxInt32 = int64(1<<31 - 1)
-	minInt32 = -1 << 31
+	maxInt16 = int64(1<<15 - 1)
+	minInt16 = -1 << 15
 	maxInt   = int(^uint(0) >> 1)
 	minInt   = -maxInt - 1
 )

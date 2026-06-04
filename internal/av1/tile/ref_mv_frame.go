@@ -128,9 +128,9 @@ func referenceMVEntryForInter(result InterMotionResult, refFrameSide [referenceF
 	return entry
 }
 
-func refMVOutOfRange(v int32) bool {
+func refMVOutOfRange(v int16) bool {
 	if v < 0 {
-		return -int64(v) > refMVSLimit
+		return -int(v) > refMVSLimit
 	}
-	return v > refMVSLimit
+	return int(v) > refMVSLimit
 }

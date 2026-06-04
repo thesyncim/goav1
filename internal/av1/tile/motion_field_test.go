@@ -308,7 +308,7 @@ func TestMotionFieldBlockOffsetMatchesLibaomGetBlockPosition(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := motionFieldBlockOffset(tc.v); got != tc.want {
+			if got := motionFieldBlockOffset(int16(tc.v)); got != tc.want {
 				t.Fatalf("motionFieldBlockOffset(%d)=%d want %d", tc.v, got, tc.want)
 			}
 		})

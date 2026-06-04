@@ -88,7 +88,7 @@ func TestCollectSubChromaInterCellsBlockSize4x4Quadrant(t *testing.T) {
 		ctx.GridMotionValid[p[1]][p[0]] = 1
 		ctx.GridInterMotion[p[1]][p[0]] = InterMotionResult{
 			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
-			MV:         [2]motion.Vector{{Row: int32(p[0]), Col: int32(p[1])}},
+			MV:         [2]motion.Vector{{Row: int16(p[0]), Col: int16(p[1])}},
 		}
 	}
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize4x4, 4, 4, true, true, motion.RegularFilters)

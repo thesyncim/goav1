@@ -383,7 +383,7 @@ func FuzzReadMotionVector(f *testing.F) {
 		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		_, residual, err := state.ReadMotionVector(&cdfs, motion.Vector{Row: int32(row), Col: int32(col)}, precision)
+		_, residual, err := state.ReadMotionVector(&cdfs, motion.Vector{Row: row, Col: col}, precision)
 		if err != nil {
 			return
 		}

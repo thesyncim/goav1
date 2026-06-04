@@ -561,16 +561,20 @@ func (req ReferenceMVStackRequest) clampReferenceMVStack(dims BlockDimensions, s
 }
 
 func clampMVToLimits(mv motion.Vector, rowMin, rowMax, colMin, colMax int32) motion.Vector {
-	if mv.Col < colMin {
-		mv.Col = colMin
-	} else if mv.Col > colMax {
-		mv.Col = colMax
+	col := int32(mv.Col)
+	if col < colMin {
+		col = colMin
+	} else if col > colMax {
+		col = colMax
 	}
-	if mv.Row < rowMin {
-		mv.Row = rowMin
-	} else if mv.Row > rowMax {
-		mv.Row = rowMax
+	row := int32(mv.Row)
+	if row < rowMin {
+		row = rowMin
+	} else if row > rowMax {
+		row = rowMax
 	}
+	mv.Row = int16(row)
+	mv.Col = int16(col)
 	return mv
 }
 
@@ -715,7 +719,8 @@ func (req ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntr
 }
 
 func temporalMVDifferent(a motion.Vector, b motion.Vector) bool {
-	return absInt32(a.Row-b.Row) >= 16 || absInt32(a.Col-b.Col) >= 16
+	return absInt32(int32(a.Row)-int32(b.Row)) >= 16 ||
+		absInt32(int32(a.Col)-int32(b.Col)) >= 16
 }
 
 func absInt32(v int32) int32 {

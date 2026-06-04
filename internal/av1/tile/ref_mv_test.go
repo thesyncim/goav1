@@ -768,8 +768,8 @@ func FuzzReferenceMVStack(f *testing.F) {
 		weights := [4]uint16{w0, w1, w2, w3}
 		for i := range stack.Candidates {
 			stack.Candidates[i] = ReferenceMVCandidate{
-				This:     motion.Vector{Row: int32(int16(weights[i%len(weights)])), Col: -int32(int16(weights[(i+1)%len(weights)]))},
-				Compound: motion.Vector{Row: -int32(int16(weights[(i+2)%len(weights)])), Col: int32(int16(weights[(i+3)%len(weights)]))},
+				This:     motion.Vector{Row: int16(weights[i%len(weights)]), Col: -int16(weights[(i+1)%len(weights)])},
+				Compound: motion.Vector{Row: -int16(weights[(i+2)%len(weights)]), Col: int16(weights[(i+3)%len(weights)])},
 				Weight:   weights[i%len(weights)],
 			}
 		}
@@ -819,12 +819,12 @@ func FuzzBuildReferenceMVStack(f *testing.F) {
 		above := InterMotionResult{
 			References: refs,
 			Mode:       mode,
-			MV:         [2]motion.Vector{{Row: int32(aboveRow), Col: int32(aboveCol)}, {Row: -int32(aboveRow), Col: -int32(aboveCol)}},
+			MV:         [2]motion.Vector{{Row: aboveRow, Col: aboveCol}, {Row: -aboveRow, Col: -aboveCol}},
 		}
 		left := InterMotionResult{
 			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameAltref}, Compound: true},
 			Mode:       InterModeResult{Compound: true, CompoundMode: CompoundInterModeNearNear},
-			MV:         [2]motion.Vector{{Row: int32(leftRow), Col: int32(leftCol)}, {Row: -int32(leftCol), Col: int32(leftRow)}},
+			MV:         [2]motion.Vector{{Row: leftRow, Col: leftCol}, {Row: -leftCol, Col: leftRow}},
 		}
 		seedAboveMotion(&ctx, 0, size, above)
 		seedLeftMotion(&ctx, 0, size, left)

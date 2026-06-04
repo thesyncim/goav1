@@ -1574,9 +1574,9 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			DecodeCompoundBlend:   rawRoot&0xf0 == 0xf0,
 			DecodeCoefficients:    decodeCoefficients,
 			GlobalMVs: [referenceFrameCount]motion.Vector{
-				ReferenceFrameLast:    {Row: int32(int8(rawRows)), Col: int32(int8(rawCols))},
-				ReferenceFrameGolden:  {Row: -int32(int8(rawRows)), Col: int32(int8(rawCols))},
-				ReferenceFrameAltref2: {Row: int32(int8(rawRoot)), Col: -int32(int8(rawCols))},
+				ReferenceFrameLast:    {Row: int16(int8(rawRows)), Col: int16(int8(rawCols))},
+				ReferenceFrameGolden:  {Row: -int16(int8(rawRows)), Col: int16(int8(rawCols))},
+				ReferenceFrameAltref2: {Row: int16(int8(rawRoot)), Col: -int16(int8(rawCols))},
 			},
 			GlobalMotionTypes: [referenceFrameCount]parser.GlobalMotionType{
 				ReferenceFrameLast:   parser.GlobalMotionType(rawRoot % 4),

@@ -797,21 +797,28 @@ func frameWorkBlockLoopGlobalMotion(params parser.GlobalMotionParams, allowHighP
 	for i, ref := range params.Ref {
 		types[i] = ref.Type
 		if ref.Type == parser.GlobalMotionTranslation {
-			mv := motion.Vector{
-				Row: ref.Matrix[0] >> 13,
-				Col: ref.Matrix[1] >> 13,
-			}
+			row := ref.Matrix[0] >> 13
+			col := ref.Matrix[1] >> 13
 			if forceIntegerMV {
-				mv.Row = (mv.Row >> 3) << 3
-				mv.Col = (mv.Col >> 3) << 3
+				row = (row >> 3) << 3
+				col = (col >> 3) << 3
 			} else if !allowHighPrecisionMV {
-				mv.Row = (mv.Row >> 1) << 1
-				mv.Col = (mv.Col >> 1) << 1
+				row = (row >> 1) << 1
+				col = (col >> 1) << 1
 			}
-			mvs[i] = mv
+			if mv, ok := frameWorkMotionVectorFromInt32(row, col); ok {
+				mvs[i] = mv
+			}
 		}
 	}
 	return mvs, types
+}
+
+func frameWorkMotionVectorFromInt32(row int32, col int32) (motion.Vector, bool) {
+	if row <= tile.MVLower || row >= tile.MVUpper || col <= tile.MVLower || col >= tile.MVUpper {
+		return motion.Vector{}, false
+	}
+	return motion.Vector{Row: int16(row), Col: int16(col)}, true
 }
 
 func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint32, refs [parser.InterRefsPerFrame]uint32) ([parser.InterRefsPerFrame]bool, error) {
