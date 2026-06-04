@@ -469,7 +469,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				}
 				return visit(visitInfo)
 			})
-			stats.PartitionReads += int32(walkStats.PartitionReads)
+			stats.PartitionReads += walkStats.PartitionReads
 			if err != nil {
 				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}

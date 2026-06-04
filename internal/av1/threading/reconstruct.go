@@ -75,7 +75,7 @@ func (b *FrameWorkBatch) BlockCoeffPlanePosition(index int, visit tile.BlockVisi
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	return geom.plane, geom.x, geom.y, nil
+	return geom.plane, int(geom.x), int(geom.y), nil
 }
 
 // ReconstructBlockCoeff dequantizes and adds one decoded transform block into
@@ -110,6 +110,11 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
+	relX := int(geom.x) - int(geom.window.X)
+	relY := int(geom.y) - int(geom.window.Y)
+	visibleWidth := int(geom.visibleWidth)
+	visibleHeight := int(geom.visibleHeight)
+	scanStride := int(geom.scanSize.Height)
 	// Resolve the quantize.Plane once and share it between the dequantizer and
 	// the inverse-quant matrix lookup (BlockQuantizer would otherwise re-derive
 	// it per transform block).
@@ -136,8 +141,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 		EOB:            int(block.Result.EOB),
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
-		geom.x-int(geom.window.X), geom.y-int(geom.window.Y), geom.visibleWidth, geom.visibleHeight,
-		block.Coeffs, geom.scanSize.Height, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
+		relX, relY, visibleWidth, visibleHeight,
+		block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -155,6 +160,11 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
+	relX := int(geom.x) - int(geom.window.X)
+	relY := int(geom.y) - int(geom.window.Y)
+	visibleWidth := int(geom.visibleWidth)
+	visibleHeight := int(geom.visibleHeight)
+	scanStride := int(geom.scanSize.Height)
 	// Resolve the quantize.Plane once and share it between the dequantizer and
 	// the inverse-quant matrix lookup (BlockQuantizer would otherwise re-derive
 	// it per transform block).
@@ -181,8 +191,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 		EOB:            int(block.Result.EOB),
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
-		geom.x-int(geom.window.X), geom.y-int(geom.window.Y), geom.visibleWidth, geom.visibleHeight,
-		block.Coeffs, geom.scanSize.Height, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
+		relX, relY, visibleWidth, visibleHeight,
+		block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -236,15 +246,15 @@ func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, q
 }
 
 type frameWorkBlockCoeffGeometry struct {
-	plane         FrameWorkPlane
 	window        FrameWorkPlaneRegion
-	x             int
-	y             int
 	size          transform.Size
 	scanSize      transform.Size
+	x             uint32
+	y             uint32
+	visibleWidth  uint8
+	visibleHeight uint8
 	txScale       uint8
-	visibleWidth  int
-	visibleHeight int
+	plane         FrameWorkPlane
 }
 
 func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
@@ -267,6 +277,10 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 	x, y, err := frameWorkBlockCoeffPosition(region, visit, block.Block, ssX, ssY)
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
+	}
+	geomX, geomY, ok := frameWorkBlockCoeffCoords(x, y)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
 	// libaom's av1_inverse_transform_block adds the residual of the WHOLE
 	// tx_size to the predicted block; it never trims to the cropped visible
@@ -297,28 +311,46 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 				}
 			}
 			return frameWorkBlockCoeffGeometry{
-				plane:    plane,
 				window:   window,
-				x:        x,
-				y:        y,
 				size:     size,
 				scanSize: scanSize,
+				x:        geomX,
+				y:        geomY,
 				txScale:  txScale,
+				plane:    plane,
 			}, nil
 		}
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
+	geomVisibleWidth, geomVisibleHeight, ok := frameWorkBlockCoeffVisiblePixels(visibleWidth, visibleHeight)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
 	return frameWorkBlockCoeffGeometry{
-		plane:         plane,
 		window:        window,
-		x:             x,
-		y:             y,
 		size:          size,
 		scanSize:      scanSize,
+		x:             geomX,
+		y:             geomY,
+		visibleWidth:  geomVisibleWidth,
+		visibleHeight: geomVisibleHeight,
 		txScale:       txScale,
-		visibleWidth:  visibleWidth,
-		visibleHeight: visibleHeight,
+		plane:         plane,
 	}, nil
+}
+
+func frameWorkBlockCoeffCoords(x int, y int) (uint32, uint32, bool) {
+	if x < 0 || y < 0 || uint64(x) > uint64(^uint32(0)) || uint64(y) > uint64(^uint32(0)) {
+		return 0, 0, false
+	}
+	return uint32(x), uint32(y), true
+}
+
+func frameWorkBlockCoeffVisiblePixels(width int, height int) (uint8, uint8, bool) {
+	if width <= 0 || height <= 0 || width > int(^uint8(0)) || height > int(^uint8(0)) {
+		return 0, 0, false
+	}
+	return uint8(width), uint8(height), true
 }
 
 func frameWorkBlockCoeffVisibleSize(block tile.TransformBlock, size transform.Size) (int, int, error) {

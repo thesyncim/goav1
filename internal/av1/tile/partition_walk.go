@@ -40,8 +40,8 @@ type BlockVisit struct {
 
 // BlockWalkStats reports how much partition syntax was consumed.
 type BlockWalkStats struct {
-	PartitionReads int
-	Blocks         int
+	PartitionReads int32
+	Blocks         int32
 }
 
 // BlockVisitor is called in bitstream traversal order for every leaf block.
