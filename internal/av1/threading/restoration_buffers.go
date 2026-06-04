@@ -66,10 +66,10 @@ func (b *FrameWorkBatch) ReadRestorationUnitsForSuperblock(index int, state *til
 		return 0, err
 	}
 	if visit.SBSizeMIB != b.Sequence.SBSizeMIB ||
-		visit.MICol < region.MIColStart ||
-		visit.MIRow < region.MIRowStart ||
-		visit.MICol >= region.MIColEnd ||
-		visit.MIRow >= region.MIRowEnd {
+		visit.MICol < uint32(region.MIColStart) ||
+		visit.MIRow < uint32(region.MIRowStart) ||
+		visit.MICol >= uint32(region.MIColEnd) ||
+		visit.MIRow >= uint32(region.MIRowEnd) {
 		return 0, ErrInvalidBatch
 	}
 	if req.Buffers.Plan.Planes != 1 && req.Buffers.Plan.Planes != 3 {

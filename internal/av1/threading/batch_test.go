@@ -1654,7 +1654,7 @@ func TestFrameWorkBatchJobRegionAllocs(t *testing.T) {
 		if region.PixelWidth != 172 || region.MIColEnd != 76 {
 			t.Fatalf("region=%+v", region)
 		}
-		block, err := ctx.JobBlockDeltaContext(0, region.MIColStart, region.MIRowStart, false, true)
+		block, err := ctx.JobBlockDeltaContext(0, uint32(region.MIColStart), uint32(region.MIRowStart), false, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1920,7 +1920,7 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 			region.MIRowStart >= region.MIRowEnd {
 			t.Fatalf("invalid region=%+v width=%d height=%d", region, width, height)
 		}
-		block, err := ctx.JobBlockDeltaContext(0, region.MIColStart, region.MIRowStart, false, false)
+		block, err := ctx.JobBlockDeltaContext(0, uint32(region.MIColStart), uint32(region.MIRowStart), false, false)
 		if err != nil {
 			t.Fatalf("block context err=%v region=%+v", err, region)
 		}

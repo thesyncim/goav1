@@ -738,10 +738,10 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
-			MIColStart: region.MIColStart,
-			MIRowStart: region.MIRowStart,
-			MIColEnd:   region.MIColEnd,
-			MIRowEnd:   region.MIRowEnd,
+			MIColStart: uint32(region.MIColStart),
+			MIRowStart: uint32(region.MIRowStart),
+			MIColEnd:   uint32(region.MIColEnd),
+			MIRowEnd:   uint32(region.MIRowEnd),
 		},
 		SkipMode:                    b.SkipMode,
 		CDEF:                        b.CDEF,
@@ -913,10 +913,12 @@ func (b *FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) 
 	}
 	root := tile.RootBlockLevel(b.Sequence.Use128x128Superblock)
 	rootSize := uint32(root.Size4x4())
-	if rootSize == 0 || region.MIColEnd <= region.MIColStart {
+	miColStart := uint32(region.MIColStart)
+	miColEnd := uint32(region.MIColEnd)
+	if rootSize == 0 || miColEnd <= miColStart {
 		return 0, ErrInvalidBatch
 	}
-	return int((region.MIColEnd - region.MIColStart + rootSize - 1) / rootSize), nil
+	return int((miColEnd - miColStart + rootSize - 1) / rootSize), nil
 }
 
 // DecodeAndReconstructJobResiduals walks one tile job's blocks, invokes the
@@ -1542,8 +1544,8 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 			return ErrInvalidBatch
 		}
 		visit := &c.scratch.reconVisits[idx]
-		sbRow := int((visit.Block.MIRow - region.MIRowStart) / sbSizeMIB)
-		sbCol := int((visit.Block.MICol - region.MIColStart) / sbSizeMIB)
+		sbRow := int((visit.Block.MIRow - uint32(region.MIRowStart)) / sbSizeMIB)
+		sbCol := int((visit.Block.MICol - uint32(region.MIColStart)) / sbSizeMIB)
 		if sbRow < 0 || sbRow >= rowCount || sbCol < 0 {
 			return ErrInvalidBatch
 		}

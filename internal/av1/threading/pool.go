@@ -100,10 +100,10 @@ type FrameWorkJobRegion struct {
 	PixelWidth  uint32
 	PixelHeight uint32
 
-	MIColStart uint32
-	MIRowStart uint32
-	MIColEnd   uint32
-	MIRowEnd   uint32
+	MIColStart uint16
+	MIRowStart uint16
+	MIColEnd   uint16
+	MIRowEnd   uint16
 }
 
 // FrameWorkPlane identifies one frame plane.
@@ -432,6 +432,9 @@ func (b *FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error)
 	if miColEnd <= miColStart || miRowEnd <= miRowStart {
 		return FrameWorkJobRegion{}, ErrInvalidBatch
 	}
+	if miColEnd > uint32(^uint16(0)) || miRowEnd > uint32(^uint16(0)) {
+		return FrameWorkJobRegion{}, ErrInvalidBatch
+	}
 
 	return FrameWorkJobRegion{
 		Tile:        job.Tile,
@@ -445,10 +448,10 @@ func (b *FrameWorkBatch) computeJobRegion(index int) (FrameWorkJobRegion, error)
 		PixelY:      pixelY,
 		PixelWidth:  pixelXEnd - pixelX,
 		PixelHeight: pixelYEnd - pixelY,
-		MIColStart:  miColStart,
-		MIRowStart:  miRowStart,
-		MIColEnd:    miColEnd,
-		MIRowEnd:    miRowEnd,
+		MIColStart:  uint16(miColStart),
+		MIRowStart:  uint16(miRowStart),
+		MIColEnd:    uint16(miColEnd),
+		MIRowEnd:    uint16(miRowEnd),
 	}, nil
 }
 
@@ -459,8 +462,8 @@ func (b *FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uin
 	if err != nil {
 		return tile.BlockDeltaContext{}, err
 	}
-	if miCol < region.MIColStart || miCol >= region.MIColEnd ||
-		miRow < region.MIRowStart || miRow >= region.MIRowEnd {
+	if miCol < uint32(region.MIColStart) || miCol >= uint32(region.MIColEnd) ||
+		miRow < uint32(region.MIRowStart) || miRow >= uint32(region.MIRowEnd) {
 		return tile.BlockDeltaContext{}, ErrInvalidBatch
 	}
 	return tile.BlockDeltaContext{
@@ -610,14 +613,14 @@ func (b *FrameWorkBatch) computeJobOutputPlane(index int, plane FrameWorkPlane) 
 	// extent, so we expand the writable trailing edge to the superblock pixel
 	// extent. frameWorkPlaneWindow then clamps to the underlying allocation
 	// (which RequiredSize sizes to the superblock-aligned extent).
-	readLumaX := region.MIColEnd * 4
-	readLumaY := region.MIRowEnd * 4
+	readLumaX := uint32(region.MIColEnd) * 4
+	readLumaY := uint32(region.MIRowEnd) * 4
 	clipLumaX := uint32(region.SBX+region.SBCols) << b.Sequence.SBSizeLog2
 	clipLumaY := uint32(region.SBY+region.SBRows) << b.Sequence.SBSizeLog2
-	xRead0, xRead1 := frameWorkPlaneRange(region.MIColStart*4, readLumaX, subsamplingX)
-	yRead0, yRead1 := frameWorkPlaneRange(region.MIRowStart*4, readLumaY, subsamplingY)
-	xAligned0, xAligned1 := frameWorkPlaneRange(region.MIColStart*4, clipLumaX, subsamplingX)
-	yAligned0, yAligned1 := frameWorkPlaneRange(region.MIRowStart*4, clipLumaY, subsamplingY)
+	xRead0, xRead1 := frameWorkPlaneRange(uint32(region.MIColStart)*4, readLumaX, subsamplingX)
+	yRead0, yRead1 := frameWorkPlaneRange(uint32(region.MIRowStart)*4, readLumaY, subsamplingY)
+	xAligned0, xAligned1 := frameWorkPlaneRange(uint32(region.MIColStart)*4, clipLumaX, subsamplingX)
+	yAligned0, yAligned1 := frameWorkPlaneRange(uint32(region.MIRowStart)*4, clipLumaY, subsamplingY)
 	// The window's pixel-space origin must remain aligned with the visible
 	// origin; only the trailing edge expands.
 	if xAligned0 != x0 || yAligned0 != y0 || xRead0 != x0 || yRead0 != y0 {
