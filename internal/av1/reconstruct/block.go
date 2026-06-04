@@ -124,6 +124,10 @@ func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, coeffHeight, eob); err != nil {
 			return ErrInvalidBlock
 		}
+	} else if cfg.Transform == transform.TypeDCTDCT && eob == 1 {
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dequant[0], transformScratch, cfg.Size, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, coeffHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
 		return ErrInvalidBlock
 	}
@@ -170,6 +174,10 @@ func reconstructPlaneBlockTrustedWithGeometry(dst frame.Plane, bytesPerSample in
 	}
 	if cfg.Lossless {
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, eob); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if cfg.Transform == transform.TypeDCTDCT && eob == 1 {
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dequant[0], transformScratch, cfg.Size, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
@@ -238,6 +246,10 @@ func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitD
 	}
 	if cfg.Lossless {
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, eob); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if cfg.Transform == transform.TypeDCTDCT && eob == 1 {
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dequant[0], transformScratch, cfg.Size, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {

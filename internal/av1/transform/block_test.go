@@ -113,6 +113,59 @@ func TestInverseBlockDCTMatchesDirect(t *testing.T) {
 	}
 }
 
+func TestInverseDCTDCOnlyBlockBitDepthMatchesFullInverse(t *testing.T) {
+	sizes := []Size{
+		{Width: 4, Height: 4},
+		{Width: 8, Height: 8},
+		{Width: 16, Height: 16},
+		{Width: 32, Height: 32},
+		{Width: 64, Height: 64},
+		{Width: 4, Height: 8},
+		{Width: 8, Height: 4},
+		{Width: 8, Height: 16},
+		{Width: 16, Height: 8},
+		{Width: 16, Height: 32},
+		{Width: 32, Height: 16},
+		{Width: 32, Height: 64},
+		{Width: 64, Height: 32},
+		{Width: 4, Height: 16},
+		{Width: 16, Height: 4},
+		{Width: 8, Height: 32},
+		{Width: 32, Height: 8},
+		{Width: 16, Height: 64},
+		{Width: 64, Height: 16},
+	}
+	dcs := []int32{-8192, -257, -1, 0, 1, 255, 8191}
+	for _, size := range sizes {
+		if !TypeDCTDCT.Supported(size) {
+			continue
+		}
+		for _, bitDepth := range []uint8{8, 10, 12} {
+			for _, dc := range dcs {
+				width := int(size.Width)
+				height := int(size.Height)
+				coeff := make([]int32, width*height)
+				coeff[0] = dc
+				want := make([]int16, width*height)
+				got := make([]int16, width*height)
+				fullScratch := make([]int32, width*height)
+				dcScratch := make([]int32, width+height)
+				if err := InverseBlockBitDepth(want, width, coeff, height, fullScratch, size, TypeDCTDCT, bitDepth); err != nil {
+					t.Fatalf("full size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
+				}
+				if err := InverseDCTDCOnlyBlockBitDepth(got, width, dc, dcScratch, size, bitDepth); err != nil {
+					t.Fatalf("dc size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d want %d", size, bitDepth, dc, i, got[i], want[i])
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestInverseBlockIDTXMatchesDirect(t *testing.T) {
 	coeff := make([]int32, 4*8)
 	coeff[0] = 64

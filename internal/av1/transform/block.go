@@ -122,6 +122,55 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
 }
 
+// InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose
+// only non-zero coefficient is DC. It uses the same 1D DCT kernels and stage
+// clamps as InverseBlockBitDepth, but evaluates only the single horizontal and
+// vertical DC basis before filling the block.
+func InverseDCTDCOnlyBlockBitDepth(dst []int16, dstStride int, dc int32, scratch []int32, size Size, bitDepth uint8) error {
+	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	idx := sizeIndex(size)
+	if idx < 0 || !sizeValidTable[idx] {
+		return ErrInvalidTransform
+	}
+	width := int(size.Width)
+	height := int(size.Height)
+	if dstStride < width || len(scratch) < width+height || !blockFits(len(dst), dstStride, width, height) {
+		return ErrInvalidTransform
+	}
+	if size.IsRect2() {
+		dc = rect2Scale(dc)
+	}
+
+	row := scratch[:width:width]
+	clear(row)
+	row[0] = clipRange(int64(dc), rowMin, rowMax)
+	inverse1DRow(row, width, tx1DDCT, rowMin, rowMax)
+
+	v := row[0]
+	if shift := int(sizeShiftTable[idx]); shift > 0 {
+		v = clipRange(roundShift(int64(v), shift), colMin, colMax)
+	} else {
+		v = clipRange(int64(v), colMin, colMax)
+	}
+
+	col := scratch[width : width+height : width+height]
+	clear(col)
+	col[0] = v
+	inverse1D(col, 1, height, tx1DDCT, colMin, colMax)
+
+	for rowIndex := 0; rowIndex < height; rowIndex++ {
+		sample := clipInt16(int32(roundShift(int64(col[rowIndex]), 4)))
+		dstLine := dst[rowIndex*dstStride : rowIndex*dstStride+width : rowIndex*dstStride+width]
+		for colIndex := range dstLine {
+			dstLine[colIndex] = sample
+		}
+	}
+	return nil
+}
+
 // stageRangeBounds returns the libaom inverse-transform stage clamp bounds for
 // bitDepth. The row bound clamps to bd+8 bits; the column bound clamps to
 // max(bd+6, 16) bits.
