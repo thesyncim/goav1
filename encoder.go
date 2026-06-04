@@ -137,6 +137,10 @@ func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolut
 	return internalencoder.SupportedResolutionScaling(from, to)
 }
 
+func EncoderSequenceHeaderForConfig(config EncoderConfig) (EncoderSequenceHeader, error) {
+	return internalencoder.SequenceHeaderForConfig(config)
+}
+
 func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {
 	return internalencoder.LowOverheadOBUSize(unit)
 }

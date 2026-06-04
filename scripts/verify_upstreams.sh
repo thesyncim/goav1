@@ -25,4 +25,5 @@ verify_repo() {
 
 verify_repo dav1d b546257f770768b2c88258c533da38b91a06f737
 verify_repo libaom 047d8cf6168feafe1300eb6902000dd1a03d5549
+verify_repo svt-av1 c04f951541ad600e0d9c10836f2ab7b9bc69816d
 verify_repo webrtc 7974ac00e6e0046950002bda6a38eb515dbe48a5

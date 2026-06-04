@@ -22,6 +22,15 @@ commit = "047d8cf6168feafe1300eb6902000dd1a03d5549"
 verify = "git ls-remote --tags https://aomedia.googlesource.com/aom refs/tags/v3.14.0 refs/tags/v3.14.0^{}"
 
 [[source]]
+name = "svt-av1"
+role = "fast production AV1 encoder architecture, threading, mode decision, and rate-control reference"
+url = "https://gitlab.com/AOMediaCodec/SVT-AV1.git"
+ref = "refs/tags/v4.1.0"
+tag = "v4.1.0"
+commit = "c04f951541ad600e0d9c10836f2ab7b9bc69816d"
+verify = "git ls-remote --tags https://gitlab.com/AOMediaCodec/SVT-AV1.git refs/tags/v4.1.0 refs/tags/v4.1.0^{}"
+
+[[source]]
 name = "webrtc"
 role = "AV1 RTP payload and depayload behavior"
 url = "https://webrtc.googlesource.com/src"

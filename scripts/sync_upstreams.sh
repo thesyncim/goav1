@@ -43,6 +43,13 @@ sync_repo \
 	av1 aom aom_dsp aom_ports aom_util test examples /CHANGELOG /README.md /LICENSE /PATENTS
 
 sync_repo \
+	svt-av1 \
+	https://gitlab.com/AOMediaCodec/SVT-AV1.git \
+	refs/tags/v4.1.0 \
+	c04f951541ad600e0d9c10836f2ab7b9bc69816d \
+	Source test Docs /CMakeLists.txt /README.md /LICENSE.md /PATENTS.md
+
+sync_repo \
 	webrtc \
 	https://webrtc.googlesource.com/src \
 	refs/branch-heads/7848 \

@@ -80,6 +80,34 @@ func TestPublicEncoderLowOverheadOBU(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderSequenceHeaderForConfig(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution:  av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability: av1.EncoderScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	if seq.OperatingPointsCount != 4 || seq.MaxFrameWidth != 640 || seq.MaxFrameHeight != 360 {
+		t.Fatalf("sequence header = %+v", seq)
+	}
+	var buf [160]byte
+	out, err := av1.AppendEncoderLowOverheadSequenceHeaderOBU(buf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadSequenceHeaderOBU: %v", err)
+	}
+	unit, consumed, err := av1.ParseLowOverheadOBU(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != av1.OBUSequenceHeader {
+		t.Fatalf("parsed header=%+v consumed=%d", unit.Header, consumed)
+	}
+	if _, err := av1.ParseSequenceHeader(unit.Payload); err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

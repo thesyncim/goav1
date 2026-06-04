@@ -192,6 +192,122 @@ func TestAppendSequenceHeaderAllocs(t *testing.T) {
 	}
 }
 
+func TestSequenceHeaderForConfigSingleLayer(t *testing.T) {
+	seq, err := SequenceHeaderForConfig(Config{
+		Resolution: Resolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("SequenceHeaderForConfig: %v", err)
+	}
+	if seq.Profile != Profile0 || seq.MaxFrameWidth != 640 || seq.MaxFrameHeight != 360 {
+		t.Fatalf("sequence basics: %+v", seq)
+	}
+	if seq.OperatingPointsCount != 1 || seq.OperatingPoints[0].IDC != 0 || seq.OperatingPoints[0].SeqLevelIdx != SequenceLevelMax {
+		t.Fatalf("single-layer operating point: count=%d op=%+v", seq.OperatingPointsCount, seq.OperatingPoints[0])
+	}
+	if !seq.EnableOrderHint || seq.OrderHintBits != webRTCDefaultOrderHintBits || !seq.EnableCDEF {
+		t.Fatalf("realtime tools: %+v", seq)
+	}
+
+	var buf [128]byte
+	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+	}
+	parsed, err := parser.ParseSequenceHeader(out)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	if parsed.MaxFrameWidth != 640 || parsed.MaxFrameHeight != 360 || parsed.OperatingPoints[0].SeqLevelIdx != parser.SeqLevelMax {
+		t.Fatalf("parsed sequence: %+v", parsed)
+	}
+	if parsed.ColorConfig.BitDepth != 8 || !parsed.ColorConfig.SubsamplingX || !parsed.ColorConfig.SubsamplingY {
+		t.Fatalf("parsed color config: %+v", parsed.ColorConfig)
+	}
+}
+
+func TestSequenceHeaderForConfigSVCOperatingPoints(t *testing.T) {
+	seq, err := SequenceHeaderForConfig(Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("SequenceHeaderForConfig: %v", err)
+	}
+	if seq.OperatingPointsCount != 4 {
+		t.Fatalf("operating point count=%d want 4", seq.OperatingPointsCount)
+	}
+	wantIDC := [...]uint16{0x303, 0x301, 0x103, 0x101}
+	for i := range wantIDC {
+		if seq.OperatingPoints[i].IDC != wantIDC[i] || seq.OperatingPoints[i].SeqLevelIdx != SequenceLevelMax {
+			t.Fatalf("op[%d]=%+v want idc=%#x level=%d", i, seq.OperatingPoints[i], wantIDC[i], SequenceLevelMax)
+		}
+	}
+
+	var buf [160]byte
+	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+	}
+	parsed, err := parser.ParseSequenceHeader(out)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	for i := range wantIDC {
+		if parsed.OperatingPoints[i].IDC != wantIDC[i] {
+			t.Fatalf("parsed op[%d]=%+v want idc=%#x", i, parsed.OperatingPoints[i], wantIDC[i])
+		}
+	}
+	if index, ok := parser.SelectOperatingPoint(parsed, 1, 1); !ok || index != 0 {
+		t.Fatalf("SelectOperatingPoint top layer = %d,%v; want 0,true", index, ok)
+	}
+	if index, ok := parser.SelectOperatingPoint(parsed, 0, 0); !ok || index != 0 {
+		t.Fatalf("SelectOperatingPoint base layer first match = %d,%v; want 0,true", index, ok)
+	}
+}
+
+func TestSequenceHeaderForConfigRequestedLayers(t *testing.T) {
+	seq, err := SequenceHeaderForConfig(Config{
+		Resolution:         Resolution{Width: 640, Height: 360},
+		SpatialLayerCount:  2,
+		TemporalLayerCount: 3,
+	})
+	if err != nil {
+		t.Fatalf("SequenceHeaderForConfig: %v", err)
+	}
+	if seq.OperatingPointsCount != 6 || seq.OperatingPoints[0].IDC != 0x307 || seq.OperatingPoints[5].IDC != 0x101 {
+		t.Fatalf("requested-layer operating points: count=%d first=%#x last=%#x",
+			seq.OperatingPointsCount, seq.OperatingPoints[0].IDC, seq.OperatingPoints[5].IDC)
+	}
+}
+
+func TestSequenceHeaderForConfigRejectsInvalidSequenceCombination(t *testing.T) {
+	_, err := SequenceHeaderForConfig(Config{
+		Resolution: Resolution{Width: 640, Height: 360},
+		Profile:    Profile0,
+		BitDepth:   12,
+	})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("SequenceHeaderForConfig err=%v want %v", err, ErrInvalidConfig)
+	}
+}
+
+func TestSequenceHeaderForConfigAllocs(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	}
+	if _, err := SequenceHeaderForConfig(cfg); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = SequenceHeaderForConfig(cfg)
+	})
+	if allocs != 0 {
+		t.Fatalf("SequenceHeaderForConfig allocated: %f", allocs)
+	}
+}
+
 func realtimeEncoderSequenceHeader() SequenceHeader {
 	var seq SequenceHeader
 	seq.Profile = Profile0
