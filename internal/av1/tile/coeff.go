@@ -941,12 +941,12 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 	headC := lastC
 	// Internal scratch callers can reuse the dirty-position array as a temporary
-	// scan-index stack, then rewrite it to coefficient positions after signs are
-	// decoded. Public callers keep the coeffs[pos] linked-list fallback below.
+	// raster-position stack in scan order. Public callers keep the coeffs[pos]
+	// linked-list fallback below.
 	useDirtyScanList := trackDirty && dirtyNext == 0
 	nonzeroScanLen := 0
 	if useDirtyScanList {
-		(*dirtyPos)[0] = int16(lastC)
+		(*dirtyPos)[0] = int16(lastPos)
 		nonzeroScanLen = 1
 	} else {
 		coeffs[lastPos] = 0
@@ -995,7 +995,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						(*dirtyPos)[nonzeroScanLen] = int16(pos)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1044,7 +1044,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						(*dirtyPos)[nonzeroScanLen] = int16(pos)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1078,7 +1078,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						(*dirtyPos)[nonzeroScanLen] = int16(pos)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1109,7 +1109,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						*levelDirtyLen = uint16(levelDirtyNext)
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(c)
+						(*dirtyPos)[nonzeroScanLen] = int16(pos)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1128,12 +1128,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	maxScanLine := 0
 	if useDirtyScanList {
 		for i := nonzeroScanLen - 1; i >= 0; i-- {
-			c := int((*dirtyPos)[i])
-			if c < 0 || c >= eobPos {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
-			pos := int(scan[c])
+			pos := int((*dirtyPos)[i])
 			if pos < 0 || pos >= maxEOB {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
@@ -1148,7 +1143,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				maxScanLine = pos
 			}
 			negative := false
-			if c == 0 {
+			if pos == 0 {
 				negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 			} else {
 				bit := reader.ReadBitTrusted()
@@ -1170,6 +1165,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				signBit = 1
 			}
 			if coeffTraceEnabled {
+				c := coeffTraceScanIndex(scan, pos, eobPos)
 				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
 			}
 			culLevel += level
@@ -1181,11 +1177,10 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			if negative {
 				signed = -signed
 			}
-			if c == 0 {
+			if pos == 0 {
 				dcValue = int(signed)
 			}
 			coeffs[pos] = signed
-			(*dirtyPos)[i] = int16(pos)
 		}
 		*dirtyLen = uint16(nonzeroScanLen)
 	} else {
@@ -1280,6 +1275,15 @@ func readBaseRangeFromArrCursorUpdate(reader *entropy.Cursor, arr *[CoeffBRConte
 
 func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
 	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[context])
+}
+
+func coeffTraceScanIndex(scan []int16, pos int, eobPos int) int {
+	for c := 0; c < eobPos; c++ {
+		if int(scan[c]) == pos {
+			return c
+		}
+	}
+	return -1
 }
 
 func eobFlagCDFKnown(cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, context uint8) *entropy.CDF {
