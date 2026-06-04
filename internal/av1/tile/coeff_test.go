@@ -12,7 +12,7 @@ import (
 func TestCoeffQContextMatchesLibaom(t *testing.T) {
 	tests := []struct {
 		q    uint8
-		want int
+		want uint8
 	}{
 		{q: 0, want: 0},
 		{q: 20, want: 0},
@@ -165,7 +165,7 @@ func cdfValuesEqual(a, b []uint16) bool {
 func TestCoeffContextsMatchLibaom(t *testing.T) {
 	ctxTests := []struct {
 		size TransformSize
-		want int
+		want uint8
 	}{
 		{size: TransformSize4x4, want: 0},
 		{size: TransformSize4x8, want: 1},
@@ -185,7 +185,7 @@ func TestCoeffContextsMatchLibaom(t *testing.T) {
 
 	eobTests := []struct {
 		size TransformSize
-		want int
+		want uint8
 	}{
 		{size: TransformSize4x4, want: 0},
 		{size: TransformSize4x8, want: 1},

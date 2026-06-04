@@ -280,7 +280,7 @@ func coeffGeo(size TransformSize) (coeffGeometry, bool) {
 	return g, g.valid
 }
 
-func CoeffQContext(baseQIndex uint8) int {
+func CoeffQContext(baseQIndex uint8) uint8 {
 	if baseQIndex <= 20 {
 		return 0
 	}
@@ -309,20 +309,20 @@ func CoeffPlaneTypeForPlane(plane int) (CoeffPlaneType, error) {
 }
 
 // CoeffTransformSizeContext ports libaom's get_txsize_entropy_ctx().
-func CoeffTransformSizeContext(size TransformSize) (int, error) {
+func CoeffTransformSizeContext(size TransformSize) (uint8, error) {
 	dims, ok := size.Dimensions()
 	if !ok {
 		return 0, ErrInvalidDecodeState
 	}
-	return int(dims.Min+dims.Max+1) >> 1, nil
+	return (dims.Min + dims.Max + 1) >> 1, nil
 }
 
 // EOBMultiSize ports libaom's txsize_log2_minus4[] table.
-func EOBMultiSize(size TransformSize) (int, error) {
+func EOBMultiSize(size TransformSize) (uint8, error) {
 	if !size.Valid() {
 		return 0, ErrInvalidDecodeState
 	}
-	return int(eobMultiSizeTable[size]), nil
+	return eobMultiSizeTable[size], nil
 }
 
 func RecEOBPosition(token int, extra int) (int, error) {
@@ -558,8 +558,8 @@ func (c *CoeffCDFs) CoeffBRCDF(size TransformSize, plane CoeffPlaneType, context
 	if err != nil {
 		return nil, entropy.ErrInvalidCDF
 	}
-	if tx > int(TransformSize32x32) {
-		tx = int(TransformSize32x32)
+	if tx > uint8(TransformSize32x32) {
+		tx = uint8(TransformSize32x32)
 	}
 	if c == nil || !plane.Valid() || context < 0 || context >= CoeffBRContexts {
 		return nil, entropy.ErrInvalidCDF
