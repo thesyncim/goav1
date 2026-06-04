@@ -717,6 +717,22 @@ func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
 	}
 }
 
+// ReadCDFUnchecked decodes one symbol from cursor state. The caller must prove
+// c and cdf are non-nil and cdf is valid by construction.
+func (c *Cursor) ReadCDFUnchecked(cdf *CDF) int {
+	symbols := int(cdf.symbols)
+	switch symbols {
+	case 2:
+		return c.readBinaryCDFKnown(&cdf.values)
+	case 3:
+		return c.readCDF3Known(&cdf.values)
+	case 4:
+		return c.readCDF4Known(&cdf.values)
+	default:
+		return c.readSymbolKnown(&cdf.values, symbols)
+	}
+}
+
 // ReadBinaryCDFUnchecked decodes one symbol from a two-symbol CDF. The caller
 // must prove r and cdf are non-nil and that cdf has exactly two symbols.
 func (r *Reader) ReadBinaryCDFUnchecked(cdf *CDF) int {
@@ -743,6 +759,67 @@ func (r *Reader) ReadCDF3Unchecked(cdf *CDF) int {
 // symbols.
 func (c *Cursor) ReadCDF3Unchecked(cdf *CDF) int {
 	return c.readCDF3Known(&cdf.values)
+}
+
+//go:nosplit
+func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) int {
+	rangeValue := c.rng
+	rngHi := rangeValue >> 8
+	coded := c.dif >> (ecWindow - 16)
+	upper := rangeValue
+	lower := uint32(0)
+	symbol := 0
+	last := symbols - 1
+	head := uint16(0)
+	minTerm := ecMinProb * uint32(last)
+	for symbol < last {
+		v := values[symbol]
+		if symbol == 0 {
+			head = v
+		}
+		lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
+		if coded >= lower {
+			break
+		}
+		symbol++
+		upper = lower
+		minTerm -= ecMinProb
+	}
+	if symbol == last {
+		lower = 0
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(head, symbols, c.dif, c.rng, c.pos*8-c.cnt+c.tellOffs)
+	}
+	dif := c.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := 16 - bits.Len32(rng)
+	c.cnt -= shift
+	c.dif = ((dif + 1) << uint(shift)) - 1
+	c.rng = rng << uint(shift)
+	if c.cnt < 0 {
+		c.refill()
+	}
+	if c.allowCDFUpdate {
+		count := values[symbols]
+		rate := uint(4 + (count >> 4))
+		if symbols > 3 {
+			rate++
+		}
+		for i := 0; i < last; i++ {
+			v := uint32(values[i])
+			if i < symbol {
+				values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+			} else {
+				values[i] = uint16(v - (v >> rate))
+			}
+		}
+		if count < MaxCDFCount {
+			values[symbols] = count + 1
+		}
+	}
+	return symbol
 }
 
 //go:nosplit
