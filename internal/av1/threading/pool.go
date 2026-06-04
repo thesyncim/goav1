@@ -145,29 +145,30 @@ const (
 // Width/Height (or frameWorkPlaneBlockStartsBeyondOutput). When ClipWidth
 // (resp. ClipHeight) is zero, callers fall back to Width (resp. Height).
 type FrameWorkPlaneRegion struct {
-	Plane FrameWorkPlane
-	Pix   []byte
+	Pix []byte
 
-	Stride         int
-	X              int
-	Y              int
-	Width          int
-	Height         int
-	BytesPerSample int
-	RowBytes       int
+	Stride   uint32
+	X        uint32
+	Y        uint32
+	Width    uint32
+	Height   uint32
+	RowBytes uint32
 	// ClipWidth / ClipHeight are the superblock-aligned writable extent in plane
 	// samples (full-transform write extent for partial bottom/right superblock
 	// blocks, clamped to the allocation). Zero defaults to Width / Height (i.e.,
 	// visible == aligned). ClipRowBytes is ClipWidth * BytesPerSample.
-	ClipWidth    int
-	ClipHeight   int
-	ClipRowBytes int
+	ClipWidth    uint32
+	ClipHeight   uint32
+	ClipRowBytes uint32
 	// ReadWidth / ReadHeight are the MI-aligned neighbor-read extent in plane
 	// samples (libaom's n_top_px/n_left_px cap from mi_{cols,rows} * MI_SIZE and
 	// the TX-origin reject bound). They satisfy Width <= ReadWidth <= ClipWidth.
 	// Zero defaults to ClipWidth / ClipHeight (then to Width / Height).
-	ReadWidth  int
-	ReadHeight int
+	ReadWidth  uint32
+	ReadHeight uint32
+
+	Plane          FrameWorkPlane
+	BytesPerSample uint8
 }
 
 // FrameWorkLoopRestorationPlan carries the frame-level post-filter decisions
@@ -813,7 +814,9 @@ func frameWorkExpandPlaneRange(start uint32, end uint32, limit int, margin uint3
 // underlying plane buffer.
 func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSample int, x0 uint32, y0 uint32, x1 uint32, y1 uint32, xRead1 uint32, yRead1 uint32, xAligned1 uint32, yAligned1 uint32) (FrameWorkPlaneRegion, error) {
 	if bytesPerSample <= 0 ||
+		bytesPerSample > int(^uint8(0)) ||
 		plane.Stride <= 0 ||
+		uint64(plane.Stride) > uint64(^uint32(0)) ||
 		plane.Width <= 0 ||
 		plane.Height <= 0 ||
 		uint64(plane.Width) > uint64(^uint32(0)) ||
@@ -865,7 +868,6 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 	x := int(x0)
 	y := int(y0)
 	width := int(x1 - x0)
-	height := int(y1 - y0)
 	clipWidth := int(xAligned1 - x0)
 	clipHeight := int(yAligned1 - y0)
 	readWidth := int(xRead1 - x0)
@@ -907,20 +909,20 @@ func frameWorkPlaneWindow(which FrameWorkPlane, plane frame.Plane, bytesPerSampl
 		return FrameWorkPlaneRegion{}, ErrInvalidBatch
 	}
 	return FrameWorkPlaneRegion{
-		Plane:          which,
 		Pix:            plane.Pix[offset:end],
-		Stride:         plane.Stride,
-		X:              x,
-		Y:              y,
-		Width:          width,
-		Height:         height,
-		BytesPerSample: bytesPerSample,
-		RowBytes:       rowBytes,
-		ClipWidth:      clipWidth,
-		ClipHeight:     clipHeight,
-		ClipRowBytes:   clipRowBytes,
-		ReadWidth:      readWidth,
-		ReadHeight:     readHeight,
+		Stride:         uint32(plane.Stride),
+		X:              x0,
+		Y:              y0,
+		Width:          x1 - x0,
+		Height:         y1 - y0,
+		RowBytes:       uint32(rowBytes),
+		ClipWidth:      uint32(clipWidth),
+		ClipHeight:     uint32(clipHeight),
+		ClipRowBytes:   uint32(clipRowBytes),
+		ReadWidth:      uint32(readWidth),
+		ReadHeight:     uint32(readHeight),
+		Plane:          which,
+		BytesPerSample: uint8(bytesPerSample),
 	}, nil
 }
 

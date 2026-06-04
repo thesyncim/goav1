@@ -712,12 +712,12 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	// (mi_rows = ((65+7)>>3)<<1 = 18); ClipHeight is the SB-aligned writable
 	// edge (SBRows*64 = 128, clamped to the SB-aligned allocation 128), = 128.
 	if y.Plane != FrameWorkPlaneY || y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 ||
-		y.Stride != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 ||
+		int(y.Stride) != output.Y.Stride || y.BytesPerSample != 1 || y.RowBytes != 66 ||
 		y.ReadWidth != 72 || y.ReadHeight != 72 ||
 		y.ClipWidth != 128 || y.ClipHeight != 128 || y.ClipRowBytes != 128 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
-	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
+	if len(y.Pix) != int((y.ClipHeight-1)*y.Stride+y.ClipRowBytes) {
 		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
 	}
 	y.Pix[0] = 0x7a
@@ -734,7 +734,7 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 	// SB-aligned (luma 192 -> chroma 96): 96-32 = 64. ReadHeight = luma 72 >> 1
 	// = 36; ClipHeight = luma 128 >> 1 = 64.
 	if u.Plane != FrameWorkPlaneU || u.X != 32 || u.Y != 0 || u.Width != 33 || u.Height != 33 ||
-		u.Stride != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 ||
+		int(u.Stride) != output.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 33 ||
 		u.ReadWidth != 36 || u.ReadHeight != 36 ||
 		u.ClipWidth != 64 || u.ClipHeight != 64 || u.ClipRowBytes != 64 {
 		t.Fatalf("U plane region=%+v", u)
@@ -749,7 +749,7 @@ func TestFrameWorkBatchJobOutputPlane420(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v.Plane != FrameWorkPlaneV || v.X != 32 || v.Y != 0 || v.Width != 33 || v.Height != 33 ||
-		v.Stride != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 ||
+		int(v.Stride) != output.V.Stride || v.BytesPerSample != 1 || v.RowBytes != 33 ||
 		v.ReadWidth != 36 || v.ReadHeight != 36 ||
 		v.ClipWidth != 64 || v.ClipHeight != 64 || v.ClipRowBytes != 64 {
 		t.Fatalf("V plane region=%+v", v)
@@ -1265,10 +1265,10 @@ func TestFrameWorkBatchReferencePlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	if u.Plane != FrameWorkPlaneU || u.X != 0 || u.Y != 0 || u.Width != 75 || u.Height != 65 ||
-		u.Stride != golden.U.Stride || u.BytesPerSample != 2 || u.RowBytes != 150 {
+		int(u.Stride) != golden.U.Stride || u.BytesPerSample != 2 || u.RowBytes != 150 {
 		t.Fatalf("U reference plane=%+v", u)
 	}
-	if len(u.Pix) != (u.Height-1)*u.Stride+u.RowBytes {
+	if len(u.Pix) != int((u.Height-1)*u.Stride+u.RowBytes) {
 		t.Fatalf("U len=%d plane=%+v", len(u.Pix), u)
 	}
 	u.Pix[1] = 0x5a
@@ -1313,7 +1313,7 @@ func TestFrameWorkBatchJobReferencePlaneWindow420(t *testing.T) {
 	if y.X != 64 || y.Y != 0 || y.Width != 66 || y.Height != 65 || y.RowBytes != 66 {
 		t.Fatalf("Y reference job plane=%+v", y)
 	}
-	if len(y.Pix) != (y.Height-1)*y.Stride+y.RowBytes {
+	if len(y.Pix) != int((y.Height-1)*y.Stride+y.RowBytes) {
 		t.Fatalf("Y len=%d plane=%+v", len(y.Pix), y)
 	}
 	y.Pix[0] = 0x91
@@ -1326,10 +1326,10 @@ func TestFrameWorkBatchJobReferencePlaneWindow420(t *testing.T) {
 		t.Fatal(err)
 	}
 	if u.X != 30 || u.Y != 0 || u.Width != 35 || u.Height != 33 ||
-		u.Stride != reference.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 35 {
+		int(u.Stride) != reference.U.Stride || u.BytesPerSample != 1 || u.RowBytes != 35 {
 		t.Fatalf("U reference job window=%+v", u)
 	}
-	if len(u.Pix) != (u.Height-1)*u.Stride+u.RowBytes {
+	if len(u.Pix) != int((u.Height-1)*u.Stride+u.RowBytes) {
 		t.Fatalf("U len=%d plane=%+v", len(u.Pix), u)
 	}
 	u.Pix[0] = 0x42
@@ -1938,7 +1938,7 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 		if err != nil {
 			t.Fatalf("reference plane err=%v region=%+v", err, region)
 		}
-		if refPlane.Width != int(width) || refPlane.Height != int(height) || len(refPlane.Pix) == 0 {
+		if int(refPlane.Width) != int(width) || int(refPlane.Height) != int(height) || len(refPlane.Pix) == 0 {
 			t.Fatalf("invalid reference plane=%+v", refPlane)
 		}
 		jobRefPlane, err := ctx.JobReferencePlaneWindow(0, FrameWorkReferenceLast, FrameWorkPlaneY, uint32(width&7), uint32(height&7))
@@ -1946,9 +1946,8 @@ func FuzzFrameWorkBatchJobRegion(f *testing.F) {
 			t.Fatalf("job reference plane err=%v region=%+v", err, region)
 		}
 		if jobRefPlane.Width == 0 || jobRefPlane.Height == 0 || len(jobRefPlane.Pix) == 0 ||
-			jobRefPlane.X < 0 || jobRefPlane.Y < 0 ||
-			jobRefPlane.X+jobRefPlane.Width > int(width) ||
-			jobRefPlane.Y+jobRefPlane.Height > int(height) {
+			jobRefPlane.X+jobRefPlane.Width > uint32(width) ||
+			jobRefPlane.Y+jobRefPlane.Height > uint32(height) {
 			t.Fatalf("invalid job reference plane=%+v", jobRefPlane)
 		}
 		if !format.MonoChrome {

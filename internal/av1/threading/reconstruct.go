@@ -135,8 +135,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 		Lossless:       lossless,
 		EOB:            int(block.Result.EOB),
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
+	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
+		geom.x-int(geom.window.X), geom.y-int(geom.window.Y), geom.visibleWidth, geom.visibleHeight,
 		block.Coeffs, geom.scanSize.Height, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
@@ -180,8 +180,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 		Lossless:       lossless,
 		EOB:            int(block.Result.EOB),
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst, geom.window.BytesPerSample, b.Sequence.ColorConfig.BitDepth,
-		geom.x-geom.window.X, geom.y-geom.window.Y, geom.visibleWidth, geom.visibleHeight,
+	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
+		geom.x-int(geom.window.X), geom.y-int(geom.window.Y), geom.visibleWidth, geom.visibleHeight,
 		block.Coeffs, geom.scanSize.Height, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}

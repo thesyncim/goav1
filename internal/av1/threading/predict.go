@@ -403,11 +403,11 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 	dst := frameWorkPlaneFromWindow(window)
 	absX := x
 	absY := y
-	x -= window.X
-	y -= window.Y
+	x -= int(window.X)
+	y -= int(window.Y)
 
 	if visit.Prediction.Palette.YSize > 0 {
-		if err := frameWorkPredictLumaPalette(dst, window.BytesPerSample, x, y, width, height, visit.Block, visit.Prediction.Palette, 0, 0); err != nil {
+		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, 0, 0); err != nil {
 			return err
 		}
 		return nil
@@ -419,11 +419,11 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 			return ErrInvalidBatch
 		}
 		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, true)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, true)
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -432,11 +432,11 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(visit.Block, b.Sequence.SBSizeMIB, uint32(region.MIColEnd), uint32(region.MIRowEnd), absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, visit.Block, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -447,11 +447,11 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 		return ErrInvalidBatch
 	}
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, visit.Block, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -489,8 +489,8 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		return ErrInvalidBatch
 	}
 	dst := frameWorkPlaneFromWindow(window)
-	x := absX - window.X
-	y := absY - window.Y
+	x := absX - int(window.X)
+	y := absY - int(window.Y)
 	txX4 := int(tx.X4)
 	txY4 := int(tx.Y4)
 	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, int(visit.Block.X4), int(visit.Block.Y4), txX4, txY4)
@@ -500,7 +500,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		if err != nil {
 			return err
 		}
-		if err := frameWorkPredictLumaPalette(dst, window.BytesPerSample, x, y, width, height, visit.Block, visit.Prediction.Palette, absX-baseX, absY-baseY); err != nil {
+		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, absX-baseX, absY-baseY); err != nil {
 			return err
 		}
 		return nil
@@ -512,11 +512,11 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 			return ErrInvalidBatch
 		}
 		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
-		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, true)
+		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, true)
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -525,11 +525,11 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
 		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, uint32(region.MIColEnd), uint32(region.MIRowEnd), absX, absY, predWidth, predHeight)
-		edges, err := frameWorkDirectionalPredictionEdges(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
+		edges, err := frameWorkDirectionalPredictionEdges(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -540,11 +540,11 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		return ErrInvalidBatch
 	}
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
-	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, window.BytesPerSample, b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1071,12 +1071,7 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if err != nil {
 			return err
 		}
-		ref := frame.Plane{
-			Pix:    refWindow.Pix,
-			Stride: refWindow.Stride,
-			Width:  refWindow.Width,
-			Height: refWindow.Height,
-		}
+		ref := frameWorkPlaneFromWindow(refWindow)
 		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 		if err != nil {
 			return err
@@ -1139,12 +1134,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFiltersPtr(index in
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1420,12 +1410,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFiltersPtr(index int, vis
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1635,12 +1620,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1779,12 +1759,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1835,12 +1810,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1893,12 +1863,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -2036,12 +2001,7 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	if err != nil {
 		return err
 	}
-	ref := frame.Plane{
-		Pix:    refWindow.Pix,
-		Stride: refWindow.Stride,
-		Width:  refWindow.Width,
-		Height: refWindow.Height,
-	}
+	ref := frameWorkPlaneFromWindow(refWindow)
 	// OBMC / sub-block area predictions may straddle a scaled reference. The
 	// regular same-size convolver below assumes ref.Width / ref.Height equal
 	// geom.Output.Width / geom.Output.Height; for SVC L2T1 spatial=1 the
@@ -2154,6 +2114,9 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 // past the visible edge stay within the underlying frame buffer. When the
 // window has no recorded clip extent the plane is returned unchanged.
 func frameWorkExtendPlaneToClip(plane frame.Plane, window FrameWorkPlaneRegion, bytesPerSample int) frame.Plane {
+	if bytesPerSample <= 0 {
+		return plane
+	}
 	clipWidth := window.ClipWidth
 	if clipWidth <= 0 {
 		clipWidth = window.Width
@@ -2164,8 +2127,14 @@ func frameWorkExtendPlaneToClip(plane frame.Plane, window FrameWorkPlaneRegion, 
 	}
 	// Translate window-relative clip extent (which starts at window.X /
 	// window.Y) into plane-relative bounds.
-	planeWidth := window.X + clipWidth
-	planeHeight := window.Y + clipHeight
+	planeWidth64 := uint64(window.X) + uint64(clipWidth)
+	planeHeight64 := uint64(window.Y) + uint64(clipHeight)
+	maxInt := uint64(^uint(0) >> 1)
+	if planeWidth64 > maxInt || planeHeight64 > maxInt {
+		return plane
+	}
+	planeWidth := int(planeWidth64)
+	planeHeight := int(planeHeight64)
 	if planeWidth <= plane.Width && planeHeight <= plane.Height {
 		return plane
 	}
@@ -2197,10 +2166,10 @@ func frameWorkPredictionPlaneEdgeBlock(block tile.BlockVisit, geom frameWorkPred
 }
 
 func frameWorkPredictionEdgeBlockForWindow(block tile.BlockVisit, x int, y int, window FrameWorkPlaneRegion) tile.BlockVisit {
-	if x <= window.X {
+	if x <= int(window.X) {
 		block.HaveLeft = false
 	}
-	if y <= window.Y {
+	if y <= int(window.Y) {
 		block.HaveTop = false
 	}
 	return block
@@ -3476,9 +3445,9 @@ func frameWorkPlaneFromWindow(window FrameWorkPlaneRegion) frame.Plane {
 	}
 	return frame.Plane{
 		Pix:    window.Pix,
-		Stride: window.Stride,
-		Width:  width,
-		Height: height,
+		Stride: int(window.Stride),
+		Width:  int(width),
+		Height: int(height),
 	}
 }
 
@@ -3510,7 +3479,9 @@ func frameWorkPlaneFromWindow(window FrameWorkPlaneRegion) frame.Plane {
 // width/height for the downstream writeback and the input predWidth/predHeight
 // for libaom's edge/DC/Smooth sample weighting.
 func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y int, width int, height int) (int, int, bool) {
-	if width <= 0 || height <= 0 || x < window.X || y < window.Y {
+	windowX := int(window.X)
+	windowY := int(window.Y)
+	if width <= 0 || height <= 0 || x < windowX || y < windowY {
 		return 0, 0, false
 	}
 	clipWidth := window.ClipWidth
@@ -3521,11 +3492,11 @@ func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y in
 	if clipHeight <= 0 {
 		clipHeight = window.Height
 	}
-	windowXEnd, ok := frameWorkCheckedAdd(window.X, clipWidth)
+	windowXEnd, ok := frameWorkCheckedAdd(windowX, int(clipWidth))
 	if !ok {
 		return 0, 0, false
 	}
-	windowYEnd, ok := frameWorkCheckedAdd(window.Y, clipHeight)
+	windowYEnd, ok := frameWorkCheckedAdd(windowY, int(clipHeight))
 	if !ok {
 		return 0, 0, false
 	}
@@ -3881,7 +3852,7 @@ func frameWorkWindowEdgeReadBound(window FrameWorkPlaneRegion) (int, int) {
 	if h <= 0 {
 		h = window.Height
 	}
-	return w, h
+	return int(w), int(h)
 }
 
 // frameWorkWindowEdgeReadBoundAbsolute returns the same MI-aligned neighbor-read
@@ -3891,7 +3862,7 @@ func frameWorkWindowEdgeReadBound(window FrameWorkPlaneRegion) (int, int) {
 // libaom's xr / yd derived from xd->mi_params.mi_{cols,rows} * MI_SIZE.
 func frameWorkWindowEdgeReadBoundAbsolute(window FrameWorkPlaneRegion) (int, int) {
 	w, h := frameWorkWindowEdgeReadBound(window)
-	return window.X + w, window.Y + h
+	return int(window.X) + w, int(window.Y) + h
 }
 
 // frameWorkIntraPredictionEdgesWithExtent builds the top/left/top-left intra

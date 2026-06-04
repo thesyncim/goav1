@@ -379,7 +379,7 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 		y.ClipWidth != 64 || y.ClipHeight != 64 || y.ClipRowBytes != 64 {
 		t.Fatalf("Y plane region=%+v", y)
 	}
-	if len(y.Pix) != (y.ClipHeight-1)*y.Stride+y.ClipRowBytes {
+	if len(y.Pix) != int((y.ClipHeight-1)*y.Stride+y.ClipRowBytes) {
 		t.Fatalf("Y len=%d region=%+v", len(y.Pix), y)
 	}
 	if y.Stride < y.ClipRowBytes {
@@ -395,7 +395,7 @@ func TestFrameWorkJobOutputPlaneClipExtentMatchesMIAlignment(t *testing.T) {
 		u.ClipWidth != 32 || u.ClipHeight != 32 || u.ClipRowBytes != 32 {
 		t.Fatalf("U plane region=%+v", u)
 	}
-	if len(u.Pix) != (u.ClipHeight-1)*u.Stride+u.ClipRowBytes {
+	if len(u.Pix) != int((u.ClipHeight-1)*u.Stride+u.ClipRowBytes) {
 		t.Fatalf("U len=%d region=%+v", len(u.Pix), u)
 	}
 	v, err := ctx.JobOutputPlane(0, FrameWorkPlaneV)
