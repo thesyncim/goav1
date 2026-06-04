@@ -20,8 +20,8 @@ const (
 
 type frameWorkWedgeCode struct {
 	direction frameWorkWedgeDirection
-	xOffset   int
-	yOffset   int
+	xOffset   uint8
+	yOffset   uint8
 }
 
 var frameWorkWedgeMasterObliqueOdd = [frameWorkWedgeMasterSize]byte{
@@ -103,8 +103,8 @@ func frameWorkBuildWedgeMask(mask []byte, stride int, size tile.BlockSize, wedge
 	if wedgeSign {
 		neg ^= 1
 	}
-	woff := (code.xOffset * width) >> 3
-	hoff := (code.yOffset * height) >> 3
+	woff := (int(code.xOffset) * width) >> 3
+	hoff := (int(code.yOffset) * height) >> 3
 	row0 := frameWorkWedgeMasterSize/2 - hoff
 	col0 := frameWorkWedgeMasterSize/2 - woff
 	for row := range height {

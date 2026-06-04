@@ -30,6 +30,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		{name: "frameWorkJobGeometryCache", size: unsafe.Sizeof(frameWorkJobGeometryCache{}), max: 264},
+		{name: "frameWorkWedgeCode", size: unsafe.Sizeof(frameWorkWedgeCode{}), max: 3},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)
