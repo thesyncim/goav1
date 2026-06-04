@@ -361,7 +361,13 @@ func writeWebRTCFrameDiffs(w *bitWriter, diffs [WebRTCMaxFrameReferences]uint16,
 }
 
 func webRTCNonSymmetricBits(value uint32, numValues uint32) (int, error) {
-	if numValues <= 1 || value >= numValues {
+	if numValues == 1 {
+		if value == 0 {
+			return 0, nil
+		}
+		return 0, ErrInvalidFrame
+	}
+	if numValues == 0 || value >= numValues {
 		return 0, ErrInvalidFrame
 	}
 	width := uint8(32 - leadingZeros32(numValues-1))
@@ -373,7 +379,13 @@ func webRTCNonSymmetricBits(value uint32, numValues uint32) (int, error) {
 }
 
 func writeWebRTCNonSymmetric(w *bitWriter, value uint32, numValues uint32) error {
-	if numValues <= 1 || value >= numValues {
+	if numValues == 1 {
+		if value == 0 {
+			return nil
+		}
+		return ErrInvalidFrame
+	}
+	if numValues == 0 || value >= numValues {
 		return ErrInvalidFrame
 	}
 	width := uint8(32 - leadingZeros32(numValues-1))

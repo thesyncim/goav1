@@ -41,6 +41,11 @@ type PacketPlan struct {
 	PacketSize     int
 }
 
+type PacketDependencyDescriptorFlags struct {
+	FirstPacketInFrame bool
+	LastPacketInFrame  bool
+}
+
 // PacketizerScratchSize reports caller-owned scratch slots needed to packetize
 // one low-overhead AV1 frame into RTP payloads.
 type PacketizerScratchSize struct {
@@ -131,6 +136,16 @@ func (p *Packetizer) NextPacketPlan() (PacketPlan, bool) {
 		return PacketPlan{}, false
 	}
 	return p.packets[p.packetIndex], true
+}
+
+func (p *Packetizer) NextPacketDependencyDescriptorFlags() (PacketDependencyDescriptorFlags, bool) {
+	if p.packetIndex >= len(p.packets) {
+		return PacketDependencyDescriptorFlags{}, false
+	}
+	return PacketDependencyDescriptorFlags{
+		FirstPacketInFrame: p.packetIndex == 0,
+		LastPacketInFrame:  p.packetIndex == len(p.packets)-1,
+	}, true
 }
 
 func (p *Packetizer) NextPacket(dst []byte) (n int, marker bool, ok bool, err error) {

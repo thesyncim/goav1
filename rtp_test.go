@@ -62,8 +62,22 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	}
 
 	var packetBytes [8][32]byte
+	var descriptors [8][16]byte
 	var payloads [8][]byte
 	payloadCount := 0
+	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+		Resolution: EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := EncoderWebRTCGenericFrameInfo{
+		FrameID:    77,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     1,
+	}
+	info.DTIs[0] = EncoderDecodeTargetSwitch
 	for {
 		if payloadCount >= len(payloads) {
 			t.Fatal("too many packets")
@@ -75,6 +89,17 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		plan, ok := packetizer.NextPacketPlan()
 		if !ok || plan.PacketSize+1 != size {
 			t.Fatalf("packet %d plan=%+v ok=%v size=%d", payloadCount, plan, ok, size)
+		}
+		flags, ok := NextRTPPacketDependencyDescriptorFlags(&packetizer)
+		if !ok {
+			t.Fatalf("packet %d missing dependency descriptor flags", payloadCount)
+		}
+		descriptor, err := AppendEncoderWebRTCDependencyDescriptor(descriptors[payloadCount][:0], structure, info, flags.FirstPacketInFrame, flags.LastPacketInFrame, payloadCount == 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(descriptor) == 0 {
+			t.Fatalf("packet %d empty descriptor", payloadCount)
 		}
 		n, marker, ok, err := packetizer.NextPacket(packetBytes[payloadCount][:size])
 		if err != nil {
@@ -91,6 +116,9 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	}
 	if payloadCount != size.Packets {
 		t.Fatalf("payloadCount=%d scratch packets=%d", payloadCount, size.Packets)
+	}
+	if descriptors[0][0]&0xc0 != 0x80 || descriptors[payloadCount-1][0]&0xc0 != 0x40 {
+		t.Fatalf("descriptor flags first=%02x last=%02x", descriptors[0][0], descriptors[payloadCount-1][0])
 	}
 	if next, ok := packetizer.NextPacketSize(); ok || next != 0 {
 		t.Fatalf("done packet size=%d ok=%v want 0,false", next, ok)

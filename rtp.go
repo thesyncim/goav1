@@ -43,6 +43,8 @@ type RTPPacketizerOBU = internalrtp.PacketizerOBU
 // element range, and byte size.
 type RTPPacketPlan = internalrtp.PacketPlan
 
+type RTPPacketDependencyDescriptorFlags = internalrtp.PacketDependencyDescriptorFlags
+
 // RTPPacketizerScratchSize reports the sizes of the OBU and packet scratches
 // required to packetize a payload under given limits.
 type RTPPacketizerScratchSize = internalrtp.PacketizerScratchSize
@@ -123,6 +125,10 @@ func PutRTPFragment(dst []byte, obu []byte, offset int, mtu int, startsNewCodedV
 // and lastFrameInPicture set the corresponding aggregation-header bits.
 func NewRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, keyFrame bool, lastFrameInPicture bool, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (RTPPacketizer, error) {
 	return internalrtp.NewPacketizer(payload, limits, keyFrame, lastFrameInPicture, obuScratch, packetScratch, workScratch)
+}
+
+func NextRTPPacketDependencyDescriptorFlags(packetizer *RTPPacketizer) (RTPPacketDependencyDescriptorFlags, bool) {
+	return packetizer.NextPacketDependencyDescriptorFlags()
 }
 
 // RTPPacketizerScratchLen reports the OBU and packet scratch capacities the

@@ -225,6 +225,53 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	}
 }
 
+func TestPacketizerNextPacketDependencyDescriptorFlags(t *testing.T) {
+	frame := appendPacketizerOBU(nil, obu.TypeFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+
+	var obus [2]PacketizerOBU
+	var packets [8]PacketPlan
+	var work [8]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 6}, false, true, obus[:], packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [...]PacketDependencyDescriptorFlags{
+		{FirstPacketInFrame: true},
+		{},
+		{LastPacketInFrame: true},
+	}
+	var payload [16]byte
+	for i := range want {
+		got, ok := packetizer.NextPacketDependencyDescriptorFlags()
+		if !ok || got != want[i] {
+			t.Fatalf("packet %d flags=%+v ok=%v want %+v,true", i, got, ok, want[i])
+		}
+		if _, _, _, err := packetizer.NextPacket(payload[:]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, ok := packetizer.NextPacketDependencyDescriptorFlags(); ok || got != (PacketDependencyDescriptorFlags{}) {
+		t.Fatalf("done flags=%+v ok=%v want zero,false", got, ok)
+	}
+}
+
+func TestPacketizerSinglePacketDependencyDescriptorFlags(t *testing.T) {
+	frame := appendPacketizerOBU(nil, obu.TypeFrame, []byte{0xaa})
+
+	var obus [1]PacketizerOBU
+	var packets [1]PacketPlan
+	var work [1]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, false, true, obus[:], packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := packetizer.NextPacketDependencyDescriptorFlags()
+	if !ok || got != (PacketDependencyDescriptorFlags{FirstPacketInFrame: true, LastPacketInFrame: true}) {
+		t.Fatalf("single flags=%+v ok=%v", got, ok)
+	}
+}
+
 func TestPacketizerFragmentsOBU(t *testing.T) {
 	payloadBytes := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	frame := appendPacketizerOBU(nil, obu.TypeFrame, payloadBytes)

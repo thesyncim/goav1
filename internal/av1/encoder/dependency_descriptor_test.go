@@ -75,6 +75,26 @@ func TestAppendWebRTCDependencyDescriptorCustomFrameDiff(t *testing.T) {
 	}
 }
 
+func TestAppendWebRTCDependencyDescriptorSingleChainStructure(t *testing.T) {
+	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
+		Resolution: Resolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	info := WebRTCGenericFrameInfo{
+		FrameID:    77,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     1,
+	}
+	info.DTIs[0] = DecodeTargetSwitch
+	var buf [32]byte
+	if _, err := AppendWebRTCDependencyDescriptor(buf[:0], structure, info, true, false, true); err != nil {
+		t.Fatalf("AppendWebRTCDependencyDescriptor single-chain: %v", err)
+	}
+}
+
 func TestAppendWebRTCDependencyDescriptorRejectsInvalid(t *testing.T) {
 	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
 		Resolution:  Resolution{Width: 640, Height: 360},
