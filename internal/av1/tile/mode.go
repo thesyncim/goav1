@@ -705,26 +705,26 @@ func validateBlockModeSlot(x4 int, y4 int) error {
 	return nil
 }
 
-func cdefUnitsForBlock(size BlockSize, x4 int, y4 int) ([cdefUnitsPerSB]int, int, error) {
+func cdefUnitsForBlock(size BlockSize, x4 int, y4 int) ([cdefUnitsPerSB]uint8, int, error) {
 	dims, ok := size.Dimensions()
 	if !ok || x4 < 0 || y4 < 0 ||
 		x4+int(dims.W4) > MaxBlockModeSlots ||
 		y4+int(dims.H4) > MaxBlockModeSlots {
-		return [cdefUnitsPerSB]int{}, 0, ErrInvalidDecodeState
+		return [cdefUnitsPerSB]uint8{}, 0, ErrInvalidDecodeState
 	}
 	xUnit0 := x4 >> 4
 	yUnit0 := y4 >> 4
 	xUnit1 := (x4 + int(dims.W4) - 1) >> 4
 	yUnit1 := (y4 + int(dims.H4) - 1) >> 4
 	if xUnit0 < 0 || yUnit0 < 0 || xUnit1 >= 2 || yUnit1 >= 2 {
-		return [cdefUnitsPerSB]int{}, 0, ErrInvalidDecodeState
+		return [cdefUnitsPerSB]uint8{}, 0, ErrInvalidDecodeState
 	}
 
-	var units [cdefUnitsPerSB]int
+	var units [cdefUnitsPerSB]uint8
 	count := 0
 	for uy := yUnit0; uy <= yUnit1; uy++ {
 		for ux := xUnit0; ux <= xUnit1; ux++ {
-			units[count] = uy*2 + ux
+			units[count] = uint8(uy*2 + ux)
 			count++
 		}
 	}
