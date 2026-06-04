@@ -24,6 +24,8 @@ pools, explicit scratch sizing, and zero steady-state allocations.
 - **Performance work is active** - scalar Go is already source-shaped against
   libaom/dav1d where it matters, and SIMD/assembly dispatch exists for the first
   motion kernels, but matching dav1d throughput remains the main open target.
+- **Encoder implementation is in scope** - the encoder target is WebRTC AV1
+  realtime use cases and controls, not offline/general-purpose encoding.
 
 Pre-v1: no release tag has been published yet.
 
@@ -126,13 +128,26 @@ pool, and result storage. The executable examples in `example_test.go` and
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | Not implemented |
+| Encoder | In scope, not landed yet; first target is WebRTC-focused realtime AV1 with bitrate/framerate/resolution/keyframe controls, temporal/spatial layers, SVC, screen/camera tuning, RTP/OBU output, and dependency metadata |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
 gaps live in [CONFORMANCE.md](CONFORMANCE.md). The package and lifecycle map
 lives in [ARCHITECTURE.md](ARCHITECTURE.md). Upstream pins are tracked in
 [UPSTREAM.md](UPSTREAM.md) and `third_party/upstream.lock`.
+
+## Encoder Scope
+
+Encoder implementation is now in project scope, with the first target scoped to
+realtime WebRTC AV1 only. It is not intended to be an offline encoder, a full
+authoring tool, or a general replacement for `aomenc`.
+
+The intended control surface is the WebRTC one: bitrate, framerate, resolution,
+keyframe requests, temporal/spatial layer structure, SVC, camera and
+screen-content tuning, realtime speed/quality controls, low-overhead OBU/RTP
+output, and dependency/scalability metadata. Encoder behavior should be ported
+from pinned libaom/libwebrtc source with oracle tests and zero-allocation hot
+paths before being advertised as supported.
 
 ## CLI
 
@@ -352,7 +367,7 @@ Security reports: [SECURITY.md](SECURITY.md).
 - [docs/svc.md](docs/svc.md) - scalable video coding integration guide
 - [docs/dsp.md](docs/dsp.md) - DSP and SIMD dispatch notes
 - [UPSTREAM.md](UPSTREAM.md) - upstream pinning policy
-- [CHANGELOG.md](CHANGELOG.md) - session-by-session change history
+- [CHANGELOG.md](CHANGELOG.md) - release-level change summary
 - [SECURITY.md](SECURITY.md) - threat model, supported versions, and reporting
   process
 

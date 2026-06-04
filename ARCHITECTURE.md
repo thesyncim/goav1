@@ -1,9 +1,10 @@
 # goav1 Architecture
 
-This document is the contributor-facing map of the goav1 decoder. It explains
-the package layout, the per-frame pipeline a caller drives, the public API
-surface, the testing strategy, and the known limitations and roadmap. Pair it
-with the per-package `doc.go` comments and `README.md` for context.
+This document is the contributor-facing map of the goav1 decoder and the
+WebRTC encoder implementation scope. It explains the package layout, the
+per-frame pipeline a caller drives, the public API surface, the testing
+strategy, and the known limitations. Pair it with the per-package `doc.go`
+comments and `README.md` for context.
 
 Audience:
 
@@ -33,7 +34,7 @@ and orchestration, and the root package exports the caller-facing API only.
 9. [Testing Strategy](#testing-strategy)
 10. [Build Tags and Environment Variables](#build-tags-and-environment-variables)
 11. [Scalable Video Coding (SVC)](#scalable-video-coding-svc)
-12. [Known Limitations and Roadmap](#known-limitations-and-roadmap)
+12. [Known Limitations and Scope](#known-limitations-and-scope)
 13. [Upstream References](#upstream-references)
     - [Licensing](#licensing)
 
@@ -95,7 +96,7 @@ goav1/
 +-- cmd/                                             # CLI tools
 |   +-- aom-go-dec/    IVF -> decoded-frame CLI (residual-stream runner)
 |   +-- dump_svc/      SVC layer inspection CLI
-+-- README.md                                        # status and current safe point
++-- README.md                                        # overview and quick start
 +-- UPSTREAM.md                                      # pinning policy
 +-- ARCHITECTURE.md                                  # this file
 +-- Makefile                                         # standard developer targets
@@ -125,7 +126,7 @@ goav1/
 |   +-- work/           Caller-buffer work plans (TilePlan, FramePlan, etc.)
 |   +-- threading/      Worker pool, batches, frame-work batch context
 |   +-- decoder/        High-level stream + event + frame-work state machine
-|   +-- encoder/        Reserved for future encoder
+|   +-- encoder/        WebRTC realtime AV1 encoder target
 |   +-- testvector/     Conformance vectors + libaom oracle harness
 |   +-- testdata/       Committed libaom IVF test vectors
 +-- third_party/        Pinned upstream clones (gitignored, populated by sync-upstreams)
@@ -383,8 +384,10 @@ Notes on the layering:
     a `*ScratchSize`/`*Request`/`*Result` triple and a Bind helper that
     slices caller-owned scratch into the per-stage views.
 
-- **`internal/av1/encoder`** — Reserved. The package currently holds only
-  `doc.go`. The realtime encoder is post-MVP.
+- **`internal/av1/encoder`** — WebRTC realtime AV1 encoder implementation
+  target. The package currently holds only `doc.go`; the encoder API has not
+  landed yet. The scope is WebRTC use cases and controls only, ported from
+  pinned libaom/libwebrtc behavior.
 
 ### Conformance and oracle
 
@@ -1077,7 +1080,7 @@ Two pieces of bitstream syntax carry layer information:
 
 ---
 
-## Known Limitations and Roadmap
+## Known Limitations and Scope
 
 ### Current state (as of the README)
 
@@ -1146,8 +1149,12 @@ roll-up.
 
 ### Not yet implemented
 
-- **Encoder.** `internal/av1/encoder` is a placeholder package only.
-  The encoder pipeline is post-MVP.
+- **Encoder.** Encoder implementation is in scope. The first target is a
+  realtime WebRTC AV1 encoder, not an offline/general-purpose encoder. Expected
+  controls include bitrate, framerate, resolution, keyframe requests,
+  temporal/spatial layers, SVC, camera/screen-content tuning, realtime
+  speed/quality controls, low-overhead OBU/RTP output, and
+  dependency/scalability metadata.
 - **SIMD / assembly backends.** Every DSP path is pure Go. The dispatch
   in `internal/av1/dsp` is stable and ready to take SIMD variants once
   the conformance work is complete.
@@ -1156,25 +1163,21 @@ roll-up.
   workers mid-frame. Determinism plus the batch unit-count balancing
   has been sufficient for realtime targets so far.
 
-### Roadmap (post-MVP)
+### Open Work
 
-In rough priority order, the items the decoder needs to clear before it
-can be declared bit-exact across the lenient fast slice:
-
-1. **Bit-exact pass on the remaining 7 fast vectors under strict MD5.**
-   Each vector that mismatches at a later frame is a debugging job:
-   compare the per-block residual or motion-field state against the
-   libaom dumper outputs (see `internal/av1/testvector/debug_*.go` for
-   the helpers that exist; the dumps are gitignored).
-2. **Bit-exact `SuiteLevelRelevant`** — adds intra-bc, SVC, more film
-   grain, monochrome, and 10-bit content.
-3. **SIMD backends** (amd64 SSE/AVX2 first, then arm64 NEON) for the
-   hot DSP entries: inverse transforms, deblocking edges, CDEF, and
-   the convolve filter. Each backend must clear `make alloc`,
+1. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
+   malformed/adversarial, fuzz, and real-world corpus coverage beyond the
+   committed vector gates.
+2. **Complete tile-list playback.** Tile-list OBUs parse today; anchor-frame
+   reuse, per-tile reconstruction, and output-frame blitting still need the
+   end-to-end implementation.
+3. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
+   inverse transforms, deblocking edges, CDEF, restoration, and convolve
+   filters. Each backend must clear `make alloc`,
    `make test-motion-conformance`, and `make test-transform-conformance`
-   before being wired into dispatch.
-4. **Realtime encoder.** Out of scope for the decoder MVP; tracked in
-   `internal/av1/encoder/doc.go`.
+   before dispatch.
+4. **Implement the WebRTC realtime encoder.** Build the in-scope encoder target
+   described in `README.md` and `internal/av1/encoder/doc.go`.
 
 ---
 
@@ -1186,8 +1189,8 @@ summaries. See `UPSTREAM.md` for the verification policy and
 
 - **dav1d 1.5.3** — decoder architecture, OBU parsing, tile/decode
   pipeline, DSP layout.
-- **libaom v3.14.0** — reference AV1 bitstream behavior, realtime
-  encoder behavior (future).
+- **libaom v3.14.0** — reference AV1 bitstream behavior and realtime
+  encoder behavior.
 - **libwebrtc (Chrome Stable 148.0.7778.179, branch `7778_178`)** —
   AV1 RTP payload and depayload behavior.
 - **AV1 RTP spec v1.0.0** (`av1-rtp-spec`) — normative RTP payload

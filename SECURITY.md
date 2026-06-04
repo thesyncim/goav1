@@ -64,7 +64,9 @@ transport parsers must assume that input bytes are adversarial.
 
 Out of scope:
 
-- Trusted-side bugs (the AV1 encoder, which is not yet implemented).
+- Trusted-side encoder misuse once the WebRTC encoder lands, such as invalid
+  local raw-frame buffers or unsupported control combinations supplied by the
+  calling application.
 - The host Go runtime, OS kernel, or hardware vulnerabilities.
 - Calling-program misuse of caller-owned scratch buffers in a way the
   documented contract forbids (e.g. mutating a buffer while the

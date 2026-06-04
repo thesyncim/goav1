@@ -293,8 +293,10 @@ ship under `internal/av1/testdata/libaom/`.
 
 ### Cross-cutting items not enumerated above
 
-- **Encoder.** `internal/av1/encoder/` contains only `doc.go`. The realtime
-  encoder is out of scope for the decoder MVP.
+- **Encoder.** Encoder implementation is in project scope. The first target is
+  a WebRTC-focused realtime AV1 encoder with WebRTC controls and RTP/OBU
+  output, not an offline/general-purpose encoder. `internal/av1/encoder/`
+  currently contains only scope documentation.
 - **SIMD / assembly backends.** Every DSP entry point is pure Go today.
   The `internal/av1/dsp` and `internal/av1/transform` dispatch shapes are
   stable; an amd64/arm64 backend will land behind them.
@@ -476,11 +478,11 @@ When adding or removing a feature row above, update:
 
 - This document (`CONFORMANCE.md`).
 - The "Feature coverage status" sub-table in
-  [ARCHITECTURE.md](ARCHITECTURE.md#known-limitations-and-roadmap) if
+  [ARCHITECTURE.md](ARCHITECTURE.md#known-limitations-and-scope) if
   the row crosses a major status boundary (`No` -> `Partial`,
   `Partial` -> `Yes`).
-- The "Current Safe Point" bullets in [README.md](README.md) when the
-  feature is part of the public API.
+- The feature table in [README.md](README.md) when the feature is part of the
+  public API or project scope.
 
 The vector coverage table in section 2 should be re-run after any change
 to the decoder, residual reconstruction, or post-filter pipeline.
