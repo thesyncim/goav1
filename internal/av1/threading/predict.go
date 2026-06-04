@@ -462,13 +462,19 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	if err != nil {
 		return err
 	}
-	region, err := b.JobRegion(index)
-	if err != nil {
-		return err
+	region, regionOK := b.cachedJobRegionTrusted(index)
+	if !regionOK {
+		region, err = b.JobRegion(index)
+		if err != nil {
+			return err
+		}
 	}
-	window, err := b.JobOutputPlane(index, FrameWorkPlaneY)
-	if err != nil {
-		return err
+	window, windowOK := b.cachedJobOutputPlaneTrusted(index, FrameWorkPlaneY)
+	if !windowOK {
+		window, err = b.JobOutputPlane(index, FrameWorkPlaneY)
+		if err != nil {
+			return err
+		}
 	}
 	absX, absY, err := frameWorkBlockLumaTransformPosition(visit.Block, tx)
 	if err != nil {
