@@ -815,9 +815,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	baseArr := &cdfs.CoeffBase[txCtx][req.Plane]
 	baseEOBArr := &cdfs.CoeffBaseEOB[txCtx][req.Plane]
 	brArr := &cdfs.CoeffBR[txBR][req.Plane]
+	eobCDF := eobFlagCDFKnown(cdfs, req.Size, req.Plane, req.EOBMultiContext)
+	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
 	reader := s.Reader.Cursor()
-	eob, err := readEOBCursor(&reader, cdfs, req.Size, txCtx, req.Plane, req.EOBMultiContext)
+	eob, err := readEOBCursorKnown(&reader, eobCDF, eobExtraArr)
 	if err != nil {
 		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{}, err
@@ -1186,6 +1188,25 @@ func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]en
 	return reader.ReadCDF4HighTokenUnchecked(&arr[context])
 }
 
+func eobFlagCDFKnown(cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, context uint8) *entropy.CDF {
+	switch eobMultiSizeTable[size] {
+	case 0:
+		return &cdfs.EOBFlag16[plane][context]
+	case 1:
+		return &cdfs.EOBFlag32[plane][context]
+	case 2:
+		return &cdfs.EOBFlag64[plane][context]
+	case 3:
+		return &cdfs.EOBFlag128[plane][context]
+	case 4:
+		return &cdfs.EOBFlag256[plane][context]
+	case 5:
+		return &cdfs.EOBFlag512[plane][context]
+	default:
+		return &cdfs.EOBFlag1024[plane][context]
+	}
+}
+
 func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, txCtx int, plane CoeffPlaneType, context uint8) (EOBResult, error) {
 	if reader == nil || cdfs == nil || !plane.Valid() || size >= transformSizeCount ||
 		txCtx < 0 || txCtx >= CoeffTxSizeContexts || context >= maxEOBFlagContexts {
@@ -1209,6 +1230,10 @@ func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 		eobCDF = &cdfs.EOBFlag1024[plane][context]
 	}
 
+	return readEOBCursorKnown(reader, eobCDF, &cdfs.EOBExtra[txCtx][plane])
+}
+
+func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobExtraArr *[EOBCoefContexts]entropy.CDF) (EOBResult, error) {
 	token := reader.ReadCDFUnchecked(eobCDF) + 1
 	if token >= len(eobOffsetBits) {
 		return EOBResult{}, ErrInvalidDecodeState
@@ -1219,16 +1244,16 @@ func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 		if token < 3 || token-3 >= EOBCoefContexts {
 			return EOBResult{}, ErrInvalidDecodeState
 		}
-		if reader.ReadBinaryCDFUnchecked(&cdfs.EOBExtra[txCtx][plane][token-3]) != 0 {
+		if reader.ReadBinaryCDFUnchecked(&eobExtraArr[token-3]) != 0 {
 			extra += 1 << (offsetBits - 1)
 		}
 		if offsetBits > 1 {
 			extra += int(reader.ReadBitsTrusted(offsetBits - 1))
 		}
 	}
-	pos, err := RecEOBPosition(token, extra)
-	if err != nil {
-		return EOBResult{}, err
+	pos := int(eobGroupStart[token])
+	if pos > 2 {
+		pos += extra
 	}
 	return EOBResult{Token: uint8(token), Extra: uint16(extra), Position: uint16(pos), OffsetBits: offsetBits}, nil
 }
