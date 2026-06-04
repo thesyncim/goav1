@@ -344,7 +344,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 						return err
 					}
 					stats.temporalReferenceResolves += resolved
-					stats.temporalMotionProjections += setupStats.Projections
+					stats.temporalMotionProjections += int(setupStats.Projections)
 				}
 				var restorationReq *threading.FrameWorkTileRestorationRequest
 				if ctx.RestorationFrameBuffers != nil {

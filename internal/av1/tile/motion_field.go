@@ -11,7 +11,7 @@ const (
 	motionFieldMaxOffsetHeight  = 0
 )
 
-var motionFieldDivMult = [32]int32{
+var motionFieldDivMult = [32]int16{
 	0, 16384, 8192, 5461, 4096, 3276, 2730, 2340,
 	2048, 1820, 1638, 1489, 1365, 1260, 1170, 1092,
 	1024, 963, 910, 862, 819, 780, 744, 712,
@@ -57,9 +57,9 @@ type TemporalMotionSetupRequest struct {
 
 // TemporalMotionSetupStats reports which setup projections were attempted.
 type TemporalMotionSetupStats struct {
-	Projections int
+	Projections uint8
 	LastOverlay bool
-	RefStamp    int
+	RefStamp    int8
 }
 
 // TemporalMotionProjectionRequest describes one libaom motion_field_projection
