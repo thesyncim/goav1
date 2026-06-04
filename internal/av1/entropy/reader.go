@@ -18,6 +18,8 @@ const (
 	ecProbShift = 6
 	ecWindow    = 32
 	ecLotsBits  = 0x4000
+
+	cdf4HighTokenMax = 12
 )
 
 // byteAtUnchecked loads src[pos] after the caller has proven pos < len(src).
@@ -1054,7 +1056,7 @@ func (c *Cursor) ReadCDF4NoUpdateUnchecked(cdf *CDF) int {
 // exactly four symbols.
 func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 	if c.allowCDFUpdate {
-		return c.readCDF4HighTokenUpdateKnown(&cdf.values)
+		return c.readCDF4HighTokenUpdateLoop(&cdf.values)
 	}
 	return c.readCDF4HighTokenKnown(&cdf.values)
 }
@@ -1062,13 +1064,94 @@ func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 // ReadCDF4HighTokenUpdateUnchecked decodes a high-token chain and always adapts
 // the CDF row after each symbol.
 func (c *Cursor) ReadCDF4HighTokenUpdateUnchecked(cdf *CDF) uint8 {
-	return c.readCDF4HighTokenUpdateKnown(&cdf.values)
+	return c.readCDF4HighTokenUpdateLoop(&cdf.values)
 }
 
 // ReadCDF4HighTokenNoUpdateUnchecked decodes a high-token chain without CDF
 // adaptation.
 func (c *Cursor) ReadCDF4HighTokenNoUpdateUnchecked(cdf *CDF) uint8 {
 	return c.readCDF4HighTokenKnown(&cdf.values)
+}
+
+//go:nosplit
+func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uint8 {
+	src := c.src
+	pos := int(c.pos)
+	dif := c.dif
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
+
+	level := uint8(0)
+	for {
+		rangeValue := rng
+		rngHi := rangeValue >> 8
+		coded := dif >> (ecWindow - 16)
+		upper := rangeValue
+		c0 := uint32(values[0])
+		c1 := uint32(values[1])
+		c2 := uint32(values[2])
+		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		symbol := uint8(0)
+		if coded < lower {
+			symbol = 1
+			upper = lower
+			lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+			if coded < lower {
+				symbol = 2
+				upper = lower
+				lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+				if coded < lower {
+					symbol = 3
+					upper = lower
+					lower = 0
+				}
+			}
+		}
+		if traceEntropyReads {
+			traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
+		}
+		dif -= lower << (ecWindow - 16)
+		rng = upper - lower
+		shift := int32(16 - bits.Len32(rng))
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng <<= uint(shift)
+		if cnt < 0 {
+			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		}
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
+		}
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if symbol > 2 {
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		} else {
+			values[2] = uint16(c2 - (c2 >> rate))
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
+		level += symbol
+		if symbol != 3 || level == cdf4HighTokenMax {
+			break
+		}
+	}
+
+	c.pos = uint32(pos)
+	c.dif = dif
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
+	return level
 }
 
 //go:nosplit
@@ -1414,260 +1497,6 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 				rng <<= uint(shift)
 				if cnt < 0 {
 					pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
-				}
-				level += symbol
-			}
-		}
-	}
-
-	c.pos = uint32(pos)
-	c.dif = dif
-	c.rng = uint16(rng)
-	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
-	return level
-}
-
-//go:nosplit
-func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) uint8 {
-	src := c.src
-	pos := int(c.pos)
-	dif := c.dif
-	rng := uint32(c.rng)
-	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
-
-	level := uint8(0)
-	var shift int32
-	rangeValue := rng
-	rngHi := rangeValue >> 8
-	coded := dif >> (ecWindow - 16)
-	upper := rangeValue
-	c0 := uint32(values[0])
-	c1 := uint32(values[1])
-	c2 := uint32(values[2])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-	symbol := uint8(0)
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = 0
-			}
-		}
-	}
-	if traceEntropyReads {
-		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
-	}
-	dif -= lower << (ecWindow - 16)
-	rng = upper - lower
-	shift = int32(16 - bits.Len32(rng))
-	cnt -= shift
-	dif = ((dif + 1) << uint(shift)) - 1
-	rng <<= uint(shift)
-	if cnt < 0 {
-		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
-	}
-	count := values[4]
-	rate := uint(5 + (count >> 4))
-	if symbol > 0 {
-		values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-	} else {
-		values[0] = uint16(c0 - (c0 >> rate))
-	}
-	if symbol > 1 {
-		values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-	} else {
-		values[1] = uint16(c1 - (c1 >> rate))
-	}
-	if symbol > 2 {
-		values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-	} else {
-		values[2] = uint16(c2 - (c2 >> rate))
-	}
-	if count < MaxCDFCount {
-		values[4] = count + 1
-	}
-	level += symbol
-	if symbol == 3 {
-		rangeValue = rng
-		rngHi = rangeValue >> 8
-		coded = dif >> (ecWindow - 16)
-		upper = rangeValue
-		c0 = uint32(values[0])
-		c1 = uint32(values[1])
-		c2 = uint32(values[2])
-		lower = ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-		symbol = 0
-		if coded < lower {
-			symbol = 1
-			upper = lower
-			lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-			if coded < lower {
-				symbol = 2
-				upper = lower
-				lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-				if coded < lower {
-					symbol = 3
-					upper = lower
-					lower = 0
-				}
-			}
-		}
-		if traceEntropyReads {
-			traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
-		}
-		dif -= lower << (ecWindow - 16)
-		rng = upper - lower
-		shift = int32(16 - bits.Len32(rng))
-		cnt -= shift
-		dif = ((dif + 1) << uint(shift)) - 1
-		rng <<= uint(shift)
-		if cnt < 0 {
-			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
-		}
-		count = values[4]
-		rate = uint(5 + (count >> 4))
-		if symbol > 0 {
-			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-		} else {
-			values[0] = uint16(c0 - (c0 >> rate))
-		}
-		if symbol > 1 {
-			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-		} else {
-			values[1] = uint16(c1 - (c1 >> rate))
-		}
-		if symbol > 2 {
-			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-		} else {
-			values[2] = uint16(c2 - (c2 >> rate))
-		}
-		if count < MaxCDFCount {
-			values[4] = count + 1
-		}
-		level += symbol
-		if symbol == 3 {
-			rangeValue = rng
-			rngHi = rangeValue >> 8
-			coded = dif >> (ecWindow - 16)
-			upper = rangeValue
-			c0 = uint32(values[0])
-			c1 = uint32(values[1])
-			c2 = uint32(values[2])
-			lower = ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-			symbol = 0
-			if coded < lower {
-				symbol = 1
-				upper = lower
-				lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-				if coded < lower {
-					symbol = 2
-					upper = lower
-					lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-					if coded < lower {
-						symbol = 3
-						upper = lower
-						lower = 0
-					}
-				}
-			}
-			if traceEntropyReads {
-				traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
-			}
-			dif -= lower << (ecWindow - 16)
-			rng = upper - lower
-			shift = int32(16 - bits.Len32(rng))
-			cnt -= shift
-			dif = ((dif + 1) << uint(shift)) - 1
-			rng <<= uint(shift)
-			if cnt < 0 {
-				pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
-			}
-			count = values[4]
-			rate = uint(5 + (count >> 4))
-			if symbol > 0 {
-				values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-			} else {
-				values[0] = uint16(c0 - (c0 >> rate))
-			}
-			if symbol > 1 {
-				values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-			} else {
-				values[1] = uint16(c1 - (c1 >> rate))
-			}
-			if symbol > 2 {
-				values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-			} else {
-				values[2] = uint16(c2 - (c2 >> rate))
-			}
-			if count < MaxCDFCount {
-				values[4] = count + 1
-			}
-			level += symbol
-			if symbol == 3 {
-				rangeValue = rng
-				rngHi = rangeValue >> 8
-				coded = dif >> (ecWindow - 16)
-				upper = rangeValue
-				c0 = uint32(values[0])
-				c1 = uint32(values[1])
-				c2 = uint32(values[2])
-				lower = ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-				symbol = 0
-				if coded < lower {
-					symbol = 1
-					upper = lower
-					lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-					if coded < lower {
-						symbol = 2
-						upper = lower
-						lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-						if coded < lower {
-							symbol = 3
-							upper = lower
-							lower = 0
-						}
-					}
-				}
-				if traceEntropyReads {
-					traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
-				}
-				dif -= lower << (ecWindow - 16)
-				rng = upper - lower
-				shift = int32(16 - bits.Len32(rng))
-				cnt -= shift
-				dif = ((dif + 1) << uint(shift)) - 1
-				rng <<= uint(shift)
-				if cnt < 0 {
-					pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
-				}
-				count = values[4]
-				rate = uint(5 + (count >> 4))
-				if symbol > 0 {
-					values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-				} else {
-					values[0] = uint16(c0 - (c0 >> rate))
-				}
-				if symbol > 1 {
-					values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-				} else {
-					values[1] = uint16(c1 - (c1 >> rate))
-				}
-				if symbol > 2 {
-					values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-				} else {
-					values[2] = uint16(c2 - (c2 >> rate))
-				}
-				if count < MaxCDFCount {
-					values[4] = count + 1
 				}
 				level += symbol
 			}
