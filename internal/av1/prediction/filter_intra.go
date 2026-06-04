@@ -138,10 +138,30 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 		}
 	}
 
-	for row := range height {
-		for col := range width {
-			setBlockSample(block, bytesPerSample, row, col, buffer[row+1][col+1])
+	storeFilterIntraBlock(block, bytesPerSample, width, height, &buffer)
+	return nil
+}
+
+func storeFilterIntraBlock(block planeBlock, bytesPerSample int, width int, height int, buffer *[33][33]uint16) {
+	switch bytesPerSample {
+	case 1:
+		for row := range height {
+			dst := block.pix[row*block.stride:]
+			src := buffer[row+1][1:]
+			for col := range width {
+				dst[col] = byte(src[col])
+			}
+		}
+	case 2:
+		for row := range height {
+			dst := block.pix[row*block.stride:]
+			src := buffer[row+1][1:]
+			for col := range width {
+				value := src[col]
+				offset := col << 1
+				dst[offset] = byte(value)
+				dst[offset+1] = byte(value >> 8)
+			}
 		}
 	}
-	return nil
 }
