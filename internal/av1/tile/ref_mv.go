@@ -2111,8 +2111,8 @@ func (mode InterModeResult) usesNewMV() bool {
 type compoundReferenceLists struct {
 	id        [2][MaxMVRefCandidates]motion.Vector
 	diff      [2][MaxMVRefCandidates]motion.Vector
-	idCount   [2]int
-	diffCount [2]int
+	idCount   [2]uint8
+	diffCount [2]uint8
 }
 
 func (lists *compoundReferenceLists) add(candidate InterMotionResult, target [2]ReferenceFrame, signBias [referenceFrameCount]bool) {
@@ -2123,18 +2123,18 @@ func (lists *compoundReferenceLists) add(candidate InterMotionResult, target [2]
 		}
 		for cmpIdx := range 2 {
 			if candidateRef == target[cmpIdx] {
-				if lists.idCount[cmpIdx] < MaxMVRefCandidates {
-					lists.id[cmpIdx][lists.idCount[cmpIdx]] = candidate.MV[refIdx]
+				if count := int(lists.idCount[cmpIdx]); count < MaxMVRefCandidates {
+					lists.id[cmpIdx][count] = candidate.MV[refIdx]
 					lists.idCount[cmpIdx]++
 				}
 				continue
 			}
-			if lists.diffCount[cmpIdx] < MaxMVRefCandidates {
+			if count := int(lists.diffCount[cmpIdx]); count < MaxMVRefCandidates {
 				mv := candidate.MV[refIdx]
 				if signBias[candidateRef] != signBias[target[cmpIdx]] {
 					mv = negateMV(mv)
 				}
-				lists.diff[cmpIdx][lists.diffCount[cmpIdx]] = mv
+				lists.diff[cmpIdx][count] = mv
 				lists.diffCount[cmpIdx]++
 			}
 		}
@@ -2145,11 +2145,11 @@ func (lists *compoundReferenceLists) compoundList(req ReferenceMVStackRequest) [
 	var out [MaxMVRefCandidates][2]motion.Vector
 	for refIdx := range 2 {
 		outIdx := 0
-		for i := 0; i < lists.idCount[refIdx] && outIdx < MaxMVRefCandidates; i++ {
+		for i := 0; i < int(lists.idCount[refIdx]) && outIdx < MaxMVRefCandidates; i++ {
 			out[outIdx][refIdx] = lists.id[refIdx][i]
 			outIdx++
 		}
-		for i := 0; i < lists.diffCount[refIdx] && outIdx < MaxMVRefCandidates; i++ {
+		for i := 0; i < int(lists.diffCount[refIdx]) && outIdx < MaxMVRefCandidates; i++ {
 			out[outIdx][refIdx] = lists.diff[refIdx][i]
 			outIdx++
 		}
