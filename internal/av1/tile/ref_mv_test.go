@@ -107,7 +107,7 @@ func TestReferenceMVStackDRLRequestForMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Mode != InterModeNewMV || req.Compound || req.RefMVCount != stack.Count {
+	if req.Mode != InterModeNewMV || req.Compound || req.RefMVCount != int(stack.Count) {
 		t.Fatalf("req=%+v", req)
 	}
 	if req.Contexts != ([3]int{1, 0, 1}) {
@@ -764,7 +764,7 @@ func FuzzReferenceMVStack(f *testing.F) {
 	f.Add(uint8(4), uint16(640), uint16(100), uint16(700), uint16(1), uint8(CompoundInterModeNearNew), true, uint8(1), false, true)
 
 	f.Fuzz(func(t *testing.T, rawCount uint8, w0 uint16, w1 uint16, w2 uint16, w3 uint16, rawMode uint8, compound bool, rawRefIdx uint8, allowHighPrecision bool, forceInteger bool) {
-		stack := ReferenceMVStack{Count: int(rawCount % (MaxRefMVStackSize + 1))}
+		stack := ReferenceMVStack{Count: rawCount % (MaxRefMVStackSize + 1)}
 		weights := [4]uint16{w0, w1, w2, w3}
 		for i := range stack.Candidates {
 			stack.Candidates[i] = ReferenceMVCandidate{
@@ -785,7 +785,7 @@ func FuzzReferenceMVStack(f *testing.F) {
 			}
 			t.Fatalf("DRLRequestForMode err=%v", err)
 		}
-		if req.RefMVCount != stack.Count {
+		if req.RefMVCount != int(stack.Count) {
 			t.Fatalf("ref mv count=%d want %d", req.RefMVCount, stack.Count)
 		}
 
@@ -843,7 +843,7 @@ func FuzzBuildReferenceMVStack(f *testing.F) {
 			}
 			t.Fatalf("BuildReferenceMVStack err=%v", err)
 		}
-		if result.Stack.Count < 0 || result.Stack.Count > MaxRefMVStackSize {
+		if result.Stack.Count > MaxRefMVStackSize {
 			t.Fatalf("bad stack count=%d", result.Stack.Count)
 		}
 		if _, err := AnalyzeInterModeContext(result.ModeContext, compound); err != nil {
@@ -952,7 +952,7 @@ func TestBuildReferenceMVStackGlobalMVSubstitution(t *testing.T) {
 	// long as one slot is the gm_mv and the other is the left neighbor MV.
 	gotGM := false
 	gotLeft := false
-	for i := 0; i < result.Stack.Count; i++ {
+	for i := 0; i < int(result.Stack.Count); i++ {
 		switch result.Stack.Candidates[i].This {
 		case gmMV:
 			gotGM = true
@@ -1678,7 +1678,7 @@ func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
 	stack.Candidates[0] = ReferenceMVCandidate{This: light, Weight: 2}
 	stack.Candidates[1] = ReferenceMVCandidate{This: heavy, Weight: 8}
 	stack.Count = 2
-	sortReferenceMVStack(&stack, 0, stack.Count)
+	sortReferenceMVStack(&stack, 0, int(stack.Count))
 	stack.setSingleRefMVs(motion.Vector{})
 	if stack.Candidates[0].This != heavy {
 		t.Fatalf("post-sort stack[0]=%+v want heavy=%+v", stack.Candidates[0].This, heavy)

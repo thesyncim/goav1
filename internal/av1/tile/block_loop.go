@@ -1838,7 +1838,7 @@ func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block Block
 	if err != nil {
 		return motion.Vector{}, err
 	}
-	for i := 0; i < MaxMVRefCandidates && i < stack.Count; i++ {
+	for i := 0; i < MaxMVRefCandidates && i < int(stack.Count); i++ {
 		if mv := stack.Candidates[i].This; mv != (motion.Vector{}) && intrabcDVValid(mv, req, block) {
 			return mv, nil
 		}
