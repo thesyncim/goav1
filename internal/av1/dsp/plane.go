@@ -117,6 +117,41 @@ func addResidualPlaneBlockPureGo(block planeBlock, bytesPerSample int, max uint1
 	switch bytesPerSample {
 	case 1:
 		maxInt := int(max)
+		if width == 4 {
+			for row := 0; row < block.height; row++ {
+				line := block.pix[row*block.stride : row*block.stride+4 : row*block.stride+4]
+				resLine := residual[row*residualStride : row*residualStride+4 : row*residualStride+4]
+				v0 := int(line[0]) + int(resLine[0])
+				if v0 < 0 {
+					v0 = 0
+				} else if v0 > maxInt {
+					v0 = maxInt
+				}
+				v1 := int(line[1]) + int(resLine[1])
+				if v1 < 0 {
+					v1 = 0
+				} else if v1 > maxInt {
+					v1 = maxInt
+				}
+				v2 := int(line[2]) + int(resLine[2])
+				if v2 < 0 {
+					v2 = 0
+				} else if v2 > maxInt {
+					v2 = maxInt
+				}
+				v3 := int(line[3]) + int(resLine[3])
+				if v3 < 0 {
+					v3 = 0
+				} else if v3 > maxInt {
+					v3 = maxInt
+				}
+				line[0] = byte(v0)
+				line[1] = byte(v1)
+				line[2] = byte(v2)
+				line[3] = byte(v3)
+			}
+			return
+		}
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
 			resLine := residual[row*residualStride : row*residualStride+width : row*residualStride+width]

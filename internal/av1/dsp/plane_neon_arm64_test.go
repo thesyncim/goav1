@@ -41,7 +41,7 @@ func TestAddResidualPlaneBlockNEONMatchesPureGo(t *testing.T) {
 		{2, 10, 0x3ff},
 		{2, 12, 0xfff},
 	}
-	widths := []int{1, 3, 7, 8, 9, 13, 16, 17, 24, 32, 33, 64}
+	widths := []int{1, 3, 4, 7, 8, 9, 13, 16, 17, 24, 32, 33, 64}
 	heights := []int{1, 2, 4, 8, 16}
 
 	for _, sh := range shapes {
