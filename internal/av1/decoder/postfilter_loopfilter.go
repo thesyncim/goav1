@@ -131,6 +131,28 @@ type frameWorkLoopFilterLevelContext struct {
 	monoChrome   bool
 }
 
+var frameWorkLoopFilterWidthByTX = [...][2][2]uint8{
+	tile.TransformSize4x4:   {{4, 4}, {4, 4}},
+	tile.TransformSize8x8:   {{8, 8}, {6, 6}},
+	tile.TransformSize16x16: {{14, 14}, {6, 6}},
+	tile.TransformSize32x32: {{14, 14}, {6, 6}},
+	tile.TransformSize64x64: {{14, 14}, {6, 6}},
+	tile.TransformSize4x8:   {{4, 8}, {4, 6}},
+	tile.TransformSize8x4:   {{8, 4}, {6, 4}},
+	tile.TransformSize8x16:  {{8, 14}, {6, 6}},
+	tile.TransformSize16x8:  {{14, 8}, {6, 6}},
+	tile.TransformSize16x32: {{14, 14}, {6, 6}},
+	tile.TransformSize32x16: {{14, 14}, {6, 6}},
+	tile.TransformSize32x64: {{14, 14}, {6, 6}},
+	tile.TransformSize64x32: {{14, 14}, {6, 6}},
+	tile.TransformSize4x16:  {{4, 14}, {4, 6}},
+	tile.TransformSize16x4:  {{14, 4}, {6, 4}},
+	tile.TransformSize8x32:  {{8, 14}, {6, 6}},
+	tile.TransformSize32x8:  {{14, 8}, {6, 6}},
+	tile.TransformSize16x64: {{14, 14}, {6, 6}},
+	tile.TransformSize64x16: {{14, 14}, {6, 6}},
+}
+
 func frameWorkLoopFilterLevelContextFor(event *Event) frameWorkLoopFilterLevelContext {
 	loopFilter := &event.LoopFilter
 	return frameWorkLoopFilterLevelContext{
@@ -2242,33 +2264,16 @@ func frameWorkLoopFilterTransformBlockContains(tx tile.TransformBlock, x4 int, y
 }
 
 func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx tile.TransformSize) (uint8, error) {
-	dims, ok := tx.Dimensions()
-	if !ok {
+	if edge > loopfilter.EdgeHorizontal || !tx.Valid() || int(tx) >= len(frameWorkLoopFilterWidthByTX) {
 		return 0, threading.ErrInvalidBatch
 	}
-	span4 := dims.W4
-	if edge == loopfilter.EdgeHorizontal {
-		span4 = dims.H4
-	}
 	if plane == loopfilter.PlaneU || plane == loopfilter.PlaneV {
-		// libaom av1_loopfilter.c: chroma uses 4-tap when dim==0 (span4<=1)
-		// and 6-tap otherwise. The 8-tap and 14-tap filters are luma-only.
-		if span4 <= 1 {
-			return 4, nil
-		}
-		return 6, nil
+		return frameWorkLoopFilterWidthByTX[tx][1][edge], nil
 	}
 	if plane != loopfilter.PlaneY {
 		return 0, threading.ErrInvalidBatch
 	}
-	switch {
-	case span4 <= 1:
-		return 4, nil
-	case span4 == 2:
-		return 8, nil
-	default:
-		return 14, nil
-	}
+	return frameWorkLoopFilterWidthByTX[tx][0][edge], nil
 }
 
 // frameWorkLoopFilterPlaneSize returns the per-plane deblock extent in pixels.

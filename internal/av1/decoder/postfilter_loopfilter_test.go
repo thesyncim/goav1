@@ -66,6 +66,40 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterScratchUpperBound(t *test
 	}
 }
 
+func TestFrameWorkLoopFilterWidthTableMatchesTransformDimensions(t *testing.T) {
+	for tx := tile.TransformSize(0); tx.Valid(); tx++ {
+		dims, ok := tx.Dimensions()
+		if !ok {
+			t.Fatalf("TransformSize(%d).Dimensions invalid", tx)
+		}
+		for _, edge := range []loopfilter.Edge{loopfilter.EdgeVertical, loopfilter.EdgeHorizontal} {
+			span4 := dims.W4
+			if edge == loopfilter.EdgeHorizontal {
+				span4 = dims.H4
+			}
+			wantLuma := uint8(14)
+			switch {
+			case span4 <= 1:
+				wantLuma = 4
+			case span4 == 2:
+				wantLuma = 8
+			}
+			gotLuma, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
+			if err != nil || gotLuma != wantLuma {
+				t.Fatalf("luma width tx=%d edge=%d got=%d err=%v want=%d", tx, edge, gotLuma, err, wantLuma)
+			}
+			wantChroma := uint8(6)
+			if span4 <= 1 {
+				wantChroma = 4
+			}
+			gotChroma, err := frameWorkLoopFilterWidth(loopfilter.PlaneU, edge, tx)
+			if err != nil || gotChroma != wantChroma {
+				t.Fatalf("chroma width tx=%d edge=%d got=%d err=%v want=%d", tx, edge, gotChroma, err, wantChroma)
+			}
+		}
+	}
+}
+
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolvesLevels(t *testing.T) {
 	size := parser.FrameSize{
 		CodedWidth:          16,
