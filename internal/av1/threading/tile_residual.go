@@ -675,7 +675,12 @@ type FrameWorkTileResidualStats struct {
 
 // Run implements FrameWorkBatchRunner for the default residual decode path.
 func (r *FrameWorkTileResidualRunner) Run(b FrameWorkBatch) error {
-	if r == nil || int(b.Batch.Worker) >= len(r.Workers) {
+	return r.RunPtr(&b)
+}
+
+// RunPtr is the hot no-copy runner used by Pool when available.
+func (r *FrameWorkTileResidualRunner) RunPtr(b *FrameWorkBatch) error {
+	if r == nil || b == nil || int(b.Batch.Worker) >= len(r.Workers) {
 		return ErrInvalidBatch
 	}
 	worker := &r.Workers[b.Batch.Worker]
@@ -705,6 +710,50 @@ func (r *FrameWorkTileResidualRunner) Run(b FrameWorkBatch) error {
 		}
 	}
 	return nil
+}
+
+// ExecuteFrameWorkTileResidualRunner runs residual batches through the concrete
+// no-copy runner path. Keeping this concrete lets escape analysis inspect RunPtr
+// and keep the per-batch context on the stack.
+func ExecuteFrameWorkTileResidualRunner(p *Pool, batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner *FrameWorkTileResidualRunner) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if runner == nil {
+		return ErrInvalidCallback
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) > len(p.workers) {
+		return ErrInvalidBatch
+	}
+	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+	p.mu.Unlock()
+
+	var firstErr error
+	for i := range batches {
+		batch := batches[i]
+		batchJobs, err := batch.jobSlice(jobs)
+		if err != nil {
+			return err
+		}
+		ctx := base
+		ctx.Batch = batch
+		ctx.Jobs = batchJobs
+		if err := runner.RunPtr(&ctx); firstErr == nil && err != nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (req FrameWorkTileResidualDefaultRequest) withPredictionScratch(scratch *FrameWorkPredictionScratch) FrameWorkTileResidualDefaultRequest {
@@ -780,10 +829,10 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 	return tile.BlockLoopRequest{
 		Walk: tile.BlockWalkRequest{
 			Root:       tile.RootBlockLevel(b.Sequence.Use128x128Superblock),
-			MIColStart: uint32(region.MIColStart),
-			MIRowStart: uint32(region.MIRowStart),
-			MIColEnd:   uint32(region.MIColEnd),
-			MIRowEnd:   uint32(region.MIRowEnd),
+			MIColStart: region.MIColStart,
+			MIRowStart: region.MIRowStart,
+			MIColEnd:   region.MIColEnd,
+			MIRowEnd:   region.MIRowEnd,
 		},
 		SkipMode:                    b.SkipMode,
 		CDEF:                        b.CDEF,

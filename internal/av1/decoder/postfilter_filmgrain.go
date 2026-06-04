@@ -139,26 +139,26 @@ type FrameWorkFilmGrainPostFilterScalingLUTs struct {
 // FrameWorkFilmGrainPostFilterLumaGrain is the generated luma grain template
 // stored in caller-owned scratch.
 type FrameWorkFilmGrainPostFilterLumaGrain struct {
-	Active bool
-
 	Grain []int16
 
-	Width  int
-	Height int
-	Stride int
+	Width  uint16
+	Height uint16
+	Stride uint16
+
+	Active bool
 }
 
 // FrameWorkFilmGrainPostFilterChromaGrain is one generated chroma grain
 // template stored in caller-owned scratch.
 type FrameWorkFilmGrainPostFilterChromaGrain struct {
-	Active bool
-
-	Plane int
 	Grain []int16
 
-	Width  int
-	Height int
-	Stride int
+	Width  uint16
+	Height uint16
+	Stride uint16
+
+	Plane  uint8
+	Active bool
 }
 
 // FrameWorkFilmGrainPostFilterLumaRow summarizes one applied luma grain row
@@ -166,11 +166,11 @@ type FrameWorkFilmGrainPostFilterChromaGrain struct {
 type FrameWorkFilmGrainPostFilterLumaRow struct {
 	Active bool
 
-	Row int
+	Row uint16
 
-	Width  int
-	Height int
-	Stride int
+	Width  uint32
+	Height uint32
+	Stride uint32
 }
 
 // FrameWorkFilmGrainPostFilterChromaRow summarizes one applied chroma grain row
@@ -178,13 +178,13 @@ type FrameWorkFilmGrainPostFilterLumaRow struct {
 type FrameWorkFilmGrainPostFilterChromaRow struct {
 	Active bool
 
-	Plane int
-	Row   int
+	Plane uint8
+	Row   uint16
 
-	Width      int
-	Height     int
-	Stride     int
-	LumaStride int
+	Width      uint32
+	Height     uint32
+	Stride     uint32
+	LumaStride uint32
 }
 
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
@@ -382,12 +382,20 @@ func (ctx FrameWorkPostFilterContext) GenerateFilmGrainChromaGrain(dst []int16, 
 		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrInvalidFormat
 	}
 	width, height := frameWorkFilmGrainChromaGrainDimensions(plan.Format)
+	width16, ok := frameWorkFilmGrainUint16(width)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrInvalidFormat
+	}
+	height16, ok := frameWorkFilmGrainUint16(height)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterChromaGrain{}, frame.ErrInvalidFormat
+	}
 	return FrameWorkFilmGrainPostFilterChromaGrain{
 		Active: true,
-		Plane:  plane,
+		Plane:  uint8(plane),
 		Grain:  dst[:filmgrain.ChromaGrainSamples],
-		Width:  width,
-		Height: height,
+		Width:  width16,
+		Height: height16,
 		Stride: filmgrain.ChromaGrainWidth,
 	}, nil
 }
@@ -421,12 +429,20 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []
 	if err := filmgrain.ApplyLumaRow(dst, src, grain, scaling, params); err != nil {
 		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrInvalidFormat
 	}
+	row16, ok := frameWorkFilmGrainRows16(row)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrInvalidFormat
+	}
+	width32, height32, stride32, ok := frameWorkFilmGrainRowDimensions32(params.Width, params.Height, params.Stride)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterLumaRow{}, frame.ErrInvalidFormat
+	}
 	return FrameWorkFilmGrainPostFilterLumaRow{
 		Active: true,
-		Row:    row,
-		Width:  params.Width,
-		Height: params.Height,
-		Stride: params.Stride,
+		Row:    row16,
+		Width:  width32,
+		Height: height32,
+		Stride: stride32,
 	}, nil
 }
 
@@ -473,14 +489,26 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainChromaRow(dst []uint16, src 
 	if err := filmgrain.ApplyChromaRow(dst, src, luma, grain, scaling, params); err != nil {
 		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
 	}
+	row16, ok := frameWorkFilmGrainRows16(row)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
+	width32, height32, stride32, ok := frameWorkFilmGrainRowDimensions32(params.Width, params.Height, params.Stride)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
+	lumaStride32, ok := frameWorkFilmGrainUint32(params.LumaStride)
+	if !ok {
+		return FrameWorkFilmGrainPostFilterChromaRow{}, frame.ErrInvalidFormat
+	}
 	return FrameWorkFilmGrainPostFilterChromaRow{
 		Active:     true,
-		Plane:      plane,
-		Row:        row,
-		Width:      params.Width,
-		Height:     params.Height,
-		Stride:     params.Stride,
-		LumaStride: params.LumaStride,
+		Plane:      uint8(plane),
+		Row:        row16,
+		Width:      width32,
+		Height:     height32,
+		Stride:     stride32,
+		LumaStride: lumaStride32,
 	}, nil
 }
 
@@ -818,6 +846,36 @@ func frameWorkFilmGrainRows16(v int) (uint16, bool) {
 		return 0, false
 	}
 	return uint16(v), true
+}
+
+func frameWorkFilmGrainUint16(v int) (uint16, bool) {
+	if v < 0 || uint64(v) > uint64(^uint16(0)) {
+		return 0, false
+	}
+	return uint16(v), true
+}
+
+func frameWorkFilmGrainUint32(v int) (uint32, bool) {
+	if v < 0 || uint64(v) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(v), true
+}
+
+func frameWorkFilmGrainRowDimensions32(width int, height int, stride int) (uint32, uint32, uint32, bool) {
+	width32, ok := frameWorkFilmGrainUint32(width)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	height32, ok := frameWorkFilmGrainUint32(height)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	stride32, ok := frameWorkFilmGrainUint32(stride)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	return width32, height32, stride32, true
 }
 
 func frameWorkFilmGrainAnyPlaneActive(plan FrameWorkFilmGrainPostFilterPlan) bool {

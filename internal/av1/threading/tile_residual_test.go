@@ -395,7 +395,7 @@ func TestFrameWorkTileResidualRunnerExecuteFrameWork(t *testing.T) {
 	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
 	runner.Workers[0].Int32Scratch = req.Int32Scratch
 	runner.Workers[0].ResidualScratch = req.ResidualScratch
-	if err := pool.ExecuteFrameWorkRunner(batches[:n], ctx.Jobs, ctx, &runner); err != nil {
+	if err := ExecuteFrameWorkTileResidualRunner(pool, batches[:n], ctx.Jobs, ctx, &runner); err != nil {
 		t.Fatal(err)
 	}
 	if stats := runner.Workers[0].Stats; stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.Residuals != 1 {
@@ -1312,6 +1312,33 @@ func TestFrameWorkTileResidualRunnerRunAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("FrameWorkTileResidualRunner.Run allocated: %f", allocs)
+	}
+}
+
+func TestFrameWorkTileResidualRunnerExecuteFrameWorkAllocs(t *testing.T) {
+	ctx, _, _, _, req := testFrameWorkResidualDriver(t)
+	var batches [1]Batch
+	n, err := BuildBatches(batches[:], ctx.Jobs, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var runner FrameWorkTileResidualRunner
+	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
+	runner.Workers[0].Int32Scratch = req.Int32Scratch
+	runner.Workers[0].ResidualScratch = req.ResidualScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := ExecuteFrameWorkTileResidualRunner(pool, batches[:n], ctx.Jobs, ctx, &runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkTileResidualRunner ExecuteFrameWork allocated: %f", allocs)
 	}
 }
 

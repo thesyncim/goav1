@@ -135,7 +135,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Active || result.Row != 0 || result.Width != 34 || result.Height != filmgrain.LumaBlockSize || result.Stride != int(plan.Planes[0].Stride) {
+	if !result.Active || result.Row != 0 || result.Width != 34 || result.Height != filmgrain.LumaBlockSize || result.Stride != plan.Planes[0].Stride {
 		t.Fatalf("result=%+v", result)
 	}
 	if got := dst[32]; got != 124 {

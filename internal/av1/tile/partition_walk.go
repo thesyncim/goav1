@@ -5,18 +5,18 @@ package tile
 type BlockWalkRequest struct {
 	Root BlockLevel
 
-	MIColStart uint32
-	MIRowStart uint32
-	MIColEnd   uint32
-	MIRowEnd   uint32
+	MIColStart uint16
+	MIRowStart uint16
+	MIColEnd   uint16
+	MIRowEnd   uint16
 
 	// NeighborMI*Start names the tile/job boundary used for HaveTop and
 	// HaveLeft when UseNeighborBounds is set. Block-loop callers that walk one
 	// root at a time set these to the full job origin so block mode syntax
 	// still sees neighbors across root boundaries.
 	UseNeighborBounds  bool
-	NeighborMIColStart uint32
-	NeighborMIRowStart uint32
+	NeighborMIColStart uint16
+	NeighborMIRowStart uint16
 }
 
 // BlockVisit describes one decoded leaf block from AV1's partition tree.
@@ -66,11 +66,12 @@ func walkBlocks(ctx *PartitionContext, req BlockWalkRequest, read partitionReadF
 		req.MIColEnd <= req.MIColStart || req.MIRowEnd <= req.MIRowStart {
 		return BlockWalkStats{}, ErrInvalidDecodeState
 	}
-	if req.MIColEnd > uint32(^uint16(0)) || req.MIRowEnd > uint32(^uint16(0)) {
-		return BlockWalkStats{}, ErrInvalidDecodeState
-	}
 	rootSize := uint32(req.Root.Size4x4())
-	if rootSize == 0 || req.MIColStart%rootSize != 0 || req.MIRowStart%rootSize != 0 {
+	miColStart := uint32(req.MIColStart)
+	miRowStart := uint32(req.MIRowStart)
+	miColEnd := uint32(req.MIColEnd)
+	miRowEnd := uint32(req.MIRowEnd)
+	if rootSize == 0 || miColStart%rootSize != 0 || miRowStart%rootSize != 0 {
 		return BlockWalkStats{}, ErrInvalidDecodeState
 	}
 
@@ -80,8 +81,8 @@ func walkBlocks(ctx *PartitionContext, req BlockWalkRequest, read partitionReadF
 		read:  read,
 		visit: visit,
 	}
-	for miRow := req.MIRowStart; miRow < req.MIRowEnd; miRow += rootSize {
-		for miCol := req.MIColStart; miCol < req.MIColEnd; miCol += rootSize {
+	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
+		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			if err := w.walkNode(req.Root, miCol, miRow, miCol, miRow); err != nil {
 				return w.stats, err
 			}
@@ -100,12 +101,14 @@ type partitionWalker struct {
 }
 
 func (w *partitionWalker) walkNode(level BlockLevel, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
-	if miCol >= w.req.MIColEnd || miRow >= w.req.MIRowEnd {
+	miColEnd := uint32(w.req.MIColEnd)
+	miRowEnd := uint32(w.req.MIRowEnd)
+	if miCol >= miColEnd || miRow >= miRowEnd {
 		return nil
 	}
 	half := uint32(level.HalfSize4x4())
-	haveRight := miCol+half < w.req.MIColEnd
-	haveBottom := miRow+half < w.req.MIRowEnd
+	haveRight := miCol+half < miColEnd
+	haveBottom := miRow+half < miRowEnd
 	xb8, yb8, err := partitionContextSlot(rootCol, rootRow, miCol, miRow)
 	if err != nil {
 		return err
@@ -265,7 +268,7 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		step := half >> 1
 		for i := range uint32(4) {
 			y := miRow + i*step
-			if i > 0 && y >= w.req.MIRowEnd {
+			if i > 0 && y >= uint32(w.req.MIRowEnd) {
 				break
 			}
 			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, y); err != nil {
@@ -281,7 +284,7 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		step := half >> 1
 		for i := range uint32(4) {
 			x := miCol + i*step
-			if i > 0 && x >= w.req.MIColEnd {
+			if i > 0 && x >= uint32(w.req.MIColEnd) {
 				break
 			}
 			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, x, miRow); err != nil {
@@ -295,7 +298,9 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 }
 
 func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size BlockSize, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
-	if miCol >= w.req.MIColEnd || miRow >= w.req.MIRowEnd {
+	miColEndLimit := uint32(w.req.MIColEnd)
+	miRowEndLimit := uint32(w.req.MIRowEnd)
+	if miCol >= miColEndLimit || miRow >= miRowEndLimit {
 		return nil
 	}
 	dims, ok := size.Dimensions()
@@ -304,11 +309,11 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 	}
 	miEndCol := miCol + uint32(dims.W4)
 	miEndRow := miRow + uint32(dims.H4)
-	if miEndCol > w.req.MIColEnd {
-		miEndCol = w.req.MIColEnd
+	if miEndCol > miColEndLimit {
+		miEndCol = miColEndLimit
 	}
-	if miEndRow > w.req.MIRowEnd {
-		miEndRow = w.req.MIRowEnd
+	if miEndRow > miRowEndLimit {
+		miEndRow = miRowEndLimit
 	}
 	if miEndCol <= miCol || miEndRow <= miRow {
 		return nil
@@ -335,16 +340,16 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 
 func (req BlockWalkRequest) neighborMIColStart() uint32 {
 	if req.UseNeighborBounds {
-		return req.NeighborMIColStart
+		return uint32(req.NeighborMIColStart)
 	}
-	return req.MIColStart
+	return uint32(req.MIColStart)
 }
 
 func (req BlockWalkRequest) neighborMIRowStart() uint32 {
 	if req.UseNeighborBounds {
-		return req.NeighborMIRowStart
+		return uint32(req.NeighborMIRowStart)
 	}
-	return req.MIRowStart
+	return uint32(req.MIRowStart)
 }
 
 func partitionContextSlot(rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) (int, int, error) {

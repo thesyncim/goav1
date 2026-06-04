@@ -180,10 +180,10 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRow(t *testing.T) {
 	if !result.Active ||
 		result.Plane != filmgrain.ChromaPlaneCb ||
 		result.Row != 0 ||
-		result.Width != int(plan.Planes[filmgrain.ChromaPlaneCb].Width) ||
+		result.Width != plan.Planes[filmgrain.ChromaPlaneCb].Width ||
 		result.Height != filmgrain.LumaBlockSize>>1 ||
-		result.Stride != int(plan.Planes[filmgrain.ChromaPlaneCb].Stride) ||
-		result.LumaStride != lumaStride {
+		result.Stride != plan.Planes[filmgrain.ChromaPlaneCb].Stride ||
+		result.LumaStride != uint32(lumaStride) {
 		t.Fatalf("result=%+v", result)
 	}
 	if got := dst[0]; got != 105 {

@@ -306,8 +306,8 @@ func FuzzWalkBlocksScripted(f *testing.F) {
 			Root:       root,
 			MIColStart: 0,
 			MIRowStart: 0,
-			MIColEnd:   cols,
-			MIRowEnd:   rows,
+			MIColEnd:   uint16(cols),
+			MIRowEnd:   uint16(rows),
 		}, read, func(visit BlockVisit) error {
 			if visit.MICol >= visit.MIColEnd || visit.MIRow >= visit.MIRowEnd {
 				t.Fatalf("empty visit=%+v", visit)

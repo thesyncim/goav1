@@ -229,8 +229,8 @@ type BlockLoopRequest struct {
 // BlockLoopSuperblockVisit is reported before partition syntax is decoded for
 // one root superblock in the block loop.
 type BlockLoopSuperblockVisit struct {
-	MICol     uint32
-	MIRow     uint32
+	MICol     uint16
+	MIRow     uint16
 	SBSizeMIB uint8
 }
 
@@ -369,28 +369,34 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 
 	var stats BlockLoopStats
 	rootSize := uint32(req.Walk.Root.Size4x4())
+	miColStart := uint32(req.Walk.MIColStart)
+	miRowStart := uint32(req.Walk.MIRowStart)
+	miColEnd := uint32(req.Walk.MIColEnd)
+	miRowEnd := uint32(req.Walk.MIRowEnd)
+	neighborMIColStart := req.Walk.neighborMIColStart()
+	neighborMIRowStart := req.Walk.neighborMIRowStart()
 	ensureIntrabcDiagonalCarriers(req.ContextCarrier)
-	for miRow := req.Walk.MIRowStart; miRow < req.Walk.MIRowEnd; miRow += rootSize {
+	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		promotePendingDiagonalCarriers(req.ContextCarrier)
-		for miCol := req.Walk.MIColStart; miCol < req.Walk.MIColEnd; miCol += rootSize {
-			rootColIndex := int((miCol - req.Walk.MIColStart) / rootSize)
-			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > req.Walk.neighborMIRowStart(), miCol > req.Walk.neighborMIColStart(), req.SBSizeMIB); err != nil {
+		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
+			rootColIndex := int((miCol - miColStart) / rootSize)
+			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB); err != nil {
 				return stats, err
 			}
 			rootReq := BlockWalkRequest{
 				Root:               req.Walk.Root,
-				MIColStart:         miCol,
-				MIRowStart:         miRow,
-				MIColEnd:           minUint32(req.Walk.MIColEnd, miCol+rootSize),
-				MIRowEnd:           minUint32(req.Walk.MIRowEnd, miRow+rootSize),
+				MIColStart:         uint16(miCol),
+				MIRowStart:         uint16(miRow),
+				MIColEnd:           uint16(minUint32(miColEnd, miCol+rootSize)),
+				MIRowEnd:           uint16(minUint32(miRowEnd, miRow+rootSize)),
 				UseNeighborBounds:  true,
-				NeighborMIColStart: req.Walk.neighborMIColStart(),
-				NeighborMIRowStart: req.Walk.neighborMIRowStart(),
+				NeighborMIColStart: uint16(neighborMIColStart),
+				NeighborMIRowStart: uint16(neighborMIRowStart),
 			}
 			if req.BeforeSuperblock != nil {
 				if err := req.BeforeSuperblock(BlockLoopSuperblockVisit{
-					MICol:     miCol,
-					MIRow:     miRow,
+					MICol:     uint16(miCol),
+					MIRow:     uint16(miRow),
 					SBSizeMIB: req.SBSizeMIB,
 				}); err != nil {
 					return stats, err
@@ -1642,9 +1648,6 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		req.Walk.MIRowEnd <= req.Walk.MIRowStart {
 		return ErrInvalidDecodeState
 	}
-	if req.Walk.MIColEnd > uint32(^uint16(0)) || req.Walk.MIRowEnd > uint32(^uint16(0)) {
-		return ErrInvalidDecodeState
-	}
 	if req.DecodeInterModes && !req.DecodePredictionModes {
 		return ErrInvalidDecodeState
 	}
@@ -1664,7 +1667,7 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		return ErrInvalidDecodeState
 	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
-	if rootSize == 0 || req.Walk.MIColStart%rootSize != 0 || req.Walk.MIRowStart%rootSize != 0 {
+	if rootSize == 0 || uint32(req.Walk.MIColStart)%rootSize != 0 || uint32(req.Walk.MIRowStart)%rootSize != 0 {
 		return ErrInvalidDecodeState
 	}
 	if req.ContextCarrier != nil {
@@ -1685,7 +1688,7 @@ func blockLoopRootColumns(req BlockWalkRequest, rootSize uint32) int {
 	if rootSize == 0 || req.MIColEnd <= req.MIColStart {
 		return 0
 	}
-	return int((req.MIColEnd - req.MIColStart + rootSize - 1) / rootSize)
+	return int((uint32(req.MIColEnd) - uint32(req.MIColStart) + rootSize - 1) / rootSize)
 }
 
 func previousBlockSegmentID(req BlockLoopRequest, block BlockVisit) (uint8, error) {
@@ -1851,12 +1854,12 @@ func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, e
 
 func referenceMVStackRequestRegion(req BlockLoopRequest, block BlockVisit) ReferenceMVStackRequest {
 	return ReferenceMVStackRequest{
-		MICol:          uint16(block.MICol),
-		MIRow:          uint16(block.MIRow),
-		TileMIColStart: uint16(req.Walk.MIColStart),
-		TileMIRowStart: uint16(req.Walk.MIRowStart),
-		TileMIColEnd:   uint16(req.Walk.MIColEnd),
-		TileMIRowEnd:   uint16(req.Walk.MIRowEnd),
+		MICol:          block.MICol,
+		MIRow:          block.MIRow,
+		TileMIColStart: req.Walk.MIColStart,
+		TileMIRowStart: req.Walk.MIRowStart,
+		TileMIColEnd:   req.Walk.MIColEnd,
+		TileMIRowEnd:   req.Walk.MIRowEnd,
 		FrameMIRows:    req.FrameMIRows,
 		FrameMICols:    req.FrameMICols,
 	}
