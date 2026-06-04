@@ -145,10 +145,15 @@ authoring tool, or a general replacement for `aomenc`.
 The intended control surface is the WebRTC one: bitrate, framerate, resolution,
 keyframe requests, temporal/spatial layer structure, SVC, camera and
 screen-content tuning, realtime speed/quality controls, low-overhead OBU/RTP
-output, and dependency/scalability metadata. Encoder behavior should be ported
-from pinned libaom/libwebrtc source with oracle tests and zero-allocation hot
-paths. The first public surface exposes that control plane and frame-reference
-validation; actual AV1 bitstream emission remains in progress.
+output, and dependency/scalability metadata. Encoder correctness and control
+behavior should be ported from pinned libaom/libwebrtc source; speed-sensitive
+architecture should be checked against pinned SVT-AV1 before local invention.
+New encoder code, and decoder code touched while optimizing it, should preserve
+the upstream C integer width/signedness where it affects layout, overflow,
+shifts, or ABI-shaped state. Oracle tests and zero-allocation hot paths are
+required before the encoder is advertised as usable. The first public surface
+exposes that control plane and frame-reference validation; actual AV1 bitstream
+emission remains in progress.
 
 ## CLI
 
@@ -348,7 +353,7 @@ Release checklist:
 Supply-chain controls:
 
 - workflow permissions are expected to remain least-privilege
-- upstream pins for libaom, dav1d, and libwebrtc are recorded in
+- upstream pins for libaom, dav1d, SVT-AV1, and libwebrtc are recorded in
   `third_party/upstream.lock`; run `make sync-upstreams` and
   `make verify-upstreams` to materialize and verify the local clones
 - release evidence should record commit SHA, Go version, platform, pinned
@@ -385,11 +390,12 @@ Patent License 1.0 that accompanies libaom is reproduced verbatim in
 redistributors must keep both [LICENSE](LICENSE) and [PATENTS](PATENTS) together
 with any source-form distribution of goav1.
 
-A complete list of upstream attributions covering libaom, dav1d, libwebrtc, the
-AV1 bitstream and RTP specifications, and the bundled libaom test vectors lives
-in [NOTICE](NOTICE). The pinned upstream commits and local upstream license paths
-are tracked in [third_party/upstream.lock](third_party/upstream.lock) and
-produced on demand by `make sync-upstreams`.
+A complete list of upstream attributions covering libaom, dav1d, SVT-AV1,
+libwebrtc, the AV1 bitstream and RTP specifications, and the bundled libaom
+test vectors lives in [NOTICE](NOTICE). The pinned upstream commits and local
+upstream license paths are tracked in
+[third_party/upstream.lock](third_party/upstream.lock) and produced on demand by
+`make sync-upstreams`.
 
 ## Acknowledgements
 

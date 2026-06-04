@@ -80,10 +80,11 @@ exported.
   conformance tests. SIMD/assembly backends, when added, must clear the same
   tests before being wired into the dispatch.
 
-- **Port from pinned upstream.** AV1 syntax, RTP behaviour, and decoder
-  control flow are never implemented from spec summaries. `third_party/`
-  pins exact libaom, dav1d, and libwebrtc commits and `make verify-upstreams`
-  fails if the local clones drift. See `UPSTREAM.md`.
+- **Port from pinned upstream.** AV1 syntax, RTP behaviour, decoder
+  control flow, and realtime encoder behavior are never implemented from spec
+  summaries. `third_party/` pins exact libaom, dav1d, SVT-AV1, and libwebrtc
+  commits and `make verify-upstreams` fails if the local clones drift. See
+  `UPSTREAM.md`.
 
 ---
 
@@ -386,8 +387,10 @@ Notes on the layering:
 
 - **`internal/av1/encoder`** — WebRTC realtime AV1 encoder implementation
   target. The control/configuration foundation is landed; bitstream emission is
-  the next implementation step. The scope is WebRTC use cases and controls only,
-  ported from pinned libaom/libwebrtc behavior.
+  the next implementation step. The scope is WebRTC use cases and controls only.
+  Correctness/control behavior is ported from pinned libaom/libwebrtc source,
+  and speed-sensitive architecture is checked against pinned SVT-AV1 before
+  local invention.
 
 ### Conformance and oracle
 
@@ -1189,8 +1192,10 @@ summaries. See `UPSTREAM.md` for the verification policy and
   pipeline, DSP layout.
 - **libaom v3.14.0** — reference AV1 bitstream behavior and realtime
   encoder behavior.
-- **libwebrtc (Chrome Stable 148.0.7778.179, branch `7778_178`)** —
-  AV1 RTP payload and depayload behavior.
+- **SVT-AV1 v4.1.0** — production realtime encoder architecture,
+  threading, mode decision, and rate-control reference.
+- **libwebrtc (branch-heads/7848)** — AV1 RTP payload/depayload behavior and
+  WebRTC encoder control integration.
 - **AV1 RTP spec v1.0.0** (`av1-rtp-spec`) — normative RTP payload
   format.
 - **AV1 Bitstream & Decoding Process Specification** — normative
@@ -1204,7 +1209,8 @@ When adding behavior:
    message when useful.
 4. Keep ports C-readable: flat structs, fixed arrays, explicit state,
    no reflection, no hidden allocation, no clever iterator abstraction
-   in hot loops.
+   in hot loops, and matching C integer widths/signedness in new or touched
+   parity paths.
 
 `make sync-upstreams` performs shallow, sparse clones of the pinned
 upstreams under `third_party/upstream/` (gitignored).

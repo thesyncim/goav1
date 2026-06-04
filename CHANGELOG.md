@@ -31,8 +31,10 @@ The project has not published a release tag yet.
   controls; low-overhead OBU/RTP output; and dependency/scalability metadata
   needed by WebRTC integrations.
 - Encoder implementation is in scope. The public API has not landed yet.
-  Behavior must be ported from pinned libaom/libwebrtc source, with oracle
-  tests and zero-allocation hot paths before it is advertised as usable.
+  Behavior must be ported from pinned libaom/libwebrtc source, with pinned
+  SVT-AV1 used as the speed-architecture reference. New/touched code must keep
+  relevant upstream C type widths and signedness. Oracle tests and
+  zero-allocation hot paths are required before it is advertised as usable.
 
 ### Verification
 

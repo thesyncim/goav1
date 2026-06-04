@@ -1,5 +1,5 @@
 # Pinned upstream references for porting and differential verification.
-# Date: 2026-05-20
+# Date: 2026-06-04
 
 [[source]]
 name = "dav1d"
@@ -32,12 +32,11 @@ verify = "git ls-remote --tags https://gitlab.com/AOMediaCodec/SVT-AV1.git refs/
 
 [[source]]
 name = "webrtc"
-role = "AV1 RTP payload and depayload behavior"
+role = "AV1 RTP payload, depayload, and WebRTC encoder control behavior"
 url = "https://webrtc.googlesource.com/src"
-stable_channel = "Chrome Stable Mac 148.0.7778.179"
-ref = "refs/branch-heads/7778_178"
-commit = "9a7f650bcd14f241d20f88f4e1ea3b7300de72ac"
-verify = "chromiumdash Stable Mac feed hashes.webrtc plus git ls-remote https://webrtc.googlesource.com/src refs/branch-heads/7778_178"
+ref = "refs/branch-heads/7848"
+commit = "7974ac00e6e0046950002bda6a38eb515dbe48a5"
+verify = "git ls-remote https://webrtc.googlesource.com/src refs/branch-heads/7848"
 
 [[source]]
 name = "av1-rtp-spec"

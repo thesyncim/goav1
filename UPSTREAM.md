@@ -15,6 +15,12 @@ memory or heuristic summaries.
 - Add byte-level tests before broadening behavior.
 - Keep ports C-readable: flat structs, fixed arrays, explicit state, no
   reflection, no hidden allocation, no clever iterator abstraction in hot loops.
+- Preserve the relevant upstream C integer width, signedness, overflow,
+  truncation, and shift behavior in new code. When touching older code, fix type
+  width drift in that touched path instead of doing unrelated mass churn.
+- Use dav1d/libaom for decoder behavior and decode-performance shape, SVT-AV1
+  for realtime encoder speed architecture, and libaom/libwebrtc for encoder
+  bitstream/control correctness.
 
 ## Commands
 
