@@ -50,8 +50,8 @@ func ParseSkipModeParams(payload []byte, seq SequenceHeader, prefix FrameHeaderP
 func deriveSkipModeRefs(seq SequenceHeader, prefix FrameHeaderPrefix, size FrameSize, refs *ReferenceState, params *SkipModeParams) (bool, error) {
 	beforeIdx := -1
 	afterIdx := -1
-	beforeDiff := 0
-	afterDiff := 0
+	beforeDiff := int16(0)
+	afterDiff := int16(0)
 
 	for i := range InterRefsPerFrame {
 		slot := size.RefFrameIdx[i]
@@ -85,7 +85,7 @@ func deriveSkipModeRefs(seq SequenceHeader, prefix FrameHeaderPrefix, size Frame
 	}
 
 	before2Idx := -1
-	before2Diff := 0
+	before2Diff := int16(0)
 	for i := range InterRefsPerFrame {
 		ref := refs.Frames[size.RefFrameIdx[i]]
 		diff := relativeOrderHint(seq.OrderHintBits, ref.OrderHint, prefix.OrderHint)

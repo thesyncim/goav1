@@ -225,33 +225,33 @@ func parseShortFrameReferences(r *bitstream.Reader, seq SequenceHeader, prefix F
 	}
 	size.LastFrameIdx = uint8(last)
 	size.GoldenFrameIdx = uint8(golden)
-	return setShortFrameReferences(seq, prefix, refs, int(last), int(golden), size)
+	return setShortFrameReferences(seq, prefix, refs, size.LastFrameIdx, size.GoldenFrameIdx, size)
 }
 
 type shortRefInfo struct {
-	mapIdx  int
-	sortIdx int
+	mapIdx  uint8
+	sortIdx int16
 }
 
-func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs *ReferenceState, last int, golden int, size *FrameSize) error {
-	if last < 0 || last >= RefFrames || golden < 0 || golden >= RefFrames {
+func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs *ReferenceState, last uint8, golden uint8, size *FrameSize) error {
+	if last >= RefFrames || golden >= RefFrames {
 		return ErrInvalidFrameHeader
 	}
-	curSortIdx := 1 << uint(seq.OrderHintBits-1)
+	curSortIdx := int16(1 << uint(seq.OrderHintBits-1))
 	info := [RefFrames]shortRefInfo{}
-	lastSortIdx := -1
-	goldenSortIdx := -1
+	lastSortIdx := int16(-1)
+	goldenSortIdx := int16(-1)
 	for i := range RefFrames {
-		info[i] = shortRefInfo{mapIdx: i, sortIdx: -1}
+		info[i] = shortRefInfo{mapIdx: uint8(i), sortIdx: -1}
 		ref := refs.Frames[i]
 		if !ref.Valid {
 			return ErrReferenceFrameNeeded
 		}
 		info[i].sortIdx = curSortIdx + relativeOrderHint(seq.OrderHintBits, ref.OrderHint, prefix.OrderHint)
-		if i == last {
+		if info[i].mapIdx == last {
 			lastSortIdx = info[i].sortIdx
 		}
-		if i == golden {
+		if info[i].mapIdx == golden {
 			goldenSortIdx = info[i].sortIdx
 		}
 	}
@@ -335,8 +335,8 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 	return nil
 }
 
-func assignRef(size *FrameSize, set *[InterRefsPerFrame]bool, slot int, mapIdx int) {
-	size.RefFrameIdx[slot] = uint8(mapIdx)
+func assignRef(size *FrameSize, set *[InterRefsPerFrame]bool, slot int, mapIdx uint8) {
+	size.RefFrameIdx[slot] = mapIdx
 	set[slot] = true
 }
 
@@ -352,13 +352,13 @@ func sortShortRefInfo(info []shortRefInfo) {
 	}
 }
 
-func relativeOrderHint(bits uint8, a uint32, b uint32) int {
+func relativeOrderHint(bits uint8, a uint32, b uint32) int16 {
 	if bits == 0 {
 		return 0
 	}
 	mask := int32(1 << uint(bits-1))
 	diff := int32(a) - int32(b)
-	return int((diff & (mask - 1)) - (diff & mask))
+	return int16((diff & (mask - 1)) - (diff & mask))
 }
 
 func expectedReferenceFrameID(current uint32, delta uint32, bits uint8) uint32 {
