@@ -14,7 +14,7 @@ func TestDefaultRestorationReferencesAndCDFs(t *testing.T) {
 	if refs.Wiener != av1restoration.DefaultWienerInfo() {
 		t.Fatalf("Wiener ref=%+v", refs.Wiener)
 	}
-	if refs.SGRProj.ParamsIndex != 0 || refs.SGRProj.XQD != [2]int{-32, 31} {
+	if refs.SGRProj.ParamsIndex != 0 || refs.SGRProj.XQD != [2]int8{-32, 31} {
 		t.Fatalf("SGR ref=%+v", refs.SGRProj)
 	}
 
@@ -130,7 +130,7 @@ func TestReadSGRProjFilterMatchesLibaomDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.ParamsIndex != 0 || info.XQD != [2]int{-32, 31} {
+	if info.ParamsIndex != 0 || info.XQD != [2]int8{-32, 31} {
 		t.Fatalf("SGR=%+v", info)
 	}
 	if refs.SGRProj != info {

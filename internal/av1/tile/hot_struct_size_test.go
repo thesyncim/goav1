@@ -66,6 +66,10 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TemporalMotionSetupStats", size: unsafe.Sizeof(TemporalMotionSetupStats{}), max: 3},
 		{name: "SubChromaInterCell", size: unsafe.Sizeof(SubChromaInterCell{}), max: 12},
 		{name: "SubChromaInterResult", size: unsafe.Sizeof(SubChromaInterResult{}), max: 50},
+		{name: "SGRProjInfo", size: unsafe.Sizeof(SGRProjInfo{}), max: 3},
+		{name: "RestorationReferences", size: unsafe.Sizeof(RestorationReferences{}), max: 36},
+		{name: "RestorationUnit", size: unsafe.Sizeof(RestorationUnit{}), max: 38},
+		{name: "RestorationUnitRecord", size: unsafe.Sizeof(RestorationUnitRecord{}), max: 64},
 		{name: "BlockCoeffBlock", size: unsafe.Sizeof(BlockCoeffBlock{}), max: 64},
 		{name: "BlockLoopStats", size: unsafe.Sizeof(BlockLoopStats{}), max: 100},
 	}

@@ -15,7 +15,7 @@ const (
 // SGRProjInfo is the entropy-decoded per-restoration-unit SGR projection info.
 type SGRProjInfo struct {
 	ParamsIndex uint8
-	XQD         [2]int
+	XQD         [2]int8
 }
 
 // RestorationUnit is one decoded loop-restoration unit's syntax.
@@ -44,7 +44,7 @@ func DefaultRestorationReferences() RestorationReferences {
 	return RestorationReferences{
 		Wiener: av1restoration.DefaultWienerInfo(),
 		SGRProj: SGRProjInfo{
-			XQD: [2]int{
+			XQD: [2]int8{
 				(av1restoration.SGRProjPrjMin0 + av1restoration.SGRProjPrjMax0) / 2,
 				(av1restoration.SGRProjPrjMin1 + av1restoration.SGRProjPrjMax1) / 2,
 			},
@@ -206,29 +206,50 @@ func readSGRProjFilter(r *entropy.Reader, refs *RestorationReferences) (SGRProjI
 	switch {
 	case params.Radius[0] == 0:
 		info.XQD[0] = 0
-		x1, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, refs.SGRProj.XQD[1])
+		x1, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, int(refs.SGRProj.XQD[1]))
 		if err != nil {
 			return SGRProjInfo{}, err
 		}
-		info.XQD[1] = x1
+		x1Stored, ok := sgrProjXQD(x1)
+		if !ok {
+			return SGRProjInfo{}, ErrInvalidDecodeState
+		}
+		info.XQD[1] = x1Stored
 	case params.Radius[1] == 0:
-		x0, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, refs.SGRProj.XQD[0])
+		x0, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, int(refs.SGRProj.XQD[0]))
 		if err != nil {
 			return SGRProjInfo{}, err
 		}
-		info.XQD[0] = x0
-		info.XQD[1] = clampInt((1<<av1restoration.SGRProjPrjBits)-x0, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1)
+		x1 := clampInt((1<<av1restoration.SGRProjPrjBits)-x0, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1)
+		x0Stored, ok := sgrProjXQD(x0)
+		if !ok {
+			return SGRProjInfo{}, ErrInvalidDecodeState
+		}
+		x1Stored, ok := sgrProjXQD(x1)
+		if !ok {
+			return SGRProjInfo{}, ErrInvalidDecodeState
+		}
+		info.XQD[0] = x0Stored
+		info.XQD[1] = x1Stored
 	default:
-		x0, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, refs.SGRProj.XQD[0])
+		x0, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, int(refs.SGRProj.XQD[0]))
 		if err != nil {
 			return SGRProjInfo{}, err
 		}
-		x1, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, refs.SGRProj.XQD[1])
+		x1, err := readSGRProjXQD(r, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, int(refs.SGRProj.XQD[1]))
 		if err != nil {
 			return SGRProjInfo{}, err
 		}
-		info.XQD[0] = x0
-		info.XQD[1] = x1
+		x0Stored, ok := sgrProjXQD(x0)
+		if !ok {
+			return SGRProjInfo{}, ErrInvalidDecodeState
+		}
+		x1Stored, ok := sgrProjXQD(x1)
+		if !ok {
+			return SGRProjInfo{}, ErrInvalidDecodeState
+		}
+		info.XQD[0] = x0Stored
+		info.XQD[1] = x1Stored
 	}
 
 	refs.SGRProj = info
@@ -246,6 +267,21 @@ func readSGRProjXQD(r *entropy.Reader, min int, max int, ref int) (int, error) {
 		return 0, err
 	}
 	return int(v) + min, nil
+}
+
+func sgrProjXQD(v int) (int8, bool) {
+	const (
+		min = -1 << 7
+		max = 1<<7 - 1
+	)
+	if v < min || v > max {
+		return 0, false
+	}
+	return int8(v), true
+}
+
+func (info SGRProjInfo) XQDInt() [2]int {
+	return [2]int{int(info.XQD[0]), int(info.XQD[1])}
 }
 
 func validRestorationReferences(refs RestorationReferences) bool {

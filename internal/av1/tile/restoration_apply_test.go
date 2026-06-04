@@ -105,7 +105,7 @@ func TestApplyRestorationUnitSGRProjMatchesPrimitive(t *testing.T) {
 	src := makeRestorationApplySource(stride, height+2*av1restoration.SGRProjBorderVert, bitDepth)
 	unit := RestorationUnit{
 		Type:    parser.RestorationSGRProj,
-		SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}},
+		SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}},
 	}
 	sizes, err := RestorationUnitScratchLen(width, height)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestApplyRestorationUnitSGRProjMatchesPrimitive(t *testing.T) {
 	if result != (RestorationUnitApplyResult{Type: parser.RestorationSGRProj, Filtered: true}) {
 		t.Fatalf("result=%+v", result)
 	}
-	if err := av1restoration.ApplySelfguidedRestoration(src, stride, origin, want, width, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQD, bitDepth, make([]int32, sizes.SGRProj)); err != nil {
+	if err := av1restoration.ApplySelfguidedRestoration(src, stride, origin, want, width, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQDInt(), bitDepth, make([]int32, sizes.SGRProj)); err != nil {
 		t.Fatal(err)
 	}
 	assertSamplesEqual(t, got, want)
@@ -152,7 +152,7 @@ func TestRestorationUnitRecordScratchLen(t *testing.T) {
 	}
 
 	uv := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationNone, parser.RestorationSGRProj}, 1)
-	sgr := testRestorationApplyRecord(t, uv, 1, 1, RestorationUnit{Type: parser.RestorationSGRProj, SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}})
+	sgr := testRestorationApplyRecord(t, uv, 1, 1, RestorationUnit{Type: parser.RestorationSGRProj, SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}})
 	sizes, err = RestorationUnitRecordScratchLen(uv, sgr)
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestApplyRestorationUnitRecordWienerMatchesProcessingUnitPrimitives(t *test
 
 func TestApplyRestorationUnitRecordSGRProjChromaMatchesProcessingUnitPrimitives(t *testing.T) {
 	grid := testRestorationApplyGrid(t, [3]parser.RestorationType{parser.RestorationNone, parser.RestorationSGRProj}, 1)
-	record := testRestorationApplyRecord(t, grid, 1, 1, RestorationUnit{Type: parser.RestorationSGRProj, SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}})
+	record := testRestorationApplyRecord(t, grid, 1, 1, RestorationUnit{Type: parser.RestorationSGRProj, SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}})
 	const bitDepth = 8
 	const stride = 176
 	const border = av1restoration.SGRProjBorderHorz
@@ -1184,7 +1184,7 @@ func FuzzApplyRestorationUnitRecordWithBoundaries(f *testing.F) {
 		if err != nil {
 			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
 		}
-		unit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+		unit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}}
 		record := testRestorationApplyRecord(t, grid, uint16(rawCol)%grid.HorzUnits, uint16(rawRow)%grid.VertUnits, unit)
 		dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + int(rawUnit%5)
 		dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
@@ -1234,7 +1234,7 @@ func FuzzApplyRestorationPlaneRecords(f *testing.F) {
 		if err != nil {
 			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
 		}
-		filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+		filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}}
 		records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
 			if (i+int(rawUnit))%3 == 0 {
 				return RestorationUnit{Type: parser.RestorationNone}
@@ -1301,7 +1301,7 @@ func FuzzApplyRestorationFrame(f *testing.F) {
 			}
 			var records []RestorationUnitRecord
 			if grid.Type != parser.RestorationNone {
-				filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+				filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}}
 				records = makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
 					if (i+int(rawUnit)+plane)%4 == 0 {
 						return RestorationUnit{Type: parser.RestorationNone}
@@ -1428,7 +1428,7 @@ func FuzzApplyRestorationFramePlane(f *testing.F) {
 		if err != nil {
 			t.Fatalf("BuildRestorationPlaneGrid err=%v", err)
 		}
-		filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+		filterUnit := RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}}
 		records := makeRestorationPlaneRecords(t, grid, func(i int) RestorationUnit {
 			if (i+int(rawUnit))%4 == 0 {
 				return RestorationUnit{Type: parser.RestorationNone}
@@ -1705,7 +1705,7 @@ func makeRestorationFramePlanes(tb testing.TB, types [3]parser.RestorationType, 
 		var records []RestorationUnitRecord
 		var boundaries RestorationStripeBoundaries
 		if grid.Type != parser.RestorationNone {
-			unit := RestorationUnit{Type: grid.Type, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int{13, -9}}}
+			unit := RestorationUnit{Type: grid.Type, Wiener: av1restoration.DefaultWienerInfo(), SGRProj: SGRProjInfo{ParamsIndex: 1, XQD: [2]int8{13, -9}}}
 			if grid.Type == parser.RestorationSwitchable {
 				unit.Type = parser.RestorationWiener
 			}
