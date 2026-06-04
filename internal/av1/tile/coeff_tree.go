@@ -447,10 +447,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, err
 	}
-	txbCtx, err := ctx.txbContextKnown(ctxReq, txDims, blockDims)
-	if err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read txb context: %w", err)
-	}
+	txbCtx := ctx.txbContextTrusted(ctxReq, txDims, blockDims)
 	req.Size = ctxReq.Size
 	req.Plane = plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
