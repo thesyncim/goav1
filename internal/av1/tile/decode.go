@@ -89,7 +89,7 @@ func (s *DecodeState) ReadSymbol(cdf *entropy.CDF) (int, error) {
 
 // ReadSignedDelta decodes the signed delta core used by AV1 delta-q and
 // delta-loopfilter tile syntax.
-func (s *DecodeState) ReadSignedDelta(cdf *entropy.CDF, small int) (int, error) {
+func (s *DecodeState) ReadSignedDelta(cdf *entropy.CDF, small uint8) (int, error) {
 	if s == nil {
 		return 0, ErrInvalidDecodeState
 	}

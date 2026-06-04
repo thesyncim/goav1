@@ -1434,11 +1434,12 @@ func updateCDF2(cdf *[MaxSymbols + 1]uint16, symbol int) {
 
 // ReadSignedDelta decodes the AV1 CDF-coded signed delta core used by
 // delta_qindex and delta_lflevel tile syntax.
-func (r *Reader) ReadSignedDelta(cdf *CDF, small int) (int, error) {
-	if small <= 0 || small >= MaxSymbols {
+func (r *Reader) ReadSignedDelta(cdf *CDF, small uint8) (int, error) {
+	if small == 0 || small >= MaxSymbols {
 		return 0, ErrInvalidRange
 	}
-	if cdf == nil || cdf.Symbols() != small+1 {
+	smallInt := int(small)
+	if cdf == nil || cdf.Symbols() != smallInt+1 {
 		return 0, ErrInvalidCDF
 	}
 
@@ -1446,7 +1447,7 @@ func (r *Reader) ReadSignedDelta(cdf *CDF, small int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if abs >= small {
+	if abs >= smallInt {
 		remBits, err := r.ReadBits(3)
 		if err != nil {
 			return 0, err
