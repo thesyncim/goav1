@@ -119,7 +119,7 @@ func TestFilterFrameBlocksMatchesLibaomReference(t *testing.T) {
 		dir, variance := findDirectionLibaomReference(input[srcOrigin:], BStride, coeffShift)
 		dirs[by][bx] = uint8(dir)
 		vars[by][bx] = variance
-		strength := adjustStrengthReference(params.Level<<coeffShift, variance)
+		strength := adjustStrengthReference(int(params.Level)<<coeffShift, variance)
 		filterBlockLibaomReference(want, 16, (by<<3)*16+(bx<<3), input, srcOrigin, BlockFilterParams{
 			PrimaryStrength:   uint8(strength),
 			SecondaryStrength: uint8(params.SecondaryStrength << coeffShift),
@@ -205,6 +205,38 @@ func TestFilterBlockRejectsInvalidInputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := FilterBlock(tt.dst, tt.stride, tt.origin, tt.input, tt.inOff, tt.params); !errors.Is(err, ErrInvalidCDEF) {
+				t.Fatalf("err=%v want %v", err, ErrInvalidCDEF)
+			}
+		})
+	}
+}
+
+func TestFilterFrameBlocksRejectsInvalidFrameParams(t *testing.T) {
+	input := make([]uint16, InputBufferSize)
+	dst := make([]uint16, 64)
+	blocks := []BlockPosition{{BY: 0, BX: 0}}
+	var dirs DirectionGrid
+	var vars VarianceGrid
+	valid := FrameFilterParams{
+		Plane:             PlaneY,
+		Level:             4,
+		SecondaryStrength: 2,
+		Damping:           5,
+		CoeffShift:        1,
+	}
+	tests := []struct {
+		name   string
+		params FrameFilterParams
+	}{
+		{name: "bad-xdec", params: withFrameFilterXDec(valid, 2)},
+		{name: "bad-level", params: withFrameFilterLevel(valid, 16)},
+		{name: "bad-secondary", params: withFrameFilterSecondary(valid, 5)},
+		{name: "bad-shift", params: withFrameFilterCoeffShift(valid, 5)},
+		{name: "chroma-damping-underflow", params: FrameFilterParams{Plane: PlaneU, Level: 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := FilterFrameBlocks(dst, 8, input, cdefBlockOrigin(), blocks, &dirs, &vars, tt.params); !errors.Is(err, ErrInvalidCDEF) {
 				t.Fatalf("err=%v want %v", err, ErrInvalidCDEF)
 			}
 		})
@@ -326,10 +358,10 @@ func FuzzFilterFrameBlocks(f *testing.F) {
 		var vars VarianceGrid
 		err := FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
 			Plane:             PlaneY,
-			Level:             int(rawLevel % 16),
-			SecondaryStrength: int(rawSecondary % 4),
-			Damping:           3 + int(rawLevel%4),
-			CoeffShift:        shift,
+			Level:             rawLevel % 16,
+			SecondaryStrength: rawSecondary % 4,
+			Damping:           3 + rawLevel%4,
+			CoeffShift:        uint8(shift),
 		})
 		if err != nil {
 			t.Fatalf("FilterFrameBlocks err=%v", err)
@@ -676,6 +708,26 @@ func withCDEFSize(params BlockFilterParams, width int, height int) BlockFilterPa
 }
 
 func withCDEFCoeffShift(params BlockFilterParams, coeffShift int) BlockFilterParams {
+	params.CoeffShift = uint8(coeffShift)
+	return params
+}
+
+func withFrameFilterXDec(params FrameFilterParams, xDec int) FrameFilterParams {
+	params.XDec = uint8(xDec)
+	return params
+}
+
+func withFrameFilterLevel(params FrameFilterParams, level int) FrameFilterParams {
+	params.Level = uint8(level)
+	return params
+}
+
+func withFrameFilterSecondary(params FrameFilterParams, secondary int) FrameFilterParams {
+	params.SecondaryStrength = uint8(secondary)
+	return params
+}
+
+func withFrameFilterCoeffShift(params FrameFilterParams, coeffShift int) FrameFilterParams {
 	params.CoeffShift = uint8(coeffShift)
 	return params
 }

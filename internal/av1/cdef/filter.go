@@ -38,13 +38,13 @@ type BlockFilterParams struct {
 }
 
 type FrameFilterParams struct {
-	XDec              int
-	YDec              int
+	XDec              uint8
+	YDec              uint8
 	Plane             Plane
-	Level             int
-	SecondaryStrength int
-	Damping           int
-	CoeffShift        int
+	Level             uint8
+	SecondaryStrength uint8
+	Damping           uint8
+	CoeffShift        uint8
 }
 
 var cdefDirections = [12][2]int{
@@ -242,20 +242,26 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 	if len(blocks) == 0 {
 		return nil
 	}
-	primaryStrength, ok := checkedShift(params.Level, params.CoeffShift)
+	coeffShift := int(params.CoeffShift)
+	primaryStrength, ok := checkedShift(int(params.Level), coeffShift)
 	if !ok {
 		return ErrInvalidCDEF
 	}
-	secondaryStrength, ok := checkedShift(params.SecondaryStrength, params.CoeffShift)
+	secondaryStrength, ok := checkedShift(int(params.SecondaryStrength), coeffShift)
 	if !ok {
 		return ErrInvalidCDEF
 	}
-	damping := params.Damping + params.CoeffShift
+	damping := int(params.Damping) + coeffShift
 	if params.Plane != PlaneY {
 		damping--
 	}
-	bwLog2 := 3 - params.XDec
-	bhLog2 := 3 - params.YDec
+	if damping < 0 {
+		return ErrInvalidCDEF
+	}
+	xDec := int(params.XDec)
+	yDec := int(params.YDec)
+	bwLog2 := 3 - xDec
+	bhLog2 := 3 - yDec
 	blockWidth := 1 << bwLog2
 	blockHeight := 1 << bhLog2
 
@@ -278,7 +284,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			nextOrigin := srcOrigin + blockWidth
 			if blockWidth == 8 && nextOrigin <= len(input) &&
 				i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
-				dir1, variance1, dir2, variance2, err := FindDirectionDual(input[srcOrigin:], input[nextOrigin:], BStride, params.CoeffShift)
+				dir1, variance1, dir2, variance2, err := FindDirectionDual(input[srcOrigin:], input[nextOrigin:], BStride, coeffShift)
 				if err != nil {
 					return err
 				}
@@ -289,7 +295,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 				i += 2
 				continue
 			}
-			dir, variance, err := FindDirection(input[srcOrigin:], BStride, params.CoeffShift)
+			dir, variance, err := FindDirection(input[srcOrigin:], BStride, coeffShift)
 			if err != nil {
 				return err
 			}
@@ -299,7 +305,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 	}
 	if params.Plane == PlaneU && params.XDec != params.YDec {
-		if !convertChromaDirections(blocks, directions, params.XDec) {
+		if !convertChromaDirections(blocks, directions, xDec) {
 			return ErrInvalidCDEF
 		}
 	}
@@ -320,7 +326,6 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		if strength > int(^uint8(0)) ||
 			secondaryStrength > int(^uint8(0)) ||
 			damping > int(^uint8(0)) ||
-			params.CoeffShift > int(^uint8(0)) ||
 			blockWidth > int(^uint8(0)) ||
 			blockHeight > int(^uint8(0)) {
 			return ErrInvalidCDEF
@@ -359,12 +364,11 @@ func validateBlockFilter(dst []uint16, dstStride int, dstOrigin int, input []uin
 
 func validateFrameFilter(dst []uint16, dstStride int, input []uint16, inputOrigin int, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
 	if directions == nil || variances == nil ||
-		params.XDec < 0 || params.XDec > 1 ||
-		params.YDec < 0 || params.YDec > 1 ||
+		params.XDec > 1 ||
+		params.YDec > 1 ||
 		params.Plane > PlaneV ||
-		params.Level < 0 || params.SecondaryStrength < 0 ||
-		params.Damping < 0 ||
-		params.CoeffShift < 0 || params.CoeffShift > 4 ||
+		params.Level > 15 || params.SecondaryStrength > 4 ||
+		params.CoeffShift > 4 ||
 		dstStride <= 0 || inputOrigin < 0 || inputOrigin >= len(input) {
 		return ErrInvalidCDEF
 	}

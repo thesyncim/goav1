@@ -33,12 +33,12 @@ func FrameFilterParamsFromStrength(plane Plane, xDec int, yDec int, packed uint8
 		return FrameFilterParams{}, ErrInvalidCDEF
 	}
 	return FrameFilterParams{
-		XDec:              xDec,
-		YDec:              yDec,
+		XDec:              uint8(xDec),
+		YDec:              uint8(yDec),
 		Plane:             plane,
-		Level:             level,
-		SecondaryStrength: secondary,
-		Damping:           damping,
-		CoeffShift:        coeffShift,
+		Level:             uint8(level),
+		SecondaryStrength: uint8(secondary),
+		Damping:           uint8(damping),
+		CoeffShift:        uint8(coeffShift),
 	}, nil
 }
