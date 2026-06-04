@@ -105,3 +105,51 @@ func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 		t.Fatalf("temporal unit parsed ok=%v raw=% x", ok, tu.Raw)
 	}
 }
+
+func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
+	seq := av1.EncoderSequenceHeader{
+		Profile:               av1.EncoderProfile0,
+		OperatingPointsCount:  1,
+		MaxFrameWidth:         16,
+		MaxFrameHeight:        9,
+		EnableFilterIntra:     true,
+		EnableIntraEdgeFilter: true,
+		EnableOrderHint:       true,
+		OrderHintBits:         7,
+		EnableSuperRes:        true,
+		EnableCDEF:            true,
+		EnableRestoration:     true,
+		ColorConfig: av1.EncoderSequenceColorConfig{
+			BitDepth:                8,
+			ColorDescriptionPresent: true,
+			ColorPrimaries:          av1.EncoderSequenceColorPrimariesBT709,
+			TransferCharacteristics: av1.EncoderSequenceTransferCharacteristicsSRGB,
+			MatrixCoefficients:      av1.EncoderSequenceMatrixCoefficientsIdentity,
+			ColorRange:              true,
+		},
+	}
+	seq.OperatingPoints[0].SeqLevelIdx = 5
+
+	size, err := av1.EncoderLowOverheadSequenceHeaderOBUSize(seq)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadSequenceHeaderOBUSize: %v", err)
+	}
+	var buf [80]byte
+	out, err := av1.AppendEncoderLowOverheadSequenceHeaderOBU(buf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadSequenceHeaderOBU: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("sequence obu len=%d want %d", len(out), size)
+	}
+	unit, consumed, err := av1.ParseLowOverheadOBU(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != av1.OBUSequenceHeader {
+		t.Fatalf("parsed header=%+v consumed=%d", unit.Header, consumed)
+	}
+	if _, err := av1.ParseSequenceHeader(unit.Payload); err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+}

@@ -76,6 +76,9 @@ type EncoderFrameType = internalencoder.FrameType
 type EncoderFrameEncodeSettings = internalencoder.FrameEncodeSettings
 type EncoderReferenceBufferState = internalencoder.ReferenceBufferState
 type EncoderOBU = internalencoder.OBU
+type EncoderSequenceHeader = internalencoder.SequenceHeader
+type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
+type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -87,6 +90,13 @@ const (
 	EncoderFrameTypeKey   = internalencoder.FrameTypeKey
 	EncoderFrameTypeStart = internalencoder.FrameTypeStart
 	EncoderFrameTypeDelta = internalencoder.FrameTypeDelta
+
+	EncoderSequenceColorPrimariesBT709         = internalencoder.SequenceColorPrimariesBT709
+	EncoderSequenceTransferCharacteristicsSRGB = internalencoder.SequenceTransferCharacteristicsSRGB
+	EncoderSequenceMatrixCoefficientsIdentity  = internalencoder.SequenceMatrixCoefficientsIdentity
+	EncoderSequenceSelectScreenContentTools    = internalencoder.SequenceSelectScreenContentTools
+	EncoderSequenceSelectIntegerMV             = internalencoder.SequenceSelectIntegerMV
+	EncoderSequenceLevelMax                    = internalencoder.SequenceLevelMax
 )
 
 var (
@@ -141,4 +151,20 @@ func EncoderLowOverheadTemporalUnitSize(obus []EncoderOBU) (int, error) {
 
 func AppendEncoderLowOverheadTemporalUnit(dst []byte, obus []EncoderOBU) ([]byte, error) {
 	return internalencoder.AppendLowOverheadTemporalUnit(dst, obus)
+}
+
+func EncoderSequenceHeaderPayloadSize(seq EncoderSequenceHeader) (int, error) {
+	return internalencoder.SequenceHeaderPayloadSize(seq)
+}
+
+func AppendEncoderSequenceHeaderPayload(dst []byte, seq EncoderSequenceHeader) ([]byte, error) {
+	return internalencoder.AppendSequenceHeaderPayload(dst, seq)
+}
+
+func EncoderLowOverheadSequenceHeaderOBUSize(seq EncoderSequenceHeader) (int, error) {
+	return internalencoder.LowOverheadSequenceHeaderOBUSize(seq)
+}
+
+func AppendEncoderLowOverheadSequenceHeaderOBU(dst []byte, seq EncoderSequenceHeader) ([]byte, error) {
+	return internalencoder.AppendLowOverheadSequenceHeaderOBU(dst, seq)
 }
