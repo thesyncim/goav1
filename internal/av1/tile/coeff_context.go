@@ -98,8 +98,15 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
+	topMag := uint8(0)
+	leftMag := uint8(0)
+	topNonZero := false
+	leftNonZero := false
 	for k := 0; k < int(txDims.W4); k++ {
-		sign := c.Above[plane][x4+k] >> CoeffContextBits
+		value := c.Above[plane][x4+k]
+		topMag |= value
+		topNonZero = topNonZero || value != 0
+		sign := value >> CoeffContextBits
 		if sign == 1 {
 			dcSign--
 		} else if sign == 2 {
@@ -107,7 +114,10 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		}
 	}
 	for k := 0; k < int(txDims.H4); k++ {
-		sign := c.Left[plane][y4+k] >> CoeffContextBits
+		value := c.Left[plane][y4+k]
+		leftMag |= value
+		leftNonZero = leftNonZero || value != 0
+		sign := value >> CoeffContextBits
 		if sign == 1 {
 			dcSign--
 		} else if sign == 2 {
@@ -118,13 +128,24 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	txbSkipCtx := uint8(0)
 	if req.Plane == 0 {
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
-			top := coeffContextMagnitude(c.Above[plane][x4 : x4+int(txDims.W4)])
-			left := coeffContextMagnitude(c.Left[plane][y4 : y4+int(txDims.H4)])
+			top := topMag & CoeffContextMask
+			if top > 4 {
+				top = 4
+			}
+			left := leftMag & CoeffContextMask
+			if left > 4 {
+				left = 4
+			}
 			txbSkipCtx = coeffSkipContexts[top][left]
 		}
 	} else {
-		ctxBase := coeffEntropyBase(c.Above[plane][x4:x4+int(txDims.W4)],
-			c.Left[plane][y4:y4+int(txDims.H4)])
+		ctxBase := uint8(0)
+		if topNonZero {
+			ctxBase++
+		}
+		if leftNonZero {
+			ctxBase++
+		}
 		ctxOffset := uint8(7)
 		if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
 			ctxOffset = 10
