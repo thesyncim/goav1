@@ -66,7 +66,7 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Active || plan.MICols != cols || plan.MIRows != rows || plan.Cells != length || plan.Blocks != 1 || plan.LumaTXBs != 1 {
+	if !plan.Active || int(plan.MICols) != cols || int(plan.MIRows) != rows || int(plan.Cells) != length || plan.Blocks != 1 || plan.LumaTXBs != 1 {
 		t.Fatalf("plan=%+v", plan)
 	}
 	if got := plan.Levels[av1.LoopFilterPlaneY][av1.LoopFilterEdgeVertical]; got != (av1.DecoderFrameWorkLoopFilterPostFilterLevelStats{Blocks: 1, NonZero: 1, MaxLevel: 14}) {

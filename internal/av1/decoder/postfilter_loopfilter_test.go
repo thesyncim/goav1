@@ -101,7 +101,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanDefaultsMapAndResolve
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Active || plan.MICols != cols || plan.MIRows != rows || plan.Cells != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
+	if !plan.Active || int(plan.MICols) != cols || int(plan.MIRows) != rows || int(plan.Cells) != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
 		t.Fatalf("plan=%+v", plan)
 	}
 	if plan.TransformReadyBlocks != 1 || plan.SkipTransformBlocks != 0 || plan.LumaTXBs != 1 {
@@ -166,7 +166,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Cells != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
+	if int(plan.Cells) != cols*rows || plan.Blocks != 1 || plan.Missing != 0 {
 		t.Fatalf("plan=%+v want cells=%d blocks=1 missing=0", plan, cols*rows)
 	}
 }
@@ -1995,7 +1995,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 	if !errors.Is(err, threading.ErrInvalidBatch) {
 		t.Fatalf("LoopFilterPostFilterPlan err=%v want %v", err, threading.ErrInvalidBatch)
 	}
-	if plan.Blocks != 1 || plan.Missing != cols*rows-1 {
+	if plan.Blocks != 1 || int(plan.Missing) != cols*rows-1 {
 		t.Fatalf("plan=%+v", plan)
 	}
 }
@@ -2352,13 +2352,13 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolutio
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Active || plan.MICols != cols || plan.MIRows != rows {
+	if !plan.Active || int(plan.MICols) != cols || int(plan.MIRows) != rows {
 		t.Fatalf("plan=%+v want active grid %dx%d", plan, cols, rows)
 	}
-	if plan.Cells != cols*rows {
+	if int(plan.Cells) != cols*rows {
 		t.Fatalf("plan.Cells=%d want %d", plan.Cells, cols*rows)
 	}
-	if plan.Blocks != len(records) {
+	if int(plan.Blocks) != len(records) {
 		t.Fatalf("plan.Blocks=%d want %d", plan.Blocks, len(records))
 	}
 	if plan.Missing != 0 {
