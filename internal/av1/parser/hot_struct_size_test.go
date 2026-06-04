@@ -12,6 +12,7 @@ func TestHotStructSizes(t *testing.T) {
 		max  uintptr
 	}{
 		{name: "shortRefInfo", size: unsafe.Sizeof(shortRefInfo{}), max: 4},
+		{name: "TileGroup", size: unsafe.Sizeof(TileGroup{}), max: 40},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)
