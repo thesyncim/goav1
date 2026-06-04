@@ -108,6 +108,54 @@ func TestPublicEncoderSequenceHeaderForConfig(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderFrameHeaderPrefixPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	prefix := av1.EncoderFrameHeaderPrefix{
+		FrameType:               av1.EncoderFrameHeaderTypeKey,
+		ShowFrame:               true,
+		ShowableFrame:           false,
+		ErrorResilientMode:      true,
+		DisableCDFUpdate:        true,
+		AllowScreenContentTools: false,
+		ForceIntegerMV:          true,
+		OrderHint:               5,
+		PrimaryRefFrame:         av1.EncoderPrimaryRefNone,
+	}
+	size, err := av1.EncoderFrameHeaderPrefixPayloadSize(seq, prefix)
+	if err != nil {
+		t.Fatalf("EncoderFrameHeaderPrefixPayloadSize: %v", err)
+	}
+	var buf [8]byte
+	out, err := av1.AppendEncoderFrameHeaderPrefixPayload(buf[:0], seq, prefix)
+	if err != nil {
+		t.Fatalf("AppendEncoderFrameHeaderPrefixPayload: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("frame prefix len=%d want %d", len(out), size)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsed, err := av1.ParseFrameHeaderPrefix(out, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	if parsed.FrameType != av1.FrameTypeKey || !parsed.ShowFrame || parsed.OrderHint != 5 {
+		t.Fatalf("parsed frame prefix=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

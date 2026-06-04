@@ -79,6 +79,8 @@ type EncoderOBU = internalencoder.OBU
 type EncoderSequenceHeader = internalencoder.SequenceHeader
 type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
 type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
+type EncoderFrameHeaderType = internalencoder.FrameHeaderType
+type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -90,6 +92,12 @@ const (
 	EncoderFrameTypeKey   = internalencoder.FrameTypeKey
 	EncoderFrameTypeStart = internalencoder.FrameTypeStart
 	EncoderFrameTypeDelta = internalencoder.FrameTypeDelta
+
+	EncoderFrameHeaderTypeKey       = internalencoder.FrameHeaderTypeKey
+	EncoderFrameHeaderTypeInter     = internalencoder.FrameHeaderTypeInter
+	EncoderFrameHeaderTypeIntraOnly = internalencoder.FrameHeaderTypeIntraOnly
+	EncoderFrameHeaderTypeSwitch    = internalencoder.FrameHeaderTypeSwitch
+	EncoderPrimaryRefNone           = internalencoder.EncoderPrimaryRefNone
 
 	EncoderSequenceColorPrimariesBT709         = internalencoder.SequenceColorPrimariesBT709
 	EncoderSequenceTransferCharacteristicsSRGB = internalencoder.SequenceTransferCharacteristicsSRGB
@@ -171,4 +179,12 @@ func EncoderLowOverheadSequenceHeaderOBUSize(seq EncoderSequenceHeader) (int, er
 
 func AppendEncoderLowOverheadSequenceHeaderOBU(dst []byte, seq EncoderSequenceHeader) ([]byte, error) {
 	return internalencoder.AppendLowOverheadSequenceHeaderOBU(dst, seq)
+}
+
+func EncoderFrameHeaderPrefixPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix) (int, error) {
+	return internalencoder.FrameHeaderPrefixPayloadSize(seq, prefix)
+}
+
+func AppendEncoderFrameHeaderPrefixPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix) ([]byte, error) {
+	return internalencoder.AppendFrameHeaderPrefixPayload(dst, seq, prefix)
 }
