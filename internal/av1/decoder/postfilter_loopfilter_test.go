@@ -243,7 +243,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresLumaEdges(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.EdgeCandidates != 4 || plan.StoredEdges != len(edges) || plan.DroppedEdges != 0 {
+	if plan.EdgeCandidates != 4 || plan.StoredEdges != uint32(len(edges)) || plan.DroppedEdges != 0 {
 		t.Fatalf("plan=%+v", plan)
 	}
 	want := []FrameWorkLoopFilterPostFilterEdge{
@@ -317,7 +317,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanStoresChromaEdges(t *
 	if plan.EdgeCandidates != 3 || plan.StoredEdges != 3 || plan.DroppedEdges != 0 {
 		t.Fatalf("plan=%+v", plan)
 	}
-	if plan.PlaneEdgeCandidates != [3]int{1, 1, 1} {
+	if plan.PlaneEdgeCandidates != [3]uint32{1, 1, 1} {
 		t.Fatalf("plane edge candidates=%v want [1 1 1]", plan.PlaneEdgeCandidates)
 	}
 	if plan.ChromaTXBs != 2 {
@@ -383,7 +383,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaSubsamplingGeom
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.EdgeCandidates != 2 || plan.StoredEdges != 2 || plan.PlaneEdgeCandidates != [3]int{1, 1, 0} {
+			if plan.EdgeCandidates != 2 || plan.StoredEdges != 2 || plan.PlaneEdgeCandidates != [3]uint32{1, 1, 0} {
 				t.Fatalf("plan=%+v", plan)
 			}
 			wantU := FrameWorkLoopFilterPostFilterEdge{
@@ -513,7 +513,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSplitsLumaEdgeByPerCe
 	// TX_4X4 -> width 4). The old behaviour emitted a single length=4
 	// width=4 edge.
 	var horizY []FrameWorkLoopFilterPostFilterEdge
-	for i := 0; i < plan.StoredEdges; i++ {
+	for i := 0; i < int(plan.StoredEdges); i++ {
 		e := edges[i]
 		if e.Plane == loopfilter.PlaneY && e.Edge == loopfilter.EdgeHorizontal && e.Y4 == 1 {
 			horizY = append(horizY, e)
@@ -622,7 +622,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanLimitsChromaWidthByPr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PlaneEdgeCandidates != [3]int{0, 1, 0} {
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PlaneEdgeCandidates != [3]uint32{0, 1, 0} {
 		t.Fatalf("plan=%+v", plan)
 	}
 	want := FrameWorkLoopFilterPostFilterEdge{
@@ -725,7 +725,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaPreviousLookupH
 	// Locate the U/V vertical edges emitted at chroma_4x4=1 (= luma 2),
 	// the boundary between the sub8x8 cluster and the 8x8 right block.
 	var chromaVerts []FrameWorkLoopFilterPostFilterEdge
-	for i := 0; i < plan.StoredEdges; i++ {
+	for i := 0; i < int(plan.StoredEdges); i++ {
 		e := edges[i]
 		if (e.Plane == loopfilter.PlaneU || e.Plane == loopfilter.PlaneV) &&
 			e.Edge == loopfilter.EdgeVertical && e.X4 == 1 && e.BlockMICol == 2 {
@@ -972,7 +972,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousChromaLev
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 || plan.PlaneEdgeCandidates != [3]int{0, 1, 0} {
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 || plan.PlaneEdgeCandidates != [3]uint32{0, 1, 0} {
 		t.Fatalf("plan=%+v", plan)
 	}
 	want := FrameWorkLoopFilterPostFilterEdge{
@@ -1034,7 +1034,7 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanUsesPreviousChromaLev
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 || plan.PlaneEdgeCandidates != [3]int{0, 0, 1} {
+	if plan.EdgeCandidates != 1 || plan.StoredEdges != 1 || plan.PreviousLevelEdges != 1 || plan.PlaneEdgeCandidates != [3]uint32{0, 0, 1} {
 		t.Fatalf("plan=%+v", plan)
 	}
 	want := FrameWorkLoopFilterPostFilterEdge{
@@ -1091,7 +1091,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, edge := range edges[:plan.StoredEdges] {
+	for _, edge := range edges[:int(plan.StoredEdges)] {
 		thresholds, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
 		if err != nil {
 			t.Fatal(err)
@@ -1162,7 +1162,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLumaAndChroma(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:int(plan.StoredEdges)])
 
 	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
 		Map:   filterMap,
@@ -1227,7 +1227,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesHighBitDepthChroma(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:int(plan.StoredEdges)])
 
 	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
 		Map:   filterMap,
@@ -1287,11 +1287,11 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesUsesPlanePassOrder(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.StoredEdges != len(edges) || plan.PlaneEdgeCandidates != [3]int{4, 4, 4} {
+	if plan.StoredEdges != uint32(len(edges)) || plan.PlaneEdgeCandidates != [3]uint32{4, 4, 4} {
 		t.Fatalf("plan=%+v", plan)
 	}
-	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
-	testApplyFrameWorkLoopFilterEdgesStoredOrder(t, storedOrderFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:int(plan.StoredEdges)])
+	testApplyFrameWorkLoopFilterEdgesStoredOrder(t, storedOrderFrame, ctx.Event.LoopFilter.Sharpness, edges[:int(plan.StoredEdges)])
 	if bytes.Equal(storedOrderFrame.Y.Pix, wantFrame.Y.Pix) &&
 		bytes.Equal(storedOrderFrame.U.Pix, wantFrame.U.Pix) &&
 		bytes.Equal(storedOrderFrame.V.Pix, wantFrame.V.Pix) {
@@ -1889,7 +1889,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesRejectsChromaCandidat
 	if !errors.Is(err, ErrUnsupportedPostFilter) {
 		t.Fatalf("ApplyLoopFilterLumaEdges err=%v want %v", err, ErrUnsupportedPostFilter)
 	}
-	if !result.Active || result.Plan.PlaneEdgeCandidates != [3]int{1, 1, 1} {
+	if !result.Active || result.Plan.PlaneEdgeCandidates != [3]uint32{1, 1, 1} {
 		t.Fatalf("result=%+v", result)
 	}
 	if !bytes.Equal(output.Y.Pix, beforeY) {
@@ -2381,7 +2381,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolutio
 	farLumaVertical := false
 	farLumaHorizontal := false
 	farChromaVertical := false
-	for _, e := range edges[:plan.StoredEdges] {
+	for _, e := range edges[:int(plan.StoredEdges)] {
 		if e.Plane == loopfilter.PlaneY && e.Edge == loopfilter.EdgeVertical && e.X4 >= 128 {
 			farLumaVertical = true
 		}
@@ -2404,7 +2404,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesEnhancementLayerResolutio
 	}
 
 	wantFrame := testCloneFrameWorkLoopFilterFrame(output)
-	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:plan.StoredEdges])
+	testApplyFrameWorkLoopFilterEdgesDirect(t, wantFrame, ctx.Event.LoopFilter.Sharpness, edges[:int(plan.StoredEdges)])
 
 	result, err := ctx.ApplyLoopFilterEdges(FrameWorkLoopFilterPostFilterRequest{
 		Map:   filterMap,

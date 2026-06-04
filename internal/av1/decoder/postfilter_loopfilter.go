@@ -75,10 +75,9 @@ type FrameWorkLoopFilterPostFilterLevelStats struct {
 // FrameWorkLoopFilterPostFilterPlan summarizes loop-filter metadata needed by
 // the eventual frame-edge scheduler.
 type FrameWorkLoopFilterPostFilterPlan struct {
-	Active bool
+	StoredEdges uint32
 
-	MICols uint16
-	MIRows uint16
+	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
 
 	Cells   int32
 	Blocks  int32
@@ -88,13 +87,16 @@ type FrameWorkLoopFilterPostFilterPlan struct {
 	SkipTransformBlocks  int32
 	LumaTXBs             int32
 	ChromaTXBs           int32
-	EdgeCandidates       int
-	PlaneEdgeCandidates  [3]int
-	PreviousLevelEdges   int
-	StoredEdges          int
-	DroppedEdges         int
 
-	Levels [3][2]FrameWorkLoopFilterPostFilterLevelStats
+	EdgeCandidates      uint32
+	PlaneEdgeCandidates [3]uint32
+	PreviousLevelEdges  uint32
+	DroppedEdges        uint32
+
+	MICols uint16
+	MIRows uint16
+
+	Active bool
 }
 
 type frameWorkLoopFilterPlanningContext struct {
@@ -179,8 +181,12 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterScratchLen(req FrameWo
 	if err != nil {
 		return FrameWorkLoopFilterPostFilterScratchSize{}, err
 	}
+	edgeCandidates, ok := frameWorkLoopFilterCounterLen(plan.EdgeCandidates)
+	if !ok {
+		return FrameWorkLoopFilterPostFilterScratchSize{}, frame.ErrInvalidFormat
+	}
 	return FrameWorkLoopFilterPostFilterScratchSize{
-		Edges: plan.EdgeCandidates,
+		Edges: edgeCandidates,
 	}, nil
 }
 
@@ -311,7 +317,11 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 	if plan.DroppedEdges != 0 || plan.StoredEdges != plan.EdgeCandidates {
 		return result, frame.ErrShortBuffer
 	}
-	edges := req.Edges[:plan.StoredEdges]
+	storedEdges, ok := frameWorkLoopFilterCounterLen(plan.StoredEdges)
+	if !ok {
+		return result, frame.ErrInvalidFormat
+	}
+	edges := req.Edges[:storedEdges]
 	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneV); err != nil {
 		return result, err
 	}
@@ -341,7 +351,11 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 	if plan.PlaneEdgeCandidates[loopfilter.PlaneU] != 0 || plan.PlaneEdgeCandidates[loopfilter.PlaneV] != 0 {
 		return result, ErrUnsupportedPostFilter
 	}
-	edges := req.Edges[:plan.StoredEdges]
+	storedEdges, ok := frameWorkLoopFilterCounterLen(plan.StoredEdges)
+	if !ok {
+		return result, frame.ErrInvalidFormat
+	}
+	edges := req.Edges[:storedEdges]
 	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, loopfilter.PlaneY); err != nil {
 		return result, err
 	}
@@ -1230,10 +1244,18 @@ func frameWorkAppendLoopFilterChromaEdgeSegmentsUnequalUVWithWidth(ctx FrameWork
 		if err != nil {
 			return err
 		}
+		beforeStoredLen, ok := frameWorkLoopFilterCounterLen(beforeStored)
+		if !ok {
+			return frame.ErrInvalidFormat
+		}
 		candidates := plan.EdgeCandidates - beforeCandidates
 		stored := plan.StoredEdges - beforeStored
-		for i := 0; i < stored; i++ {
-			edgeCopy := edges[beforeStored+i]
+		storedCount, ok := frameWorkLoopFilterCounterLen(stored)
+		if !ok {
+			return frame.ErrInvalidFormat
+		}
+		for i := 0; i < storedCount; i++ {
+			edgeCopy := edges[beforeStoredLen+i]
 			edgeCopy.Plane = loopfilter.PlaneV
 			edgeCopy.Level = currentLevelV
 			frameWorkStoreLoopFilterEdge(plan, edges, edgeCopy)
@@ -2240,12 +2262,20 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 	if edge.LevelFromPrevious {
 		plan.PreviousLevelEdges++
 	}
-	if plan.StoredEdges < len(edges) {
-		edges[plan.StoredEdges] = edge
+	storedEdges, ok := frameWorkLoopFilterCounterLen(plan.StoredEdges)
+	if ok && storedEdges < len(edges) {
+		edges[storedEdges] = edge
 		plan.StoredEdges++
 		return
 	}
 	plan.DroppedEdges++
+}
+
+func frameWorkLoopFilterCounterLen(count uint32) (int, bool) {
+	if uint64(count) > uint64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(count), true
 }
 
 func frameWorkLoopFilterCountChromaTXBsWithShifts(color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, ssX uint8, ssY uint8) (int, error) {
