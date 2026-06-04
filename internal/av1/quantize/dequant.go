@@ -256,8 +256,12 @@ func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffSt
 		return ErrInvalidQuantizer
 	}
 
-	for col := range width {
-		clear(dst[col*dstStride : col*dstStride+height])
+	if dstStride == height {
+		clear(dst[:samples])
+	} else {
+		for col := range width {
+			clear(dst[col*dstStride : col*dstStride+height])
+		}
 	}
 	for i := 0; i < eob; i++ {
 		pos := int(scan[i])
