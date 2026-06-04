@@ -64,7 +64,7 @@ const (
 type FrameWorkEventResult struct {
 	Step           FrameWorkStep
 	Output         *frame.Frame
-	ReferenceCount int
+	ReferenceCount uint8
 	Run            FrameWorkStepResult
 }
 
@@ -75,7 +75,7 @@ type FrameWorkPostFilterContext struct {
 	Step  FrameWorkStep
 
 	Output           *frame.Frame
-	ReferenceCount   int
+	ReferenceCount   uint8
 	ExecutedTileWork bool
 
 	CDEFIndexMap            *threading.FrameWorkCDEFIndexMap
@@ -169,7 +169,7 @@ func (s FrameWorkSideDataScratchSize) Max(other FrameWorkSideDataScratchSize) Fr
 // tile-group continuation events, and the final reference publication step.
 type FrameWorkState struct {
 	Surface        int
-	ReferenceCount int
+	ReferenceCount uint8
 	Sequence       threading.FrameWorkSequenceContext
 
 	tileResidualFrameContexts     [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage
@@ -473,7 +473,7 @@ func (s *FrameWorkState) PlanTile(event Event, workers int, spans []parser.TileS
 	if s == nil || !s.active {
 		return FrameTileWorkPlan{}, ErrInvalidFrameWorkState
 	}
-	return PlanFrameTileWork(event, s.Surface, s.ReferenceCount, workers, spans, jobs, batches)
+	return PlanFrameTileWork(event, s.Surface, int(s.ReferenceCount), workers, spans, jobs, batches)
 }
 
 // Finish applies the final frame event to surface references and releases any
@@ -804,10 +804,14 @@ func (s *FrameWorkState) ShowExisting(refs *SurfaceReferences, pool *frame.Pool,
 			return ShowExistingFrameWorkPlan{}, err
 		}
 	}
+	releaseCount8, err := frameWorkReleaseCount8(releaseCount)
+	if err != nil {
+		return ShowExistingFrameWorkPlan{}, err
+	}
 	*refs = next
 	return ShowExistingFrameWorkPlan{
 		Surface:          surface,
-		ReleaseCount:     releaseCount,
+		ReleaseCount:     releaseCount8,
 		DroppedFrameWork: dropped,
 	}, nil
 }
@@ -846,10 +850,14 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 			s.resetReferenceState()
 		}
 		if event.Kind != EventFrameHeader && event.Kind != EventFrame {
-			if dropped {
-				return FrameWorkStep{Kind: FrameWorkStepDropped, DroppedFrameWork: true, ReleaseCount: releaseCount}, nil, nil
+			releaseCount8, err := frameWorkReleaseCount8(releaseCount)
+			if err != nil {
+				return FrameWorkStep{}, nil, err
 			}
-			return FrameWorkStep{ReleaseCount: releaseCount}, nil, nil
+			if dropped {
+				return FrameWorkStep{Kind: FrameWorkStepDropped, DroppedFrameWork: true, ReleaseCount: releaseCount8}, nil, nil
+			}
+			return FrameWorkStep{ReleaseCount: releaseCount8}, nil, nil
 		}
 	}
 
@@ -859,10 +867,14 @@ func (s *FrameWorkState) PlanEvent(refs *SurfaceReferences, pool *frame.Pool, se
 		if err != nil {
 			return FrameWorkStep{}, nil, err
 		}
+		releaseCount8, err := frameWorkReleaseCount8(releaseCount)
+		if err != nil {
+			return FrameWorkStep{}, nil, err
+		}
 		return FrameWorkStep{
 			Kind:             FrameWorkStepBegin,
 			DroppedFrameWork: dropped,
-			ReleaseCount:     releaseCount,
+			ReleaseCount:     releaseCount8,
 			Begin:            plan,
 		}, output, nil
 
@@ -917,10 +929,14 @@ func (s *FrameWorkState) RunStepWithPostFilter(refs *SurfaceReferences, framePoo
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     step.ReleaseCount + releaseCount,
+		ReleaseCount:     totalReleaseCount,
 	}, nil
 }
 
@@ -997,10 +1013,14 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     step.ReleaseCount + releaseCount,
+		ReleaseCount:     totalReleaseCount,
 	}, nil
 }
 
@@ -1039,10 +1059,14 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     step.ReleaseCount + releaseCount,
+		ReleaseCount:     totalReleaseCount,
 	}, nil
 }
 
@@ -1081,10 +1105,14 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     step.ReleaseCount + releaseCount,
+		ReleaseCount:     totalReleaseCount,
 	}, nil
 }
 
@@ -1192,7 +1220,7 @@ func (s *FrameWorkState) RunEventWithContextAndSideDataAndPostFilterRunners(refs
 	}, nil
 }
 
-func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int) (FrameWorkStep, *frame.Frame, int, []*frame.Frame, error) {
+func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int) (FrameWorkStep, *frame.Frame, uint8, []*frame.Frame, error) {
 	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
 	if err != nil {
 		return FrameWorkStep{}, nil, 0, nil, err
@@ -1222,23 +1250,24 @@ func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, f
 			}
 		}
 		if referenceCount != 0 {
+			referenceCountN := int(referenceCount)
 			if step.Kind == FrameWorkStepTile {
 				count, err := refs.FrameReferences(event, referenceSurfaces)
 				if err != nil {
 					return FrameWorkStep{}, nil, 0, nil, err
 				}
-				if count != referenceCount {
+				if count != referenceCountN {
 					return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
 				}
 			}
-			count, err := ResolveFrameReferences(framePool, referenceSurfaces[:referenceCount], referenceFrames)
+			count, err := ResolveFrameReferences(framePool, referenceSurfaces[:referenceCountN], referenceFrames)
 			if err != nil {
 				return FrameWorkStep{}, nil, 0, nil, err
 			}
-			if count != referenceCount {
+			if count != referenceCountN {
 				return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
 			}
-			references = referenceFrames[:referenceCount]
+			references = referenceFrames[:referenceCountN]
 		}
 	}
 	return step, output, referenceCount, references, nil
@@ -1393,17 +1422,18 @@ func (s *FrameWorkState) bindFrameWorkEventSideData(event Event, step FrameWorkS
 	if !hasTile || plan.JobCount == 0 {
 		return nil
 	}
-	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+	referenceCountN := int(referenceCount)
+	if referenceCountN > parser.InterRefsPerFrame {
 		return ErrInvalidTileWork
 	}
-	if len(references) < referenceCount {
+	if len(references) < referenceCountN {
 		return ErrSurfaceReferenceBufferTooSmall
 	}
 	ctx := FrameWorkBatch{
 		Step:                  step,
 		Output:                output,
 		Payload:               payload,
-		References:            references[:referenceCount],
+		References:            references[:referenceCountN],
 		FrameWorkFrameContext: frameWorkFrameContext(event, s.sequenceContext()),
 		DisableCDFUpdate:      event.FrameHeader.DisableCDFUpdate,
 	}
@@ -1458,7 +1488,7 @@ func (s *FrameWorkState) postFilterSideData() (*threading.FrameWorkCDEFIndexMap,
 	return cdefIndexMap, loopFilterMap, restorationFrameBuffers
 }
 
-func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterFunc) error {
+func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterFunc) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -1477,7 +1507,7 @@ func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame
 	})
 }
 
-func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount int, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterRunner) error {
+func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterRunner) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -1582,10 +1612,11 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 	if plan.JobCount == 0 {
 		return false, nil
 	}
-	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+	referenceCountN := int(referenceCount)
+	if referenceCountN > parser.InterRefsPerFrame {
 		return false, ErrInvalidTileWork
 	}
-	if len(references) < referenceCount {
+	if len(references) < referenceCountN {
 		return false, ErrSurfaceReferenceBufferTooSmall
 	}
 	if validatePayload {
@@ -1598,7 +1629,7 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		Step:                          step,
 		Output:                        output,
 		Payload:                       payload,
-		References:                    references[:referenceCount],
+		References:                    references[:referenceCountN],
 		FrameWorkFrameContext:         frameContext,
 		DisableCDFUpdate:              disableCDFUpdate,
 		InitialTileResidualCDFs:       initialTileResidualCDFs,
@@ -1632,10 +1663,11 @@ func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.P
 	if plan.JobCount == 0 {
 		return false, nil
 	}
-	if referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
+	referenceCountN := int(referenceCount)
+	if referenceCountN > parser.InterRefsPerFrame {
 		return false, ErrInvalidTileWork
 	}
-	if len(references) < referenceCount {
+	if len(references) < referenceCountN {
 		return false, ErrSurfaceReferenceBufferTooSmall
 	}
 	if validatePayload {
@@ -1648,7 +1680,7 @@ func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.P
 		Step:                          step,
 		Output:                        output,
 		Payload:                       payload,
-		References:                    references[:referenceCount],
+		References:                    references[:referenceCountN],
 		FrameWorkFrameContext:         frameContext,
 		DisableCDFUpdate:              disableCDFUpdate,
 		InitialTileResidualCDFs:       initialTileResidualCDFs,
@@ -1736,10 +1768,14 @@ func BeginFrameWork(refs *SurfaceReferences, pool *frame.Pool, sequence parser.S
 	if err != nil {
 		return FrameWorkPlan{}, nil, err
 	}
+	referenceCount, err := frameWorkReferenceCount8(refCount)
+	if err != nil {
+		return FrameWorkPlan{}, nil, err
+	}
 
 	return FrameWorkPlan{
 		Surface:        surface,
-		ReferenceCount: refCount,
+		ReferenceCount: referenceCount,
 		Tile:           tilePlan,
 	}, output, nil
 }
@@ -1753,13 +1789,17 @@ func PlanFrameTileWork(event Event, surface int, referenceCount int, workers int
 	if surface < 0 || referenceCount < 0 || referenceCount > parser.InterRefsPerFrame {
 		return FrameTileWorkPlan{}, ErrInvalidTileWork
 	}
+	referenceCount8, err := frameWorkReferenceCount8(referenceCount)
+	if err != nil {
+		return FrameTileWorkPlan{}, err
+	}
 	tilePlan, err := PlanTileWork(event, workers, spans, jobs, batches)
 	if err != nil {
 		return FrameTileWorkPlan{}, err
 	}
 	return FrameTileWorkPlan{
 		Surface:        surface,
-		ReferenceCount: referenceCount,
+		ReferenceCount: referenceCount8,
 		Tile:           tilePlan,
 	}, nil
 }
@@ -1820,7 +1860,28 @@ func validateTileWorkPlan(plan TileWorkPlan, jobs []tile.Job, batches []threadin
 	return nil
 }
 
-func frameWorkStepTilePlan(step FrameWorkStep) (TileWorkPlan, int, bool, error) {
+func frameWorkReferenceCount8(count int) (uint8, error) {
+	if count < 0 || count > parser.InterRefsPerFrame {
+		return 0, ErrInvalidFrameWorkStep
+	}
+	return uint8(count), nil
+}
+
+func frameWorkReleaseCount8(count int) (uint8, error) {
+	if count < 0 || count > parser.RefFrames+1 {
+		return 0, ErrInvalidFrameWorkStep
+	}
+	return uint8(count), nil
+}
+
+func frameWorkAddReleaseCount(base uint8, extra int) (uint8, error) {
+	if extra < 0 || int(base)+extra > parser.RefFrames+1 {
+		return 0, ErrInvalidFrameWorkStep
+	}
+	return base + uint8(extra), nil
+}
+
+func frameWorkStepTilePlan(step FrameWorkStep) (TileWorkPlan, uint8, bool, error) {
 	switch step.Kind {
 	case FrameWorkStepIgnored, FrameWorkStepDropped, FrameWorkStepShowExisting:
 		return TileWorkPlan{}, 0, false, nil

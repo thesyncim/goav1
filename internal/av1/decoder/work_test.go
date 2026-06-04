@@ -1143,11 +1143,12 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 		t.Fatal(err)
 	}
 	if plan.ReferenceCount != 0 {
-		count, err := ResolveFrameReferences(&pool, referenceSurfaces[:plan.ReferenceCount], referenceFrames[:])
+		referenceCount := int(plan.ReferenceCount)
+		count, err := ResolveFrameReferences(&pool, referenceSurfaces[:referenceCount], referenceFrames[:])
 		if err != nil {
 			t.Fatal(err)
 		}
-		if count != plan.ReferenceCount {
+		if count != referenceCount {
 			t.Fatalf("reference count=%d want %d", count, plan.ReferenceCount)
 		}
 	}
@@ -1158,7 +1159,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 	finalInter.Unit.Payload = []byte{0x00}
 	finalInter.FrameSize.RefreshFrameFlags = 0x01
 	finalInter.TileGroup = parser.TileGroup{Final: true}
-	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalInter, step, workerPool, nil, referenceFrames[:plan.ReferenceCount], finalInter.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
+	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalInter, step, workerPool, nil, referenceFrames[:int(plan.ReferenceCount)], finalInter.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
 		var storage threading.FrameWorkTileResidualCDFStorage
 		if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
 			return err

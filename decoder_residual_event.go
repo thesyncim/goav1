@@ -529,7 +529,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		if step.Run.CompletedFrame {
 			result.CompletedFrames++
 		}
-		result.ReleaseCount += step.Run.ReleaseCount
+		result.ReleaseCount += int(step.Run.ReleaseCount)
 		decoderFrameWorkAccumulateResidualStats(&result.Stats, eventStats)
 	}
 	if r.Stats != nil {
@@ -638,7 +638,8 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 			}
 		}
 		if referenceCount != 0 {
-			if len(req.ReferenceSurfaces) < referenceCount {
+			referenceCountN := int(referenceCount)
+			if len(req.ReferenceSurfaces) < referenceCountN {
 				return DecoderFrameWorkEventResult{}, ErrDecoderSurfaceReferenceBufferTooSmall
 			}
 			if step.Kind == DecoderFrameWorkStepTile {
@@ -646,18 +647,18 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 				if err != nil {
 					return DecoderFrameWorkEventResult{}, err
 				}
-				if count != referenceCount {
+				if count != referenceCountN {
 					return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
 				}
 			}
-			count, err := ResolveDecoderFrameReferences(req.FramePool, req.ReferenceSurfaces[:referenceCount], req.ReferenceFrames)
+			count, err := ResolveDecoderFrameReferences(req.FramePool, req.ReferenceSurfaces[:referenceCountN], req.ReferenceFrames)
 			if err != nil {
 				return DecoderFrameWorkEventResult{}, err
 			}
-			if count != referenceCount {
+			if count != referenceCountN {
 				return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
 			}
-			references = req.ReferenceFrames[:referenceCount]
+			references = req.ReferenceFrames[:referenceCountN]
 		}
 	}
 
@@ -888,7 +889,7 @@ func decoderFrameWorkResidualEventPlanMax(a DecoderTileWorkPlan, b DecoderTileWo
 	}
 }
 
-func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPlan, int, bool, error) {
+func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPlan, uint8, bool, error) {
 	switch step.Kind {
 	case DecoderFrameWorkStepIgnored, DecoderFrameWorkStepDropped, DecoderFrameWorkStepShowExisting:
 		return DecoderTileWorkPlan{}, 0, false, nil

@@ -274,7 +274,7 @@ func (s *FrameWorkState) clearSharedFrameContext() {
 	s.sharedFrameContextGlobalSurface = nil
 }
 
-func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, provider FrameSurfaceProvider) (FrameWorkStep, *frame.Frame, int, []*frame.Frame, error) {
+func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, provider FrameSurfaceProvider) (FrameWorkStep, *frame.Frame, uint8, []*frame.Frame, error) {
 	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
 	if err != nil {
 		return FrameWorkStep{}, nil, 0, nil, err
@@ -310,23 +310,24 @@ func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceRefe
 			}
 		}
 		if referenceCount != 0 {
+			referenceCountN := int(referenceCount)
 			if step.Kind == FrameWorkStepTile {
 				count, err := refs.FrameReferences(event, referenceSurfaces)
 				if err != nil {
 					return FrameWorkStep{}, nil, 0, nil, err
 				}
-				if count != referenceCount {
+				if count != referenceCountN {
 					return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
 				}
 			}
-			count, err := ResolveFrameReferencesWithProvider(provider, referenceSurfaces[:referenceCount], referenceFrames)
+			count, err := ResolveFrameReferencesWithProvider(provider, referenceSurfaces[:referenceCountN], referenceFrames)
 			if err != nil {
 				return FrameWorkStep{}, nil, 0, nil, err
 			}
-			if count != referenceCount {
+			if count != referenceCountN {
 				return FrameWorkStep{}, nil, 0, nil, ErrInvalidFrameWorkStep
 			}
-			references = referenceFrames[:referenceCount]
+			references = referenceFrames[:referenceCountN]
 		}
 	}
 	return step, output, referenceCount, references, nil
@@ -368,10 +369,14 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 	if err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
 	return FrameWorkStepResult{
 		ExecutedTileWork: executed,
 		CompletedFrame:   completed,
-		ReleaseCount:     step.ReleaseCount + releaseCount,
+		ReleaseCount:     totalReleaseCount,
 	}, nil
 }
 
