@@ -2517,17 +2517,71 @@ func frameWorkResolveLoopFilterLevels(levelCtx frameWorkLoopFilterLevelContext, 
 
 func frameWorkResolveLoopFilterRecordLevels(levelCtx frameWorkLoopFilterLevelContext, record *threading.FrameWorkLoopFilterBlockRecord) ([3][2]uint8, error) {
 	var levels [3][2]uint8
+	if record == nil || levelCtx.loopFilter == nil || levelCtx.segmentation == nil || levelCtx.delta == nil {
+		return levels, threading.ErrInvalidBatch
+	}
+	if record.RefFrame >= parser.RefFrames ||
+		(record.Mode != loopfilter.ModeDeltaClassZero && record.Mode != loopfilter.ModeDeltaClassMotion) {
+		return levels, loopfilter.ErrInvalidFilter
+	}
+	if levelCtx.lumaZero {
+		return levels, nil
+	}
 	planeCount := 3
 	if levelCtx.monoChrome {
 		planeCount = 1
 	}
 	for plane := 0; plane < planeCount; plane++ {
 		for edge := range 2 {
-			level, err := frameWorkResolveLoopFilterLevel(levelCtx, record, loopfilter.Plane(plane), loopfilter.Edge(edge))
-			if err != nil {
-				return [3][2]uint8{}, err
+			base := levelCtx.base[plane][edge]
+			if plane != int(loopfilter.PlaneY) && base == 0 {
+				continue
 			}
-			levels[plane][edge] = level
+			deltaLF := int8(0)
+			if levelCtx.delta.DeltaLFPresent {
+				if !levelCtx.delta.DeltaLFMulti {
+					deltaLF = record.DeltaLFFromBase
+				} else {
+					switch plane {
+					case int(loopfilter.PlaneY):
+						deltaLF = record.DeltaLF[edge]
+					case int(loopfilter.PlaneU):
+						deltaLF = record.DeltaLF[2]
+					case int(loopfilter.PlaneV):
+						deltaLF = record.DeltaLF[3]
+					}
+				}
+			}
+			segDelta := int16(0)
+			if levelCtx.segmentation.Enabled {
+				if record.SegmentID >= parser.MaxSegments {
+					return levels, loopfilter.ErrInvalidFilter
+				}
+				data := levelCtx.segmentation.Data.Segments[record.SegmentID]
+				switch plane {
+				case int(loopfilter.PlaneY):
+					if edge == int(loopfilter.EdgeVertical) {
+						segDelta = data.DeltaLFYV
+					} else {
+						segDelta = data.DeltaLFYH
+					}
+				case int(loopfilter.PlaneU):
+					segDelta = data.DeltaLFU
+				case int(loopfilter.PlaneV):
+					segDelta = data.DeltaLFV
+				}
+			}
+			level := int(loopfilter.ClampLevel(int(base) + int(deltaLF)))
+			level = int(loopfilter.ClampLevel(level + int(segDelta)))
+			if levelCtx.loopFilter.ModeRefDeltaEnabled {
+				scale := 1 << (level >> 5)
+				delta := int(levelCtx.loopFilter.Deltas.Ref[record.RefFrame])
+				if record.RefFrame > 0 {
+					delta += int(levelCtx.loopFilter.Deltas.Mode[record.Mode])
+				}
+				level = int(loopfilter.ClampLevel(level + delta*scale))
+			}
+			levels[plane][edge] = uint8(level)
 		}
 	}
 	return levels, nil
