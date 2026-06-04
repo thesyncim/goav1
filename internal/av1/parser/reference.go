@@ -16,7 +16,7 @@ const (
 type ReferenceFrame struct {
 	Valid bool
 
-	FrameID   uint32
+	FrameID   uint16
 	OrderHint uint8
 	FrameType FrameType
 

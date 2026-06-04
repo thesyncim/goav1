@@ -368,6 +368,9 @@ func parseSequenceFrameSize(r *bitstream.Reader, sh *SequenceHeader) error {
 			return err
 		}
 		sh.AdditionalFrameIDLength = uint8(v + 1)
+		if sh.FrameIDBits() > 16 {
+			return ErrInvalidSequenceHeader
+		}
 	}
 	return nil
 }

@@ -269,6 +269,49 @@ func TestParseFrameSizeRejectsMissingReference(t *testing.T) {
 	}
 }
 
+func TestParseFrameSizeInterFrameIDWrap(t *testing.T) {
+	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeaderWithFrameIDLengths(13, 0))
+	var prefixBits testBitWriter
+	prefixBits.writeBool(false)                     // show_existing_frame
+	prefixBits.writeBits(uint64(FrameTypeInter), 2) // frame_type
+	prefixBits.writeBool(true)                      // show_frame
+	prefixBits.writeBool(false)                     // error_resilient_mode
+	prefixBits.writeBool(false)                     // disable_cdf_update
+	prefixBits.writeBits(1, seq.FrameIDBits())      // current_frame_id
+	prefixBits.writeBool(false)                     // frame_size_override_flag
+	prefixBits.writeBits(4, seq.OrderHintBits)
+	prefixBits.writeBits(0, 3) // primary_ref_frame
+
+	prefixPayload := prefixBits.bytes()
+	prefix, err := ParseFrameHeaderPrefix(prefixPayload, seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := oneReferenceState(seq, 0, 1)
+	refs.Frames[0].FrameID = 0xffff
+
+	var w testBitWriter
+	w.writeBitsFrom(prefixPayload, prefix.BitsRead)
+	w.writeBits(0x02, 8) // refresh_frame_flags
+	w.writeBool(false)   // frame_refs_short_signaling
+	for range InterRefsPerFrame {
+		w.writeBits(0, 3)                      // ref_frame_idx[i]
+		w.writeBits(1, seq.DeltaFrameIDLength) // delta_frame_id_minus_1
+	}
+	w.writeBool(false) // use_superres
+	w.writeBool(false) // render_and_frame_size_different
+
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range InterRefsPerFrame {
+		if size.RefFrameIdx[i] != 0 || size.DeltaFrameIDMinus1[i] != 1 {
+			t.Fatalf("ref[%d] idx=%d delta=%d", i, size.RefFrameIdx[i], size.DeltaFrameIDMinus1[i])
+		}
+	}
+}
+
 func TestReferenceStateUpdate(t *testing.T) {
 	var refs ReferenceState
 	prefix := FrameHeaderPrefix{

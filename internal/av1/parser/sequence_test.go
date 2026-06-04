@@ -127,6 +127,50 @@ func realtimeSequenceHeaderWithLevel(level uint8) []byte {
 	return w.trailingBits()
 }
 
+func realtimeSequenceHeaderWithFrameIDLengths(deltaMinus2 uint8, additionalMinus1 uint8) []byte {
+	var w testBitWriter
+	w.writeBits(0, 3)  // seq_profile
+	w.writeBool(false) // still_picture
+	w.writeBool(false) // reduced_still_picture_header
+	w.writeBool(false) // timing_info_present_flag
+	w.writeBool(false) // initial_display_delay_present_flag
+	w.writeBits(0, 5)  // operating_points_cnt_minus_1
+	w.writeBits(0, 12) // operating_point_idc[0]
+	w.writeBits(5, 5)  // seq_level_idx[0]
+	w.writeBits(3, 4)  // frame_width_bits_minus_1
+	w.writeBits(3, 4)  // frame_height_bits_minus_1
+	w.writeBits(15, 4) // max_frame_width_minus_1
+	w.writeBits(8, 4)  // max_frame_height_minus_1
+	w.writeBool(true)  // frame_id_numbers_present_flag
+	w.writeBits(uint64(deltaMinus2), 4)
+	w.writeBits(uint64(additionalMinus1), 3)
+	w.writeBool(false) // use_128x128_superblock
+	w.writeBool(true)  // enable_filter_intra
+	w.writeBool(true)  // enable_intra_edge_filter
+	w.writeBool(true)  // enable_interintra_compound
+	w.writeBool(true)  // enable_masked_compound
+	w.writeBool(false) // enable_warped_motion
+	w.writeBool(true)  // enable_dual_filter
+	w.writeBool(true)  // enable_order_hint
+	w.writeBool(true)  // enable_jnt_comp
+	w.writeBool(true)  // enable_ref_frame_mvs
+	w.writeBool(false) // seq_choose_screen_content_tools
+	w.writeBits(0, 1)  // seq_force_screen_content_tools
+	w.writeBits(6, 3)  // order_hint_bits_minus_1
+	w.writeBool(true)  // enable_superres
+	w.writeBool(true)  // enable_cdef
+	w.writeBool(true)  // enable_restoration
+	w.writeBool(false) // high_bitdepth
+	w.writeBool(false) // mono_chrome
+	w.writeBool(true)  // color_description_present_flag
+	w.writeBits(ColorPrimariesBT709, 8)
+	w.writeBits(TransferCharacteristicsSRGB, 8)
+	w.writeBits(MatrixCoefficientsIdentity, 8)
+	w.writeBool(false) // separate_uv_delta_q
+	w.writeBool(true)  // film_grain_params_present
+	return w.trailingBits()
+}
+
 func TestValidSequenceLevelIndexMatchesLibaom(t *testing.T) {
 	valid := [...]uint8{0, 1, 4, 5, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 31}
 	for _, level := range valid {
@@ -219,6 +263,22 @@ func TestParseSequenceHeaderRejectsInvalidSequenceLevel(t *testing.T) {
 		if !errors.Is(err, ErrInvalidSequenceHeader) {
 			t.Fatalf("ParseSequenceHeader invalid level err=%v want %v", err, ErrInvalidSequenceHeader)
 		}
+	}
+}
+
+func TestParseSequenceHeaderFrameIDLengthBounds(t *testing.T) {
+	sh, err := ParseSequenceHeader(realtimeSequenceHeaderWithFrameIDLengths(13, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sh.FrameIDNumbersPresent || sh.DeltaFrameIDLength != 15 || sh.AdditionalFrameIDLength != 1 || sh.FrameIDBits() != 16 {
+		t.Fatalf("frame id lengths parsed incorrectly: delta=%d additional=%d bits=%d present=%v",
+			sh.DeltaFrameIDLength, sh.AdditionalFrameIDLength, sh.FrameIDBits(), sh.FrameIDNumbersPresent)
+	}
+
+	_, err = ParseSequenceHeader(realtimeSequenceHeaderWithFrameIDLengths(14, 0))
+	if !errors.Is(err, ErrInvalidSequenceHeader) {
+		t.Fatalf("ParseSequenceHeader oversized frame id err=%v want %v", err, ErrInvalidSequenceHeader)
 	}
 }
 

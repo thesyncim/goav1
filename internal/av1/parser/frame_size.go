@@ -38,7 +38,7 @@ type FrameSize struct {
 	LastFrameIdx            uint8
 	GoldenFrameIdx          uint8
 	RefFrameIdx             [InterRefsPerFrame]uint8
-	DeltaFrameIDMinus1      [InterRefsPerFrame]uint32
+	DeltaFrameIDMinus1      [InterRefsPerFrame]uint16
 	UsedReferenceFrameSize  bool
 	ReferenceFrameSizeIdx   uint8
 
@@ -205,8 +205,8 @@ func parseInterReferences(r *bitstream.Reader, seq SequenceHeader, prefix FrameH
 			if err != nil {
 				return err
 			}
-			size.DeltaFrameIDMinus1[i] = uint32(v)
-			if ref.FrameID != expectedReferenceFrameID(prefix.FrameID, uint32(v)+1, seq.FrameIDBits()) {
+			size.DeltaFrameIDMinus1[i] = uint16(v)
+			if ref.FrameID != expectedReferenceFrameID(prefix.FrameID, uint16(v)+1, seq.FrameIDBits()) {
 				return ErrInvalidFrameHeader
 			}
 		}
@@ -361,9 +361,9 @@ func relativeOrderHint(bits uint8, a uint8, b uint8) int16 {
 	return int16((diff & (mask - 1)) - (diff & mask))
 }
 
-func expectedReferenceFrameID(current uint32, delta uint32, bits uint8) uint32 {
-	mod := uint64(1) << uint(bits)
-	return uint32((uint64(current) + mod - uint64(delta)) & (mod - 1))
+func expectedReferenceFrameID(current uint16, delta uint16, bits uint8) uint16 {
+	mod := uint32(1) << uint(bits)
+	return uint16((uint32(current) + mod - uint32(delta)) & (mod - 1))
 }
 
 func parseFrameDimensions(r *bitstream.Reader, seq SequenceHeader, prefix FrameHeaderPrefix, size *FrameSize) error {

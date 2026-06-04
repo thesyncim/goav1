@@ -42,7 +42,7 @@ type FrameHeaderPrefix struct {
 	ForceIntegerMV          bool
 
 	FramePresentationDelay uint32
-	FrameID                uint32
+	FrameID                uint16
 	FrameSizeOverride      bool
 	OrderHint              uint8
 	PrimaryRefFrame        uint8
@@ -111,7 +111,7 @@ func parseShowExistingFrameHeader(r *bitstream.Reader, seq SequenceHeader, hdr *
 		if err != nil {
 			return err
 		}
-		hdr.FrameID = uint32(v)
+		hdr.FrameID = uint16(v)
 	}
 	return nil
 }
@@ -185,7 +185,7 @@ func parseFrameHeaderReferencePrefix(r *bitstream.Reader, seq SequenceHeader, hd
 		if err != nil {
 			return err
 		}
-		hdr.FrameID = uint32(v)
+		hdr.FrameID = uint16(v)
 	}
 
 	if hdr.FrameType == FrameTypeSwitch {
