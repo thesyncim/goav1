@@ -586,7 +586,7 @@ type FrameWorkTileResidualRequest struct {
 type FrameWorkTileResidualDefaultRequest struct {
 	CurrentSegmentMap  []uint8
 	PreviousSegmentMap []uint8
-	SegmentMapStride   int
+	SegmentMapStride   uint16
 
 	PredictionScratch *FrameWorkPredictionScratch
 	Restoration       *FrameWorkTileRestorationRequest
@@ -716,7 +716,7 @@ func (s *FrameWorkTileResidualStats) Add(other FrameWorkTileResidualStats) {
 
 // JobBlockLoopRequest derives the block-loop request for Jobs[index] from the
 // frame context carried by this batch.
-func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride int) (tile.BlockLoopRequest, error) {
+func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16) (tile.BlockLoopRequest, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return tile.BlockLoopRequest{}, err

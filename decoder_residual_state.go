@@ -157,7 +157,7 @@ func BindTileBlockLoopContextCarrier(rootColumns int, above []TileBlockLoopRootA
 // for one job in batch, wiring the caller-owned segmentation maps,
 // segment-map stride, and block-loop context carrier into the
 // returned request.
-func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride int, carrier *TileBlockLoopContextCarrier) (TileBlockLoopRequest, error) {
+func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16, carrier *TileBlockLoopContextCarrier) (TileBlockLoopRequest, error) {
 	req, err := batch.JobBlockLoopRequest(index, currentSegmentMap, previousSegmentMap, segmentMapStride)
 	if err != nil {
 		return TileBlockLoopRequest{}, err
@@ -237,7 +237,7 @@ type DecoderFrameWorkBatchResidualRequest struct {
 
 	CurrentSegmentMap  []uint8
 	PreviousSegmentMap []uint8
-	SegmentMapStride   int
+	SegmentMapStride   uint16
 
 	// LoopContextAbove optionally backs one job's root-column context at a time.
 	// When nil, the helper leaves Tile.Loop.ContextCarrier unchanged.

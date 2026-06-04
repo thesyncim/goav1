@@ -563,11 +563,12 @@ func (s *DecodeState) ReadBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeCon
 }
 
 // PredictCurrentSegmentID ports dav1d's get_cur_frame_segid() helper.
-func PredictCurrentSegmentID(cur []uint8, stride int, x4 int, y4 int, haveTop bool, haveLeft bool) (uint8, int, error) {
-	if stride <= 0 || x4 < 0 || y4 < 0 || x4 >= stride {
+func PredictCurrentSegmentID(cur []uint8, stride uint16, x4 int, y4 int, haveTop bool, haveLeft bool) (uint8, int, error) {
+	strideInt := int(stride)
+	if stride == 0 || x4 < 0 || y4 < 0 || x4 >= strideInt {
 		return 0, 0, ErrInvalidDecodeState
 	}
-	idx := y4*stride + x4
+	idx := y4*strideInt + x4
 	if idx < 0 || idx >= len(cur) {
 		return 0, 0, ErrInvalidDecodeState
 	}
@@ -575,12 +576,12 @@ func PredictCurrentSegmentID(cur []uint8, stride int, x4 int, y4 int, haveTop bo
 		return 0, 0, ErrInvalidDecodeState
 	}
 	if haveLeft && haveTop {
-		if idx-stride-1 < 0 || idx-1 >= len(cur) || idx-stride >= len(cur) {
+		if idx-strideInt-1 < 0 || idx-1 >= len(cur) || idx-strideInt >= len(cur) {
 			return 0, 0, ErrInvalidDecodeState
 		}
 		left := cur[idx-1]
-		above := cur[idx-stride]
-		aboveLeft := cur[idx-stride-1]
+		above := cur[idx-strideInt]
+		aboveLeft := cur[idx-strideInt-1]
 		if left >= parser.MaxSegments || above >= parser.MaxSegments || aboveLeft >= parser.MaxSegments {
 			return 0, 0, ErrInvalidDecodeState
 		}
@@ -606,7 +607,7 @@ func PredictCurrentSegmentID(cur []uint8, stride int, x4 int, y4 int, haveTop bo
 		return left, 0, nil
 	}
 	if haveTop {
-		above := cur[idx-stride]
+		above := cur[idx-strideInt]
 		if above >= parser.MaxSegments {
 			return 0, 0, ErrInvalidDecodeState
 		}
@@ -617,13 +618,14 @@ func PredictCurrentSegmentID(cur []uint8, stride int, x4 int, y4 int, haveTop bo
 
 // MinPreviousSegmentID ports dav1d/libaom's previous-frame segment-map block
 // prediction: the minimum segment id over the block footprint.
-func MinPreviousSegmentID(prev []uint8, stride int, x4 int, y4 int, w4 int, h4 int) (uint8, error) {
-	if stride <= 0 || x4 < 0 || y4 < 0 || w4 <= 0 || h4 <= 0 || x4+w4 > stride {
+func MinPreviousSegmentID(prev []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int) (uint8, error) {
+	strideInt := int(stride)
+	if stride == 0 || x4 < 0 || y4 < 0 || w4 <= 0 || h4 <= 0 || x4+w4 > strideInt {
 		return 0, ErrInvalidDecodeState
 	}
 	best := uint8(parser.MaxSegments)
 	for y := range h4 {
-		row := (y4+y)*stride + x4
+		row := (y4+y)*strideInt + x4
 		if row < 0 || row+w4 > len(prev) {
 			return 0, ErrInvalidDecodeState
 		}
@@ -647,13 +649,14 @@ func MinPreviousSegmentID(prev []uint8, stride int, x4 int, y4 int, w4 int, h4 i
 }
 
 // FillSegmentID writes a decoded segment id into a current-frame segment map.
-func FillSegmentID(dst []uint8, stride int, x4 int, y4 int, w4 int, h4 int, segmentID uint8) error {
-	if segmentID >= parser.MaxSegments || stride <= 0 || x4 < 0 || y4 < 0 ||
-		w4 <= 0 || h4 <= 0 || x4+w4 > stride {
+func FillSegmentID(dst []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int, segmentID uint8) error {
+	strideInt := int(stride)
+	if segmentID >= parser.MaxSegments || stride == 0 || x4 < 0 || y4 < 0 ||
+		w4 <= 0 || h4 <= 0 || x4+w4 > strideInt {
 		return ErrInvalidDecodeState
 	}
 	for y := range h4 {
-		row := (y4+y)*stride + x4
+		row := (y4+y)*strideInt + x4
 		if row < 0 || row+w4 > len(dst) {
 			return ErrInvalidDecodeState
 		}

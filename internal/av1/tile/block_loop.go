@@ -161,7 +161,7 @@ type BlockLoopRequest struct {
 
 	CurrentSegmentMap  []uint8
 	PreviousSegmentMap []uint8
-	SegmentMapStride   int
+	SegmentMapStride   uint16
 
 	FrameType               parser.FrameType
 	AllowIntrabc            bool
@@ -1682,7 +1682,7 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 		}
 	}
 	if req.Segmentation.Enabled && (req.Segmentation.UpdateMap || len(req.PreviousSegmentMap) != 0) {
-		if req.SegmentMapStride <= 0 {
+		if req.SegmentMapStride == 0 {
 			return ErrInvalidDecodeState
 		}
 	}
