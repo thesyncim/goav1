@@ -18,9 +18,9 @@
 // jobs and worker batches, decoder block coefficient reconstruction,
 // coefficient replay reconstruction adapters, one-block coefficient
 // decode/reconstruct helpers, decoder postfilter scratch binding, superres
-// upscaling, and film-grain output helpers. The decoder and encoder APIs will
-// grow at this top level as the internal pipeline
-// stabilizes.
+// upscaling, film-grain output helpers, and the WebRTC AV1 encoder control
+// foundation. The decoder and encoder APIs will grow at this top level as the
+// internal pipeline stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly

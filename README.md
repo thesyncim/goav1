@@ -128,7 +128,7 @@ pool, and result storage. The executable examples in `example_test.go` and
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | In scope, not landed yet; first target is WebRTC-focused realtime AV1 with bitrate/framerate/resolution/keyframe controls, temporal/spatial layers, SVC, screen/camera tuning, RTP/OBU output, and dependency metadata |
+| Encoder | Control foundation landed for WebRTC-focused realtime AV1: profile/scalability modes, SVC layer sizing/bitrates, supported reference scaling, and temporal-unit validation; bitstream emission is next |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -147,7 +147,8 @@ keyframe requests, temporal/spatial layer structure, SVC, camera and
 screen-content tuning, realtime speed/quality controls, low-overhead OBU/RTP
 output, and dependency/scalability metadata. Encoder behavior should be ported
 from pinned libaom/libwebrtc source with oracle tests and zero-allocation hot
-paths before being advertised as supported.
+paths. The first public surface exposes that control plane and frame-reference
+validation; actual AV1 bitstream emission remains in progress.
 
 ## CLI
 
