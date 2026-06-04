@@ -72,8 +72,12 @@ func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inp
 	if err := validateBlockFilter(dst, dstStride, dstOrigin, input, inputOrigin, params); err != nil {
 		return err
 	}
-	filterBlockImpl(dst, dstStride, dstOrigin, input, inputOrigin, params)
+	filterBlockUnchecked(dst, dstStride, dstOrigin, input, inputOrigin, params)
 	return nil
+}
+
+func filterBlockUnchecked(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
+	filterBlockImpl(dst, dstStride, dstOrigin, input, inputOrigin, params)
 }
 
 // filterBlockPureGo is the canonical bit-exact CDEF block filter. It assumes
@@ -327,10 +331,11 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			secondaryStrength > int(^uint8(0)) ||
 			damping > int(^uint8(0)) ||
 			blockWidth > int(^uint8(0)) ||
-			blockHeight > int(^uint8(0)) {
+			blockHeight > int(^uint8(0)) ||
+			!blockFitsAt(len(dst), dstOrigin, dstStride, blockWidth, blockHeight) {
 			return ErrInvalidCDEF
 		}
-		err := FilterBlock(dst, dstStride, dstOrigin, input, srcOrigin, BlockFilterParams{
+		blockParams := BlockFilterParams{
 			PrimaryStrength:   uint8(strength),
 			SecondaryStrength: uint8(secondaryStrength),
 			Direction:         uint8(dir),
@@ -339,10 +344,11 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			CoeffShift:        uint8(params.CoeffShift),
 			Width:             uint8(blockWidth),
 			Height:            uint8(blockHeight),
-		})
-		if err != nil {
-			return err
 		}
+		if !cdefInputFits(len(input), srcOrigin, blockParams) {
+			return ErrInvalidCDEF
+		}
+		filterBlockUnchecked(dst, dstStride, dstOrigin, input, srcOrigin, blockParams)
 	}
 	return nil
 }
