@@ -37,7 +37,20 @@ Requires Go 1.26 or newer.
 
 ## Quick start
 
-The simplest API decodes a complete IVF stream and returns independent frame
+goav1 exposes both a friendly copy-returning API and the explicit ownership
+surface used by realtime integrations. Pick the path by lifetime and allocation
+needs:
+
+| Use case | API | Ownership model |
+| --- | --- | --- |
+| One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
+| Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
+| Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
+| Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
+| Manual OBU or RTP run loop | `DecoderFrameWorkResidualStreamRunner` `Run*Into` methods | Caller-owned event, tile, frame, post-filter, and output-result scratch |
+| IVF demux only | `NewIVFIterator` | Zero-allocation payload views into the source bytes |
+
+The simplest helper decodes a complete IVF stream and returns independent frame
 copies:
 
 ```go
@@ -96,7 +109,10 @@ for {
 Lower-level package APIs expose the same pipeline pieces directly: IVF and OBU
 iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
-and DSP primitives. The executable examples in `example_test.go` and
+and DSP primitives. The `RunLowOverheadInto`, `RunLowOverheadsInto`,
+`RunRTPPayloadInto`, and `RunRTPPayloadsInto` families are the allocation-aware
+entry points for callers that already own their demux, jitter buffer, frame
+pool, and result storage. The executable examples in `example_test.go` and
 `example_decode_simple_test.go` are kept in sync by `go test`.
 
 ## Features
@@ -196,6 +212,20 @@ places the matched profiles point to: coefficient decode shape, loop-filter
 planning/application, post-filter scheduling, hot struct layout, zero-cost
 tracing, and SIMD kernels for the highest-volume DSP paths.
 
+- **Zero-allocation steady decode.** `NewDecoder` probes once, sizes the frame
+  pool and post-filter scratch up front, and then reuses those arenas through
+  `DecodeNext`. `make alloc` enforces `0 B/op` and `0 allocs/op` across the
+  post-filtered profile, super-res, restoration, film-grain, and full-vector
+  decode benchmarks.
+- **Fair cross-decoder timing.** `make bench-cross` compares the verified
+  full-decode path against `aomdec`, `dav1d`, and `SvtAv1DecApp` when present,
+  using single-thread decode and discarded output. The optional corpus lane
+  extends that comparison to longer generated clips so startup overhead does not
+  hide the real goav1/dav1d throughput ratio.
+- **Compiler guardrails.** Escape-analysis, BCE, trace-zero, and hot-struct
+  size checks are treated as perf gates because they catch hidden regressions
+  before they turn into frame-time noise.
+
 Run the local benchmarks:
 
 ```sh
@@ -212,9 +242,21 @@ Run the cross-decoder throughput tool when `aomdec`, `dav1d`, or
 make bench-cross
 ```
 
-`bench-cross` uses the same corpus, same output discard/MD5 style, and the same
-single-thread baseline where possible. Missing external decoders are skipped so
-the target can run on lightweight developer machines.
+`bench-cross` uses the committed libaom vector set, the same output-discard/MD5
+style, and the same single-thread baseline where possible. Missing external
+decoders are skipped so the target can run on lightweight developer machines.
+
+For the longer steady-state corpus comparison:
+
+```sh
+scripts/gen_bench_corpus.sh
+GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle \
+    -run TestCrossDecoderCorpus \
+    -timeout 30m ./internal/av1/testvector -v -count=1
+```
+
+That report prints per-clip and aggregate fps, raw and startup-adjusted external
+decoder timings, and the goav1/dav1d ratio that should drive optimization work.
 
 Allocation and compiler guardrails are part of performance, not an afterthought:
 
@@ -286,6 +328,18 @@ Release checklist:
 - run the verification commands above on a clean tree
 - record conformance gate summaries and benchmark evidence
 - publish the tag and GitHub Release together
+
+Supply-chain controls:
+
+- workflow permissions are expected to remain least-privilege
+- upstream pins for libaom, dav1d, and libwebrtc are recorded in
+  `third_party/upstream.lock`; run `make sync-upstreams` and
+  `make verify-upstreams` to materialize and verify the local clones
+- release evidence should record commit SHA, Go version, platform, pinned
+  upstream versions, conformance summaries, allocation/compiler reports,
+  cross-decoder benchmark output, and module inventory
+- future binary releases need signed checksums, provenance, and an SPDX or
+  CycloneDX SBOM
 
 Security reports: [SECURITY.md](SECURITY.md).
 
