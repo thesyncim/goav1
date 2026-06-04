@@ -614,7 +614,7 @@ func (r *Reader) ReadCDF(cdf *CDF) (int, error) {
 	case 4:
 		return r.readCDF4Known(&cdf.values), nil
 	default:
-		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+		return r.readSymbolKnown(&cdf.values, symbols)
 	}
 }
 
@@ -639,16 +639,13 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	lower := uint32(0)
 	symbol := 0
 	last := len(cdf) - 2
-	head := uint16(0)
+	head := cdf[0]
 	// minTerm tracks ecMinProb*(last-symbol); it decrements by ecMinProb each
 	// iteration, replacing the per-step multiply with a single subtraction. The
 	// arithmetic is identical to ecMinProb*uint32(last-symbol).
 	minTerm := ecMinProb * uint32(last)
 	for symbol < last {
 		c := cdf[symbol]
-		if symbol == 0 {
-			head = c
-		}
 		lower = ((rngHi * uint32(c>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
 		if coded >= lower {
 			break
@@ -722,7 +719,7 @@ func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
 	case 4:
 		return r.readCDF4Known(&cdf.values), nil
 	default:
-		return r.readSymbolTrusted(cdf.values[:symbols+1], symbols)
+		return r.readSymbolKnown(&cdf.values, symbols)
 	}
 }
 
@@ -740,6 +737,67 @@ func (c *Cursor) ReadCDFUnchecked(cdf *CDF) int {
 	default:
 		return c.readSymbolKnown(&cdf.values, symbols)
 	}
+}
+
+// readSymbolKnown is the fixed-array core for trusted CDF objects with more
+// than four symbols. It matches the cursor helper's raw CDF-row shape while
+// preserving Reader's invalid-range guard for public ReadCDF callers.
+func (r *Reader) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) (int, error) {
+	rangeValue := uint32(r.rng)
+	rngHi := rangeValue >> 8
+	coded := r.dif >> (ecWindow - 16)
+	upper := rangeValue
+	lower := uint32(0)
+	symbol := 0
+	last := symbols - 1
+	head := values[0]
+	minTerm := ecMinProb * uint32(last)
+	for symbol < last {
+		v := values[symbol]
+		lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
+		if coded >= lower {
+			break
+		}
+		symbol++
+		upper = lower
+		minTerm -= ecMinProb
+	}
+	if symbol == last {
+		lower = 0
+	}
+	if lower >= upper {
+		return 0, ErrInvalidCDF
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(head, symbols, r.dif, uint32(r.rng), r.BitsRead())
+	}
+	dif := r.dif - (lower << (ecWindow - 16))
+	rng := upper - lower
+	shift := int32(16 - bits.Len32(rng))
+	cnt := int32(r.cnt) - shift
+	r.cnt = int16(cnt)
+	r.dif = ((dif + 1) << uint(shift)) - 1
+	r.rng = uint16(rng << uint(shift))
+	if cnt < 0 {
+		r.refill()
+	}
+	if r.allowCDFUpdate {
+		count := values[symbols]
+		rate := uint(5 + (count >> 4))
+		for i := 0; i < symbol; i++ {
+			v := uint32(values[i])
+			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+		}
+		for i := symbol; i < last; i++ {
+			v := uint32(values[i])
+			values[i] = uint16(v - (v >> rate))
+		}
+		if count < MaxCDFCount {
+			values[symbols] = count + 1
+		}
+	}
+	return symbol, nil
 }
 
 // ReadBinaryCDFUnchecked decodes one symbol from a two-symbol CDF. The caller
@@ -779,13 +837,10 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 	lower := uint32(0)
 	symbol := 0
 	last := symbols - 1
-	head := uint16(0)
+	head := values[0]
 	minTerm := ecMinProb * uint32(last)
 	for symbol < last {
 		v := values[symbol]
-		if symbol == 0 {
-			head = v
-		}
 		lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
 		if coded >= lower {
 			break
@@ -817,13 +872,13 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 		if symbols > 3 {
 			rate++
 		}
-		for i := 0; i < last; i++ {
+		for i := 0; i < symbol; i++ {
 			v := uint32(values[i])
-			if i < symbol {
-				values[i] = uint16(v + ((CDFProbTop - v) >> rate))
-			} else {
-				values[i] = uint16(v - (v >> rate))
-			}
+			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+		}
+		for i := symbol; i < last; i++ {
+			v := uint32(values[i])
+			values[i] = uint16(v - (v >> rate))
 		}
 		if count < MaxCDFCount {
 			values[symbols] = count + 1

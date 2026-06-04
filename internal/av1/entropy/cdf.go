@@ -229,15 +229,14 @@ func updateCDFWindow(cdf []uint16, symbol int) {
 		rate++
 	}
 
-	// Range over the probability entries (indices [0, symbols-2]); the final
-	// symbols-1 entry is fixed at 0 in inverse-CDF form. Ranging the sub-slice
-	// drops the per-iteration index bounds check on the write-back.
-	for i, v := range cdf[:symbols-1] {
-		if i < symbol {
-			cdf[i] = v + ((uint16(CDFProbTop) - v) >> rate)
-		} else {
-			cdf[i] = v - (v >> rate)
-		}
+	last := symbols - 1
+	for i := 0; i < symbol; i++ {
+		v := cdf[i]
+		cdf[i] = v + ((uint16(CDFProbTop) - v) >> rate)
+	}
+	for i := symbol; i < last; i++ {
+		v := cdf[i]
+		cdf[i] = v - (v >> rate)
 	}
 	if count < MaxCDFCount {
 		cdf[symbols] = count + 1
