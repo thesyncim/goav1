@@ -878,7 +878,7 @@ func makeSentinelRestorationBoundaries(size RestorationStripeBoundaryBufferSize,
 		above[i] = sentinel
 		below[i] = sentinel
 	}
-	return RestorationStripeBoundaries{Above: above, Below: below, Stride: size.Stride}
+	return RestorationStripeBoundaries{Above: above, Below: below, Stride: int(size.Stride)}
 }
 
 func makeRestorationBoundaryPlane(grid RestorationPlaneGrid, stride int) []uint16 {

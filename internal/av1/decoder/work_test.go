@@ -1851,7 +1851,7 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 		t.Fatalf("lfMap=%+v runner=%+v len=%d", lfMap, runner.LoopFilterMap, lfLen)
 	}
 	if restorationBuffers == nil || restorationBuffers.Plan != runner.RestorationFrameBuffers.Plan ||
-		len(restorationBuffers.Records[0]) != restorationPlan.UnitRecords[0] {
+		len(restorationBuffers.Records[0]) != int(restorationPlan.UnitRecords[0]) {
 		t.Fatalf("restorationBuffers=%+v runner=%+v plan=%+v", restorationBuffers, runner.RestorationFrameBuffers, restorationPlan)
 	}
 }
@@ -2481,7 +2481,7 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 		if post.LoopFilterMap == nil || post.LoopFilterMap.Stride != lfMap.Stride || post.LoopFilterMap.Rows != lfMap.Rows {
 			t.Fatalf("LoopFilterMap=%+v want stride=%d rows=%d", post.LoopFilterMap, lfMap.Stride, lfMap.Rows)
 		}
-		if post.RestorationFrameBuffers == nil || len(post.RestorationFrameBuffers.Records[0]) != restorationPlan.UnitRecords[0] {
+		if post.RestorationFrameBuffers == nil || len(post.RestorationFrameBuffers.Records[0]) != int(restorationPlan.UnitRecords[0]) {
 			t.Fatalf("RestorationFrameBuffers=%+v want records=%d", post.RestorationFrameBuffers, restorationPlan.UnitRecords[0])
 		}
 		post.CDEFIndexMap.Read[0] = true

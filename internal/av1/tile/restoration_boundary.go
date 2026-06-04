@@ -49,8 +49,8 @@ type RestorationStripeBoundaryScratch struct {
 // RestorationStripeBoundaryBufferSize reports the caller-owned boundary buffer
 // layout for one whole-frame restoration plane.
 type RestorationStripeBoundaryBufferSize struct {
-	Stride int
-	Rows   int
+	Stride uint32
+	Rows   uint32
 	Len    int
 }
 
@@ -90,7 +90,10 @@ func RestorationStripeBoundaryBufferLen(grid RestorationPlaneGrid) (RestorationS
 	if !ok {
 		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
 	}
-	return RestorationStripeBoundaryBufferSize{Stride: stride, Rows: rows, Len: n}, nil
+	if uint64(stride) > uint64(^uint32(0)) || uint64(rows) > uint64(^uint32(0)) {
+		return RestorationStripeBoundaryBufferSize{}, ErrInvalidPlan
+	}
+	return RestorationStripeBoundaryBufferSize{Stride: uint32(stride), Rows: uint32(rows), Len: n}, nil
 }
 
 func RestorationStripeBoundaryScratchLen(stripe RestorationProcessingStripe, optimized bool) (RestorationStripeBoundaryScratchSize, error) {
@@ -812,11 +815,11 @@ func validateRestorationStripeBoundaries(grid RestorationPlaneGrid, boundaries R
 	if err != nil {
 		return err
 	}
-	need, ok := checkedMulInt(boundaries.Stride, size.Rows)
+	need, ok := checkedMulInt(boundaries.Stride, int(size.Rows))
 	if !ok {
 		return ErrInvalidPlan
 	}
-	if boundaries.Stride < size.Stride ||
+	if boundaries.Stride < int(size.Stride) ||
 		len(boundaries.Above) < need ||
 		len(boundaries.Below) < need {
 		return ErrInvalidPlan

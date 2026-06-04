@@ -36,7 +36,7 @@ func TestPublicTileRestorationFramePlanAndBuffers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Active || plan.Planes != 3 || plan.UnitRecords != ([3]int{4, 4, 0}) || plan.UnitRecordLen() != 8 {
+	if !plan.Active || plan.Planes != 3 || plan.UnitRecords != ([3]uint32{4, 4, 0}) || plan.UnitRecordLen() != 8 {
 		t.Fatalf("plan=%+v records=%d", plan, plan.UnitRecordLen())
 	}
 	if plan.Boundaries[0] != (av1.TileRestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}) ||

@@ -607,7 +607,7 @@ func TestFrameWorkBatchRestorationFrameAndLoopPlans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !framePlan.Active || framePlan.Planes != 3 || framePlan.UnitRecords != ([3]int{4, 4, 0}) {
+	if !framePlan.Active || framePlan.Planes != 3 || framePlan.UnitRecords != ([3]uint32{4, 4, 0}) {
 		t.Fatalf("frame plan=%+v", framePlan)
 	}
 

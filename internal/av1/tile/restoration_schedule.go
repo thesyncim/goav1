@@ -54,7 +54,7 @@ type RestorationFramePlan struct {
 	Active bool
 
 	Grids       [3]RestorationPlaneGrid
-	UnitRecords [3]int
+	UnitRecords [3]uint32
 	Boundaries  [3]RestorationStripeBoundaryBufferSize
 }
 
@@ -128,11 +128,14 @@ func BuildRestorationFramePlan(params parser.RestorationParams, size parser.Fram
 		if err != nil {
 			return RestorationFramePlan{}, err
 		}
+		if uint64(records) > uint64(^uint32(0)) {
+			return RestorationFramePlan{}, ErrInvalidPlan
+		}
 		boundaries, err := RestorationStripeBoundaryBufferLen(grid)
 		if err != nil {
 			return RestorationFramePlan{}, err
 		}
-		plan.UnitRecords[plane] = records
+		plan.UnitRecords[plane] = uint32(records)
 		plan.Boundaries[plane] = boundaries
 		plan.Active = true
 	}
@@ -160,7 +163,7 @@ func (g RestorationPlaneGrid) UnitRecordLen() (int, error) {
 func (p RestorationFramePlan) UnitRecordLen() int {
 	total := 0
 	for i := 0; i < int(p.Planes) && i < len(p.UnitRecords); i++ {
-		total += p.UnitRecords[i]
+		total += int(p.UnitRecords[i])
 	}
 	return total
 }
@@ -191,7 +194,7 @@ func BindRestorationFrameRecordBuffers(plan RestorationFramePlan, backing []Rest
 	var records [3][]RestorationUnitRecord
 	offset := 0
 	for plane := 0; plane < int(plan.Planes); plane++ {
-		n := plan.UnitRecords[plane]
+		n := int(plan.UnitRecords[plane])
 		if n == 0 {
 			continue
 		}
@@ -225,7 +228,7 @@ func BindRestorationFrameBoundaryBuffers(plan RestorationFramePlan, above []uint
 		boundaries[plane] = RestorationStripeBoundaries{
 			Above:  above[offset : offset+size.Len],
 			Below:  below[offset : offset+size.Len],
-			Stride: size.Stride,
+			Stride: int(size.Stride),
 		}
 		offset += size.Len
 	}
@@ -510,7 +513,7 @@ func validateRestorationFramePlan(plan RestorationFramePlan) error {
 		if err != nil {
 			return err
 		}
-		if plan.UnitRecords[plane] != records {
+		if uint64(records) > uint64(^uint32(0)) || plan.UnitRecords[plane] != uint32(records) {
 			return ErrInvalidPlan
 		}
 		boundaries, err := RestorationStripeBoundaryBufferLen(grid)

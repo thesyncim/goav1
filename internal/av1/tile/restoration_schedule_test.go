@@ -62,7 +62,7 @@ func TestBuildRestorationFramePlanMatchesLibaomAllocationShape(t *testing.T) {
 	if !plan.Active || plan.Planes != 3 {
 		t.Fatalf("plan active=%v planes=%d", plan.Active, plan.Planes)
 	}
-	if plan.UnitRecords != ([3]int{4, 4, 0}) || plan.UnitRecordLen() != 8 {
+	if plan.UnitRecords != ([3]uint32{4, 4, 0}) || plan.UnitRecordLen() != 8 {
 		t.Fatalf("unit records=%+v total=%d", plan.UnitRecords, plan.UnitRecordLen())
 	}
 	wantY := RestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}
@@ -106,7 +106,7 @@ func TestBuildRestorationFramePlanMonochromeSkipsChroma(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Active || plan.Planes != 1 || plan.UnitRecords != ([3]int{4, 0, 0}) || plan.Grids[1] != (RestorationPlaneGrid{}) {
+	if !plan.Active || plan.Planes != 1 || plan.UnitRecords != ([3]uint32{4, 0, 0}) || plan.Grids[1] != (RestorationPlaneGrid{}) {
 		t.Fatalf("plan=%+v", plan)
 	}
 }
@@ -629,13 +629,13 @@ func FuzzBuildRestorationFramePlan(f *testing.F) {
 			}
 			active = true
 			wantRecords := int(grid.HorzUnits) * int(grid.VertUnits)
-			if wantRecords == 0 || plan.UnitRecords[plane] != wantRecords {
+			if wantRecords == 0 || plan.UnitRecords[plane] != uint32(wantRecords) {
 				t.Fatalf("plane=%d records=%d want %d grid=%+v", plane, plan.UnitRecords[plane], wantRecords, grid)
 			}
 			if plan.Boundaries[plane].Stride%32 != 0 || plan.Boundaries[plane].Rows == 0 || plan.Boundaries[plane].Len == 0 {
 				t.Fatalf("plane=%d boundary=%+v", plane, plan.Boundaries[plane])
 			}
-			totalRecords += plan.UnitRecords[plane]
+			totalRecords += int(plan.UnitRecords[plane])
 			totalBoundaries += plan.Boundaries[plane].Len
 		}
 		if plan.Active != active || plan.UnitRecordLen() != totalRecords || plan.BoundaryBufferLen() != totalBoundaries {
@@ -684,7 +684,7 @@ func FuzzBindRestorationFramePlanBuffers(f *testing.F) {
 		totalRecords := 0
 		totalBoundaries := 0
 		for plane := 0; plane < int(plan.Planes); plane++ {
-			if len(records[plane]) != plan.UnitRecords[plane] {
+			if len(records[plane]) != int(plan.UnitRecords[plane]) {
 				t.Fatalf("plane=%d records=%d want %d", plane, len(records[plane]), plan.UnitRecords[plane])
 			}
 			if plan.Boundaries[plane].Len == 0 {
@@ -693,7 +693,7 @@ func FuzzBindRestorationFramePlanBuffers(f *testing.F) {
 				}
 			} else if len(boundaries[plane].Above) != plan.Boundaries[plane].Len ||
 				len(boundaries[plane].Below) != plan.Boundaries[plane].Len ||
-				boundaries[plane].Stride != plan.Boundaries[plane].Stride {
+				boundaries[plane].Stride != int(plan.Boundaries[plane].Stride) {
 				t.Fatalf("plane=%d boundaries=%+v want %+v", plane, boundaries[plane], plan.Boundaries[plane])
 			}
 			totalRecords += len(records[plane])
