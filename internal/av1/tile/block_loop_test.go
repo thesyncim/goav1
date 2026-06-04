@@ -1292,7 +1292,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		EnableOrderHint:          true,
 		OrderHintBits:            4,
 		CurrentOrderHint:         8,
-		ReferenceOrderHints:      [referenceFrameCount]uint32{ReferenceFrameLast: 4},
+		ReferenceOrderHints:      [referenceFrameCount]uint8{ReferenceFrameLast: 4},
 		GlobalMotionTypes:        [referenceFrameCount]parser.GlobalMotionType{ReferenceFrameLast: parser.GlobalMotionTranslation},
 		ScaledReferences:         [referenceFrameCount]bool{},
 		DecodeCompoundBlend:      true,
@@ -1353,7 +1353,7 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 		EnableOrderHint:       true,
 		OrderHintBits:         4,
 		CurrentOrderHint:      8,
-		ReferenceOrderHints: [referenceFrameCount]uint32{
+		ReferenceOrderHints: [referenceFrameCount]uint8{
 			ReferenceFrameLast:   4,
 			ReferenceFrameAltref: 12,
 		},
@@ -1586,10 +1586,10 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 				ReferenceFrameGolden: rawRoot&1 != 0,
 				ReferenceFrameAltref: rawRows&1 != 0,
 			},
-			ReferenceOrderHints: [referenceFrameCount]uint32{
-				ReferenceFrameLast:   uint32(rawCols) % orderLimit,
-				ReferenceFrameGolden: uint32(rawRows) % orderLimit,
-				ReferenceFrameAltref: uint32(rawRoot) % orderLimit,
+			ReferenceOrderHints: [referenceFrameCount]uint8{
+				ReferenceFrameLast:   uint8(uint32(rawCols) % orderLimit),
+				ReferenceFrameGolden: uint8(uint32(rawRows) % orderLimit),
+				ReferenceFrameAltref: uint8(uint32(rawRoot) % orderLimit),
 			},
 			ScaledReferences: [referenceFrameCount]bool{
 				ReferenceFrameLast2: rawCols&1 != 0,
@@ -1602,7 +1602,7 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			EnableDistWtdCompound:    rawCols&0x40 != 0,
 			EnableOrderHint:          true,
 			OrderHintBits:            orderBits,
-			CurrentOrderHint:         uint32(rawRoot) % orderLimit,
+			CurrentOrderHint:         uint8(uint32(rawRoot) % orderLimit),
 			Color: parser.ColorConfig{
 				MonoChrome:   rawCols&0x20 == 0,
 				SubsamplingX: rawCols&1 != 0,

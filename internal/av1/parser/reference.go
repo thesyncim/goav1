@@ -17,7 +17,7 @@ type ReferenceFrame struct {
 	Valid bool
 
 	FrameID   uint32
-	OrderHint uint32
+	OrderHint uint8
 	FrameType FrameType
 
 	ShowableFrame bool

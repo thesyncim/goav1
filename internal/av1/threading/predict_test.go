@@ -1987,9 +1987,9 @@ func TestFrameWorkBatchPredictBlockInterCompoundWedgeChromaSubsampledMatchesLiba
 func TestFrameWorkCompoundDistanceWeightedOffsetsMatchLibaom(t *testing.T) {
 	tests := []struct {
 		name string
-		cur  uint32
-		ref0 uint32
-		ref1 uint32
+		cur  uint8
+		ref0 uint8
+		ref1 uint8
 		want [2]int
 	}{
 		{name: "equal distance", cur: 8, ref0: 4, ref1: 12, want: [2]int{7, 9}},
@@ -2029,7 +2029,7 @@ func FuzzFrameWorkDistanceWeightedCompoundOffsets(f *testing.F) {
 		cur %= limit
 		ref0 %= limit
 		ref1 %= limit
-		fwd, bck, err := frameWorkDistanceWeightedCompoundOffsets(bits, cur, ref0, ref1)
+		fwd, bck, err := frameWorkDistanceWeightedCompoundOffsets(bits, uint8(cur), uint8(ref0), uint8(ref1))
 		if err != nil {
 			t.Fatalf("frameWorkDistanceWeightedCompoundOffsets err=%v", err)
 		}

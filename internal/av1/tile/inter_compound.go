@@ -78,8 +78,8 @@ type CompoundBlendRequest struct {
 	EnableDistWtdCompound bool
 	EnableOrderHint       bool
 	OrderHintBits         uint8
-	CurrentOrderHint      uint32
-	RefOrderHint          [2]uint32
+	CurrentOrderHint      uint8
+	RefOrderHint          [2]uint8
 
 	X4       uint8
 	Y4       uint8
@@ -570,18 +570,20 @@ func compoundReferenceDistancesEqual(req CompoundBlendRequest) (bool, error) {
 	return d0 == d1, nil
 }
 
-func compoundRelativeOrderHint(enabled bool, bits uint8, a uint32, b uint32) (int, error) {
+func compoundRelativeOrderHint(enabled bool, bits uint8, a uint8, b uint8) (int, error) {
 	if !enabled {
 		return 0, nil
 	}
-	if bits == 0 || bits > 31 {
+	if bits == 0 || bits > 8 {
 		return 0, ErrInvalidDecodeState
 	}
 	limit := uint32(1) << bits
-	if a >= limit || b >= limit {
+	ua := uint32(a)
+	ub := uint32(b)
+	if ua >= limit || ub >= limit {
 		return 0, ErrInvalidDecodeState
 	}
 	mask := int32(1 << (bits - 1))
-	diff := int32(a) - int32(b)
+	diff := int32(ua) - int32(ub)
 	return int((diff & (mask - 1)) - (diff & mask)), nil
 }

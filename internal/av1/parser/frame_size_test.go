@@ -101,7 +101,7 @@ func TestParseIntraFrameSizeHiddenKeyReadsRefreshAndOrderHints(t *testing.T) {
 		t.Fatalf("RefreshFrameFlags=%02x", size.RefreshFrameFlags)
 	}
 	for i := range refFrames {
-		if size.RefOrderHints[i] != uint32(i) {
+		if size.RefOrderHints[i] != uint8(i) {
 			t.Fatalf("RefOrderHints[%d]=%d", i, size.RefOrderHints[i])
 		}
 	}
@@ -396,7 +396,7 @@ func TestParseFrameSizeShortSignalingAllocs(t *testing.T) {
 	refs := oneReferenceState(seq, 0, 1)
 	for i := range refs.Frames {
 		refs.Frames[i].Valid = true
-		refs.Frames[i].OrderHint = uint32(i)
+		refs.Frames[i].OrderHint = uint8(i)
 	}
 
 	var w testBitWriter
@@ -478,7 +478,7 @@ func buildInterFramePrefixRaw(seq SequenceHeader, frameSizeOverride bool, errorR
 	return payload, prefix, err
 }
 
-func oneReferenceState(seq SequenceHeader, slot int, orderHint uint32) ReferenceState {
+func oneReferenceState(seq SequenceHeader, slot int, orderHint uint8) ReferenceState {
 	var refs ReferenceState
 	refs.Frames[slot] = ReferenceFrame{
 		Valid:     true,

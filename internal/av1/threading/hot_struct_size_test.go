@@ -14,10 +14,10 @@ func TestHotStructSizes(t *testing.T) {
 		max  uintptr
 	}{
 		{name: "Batch", size: unsafe.Sizeof(Batch{}), max: 20},
-		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 2008},
-		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1536},
+		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1784},
+		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1304},
 		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 56 * hotStructKiB},
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 86752},
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 86280},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
 		{name: "FrameWorkLoopFilterMapStats", size: unsafe.Sizeof(FrameWorkLoopFilterMapStats{}), max: 12},
 		{name: "FrameWorkTileResidualStats", size: unsafe.Sizeof(FrameWorkTileResidualStats{}), max: 136},

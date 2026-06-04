@@ -821,7 +821,7 @@ func frameWorkMotionVectorFromInt32(row int32, col int32) (motion.Vector, bool) 
 	return motion.Vector{Row: int16(row), Col: int16(col)}, true
 }
 
-func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint32, refs [parser.InterRefsPerFrame]uint32) ([parser.InterRefsPerFrame]bool, error) {
+func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint8, refs [parser.InterRefsPerFrame]uint8) ([parser.InterRefsPerFrame]bool, error) {
 	var bias [parser.InterRefsPerFrame]bool
 	if !enabled {
 		return bias, nil
@@ -836,7 +836,7 @@ func frameWorkBlockLoopRefSignBias(enabled bool, bits uint8, current uint32, ref
 	return bias, nil
 }
 
-func frameWorkBlockLoopRefFrameSide(enabled bool, bits uint8, current uint32, refs [parser.InterRefsPerFrame]uint32) ([parser.InterRefsPerFrame]int8, error) {
+func frameWorkBlockLoopRefFrameSide(enabled bool, bits uint8, current uint8, refs [parser.InterRefsPerFrame]uint8) ([parser.InterRefsPerFrame]int8, error) {
 	var side [parser.InterRefsPerFrame]int8
 	if !enabled {
 		return side, nil

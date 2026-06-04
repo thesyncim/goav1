@@ -1011,7 +1011,7 @@ func TestReferenceOrderHintsFromReferenceState(t *testing.T) {
 		RefFrameIdx: [parser.InterRefsPerFrame]uint8{2, 5, 2, 5, 2, 5, 2},
 	}
 	got := referenceOrderHints(size, &refs)
-	want := [parser.InterRefsPerFrame]uint32{11, 21, 11, 21, 11, 21, 11}
+	want := [parser.InterRefsPerFrame]uint8{11, 21, 11, 21, 11, 21, 11}
 	if got != want {
 		t.Fatalf("reference order hints=%v want %v", got, want)
 	}

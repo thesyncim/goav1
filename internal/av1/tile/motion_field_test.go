@@ -48,7 +48,7 @@ func TestTemporalMotionFieldProjectReferenceFrameMatchesLibaomPlacement(t *testi
 		OrderHintBits:      5,
 		CurrentOrderHint:   8,
 		StartOrderHint:     4,
-		StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
+		StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
 		Backward:           true,
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 			OrderHintBits:      5,
 			CurrentOrderHint:   8,
 			StartOrderHint:     4,
-			StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
+			StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -110,7 +110,7 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 			OrderHintBits:      5,
 			CurrentOrderHint:   8,
 			StartOrderHint:     4,
-			StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 6},
+			StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 6},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +136,7 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 			OrderHintBits:      5,
 			CurrentOrderHint:   8,
 			StartOrderHint:     4,
-			StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
+			StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
 			Backward:           true,
 		})
 		if err != nil {
@@ -154,7 +154,7 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 		OrderHintBits:      0,
 		CurrentOrderHint:   8,
 		StartOrderHint:     4,
-		StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
+		StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
 	}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad order hint bits err=%v want %v", err, ErrInvalidDecodeState)
 	}
@@ -328,7 +328,7 @@ func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 		OrderHintBits:      5,
 		CurrentOrderHint:   8,
 		StartOrderHint:     4,
-		StartRefOrderHints: [referenceFrameCount]uint32{ReferenceFrameLast: 0},
+		StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
 		Backward:           true,
 	}
 	var setupRefs [referenceFrameCount]TemporalMotionReferenceFrame
@@ -353,8 +353,8 @@ func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 	}
 }
 
-func temporalReferenceFrameForSetupTest(frame *ReferenceMVFrame, orderHint uint32, ref ReferenceFrame, refOrderHint uint32) TemporalMotionReferenceFrame {
-	var hints [referenceFrameCount]uint32
+func temporalReferenceFrameForSetupTest(frame *ReferenceMVFrame, orderHint uint8, ref ReferenceFrame, refOrderHint uint8) TemporalMotionReferenceFrame {
+	var hints [referenceFrameCount]uint8
 	hints[ref] = refOrderHint
 	return TemporalMotionReferenceFrame{
 		Frame:         frame,

@@ -50,7 +50,7 @@ type Event struct {
 	FrameMode           parser.FrameModeParams
 	GlobalMotion        parser.GlobalMotionParams
 	FilmGrain           parser.FilmGrainParams
-	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint8
 	TileGroup           parser.TileGroup
 	ExistingFrame       parser.ReferenceFrame
 
@@ -87,7 +87,7 @@ type frameState struct {
 	FrameMode           parser.FrameModeParams
 	GlobalMotion        parser.GlobalMotionParams
 	FilmGrain           parser.FilmGrainParams
-	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint8
 }
 
 type Stream struct {
@@ -562,8 +562,8 @@ func (s *Stream) applyFrameState(event *Event) {
 	event.ReferenceOrderHints = s.frame.ReferenceOrderHints
 }
 
-func referenceOrderHints(size parser.FrameSize, refs *parser.ReferenceState) [parser.InterRefsPerFrame]uint32 {
-	var hints [parser.InterRefsPerFrame]uint32
+func referenceOrderHints(size parser.FrameSize, refs *parser.ReferenceState) [parser.InterRefsPerFrame]uint8 {
+	var hints [parser.InterRefsPerFrame]uint8
 	if refs == nil {
 		return hints
 	}

@@ -39,8 +39,8 @@ type TemporalMotionEntry struct {
 type TemporalMotionReferenceFrame struct {
 	Frame *ReferenceMVFrame
 
-	OrderHint     uint32
-	RefOrderHints [referenceFrameCount]uint32
+	OrderHint     uint8
+	RefOrderHints [referenceFrameCount]uint8
 
 	IntraOnly bool
 }
@@ -50,7 +50,7 @@ type TemporalMotionReferenceFrame struct {
 type TemporalMotionSetupRequest struct {
 	EnableOrderHint  bool
 	OrderHintBits    uint8
-	CurrentOrderHint uint32
+	CurrentOrderHint uint8
 
 	References [referenceFrameCount]TemporalMotionReferenceFrame
 }
@@ -68,9 +68,9 @@ type TemporalMotionProjectionRequest struct {
 	StartFrame *ReferenceMVFrame
 
 	OrderHintBits      uint8
-	CurrentOrderHint   uint32
-	StartOrderHint     uint32
-	StartRefOrderHints [referenceFrameCount]uint32
+	CurrentOrderHint   uint8
+	StartOrderHint     uint8
+	StartRefOrderHints [referenceFrameCount]uint8
 
 	// Backward matches libaom's dir == 2 path used for LAST/LAST2 projection.
 	Backward bool
@@ -270,15 +270,15 @@ func validateReferenceMVFrame(f *ReferenceMVFrame) error {
 	return f.Validate()
 }
 
-func temporalReferenceOrderHints(refs [referenceFrameCount]TemporalMotionReferenceFrame) [referenceFrameCount]uint32 {
-	var hints [referenceFrameCount]uint32
+func temporalReferenceOrderHints(refs [referenceFrameCount]TemporalMotionReferenceFrame) [referenceFrameCount]uint8 {
+	var hints [referenceFrameCount]uint8
 	for ref := range referenceFrameCount {
 		hints[ref] = refs[ref].OrderHint
 	}
 	return hints
 }
 
-func temporalReferenceFuture(bits uint8, ref uint32, current uint32) (bool, error) {
+func temporalReferenceFuture(bits uint8, ref uint8, current uint8) (bool, error) {
 	distance, err := motionFieldRelativeOrderHint(bits, ref, current)
 	if err != nil {
 		return false, err
@@ -286,7 +286,7 @@ func temporalReferenceFuture(bits uint8, ref uint32, current uint32) (bool, erro
 	return distance > 0, nil
 }
 
-func motionFieldRefOffsets(bits uint8, start uint32, refs [referenceFrameCount]uint32) ([referenceFrameCount]int, error) {
+func motionFieldRefOffsets(bits uint8, start uint8, refs [referenceFrameCount]uint8) ([referenceFrameCount]int, error) {
 	var offsets [referenceFrameCount]int
 	for ref := range referenceFrameCount {
 		offset, err := motionFieldRelativeOrderHint(bits, start, refs[ref])
@@ -298,16 +298,18 @@ func motionFieldRefOffsets(bits uint8, start uint32, refs [referenceFrameCount]u
 	return offsets, nil
 }
 
-func motionFieldRelativeOrderHint(bits uint8, a uint32, b uint32) (int, error) {
-	if bits == 0 || bits > 31 {
+func motionFieldRelativeOrderHint(bits uint8, a uint8, b uint8) (int, error) {
+	if bits == 0 || bits > 8 {
 		return 0, ErrInvalidDecodeState
 	}
 	limit := uint32(1) << bits
-	if a >= limit || b >= limit {
+	ua := uint32(a)
+	ub := uint32(b)
+	if ua >= limit || ub >= limit {
 		return 0, ErrInvalidDecodeState
 	}
 	mask := int32(1 << (bits - 1))
-	diff := int32(a) - int32(b)
+	diff := int32(ua) - int32(ub)
 	return int((diff & (mask - 1)) - (diff & mask)), nil
 }
 

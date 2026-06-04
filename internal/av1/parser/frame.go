@@ -44,7 +44,7 @@ type FrameHeaderPrefix struct {
 	FramePresentationDelay uint32
 	FrameID                uint32
 	FrameSizeOverride      bool
-	OrderHint              uint32
+	OrderHint              uint8
 	PrimaryRefFrame        uint8
 
 	BitsRead int
@@ -203,7 +203,7 @@ func parseFrameHeaderReferencePrefix(r *bitstream.Reader, seq SequenceHeader, hd
 		if err != nil {
 			return err
 		}
-		hdr.OrderHint = uint32(v)
+		hdr.OrderHint = uint8(v)
 	}
 
 	if !hdr.ErrorResilientMode && frameTypeIsInterOrSwitch(hdr.FrameType) {

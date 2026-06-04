@@ -182,7 +182,7 @@ type BlockLoopRequest struct {
 	GlobalMotionTypes    [referenceFrameCount]parser.GlobalMotionType
 	RefSignBias          [referenceFrameCount]bool
 	RefFrameSide         [referenceFrameCount]int8
-	ReferenceOrderHints  [referenceFrameCount]uint32
+	ReferenceOrderHints  [referenceFrameCount]uint8
 	ScaledReferences     [referenceFrameCount]bool
 	InterpolationFilter  parser.InterpolationFilter
 	EnableDualFilter     bool
@@ -202,7 +202,7 @@ type BlockLoopRequest struct {
 	// this frame-level unavailable marker with per-block temporal samples.
 	TemporalMVSampleUnavailable bool
 	OrderHintBits               uint8
-	CurrentOrderHint            uint32
+	CurrentOrderHint            uint8
 	TemporalMVs                 *TemporalMotionField
 	CurrentMVFrame              *ReferenceMVFrame
 
@@ -2090,8 +2090,8 @@ func blockReferenceScaled(refs InterReferencesResult, scaled [referenceFrameCoun
 	return false
 }
 
-func blockReferenceOrderHints(refs InterReferencesResult, orderHints [referenceFrameCount]uint32) [2]uint32 {
-	var out [2]uint32
+func blockReferenceOrderHints(refs InterReferencesResult, orderHints [referenceFrameCount]uint8) [2]uint8 {
+	var out [2]uint8
 	if refs.Ref[0].Valid() {
 		out[0] = orderHints[refs.Ref[0]]
 	}

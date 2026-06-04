@@ -96,7 +96,7 @@ func FuzzParseFrameSize(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -150,7 +150,7 @@ func FuzzParseTileInfo(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -282,7 +282,7 @@ func FuzzParseQuantizationParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -354,7 +354,7 @@ func FuzzParseSegmentationParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -438,7 +438,7 @@ func FuzzParseDeltaParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -523,7 +523,7 @@ func FuzzParseLoopFilterParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -619,7 +619,7 @@ func FuzzParseCDEFParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -729,7 +729,7 @@ func FuzzParseRestorationParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -840,7 +840,7 @@ func FuzzParseTransformReferenceParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -950,7 +950,7 @@ func FuzzParseSkipModeParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -1072,7 +1072,7 @@ func FuzzParseFrameModeParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:     true,
-			OrderHint: uint32(i),
+			OrderHint: uint8(i),
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
 				UpscaledWidth:       seq.MaxFrameWidth,
@@ -1194,7 +1194,7 @@ func FuzzParseGlobalMotionParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:        true,
-			OrderHint:    uint32(i),
+			OrderHint:    uint8(i),
 			GlobalMotion: defaultGlobal,
 			Size: FrameSize{
 				CodedWidth:          seq.MaxFrameWidth,
@@ -1327,7 +1327,7 @@ func FuzzParseFilmGrainParams(f *testing.F) {
 	for i := range RefFrames {
 		refs.Frames[i] = ReferenceFrame{
 			Valid:        true,
-			OrderHint:    uint32(i),
+			OrderHint:    uint8(i),
 			GlobalMotion: defaultGlobal,
 			FilmGrain:    defaultFilmGrain,
 			Size: FrameSize{

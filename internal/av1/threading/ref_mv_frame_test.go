@@ -39,7 +39,7 @@ func TestFrameWorkBatchSetupTemporalMotionField(t *testing.T) {
 		Valid: true,
 	}
 	ctx.TemporalMVs = &temporal
-	var refOrderHints [parser.InterRefsPerFrame]uint32
+	var refOrderHints [parser.InterRefsPerFrame]uint8
 	refOrderHints[tile.ReferenceFrameLast] = 0
 	refOrderHints[tile.ReferenceFrameAltref] = 1
 	ctx.ReferenceMVs[tile.ReferenceFrameLast] = tile.TemporalMotionReferenceFrame{

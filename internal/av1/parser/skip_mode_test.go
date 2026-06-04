@@ -24,7 +24,7 @@ func TestParseSkipModeParamsBeforeAfterRefs(t *testing.T) {
 
 	seq := SequenceHeader{EnableOrderHint: true, OrderHintBits: 5}
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter, OrderHint: 16}
-	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint32{15, 17, 14, 18, 13, 19, 12})
+	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint8{15, 17, 14, 18, 13, 19, 12})
 
 	params, err := ParseSkipModeParams(w.bytes(), seq, prefix, size, &refs,
 		TransformReferenceParams{ReferenceMode: ReferenceModeSelect},
@@ -43,7 +43,7 @@ func TestParseSkipModeParamsSecondBeforeRef(t *testing.T) {
 
 	seq := SequenceHeader{EnableOrderHint: true, OrderHintBits: 5}
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter, OrderHint: 16}
-	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint32{12, 14, 11, 10, 9, 8, 7})
+	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint8{12, 14, 11, 10, 9, 8, 7})
 
 	params, err := ParseSkipModeParams(w.bytes(), seq, prefix, size, &refs,
 		TransformReferenceParams{ReferenceMode: ReferenceModeSelect},
@@ -59,7 +59,7 @@ func TestParseSkipModeParamsSecondBeforeRef(t *testing.T) {
 func TestParseSkipModeParamsNoLegalPair(t *testing.T) {
 	seq := SequenceHeader{EnableOrderHint: true, OrderHintBits: 5}
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter, OrderHint: 16}
-	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint32{16, 16, 16, 16, 16, 16, 16})
+	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint8{16, 16, 16, 16, 16, 16, 16})
 
 	params, err := ParseSkipModeParams(nil, seq, prefix, size, &refs,
 		TransformReferenceParams{ReferenceMode: ReferenceModeSelect},
@@ -79,7 +79,7 @@ func TestParseSkipModeParamsAllocs(t *testing.T) {
 	payload := w.bytes()
 	seq := SequenceHeader{EnableOrderHint: true, OrderHintBits: 5}
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter, OrderHint: 16}
-	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint32{15, 17, 14, 18, 13, 19, 12})
+	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint8{15, 17, 14, 18, 13, 19, 12})
 	transformRef := TransformReferenceParams{ReferenceMode: ReferenceModeSelect, BitsRead: 6}
 
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -100,7 +100,7 @@ func BenchmarkParseSkipModeParams(b *testing.B) {
 	payload := w.bytes()
 	seq := SequenceHeader{EnableOrderHint: true, OrderHintBits: 5}
 	prefix := FrameHeaderPrefix{FrameType: FrameTypeInter, OrderHint: 16}
-	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint32{15, 17, 14, 18, 13, 19, 12})
+	size, refs := skipModeRefs(seq, [InterRefsPerFrame]uint8{15, 17, 14, 18, 13, 19, 12})
 	transformRef := TransformReferenceParams{ReferenceMode: ReferenceModeSelect, BitsRead: 6}
 
 	b.ReportAllocs()
@@ -109,7 +109,7 @@ func BenchmarkParseSkipModeParams(b *testing.B) {
 	}
 }
 
-func skipModeRefs(seq SequenceHeader, orderHints [InterRefsPerFrame]uint32) (FrameSize, ReferenceState) {
+func skipModeRefs(seq SequenceHeader, orderHints [InterRefsPerFrame]uint8) (FrameSize, ReferenceState) {
 	var size FrameSize
 	var refs ReferenceState
 	for i := range InterRefsPerFrame {

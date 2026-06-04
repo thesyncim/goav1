@@ -72,8 +72,8 @@ type ReferenceMVStackRequest struct {
 
 	TemporalMVs          *TemporalMotionField
 	OrderHintBits        uint8
-	CurrentOrderHint     uint32
-	ReferenceOrderHints  [referenceFrameCount]uint32
+	CurrentOrderHint     uint8
+	ReferenceOrderHints  [referenceFrameCount]uint8
 	AllowHighPrecisionMV bool
 	ForceIntegerMV       bool
 

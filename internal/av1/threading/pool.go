@@ -204,7 +204,7 @@ type FrameWorkFrameContext struct {
 	FrameMode           parser.FrameModeParams
 	GlobalMotion        parser.GlobalMotionParams
 	FilmGrain           parser.FilmGrainParams
-	ReferenceOrderHints [parser.InterRefsPerFrame]uint32
+	ReferenceOrderHints [parser.InterRefsPerFrame]uint8
 }
 
 // FrameWorkBatch is the decoder context supplied to one frame-work tile batch.

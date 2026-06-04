@@ -1669,7 +1669,7 @@ func (b *FrameWorkBatch) frameWorkCompoundOffsets(refs tile.InterReferencesResul
 	case tile.CompoundTypeAverage:
 		return 8, 8, nil
 	case tile.CompoundTypeDistWtd:
-		if blend.CompoundIndex != 0 || !b.Sequence.EnableOrderHint || b.Sequence.OrderHintBits == 0 || b.Sequence.OrderHintBits > 31 {
+		if blend.CompoundIndex != 0 || !b.Sequence.EnableOrderHint || b.Sequence.OrderHintBits == 0 || b.Sequence.OrderHintBits > 8 {
 			return 0, 0, ErrInvalidBatch
 		}
 		if !refs.Compound || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() {
@@ -1683,7 +1683,7 @@ func (b *FrameWorkBatch) frameWorkCompoundOffsets(refs tile.InterReferencesResul
 	}
 }
 
-func frameWorkDistanceWeightedCompoundOffsets(orderHintBits uint8, currentOrderHint uint32, ref0OrderHint uint32, ref1OrderHint uint32) (int, int, error) {
+func frameWorkDistanceWeightedCompoundOffsets(orderHintBits uint8, currentOrderHint uint8, ref0OrderHint uint8, ref1OrderHint uint8) (int, int, error) {
 	d0, err := frameWorkRelativeOrderHint(orderHintBits, ref1OrderHint, currentOrderHint)
 	if err != nil {
 		return 0, 0, ErrInvalidBatch
@@ -1724,16 +1724,18 @@ func frameWorkDistanceWeightedCompoundOffsets(orderHintBits uint8, currentOrderH
 	return frameWorkQuantDistLookup[i][order], frameWorkQuantDistLookup[i][1-order], nil
 }
 
-func frameWorkRelativeOrderHint(bits uint8, a uint32, b uint32) (int, error) {
-	if bits == 0 || bits > 31 {
+func frameWorkRelativeOrderHint(bits uint8, a uint8, b uint8) (int, error) {
+	if bits == 0 || bits > 8 {
 		return 0, ErrInvalidBatch
 	}
 	limit := uint32(1) << bits
-	if a >= limit || b >= limit {
+	ua := uint32(a)
+	ub := uint32(b)
+	if ua >= limit || ub >= limit {
 		return 0, ErrInvalidBatch
 	}
 	mask := int32(1 << (bits - 1))
-	diff := int32(a) - int32(b)
+	diff := int32(ua) - int32(ub)
 	return int((diff & (mask - 1)) - (diff & mask)), nil
 }
 

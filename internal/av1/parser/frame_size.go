@@ -32,7 +32,7 @@ type FrameSize struct {
 	RefreshFrameFlags        uint8
 	BufferRemovalTimePresent bool
 	BufferRemovalTimes       [32]uint32
-	RefOrderHints            [refFrames]uint32
+	RefOrderHints            [refFrames]uint8
 
 	FrameRefsShortSignaling bool
 	LastFrameIdx            uint8
@@ -168,7 +168,7 @@ func parseRefreshFrameFlags(r *bitstream.Reader, seq SequenceHeader, prefix Fram
 			if err != nil {
 				return err
 			}
-			size.RefOrderHints[i] = uint32(v)
+			size.RefOrderHints[i] = uint8(v)
 		}
 	}
 	return nil
@@ -352,12 +352,12 @@ func sortShortRefInfo(info []shortRefInfo) {
 	}
 }
 
-func relativeOrderHint(bits uint8, a uint32, b uint32) int16 {
+func relativeOrderHint(bits uint8, a uint8, b uint8) int16 {
 	if bits == 0 {
 		return 0
 	}
 	mask := int32(1 << uint(bits-1))
-	diff := int32(a) - int32(b)
+	diff := int32(uint32(a)) - int32(uint32(b))
 	return int16((diff & (mask - 1)) - (diff & mask))
 }
 

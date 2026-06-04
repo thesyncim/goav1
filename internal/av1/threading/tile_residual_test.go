@@ -26,7 +26,7 @@ func TestFrameWorkBatchJobBlockLoopRequest(t *testing.T) {
 			FrameSize:           parser.FrameSize{CodedWidth: 300, Height: 260},
 			TileInfo:            parser.TileInfo{InterpolationFilter: parser.InterpolationSwitchable, UseRefFrameMVS: true},
 			GlobalMotion:        parser.DefaultGlobalMotionParams(),
-			ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 9, 10, 4, 5, 6, 7},
+			ReferenceOrderHints: [parser.InterRefsPerFrame]uint8{1, 9, 10, 4, 5, 6, 7},
 			SkipMode:            parser.SkipModeParams{Allowed: true, Enabled: true},
 			CDEF:                parser.CDEFParams{Bits: 2, StrengthCount: 4},
 			Delta:               parser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
@@ -226,7 +226,7 @@ func TestFrameWorkDeferredReconPreservesScanSlice(t *testing.T) {
 }
 
 func TestFrameWorkBlockLoopRefFrameSideMatchesLibaom(t *testing.T) {
-	refs := [parser.InterRefsPerFrame]uint32{7, 8, 9, 24, 4, 5, 6}
+	refs := [parser.InterRefsPerFrame]uint8{7, 8, 9, 24, 4, 5, 6}
 	side, err := frameWorkBlockLoopRefFrameSide(true, 5, 8, refs)
 	if err != nil {
 		t.Fatal(err)

@@ -18,7 +18,7 @@ func TestTemporalMotionReferencePublishAndResolve(t *testing.T) {
 			FrameType: parser.FrameTypeInter,
 			OrderHint: 9,
 		},
-		ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{1, 2, 3, 4, 5, 6, 7},
+		ReferenceOrderHints: [parser.InterRefsPerFrame]uint8{1, 2, 3, 4, 5, 6, 7},
 	}
 	if err := PublishTemporalMotionReference(event, 2, mvFrame, store); err != nil {
 		t.Fatal(err)

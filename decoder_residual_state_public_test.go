@@ -4890,7 +4890,7 @@ func publicDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
 			FrameHeader:         av1.FrameHeaderPrefix{OrderHint: 9},
 			FrameSize:           av1.FrameSize{CodedWidth: 300, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
 			TileInfo:            av1.TileInfo{InterpolationFilter: av1.InterpolationSwitchable, UseRefFrameMVS: true},
-			ReferenceOrderHints: [av1.InterRefsPerFrame]uint32{1, 9, 10, 4, 5, 6, 7},
+			ReferenceOrderHints: [av1.InterRefsPerFrame]uint8{1, 9, 10, 4, 5, 6, 7},
 			SkipMode:            av1.SkipModeParams{Allowed: true, Enabled: true},
 			CDEF:                av1.CDEFParams{Bits: 2, StrengthCount: 4},
 			Delta:               av1.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},

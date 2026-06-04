@@ -89,7 +89,7 @@ func TestCompoundBlendContextsMatchLibaom(t *testing.T) {
 		EnableOrderHint:  true,
 		OrderHintBits:    4,
 		CurrentOrderHint: 8,
-		RefOrderHint:     [2]uint32{4, 12},
+		RefOrderHint:     [2]uint8{4, 12},
 		HaveTop:          true,
 		HaveLeft:         true,
 	}
@@ -116,7 +116,7 @@ func TestCompoundBlendContextsMatchLibaom(t *testing.T) {
 	if got, err := ctx.CompoundIndexContext(req); err != nil || got != 4 {
 		t.Fatalf("equal-distance compound index ctx=%d err=%v want 4", got, err)
 	}
-	req.RefOrderHint = [2]uint32{7, 12}
+	req.RefOrderHint = [2]uint8{7, 12}
 	if got, err := ctx.CompoundIndexContext(req); err != nil || got != 1 {
 		t.Fatalf("unequal-distance compound index ctx=%d err=%v want 1", got, err)
 	}
@@ -181,7 +181,7 @@ func TestReadCompoundBlend(t *testing.T) {
 		EnableOrderHint:       true,
 		OrderHintBits:         4,
 		CurrentOrderHint:      8,
-		RefOrderHint:          [2]uint32{4, 12},
+		RefOrderHint:          [2]uint8{4, 12},
 		HaveTop:               true,
 		HaveLeft:              true,
 	}
@@ -395,8 +395,8 @@ func FuzzReadCompoundBlend(f *testing.F) {
 			EnableDistWtdCompound: dist,
 			EnableOrderHint:       orderHint,
 			OrderHintBits:         bits,
-			CurrentOrderHint:      cur,
-			RefOrderHint:          [2]uint32{ref0, ref1},
+			CurrentOrderHint:      uint8(cur),
+			RefOrderHint:          [2]uint8{uint8(ref0), uint8(ref1)},
 			HaveTop:               true,
 			HaveLeft:              true,
 		})

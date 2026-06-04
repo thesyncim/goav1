@@ -900,7 +900,7 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		FrameMode:           parser.FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true},
 		GlobalMotion:        globalMotion,
 		FilmGrain:           filmGrain,
-		ReferenceOrderHints: [parser.InterRefsPerFrame]uint32{4, 5, 6, 7, 8, 9, 10},
+		ReferenceOrderHints: [parser.InterRefsPerFrame]uint8{4, 5, 6, 7, 8, 9, 10},
 	}
 	step := FrameWorkStep{
 		Kind: FrameWorkStepTile,

@@ -350,7 +350,7 @@ func TestBuildReferenceMVStackUsesTemporalRefFrameMVS(t *testing.T) {
 		TemporalMVs:      field,
 		OrderHintBits:    5,
 		CurrentOrderHint: 8,
-		ReferenceOrderHints: [referenceFrameCount]uint32{
+		ReferenceOrderHints: [referenceFrameCount]uint8{
 			ReferenceFrameLast: 4,
 		},
 		GlobalMVs:      [2]motion.Vector{{Row: 0, Col: 0}},
@@ -400,7 +400,7 @@ func TestBuildReferenceMVStackTemporalCompoundProjectsBothRefs(t *testing.T) {
 		TemporalMVs:      field,
 		OrderHintBits:    5,
 		CurrentOrderHint: 8,
-		ReferenceOrderHints: [referenceFrameCount]uint32{
+		ReferenceOrderHints: [referenceFrameCount]uint8{
 			ReferenceFrameLast: 4,
 			ReferenceFrameBWD:  12,
 		},
@@ -434,7 +434,7 @@ func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T)
 		UseRefFrameMVS:   true,
 		OrderHintBits:    5,
 		CurrentOrderHint: 8,
-		ReferenceOrderHints: [referenceFrameCount]uint32{
+		ReferenceOrderHints: [referenceFrameCount]uint8{
 			ReferenceFrameLast: 4,
 		},
 	}

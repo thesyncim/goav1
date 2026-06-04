@@ -17,8 +17,8 @@ var ErrInvalidTileWork = errors.New("decoder: invalid tile work")
 // av1_setup_motion_field (order_hint, ref_order_hints, intra-only).
 type mvFrameMeta struct {
 	valid         bool
-	orderHint     uint32
-	refOrderHints [parser.InterRefsPerFrame]uint32
+	orderHint     uint8
+	refOrderHints [parser.InterRefsPerFrame]uint8
 	intraOnly     bool
 }
 
