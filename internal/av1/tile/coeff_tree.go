@@ -41,10 +41,7 @@ func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
 		return
 	}
 	for i := 0; i < int(s.coeffDirtyLen); i++ {
-		pos := int(s.InverseScan[i])
-		if uint(pos) < uint(len(s.Coeffs)) {
-			s.Coeffs[pos] = 0
-		}
+		s.Coeffs[s.InverseScan[i]] = 0
 	}
 	s.coeffDirtyLen = 0
 }
