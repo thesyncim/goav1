@@ -146,6 +146,95 @@ func TestReaderUVLC(t *testing.T) {
 	}
 }
 
+func TestReaderUVLCMatchesBitByBit(t *testing.T) {
+	tests := []struct {
+		name   string
+		src    []byte
+		offset int
+	}{
+		{name: "aligned zero", src: []byte{0b10000000}},
+		{name: "aligned one", src: []byte{0b01000000}},
+		{name: "misaligned small", src: []byte{0b00110110, 0b10000000}, offset: 2},
+		{name: "cross byte", src: []byte{0b00000000, 0b10000000, 0xff}},
+		{name: "misaligned cross byte", src: []byte{0b10000000, 0b00010000, 0b11110000}, offset: 1},
+		{name: "long suffix", src: []byte{0x00, 0x80, 0xff}},
+		{name: "long aligned window", src: []byte{0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+		{name: "long misaligned window", src: []byte{0x80, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, offset: 1},
+		{name: "max valid window", src: []byte{0x00, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 0xfe}},
+		{name: "short suffix", src: []byte{0b00000001}},
+		{name: "eof zeros", src: []byte{0x00}},
+		{name: "overflow", src: []byte{0x00, 0x00, 0x00, 0x00, 0x80}},
+		{name: "overflow fast window", src: []byte{0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff}},
+	}
+
+	for _, tt := range tests {
+		ref := NewReader(tt.src)
+		gotReader := NewReader(tt.src)
+		if err := ref.SkipBits(tt.offset); err != nil {
+			t.Fatalf("%s ref skip: %v", tt.name, err)
+		}
+		if err := gotReader.SkipBits(tt.offset); err != nil {
+			t.Fatalf("%s got skip: %v", tt.name, err)
+		}
+
+		want, wantErr := readUVLCBitByBitForTest(&ref)
+		got, gotErr := gotReader.ReadUVLC()
+		if !errors.Is(gotErr, wantErr) {
+			t.Fatalf("%s err=%v want %v", tt.name, gotErr, wantErr)
+		}
+		if got != want || gotReader.BitsRead() != ref.BitsRead() {
+			t.Fatalf("%s got value=%d bits=%d want value=%d bits=%d", tt.name, got, gotReader.BitsRead(), want, ref.BitsRead())
+		}
+	}
+}
+
+func TestReaderUVLCOverflowConsumesPrefixOnly(t *testing.T) {
+	r := NewReader([]byte{0x00, 0x00, 0x00, 0x00, 0x80})
+	if _, err := r.ReadUVLC(); !errors.Is(err, ErrUVLCOverflow) {
+		t.Fatalf("ReadUVLC err=%v want %v", err, ErrUVLCOverflow)
+	}
+	if r.BitsRead() != 32 {
+		t.Fatalf("ReadUVLC overflow consumed %d bits want 32", r.BitsRead())
+	}
+}
+
+func TestReaderUVLCEOFConsumesAvailableZeros(t *testing.T) {
+	r := NewReader([]byte{0x00})
+	if _, err := r.ReadUVLC(); !errors.Is(err, ErrNotEnoughBits) {
+		t.Fatalf("ReadUVLC err=%v want %v", err, ErrNotEnoughBits)
+	}
+	if r.BitsRead() != 8 {
+		t.Fatalf("ReadUVLC EOF consumed %d bits want 8", r.BitsRead())
+	}
+}
+
+func readUVLCBitByBitForTest(r *Reader) (uint32, error) {
+	leadingZeros := 0
+	for {
+		bit, err := r.ReadBit()
+		if err != nil {
+			return 0, err
+		}
+		if bit != 0 {
+			break
+		}
+		leadingZeros++
+		if leadingZeros >= 32 {
+			return 0, ErrUVLCOverflow
+		}
+	}
+
+	if leadingZeros == 0 {
+		return 0, nil
+	}
+
+	value, err := r.ReadBits(uint8(leadingZeros))
+	if err != nil {
+		return 0, err
+	}
+	return uint32((uint64(1) << uint(leadingZeros)) - 1 + value), nil
+}
+
 func TestReaderTrailingBits(t *testing.T) {
 	r := NewReader([]byte{0b10100000, 0x00})
 	if err := r.SkipBits(2); err != nil {
@@ -197,5 +286,32 @@ func BenchmarkReaderReadBitsMisaligned64(b *testing.B) {
 		r := NewReader(src)
 		_, _ = r.ReadBit()
 		_, _ = r.ReadBits(64)
+	}
+}
+
+func BenchmarkReaderReadUVLC(b *testing.B) {
+	src := []byte{0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadUVLC()
+	}
+}
+
+func BenchmarkReaderReadUVLCShort(b *testing.B) {
+	src := []byte{0x00, 0x80, 0xff}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = r.ReadUVLC()
+	}
+}
+
+func BenchmarkReaderReadUVLCBitByBitReference(b *testing.B) {
+	src := []byte{0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r := NewReader(src)
+		_, _ = readUVLCBitByBitForTest(&r)
 	}
 }

@@ -7,6 +7,7 @@ package bitstream
 import (
 	"encoding/binary"
 	"errors"
+	"math/bits"
 )
 
 var (
@@ -129,26 +130,58 @@ func (r *Reader) SkipBits(n int) error {
 
 // ReadUVLC reads the AV1 uvlc() syntax element.
 func (r *Reader) ReadUVLC() (uint32, error) {
-	leadingZeros := 0
+	leadingZeros := uint8(0)
 	for {
-		bit, err := r.ReadBit()
-		if err != nil {
-			return 0, err
+		if r.bit >= len(r.src)*8 {
+			return 0, ErrNotEnoughBits
 		}
-		if bit == 1 {
-			break
+		byteIndex := r.bit >> 3
+		bitInByte := r.bit & 7
+		if len(r.src)-byteIndex >= 8 && (bitInByte == 0 || len(r.src)-byteIndex >= 9) {
+			word := binary.BigEndian.Uint64(r.src[byteIndex:])
+			if bitInByte != 0 {
+				word = (word << uint(bitInByte)) | uint64(r.src[byteIndex+8]>>uint(8-bitInByte))
+			}
+			zeros := bits.LeadingZeros64(word)
+			if zeros >= 32 {
+				r.bit += 32
+				return 0, ErrUVLCOverflow
+			}
+			leadingZeros := uint8(zeros)
+			if leadingZeros == 0 {
+				r.bit++
+				return 0, nil
+			}
+			suffix := (word << uint(leadingZeros+1)) >> uint(64-leadingZeros)
+			r.bit += int(leadingZeros)*2 + 1
+			return uint32((uint64(1) << uint(leadingZeros)) - 1 + suffix), nil
 		}
-		leadingZeros++
-		if leadingZeros >= 32 {
+		window := r.src[byteIndex] << uint(bitInByte)
+		if window == 0 {
+			zeros := uint8(8 - bitInByte)
+			if leadingZeros+zeros >= 32 {
+				r.bit += int(32 - leadingZeros)
+				return 0, ErrUVLCOverflow
+			}
+			leadingZeros += zeros
+			r.bit += int(zeros)
+			continue
+		}
+		zeros := uint8(bits.LeadingZeros8(window))
+		if leadingZeros+zeros >= 32 {
+			r.bit += int(32 - leadingZeros)
 			return 0, ErrUVLCOverflow
 		}
+		leadingZeros += zeros
+		r.bit += int(zeros) + 1
+		break
 	}
 
 	if leadingZeros == 0 {
 		return 0, nil
 	}
 
-	value, err := r.ReadBits(uint8(leadingZeros))
+	value, err := r.ReadBits(leadingZeros)
 	if err != nil {
 		return 0, err
 	}
