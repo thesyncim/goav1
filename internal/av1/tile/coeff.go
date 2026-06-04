@@ -974,7 +974,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				p1 := padded + 1
 				_ = levelsScratch[s1p1]
 				mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-				brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
 				extra := readBaseRangeFromArrCursor(&reader, brArr, brCtx)
 				level += int(extra)
 			}
@@ -1182,7 +1182,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}, nil
 }
 
-func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
+func readBaseRangeFromArrCursor(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
 	return reader.ReadCDF4HighTokenUnchecked(&arr[context])
 }
 
@@ -1490,7 +1490,7 @@ func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride
 // coeffGeometryTable/coeffPosTable indexing and the Class2D Dimensions() call.
 // The TXB loop has already proven pos and class valid and levels large enough
 // for this geometry.
-func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) int {
+func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) uint8 {
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := int(geo.stride)
@@ -1534,25 +1534,25 @@ func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coef
 	switch class {
 	case transform.Class2D:
 		if geo.txTall && row < 2 {
-			return ctx + 11
+			return uint8(ctx + 11)
 		}
 		if geo.txWide && col < 2 {
-			return ctx + 16
+			return uint8(ctx + 16)
 		}
 		if row+col < 2 {
-			return ctx + 1
+			return uint8(ctx + 1)
 		}
 		if row+col < 4 {
-			return ctx + 6
+			return uint8(ctx + 6)
 		}
-		return ctx + 21
+		return uint8(ctx + 21)
 	case transform.ClassHoriz:
-		return ctx + coeff1DContextOffset(col)
+		return uint8(ctx + coeff1DContextOffset(col))
 	}
-	return ctx + coeff1DContextOffset(row)
+	return uint8(ctx + coeff1DContextOffset(row))
 }
 
-func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) int {
+func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) uint8 {
 	p := posSlice[pos]
 	if pos == 0 {
 		return 0
@@ -1569,12 +1569,12 @@ func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, str
 	mag := clipMax3(levels[s1]) + clipMax3(levels[p1]) +
 		clipMax3(levels[s1p1]) + clipMax3(levels[s2]) + clipMax3(levels[p2])
 	ctx := minInt((mag+1)>>1, 4)
-	return ctx + int(p.lower2DOffset)
+	return uint8(ctx + int(p.lower2DOffset))
 }
 
 // coeffBRContextFast is the hot-loop variant of CoeffBRContext using the
 // hoisted geometry and position slice.
-func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) int {
+func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) uint8 {
 	p := posSlice[pos]
 	padded := int(p.padded)
 	stride := int(geo.stride)
@@ -1596,9 +1596,9 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 			minInt(int(levels[s1p1]), MaxBaseBRRange)
 		mag = minInt((mag+1)>>1, 6)
 		if row < 2 && col < 2 {
-			return mag + 7
+			return uint8(mag + 7)
 		}
-		return mag + 14
+		return uint8(mag + 14)
 	}
 
 	mag := int(levels[p1]) + int(levels[s1])
@@ -1612,26 +1612,26 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 	}
 	mag = minInt((mag+1)>>1, 6)
 	if pos == 0 {
-		return mag
+		return uint8(mag)
 	}
 	switch class {
 	case transform.Class2D:
 		if row < 2 && col < 2 {
-			return mag + 7
+			return uint8(mag + 7)
 		}
 	case transform.ClassHoriz:
 		if col == 0 {
-			return mag + 7
+			return uint8(mag + 7)
 		}
 	case transform.ClassVert:
 		if row == 0 {
-			return mag + 7
+			return uint8(mag + 7)
 		}
 	}
-	return mag + 14
+	return uint8(mag + 14)
 }
 
-func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) int {
+func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) uint8 {
 	p := posSlice[pos]
 	padded := int(p.padded)
 	s1 := padded + stride
@@ -1639,10 +1639,10 @@ func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride i
 	p1 := padded + 1
 	_ = levels[s1p1]
 	mag := int(levels[p1]) + int(levels[s1]) + int(levels[s1p1])
-	return minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+	return uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
 }
 
-func coeffBRContextEOBFast(posSlice []coeffPos, class transform.Class, pos int) int {
+func coeffBRContextEOBFast(posSlice []coeffPos, class transform.Class, pos int) uint8 {
 	if pos == 0 {
 		return 0
 	}
@@ -1664,7 +1664,7 @@ func coeffBRContextEOBFast(posSlice []coeffPos, class transform.Class, pos int) 
 	return 14
 }
 
-func coeffLowerLevelsCtxEOBFast(maxEOB int, scanIndex int) int {
+func coeffLowerLevelsCtxEOBFast(maxEOB int, scanIndex int) uint8 {
 	if scanIndex == 0 {
 		return 0
 	}

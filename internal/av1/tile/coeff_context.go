@@ -41,7 +41,7 @@ func (c *CoeffEntropyContext) TXBContext(req CoeffContextRequest) (TXBContext, e
 }
 
 func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) (TXBContext, error) {
-	dcSign := 0
+	dcSign := int8(0)
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
@@ -70,17 +70,17 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 		}
 	}
 
-	txbSkipCtx := 0
+	txbSkipCtx := uint8(0)
 	if req.Plane == 0 {
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 			top := coeffContextMagnitude(c.Above[plane][x4 : x4+int(txDims.W4)])
 			left := coeffContextMagnitude(c.Left[plane][y4 : y4+int(txDims.H4)])
-			txbSkipCtx = int(coeffSkipContexts[top][left])
+			txbSkipCtx = coeffSkipContexts[top][left]
 		}
 	} else {
 		ctxBase := coeffEntropyBase(c.Above[plane][x4:x4+int(txDims.W4)],
 			c.Left[plane][y4:y4+int(txDims.H4)])
-		ctxOffset := 7
+		ctxOffset := uint8(7)
 		if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
 			ctxOffset = 10
 		}
@@ -88,8 +88,8 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 	}
 
 	return TXBContext{
-		TXBSkipContext: uint8(txbSkipCtx),
-		DCSignContext:  uint8(coeffDCSignContext(dcSign)),
+		TXBSkipContext: txbSkipCtx,
+		DCSignContext:  coeffDCSignContext(dcSign),
 	}, nil
 }
 
@@ -250,10 +250,10 @@ func coeffVisibleSpan(req CoeffContextRequest, txDims TransformDimensions) (int,
 	return visibleW, visibleH, nil
 }
 
-func coeffContextMagnitude(values []uint8) int {
-	out := 0
+func coeffContextMagnitude(values []uint8) uint8 {
+	out := uint8(0)
 	for _, value := range values {
-		out |= int(value)
+		out |= value
 	}
 	out &= CoeffContextMask
 	if out > 4 {
@@ -262,8 +262,8 @@ func coeffContextMagnitude(values []uint8) int {
 	return out
 }
 
-func coeffEntropyBase(above []uint8, left []uint8) int {
-	base := 0
+func coeffEntropyBase(above []uint8, left []uint8) uint8 {
+	base := uint8(0)
 	for _, value := range above {
 		if value != 0 {
 			base++
@@ -279,7 +279,7 @@ func coeffEntropyBase(above []uint8, left []uint8) int {
 	return base
 }
 
-func coeffDCSignContext(dcSign int) int {
+func coeffDCSignContext(dcSign int8) uint8 {
 	switch {
 	case dcSign < 0:
 		return 1
