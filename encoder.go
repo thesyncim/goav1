@@ -195,6 +195,30 @@ func AppendEncoderWebRTCDependencyDescriptor(dst []byte, structure EncoderWebRTC
 	return internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, info, firstPacketInFrame, lastPacketInFrame, attachStructure)
 }
 
+func EncoderWebRTCRTPPacketDependencyDescriptorSize(packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, attachStructureOnFirstPacket bool) (int, bool, error) {
+	flags, ok := NextRTPPacketDependencyDescriptorFlags(packetizer)
+	if !ok {
+		return 0, false, nil
+	}
+	size, err := internalencoder.WebRTCDependencyDescriptorSize(structure, info, attachStructureOnFirstPacket && flags.FirstPacketInFrame)
+	if err != nil {
+		return 0, true, err
+	}
+	return size, true, nil
+}
+
+func AppendEncoderWebRTCRTPPacketDependencyDescriptor(dst []byte, packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, attachStructureOnFirstPacket bool) ([]byte, bool, error) {
+	flags, ok := NextRTPPacketDependencyDescriptorFlags(packetizer)
+	if !ok {
+		return dst, false, nil
+	}
+	out, err := internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, info, flags.FirstPacketInFrame, flags.LastPacketInFrame, attachStructureOnFirstPacket && flags.FirstPacketInFrame)
+	if err != nil {
+		return dst, true, err
+	}
+	return out, true, nil
+}
+
 func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
 	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
 }
