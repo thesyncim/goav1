@@ -983,7 +983,7 @@ func (c *Cursor) ReadCDF4Unchecked(cdf *CDF) int {
 // CDF up to four times, summing symbols, and stopping early when a symbol below
 // 3 is observed. The caller must prove c and cdf are non-nil and cdf has
 // exactly four symbols.
-func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) int {
+func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 	if c.allowCDFUpdate {
 		return c.readCDF4HighTokenUpdateKnown(&cdf.values)
 	}
@@ -1184,7 +1184,7 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 }
 
 //go:nosplit
-func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
+func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
@@ -1192,7 +1192,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 	cnt := int32(c.cnt)
 	tellOffs := int32(c.tellOffs)
 
-	level := 0
+	level := uint8(0)
 	for i := 0; i < 4; i++ {
 		rangeValue := rng
 		rngHi := rangeValue >> 8
@@ -1202,7 +1202,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 		c1 := uint32(values[1])
 		c2 := uint32(values[2])
 		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-		symbol := 0
+		symbol := uint8(0)
 		if coded < lower {
 			symbol = 1
 			upper = lower
@@ -1245,7 +1245,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) int {
 }
 
 //go:nosplit
-func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) int {
+func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) uint8 {
 	src := c.src
 	pos := int(c.pos)
 	dif := c.dif
@@ -1253,7 +1253,7 @@ func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) in
 	cnt := int32(c.cnt)
 	tellOffs := int32(c.tellOffs)
 
-	level := 0
+	level := uint8(0)
 	for i := 0; i < 4; i++ {
 		rangeValue := rng
 		rngHi := rangeValue >> 8
@@ -1263,7 +1263,7 @@ func (c *Cursor) readCDF4HighTokenUpdateKnown(values *[MaxSymbols + 1]uint16) in
 		c1 := uint32(values[1])
 		c2 := uint32(values[2])
 		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-		symbol := 0
+		symbol := uint8(0)
 		if coded < lower {
 			symbol = 1
 			upper = lower

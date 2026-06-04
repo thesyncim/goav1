@@ -329,10 +329,10 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 				if got4Symbol := got.ReadCDF4Unchecked(&got4); got4Symbol != want4 {
 					t.Fatalf("cdf4[%d]=%d want %d", i, got4Symbol, want4)
 				}
-				wantHi := 0
+				wantHi := uint8(0)
 				for j := 0; j < 4; j++ {
 					sym := ref.ReadCDF4Unchecked(&refHi)
-					wantHi += sym
+					wantHi += uint8(sym)
 					if sym < 3 {
 						break
 					}
@@ -876,7 +876,7 @@ func benchmarkCursorCDF4HighTokenStream(b *testing.B, update bool) {
 			b.Fatal(err)
 		}
 		for range benchSymbolsPerOp {
-			sum += c.ReadCDF4HighTokenUnchecked(&cdf)
+			sum += int(c.ReadCDF4HighTokenUnchecked(&cdf))
 		}
 	}
 	benchmarkReaderSink = sum
