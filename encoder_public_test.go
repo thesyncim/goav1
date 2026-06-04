@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"bytes"
 	"testing"
 
 	av1 "github.com/thesyncim/goav1"
@@ -45,5 +46,36 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	}
 	if _, err := av1.ValidateEncoderTemporalUnitFrames(frames[:], state, av1.EncoderRateControlCBR); err != nil {
 		t.Fatalf("ValidateEncoderTemporalUnitFrames: %v", err)
+	}
+}
+
+func TestPublicEncoderLowOverheadOBU(t *testing.T) {
+	unit := av1.EncoderOBU{
+		Type:       av1.OBUFrame,
+		TemporalID: 1,
+		SpatialID:  1,
+		Payload:    []byte{0xaa, 0xbb},
+	}
+	size, err := av1.EncoderLowOverheadOBUSize(unit)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadOBUSize: %v", err)
+	}
+	var buf [8]byte
+	out, err := av1.AppendEncoderLowOverheadOBU(buf[:0], unit)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadOBU: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("encoded len=%d want %d", len(out), size)
+	}
+	parsed, consumed, err := av1.ParseLowOverheadOBU(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(out) || parsed.Header.Type != av1.OBUFrame || parsed.Header.TemporalID != 1 || parsed.Header.SpatialID != 1 {
+		t.Fatalf("parsed header=%+v consumed=%d", parsed.Header, consumed)
+	}
+	if !bytes.Equal(parsed.Payload, unit.Payload) {
+		t.Fatalf("payload=% x want % x", parsed.Payload, unit.Payload)
 	}
 }

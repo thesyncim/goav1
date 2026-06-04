@@ -75,6 +75,7 @@ type EncoderConfig = internalencoder.Config
 type EncoderFrameType = internalencoder.FrameType
 type EncoderFrameEncodeSettings = internalencoder.FrameEncodeSettings
 type EncoderReferenceBufferState = internalencoder.ReferenceBufferState
+type EncoderOBU = internalencoder.OBU
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -124,4 +125,12 @@ func ValidateEncoderTemporalUnitFrames(frames []EncoderFrameEncodeSettings, stat
 
 func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolution) (EncoderRational, bool) {
 	return internalencoder.SupportedResolutionScaling(from, to)
+}
+
+func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {
+	return internalencoder.LowOverheadOBUSize(unit)
+}
+
+func AppendEncoderLowOverheadOBU(dst []byte, unit EncoderOBU) ([]byte, error) {
+	return internalencoder.AppendLowOverheadOBU(dst, unit)
 }
