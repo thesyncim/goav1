@@ -92,9 +92,9 @@ type ReferenceMVStackResult struct {
 
 type referenceMVStackSearch struct {
 	Stack         ReferenceMVStack
-	RowMatches    int
-	ColumnMatches int
-	NewMVMatches  int
+	RowMatches    uint8
+	ColumnMatches uint8
+	NewMVMatches  uint8
 }
 
 // IntrabcReferenceDVStack returns the spatial DV candidates used by intrabc's
@@ -496,7 +496,7 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 	}
 	c.scanOuterReferenceMVs(req, dims, gridMaxRowOffset, gridMaxColOffset, processedRows, processedCols, &search)
 	refMatchCount := boolInt(search.RowMatches > 0) + boolInt(search.ColumnMatches > 0)
-	modeContext := referenceMVModeContext(nearestMatch, refMatchCount, search.NewMVMatches) | modeContextFlags
+	modeContext := referenceMVModeContext(nearestMatch, refMatchCount, int(search.NewMVMatches)) | modeContextFlags
 	sortReferenceMVStack(&search.Stack, 0, int(nearestCount))
 
 	if req.References.Compound {
@@ -524,9 +524,9 @@ func (c *BlockModeContext) BuildReferenceMVStack(req ReferenceMVStackRequest) (R
 		Stack:         search.Stack,
 		ModeContext:   modeContext,
 		NearestCount:  nearestCount,
-		RowMatches:    uint8(search.RowMatches),
-		ColumnMatches: uint8(search.ColumnMatches),
-		NewMVMatches:  uint8(search.NewMVMatches),
+		RowMatches:    search.RowMatches,
+		ColumnMatches: search.ColumnMatches,
+		NewMVMatches:  search.NewMVMatches,
 	}
 	if debugRefMVEnabled {
 		debugReferenceMVStack(req, &result)
@@ -804,8 +804,8 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req ReferenceMVStackRequest, di
 		}
 		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-			result.RowMatches += matches
-			result.NewMVMatches += newMatches
+			result.RowMatches += uint8(matches)
+			result.NewMVMatches += uint8(newMatches)
 		}
 		off += step
 	}
@@ -876,8 +876,8 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req ReferenceMVStackRequest, dim
 		}
 		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-			result.ColumnMatches += matches
-			result.NewMVMatches += newMatches
+			result.ColumnMatches += uint8(matches)
+			result.NewMVMatches += uint8(newMatches)
 		}
 		off += step
 	}
@@ -967,8 +967,8 @@ func (c *BlockModeContext) scanTopRightReferenceMV(req ReferenceMVStackRequest, 
 		return
 	}
 	matches, newMatches := result.Stack.addDirectCandidate(candidate, size, req.References, 4, req.GlobalMVs, req.GlobalMotionType)
-	result.RowMatches += matches
-	result.NewMVMatches += newMatches
+	result.RowMatches += uint8(matches)
+	result.NewMVMatches += uint8(newMatches)
 }
 
 func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions) (int, int, int, int) {
@@ -1025,7 +1025,7 @@ func referenceMVSearchOffsets(req ReferenceMVStackRequest, dims BlockDimensions)
 }
 
 func (c *BlockModeContext) scanOuterReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, maxRowOffset int, maxColOffset int, processedRows int, processedCols int, result *referenceMVStackSearch) {
-	var dummyNewMV int
+	var dummyNewMV uint8
 	c.scanGridBlockReferenceMV(req, -1, -1, &result.RowMatches, &dummyNewMV, &result.Stack)
 	rowAdj := 0
 	if dims.H4 < 2 && req.MIRow&1 != 0 {
@@ -1069,7 +1069,7 @@ func (c *BlockModeContext) scanOuterIntrabcDVs(req ReferenceMVStackRequest, dims
 	}
 }
 
-func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, rowOffset int, maxRowOffset int, processedRows *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, rowOffset int, maxRowOffset int, processedRows *int, matches *uint8, newMatches *uint8, stack *ReferenceMVStack) {
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
 	end := minInt(int(dims.W4), MaxBlockModeSlots-x4)
@@ -1129,8 +1129,8 @@ func (c *BlockModeContext) scanGridRowReferenceMVs(req ReferenceMVStackRequest, 
 			continue
 		}
 		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-		*matches += m
-		*newMatches += n
+		*matches += uint8(m)
+		*newMatches += uint8(n)
 		i += step
 	}
 }
@@ -1185,7 +1185,7 @@ func (c *BlockModeContext) scanGridRowIntrabcDVs(req ReferenceMVStackRequest, di
 	}
 }
 
-func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, colOffset int, maxColOffset int, processedCols *int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, dims BlockDimensions, colOffset int, maxColOffset int, processedCols *int, matches *uint8, newMatches *uint8, stack *ReferenceMVStack) {
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
 	end := minInt(int(dims.H4), MaxBlockModeSlots-y4)
@@ -1243,8 +1243,8 @@ func (c *BlockModeContext) scanGridColReferenceMVs(req ReferenceMVStackRequest, 
 			continue
 		}
 		m, n := stack.addDirectCandidate(candidate, size, req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
-		*matches += m
-		*newMatches += n
+		*matches += uint8(m)
+		*newMatches += uint8(n)
 		i += step
 	}
 }
@@ -1299,7 +1299,7 @@ func (c *BlockModeContext) scanGridColIntrabcDVs(req ReferenceMVStackRequest, di
 	}
 }
 
-func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *int, newMatches *int, stack *ReferenceMVStack) {
+func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest, rowOffset int, colOffset int, matches *uint8, newMatches *uint8, stack *ReferenceMVStack) {
 	x := int(req.X4) + colOffset
 	y := int(req.Y4) + rowOffset
 	candidate, size, ok := c.gridInterMotion(x, y)
@@ -1384,8 +1384,8 @@ func (c *BlockModeContext) scanGridBlockReferenceMV(req ReferenceMVStackRequest,
 		}
 	}
 	m, n := stack.addDirectCandidate(candidate, size, req.References, 4, req.GlobalMVs, req.GlobalMotionType)
-	*matches += m
-	*newMatches += n
+	*matches += uint8(m)
+	*newMatches += uint8(n)
 }
 
 func (c *BlockModeContext) scanGridBlockIntrabcDV(req ReferenceMVStackRequest, rowOffset int, colOffset int, weight uint16, stack *ReferenceMVStack) {

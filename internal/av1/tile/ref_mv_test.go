@@ -1060,7 +1060,7 @@ func TestScanOuterBlockReferenceMVUsesSBLeftHistory(t *testing.T) {
 	ctx.SBLeftBlockSizeGrid[0][29] = BlockSize8x8
 	ctx.SBLeftBlockSizeVisitedGrid[0][29] = 1
 
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	req := ReferenceMVStackRequest{
 		Size:       BlockSize8x8,
@@ -1097,7 +1097,7 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	ctx.SBLeftBlockSizeGrid[0][29] = BlockSize8x8
 	ctx.SBLeftBlockSizeVisitedGrid[0][29] = 1
 
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	req := ReferenceMVStackRequest{
 		Size:       BlockSize8x8,
@@ -1135,7 +1135,7 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary(t *testing.T) {
 	// y4<0 case: block at (X4=16, Y4=0) inside topmost SB row of tile.
 	// mi_row=0, tile_row_start=0, so the (-1, -1) lookup at y=-1 crosses
 	// the tile boundary (mi_row + y = -1 < tile_row_start=0).
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	reqTop := ReferenceMVStackRequest{
 		Size:           BlockSize8x8,
@@ -1191,7 +1191,7 @@ func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 	ctx.SBTopBlockSizeGrid[0][1] = BlockSize8x8
 	ctx.SBTopBlockSizeVisitedGrid[0][1] = 1
 
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	req := ReferenceMVStackRequest{
 		Size:           BlockSize8x16,
@@ -1268,7 +1268,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 	ctx.SBDiagonalBlockSizeGrid[0][0] = BlockSize64x64
 	ctx.SBDiagonalBlockSizeVisitedGrid[0][0] = 1
 
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	req := ReferenceMVStackRequest{
 		Size:       BlockSize64x64,
@@ -1344,7 +1344,7 @@ func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
 	ctx.SBLeftBlockSizeVisitedGrid[0][11] = 1
 
 	processedCols := 4
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize8x8.Dimensions()
 	if !ok {
@@ -1385,7 +1385,7 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	ctx.SBLeftBlockSizeVisitedGrid[0][11] = 1
 
 	processedCols := 4
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize8x8.Dimensions()
 	if !ok {
@@ -1444,7 +1444,7 @@ func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
 	ctx.SBLeftBlockSizeVisitedGrid[4][19] = 1
 
 	processedCols := 6
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize16x8.Dimensions()
 	if !ok {
@@ -1492,7 +1492,7 @@ func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 	ctx.GridMotionValid[3][3] = 0
 
 	processedCols := 2
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize16x8.Dimensions()
 	if !ok {
@@ -1551,7 +1551,7 @@ func TestScanGridRowReferenceMVsUsesSBTopHistory(t *testing.T) {
 	ctx.SBTopBlockSizeVisitedGrid[0][5] = 1
 
 	processedRows := 0
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize4x8.Dimensions()
 	if !ok {
@@ -1593,7 +1593,7 @@ func TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop(t *testing.T) {
 	ctx.SBTopBlockSizeVisitedGrid[0][5] = 1
 
 	processedRows := 0
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize4x8.Dimensions()
 	if !ok {
@@ -1629,7 +1629,7 @@ func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
 	ctx.GridMotionValid[3][3] = 0
 
 	processedRows := 2
-	var matches, newMatches int
+	var matches, newMatches uint8
 	stack := ReferenceMVStack{}
 	dims, ok := BlockSize8x16.Dimensions()
 	if !ok {
