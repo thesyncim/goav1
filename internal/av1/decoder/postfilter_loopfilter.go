@@ -247,30 +247,6 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 		return plan, err
 	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	if err := frameWorkLoopFilterForEachValidatedBlock(filterMap, cols, rows, &plan, func(record *threading.FrameWorkLoopFilterBlockRecord) error {
-		levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, record)
-		if err != nil {
-			return err
-		}
-		frameWorkAccumulateLoopFilterLevelStats(levelCtx, levels, &plan)
-		plan.TransformReadyBlocks++
-		if record.SkipTransform {
-			plan.SkipTransformBlocks++
-		}
-		if err := frameWorkAppendLoopFilterLumaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning.bounds[loopfilter.PlaneY], levels); err != nil {
-			return err
-		}
-		return frameWorkAppendLoopFilterChromaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning, levels)
-	}); err != nil {
-		return plan, err
-	}
-	return plan, nil
-}
-
-func frameWorkLoopFilterForEachValidatedBlock(filterMap FrameWorkLoopFilterMap, cols int, rows int, plan *FrameWorkLoopFilterPostFilterPlan, visit func(*threading.FrameWorkLoopFilterBlockRecord) error) error {
-	if plan == nil || visit == nil {
-		return threading.ErrInvalidBatch
-	}
 	stride := int(filterMap.Stride)
 	for row := 0; row < rows; row++ {
 		base := row * stride
@@ -281,22 +257,34 @@ func frameWorkLoopFilterForEachValidatedBlock(filterMap FrameWorkLoopFilterMap, 
 				continue
 			}
 			if err := frameWorkValidateLoopFilterRecord(record, col, row, cols, rows); err != nil {
-				return err
+				return plan, err
 			}
 			plan.Cells++
 			if int(record.Block.MICol) != col || int(record.Block.MIRow) != row {
 				continue
 			}
 			plan.Blocks++
-			if err := visit(record); err != nil {
-				return err
+			levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, record)
+			if err != nil {
+				return plan, err
+			}
+			frameWorkAccumulateLoopFilterLevelStats(levelCtx, levels, &plan)
+			plan.TransformReadyBlocks++
+			if record.SkipTransform {
+				plan.SkipTransformBlocks++
+			}
+			if err := frameWorkAppendLoopFilterLumaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning.bounds[loopfilter.PlaneY], levels); err != nil {
+				return plan, err
+			}
+			if err := frameWorkAppendLoopFilterChromaEdges(ctx, levelCtx, filterMap, record, &plan, req.Edges, planning, levels); err != nil {
+				return plan, err
 			}
 		}
 	}
 	if plan.Missing != 0 {
-		return threading.ErrInvalidBatch
+		return plan, threading.ErrInvalidBatch
 	}
-	return nil
+	return plan, nil
 }
 
 // ApplyLoopFilterEdges validates the decoded loop-filter map, stores edge
@@ -373,6 +361,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 	if len(edges) <= frameWorkLoopFilterApplyScheduleCap {
 		var schedule [frameWorkLoopFilterApplyScheduleCap]uint32
 		var counts [3][2]uint32
+		var levelUsed [loopfilter.MaxLevel + 1]bool
 		for i := range edges {
 			edge := &edges[i]
 			if edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
@@ -380,6 +369,18 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 				return loopfilter.ErrInvalidFilter
 			}
 			counts[edge.Plane][edge.Edge]++
+			levelUsed[edge.Level] = true
+		}
+		var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
+		for level := uint8(1); level <= loopfilter.MaxLevel; level++ {
+			if !levelUsed[level] {
+				continue
+			}
+			th, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness)
+			if err != nil {
+				return err
+			}
+			thresholds[level] = th
 		}
 		var starts [3][2]uint32
 		next := uint32(0)
@@ -396,7 +397,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 			schedule[pos] = uint32(i)
 			positions[edge.Plane][edge.Edge] = pos + 1
 		}
-		if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule[:len(edges)], starts, counts, maxPlane); err != nil {
+		if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule[:len(edges)], starts, counts, maxPlane, &thresholds); err != nil {
 			return err
 		}
 		if result.Edges-before != expected {
@@ -480,9 +481,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(r
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, starts [3][2]uint32, counts [3][2]uint32, maxPlane loopfilter.Plane) error {
-	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
-	var thresholdReady [loopfilter.MaxLevel + 1]bool
+func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, starts [3][2]uint32, counts [3][2]uint32, maxPlane loopfilter.Plane, thresholds *[loopfilter.MaxLevel + 1]loopfilter.Thresholds) error {
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
 	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
@@ -503,14 +502,6 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *Fram
 			end := start + int(counts[plane][edgeKind])
 			for _, edgeIndex := range schedule[start:end] {
 				edge := &edges[edgeIndex]
-				if !thresholdReady[edge.Level] {
-					th, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
-					if err != nil {
-						return err
-					}
-					thresholds[edge.Level] = th
-					thresholdReady[edge.Level] = true
-				}
 				x := int32(edge.X4) * 4
 				y := int32(edge.Y4) * 4
 				length := int32(edge.Length4) * 4

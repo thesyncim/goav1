@@ -144,9 +144,12 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 					copy(got.Residual[:], residual[:16])
 					blockX := int(block.Block.X4) * 4
 					blockY := int(block.Block.Y4) * 4
+					planeX := int(plane.X)
+					planeY := int(plane.Y)
+					planeStride := int(plane.Stride)
 					for yy := 0; yy < 4; yy++ {
-						row := (blockY + yy - plane.Y) * plane.Stride
-						col := blockX - plane.X
+						row := (blockY + yy - planeY) * planeStride
+						col := blockX - planeX
 						copy(got.Final[yy*4:yy*4+4], plane.Pix[row+col:row+col+4])
 					}
 					return nil
@@ -206,17 +209,21 @@ func libaomResidualForBlock(ctx decoder.FrameWorkBatch, qIndex uint8, visit tile
 	if err != nil {
 		return nil, err
 	}
-	dequant := make([]int32, scanSize.Width*scanSize.Height)
-	txScale, err := quantize.TransformScale(size.Width, size.Height)
+	width := int(size.Width)
+	height := int(size.Height)
+	scanW := int(scanSize.Width)
+	scanH := int(scanSize.Height)
+	dequant := make([]int32, scanW*scanH)
+	txScale, err := quantize.TransformScale(width, height)
 	if err != nil {
 		return nil, err
 	}
-	if err := quantize.DequantizeBlockScaled(dequant, scanSize.Height, block.Coeffs, scanSize.Height, scanSize.Width, scanSize.Height, q, txScale); err != nil {
+	if err := quantize.DequantizeBlockScaled(dequant, scanH, block.Coeffs, scanH, scanW, scanH, q, txScale); err != nil {
 		return nil, err
 	}
-	residual := make([]int16, size.Width*size.Height)
+	residual := make([]int16, width*height)
 	if lossless {
-		if err := transform.InverseWHT4x4Block(residual, size.Width, dequant, scanSize.Height, int(block.Result.EOB)); err != nil {
+		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanH, int(block.Result.EOB)); err != nil {
 			return nil, err
 		}
 		return residual, nil
@@ -226,7 +233,7 @@ func libaomResidualForBlock(ctx decoder.FrameWorkBatch, qIndex uint8, visit tile
 		return nil, err
 	}
 	scratch := make([]int32, scratchLen)
-	if err := transform.InverseBlock(residual, size.Width, dequant, scanSize.Height, scratch, size, block.Transform); err != nil {
+	if err := transform.InverseBlock(residual, width, dequant, scanH, scratch, size, block.Transform); err != nil {
 		return nil, err
 	}
 	return residual, nil
