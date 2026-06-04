@@ -28,7 +28,7 @@ type BlockCoeffRequest struct {
 }
 
 type BlockCoeffBlock struct {
-	Plane     int
+	Plane     uint8
 	Block     TransformBlock
 	Transform transform.Type
 
@@ -124,7 +124,7 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	var chromaPrep [2]chromaCoeffPlanePrep
 	chromaVisit := func(block ChromaCoeffBlock) error {
 		scratch.block = BlockCoeffBlock{
-			Plane:     block.Plane,
+			Plane:     uint8(block.Plane),
 			Block:     block.Block,
 			Transform: block.Transform,
 			Result:    block.Result,

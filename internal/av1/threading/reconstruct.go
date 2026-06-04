@@ -339,7 +339,7 @@ func frameWorkBlockCoeffVisibleSize(block tile.TransformBlock, size transform.Si
 	return visibleWidth, visibleHeight, nil
 }
 
-func (b *FrameWorkBatch) blockCoeffPlane(tilePlane int) (FrameWorkPlane, uint, uint, error) {
+func (b *FrameWorkBatch) blockCoeffPlane(tilePlane uint8) (FrameWorkPlane, uint, uint, error) {
 	switch tilePlane {
 	case 0:
 		return FrameWorkPlaneY, 0, 0, nil

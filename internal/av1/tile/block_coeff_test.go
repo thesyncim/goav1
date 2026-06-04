@@ -47,7 +47,7 @@ func TestDecodeBlockCoefficientsRunsTransformThenPlanes(t *testing.T) {
 	if total.TXBs != 3 || total.TXBs != total.NonZero+total.AllZero {
 		t.Fatalf("total stats=%+v want 3 txbs and consistent counts", total)
 	}
-	wantPlanes := []int{0, 1, 2}
+	wantPlanes := []uint8{0, 1, 2}
 	if len(visits) != len(wantPlanes) {
 		t.Fatalf("visits=%d want %d", len(visits), len(wantPlanes))
 	}

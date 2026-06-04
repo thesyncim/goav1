@@ -15,7 +15,7 @@ func TestHotStructSizes(t *testing.T) {
 	}{
 		{name: "Event", size: unsafe.Sizeof(Event{}), max: 6 * hotStructKiB},
 		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 576 * hotStructKiB},
-		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 28},
+		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 208},
 	}

@@ -389,9 +389,9 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanChromaSubsamplingGeom
 			wantU := FrameWorkLoopFilterPostFilterEdge{
 				Plane:      loopfilter.PlaneU,
 				Edge:       loopfilter.EdgeVertical,
-				X4:         int32(tt.wantX4),
-				Y4:         int32(tt.wantY4),
-				Length4:    int32(tt.wantLen),
+				X4:         uint16(tt.wantX4),
+				Y4:         uint16(tt.wantY4),
+				Length4:    uint16(tt.wantLen),
 				Level:      7,
 				Transform:  tile.TransformSize8x8,
 				Width:      6,
@@ -1096,7 +1096,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := loopfilter.FilterEdgeByWidth(edge.Width, wantPlane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+		if err := loopfilter.FilterEdgeByWidth(edge.Width, wantPlane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, int32(edge.X4)*4, int32(edge.Y4)*4, int32(edge.Length4)*4, thresholds); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2160,7 +2160,7 @@ func testApplyFrameWorkLoopFilterEdgeDirect(t *testing.T, output frame.Frame, sh
 	if !ok {
 		t.Fatalf("missing output plane for edge=%+v", edge)
 	}
-	if err := loopfilter.FilterEdgeByWidth(edge.Width, plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, edge.X4*4, edge.Y4*4, edge.Length4*4, thresholds); err != nil {
+	if err := loopfilter.FilterEdgeByWidth(edge.Width, plane, output.Layout.BytesPerSample, output.Format.BitDepth, edge.Edge, int32(edge.X4)*4, int32(edge.Y4)*4, int32(edge.Length4)*4, thresholds); err != nil {
 		t.Fatal(err)
 	}
 }

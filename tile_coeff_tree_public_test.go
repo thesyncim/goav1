@@ -142,10 +142,11 @@ func TestPublicDecodeTileBlockCoefficients(t *testing.T) {
 		},
 		LumaType: av1.TransformTypeDCTDCT,
 	}, func(block av1.TileBlockCoeffBlock) error {
-		if block.Plane < 0 || block.Plane >= len(counts) {
+		plane := int(block.Plane)
+		if plane >= len(counts) {
 			t.Fatalf("invalid plane=%d", block.Plane)
 		}
-		counts[block.Plane]++
+		counts[plane]++
 		if block.Plane == 0 {
 			luma = block
 		}
@@ -199,10 +200,11 @@ func TestPublicDecodeTileBlockCoefficientsChroma420(t *testing.T) {
 		LumaType:   av1.TransformTypeDCTDCT,
 		ChromaType: [2]av1.TransformType{av1.TransformTypeDCTDCT, av1.TransformTypeDCTDCT},
 	}, func(block av1.TileBlockCoeffBlock) error {
-		if block.Plane < 0 || block.Plane >= len(counts) {
+		plane := int(block.Plane)
+		if plane >= len(counts) {
 			t.Fatalf("invalid plane=%d", block.Plane)
 		}
-		counts[block.Plane]++
+		counts[plane]++
 		return nil
 	})
 	if err != nil {

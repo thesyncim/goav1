@@ -48,7 +48,7 @@ func DecoderFrameWorkChromaCoeffBlockReconstruction(ctx DecoderFrameWorkCoeffRec
 	return DecoderFrameWorkBlockCoeffReconstruction{
 		Visit: ctx.Visit,
 		Block: TileBlockCoeffBlock{
-			Plane:     block.Plane,
+			Plane:     uint8(block.Plane),
 			Block:     block.Block,
 			Transform: block.Transform,
 			Result:    block.Result,

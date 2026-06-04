@@ -26,11 +26,13 @@ type FrameWorkLoopFilterPostFilterRequest struct {
 // plane-local 4x4 coordinates. Final frame-order scheduling remains separate
 // from this block-local candidate collection.
 type FrameWorkLoopFilterPostFilterEdge struct {
-	X4         int32
-	Y4         int32
-	Length4    int32
-	BlockMICol uint32
-	BlockMIRow uint32
+	// AV1 frame dimensions are capped at 65536 samples, so 4x4-unit frame
+	// coordinates and run lengths fit comfortably in 16 bits.
+	X4         uint16
+	Y4         uint16
+	Length4    uint16
+	BlockMICol uint16
+	BlockMIRow uint16
 
 	Plane     loopfilter.Plane
 	Edge      loopfilter.Edge
@@ -393,9 +395,9 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 					bytesPerSample,
 					bitDepth,
 					edge.Edge,
-					edge.X4*4,
-					edge.Y4*4,
-					edge.Length4*4,
+					int32(edge.X4)*4,
+					int32(edge.Y4)*4,
+					int32(edge.Length4)*4,
 					thresholds[edge.Level],
 				); err != nil {
 					return err
@@ -684,15 +686,15 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 		frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
 			Plane:             loopfilter.PlaneY,
 			Edge:              edge,
-			X4:                int32(segX4),
-			Y4:                int32(segY4),
-			Length4:           int32(end - start),
+			X4:                uint16(segX4),
+			Y4:                uint16(segY4),
+			Length4:           uint16(end - start),
 			Level:             segLevel,
 			Transform:         tx,
 			Width:             uint8(w),
 			LevelFromPrevious: segFromPrevious,
-			BlockMICol:        record.Block.MICol,
-			BlockMIRow:        record.Block.MIRow,
+			BlockMICol:        uint16(record.Block.MICol),
+			BlockMIRow:        uint16(record.Block.MIRow),
 		})
 		return nil
 	}
@@ -792,15 +794,15 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 	frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
 		Plane:             loopfilter.PlaneY,
 		Edge:              edge,
-		X4:                int32(x4),
-		Y4:                int32(y4),
-		Length4:           int32(length4),
+		X4:                uint16(x4),
+		Y4:                uint16(y4),
+		Length4:           uint16(length4),
 		Level:             level,
 		Transform:         tx,
 		Width:             uint8(w),
 		LevelFromPrevious: fromPrevious,
-		BlockMICol:        record.Block.MICol,
-		BlockMIRow:        record.Block.MIRow,
+		BlockMICol:        uint16(record.Block.MICol),
+		BlockMIRow:        uint16(record.Block.MIRow),
 	})
 	return true, nil
 }
@@ -1257,14 +1259,14 @@ func frameWorkAppendLoopFilterChromaEdgeSegmentsUnequalUVWithWidth(ctx FrameWork
 		edgeRecord := FrameWorkLoopFilterPostFilterEdge{
 			Plane:      loopfilter.PlaneU,
 			Edge:       edge,
-			X4:         int32(segX4),
-			Y4:         int32(segY4),
-			Length4:    int32(end - start),
+			X4:         uint16(segX4),
+			Y4:         uint16(segY4),
+			Length4:    uint16(end - start),
 			Level:      currentLevelU,
 			Transform:  tx,
 			Width:      uint8(w),
-			BlockMICol: record.Block.MICol,
-			BlockMIRow: record.Block.MIRow,
+			BlockMICol: uint16(record.Block.MICol),
+			BlockMIRow: uint16(record.Block.MIRow),
 		}
 		frameWorkStoreLoopFilterEdge(plan, edges, edgeRecord)
 		edgeRecord.Plane = loopfilter.PlaneV
@@ -1347,14 +1349,14 @@ func frameWorkAppendLoopFilterChromaEdgeSegmentsEqualUVWithWidth(ctx FrameWorkPo
 		edgeRecord := FrameWorkLoopFilterPostFilterEdge{
 			Plane:      loopfilter.PlaneU,
 			Edge:       edge,
-			X4:         int32(segX4),
-			Y4:         int32(segY4),
-			Length4:    int32(end - start),
+			X4:         uint16(segX4),
+			Y4:         uint16(segY4),
+			Length4:    uint16(end - start),
 			Level:      currentLevel,
 			Transform:  tx,
 			Width:      uint8(w),
-			BlockMICol: record.Block.MICol,
-			BlockMIRow: record.Block.MIRow,
+			BlockMICol: uint16(record.Block.MICol),
+			BlockMIRow: uint16(record.Block.MIRow),
 		}
 		frameWorkStoreLoopFilterEdge(plan, edges, edgeRecord)
 		edgeRecord.Plane = loopfilter.PlaneV
@@ -1437,15 +1439,15 @@ func frameWorkAppendLoopFilterChromaEdgeSegments(ctx FrameWorkPostFilterContext,
 		frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
 			Plane:             plane,
 			Edge:              edge,
-			X4:                int32(segX4),
-			Y4:                int32(segY4),
-			Length4:           int32(end - start),
+			X4:                uint16(segX4),
+			Y4:                uint16(segY4),
+			Length4:           uint16(end - start),
 			Level:             segLevel,
 			Transform:         tx,
 			Width:             uint8(w),
 			LevelFromPrevious: segFromPrevious,
-			BlockMICol:        record.Block.MICol,
-			BlockMIRow:        record.Block.MIRow,
+			BlockMICol:        uint16(record.Block.MICol),
+			BlockMIRow:        uint16(record.Block.MIRow),
 		})
 		return nil
 	}
@@ -1559,15 +1561,15 @@ func frameWorkTryAppendLoopFilterFixedChromaEdge(levelCtx frameWorkLoopFilterLev
 	frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
 		Plane:             plane,
 		Edge:              edge,
-		X4:                int32(x4),
-		Y4:                int32(y4),
-		Length4:           int32(length4),
+		X4:                uint16(x4),
+		Y4:                uint16(y4),
+		Length4:           uint16(length4),
 		Level:             level,
 		Transform:         tx,
 		Width:             uint8(w),
 		LevelFromPrevious: fromPrevious,
-		BlockMICol:        record.Block.MICol,
-		BlockMIRow:        record.Block.MIRow,
+		BlockMICol:        uint16(record.Block.MICol),
+		BlockMIRow:        uint16(record.Block.MIRow),
 	})
 	return true, nil
 }
@@ -1608,14 +1610,14 @@ func frameWorkTryAppendLoopFilterFixedChromaEdgeUV(filterMap FrameWorkLoopFilter
 	edgeRecord := FrameWorkLoopFilterPostFilterEdge{
 		Plane:      loopfilter.PlaneU,
 		Edge:       edge,
-		X4:         int32(x4),
-		Y4:         int32(y4),
-		Length4:    int32(length4),
+		X4:         uint16(x4),
+		Y4:         uint16(y4),
+		Length4:    uint16(length4),
 		Level:      currentLevel,
 		Transform:  tx,
 		Width:      uint8(w),
-		BlockMICol: record.Block.MICol,
-		BlockMIRow: record.Block.MIRow,
+		BlockMICol: uint16(record.Block.MICol),
+		BlockMIRow: uint16(record.Block.MIRow),
 	}
 	frameWorkStoreLoopFilterEdge(plan, edges, edgeRecord)
 	edgeRecord.Plane = loopfilter.PlaneV
