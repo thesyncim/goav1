@@ -157,6 +157,10 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 	if err != nil {
 		return err
 	}
+	return b.reconstructBlockCoeffCoreWithGeometry(geom, block, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+}
+
+func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
@@ -257,6 +261,41 @@ type frameWorkBlockCoeffGeometry struct {
 	plane         FrameWorkPlane
 }
 
+type frameWorkTransformMeta struct {
+	size     transform.Size
+	scanSize transform.Size
+	txScale  uint8
+}
+
+var frameWorkTransformMetaBySize = [...]frameWorkTransformMeta{
+	tile.TransformSize4x4:   {size: transform.Size{Width: 4, Height: 4}, scanSize: transform.Size{Width: 4, Height: 4}, txScale: 0},
+	tile.TransformSize8x8:   {size: transform.Size{Width: 8, Height: 8}, scanSize: transform.Size{Width: 8, Height: 8}, txScale: 0},
+	tile.TransformSize16x16: {size: transform.Size{Width: 16, Height: 16}, scanSize: transform.Size{Width: 16, Height: 16}, txScale: 0},
+	tile.TransformSize32x32: {size: transform.Size{Width: 32, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 1},
+	tile.TransformSize64x64: {size: transform.Size{Width: 64, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
+	tile.TransformSize4x8:   {size: transform.Size{Width: 4, Height: 8}, scanSize: transform.Size{Width: 4, Height: 8}, txScale: 0},
+	tile.TransformSize8x4:   {size: transform.Size{Width: 8, Height: 4}, scanSize: transform.Size{Width: 8, Height: 4}, txScale: 0},
+	tile.TransformSize8x16:  {size: transform.Size{Width: 8, Height: 16}, scanSize: transform.Size{Width: 8, Height: 16}, txScale: 0},
+	tile.TransformSize16x8:  {size: transform.Size{Width: 16, Height: 8}, scanSize: transform.Size{Width: 16, Height: 8}, txScale: 0},
+	tile.TransformSize16x32: {size: transform.Size{Width: 16, Height: 32}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1},
+	tile.TransformSize32x16: {size: transform.Size{Width: 32, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1},
+	tile.TransformSize32x64: {size: transform.Size{Width: 32, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
+	tile.TransformSize64x32: {size: transform.Size{Width: 64, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
+	tile.TransformSize4x16:  {size: transform.Size{Width: 4, Height: 16}, scanSize: transform.Size{Width: 4, Height: 16}, txScale: 0},
+	tile.TransformSize16x4:  {size: transform.Size{Width: 16, Height: 4}, scanSize: transform.Size{Width: 16, Height: 4}, txScale: 0},
+	tile.TransformSize8x32:  {size: transform.Size{Width: 8, Height: 32}, scanSize: transform.Size{Width: 8, Height: 32}, txScale: 0},
+	tile.TransformSize32x8:  {size: transform.Size{Width: 32, Height: 8}, scanSize: transform.Size{Width: 32, Height: 8}, txScale: 0},
+	tile.TransformSize16x64: {size: transform.Size{Width: 16, Height: 64}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1},
+	tile.TransformSize64x16: {size: transform.Size{Width: 64, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1},
+}
+
+func frameWorkBlockCoeffTransformMeta(size tile.TransformSize) (frameWorkTransformMeta, bool) {
+	if !size.Valid() {
+		return frameWorkTransformMeta{}, false
+	}
+	return frameWorkTransformMetaBySize[size], true
+}
+
 func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
 	region, err := b.JobRegion(index)
 	if err != nil {
@@ -270,10 +309,15 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	size, err := block.Block.Size.TransformSize()
-	if err != nil {
+	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
+}
+
+func (b *FrameWorkBatch) blockCoeffGeometryKnown(region FrameWorkJobRegion, window FrameWorkPlaneRegion, plane FrameWorkPlane, ssX uint, ssY uint, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+	meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size)
+	if !ok {
 		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
+	size := meta.size
 	x, y, err := frameWorkBlockCoeffPosition(region, visit, block.Block, ssX, ssY)
 	if err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
@@ -294,16 +338,10 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 	if _, _, err := frameWorkBlockCoeffVisibleSize(block.Block, size); err != nil {
 		return frameWorkBlockCoeffGeometry{}, err
 	}
-	scanSize, err := transform.ScanSize(size)
-	if err != nil {
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
-	}
+	scanSize := meta.scanSize
 	width := int(size.Width)
 	height := int(size.Height)
-	txScale, err := quantize.TransformScale(width, height)
-	if err != nil {
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
-	}
+	txScale := meta.txScale
 	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {

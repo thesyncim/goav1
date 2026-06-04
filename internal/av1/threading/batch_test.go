@@ -2487,6 +2487,60 @@ func testBlockCoeffScratch(t *testing.T, ctx FrameWorkBatch, req FrameWorkBlockC
 	return make([]int32, int32Len), make([]int16, int16Len)
 }
 
+func TestFrameWorkBlockCoeffTransformMetaMatchesHelpers(t *testing.T) {
+	sizes := [...]tile.TransformSize{
+		tile.TransformSize4x4,
+		tile.TransformSize8x8,
+		tile.TransformSize16x16,
+		tile.TransformSize32x32,
+		tile.TransformSize64x64,
+		tile.TransformSize4x8,
+		tile.TransformSize8x4,
+		tile.TransformSize8x16,
+		tile.TransformSize16x8,
+		tile.TransformSize16x32,
+		tile.TransformSize32x16,
+		tile.TransformSize32x64,
+		tile.TransformSize64x32,
+		tile.TransformSize4x16,
+		tile.TransformSize16x4,
+		tile.TransformSize8x32,
+		tile.TransformSize32x8,
+		tile.TransformSize16x64,
+		tile.TransformSize64x16,
+	}
+	for _, txSize := range sizes {
+		meta, ok := frameWorkBlockCoeffTransformMeta(txSize)
+		if !ok {
+			t.Fatalf("metadata missing for tx size %d", txSize)
+		}
+		size, err := txSize.TransformSize()
+		if err != nil {
+			t.Fatalf("TransformSize(%d): %v", txSize, err)
+		}
+		if meta.size != size {
+			t.Fatalf("size metadata for %d = %+v, want %+v", txSize, meta.size, size)
+		}
+		scanSize, err := transform.ScanSize(size)
+		if err != nil {
+			t.Fatalf("ScanSize(%+v): %v", size, err)
+		}
+		if meta.scanSize != scanSize {
+			t.Fatalf("scan metadata for %d = %+v, want %+v", txSize, meta.scanSize, scanSize)
+		}
+		txScale, err := quantize.TransformScale(int(size.Width), int(size.Height))
+		if err != nil {
+			t.Fatalf("TransformScale(%+v): %v", size, err)
+		}
+		if meta.txScale != txScale {
+			t.Fatalf("scale metadata for %d = %d, want %d", txSize, meta.txScale, txScale)
+		}
+	}
+	if _, ok := frameWorkBlockCoeffTransformMeta(tile.TransformSize(255)); ok {
+		t.Fatal("invalid transform size unexpectedly had metadata")
+	}
+}
+
 func testReconstructBlockCoeffDirect(t *testing.T, ctx FrameWorkBatch, dst *frame.Frame, plane FrameWorkPlane, x int, y int, req FrameWorkBlockCoeffReconstruction) {
 	t.Helper()
 	size, err := req.Block.Block.Size.TransformSize()

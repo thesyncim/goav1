@@ -233,6 +233,27 @@ places the matched profiles point to: coefficient decode shape, loop-filter
 planning/application, post-filter scheduling, hot struct layout, zero-cost
 tracing, and SIMD kernels for the highest-volume DSP paths.
 
+Current goal order:
+
+- Close the decoder throughput gap with measured, corpus-based goav1 vs dav1d
+  and libaom comparisons: same thread count, discarded output, JSON/history
+  friendly reports, hot-path profiles, allocation gates, escape/BCE reports,
+  trace-zero proof, and hot-struct size guards.
+- Spend optimization work where profiles say the gap lives: coefficient/bit
+  reader shape, loop-filter edge planning, post-filter execution, large event
+  and batch copies, zero-copy IVF payload views, reusable post-filter scratch,
+  SIMD dispatch and kernels, and parallel post-filter scheduling.
+- Keep quality expanding beyond the committed green vectors: real-world
+  corpora, broader profile-2 and 12-bit edge combinations, switch-frame and
+  tile-list end-to-end coverage, malformed stream hardening, and fuzzing.
+- After the active decoder parity work, build the WebRTC AV1 encoder from
+  pinned local upstreams: libaom/libwebrtc for bitstream and control
+  correctness, SVT-AV1 for speed architecture, and oracle tests before public
+  usability claims.
+- Preserve upstream C integer widths, signedness, overflow, shift behavior, and
+  layout in all new code and touched parity paths. Do not churn untouched legacy
+  code solely for type-width cleanup.
+
 - **Zero-allocation steady decode.** `NewDecoder` probes once, sizes the frame
   pool and post-filter scratch up front, and then reuses those arenas through
   `DecodeNext`. `make alloc` enforces `0 B/op` and `0 allocs/op` across the
