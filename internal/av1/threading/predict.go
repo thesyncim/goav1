@@ -302,7 +302,7 @@ func (b *FrameWorkBatch) PredictBlockChromaIntra(index int, visit tile.BlockLoop
 	if b.Sequence.ColorConfig.MonoChrome {
 		return nil
 	}
-	if !tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: int(visit.Block.X4), Y4: int(visit.Block.Y4)}, b.Sequence.ColorConfig) {
+	if !tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: visit.Block.X4, Y4: visit.Block.Y4}, b.Sequence.ColorConfig) {
 		return nil
 	}
 	if !visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL || visit.Prediction.CFLAlphaValid {
@@ -326,7 +326,7 @@ func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVi
 		return ErrInvalidBatch
 	}
 	if b.Sequence.ColorConfig.MonoChrome ||
-		!tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: int(visit.Block.X4), Y4: int(visit.Block.Y4)}, b.Sequence.ColorConfig) {
+		!tile.HasChromaBlock(tile.TransformTreeRequest{Size: visit.Block.Size, X4: visit.Block.X4, Y4: visit.Block.Y4}, b.Sequence.ColorConfig) {
 		return ErrInvalidBatch
 	}
 	if err := b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneU, scratch); err != nil {
@@ -3600,8 +3600,8 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 	}
 	req := tile.TransformTreeRequest{
 		Size:      block.Size,
-		X4:        int(block.X4),
-		Y4:        int(block.Y4),
+		X4:        block.X4,
+		Y4:        block.Y4,
 		VisibleW4: block.VisibleW4,
 		VisibleH4: block.VisibleH4,
 	}

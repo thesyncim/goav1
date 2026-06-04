@@ -7,8 +7,8 @@ import "github.com/thesyncim/goav1/internal/av1/parser"
 type TransformTreeRequest struct {
 	Size BlockSize
 
-	X4 int
-	Y4 int
+	X4 uint8
+	Y4 uint8
 
 	VisibleW4 uint8
 	VisibleH4 uint8
@@ -86,6 +86,8 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 			result: &result,
 		}
 		maxDims, _ := maxY.Dimensions()
+		reqX4 := int(req.X4)
+		reqY4 := int(req.Y4)
 		for y := 0; y < int(req.VisibleH4); y += int(maxDims.H4) {
 			for x := 0; x < int(req.VisibleW4); x += int(maxDims.W4) {
 				// Within a block, the top/left availability for a maxY-sized
@@ -95,7 +97,7 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 				// the next iteration sees a real neighbor.
 				haveTop := req.HaveTop || y > 0
 				haveLeft := req.HaveLeft || x > 0
-				if err := walker.read(maxY, 0, req.X4+x, req.Y4+y, x/int(maxDims.W4), y/int(maxDims.H4), haveTop, haveLeft); err != nil {
+				if err := walker.read(maxY, 0, reqX4+x, reqY4+y, x/int(maxDims.W4), y/int(maxDims.H4), haveTop, haveLeft); err != nil {
 					return TransformTreeResult{}, err
 				}
 			}
@@ -112,7 +114,7 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 	if err != nil {
 		return TransformTreeResult{}, err
 	}
-	if err := ctx.MarkTransformArea(req.X4, req.Y4, int(blockDims.W4), int(blockDims.H4),
+	if err := ctx.MarkTransformArea(int(req.X4), int(req.Y4), int(blockDims.W4), int(blockDims.H4),
 		markLog2W, markLog2H, !req.Inter); err != nil {
 		return TransformTreeResult{}, err
 	}
@@ -141,11 +143,13 @@ type coeffUnitWindow struct {
 // fullCoeffUnitWindow returns the window spanning the whole prediction block,
 // reproducing the unwindowed transform-tree replay.
 func fullCoeffUnitWindow(req TransformTreeRequest) coeffUnitWindow {
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
 	return coeffUnitWindow{
-		X4Start: req.X4,
-		Y4Start: req.Y4,
-		X4End:   req.X4 + int(req.VisibleW4),
-		Y4End:   req.Y4 + int(req.VisibleH4),
+		X4Start: reqX4,
+		Y4Start: reqY4,
+		X4End:   reqX4 + int(req.VisibleW4),
+		Y4End:   reqY4 + int(req.VisibleH4),
 	}
 }
 
@@ -172,17 +176,19 @@ func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, wi
 	if !ok {
 		return ErrInvalidDecodeState
 	}
-	yStart := maxInt(window.Y4Start, req.Y4)
-	yEnd := minInt(window.Y4End, req.Y4+int(req.VisibleH4))
-	xStart := maxInt(window.X4Start, req.X4)
-	xEnd := minInt(window.X4End, req.X4+int(req.VisibleW4))
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
+	yStart := maxInt(window.Y4Start, reqY4)
+	yEnd := minInt(window.Y4End, reqY4+int(req.VisibleH4))
+	xStart := maxInt(window.X4Start, reqX4)
+	xEnd := minInt(window.X4End, reqX4+int(req.VisibleW4))
 
 	if r.Variable {
 		walker := transformTreeReplay{result: r, req: req, visit: visit}
 		for y := yStart; y < yEnd; y += int(dims.H4) {
 			for x := xStart; x < xEnd; x += int(dims.W4) {
-				xOff := (x - req.X4) / int(dims.W4)
-				yOff := (y - req.Y4) / int(dims.H4)
+				xOff := (x - reqX4) / int(dims.W4)
+				yOff := (y - reqY4) / int(dims.H4)
 				if err := walker.replay(r.Y, 0, x, y, xOff, yOff); err != nil {
 					return err
 				}
@@ -217,9 +223,9 @@ func (d *transformTreeDecoder) read(from TransformSize, depth int, x4 int, y4 in
 	split, err := d.state.ReadTransformPartitionSplit(d.cdfs, d.ctx, TransformPartitionRequest{
 		Size:     d.req.Size,
 		From:     from,
-		Depth:    depth,
-		X4:       x4,
-		Y4:       y4,
+		Depth:    uint8(depth),
+		X4:       uint8(x4),
+		Y4:       uint8(y4),
 		HaveTop:  haveTop,
 		HaveLeft: haveLeft,
 	})
@@ -359,7 +365,7 @@ func blockSignalsTransformSize(size BlockSize) bool {
 }
 
 func transformChildVisible(req TransformTreeRequest, x4 int, y4 int) bool {
-	return x4 < req.X4+int(req.VisibleW4) && y4 < req.Y4+int(req.VisibleH4)
+	return x4 < int(req.X4)+int(req.VisibleW4) && y4 < int(req.Y4)+int(req.VisibleH4)
 }
 
 func emitTransformBlock(req TransformTreeRequest, x4 int, y4 int, size TransformSize, visit TransformBlockVisitor) error {
@@ -368,8 +374,8 @@ func emitTransformBlock(req TransformTreeRequest, x4 int, y4 int, size Transform
 		x4 < 0 || y4 < 0 || x4 > int(^uint8(0)) || y4 > int(^uint8(0)) {
 		return ErrInvalidDecodeState
 	}
-	visibleW := minInt(int(dims.W4), req.X4+int(req.VisibleW4)-x4)
-	visibleH := minInt(int(dims.H4), req.Y4+int(req.VisibleH4)-y4)
+	visibleW := minInt(int(dims.W4), int(req.X4)+int(req.VisibleW4)-x4)
+	visibleH := minInt(int(dims.H4), int(req.Y4)+int(req.VisibleH4)-y4)
 	if visibleW <= 0 || visibleH <= 0 {
 		return ErrInvalidDecodeState
 	}
@@ -386,9 +392,8 @@ func validateTransformTreeRequest(req TransformTreeRequest) (BlockDimensions, er
 	dims, ok := req.Size.Dimensions()
 	if !ok || req.VisibleW4 == 0 || req.VisibleH4 == 0 ||
 		req.VisibleW4 > dims.W4 || req.VisibleH4 > dims.H4 ||
-		req.X4 < 0 || req.Y4 < 0 ||
-		req.X4+int(dims.W4) > MaxBlockModeSlots ||
-		req.Y4+int(dims.H4) > MaxBlockModeSlots {
+		int(req.X4)+int(dims.W4) > MaxBlockModeSlots ||
+		int(req.Y4)+int(dims.H4) > MaxBlockModeSlots {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	return dims, nil

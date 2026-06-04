@@ -182,13 +182,15 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	visH := int(req.Transform.VisibleH4)
 	muW := minInt(maxUnit4, visW)
 	muH := minInt(maxUnit4, visH)
+	reqX4 := int(req.Transform.X4)
+	reqY4 := int(req.Transform.Y4)
 	for row := 0; row < visH; row += muH {
 		for col := 0; col < visW; col += muW {
 			window := coeffUnitWindow{
-				X4Start: req.Transform.X4 + col,
-				Y4Start: req.Transform.Y4 + row,
-				X4End:   req.Transform.X4 + minInt(col+muW, visW),
-				Y4End:   req.Transform.Y4 + minInt(row+muH, visH),
+				X4Start: reqX4 + col,
+				Y4Start: reqY4 + row,
+				X4End:   reqX4 + minInt(col+muW, visW),
+				Y4End:   reqY4 + minInt(row+muH, visH),
 			}
 			lumaStats, err := s.decodeLumaCoefficientsInWindow(cdfs.Coeff, coeffCtx, &scratch.Coeff, lumaReq, window, lumaVisit)
 			if err != nil {

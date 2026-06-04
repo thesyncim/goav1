@@ -1731,8 +1731,8 @@ func blockLoopCoeffRequest[T BlockLoopCoeffController](req BlockLoopRequest, coe
 	return BlockCoeffRequest{
 		Transform: TransformTreeRequest{
 			Size:          block.Size,
-			X4:            int(block.X4),
-			Y4:            int(block.Y4),
+			X4:            block.X4,
+			Y4:            block.Y4,
 			VisibleW4:     block.VisibleW4,
 			VisibleH4:     block.VisibleH4,
 			HaveTop:       block.HaveTop,

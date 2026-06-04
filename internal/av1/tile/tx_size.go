@@ -66,8 +66,8 @@ type SelectedTransformRequest struct {
 	Size          BlockSize
 	TransformMode parser.TransformMode
 	Lossless      bool
-	X4            int
-	Y4            int
+	X4            uint8
+	Y4            uint8
 	HaveTop       bool
 	HaveLeft      bool
 }
@@ -77,9 +77,9 @@ type SelectedTransformRequest struct {
 type TransformPartitionRequest struct {
 	Size     BlockSize
 	From     TransformSize
-	Depth    int
-	X4       int
-	Y4       int
+	Depth    uint8
+	X4       uint8
+	Y4       uint8
 	HaveTop  bool
 	HaveLeft bool
 }
@@ -345,7 +345,7 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 // TransformPartitionContext returns dav1d/libaom's inter transform partition
 // category/context pair for one split decision.
 func (c *BlockModeContext) TransformPartitionContext(req TransformPartitionRequest) (int, int, error) {
-	if c == nil || req.Depth < 0 || req.Depth > 2 {
+	if c == nil || req.Depth > 2 {
 		return 0, 0, ErrInvalidDecodeState
 	}
 	dims, ok := req.From.Dimensions()
@@ -355,10 +355,10 @@ func (c *BlockModeContext) TransformPartitionContext(req TransformPartitionReque
 	if _, ok := req.Size.Dimensions(); !ok {
 		return 0, 0, ErrInvalidDecodeState
 	}
-	if err := validateBlockModeSlot(req.X4, req.Y4); err != nil {
+	if err := validateBlockModeSlot(int(req.X4), int(req.Y4)); err != nil {
 		return 0, 0, err
 	}
-	category := 2*(int(TransformSize64x64)-int(dims.Max)) - req.Depth
+	category := 2*(int(TransformSize64x64)-int(dims.Max)) - int(req.Depth)
 	if category < 0 || category >= TransformPartitionCats {
 		return 0, 0, ErrInvalidDecodeState
 	}
@@ -448,7 +448,7 @@ func (s *DecodeState) ReadSelectedTransformSize(cdfs *TransformCDFs, ctx *BlockM
 	if !ok || dims.Max == 0 {
 		return 0, ErrInvalidDecodeState
 	}
-	context, err := ctx.SelectedTransformContextWithAvailability(max, req.X4, req.Y4, req.HaveTop, req.HaveLeft)
+	context, err := ctx.SelectedTransformContextWithAvailability(max, int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 	if err != nil {
 		return 0, err
 	}

@@ -47,7 +47,7 @@ func PlaneBlockSize(block BlockSize, color parser.ColorConfig, plane int) (Block
 }
 
 func HasChromaBlock(req TransformTreeRequest, color parser.ColorConfig) bool {
-	return hasChromaForBlock(req.Size, req.X4, req.Y4, color)
+	return hasChromaForBlock(req.Size, int(req.X4), int(req.Y4), color)
 }
 
 // hasChromaForBlock is the small, inlinable core of HasChromaBlock. It takes

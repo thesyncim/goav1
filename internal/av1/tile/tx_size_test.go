@@ -426,8 +426,8 @@ func FuzzReadSelectedTransformSize(f *testing.F) {
 			Size:          size,
 			TransformMode: mode,
 			Lossless:      lossless,
-			X4:            x4,
-			Y4:            y4,
+			X4:            uint8(x4),
+			Y4:            uint8(y4),
 		})
 		if err != nil {
 			t.Fatalf("ReadSelectedTransformSize err=%v size=%d mode=%d lossless=%v", err, size, mode, lossless)
@@ -465,8 +465,8 @@ func FuzzReadTransformPartitionSplit(f *testing.F) {
 		if !ok {
 			t.Fatal("invalid generated block size")
 		}
-		req.X4 = int(rawX) % (MaxBlockModeSlots - int(dims.W4) + 1)
-		req.Y4 = int(rawY) % (MaxBlockModeSlots - int(dims.H4) + 1)
+		req.X4 = uint8(int(rawX) % (MaxBlockModeSlots - int(dims.W4) + 1))
+		req.Y4 = uint8(int(rawY) % (MaxBlockModeSlots - int(dims.H4) + 1))
 
 		var cdfs TransformCDFs
 		if err := cdfs.InitDefault(); err != nil {
@@ -474,7 +474,7 @@ func FuzzReadTransformPartitionSplit(f *testing.F) {
 		}
 		var ctx BlockModeContext
 		if premark {
-			if err := ctx.MarkTransform(req.Size, req.X4, req.Y4, req.From, false); err != nil {
+			if err := ctx.MarkTransform(req.Size, int(req.X4), int(req.Y4), req.From, false); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -571,7 +571,7 @@ func TestTransformPartitionCategoryMatchesLibaom(t *testing.T) {
 			gotCat, _, err := ctx.TransformPartitionContext(TransformPartitionRequest{
 				Size:     ch.bsize,
 				From:     d.from,
-				Depth:    d.depth,
+				Depth:    uint8(d.depth),
 				HaveTop:  true,
 				HaveLeft: true,
 			})

@@ -583,14 +583,16 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	block := record.Block
 	blockX4 := int(block.X4)
 	blockY4 := int(block.Y4)
-	xEnd := req.X4 + int(req.VisibleW4)
-	yEnd := req.Y4 + int(req.VisibleH4)
-	for y4 := req.Y4; y4 < yEnd; y4 += int(dims.H4) {
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
+	xEnd := reqX4 + int(req.VisibleW4)
+	yEnd := reqY4 + int(req.VisibleH4)
+	for y4 := reqY4; y4 < yEnd; y4 += int(dims.H4) {
 		visibleH4 := minInt(int(dims.H4), yEnd-y4)
 		if visibleH4 <= 0 {
 			return threading.ErrInvalidBatch
 		}
-		for x4 := req.X4; x4 < xEnd; x4 += int(dims.W4) {
+		for x4 := reqX4; x4 < xEnd; x4 += int(dims.W4) {
 			visibleW4 := minInt(int(dims.W4), xEnd-x4)
 			if visibleW4 <= 0 {
 				return threading.ErrInvalidBatch
@@ -840,12 +842,14 @@ func frameWorkLoopFilterPreviousLumaRunInRequest(record *threading.FrameWorkLoop
 	startLocalY4 := int(record.Block.Y4) + startY4 - int(record.Block.MIRow)
 	endLocalX4 := int(record.Block.X4) + endX4 - int(record.Block.MICol)
 	endLocalY4 := int(record.Block.Y4) + endY4 - int(record.Block.MIRow)
-	return startLocalX4 >= req.X4 && startLocalY4 >= req.Y4 &&
-		startLocalX4 < req.X4+int(req.VisibleW4) &&
-		startLocalY4 < req.Y4+int(req.VisibleH4) &&
-		endLocalX4 >= req.X4 && endLocalY4 >= req.Y4 &&
-		endLocalX4 < req.X4+int(req.VisibleW4) &&
-		endLocalY4 < req.Y4+int(req.VisibleH4)
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
+	return startLocalX4 >= reqX4 && startLocalY4 >= reqY4 &&
+		startLocalX4 < reqX4+int(req.VisibleW4) &&
+		startLocalY4 < reqY4+int(req.VisibleH4) &&
+		endLocalX4 >= reqX4 && endLocalY4 >= reqY4 &&
+		endLocalX4 < reqX4+int(req.VisibleW4) &&
+		endLocalY4 < reqY4+int(req.VisibleH4)
 }
 
 type frameWorkLoopFilterLumaPreviousCache struct {
@@ -904,9 +908,11 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 	}
 	localX4 := int(c.record.Block.X4) + targetX4 - int(c.record.Block.MICol)
 	localY4 := int(c.record.Block.Y4) + targetY4 - int(c.record.Block.MIRow)
-	if localX4 < c.req.X4 || localY4 < c.req.Y4 ||
-		localX4 >= c.req.X4+int(c.req.VisibleW4) ||
-		localY4 >= c.req.Y4+int(c.req.VisibleH4) {
+	reqX4 := int(c.req.X4)
+	reqY4 := int(c.req.Y4)
+	if localX4 < reqX4 || localY4 < reqY4 ||
+		localX4 >= reqX4+int(c.req.VisibleW4) ||
+		localY4 >= reqY4+int(c.req.VisibleH4) {
 		return 0, 0, threading.ErrInvalidBatch
 	}
 	width := c.width
@@ -2009,9 +2015,11 @@ func frameWorkLoopFilterLumaTransformAt(ctx FrameWorkPostFilterContext, record *
 	}
 	localX4 := int(record.Block.X4) + frameX4 - int(record.Block.MICol)
 	localY4 := int(record.Block.Y4) + frameY4 - int(record.Block.MIRow)
-	if localX4 < req.X4 || localY4 < req.Y4 ||
-		localX4 >= req.X4+int(req.VisibleW4) ||
-		localY4 >= req.Y4+int(req.VisibleH4) {
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
+	if localX4 < reqX4 || localY4 < reqY4 ||
+		localX4 >= reqX4+int(req.VisibleW4) ||
+		localY4 >= reqY4+int(req.VisibleH4) {
 		return 0, false, nil
 	}
 	if record.SkipTransform || !record.TransformTree.Variable {
@@ -2267,10 +2275,12 @@ func frameWorkLoopFilterChromaBlockWithShifts(color parser.ColorConfig, record *
 	if !record.TransformTree.HasUV || !record.TransformTree.UV.Valid() {
 		return tile.TransformBlock{}, false, threading.ErrInvalidBatch
 	}
-	x4 := req.X4 >> ssX
-	y4 := req.Y4 >> ssY
-	visibleW4 := ((req.X4 + int(req.VisibleW4) + ssX) >> ssX) - x4
-	visibleH4 := ((req.Y4 + int(req.VisibleH4) + ssY) >> ssY) - y4
+	reqX4 := int(req.X4)
+	reqY4 := int(req.Y4)
+	x4 := reqX4 >> ssX
+	y4 := reqY4 >> ssY
+	visibleW4 := ((reqX4 + int(req.VisibleW4) + ssX) >> ssX) - x4
+	visibleH4 := ((reqY4 + int(req.VisibleH4) + ssY) >> ssY) - y4
 	if visibleW4 <= 0 || visibleH4 <= 0 ||
 		x4+visibleW4 > tile.MaxBlockModeSlots ||
 		y4+visibleH4 > tile.MaxBlockModeSlots {
@@ -2313,8 +2323,8 @@ func frameWorkLoopFilterTransformTreeRequest(color parser.ColorConfig, record *t
 	}
 	return tile.TransformTreeRequest{
 		Size:          block.Size,
-		X4:            int(block.X4),
-		Y4:            int(block.Y4),
+		X4:            block.X4,
+		Y4:            block.Y4,
 		VisibleW4:     block.VisibleW4,
 		VisibleH4:     block.VisibleH4,
 		Color:         color,

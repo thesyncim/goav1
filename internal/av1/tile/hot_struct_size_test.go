@@ -14,6 +14,9 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "LumaCoeffStats", size: unsafe.Sizeof(LumaCoeffStats{}), max: 16},
 		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: 10 * 1024},
 		{name: "BlockVisit", size: unsafe.Sizeof(BlockVisit{}), max: 28},
+		{name: "TransformTreeRequest", size: unsafe.Sizeof(TransformTreeRequest{}), max: 24},
+		{name: "SelectedTransformRequest", size: unsafe.Sizeof(SelectedTransformRequest{}), max: 7},
+		{name: "TransformPartitionRequest", size: unsafe.Sizeof(TransformPartitionRequest{}), max: 7},
 		{name: "BlockCoeffBlock", size: unsafe.Sizeof(BlockCoeffBlock{}), max: 64},
 		{name: "BlockLoopStats", size: unsafe.Sizeof(BlockLoopStats{}), max: 100},
 	}

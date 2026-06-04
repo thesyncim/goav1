@@ -128,7 +128,7 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 		return LumaCoeffStats{}, ErrInvalidDecodeState
 	}
 	if req.TreeRequest.SkipTransform {
-		if err := ctx.ResetBlock(0, req.TreeRequest.Size, req.TreeRequest.X4, req.TreeRequest.Y4); err != nil {
+		if err := ctx.ResetBlock(0, req.TreeRequest.Size, int(req.TreeRequest.X4), int(req.TreeRequest.Y4)); err != nil {
 			return LumaCoeffStats{}, err
 		}
 		return LumaCoeffStats{}, nil
@@ -164,18 +164,20 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		if !ok {
 			return stats, ErrInvalidDecodeState
 		}
-		yStart := maxInt(window.Y4Start, req.TreeRequest.Y4)
-		yEnd := minInt(window.Y4End, req.TreeRequest.Y4+int(req.TreeRequest.VisibleH4))
-		xStart := maxInt(window.X4Start, req.TreeRequest.X4)
-		xEnd := minInt(window.X4End, req.TreeRequest.X4+int(req.TreeRequest.VisibleW4))
+		reqX4 := int(req.TreeRequest.X4)
+		reqY4 := int(req.TreeRequest.Y4)
+		yStart := maxInt(window.Y4Start, reqY4)
+		yEnd := minInt(window.Y4End, reqY4+int(req.TreeRequest.VisibleH4))
+		xStart := maxInt(window.X4Start, reqX4)
+		xEnd := minInt(window.X4End, reqX4+int(req.TreeRequest.VisibleW4))
 		txbReq := TXBDecodeRequest{
 			EOBMultiContext:       eobCtx,
 			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 		}
 		for y := yStart; y < yEnd; y += int(dims.H4) {
 			for x := xStart; x < xEnd; x += int(dims.W4) {
-				visibleW := minInt(int(dims.W4), req.TreeRequest.X4+int(req.TreeRequest.VisibleW4)-x)
-				visibleH := minInt(int(dims.H4), req.TreeRequest.Y4+int(req.TreeRequest.VisibleH4)-y)
+				visibleW := minInt(int(dims.W4), reqX4+int(req.TreeRequest.VisibleW4)-x)
+				visibleH := minInt(int(dims.H4), reqY4+int(req.TreeRequest.VisibleH4)-y)
 				if visibleW <= 0 || visibleH <= 0 {
 					return stats, ErrInvalidDecodeState
 				}
@@ -301,10 +303,12 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 
 	ssX := int(boolToShift(req.Color.SubsamplingX))
 	ssY := int(boolToShift(req.Color.SubsamplingY))
-	x4 := req.TreeRequest.X4 >> ssX
-	y4 := req.TreeRequest.Y4 >> ssY
-	visibleW4 := ((req.TreeRequest.X4 + int(req.TreeRequest.VisibleW4) + ssX) >> ssX) - x4
-	visibleH4 := ((req.TreeRequest.Y4 + int(req.TreeRequest.VisibleH4) + ssY) >> ssY) - y4
+	reqX4 := int(req.TreeRequest.X4)
+	reqY4 := int(req.TreeRequest.Y4)
+	x4 := reqX4 >> ssX
+	y4 := reqY4 >> ssY
+	visibleW4 := ((reqX4 + int(req.TreeRequest.VisibleW4) + ssX) >> ssX) - x4
+	visibleH4 := ((reqY4 + int(req.TreeRequest.VisibleH4) + ssY) >> ssY) - y4
 	uvDims, ok := req.Tree.UV.Dimensions()
 	if !ok || visibleW4 <= 0 || visibleH4 <= 0 ||
 		x4+visibleW4 > MaxBlockModeSlots || y4+visibleH4 > MaxBlockModeSlots {
@@ -360,10 +364,12 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 	// Convert the luma unit window into plane-relative chroma 4x4 offsets. The
 	// window bounds are absolute superblock-local luma coordinates; subtract the
 	// block origin to get the libaom `row`/`col` luma offsets, then subsample.
-	lumaXStart := maxInt(window.X4Start-req.TreeRequest.X4, 0)
-	lumaYStart := maxInt(window.Y4Start-req.TreeRequest.Y4, 0)
-	lumaXEnd := window.X4End - req.TreeRequest.X4
-	lumaYEnd := window.Y4End - req.TreeRequest.Y4
+	reqX4 := int(req.TreeRequest.X4)
+	reqY4 := int(req.TreeRequest.Y4)
+	lumaXStart := maxInt(window.X4Start-reqX4, 0)
+	lumaYStart := maxInt(window.Y4Start-reqY4, 0)
+	lumaXEnd := window.X4End - reqX4
+	lumaYEnd := window.Y4End - reqY4
 
 	cxStart := lumaXStart >> ssX
 	cyStart := lumaYStart >> ssY
