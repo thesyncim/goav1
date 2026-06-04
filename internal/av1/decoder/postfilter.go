@@ -855,7 +855,7 @@ func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(p
 		if !ok {
 			continue
 		}
-		upscale.CodedWidth[plane] = srcPlane.Width
+		upscale.CodedWidth[plane] = uint32(srcPlane.Width)
 		xDec, yDec := frameWorkCDEFPlaneDecimation(codedFormat, plane)
 		srcPlane = frameWorkCDEFAlignedPlane(srcPlane, ctx.Event.FrameSize, xDec, yDec, bytesPerSample)
 		codedPlanes[plane] = srcPlane

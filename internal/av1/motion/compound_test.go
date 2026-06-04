@@ -86,7 +86,7 @@ func TestCompoundMaskSample(t *testing.T) {
 // flatCompoundBuf builds a CompoundConvBuf of the given size filled with a
 // single CONV_BUF value.
 func flatCompoundBuf(width, height int, value uint16) *CompoundConvBuf {
-	buf := &CompoundConvBuf{Width: width, Height: height}
+	buf := &CompoundConvBuf{Width: uint8(width), Height: uint8(height)}
 	for i := 0; i < width*height; i++ {
 		buf.Data[i] = value
 	}
@@ -385,7 +385,7 @@ func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T
 			if err != nil {
 				t.Fatalf("reference: %v", err)
 			}
-			if got.Width != tc.width || got.Height != tc.height || gotScratch.Width != tc.width || gotScratch.Height != tc.height {
+			if int(got.Width) != tc.width || int(got.Height) != tc.height || int(gotScratch.Width) != tc.width || int(gotScratch.Height) != tc.height {
 				t.Fatalf("dims default=%dx%d scratch=%dx%d want %dx%d", got.Width, got.Height, gotScratch.Width, gotScratch.Height, tc.width, tc.height)
 			}
 			for i := range tc.width * tc.height {
@@ -469,7 +469,7 @@ func TestPredictInterCompoundRefToConvBufHighBDOptimizedMatchesClamped(t *testin
 				default:
 					predictInterCompoundRefHighBDToConvBufCopyClamped(wantOut, ref, tc.refX, tc.refY, tc.width, tc.height, round0, roundOffset)
 				}
-				if got.Width != tc.width || got.Height != tc.height || gotScratch.Width != tc.width || gotScratch.Height != tc.height {
+				if int(got.Width) != tc.width || int(got.Height) != tc.height || int(gotScratch.Width) != tc.width || int(gotScratch.Height) != tc.height {
 					t.Fatalf("dims default=%dx%d scratch=%dx%d want %dx%d", got.Width, got.Height, gotScratch.Width, gotScratch.Height, tc.width, tc.height)
 				}
 				for i := range tc.width * tc.height {

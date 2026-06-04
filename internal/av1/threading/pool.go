@@ -255,7 +255,7 @@ type FrameWorkBatch struct {
 	// multi-batch (multi-tile) frames, where every lane is already busy, so the
 	// deferred wavefront stays off and the fused single-thread path runs. The
 	// pool sets it from WorkerCount when it dispatches exactly one batch.
-	WavefrontWorkers int
+	WavefrontWorkers uint16
 
 	// geomCache optionally memoizes the job-constant JobRegion and per-plane
 	// JobOutputPlane windows for a single job index. It is caller-owned scratch
@@ -981,7 +981,7 @@ type workerResult struct {
 // NewPool starts a reusable bounded worker pool. Pool creation is a cold-path
 // operation; Execute is the reusable hot path.
 func NewPool(workers int) (*Pool, error) {
-	if workers <= 0 {
+	if workers <= 0 || workers > int(^uint16(0)) {
 		return nil, ErrInvalidWorkerCount
 	}
 	p := &Pool{
@@ -1130,9 +1130,9 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		return ErrPoolClosed
 	}
 
-	wavefrontWorkers := 0
+	wavefrontWorkers := uint16(0)
 	if len(batches) == 1 {
-		wavefrontWorkers = len(p.workers)
+		wavefrontWorkers = uint16(len(p.workers))
 	}
 
 	for i := range batches {
@@ -1219,9 +1219,9 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	// those idle lanes to the per-tile reconstruction so it can run an SB-row
 	// wavefront. With more than one batch every lane is busy, so leave the count
 	// zero and let each batch run the fused single-thread path.
-	wavefrontWorkers := 0
+	wavefrontWorkers := uint16(0)
 	if len(batches) == 1 {
-		wavefrontWorkers = len(p.workers)
+		wavefrontWorkers = uint16(len(p.workers))
 	}
 
 	for i := range batches {

@@ -12,6 +12,8 @@ func TestHotStructSizes(t *testing.T) {
 		max  uintptr
 	}{
 		{name: "Vector", size: unsafe.Sizeof(Vector{}), max: 4},
+		{name: "ScaleFactors", size: unsafe.Sizeof(ScaleFactors{}), max: 10},
+		{name: "CompoundConvBuf", size: unsafe.Sizeof(CompoundConvBuf{}), max: compoundMaxConvSamples*2 + 2},
 	}
 	for _, tc := range tests {
 		t.Logf("%s size=%d max=%d", tc.name, tc.size, tc.max)

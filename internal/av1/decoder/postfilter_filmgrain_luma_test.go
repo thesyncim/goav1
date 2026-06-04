@@ -126,7 +126,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, src := testFrameWorkFilmGrainLumaRowBuffers(plan.Planes[0].Width, filmgrain.LumaBlockSize, plan.Planes[0].Stride, 100)
+	dst, src := testFrameWorkFilmGrainLumaRowBuffers(int(plan.Planes[0].Width), filmgrain.LumaBlockSize, int(plan.Planes[0].Stride), 100)
 	grain := make([]int16, filmgrain.LumaGrainSamples)
 	setTestFrameWorkFilmGrainLumaRowGrain(t, grain, 0xec, 0, 0, 0, 0, 20)
 	setTestFrameWorkFilmGrainLumaRowGrain(t, grain, 0xd9, 1, 0, 0, 0, 100)
@@ -135,7 +135,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Active || result.Row != 0 || result.Width != 34 || result.Height != filmgrain.LumaBlockSize || result.Stride != plan.Planes[0].Stride {
+	if !result.Active || result.Row != 0 || result.Width != 34 || result.Height != filmgrain.LumaBlockSize || result.Stride != int(plan.Planes[0].Stride) {
 		t.Fatalf("result=%+v", result)
 	}
 	if got := dst[32]; got != 124 {
@@ -188,10 +188,10 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRowRejectsShortScratch(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, src := testFrameWorkFilmGrainLumaRowBuffers(plan.Planes[0].Width, filmgrain.LumaBlockSize, plan.Planes[0].Stride, 100)
+	dst, src := testFrameWorkFilmGrainLumaRowBuffers(int(plan.Planes[0].Width), filmgrain.LumaBlockSize, int(plan.Planes[0].Stride), 100)
 	grain := make([]int16, filmgrain.LumaGrainSamples)
 	var lut [filmgrain.ScalingLUTSize]uint8
-	need := (filmgrain.LumaBlockSize-1)*plan.Planes[0].Stride + plan.Planes[0].Width
+	need := (filmgrain.LumaBlockSize-1)*int(plan.Planes[0].Stride) + int(plan.Planes[0].Width)
 	if _, err := ctx.ApplyFilmGrainLumaRow(dst[:need-1], src, grain, lut[:], 0); !errors.Is(err, frame.ErrShortBuffer) {
 		t.Fatalf("ApplyFilmGrainLumaRow err=%v want %v", err, frame.ErrShortBuffer)
 	}
@@ -222,7 +222,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRowAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, src := testFrameWorkFilmGrainLumaRowBuffers(plan.Planes[0].Width, filmgrain.LumaBlockSize, plan.Planes[0].Stride, 100)
+	dst, src := testFrameWorkFilmGrainLumaRowBuffers(int(plan.Planes[0].Width), filmgrain.LumaBlockSize, int(plan.Planes[0].Stride), 100)
 	grain := make([]int16, filmgrain.LumaGrainSamples)
 	setTestFrameWorkFilmGrainLumaRowGrain(t, grain, 0xec, 0, 0, 0, 0, 20)
 	setTestFrameWorkFilmGrainLumaRowGrain(t, grain, 0xd9, 1, 0, 0, 0, 100)

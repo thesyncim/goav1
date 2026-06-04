@@ -17,7 +17,7 @@ type Batch struct {
 // BuildBatches partitions jobs into deterministic contiguous worker batches.
 // dst is caller-owned and may be reused across frames.
 func BuildBatches(dst []Batch, jobs []tile.Job, workers int) (int, error) {
-	if workers <= 0 {
+	if workers <= 0 || workers > int(^uint16(0)) {
 		return 0, ErrInvalidWorkerCount
 	}
 	jobCount := len(jobs)

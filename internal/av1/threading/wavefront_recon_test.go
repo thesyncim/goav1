@@ -122,7 +122,7 @@ func TestReconWavefrontByteIdenticalToSerial(t *testing.T) {
 	for _, workers := range []int{2, 3, 4} {
 		testFillFrame(wavefrontOut, 0)
 		cWave := buildWavefrontReconController(t, wavefrontOut, sbCols, sbRows, &wavefrontScratch)
-		cWave.wavefrontWorkers = workers
+		cWave.wavefrontWorkers = uint16(workers)
 		cWave.recon = frameWorkReconState{
 			batch:             cWave.batch,
 			index:             0,
@@ -247,7 +247,7 @@ func TestReconWavefrontSpeedup(t *testing.T) {
 		for range 5 {
 			testFillFrame(out, 0)
 			c := buildWavefrontReconController(t, out, sbCols, sbRows, &scratch)
-			c.wavefrontWorkers = workers
+			c.wavefrontWorkers = uint16(workers)
 			bind(c)
 			start := time.Now()
 			if err := c.replayDeferredReconstructionWavefront(); err != nil {

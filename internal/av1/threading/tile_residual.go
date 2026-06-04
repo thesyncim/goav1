@@ -901,7 +901,7 @@ func frameWorkBlockLoopRefFrameSide(enabled bool, bits uint8, current uint8, ref
 // per-axis scale factor takes when the reference and current frame share that
 // axis's dimension. av1_is_scaled() reports a scaled reference when either axis
 // differs from this.
-const refNoScaleFP int32 = 1 << motion.RefScaleShift
+const refNoScaleFP uint16 = 1 << motion.RefScaleShift
 
 // frameWorkBlockLoopScaledReferences mirrors libaom's per-frame
 // av1_setup_scale_factors_for_frame + av1_is_scaled() result for each inter
@@ -1012,7 +1012,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	// replay available as a byte-identity test harness without spawning
 	// goroutines. When neither is set, the fused single-thread path runs
 	// verbatim at zero added cost.
-	wavefrontWorkers := 0
+	wavefrontWorkers := uint16(0)
 	if req.Predict == nil && frameWorkWavefrontEligible(b, index) {
 		wavefrontWorkers = b.WavefrontWorkers
 	}
@@ -1096,7 +1096,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 // goroutines), so this returns false and the caller leaves reconstruction
 // fused.
 func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
-	workers := b.WavefrontWorkers
+	workers := int(b.WavefrontWorkers)
 	if workers <= 1 {
 		return false
 	}
@@ -1155,7 +1155,7 @@ type frameWorkTileResidualLoopController struct {
 	// the deferred replay out as an SB-row wavefront. It is zero on the
 	// single-worker and multi-tile paths, where the fused single-thread path
 	// runs verbatim.
-	wavefrontWorkers int
+	wavefrontWorkers uint16
 
 	// recon holds the reconstruction state for the fused single-thread path and
 	// the serial deferred replay. The multi-worker wavefront uses its own
@@ -1576,7 +1576,7 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	if rowCount <= 0 {
 		return ErrInvalidBatch
 	}
-	workers := min(c.wavefrontWorkers, rowCount)
+	workers := min(int(c.wavefrontWorkers), rowCount)
 	eventLimit, ok := frameWorkReconIndex(len(c.scratch.reconEvents))
 	if !ok {
 		return ErrInvalidBatch

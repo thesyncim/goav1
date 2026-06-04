@@ -14,16 +14,16 @@ func TestNewScaleFactorsIdentity(t *testing.T) {
 	if !sf.Identity {
 		t.Fatalf("expected identity scaling, got Identity=false")
 	}
-	if got, want := sf.XScaleFP, int32(1<<RefScaleShift); got != want {
+	if got, want := sf.XScaleFP, uint16(1<<RefScaleShift); got != want {
 		t.Errorf("XScaleFP=%d want %d", got, want)
 	}
-	if got, want := sf.YScaleFP, int32(1<<RefScaleShift); got != want {
+	if got, want := sf.YScaleFP, uint16(1<<RefScaleShift); got != want {
 		t.Errorf("YScaleFP=%d want %d", got, want)
 	}
-	if got, want := sf.XStepQN, int32(1<<ScaleSubpelBits); got != want {
+	if got, want := sf.XStepQN, uint16(1<<ScaleSubpelBits); got != want {
 		t.Errorf("XStepQN=%d want %d", got, want)
 	}
-	if got, want := sf.YStepQN, int32(1<<ScaleSubpelBits); got != want {
+	if got, want := sf.YStepQN, uint16(1<<ScaleSubpelBits); got != want {
 		t.Errorf("YStepQN=%d want %d", got, want)
 	}
 }
@@ -39,14 +39,14 @@ func TestNewScaleFactorsSVCEnhancementUpscale(t *testing.T) {
 	if sf.Identity {
 		t.Fatalf("expected non-identity scaling for SVC enhancement layer")
 	}
-	wantScale := int32(((640 << RefScaleShift) + 1280/2) / 1280)
+	wantScale := uint16(((640 << RefScaleShift) + 1280/2) / 1280)
 	if sf.XScaleFP != wantScale {
 		t.Errorf("XScaleFP=%d want %d", sf.XScaleFP, wantScale)
 	}
 	if sf.YScaleFP != wantScale {
 		t.Errorf("YScaleFP=%d want %d", sf.YScaleFP, wantScale)
 	}
-	wantStep := int32(((640 << ScaleSubpelBits) + 1280/2) / 1280)
+	wantStep := uint16(((640 << ScaleSubpelBits) + 1280/2) / 1280)
 	if sf.XStepQN != wantStep {
 		t.Errorf("XStepQN=%d want %d", sf.XStepQN, wantStep)
 	}
@@ -54,7 +54,7 @@ func TestNewScaleFactorsSVCEnhancementUpscale(t *testing.T) {
 		t.Errorf("YStepQN=%d want %d", sf.YStepQN, wantStep)
 	}
 	// For an exact 2:1 ratio the step is exactly 0.5 in Q10.
-	if sf.XStepQN != ScaleSubpelScale/2 {
+	if sf.XStepQN != uint16(ScaleSubpelScale/2) {
 		t.Errorf("XStepQN=%d, expected exact 0.5 Q10 step=%d", sf.XStepQN, ScaleSubpelScale/2)
 	}
 }
@@ -80,6 +80,47 @@ func TestNewScaleFactorsRejectsOutOfRange(t *testing.T) {
 			if _, err := NewScaleFactors(tc.refW, tc.refH, tc.curW, tc.curH); err == nil {
 				t.Fatalf("NewScaleFactors(%d,%d,%d,%d): expected error, got nil",
 					tc.refW, tc.refH, tc.curW, tc.curH)
+			}
+		})
+	}
+}
+
+func TestNewScaleFactorsStorageBounds(t *testing.T) {
+	cases := []struct {
+		name                   string
+		refW, refH, curW, curH int
+		wantScale              uint16
+		wantStep               uint16
+	}{
+		{
+			name:      "max downscale",
+			refW:      2,
+			refH:      2,
+			curW:      1,
+			curH:      1,
+			wantScale: 2 << RefScaleShift,
+			wantStep:  2 << ScaleSubpelBits,
+		},
+		{
+			name:      "max upscale",
+			refW:      1,
+			refH:      1,
+			curW:      16,
+			curH:      16,
+			wantScale: 1 << (RefScaleShift - 4),
+			wantStep:  1 << (ScaleSubpelBits - 4),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sf, err := NewScaleFactors(tc.refW, tc.refH, tc.curW, tc.curH)
+			if err != nil {
+				t.Fatalf("NewScaleFactors: %v", err)
+			}
+			if sf.XScaleFP != tc.wantScale || sf.YScaleFP != tc.wantScale ||
+				sf.XStepQN != tc.wantStep || sf.YStepQN != tc.wantStep {
+				t.Fatalf("scale=%d,%d step=%d,%d want scale=%d step=%d",
+					sf.XScaleFP, sf.YScaleFP, sf.XStepQN, sf.YStepQN, tc.wantScale, tc.wantStep)
 			}
 		})
 	}

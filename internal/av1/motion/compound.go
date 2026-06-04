@@ -66,16 +66,16 @@ func roundPowerOfTwo7(value int) int {
 // for compound inter prediction.
 type CompoundConvBuf struct {
 	Data   [compoundMaxConvSamples]uint16
-	Width  int
-	Height int
+	Width  uint8
+	Height uint8
 }
 
 func compoundConvBufView(buf *CompoundConvBuf, width int, height int) ([]uint16, bool) {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return nil, false
 	}
-	buf.Width = width
-	buf.Height = height
+	buf.Width = uint8(width)
+	buf.Height = uint8(height)
 	return buf.Data[:width*height], true
 }
 
@@ -881,8 +881,8 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 // (av1_dist_wtd_convolve_* do_average branch).
 func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int) error {
 	if buf0 == nil || buf1 == nil ||
-		buf0.Width != width || buf0.Height != height ||
-		buf1.Width != width || buf1.Height != height {
+		int(buf0.Width) != width || int(buf0.Height) != height ||
+		int(buf1.Width) != width || int(buf1.Height) != height {
 		return ErrInvalidMotion
 	}
 	if !planeRegionFits(dst, bytesPerSample, dstX, dstY, width, height) ||
@@ -910,8 +910,8 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 // pixels (aom_*_blend_a64_d16_mask_c).
 func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mask []byte, maskStride int, subX bool, subY bool) error {
 	if buf0 == nil || buf1 == nil ||
-		buf0.Width != width || buf0.Height != height ||
-		buf1.Width != width || buf1.Height != height {
+		int(buf0.Width) != width || int(buf0.Height) != height ||
+		int(buf1.Width) != width || int(buf1.Height) != height {
 		return ErrInvalidMotion
 	}
 	if !planeRegionFits(dst, bytesPerSample, dstX, dstY, width, height) ||
@@ -953,8 +953,8 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 // CONV_BUF predictors (av1_build_compound_diffwtd_mask_d16_c).
 func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bitDepth uint8, width int, height int, invert bool) error {
 	if buf0 == nil || buf1 == nil ||
-		buf0.Width != width || buf0.Height != height ||
-		buf1.Width != width || buf1.Height != height {
+		int(buf0.Width) != width || int(buf0.Height) != height ||
+		int(buf1.Width) != width || int(buf1.Height) != height {
 		return ErrInvalidMotion
 	}
 	if maskStride < width || len(mask) < (height-1)*maskStride+width {

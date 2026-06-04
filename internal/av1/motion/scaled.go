@@ -60,13 +60,13 @@ const (
 type ScaleFactors struct {
 	// XScaleFP is RefScaleShift-precision (refWidth << 14) rounded by
 	// half-curWidth, divided by curWidth.
-	XScaleFP int32
-	YScaleFP int32
+	XScaleFP uint16
+	YScaleFP uint16
 
 	// XStepQN is ScaleSubpelBits-precision per-output-sample step:
 	// xStep = ((refWidth << ScaleSubpelBits) + curWidth/2) / curWidth.
-	XStepQN int32
-	YStepQN int32
+	XStepQN uint16
+	YStepQN uint16
 
 	// Identity reports whether the reference and current dimensions match,
 	// in which case the same-size translational interpolator can be used.
@@ -106,10 +106,10 @@ func NewScaleFactors(refWidth int, refHeight int, curWidth int, curHeight int) (
 		return ScaleFactors{}, ErrInvalidMotion
 	}
 	return ScaleFactors{
-		XScaleFP: xScaleFP,
-		YScaleFP: yScaleFP,
-		XStepQN:  xStep,
-		YStepQN:  yStep,
+		XScaleFP: uint16(xScaleFP),
+		YScaleFP: uint16(yScaleFP),
+		XStepQN:  uint16(xStep),
+		YStepQN:  uint16(yStep),
 		Identity: refWidth == curWidth && refHeight == curHeight,
 	}, nil
 }
@@ -142,7 +142,7 @@ func NewScaleFactors(refWidth int, refHeight int, curWidth int, curHeight int) (
 // stepper by ~half a source sample for any non-identity ratio, which is
 // observable in the SVC L2T1 spatial=1 enhancement layer's reference taps.
 func (sf ScaleFactors) ScaledBlockOrigin(dstX int, dstY int, mv Vector, subsamplingX bool, subsamplingY bool) (startX int64, startY int64, xStep int64, yStep int64, err error) {
-	if sf.XScaleFP <= 0 || sf.YScaleFP <= 0 || sf.XStepQN <= 0 || sf.YStepQN <= 0 {
+	if sf.XScaleFP == 0 || sf.YScaleFP == 0 || sf.XStepQN == 0 || sf.YStepQN == 0 {
 		return 0, 0, 0, 0, ErrInvalidMotion
 	}
 	scaleX := int64(2)

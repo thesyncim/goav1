@@ -322,7 +322,7 @@ type RestorationSuperResDeblockUpscale struct {
 	// CodedWidth is the per-plane coded (downscaled) plane width that is the
 	// source span for the upscale. The MI-aligned source extent is taken from
 	// the supplied byte plane's Width (which must be the aligned coded width).
-	CodedWidth [3]int
+	CodedWidth [3]uint32
 	// RowScratch is caller-owned uint16 scratch sized to hold one MI-aligned
 	// coded source row (plane.Width samples). It is reused per saved row.
 	RowScratch []uint16
@@ -466,7 +466,7 @@ func SaveRestorationFrameBoundaryLinesFromFrameSuperRes(plan RestorationFramePla
 		if grid.Type == parser.RestorationNone {
 			continue
 		}
-		if err := SaveRestorationBoundaryLinesFromFramePlaneSuperRes(grid, codedPlanes[plane], bytesPerSample, upscale.CodedWidth[plane], upscale.BitDepth, upscale.RowScratch, boundaries[plane]); err != nil {
+		if err := SaveRestorationBoundaryLinesFromFramePlaneSuperRes(grid, codedPlanes[plane], bytesPerSample, int(upscale.CodedWidth[plane]), upscale.BitDepth, upscale.RowScratch, boundaries[plane]); err != nil {
 			return err
 		}
 	}

@@ -67,8 +67,8 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsLumaInputs(t *t
 		t.Fatalf("scratch=%+v", size)
 	}
 	if size.LumaGrain != filmgrain.LumaGrainSamples ||
-		size.LumaSamples != plan.Planes[0].Stride*plan.Planes[0].Height ||
-		size.LumaLine != filmgrain.LumaOverlapSamples*plan.Planes[0].Stride ||
+		size.LumaSamples != int(plan.Planes[0].Stride)*int(plan.Planes[0].Height) ||
+		size.LumaLine != filmgrain.LumaOverlapSamples*int(plan.Planes[0].Stride) ||
 		size.LumaColumn != filmgrain.LumaColumnScratchRows*filmgrain.LumaOverlapSamples {
 		t.Fatalf("luma scratch=%+v", size)
 	}
@@ -96,10 +96,10 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsChromaScalingFr
 	if !plan.ChromaScalingFromLuma || !plan.Planes[1].Active || !plan.Planes[2].Active {
 		t.Fatalf("plan=%+v", plan)
 	}
-	if plan.Planes[1].Width != 32 || plan.Planes[1].Height != 16 || plan.Planes[1].ARCoeffs != 5 {
+	if int(plan.Planes[1].Width) != 32 || int(plan.Planes[1].Height) != 16 || plan.Planes[1].ARCoeffs != 5 {
 		t.Fatalf("cb plane=%+v", plan.Planes[1])
 	}
-	if plan.Planes[2].Width != 32 || plan.Planes[2].Height != 16 || plan.Planes[2].ARCoeffs != 5 {
+	if int(plan.Planes[2].Width) != 32 || int(plan.Planes[2].Height) != 16 || plan.Planes[2].ARCoeffs != 5 {
 		t.Fatalf("cr plane=%+v", plan.Planes[2])
 	}
 	size, err := ctx.FilmGrainPostFilterScratchLen()
@@ -132,7 +132,7 @@ func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanReportsSampleStride(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Planes[0].Width != 48 || plan.Planes[0].Stride != 64 {
+	if int(plan.Planes[0].Width) != 48 || int(plan.Planes[0].Stride) != 64 {
 		t.Fatalf("luma plane=%+v", plan.Planes[0])
 	}
 }

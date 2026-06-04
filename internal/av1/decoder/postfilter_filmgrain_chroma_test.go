@@ -166,7 +166,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, filmgrain.LumaBlockSize>>1, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(int(plan.Planes[filmgrain.ChromaPlaneCb].Width), filmgrain.LumaBlockSize>>1, int(plan.Planes[filmgrain.ChromaPlaneCb].Stride), 100)
 	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
 	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
 	grain := make([]int16, filmgrain.ChromaGrainSamples)
@@ -180,9 +180,9 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRow(t *testing.T) {
 	if !result.Active ||
 		result.Plane != filmgrain.ChromaPlaneCb ||
 		result.Row != 0 ||
-		result.Width != plan.Planes[filmgrain.ChromaPlaneCb].Width ||
+		result.Width != int(plan.Planes[filmgrain.ChromaPlaneCb].Width) ||
 		result.Height != filmgrain.LumaBlockSize>>1 ||
-		result.Stride != plan.Planes[filmgrain.ChromaPlaneCb].Stride ||
+		result.Stride != int(plan.Planes[filmgrain.ChromaPlaneCb].Stride) ||
 		result.LumaStride != lumaStride {
 		t.Fatalf("result=%+v", result)
 	}
@@ -254,12 +254,12 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowRejectsShortScratch(t 
 		t.Fatal(err)
 	}
 	height := filmgrain.LumaBlockSize >> 1
-	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, height, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(int(plan.Planes[filmgrain.ChromaPlaneCb].Width), height, int(plan.Planes[filmgrain.ChromaPlaneCb].Stride), 100)
 	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
 	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
 	grain := make([]int16, filmgrain.ChromaGrainSamples)
 	lut := testFrameWorkFilmGrainScaling(64)
-	need := (height-1)*plan.Planes[filmgrain.ChromaPlaneCb].Stride + plan.Planes[filmgrain.ChromaPlaneCb].Width
+	need := (height-1)*int(plan.Planes[filmgrain.ChromaPlaneCb].Stride) + int(plan.Planes[filmgrain.ChromaPlaneCb].Width)
 	if _, err := ctx.ApplyFilmGrainChromaRow(dst[:need-1], src, luma, grain, lut[:], filmgrain.ChromaPlaneCb, 0); !errors.Is(err, frame.ErrShortBuffer) {
 		t.Fatalf("ApplyFilmGrainChromaRow err=%v want %v", err, frame.ErrShortBuffer)
 	}
@@ -290,7 +290,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, src := testFrameWorkFilmGrainChromaRowBuffers(plan.Planes[filmgrain.ChromaPlaneCb].Width, filmgrain.LumaBlockSize>>1, plan.Planes[filmgrain.ChromaPlaneCb].Stride, 100)
+	dst, src := testFrameWorkFilmGrainChromaRowBuffers(int(plan.Planes[filmgrain.ChromaPlaneCb].Width), filmgrain.LumaBlockSize>>1, int(plan.Planes[filmgrain.ChromaPlaneCb].Stride), 100)
 	lumaStride := frameWorkFilmGrainSampleStride(output.Layout.YStride, output.Layout.BytesPerSample)
 	luma := testFrameWorkFilmGrainSampleBuffer(output.Y.Width, output.Y.Height, lumaStride, 96)
 	grain := make([]int16, filmgrain.ChromaGrainSamples)
