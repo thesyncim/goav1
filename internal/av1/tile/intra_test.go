@@ -618,8 +618,8 @@ func FuzzReadIntraEntry(f *testing.F) {
 			FrameType:    frameType,
 			AllowIntrabc: allowIntrabc,
 			Segment:      parser.SegmentData{RefFrame: -1},
-			X4:           x4,
-			Y4:           y4,
+			X4:           uint8(x4),
+			Y4:           uint8(y4),
 			HaveTop:      haveTop,
 			HaveLeft:     haveLeft,
 		})
@@ -632,8 +632,8 @@ func FuzzReadIntraEntry(f *testing.F) {
 		mode, err := state.ReadLumaIntraMode(&cdfs, &ctx, LumaIntraModeRequest{
 			FrameType: frameType,
 			Size:      size,
-			X4:        x4,
-			Y4:        y4,
+			X4:        uint8(x4),
+			Y4:        uint8(y4),
 		})
 		if err != nil {
 			t.Fatalf("ReadLumaIntraMode err=%v frameType=%d size=%d", err, frameType, size)

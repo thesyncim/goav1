@@ -81,8 +81,8 @@ type CompoundBlendRequest struct {
 	CurrentOrderHint      uint32
 	RefOrderHint          [2]uint32
 
-	X4       int
-	Y4       int
+	X4       uint8
+	Y4       uint8
 	HaveTop  bool
 	HaveLeft bool
 }
@@ -517,7 +517,7 @@ func validateCompoundBlendRequest(req CompoundBlendRequest) error {
 	if _, ok := req.Size.Dimensions(); !ok || !req.MotionMode.Valid() {
 		return ErrInvalidDecodeState
 	}
-	if err := validateBlockModeSlot(req.X4, req.Y4); err != nil {
+	if err := validateBlockModeSlot(int(req.X4), int(req.Y4)); err != nil {
 		return err
 	}
 	if req.OrderHintBits > 31 {

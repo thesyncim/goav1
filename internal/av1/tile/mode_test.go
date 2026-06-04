@@ -494,8 +494,8 @@ func FuzzReadBlockModePrefix(f *testing.F) {
 			CDEF:                parser.CDEFParams{Bits: rawCDEF & maxCDEFBits},
 			SegmentationEnabled: segEnabled,
 			Segment:             parser.SegmentData{RefFrame: -1, Skip: segSkip},
-			X4:                  int(rawX) % xLimit,
-			Y4:                  int(rawY) % yLimit,
+			X4:                  uint8(int(rawX) % xLimit),
+			Y4:                  uint8(int(rawY) % yLimit),
 		}
 		result, err := state.ReadBlockModePrefix(&cdfs, &ctx, req)
 		if err != nil {

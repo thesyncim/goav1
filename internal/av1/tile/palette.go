@@ -204,7 +204,7 @@ func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext
 	if req.LumaMode != IntraModeDC {
 		return s.readPaletteModeUV(cdfs, ctx, req, dst, mapScratch)
 	}
-	modeCtx, err := ctx.PaletteYModeContext(req.X4, req.Y4, req.HaveTop, req.HaveLeft)
+	modeCtx, err := ctx.PaletteYModeContext(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 	if err != nil {
 		return err
 	}
@@ -259,8 +259,8 @@ type PaletteModeRequest struct {
 	AllowScreenContentTools bool
 	Size                    BlockSize
 	LumaMode                IntraMode
-	X4                      int
-	Y4                      int
+	X4                      uint8
+	Y4                      uint8
 	HaveTop                 bool
 	HaveLeft                bool
 	BitDepth                uint8
@@ -337,7 +337,7 @@ func PaletteBSizeContext(size BlockSize) (int, error) {
 
 func (s *DecodeState) readPaletteColorsY(ctx *BlockModeContext, req PaletteModeRequest, result *PaletteModeResult) error {
 	var cache [2 * PaletteMaxSize]uint16
-	nCache, err := ctx.PaletteYCache(req.X4, req.Y4, req.HaveTop, req.HaveLeft, &cache)
+	nCache, err := ctx.PaletteYCache(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft, &cache)
 	if err != nil {
 		return err
 	}
@@ -405,7 +405,7 @@ func (s *DecodeState) readPaletteColorsY(ctx *BlockModeContext, req PaletteModeR
 
 func (s *DecodeState) readPaletteColorsUV(ctx *BlockModeContext, req PaletteModeRequest, result *PaletteModeResult) error {
 	var cache [2 * PaletteMaxSize]uint16
-	nCache, err := ctx.PaletteUVCache(req.X4, req.Y4, req.HaveTop, req.HaveLeft, &cache)
+	nCache, err := ctx.PaletteUVCache(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft, &cache)
 	if err != nil {
 		return err
 	}

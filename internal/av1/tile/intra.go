@@ -108,8 +108,8 @@ type IntraFlagRequest struct {
 	SegmentationEnabled bool
 	Segment             parser.SegmentData
 
-	X4       int
-	Y4       int
+	X4       uint8
+	Y4       uint8
 	HaveTop  bool
 	HaveLeft bool
 }
@@ -126,8 +126,8 @@ type IntraFlagResult struct {
 type LumaIntraModeRequest struct {
 	FrameType parser.FrameType
 	Size      BlockSize
-	X4        int
-	Y4        int
+	X4        uint8
+	Y4        uint8
 }
 
 // IntraAngleDeltaRequest describes one directional intra angle delta symbol.
@@ -864,7 +864,7 @@ func (s *DecodeState) ReadIntraFlagResult(cdfs *IntraModeCDFs, ctx *BlockModeCon
 		if req.SegmentationEnabled && (req.Segment.RefFrame >= 0 || req.Segment.GlobalMV) {
 			return IntraFlagResult{Intra: req.Segment.RefFrame == 0 && !req.Segment.GlobalMV}, nil
 		}
-		context, err := ctx.IntraContext(req.X4, req.Y4, req.HaveTop, req.HaveLeft)
+		context, err := ctx.IntraContext(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 		if err != nil {
 			return IntraFlagResult{}, err
 		}
@@ -910,7 +910,7 @@ func (s *DecodeState) ReadLumaIntraMode(cdfs *IntraModeCDFs, ctx *BlockModeConte
 	if frameTypeIsInterOrSwitch(req.FrameType) {
 		cdf, err = cdfs.YModeCDF(yModeSizeContext[req.Size])
 	} else {
-		above, left, ctxErr := ctx.KeyframeYModeContext(req.X4, req.Y4)
+		above, left, ctxErr := ctx.KeyframeYModeContext(int(req.X4), int(req.Y4))
 		if ctxErr != nil {
 			return 0, ctxErr
 		}

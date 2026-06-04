@@ -55,8 +55,8 @@ type InterReferenceRequest struct {
 	SegmentationEnabled bool
 	Segment             parser.SegmentData
 
-	X4       int
-	Y4       int
+	X4       uint8
+	Y4       uint8
 	HaveTop  bool
 	HaveLeft bool
 }
@@ -232,6 +232,8 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 	if err := c.validateInterRefRequest(req); err != nil {
 		return 0, err
 	}
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	if req.HaveTop && req.HaveLeft {
 		aboveIntra := c.AboveIntra[req.X4] != 0
 		leftIntra := c.LeftIntra[req.Y4] != 0
@@ -243,12 +245,12 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 				if c.LeftCompound[req.Y4] == 0 {
 					return 2, nil
 				}
-				return 1 + 2*boolInt(c.leftUnidir(req.Y4)), nil
+				return 1 + 2*boolInt(c.leftUnidir(y4)), nil
 			}
 			if c.AboveCompound[req.X4] == 0 {
 				return 2, nil
 			}
-			return 1 + 2*boolInt(c.aboveUnidir(req.X4)), nil
+			return 1 + 2*boolInt(c.aboveUnidir(x4)), nil
 		}
 
 		aboveComp := c.AboveCompound[req.X4] != 0
@@ -260,16 +262,16 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 		}
 		if !aboveComp || !leftComp {
 			if aboveComp {
-				if !c.aboveUnidir(req.X4) {
+				if !c.aboveUnidir(x4) {
 					return 1, nil
 				}
-			} else if !c.leftUnidir(req.Y4) {
+			} else if !c.leftUnidir(y4) {
 				return 1, nil
 			}
 			return 3 + boolInt(aboveRef0.Backward() == leftRef0.Backward()), nil
 		}
-		aboveUni := c.aboveUnidir(req.X4)
-		leftUni := c.leftUnidir(req.Y4)
+		aboveUni := c.aboveUnidir(x4)
+		leftUni := c.leftUnidir(y4)
 		if !aboveUni && !leftUni {
 			return 0, nil
 		}
@@ -283,12 +285,12 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 			if c.LeftIntra[req.Y4] != 0 || c.LeftCompound[req.Y4] == 0 {
 				return 2, nil
 			}
-			return 4 * boolInt(c.leftUnidir(req.Y4)), nil
+			return 4 * boolInt(c.leftUnidir(y4)), nil
 		}
 		if c.AboveIntra[req.X4] != 0 || c.AboveCompound[req.X4] == 0 {
 			return 2, nil
 		}
-		return 4 * boolInt(c.aboveUnidir(req.X4)), nil
+		return 4 * boolInt(c.aboveUnidir(x4)), nil
 	}
 	return 2, nil
 }
@@ -791,7 +793,7 @@ func (c *BlockModeContext) validateInterRefRequest(req InterReferenceRequest) er
 	if _, ok := req.Size.Dimensions(); !ok {
 		return ErrInvalidDecodeState
 	}
-	return validateBlockModeSlot(req.X4, req.Y4)
+	return validateBlockModeSlot(int(req.X4), int(req.Y4))
 }
 
 func (c *BlockModeContext) countRefDirs(req InterReferenceRequest) ([2]int, error) {

@@ -220,8 +220,8 @@ type BlockModeRequest struct {
 	SegmentationEnabled bool
 	Segment             parser.SegmentData
 
-	X4 int
-	Y4 int
+	X4 uint8
+	Y4 uint8
 }
 
 // BlockModeResult is the entropy-decoded block syntax prefix.
@@ -432,7 +432,7 @@ func (s *DecodeState) ReadSkipMode(cdfs *BlockModeCDFs, ctx *BlockModeContext, r
 	if err != nil || !read {
 		return false, err
 	}
-	context, err := ctx.SkipModeContext(req.X4, req.Y4)
+	context, err := ctx.SkipModeContext(int(req.X4), int(req.Y4))
 	if err != nil {
 		return false, err
 	}
@@ -456,7 +456,7 @@ func (s *DecodeState) ReadSkipTransform(cdfs *BlockModeCDFs, ctx *BlockModeConte
 	if skipMode || segmentForcesSkip(req) {
 		return true, nil
 	}
-	context, err := ctx.SkipContext(req.X4, req.Y4)
+	context, err := ctx.SkipContext(int(req.X4), int(req.Y4))
 	if err != nil {
 		return false, err
 	}
@@ -556,7 +556,7 @@ func (s *DecodeState) ReadBlockModePrefix(cdfs *BlockModeCDFs, ctx *BlockModeCon
 		SkipTransform: skip,
 		CDEFIndex:     cdefIndex,
 	}
-	if err := ctx.Mark(req.Size, req.X4, req.Y4, result); err != nil {
+	if err := ctx.Mark(req.Size, int(req.X4), int(req.Y4), result); err != nil {
 		return BlockModeResult{}, err
 	}
 	return result, nil

@@ -35,8 +35,8 @@ type InterpFilterRequest struct {
 	GlobalTypes [2]parser.GlobalMotionType
 	SkipMode    bool
 
-	X4       int
-	Y4       int
+	X4       uint8
+	Y4       uint8
 	HaveTop  bool
 	HaveLeft bool
 }
@@ -139,9 +139,9 @@ func (s *DecodeState) readSwitchableInterpFilter(cdfs *InterpFilterCDFs, ctx *Bl
 
 func validateInterpFilterRequest(req InterpFilterRequest) error {
 	dims, ok := req.Size.Dimensions()
-	if !ok || req.X4 < 0 || req.Y4 < 0 ||
-		req.X4+int(dims.W4) > MaxBlockModeSlots ||
-		req.Y4+int(dims.H4) > MaxBlockModeSlots ||
+	if !ok ||
+		int(req.X4)+int(dims.W4) > MaxBlockModeSlots ||
+		int(req.Y4)+int(dims.H4) > MaxBlockModeSlots ||
 		!req.References.Ref[0].Valid() {
 		return ErrInvalidDecodeState
 	}
@@ -180,10 +180,10 @@ func (c *BlockModeContext) SwitchableInterpContext(req InterpFilterRequest, dir 
 	left := switchableFilterMissing
 	above := switchableFilterMissing
 	if req.HaveLeft {
-		left = c.neighborSwitchableInterpFilter(false, req.Y4, dir, ref)
+		left = c.neighborSwitchableInterpFilter(false, int(req.Y4), dir, ref)
 	}
 	if req.HaveTop {
-		above = c.neighborSwitchableInterpFilter(true, req.X4, dir, ref)
+		above = c.neighborSwitchableInterpFilter(true, int(req.X4), dir, ref)
 	}
 	switch {
 	case left == above:

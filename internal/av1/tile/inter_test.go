@@ -291,8 +291,8 @@ func FuzzReadInterReferences(f *testing.F) {
 		result, err := state.ReadInterReferences(&cdfs, &ctx, InterReferenceRequest{
 			Size:          size,
 			ReferenceMode: mode,
-			X4:            x4,
-			Y4:            y4,
+			X4:            uint8(x4),
+			Y4:            uint8(y4),
 			HaveTop:       haveTop,
 			HaveLeft:      haveLeft,
 		})

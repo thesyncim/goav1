@@ -48,8 +48,8 @@ type MotionModeRequest struct {
 type OverlappableNeighborRequest struct {
 	Size BlockSize
 
-	X4 int
-	Y4 int
+	X4 uint8
+	Y4 uint8
 
 	VisibleW4 uint8
 	VisibleH4 uint8
@@ -227,13 +227,15 @@ func (c *BlockModeContext) CountOverlappableNeighbors(req OverlappableNeighborRe
 		return 0, nil
 	}
 
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	if req.HaveTop {
-		if count := c.countOverlappableAbove(req.X4, visibleW); count != 0 {
+		if count := c.countOverlappableAbove(x4, visibleW); count != 0 {
 			return count, nil
 		}
 	}
 	if req.HaveLeft {
-		return c.countOverlappableLeft(req.Y4, visibleH), nil
+		return c.countOverlappableLeft(y4, visibleH), nil
 	}
 	return 0, nil
 }
@@ -253,20 +255,22 @@ func (c *BlockModeContext) CollectOverlappableNeighbors(req OverlappableNeighbor
 		return OverlappableNeighborSet{}, err
 	}
 	var set OverlappableNeighborSet
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
 	if req.HaveTop && aboveMax > 0 {
-		c.collectOverlappableAbove(req.X4, visibleW, aboveMax, &set)
+		c.collectOverlappableAbove(x4, visibleW, aboveMax, &set)
 	}
 	if req.HaveLeft && leftMax > 0 {
-		c.collectOverlappableLeft(req.Y4, visibleH, leftMax, &set)
+		c.collectOverlappableLeft(y4, visibleH, leftMax, &set)
 	}
 	if req.HaveTop && req.HaveLeft {
-		if neighbor, ok := c.gridOverlappableNeighbor(req.X4-1, req.Y4-1, 0, 0); ok {
+		if neighbor, ok := c.gridOverlappableNeighbor(x4-1, y4-1, 0, 0); ok {
 			set.TopLeft = neighbor
 			set.TopLeftValid = true
 		}
 	}
 	if req.HaveTopRight {
-		if neighbor, ok := c.gridOverlappableNeighbor(req.X4+visibleW, req.Y4-1, visibleW, 0); ok {
+		if neighbor, ok := c.gridOverlappableNeighbor(x4+visibleW, y4-1, visibleW, 0); ok {
 			set.TopRight = neighbor
 			set.TopRightValid = true
 		}
@@ -307,11 +311,12 @@ func (c *BlockModeContext) validateOverlappableNeighborRequest(req OverlappableN
 	if visibleH == 0 {
 		visibleH = int(dims.H4)
 	}
-	if req.X4 < 0 || req.Y4 < 0 ||
-		visibleW <= 0 || visibleH <= 0 ||
+	x4 := int(req.X4)
+	y4 := int(req.Y4)
+	if visibleW <= 0 || visibleH <= 0 ||
 		visibleW > int(dims.W4) || visibleH > int(dims.H4) ||
-		req.X4+visibleW > MaxBlockModeSlots ||
-		req.Y4+visibleH > MaxBlockModeSlots {
+		x4+visibleW > MaxBlockModeSlots ||
+		y4+visibleH > MaxBlockModeSlots {
 		return 0, 0, ErrInvalidDecodeState
 	}
 	return visibleW, visibleH, nil

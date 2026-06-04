@@ -916,8 +916,8 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		CDEF:                req.CDEF,
 		SegmentationEnabled: req.Segmentation.Enabled,
 		Segment:             segment,
-		X4:                  blockX4,
-		Y4:                  blockY4,
+		X4:                  block.X4,
+		Y4:                  block.Y4,
 	}
 	prefix, err := s.readBlockModePrefixSyntax(cdfs.Mode, ctx, prefixReq, segmentPredicted)
 	if err != nil {
@@ -933,7 +933,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 			prefix.SegmentPredicted = true
 		}
 	}
-	cdefIndex, err := s.ReadCDEFIndexForBlock(prefixReq.CDEF, cdef, prefixReq.Size, prefixReq.X4, prefixReq.Y4, prefix.SkipTransform)
+	cdefIndex, err := s.ReadCDEFIndexForBlock(prefixReq.CDEF, cdef, prefixReq.Size, int(prefixReq.X4), int(prefixReq.Y4), prefix.SkipTransform)
 	if err != nil {
 		return nil, err
 	}
@@ -1069,8 +1069,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		SkipMode:            prefix.SkipMode,
 		SegmentationEnabled: req.Segmentation.Enabled,
 		Segment:             segment,
-		X4:                  blockX4,
-		Y4:                  blockY4,
+		X4:                  block.X4,
+		Y4:                  block.Y4,
 		HaveTop:             block.HaveTop,
 		HaveLeft:            block.HaveLeft,
 	})
@@ -1115,8 +1115,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 			SkipModeRefs:        req.SkipModeRefs,
 			SegmentationEnabled: req.Segmentation.Enabled,
 			Segment:             segment,
-			X4:                  blockX4,
-			Y4:                  blockY4,
+			X4:                  block.X4,
+			Y4:                  block.Y4,
 			HaveTop:             block.HaveTop,
 			HaveLeft:            block.HaveLeft,
 		})
@@ -1231,8 +1231,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 				if req.DecodeMotionModes {
 					overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
 						Size:         block.Size,
-						X4:           blockX4,
-						Y4:           blockY4,
+						X4:           block.X4,
+						Y4:           block.Y4,
 						VisibleW4:    block.VisibleW4,
 						VisibleH4:    block.VisibleH4,
 						HaveTop:      block.HaveTop,
@@ -1345,8 +1345,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 						OrderHintBits:         req.OrderHintBits,
 						CurrentOrderHint:      req.CurrentOrderHint,
 						RefOrderHint:          blockReferenceOrderHints(refs, req.ReferenceOrderHints),
-						X4:                    blockX4,
-						Y4:                    blockY4,
+						X4:                    block.X4,
+						Y4:                    block.Y4,
 						HaveTop:               block.HaveTop,
 						HaveLeft:              block.HaveLeft,
 					})
@@ -1365,8 +1365,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 					MotionMode:       motionMode,
 					GlobalTypes:      blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes),
 					SkipMode:         prefix.SkipMode,
-					X4:               blockX4,
-					Y4:               blockY4,
+					X4:               block.X4,
+					Y4:               block.Y4,
 					HaveTop:          block.HaveTop,
 					HaveLeft:         block.HaveLeft,
 				})
@@ -1434,8 +1434,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 	mode, err := s.ReadLumaIntraMode(cdfs.Intra, ctx, LumaIntraModeRequest{
 		FrameType: req.FrameType,
 		Size:      block.Size,
-		X4:        blockX4,
-		Y4:        blockY4,
+		X4:        block.X4,
+		Y4:        block.Y4,
 	})
 	if err != nil {
 		return BlockPredictionModeResult{}, err
@@ -1508,8 +1508,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		AllowScreenContentTools: req.AllowScreenContentTools,
 		Size:                    block.Size,
 		LumaMode:                mode,
-		X4:                      blockX4,
-		Y4:                      blockY4,
+		X4:                      block.X4,
+		Y4:                      block.Y4,
 		HaveTop:                 block.HaveTop,
 		HaveLeft:                block.HaveLeft,
 		BitDepth:                req.Color.BitDepth,
@@ -1541,8 +1541,8 @@ func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockMo
 		AllowScreenContentTools: req.AllowScreenContentTools,
 		Size:                    block.Size,
 		LumaMode:                mode,
-		X4:                      blockX4,
-		Y4:                      blockY4,
+		X4:                      block.X4,
+		Y4:                      block.Y4,
 		HaveTop:                 block.HaveTop,
 		HaveLeft:                block.HaveLeft,
 		BitDepth:                req.Color.BitDepth,
