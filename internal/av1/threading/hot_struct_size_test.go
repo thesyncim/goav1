@@ -14,7 +14,7 @@ func TestHotStructSizes(t *testing.T) {
 		max  uintptr
 	}{
 		{name: "Batch", size: unsafe.Sizeof(Batch{}), max: 20},
-		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1608},
+		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1600},
 		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1152},
 		{name: "FrameWorkPlaneRegion", size: unsafe.Sizeof(FrameWorkPlaneRegion{}), max: 72},
 		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 56 * hotStructKiB},
@@ -24,7 +24,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
 		{name: "FrameWorkLoopFilterMapStats", size: unsafe.Sizeof(FrameWorkLoopFilterMapStats{}), max: 12},
 		{name: "FrameWorkTileResidualStats", size: unsafe.Sizeof(FrameWorkTileResidualStats{}), max: 136},
-		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1688},
+		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1680},
 		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
 		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 12},
 		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},

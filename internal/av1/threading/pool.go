@@ -246,7 +246,6 @@ type FrameWorkBatch struct {
 	RetainedTileResidualCDFsValid *bool
 	Batch                         Batch
 	DisableCDFUpdate              bool
-	Jobs                          []tile.Job
 
 	// WavefrontWorkers is the number of idle pool goroutines that the per-tile
 	// reconstruction may employ for an SB-row wavefront when this batch is the
@@ -256,6 +255,7 @@ type FrameWorkBatch struct {
 	// deferred wavefront stays off and the fused single-thread path runs. The
 	// pool sets it from WorkerCount when it dispatches exactly one batch.
 	WavefrontWorkers uint16
+	Jobs             []tile.Job
 
 	// geomCache optionally memoizes the job-constant JobRegion and per-plane
 	// JobOutputPlane windows for a single job index. It is caller-owned scratch
