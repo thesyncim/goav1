@@ -1175,8 +1175,8 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLumaAndChroma(t *testing.
 		result.Edges != 3 ||
 		result.Applied != 3 ||
 		result.MaxLevel != 63 ||
-		result.PlaneEdges != [3]int{1, 1, 1} ||
-		result.PlaneApplied != [3]int{1, 1, 1} ||
+		result.PlaneEdges != [3]uint32{1, 1, 1} ||
+		result.PlaneApplied != [3]uint32{1, 1, 1} ||
 		result.PlaneMaxLevel != [3]uint8{63, 63, 63} ||
 		result.Plan.StoredEdges != 3 {
 		t.Fatalf("result=%+v", result)
@@ -1236,7 +1236,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesHighBitDepthChroma(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.PlaneApplied != [3]int{1, 1, 1} || result.MaxLevel != 63 {
+	if result.PlaneApplied != [3]uint32{1, 1, 1} || result.MaxLevel != 63 {
 		t.Fatalf("result=%+v", result)
 	}
 	if bytes.Equal(output.U.Pix, beforeU) || bytes.Equal(output.V.Pix, beforeV) {
@@ -1306,8 +1306,8 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesUsesPlanePassOrder(t *tes
 		t.Fatal(err)
 	}
 	if result.Edges != 12 ||
-		result.PlaneEdges != [3]int{4, 4, 4} ||
-		result.PlaneApplied != [3]int{4, 4, 4} {
+		result.PlaneEdges != [3]uint32{4, 4, 4} ||
+		result.PlaneApplied != [3]uint32{4, 4, 4} {
 		t.Fatalf("result=%+v", result)
 	}
 	if !bytes.Equal(output.Y.Pix, wantFrame.Y.Pix) ||
@@ -1353,7 +1353,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesAllocs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result.Applied != 3 || result.PlaneApplied != [3]int{1, 1, 1} {
+		if result.Applied != 3 || result.PlaneApplied != [3]uint32{1, 1, 1} {
 			t.Fatalf("result=%+v", result)
 		}
 	})

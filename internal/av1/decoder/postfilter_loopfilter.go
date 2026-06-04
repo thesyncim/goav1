@@ -163,11 +163,11 @@ type FrameWorkLoopFilterPostFilterApplyResult struct {
 
 	Active bool
 
-	Edges   int
-	Applied int
+	Edges   uint32
+	Applied uint32
 
-	PlaneEdges    [3]int
-	PlaneApplied  [3]int
+	PlaneEdges    [3]uint32
+	PlaneApplied  [3]uint32
 	PlaneMaxLevel [3]uint8
 
 	MaxLevel uint8
@@ -364,6 +364,10 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, maxPlane loopfilter.Plane) error {
 	before := result.Edges
+	expected, ok := frameWorkLoopFilterCounter(len(edges))
+	if !ok {
+		return loopfilter.ErrInvalidFilter
+	}
 	var planes [3]frame.Plane
 	var planeReady [3]bool
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
@@ -420,7 +424,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 			}
 		}
 	}
-	if result.Edges-before != len(edges) {
+	if result.Edges-before != expected {
 		return loopfilter.ErrInvalidFilter
 	}
 	return nil
@@ -2276,6 +2280,13 @@ func frameWorkLoopFilterCounterLen(count uint32) (int, bool) {
 		return 0, false
 	}
 	return int(count), true
+}
+
+func frameWorkLoopFilterCounter(count int) (uint32, bool) {
+	if count < 0 || uint64(count) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(count), true
 }
 
 func frameWorkLoopFilterCountChromaTXBsWithShifts(color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, ssX uint8, ssY uint8) (int, error) {
