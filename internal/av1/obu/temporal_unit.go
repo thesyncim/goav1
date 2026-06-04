@@ -16,7 +16,7 @@ type TemporalUnit struct {
 // an OBU temporal delimiter and ends immediately before the next delimiter.
 type TemporalUnitIterator struct {
 	src   []byte
-	off   int
+	off   uint32
 	index uint32
 }
 
@@ -25,17 +25,22 @@ func NewTemporalUnitIterator(src []byte) TemporalUnitIterator {
 }
 
 func (it *TemporalUnitIterator) Next() (TemporalUnit, bool, error) {
-	if it.off == len(it.src) {
+	srcLen := len(it.src)
+	if uint64(srcLen) > uint64(^uint32(0)) {
+		return TemporalUnit{}, false, ErrShortPayload
+	}
+	off := int(it.off)
+	if off == srcLen {
 		return TemporalUnit{}, false, nil
 	}
-	if it.off > len(it.src) {
+	if off > srcLen {
 		return TemporalUnit{}, false, ErrShortPayload
 	}
 
-	start := it.off
+	start := off
 	first := true
-	for it.off < len(it.src) {
-		unit, consumed, err := ParseLowOverhead(it.src[it.off:])
+	for off < srcLen {
+		unit, consumed, err := ParseLowOverhead(it.src[off:])
 		if err != nil {
 			return TemporalUnit{}, false, err
 		}
@@ -44,18 +49,20 @@ func (it *TemporalUnitIterator) Next() (TemporalUnit, bool, error) {
 				return TemporalUnit{}, false, ErrMissingTemporalDelimiter
 			}
 			first = false
-			it.off += consumed
+			off += consumed
+			it.off = uint32(off)
 			continue
 		}
 		if unit.Header.Type == TypeTemporalDelimiter {
-			result := TemporalUnit{Raw: it.src[start:it.off], Index: it.index}
+			result := TemporalUnit{Raw: it.src[start:off], Index: it.index}
 			it.index++
 			return result, true, nil
 		}
-		it.off += consumed
+		off += consumed
+		it.off = uint32(off)
 	}
 
-	result := TemporalUnit{Raw: it.src[start:it.off], Index: it.index}
+	result := TemporalUnit{Raw: it.src[start:off], Index: it.index}
 	it.index++
 	return result, true, nil
 }

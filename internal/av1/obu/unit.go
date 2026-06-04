@@ -97,7 +97,7 @@ func ParseLowOverhead(src []byte) (Unit, int, error) {
 // LowOverheadIterator iterates OBUs in AV1 low-overhead bitstream format.
 type LowOverheadIterator struct {
 	src []byte
-	off int
+	off uint32
 }
 
 func NewLowOverheadIterator(src []byte) LowOverheadIterator {
@@ -105,17 +105,22 @@ func NewLowOverheadIterator(src []byte) LowOverheadIterator {
 }
 
 func (it *LowOverheadIterator) Next() (Unit, bool, error) {
-	if it.off == len(it.src) {
+	srcLen := len(it.src)
+	if uint64(srcLen) > uint64(^uint32(0)) {
+		return Unit{}, false, ErrShortPayload
+	}
+	off := int(it.off)
+	if off == srcLen {
 		return Unit{}, false, nil
 	}
-	if it.off > len(it.src) {
+	if off > srcLen {
 		return Unit{}, false, ErrShortPayload
 	}
 
-	unit, consumed, err := ParseLowOverhead(it.src[it.off:])
+	unit, consumed, err := ParseLowOverhead(it.src[off:])
 	if err != nil {
 		return Unit{}, false, err
 	}
-	it.off += consumed
+	it.off = uint32(off + consumed)
 	return unit, true, nil
 }

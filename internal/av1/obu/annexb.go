@@ -24,10 +24,10 @@ type AnnexBUnit struct {
 // allocation: temporal_unit_size, frame_unit_size, obu_unit_size, then OBU.
 type AnnexBIterator struct {
 	src []byte
-	off int
+	off uint32
 
-	temporalRemain int
-	frameRemain    int
+	temporalRemain uint32
+	frameRemain    uint32
 
 	temporalIndex uint32
 	frameIndex    uint32
@@ -52,10 +52,11 @@ func ParseAnnexBElement(src []byte) (Unit, int, error) {
 		return Unit{}, 0, ErrInvalidAnnexB
 	}
 	start := n
-	end := start + size
-	if end < start || end > len(src) {
+	end64 := uint64(start) + uint64(size)
+	if end64 > uint64(len(src)) {
 		return Unit{}, 0, ErrShortPayload
 	}
+	end := int(end64)
 	raw := src[start:end]
 	unit, err := ParseElement(raw)
 	if err != nil {
@@ -68,25 +69,31 @@ func ParseAnnexBElement(src []byte) (Unit, int, error) {
 }
 
 func (it *AnnexBIterator) Next() (AnnexBUnit, bool, error) {
-	if it.off == len(it.src) {
+	srcLen := len(it.src)
+	if uint64(srcLen) > uint64(^uint32(0)) {
+		return AnnexBUnit{}, false, ErrInvalidAnnexB
+	}
+	off := int(it.off)
+	if off == srcLen {
 		if it.temporalRemain != 0 || it.frameRemain != 0 {
 			return AnnexBUnit{}, false, ErrShortPayload
 		}
 		return AnnexBUnit{}, false, nil
 	}
-	if it.off > len(it.src) {
+	if off > srcLen {
 		return AnnexBUnit{}, false, ErrShortPayload
 	}
 
 	if it.temporalRemain == 0 {
-		size, n, err := readAnnexBSize(it.src[it.off:])
+		size, n, err := readAnnexBSize(it.src[off:])
 		if err != nil {
 			return AnnexBUnit{}, false, err
 		}
 		if size == 0 {
 			return AnnexBUnit{}, false, ErrInvalidAnnexB
 		}
-		it.off += n
+		it.off += uint32(n)
+		off += n
 		it.temporalRemain = size
 		it.currentTemporal = it.temporalIndex
 		it.temporalIndex++
@@ -95,37 +102,40 @@ func (it *AnnexBIterator) Next() (AnnexBUnit, bool, error) {
 	}
 
 	if it.frameRemain == 0 {
-		size, n, err := readAnnexBSize(it.src[it.off:])
+		size, n, err := readAnnexBSize(it.src[off:])
 		if err != nil {
 			return AnnexBUnit{}, false, err
 		}
-		if size == 0 || n+size > it.temporalRemain {
+		if size == 0 || uint64(n)+uint64(size) > uint64(it.temporalRemain) {
 			return AnnexBUnit{}, false, ErrInvalidAnnexB
 		}
-		it.off += n
-		it.temporalRemain -= n
+		it.off += uint32(n)
+		off += n
+		it.temporalRemain -= uint32(n)
 		it.frameRemain = size
 		it.currentFrame = it.frameIndex
 		it.frameIndex++
 		it.obuIndex = 0
 	}
 
-	size, n, err := readAnnexBSize(it.src[it.off:])
+	size, n, err := readAnnexBSize(it.src[off:])
 	if err != nil {
 		return AnnexBUnit{}, false, err
 	}
-	if size == 0 || n+size > it.frameRemain {
+	if size == 0 || uint64(n)+uint64(size) > uint64(it.frameRemain) {
 		return AnnexBUnit{}, false, ErrInvalidAnnexB
 	}
-	it.off += n
-	it.temporalRemain -= n
-	it.frameRemain -= n
+	it.off += uint32(n)
+	off += n
+	it.temporalRemain -= uint32(n)
+	it.frameRemain -= uint32(n)
 
-	start := it.off
-	end := start + size
-	if end < start || end > len(it.src) {
+	start := off
+	end64 := uint64(start) + uint64(size)
+	if end64 > uint64(srcLen) {
 		return AnnexBUnit{}, false, ErrShortPayload
 	}
+	end := int(end64)
 	raw := it.src[start:end]
 	unit, err := ParseElement(raw)
 	if err != nil {
@@ -142,21 +152,17 @@ func (it *AnnexBIterator) Next() (AnnexBUnit, bool, error) {
 		OBUIndex:          it.obuIndex,
 		Offset:            uint32(start),
 	}
-	it.off = end
+	it.off = uint32(end)
 	it.temporalRemain -= size
 	it.frameRemain -= size
 	it.obuIndex++
 	return result, true, nil
 }
 
-func readAnnexBSize(src []byte) (int, int, error) {
+func readAnnexBSize(src []byte) (uint32, int, error) {
 	value, n, err := bitstream.ReadLEB128(src)
 	if err != nil {
 		return 0, 0, err
 	}
-	maxInt := int(^uint(0) >> 1)
-	if value > uint32(maxInt) {
-		return 0, 0, ErrInvalidAnnexB
-	}
-	return int(value), n, nil
+	return value, n, nil
 }
