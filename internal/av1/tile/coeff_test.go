@@ -869,6 +869,77 @@ func BenchmarkCoeffCDFsInitDefault(b *testing.B) {
 	coeffBenchmarkSink = sum
 }
 
+func BenchmarkReadCoefficientsTXB8x8Class2D(b *testing.B) {
+	size := TransformSize8x8
+	class := transform.Class2D
+	txSize, err := size.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, size, txSize, class)
+	coeffs := make([]int16, len(scan))
+	payload := coeffBenchmarkTXBPayload(b, size, class, scan, scratch)
+	req := TXBDecodeRequest{
+		Size:            size,
+		Plane:           CoeffPlaneY,
+		Class:           class,
+		TXBSkipContext:  0,
+		DCSignContext:   0,
+		EOBMultiContext: 0,
+	}
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		b.Fatal(err)
+	}
+	var state DecodeState
+	sum := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += int(result.EOB) + int(result.CulLevel)
+	}
+	coeffBenchmarkSink = sum
+}
+
+func coeffBenchmarkTXBPayload(b *testing.B, size TransformSize, class transform.Class, scan []int16, scratch []uint8) []byte {
+	b.Helper()
+	coeffs := make([]int16, len(scan))
+	req := TXBDecodeRequest{
+		Size:            size,
+		Plane:           CoeffPlaneY,
+		Class:           class,
+		TXBSkipContext:  0,
+		DCSignContext:   0,
+		EOBMultiContext: 0,
+	}
+	for seed := 0; seed < 4096; seed++ {
+		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), byte(seed*29 + 7), 0x5a}
+		clear(coeffs)
+		clear(scratch)
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			b.Fatal(err)
+		}
+		var state DecodeState
+		if err := state.Reset(payload, Job{Offset: 0, Size: len(payload)}, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
+		if err == nil && !result.AllZero && result.EOB > 8 {
+			return payload
+		}
+	}
+	b.Fatal("could not find nontrivial coefficient benchmark payload")
+	return nil
+}
+
 func TestReadCoefficientsTXBAllocs(t *testing.T) {
 	txSize, err := TransformSize4x4.TransformSize()
 	if err != nil {
@@ -1163,7 +1234,7 @@ func readCoefficientsTXBForTest(t *testing.T, payload []byte, size TransformSize
 	return result, coeffs
 }
 
-func coeffScanAndScratch(t *testing.T, size TransformSize, txSize transform.Size, class transform.Class) ([]int16, []uint8) {
+func coeffScanAndScratch(t testing.TB, size TransformSize, txSize transform.Size, class transform.Class) ([]int16, []uint8) {
 	t.Helper()
 	scanSize, err := transform.ScanSize(txSize)
 	if err != nil {

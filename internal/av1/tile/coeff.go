@@ -149,11 +149,11 @@ var eobMultiSizeTable = [transformSizeCount]int{
 // coefficient hot path.
 type coeffGeometry struct {
 	valid      bool
-	scanWidth  int
-	scanHeight int
-	stride     int // scanHeight + txPadHorizontal
-	maxEOB     int // scanWidth * scanHeight
-	scratchLen int // (scanWidth+pad) * (scanHeight+pad)
+	scanWidth  uint8
+	scanHeight uint8
+	stride     uint8  // scanHeight + txPadHorizontal
+	maxEOB     uint16 // scanWidth * scanHeight
+	scratchLen uint16 // (scanWidth+pad) * (scanHeight+pad)
 	txCtx      uint8
 	txBRCtx    uint8
 	// txWide/txTall record the unadjusted transform-dimension comparison used
@@ -171,12 +171,12 @@ var coeffGeometryTable [transformSizeCount]coeffGeometry
 // padded scratch offset (col*stride+row) plus the unpadded row/col. Computing
 // these once per transform size at init turns the per-coefficient
 // index->position math (a data-dependent division) into a table lookup on the
-// hot coefficient-read path. row/col stay below the transform dimension and
-// padded stays below scratchLen, all well within int16.
+// hot coefficient-read path. row/col stay below 32 and padded stays below
+// scratchLen, all well within uint8/uint16.
 type coeffPos struct {
-	padded        int16
-	row           int16
-	col           int16
+	padded        uint16
+	row           uint8
+	col           uint8
 	lower2DOffset int8
 	br2DOffset    int8
 }
@@ -213,11 +213,11 @@ func init() {
 		}
 		coeffGeometryTable[size] = coeffGeometry{
 			valid:      true,
-			scanWidth:  scanSize.Width,
-			scanHeight: scanSize.Height,
-			stride:     stride,
-			maxEOB:     maxEOB,
-			scratchLen: (scanSize.Width + txPadHorizontal) * stride,
+			scanWidth:  uint8(scanSize.Width),
+			scanHeight: uint8(scanSize.Height),
+			stride:     uint8(stride),
+			maxEOB:     uint16(maxEOB),
+			scratchLen: uint16((scanSize.Width + txPadHorizontal) * stride),
 			txCtx:      txCtx,
 			txBRCtx:    txBRCtx,
 			txWide:     txWide,
@@ -228,9 +228,9 @@ func init() {
 			col := idx / scanSize.Height
 			row := idx - col*scanSize.Height
 			positions[idx] = coeffPos{
-				padded: int16(col*stride + row),
-				row:    int16(row),
-				col:    int16(col),
+				padded: uint16(col*stride + row),
+				row:    uint8(row),
+				col:    uint8(col),
 			}
 		}
 		for idx := range positions {
@@ -358,7 +358,7 @@ func CoeffLevelsScratchLen(size TransformSize) (int, error) {
 	if !ok {
 		return 0, ErrInvalidDecodeState
 	}
-	return g.scratchLen, nil
+	return int(g.scratchLen), nil
 }
 
 // CoeffInitLevels ports libaom's av1_txb_init_levels_c into caller-owned
@@ -749,13 +749,13 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if !ok {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	maxEOB := geo.maxEOB
+	maxEOB := int(geo.maxEOB)
 	if len(coeffs) < maxEOB || len(scan) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	coeffs = coeffs[:maxEOB]
 	scan = scan[:maxEOB]
-	scratchLen := geo.scratchLen
+	scratchLen := int(geo.scratchLen)
 	if len(levelsScratch) < scratchLen {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
@@ -947,7 +947,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	}
 
 	if req.Class == transform.Class2D {
-		stride := geo.stride
+		stride := int(geo.stride)
 		for c := eobPos - 2; c >= 0; c-- {
 			pos := int(scan[c])
 			if pos < 0 || pos >= maxEOB {
@@ -956,7 +956,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			p := posSlice[pos]
 			padded := int(p.padded)
-			if padded < 0 || padded >= len(levelsScratch) {
+			if padded >= len(levelsScratch) {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
@@ -1009,7 +1009,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
 			padded := int(posSlice[pos].padded)
-			if padded < 0 || padded >= len(levelsScratch) {
+			if padded >= len(levelsScratch) {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
@@ -1057,7 +1057,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
 			padded := int(posSlice[pos].padded)
-			if padded < 0 || padded >= len(levelsScratch) {
+			if padded >= len(levelsScratch) {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
@@ -1119,7 +1119,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			nextC := int(coeffs[pos]) - 1
 			padded := int(posSlice[pos].padded)
-			if padded < 0 || padded >= len(levelsScratch) {
+			if padded >= len(levelsScratch) {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
@@ -1436,11 +1436,11 @@ func coeffPaddedPosition(size TransformSize, coeffIndex int) (padded int, stride
 		return 0, 0, 0, 0, ErrInvalidDecodeState
 	}
 	g := &coeffGeometryTable[size]
-	if !g.valid || coeffIndex < 0 || coeffIndex >= g.maxEOB {
+	if !g.valid || coeffIndex < 0 || coeffIndex >= int(g.maxEOB) {
 		return 0, 0, 0, 0, ErrInvalidDecodeState
 	}
 	p := coeffPosTable[size][coeffIndex]
-	return int(p.padded), g.stride, int(p.row), int(p.col), nil
+	return int(p.padded), int(g.stride), int(p.row), int(p.col), nil
 }
 
 func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride int, err error) {
@@ -1448,11 +1448,11 @@ func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
 	g := &coeffGeometryTable[size]
-	if !g.valid || coeffIndex < 0 || coeffIndex >= g.maxEOB {
+	if !g.valid || coeffIndex < 0 || coeffIndex >= int(g.maxEOB) {
 		return 0, 0, 0, ErrInvalidDecodeState
 	}
 	p := coeffPosTable[size][coeffIndex]
-	return int(p.row), int(p.col), g.stride, nil
+	return int(p.row), int(p.col), int(g.stride), nil
 }
 
 // coeffLowerLevelsCtxFast is the hot-loop variant of CoeffLowerLevelsContext.
@@ -1464,7 +1464,7 @@ func coeffPosition(size TransformSize, coeffIndex int) (row int, col int, stride
 func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) int {
 	p := posSlice[pos]
 	padded := int(p.padded)
-	stride := geo.stride
+	stride := int(geo.stride)
 	// Build neighbour offsets as additive induction chains. The final dummy
 	// reads prove the maxima to the bounds-check eliminator; the TXB loop has
 	// already validated the table-derived geometry.
@@ -1548,7 +1548,7 @@ func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, str
 func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) int {
 	p := posSlice[pos]
 	padded := int(p.padded)
-	stride := geo.stride
+	stride := int(geo.stride)
 	// Same chained-induction BCE as coeffLowerLevelsCtxFast.
 	s1 := padded + stride // padded + stride
 	s1p1 := s1 + 1        // padded + stride + 1

@@ -566,7 +566,7 @@ func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.
 	if !ok || !class.Valid() {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	scanLen := geo.maxEOB
+	scanLen := int(geo.maxEOB)
 	if scanLen > len(s.Coeffs) {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
@@ -574,7 +574,7 @@ func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.
 	if len(scan) < scanLen {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	levelsLen := geo.scratchLen
+	levelsLen := int(geo.scratchLen)
 	if levelsLen > len(s.Levels) {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
