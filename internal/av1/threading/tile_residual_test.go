@@ -183,6 +183,48 @@ func TestFrameWorkBatchReferenceMVFrameBindAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkDeferredReconPreservesScanSlice(t *testing.T) {
+	var scratch FrameWorkTileResidualScratch
+	controller := frameWorkTileResidualLoopController{scratch: &scratch}
+	coeffs := []int16{1, 0, 0, 0}
+	scan := []int16{0, 1, 2, 3}
+	block := tile.BlockCoeffBlock{
+		Plane: 0,
+		Block: tile.TransformBlock{
+			Size:      tile.TransformSize4x4,
+			VisibleW4: 1,
+			VisibleH4: 1,
+		},
+		Transform: transform.TypeDCTDCT,
+		Result:    tile.TXBDecodeResult{EOB: 1},
+		Coeffs:    coeffs,
+		Scan:      scan,
+	}
+
+	controller.bufferReconTXB(&tile.BlockLoopVisit{}, &block, 7)
+
+	if len(scratch.reconBlocks) != 1 {
+		t.Fatalf("recon blocks=%d want 1", len(scratch.reconBlocks))
+	}
+	buffered := scratch.reconBlocks[0]
+	if len(buffered.Scan) != len(scan) {
+		t.Fatalf("buffered scan len=%d want %d", len(buffered.Scan), len(scan))
+	}
+	if len(scan) != 0 && &buffered.Scan[0] != &scan[0] {
+		t.Fatal("buffered scan was copied; expected immutable scan-table alias")
+	}
+	if len(buffered.Coeffs) != len(coeffs) {
+		t.Fatalf("buffered coeff len=%d want %d", len(buffered.Coeffs), len(coeffs))
+	}
+	coeffs[0] = 99
+	if buffered.Coeffs[0] != 1 {
+		t.Fatalf("buffered coeffs alias caller scratch: got %d want 1", buffered.Coeffs[0])
+	}
+	if len(scratch.coeffArena) != len(coeffs) {
+		t.Fatalf("coeff arena len=%d want %d", len(scratch.coeffArena), len(coeffs))
+	}
+}
+
 func TestFrameWorkBlockLoopRefFrameSideMatchesLibaom(t *testing.T) {
 	refs := [parser.InterRefsPerFrame]uint32{7, 8, 9, 24, 4, 5, 6}
 	side, err := frameWorkBlockLoopRefFrameSide(true, 5, 8, refs)

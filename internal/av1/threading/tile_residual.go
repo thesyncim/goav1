@@ -1414,8 +1414,9 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 // coefficient scratch slice per transform block (block.Coeffs aliases it), so
 // the buffered slice is repointed into the arena with a three-index slice that
 // caps its capacity, preventing a later append from clobbering a neighbor
-// event's coefficients. Scan is dropped: reconstruction consumes only EOB,
-// Coeffs, and geometry-derived scan size.
+// event's coefficients. Scan is kept by reference to the immutable scan table
+// so deferred reconstruction can use the same sparse dequant path as the fused
+// path without copying per-TXB scan data.
 func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) {
 	buffered := *block
 	if block.Result.AllZero {
@@ -1427,7 +1428,6 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 	} else {
 		buffered.Coeffs = nil
 	}
-	buffered.Scan = nil
 	blockIndex := len(c.scratch.reconBlocks)
 	c.scratch.reconBlocks = append(c.scratch.reconBlocks, buffered)
 	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
