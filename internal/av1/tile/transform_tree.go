@@ -134,10 +134,10 @@ func (r TransformTreeResult) ForEachLumaTXB(req TransformTreeRequest, visit Tran
 // interleave luma+chroma coefficient decode per unit; the window selects one
 // such unit. For blocks <= 64px the window spans the whole block.
 type coeffUnitWindow struct {
-	X4Start int
-	Y4Start int
-	X4End   int
-	Y4End   int
+	X4Start uint8
+	Y4Start uint8
+	X4End   uint8
+	Y4End   uint8
 }
 
 // fullCoeffUnitWindow returns the window spanning the whole prediction block,
@@ -146,10 +146,10 @@ func fullCoeffUnitWindow(req TransformTreeRequest) coeffUnitWindow {
 	reqX4 := int(req.X4)
 	reqY4 := int(req.Y4)
 	return coeffUnitWindow{
-		X4Start: reqX4,
-		Y4Start: reqY4,
-		X4End:   reqX4 + int(req.VisibleW4),
-		Y4End:   reqY4 + int(req.VisibleH4),
+		X4Start: uint8(reqX4),
+		Y4Start: uint8(reqY4),
+		X4End:   uint8(reqX4 + int(req.VisibleW4)),
+		Y4End:   uint8(reqY4 + int(req.VisibleH4)),
 	}
 }
 
@@ -178,10 +178,10 @@ func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, wi
 	}
 	reqX4 := int(req.X4)
 	reqY4 := int(req.Y4)
-	yStart := maxInt(window.Y4Start, reqY4)
-	yEnd := minInt(window.Y4End, reqY4+int(req.VisibleH4))
-	xStart := maxInt(window.X4Start, reqX4)
-	xEnd := minInt(window.X4End, reqX4+int(req.VisibleW4))
+	yStart := maxInt(int(window.Y4Start), reqY4)
+	yEnd := minInt(int(window.Y4End), reqY4+int(req.VisibleH4))
+	xStart := maxInt(int(window.X4Start), reqX4)
+	xEnd := minInt(int(window.X4End), reqX4+int(req.VisibleW4))
 
 	if r.Variable {
 		walker := transformTreeReplay{result: r, req: req, visit: visit}

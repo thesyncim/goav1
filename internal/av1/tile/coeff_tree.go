@@ -59,10 +59,10 @@ type LumaCoeffBlock struct {
 }
 
 type LumaCoeffStats struct {
-	TXBs     int32
-	NonZero  int32
-	AllZero  int32
-	EOBTotal int32
+	TXBs     uint16
+	NonZero  uint16
+	AllZero  uint16
+	EOBTotal uint32
 }
 
 type LumaCoeffVisitor func(LumaCoeffBlock) error
@@ -166,10 +166,10 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		}
 		reqX4 := int(req.TreeRequest.X4)
 		reqY4 := int(req.TreeRequest.Y4)
-		yStart := maxInt(window.Y4Start, reqY4)
-		yEnd := minInt(window.Y4End, reqY4+int(req.TreeRequest.VisibleH4))
-		xStart := maxInt(window.X4Start, reqX4)
-		xEnd := minInt(window.X4End, reqX4+int(req.TreeRequest.VisibleW4))
+		yStart := maxInt(int(window.Y4Start), reqY4)
+		yEnd := minInt(int(window.Y4End), reqY4+int(req.TreeRequest.VisibleH4))
+		xStart := maxInt(int(window.X4Start), reqX4)
+		xEnd := minInt(int(window.X4End), reqX4+int(req.TreeRequest.VisibleW4))
 		txbReq := TXBDecodeRequest{
 			EOBMultiContext:       eobCtx,
 			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
@@ -206,7 +206,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 				}
 
 				stats.TXBs++
-				stats.EOBTotal += int32(result.EOB)
+				stats.EOBTotal += uint32(result.EOB)
 				if result.AllZero {
 					stats.AllZero++
 				} else {
@@ -248,7 +248,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		}
 
 		stats.TXBs++
-		stats.EOBTotal += int32(result.EOB)
+		stats.EOBTotal += uint32(result.EOB)
 		if result.AllZero {
 			stats.AllZero++
 		} else {
@@ -366,10 +366,10 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 	// block origin to get the libaom `row`/`col` luma offsets, then subsample.
 	reqX4 := int(req.TreeRequest.X4)
 	reqY4 := int(req.TreeRequest.Y4)
-	lumaXStart := maxInt(window.X4Start-reqX4, 0)
-	lumaYStart := maxInt(window.Y4Start-reqY4, 0)
-	lumaXEnd := window.X4End - reqX4
-	lumaYEnd := window.Y4End - reqY4
+	lumaXStart := maxInt(int(window.X4Start)-reqX4, 0)
+	lumaYStart := maxInt(int(window.Y4Start)-reqY4, 0)
+	lumaXEnd := int(window.X4End) - reqX4
+	lumaYEnd := int(window.Y4End) - reqY4
 
 	cxStart := lumaXStart >> ssX
 	cyStart := lumaYStart >> ssY
@@ -410,7 +410,7 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
 			}
 			stats.TXBs++
-			stats.EOBTotal += int32(result.EOB)
+			stats.EOBTotal += uint32(result.EOB)
 			if result.AllZero {
 				stats.AllZero++
 			} else {

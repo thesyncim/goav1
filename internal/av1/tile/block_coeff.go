@@ -187,10 +187,10 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	for row := 0; row < visH; row += muH {
 		for col := 0; col < visW; col += muW {
 			window := coeffUnitWindow{
-				X4Start: reqX4 + col,
-				Y4Start: reqY4 + row,
-				X4End:   reqX4 + minInt(col+muW, visW),
-				Y4End:   reqY4 + minInt(row+muH, visH),
+				X4Start: uint8(reqX4 + col),
+				Y4Start: uint8(reqY4 + row),
+				X4End:   uint8(reqX4 + minInt(col+muW, visW)),
+				Y4End:   uint8(reqY4 + minInt(row+muH, visH)),
 			}
 			lumaStats, err := s.decodeLumaCoefficientsInWindow(cdfs.Coeff, coeffCtx, &scratch.Coeff, lumaReq, window, lumaVisit)
 			if err != nil {

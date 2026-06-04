@@ -1817,8 +1817,8 @@ func (b *FrameWorkBatch) readInterBlockTransformsAndQIndexPtr(state *tile.Decode
 }
 
 func frameWorkAccumulateResidualStats(stats *FrameWorkTileResidualStats, coeff tile.LumaCoeffStats) {
-	stats.TXBs += coeff.TXBs
-	stats.NonZero += coeff.NonZero
-	stats.AllZero += coeff.AllZero
-	stats.EOBTotal += coeff.EOBTotal
+	stats.TXBs += int32(coeff.TXBs)
+	stats.NonZero += int32(coeff.NonZero)
+	stats.AllZero += int32(coeff.AllZero)
+	stats.EOBTotal += int32(coeff.EOBTotal)
 }

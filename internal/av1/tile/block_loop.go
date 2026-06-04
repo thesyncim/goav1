@@ -456,10 +456,10 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				if visitInfo.CoefficientsValid {
 					stats.CoefficientBlocks++
 					total := visitInfo.Coefficients.TotalStats()
-					stats.CoefficientTXBs += total.TXBs
-					stats.CoefficientNonZero += total.NonZero
-					stats.CoefficientAllZero += total.AllZero
-					stats.CoefficientEOBTotal += total.EOBTotal
+					stats.CoefficientTXBs += int32(total.TXBs)
+					stats.CoefficientNonZero += int32(total.NonZero)
+					stats.CoefficientAllZero += int32(total.AllZero)
+					stats.CoefficientEOBTotal += int32(total.EOBTotal)
 				}
 				readDelta, err := shouldReadBlockDelta(visitInfo.Delta)
 				if err != nil {
