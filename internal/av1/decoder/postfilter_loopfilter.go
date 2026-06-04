@@ -481,30 +481,28 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(r
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, starts [3][2]uint32, counts [3][2]uint32, maxPlane loopfilter.Plane) error {
-	var planes [3]frame.Plane
-	var planeReady [3]bool
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
 	var thresholdReady [loopfilter.MaxLevel + 1]bool
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
 	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+		if counts[plane][loopfilter.EdgeVertical]+counts[plane][loopfilter.EdgeHorizontal] == 0 {
+			continue
+		}
+		dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, plane)
+		if !ok {
+			return loopfilter.ErrInvalidFilter
+		}
+		planeW, planeH, err := frameWorkLoopFilterBufferSize(ctx, plane)
+		if err != nil {
+			return err
+		}
+		dst = frameWorkLoopFilterAlignedPlane(dst, planeW, planeH, bytesPerSample)
 		for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
 			start := int(starts[plane][edgeKind])
 			end := start + int(counts[plane][edgeKind])
 			for _, edgeIndex := range schedule[start:end] {
 				edge := &edges[edgeIndex]
-				if !planeReady[plane] {
-					dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, plane)
-					if !ok {
-						return loopfilter.ErrInvalidFilter
-					}
-					planeW, planeH, err := frameWorkLoopFilterBufferSize(ctx, plane)
-					if err != nil {
-						return err
-					}
-					planes[plane] = frameWorkLoopFilterAlignedPlane(dst, planeW, planeH, bytesPerSample)
-					planeReady[plane] = true
-				}
 				if !thresholdReady[edge.Level] {
 					th, err := loopfilter.ThresholdsForLevel(edge.Level, ctx.Event.LoopFilter.Sharpness)
 					if err != nil {
@@ -518,19 +516,19 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *Fram
 				length := int32(edge.Length4) * 4
 				switch edge.Width {
 				case 4:
-					if err := loopfilter.Filter4Edge(planes[plane], bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
+					if err := loopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
 						return err
 					}
 				case 6:
-					if err := loopfilter.Filter6Edge(planes[plane], bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
+					if err := loopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
 						return err
 					}
 				case 8:
-					if err := loopfilter.Filter8Edge(planes[plane], bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
+					if err := loopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
 						return err
 					}
 				case 14:
-					if err := loopfilter.Filter14Edge(planes[plane], bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
+					if err := loopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, edge.Edge, x, y, length, thresholds[edge.Level]); err != nil {
 						return err
 					}
 				default:
