@@ -77,6 +77,15 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if structure.NumDecodeTargets != 2 || structure.TemplateNum != 4 {
 		t.Fatalf("dependency structure = %+v", structure)
 	}
+
+	control, err := av1.EncoderWebRTCTemporalUnitControlForFrames(cfg, frames[:], state, idState, 8)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCTemporalUnitControlForFrames: %v", err)
+	}
+	if control.FrameNum != 1 || control.Frames[0].GenericFrameInfo.DependencyNum != 1 ||
+		control.Frames[0].LibaomSVCRefFrameConfig.Reference[0] != 1 {
+		t.Fatalf("temporal-unit control = %+v", control)
+	}
 }
 
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {

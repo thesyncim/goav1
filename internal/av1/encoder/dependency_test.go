@@ -135,6 +135,96 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	}
 }
 
+func TestWebRTCTemporalUnitControlForFramesKeyUnit(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	}
+	frames := [...]FrameEncodeSettings{
+		{
+			Type:            FrameTypeKey,
+			Resolution:      Resolution{Width: 320, Height: 180},
+			SpatialID:       0,
+			TemporalID:      0,
+			UpdateBuffer:    0,
+			UpdateBufferSet: true,
+			Output:          true,
+		},
+		{
+			Type:             FrameTypeDelta,
+			Resolution:       Resolution{Width: 640, Height: 360},
+			SpatialID:        1,
+			TemporalID:       0,
+			ReferenceBuffers: [WebRTCMaxFrameReferences]uint8{0},
+			ReferenceCount:   1,
+			UpdateBuffer:     1,
+			UpdateBufferSet:  true,
+			Output:           true,
+		},
+	}
+
+	got, err := WebRTCTemporalUnitControlForFrames(cfg, frames[:], ReferenceBufferState{}, FrameIDBufferState{}, 10)
+	if err != nil {
+		t.Fatalf("WebRTCTemporalUnitControlForFrames key unit: %v", err)
+	}
+	if got.FrameNum != 2 || !got.HasDependencyStructure || !got.Frames[0].AttachDependencyStructure || got.Frames[1].AttachDependencyStructure {
+		t.Fatalf("control flags = %+v", got)
+	}
+	if got.Frames[1].GenericFrameInfo.DependencyNum != 1 || got.Frames[1].GenericFrameInfo.Dependencies[0] != 10 {
+		t.Fatalf("upper-layer generic info = %+v", got.Frames[1].GenericFrameInfo)
+	}
+	if got.Frames[1].LibaomSVCRefFrameConfig.Reference[0] != 1 || got.Frames[1].LibaomSVCRefFrameConfig.RefIdx[0] != 0 {
+		t.Fatalf("upper-layer ref config = %+v", got.Frames[1].LibaomSVCRefFrameConfig)
+	}
+	if !got.ReferenceState.Valid[0] || !got.ReferenceState.Valid[1] ||
+		got.FrameIDState.FrameIDs[0] != 10 || got.FrameIDState.FrameIDs[1] != 11 {
+		t.Fatalf("states = refs %+v ids %+v", got.ReferenceState, got.FrameIDState)
+	}
+	if got.DependencyStructure.TemplateNum != 4 || got.DependencyStructure.NumDecodeTargets != 2 {
+		t.Fatalf("dependency structure = %+v", got.DependencyStructure)
+	}
+}
+
+func TestWebRTCTemporalUnitControlForFramesDeltaUnit(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	}
+	refState := ReferenceBufferState{}
+	refState.Valid[1] = true
+	refState.Resolutions[1] = Resolution{Width: 640, Height: 360}
+	idState := FrameIDBufferState{}
+	idState.Valid[1] = true
+	idState.FrameIDs[1] = 22
+	frames := [...]FrameEncodeSettings{
+		{
+			Type:             FrameTypeDelta,
+			Resolution:       Resolution{Width: 640, Height: 360},
+			SpatialID:        1,
+			TemporalID:       1,
+			ReferenceBuffers: [WebRTCMaxFrameReferences]uint8{1},
+			ReferenceCount:   1,
+			UpdateBuffer:     1,
+			UpdateBufferSet:  true,
+			Output:           true,
+		},
+	}
+
+	got, err := WebRTCTemporalUnitControlForFrames(cfg, frames[:], refState, idState, 23)
+	if err != nil {
+		t.Fatalf("WebRTCTemporalUnitControlForFrames delta unit: %v", err)
+	}
+	if got.HasDependencyStructure || got.Frames[0].AttachDependencyStructure {
+		t.Fatalf("delta unexpectedly attached structure: %+v", got)
+	}
+	if got.Frames[0].GenericFrameInfo.DependencyNum != 1 || got.Frames[0].GenericFrameInfo.Dependencies[0] != 22 {
+		t.Fatalf("delta generic info = %+v", got.Frames[0].GenericFrameInfo)
+	}
+	if got.FrameIDState.FrameIDs[1] != 23 {
+		t.Fatalf("delta id state = %+v", got.FrameIDState)
+	}
+}
+
 func TestWebRTCDependencyHelpersAllocs(t *testing.T) {
 	state := FrameIDBufferState{}
 	state.Valid[3] = true
@@ -155,5 +245,37 @@ func TestWebRTCDependencyHelpersAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("dependency helpers allocs = %f; want 0", allocs)
+	}
+}
+
+func TestWebRTCTemporalUnitControlForFramesAllocs(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	}
+	refState := ReferenceBufferState{}
+	refState.Valid[1] = true
+	refState.Resolutions[1] = Resolution{Width: 640, Height: 360}
+	idState := FrameIDBufferState{}
+	idState.Valid[1] = true
+	idState.FrameIDs[1] = 22
+	frames := [...]FrameEncodeSettings{
+		{
+			Type:             FrameTypeDelta,
+			Resolution:       Resolution{Width: 640, Height: 360},
+			SpatialID:        1,
+			TemporalID:       1,
+			ReferenceBuffers: [WebRTCMaxFrameReferences]uint8{1},
+			ReferenceCount:   1,
+			UpdateBuffer:     1,
+			UpdateBufferSet:  true,
+			Output:           true,
+		},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = WebRTCTemporalUnitControlForFrames(cfg, frames[:], refState, idState, 23)
+	})
+	if allocs != 0 {
+		t.Fatalf("temporal-unit control allocs = %f; want 0", allocs)
 	}
 }

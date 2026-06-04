@@ -84,6 +84,8 @@ type EncoderFrameIDBufferState = internalencoder.FrameIDBufferState
 type EncoderWebRTCGenericFrameInfo = internalencoder.WebRTCGenericFrameInfo
 type EncoderWebRTCFrameDependencyTemplate = internalencoder.WebRTCFrameDependencyTemplate
 type EncoderWebRTCFrameDependencyStructure = internalencoder.WebRTCFrameDependencyStructure
+type EncoderWebRTCFrameControl = internalencoder.WebRTCFrameControl
+type EncoderWebRTCTemporalUnitControl = internalencoder.WebRTCTemporalUnitControl
 type EncoderOBU = internalencoder.OBU
 type EncoderSequenceHeader = internalencoder.SequenceHeader
 type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
@@ -166,6 +168,10 @@ func EncoderWebRTCGenericFrameInfoForFrame(settings EncoderFrameEncodeSettings, 
 
 func EncoderWebRTCFrameDependencyStructureForConfig(config EncoderConfig) (EncoderWebRTCFrameDependencyStructure, error) {
 	return internalencoder.WebRTCFrameDependencyStructureForConfig(config)
+}
+
+func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
+	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
 }
 
 func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolution) (EncoderRational, bool) {

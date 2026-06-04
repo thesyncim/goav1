@@ -137,6 +137,78 @@ type WebRTCFrameDependencyStructure struct {
 	ResolutionNum                uint8
 }
 
+type WebRTCFrameControl struct {
+	Settings                  FrameEncodeSettings
+	LibaomSVCRefFrameConfig   LibaomSVCRefFrameConfig
+	GenericFrameInfo          WebRTCGenericFrameInfo
+	AttachDependencyStructure bool
+}
+
+type WebRTCTemporalUnitControl struct {
+	Frames                 [WebRTCMaxSpatialLayers]WebRTCFrameControl
+	FrameNum               uint8
+	ReferenceState         ReferenceBufferState
+	FrameIDState           FrameIDBufferState
+	DependencyStructure    WebRTCFrameDependencyStructure
+	HasDependencyStructure bool
+}
+
+func WebRTCTemporalUnitControlForFrames(config Config, frames []FrameEncodeSettings, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, firstFrameID uint64) (WebRTCTemporalUnitControl, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCTemporalUnitControl{}, err
+	}
+	if len(frames) == 0 || len(frames) > int(config.SpatialLayerCount) || len(frames) > WebRTCMaxSpatialLayers {
+		return WebRTCTemporalUnitControl{}, ErrInvalidFrame
+	}
+
+	nextReferenceState, err := ValidateTemporalUnitFrames(frames, referenceState, config.RateControl)
+	if err != nil {
+		return WebRTCTemporalUnitControl{}, err
+	}
+
+	var control WebRTCTemporalUnitControl
+	control.FrameNum = uint8(len(frames))
+	control.ReferenceState = nextReferenceState
+	nextFrameIDState := frameIDState
+	for i := range frames {
+		settings := frames[i]
+		if settings.SpatialID >= config.SpatialLayerCount || settings.TemporalID >= config.TemporalLayerCount {
+			return WebRTCTemporalUnitControl{}, ErrInvalidFrame
+		}
+
+		frameID := firstFrameID + uint64(i)
+		frameControl := &control.Frames[i]
+		frameControl.Settings = settings
+		frameControl.LibaomSVCRefFrameConfig, err = LibaomSVCRefFrameConfigForFrame(settings)
+		if err != nil {
+			return WebRTCTemporalUnitControl{}, err
+		}
+		frameControl.GenericFrameInfo, nextFrameIDState, err = WebRTCGenericFrameInfoForFrame(
+			settings,
+			frameID,
+			nextFrameIDState,
+			config.SpatialLayerCount,
+			config.TemporalLayerCount,
+		)
+		if err != nil {
+			return WebRTCTemporalUnitControl{}, err
+		}
+		if settings.Type == FrameTypeKey {
+			frameControl.AttachDependencyStructure = true
+			control.HasDependencyStructure = true
+		}
+	}
+	control.FrameIDState = nextFrameIDState
+	if control.HasDependencyStructure {
+		control.DependencyStructure, err = WebRTCFrameDependencyStructureForConfig(config)
+		if err != nil {
+			return WebRTCTemporalUnitControl{}, err
+		}
+	}
+	return control, nil
+}
+
 func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependencyStructure, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
