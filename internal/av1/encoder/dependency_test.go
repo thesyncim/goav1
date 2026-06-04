@@ -135,6 +135,30 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	}
 }
 
+func TestWebRTCTemplateIDForFrame(t *testing.T) {
+	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	structure.StructureID = 62
+	id, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{
+		SpatialID:  1,
+		TemporalID: 0,
+	})
+	if err != nil {
+		t.Fatalf("WebRTCTemplateIDForFrame: %v", err)
+	}
+	if id != 0 {
+		t.Fatalf("template id=%d want 0", id)
+	}
+	if _, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{SpatialID: 3}); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("missing layer err=%v want ErrInvalidFrame", err)
+	}
+}
+
 func TestWebRTCTemporalUnitControlForFramesKeyUnit(t *testing.T) {
 	cfg := Config{
 		Resolution:  Resolution{Width: 640, Height: 360},

@@ -86,6 +86,23 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 		control.Frames[0].LibaomSVCRefFrameConfig.Reference[0] != 1 {
 		t.Fatalf("temporal-unit control = %+v", control)
 	}
+
+	descriptor, err := av1.EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure, control.Frames[0].GenericFrameInfo, true, true)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame: %v", err)
+	}
+	var descriptorBuf [av1.RTPDependencyDescriptorMandatorySize]byte
+	n, err := av1.PutRTPDependencyDescriptorMandatory(descriptorBuf[:], descriptor)
+	if err != nil {
+		t.Fatalf("PutRTPDependencyDescriptorMandatory: %v", err)
+	}
+	parsed, consumed, err := av1.ParseRTPDependencyDescriptorMandatory(descriptorBuf[:])
+	if err != nil {
+		t.Fatalf("ParseRTPDependencyDescriptorMandatory: %v", err)
+	}
+	if n != av1.RTPDependencyDescriptorMandatorySize || consumed != n || parsed != descriptor {
+		t.Fatalf("descriptor roundtrip n=%d consumed=%d parsed=%+v want=%+v", n, consumed, parsed, descriptor)
+	}
 }
 
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {

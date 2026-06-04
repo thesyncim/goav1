@@ -170,6 +170,23 @@ func EncoderWebRTCFrameDependencyStructureForConfig(config EncoderConfig) (Encod
 	return internalencoder.WebRTCFrameDependencyStructureForConfig(config)
 }
 
+func EncoderWebRTCTemplateIDForFrame(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo) (uint8, error) {
+	return internalencoder.WebRTCTemplateIDForFrame(structure, info)
+}
+
+func EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool) (RTPDependencyDescriptorMandatory, error) {
+	templateID, err := internalencoder.WebRTCTemplateIDForFrame(structure, info)
+	if err != nil {
+		return RTPDependencyDescriptorMandatory{}, err
+	}
+	return RTPDependencyDescriptorMandatory{
+		FirstPacketInFrame: firstPacketInFrame,
+		LastPacketInFrame:  lastPacketInFrame,
+		TemplateID:         templateID,
+		FrameNumber:        uint16(info.FrameID),
+	}, nil
+}
+
 func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
 	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
 }

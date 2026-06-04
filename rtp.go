@@ -51,23 +51,30 @@ type RTPPacketizerScratchSize = internalrtp.PacketizerScratchSize
 // by AssembleRTPFrame to report span offsets and sizes.
 type RTPFrameOBU = internalrtp.FrameOBU
 
+// RTPDependencyDescriptorMandatory is the fixed 3-byte mandatory prefix of
+// WebRTC's dependency descriptor RTP header extension.
+type RTPDependencyDescriptorMandatory = internalrtp.DependencyDescriptorMandatory
+
+const RTPDependencyDescriptorMandatorySize = internalrtp.DependencyDescriptorMandatorySize
+
 // RTP packetization/depacketization errors. Each Err* value is returned by
 // the RTP helpers when their input violates the AV1 RTP draft framing rules
 // or the supplied caller buffers are too small.
 var (
-	ErrRTPShortPayload             = internalrtp.ErrShortPayload
-	ErrRTPReservedBit              = internalrtp.ErrReservedBit
-	ErrRTPInvalidAggregationHeader = internalrtp.ErrInvalidAggregationHeader
-	ErrRTPInvalidElementCount      = internalrtp.ErrInvalidElementCount
-	ErrRTPShortBuffer              = internalrtp.ErrShortBuffer
-	ErrRTPZeroLengthElement        = internalrtp.ErrZeroLengthElement
-	ErrRTPUnexpectedContinuation   = internalrtp.ErrUnexpectedContinuation
-	ErrRTPFragmentInterrupted      = internalrtp.ErrFragmentInterrupted
-	ErrRTPEmptyFrame               = internalrtp.ErrEmptyFrame
-	ErrRTPMTUTooSmall              = internalrtp.ErrMTUTooSmall
-	ErrRTPInvalidPayloadLimits     = internalrtp.ErrInvalidPayloadLimits
-	ErrRTPOBUBufferTooSmall        = internalrtp.ErrOBUBufferTooSmall
-	ErrRTPPacketPlanTooSmall       = internalrtp.ErrPacketPlanTooSmall
+	ErrRTPShortPayload                = internalrtp.ErrShortPayload
+	ErrRTPReservedBit                 = internalrtp.ErrReservedBit
+	ErrRTPInvalidAggregationHeader    = internalrtp.ErrInvalidAggregationHeader
+	ErrRTPInvalidElementCount         = internalrtp.ErrInvalidElementCount
+	ErrRTPShortBuffer                 = internalrtp.ErrShortBuffer
+	ErrRTPZeroLengthElement           = internalrtp.ErrZeroLengthElement
+	ErrRTPUnexpectedContinuation      = internalrtp.ErrUnexpectedContinuation
+	ErrRTPFragmentInterrupted         = internalrtp.ErrFragmentInterrupted
+	ErrRTPEmptyFrame                  = internalrtp.ErrEmptyFrame
+	ErrRTPMTUTooSmall                 = internalrtp.ErrMTUTooSmall
+	ErrRTPInvalidPayloadLimits        = internalrtp.ErrInvalidPayloadLimits
+	ErrRTPOBUBufferTooSmall           = internalrtp.ErrOBUBufferTooSmall
+	ErrRTPPacketPlanTooSmall          = internalrtp.ErrPacketPlanTooSmall
+	ErrRTPInvalidDependencyDescriptor = internalrtp.ErrInvalidDependencyDescriptor
 )
 
 // ParseRTPAggregationHeader parses an AV1 RTP aggregation header at the front
@@ -92,6 +99,14 @@ func NewRTPPayloadIterator(payload []byte) (RTPPayloadIterator, error) {
 // into dst and returns the number of bytes written.
 func PutRTPPayload(dst []byte, header RTPAggregationHeader, elements []RTPElement) (int, error) {
 	return internalrtp.PutPayload(dst, header, elements)
+}
+
+func PutRTPDependencyDescriptorMandatory(dst []byte, descriptor RTPDependencyDescriptorMandatory) (int, error) {
+	return internalrtp.PutDependencyDescriptorMandatory(dst, descriptor)
+}
+
+func ParseRTPDependencyDescriptorMandatory(src []byte) (RTPDependencyDescriptorMandatory, int, error) {
+	return internalrtp.ParseDependencyDescriptorMandatory(src)
 }
 
 // PutRTPFragment writes one MTU-sized RTP fragment of an OBU into dst. offset

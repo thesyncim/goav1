@@ -2,7 +2,7 @@ package encoder
 
 const (
 	WebRTCRtpDependencyMaxDecodeTargets = MaxLayers
-	WebRTCRtpDependencyMaxTemplates     = MaxLayers
+	WebRTCRtpDependencyMaxTemplates     = 64
 	LibaomSVCReferenceSlots             = 7
 )
 
@@ -207,6 +207,21 @@ func WebRTCTemporalUnitControlForFrames(config Config, frames []FrameEncodeSetti
 		}
 	}
 	return control, nil
+}
+
+func WebRTCTemplateIDForFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (uint8, error) {
+	if structure.TemplateNum == 0 || structure.TemplateNum > WebRTCRtpDependencyMaxTemplates ||
+		structure.NumDecodeTargets == 0 || structure.StructureID >= WebRTCRtpDependencyMaxTemplates ||
+		info.SpatialID >= WebRTCMaxSpatialLayers || info.TemporalID >= WebRTCMaxTemporalLayers {
+		return 0, ErrInvalidFrame
+	}
+	for i := uint8(0); i < structure.TemplateNum; i++ {
+		template := structure.Templates[i]
+		if template.SpatialID == info.SpatialID && template.TemporalID == info.TemporalID {
+			return (structure.StructureID + i) % WebRTCRtpDependencyMaxTemplates, nil
+		}
+	}
+	return 0, ErrInvalidFrame
 }
 
 func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependencyStructure, error) {
