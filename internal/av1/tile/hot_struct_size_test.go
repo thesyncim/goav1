@@ -11,8 +11,15 @@ func TestHotStructSizes(t *testing.T) {
 		size uintptr
 		max  uintptr
 	}{
+		{name: "eobGroupStart", size: unsafe.Sizeof(eobGroupStart), max: 24},
+		{name: "eobOffsetBits", size: unsafe.Sizeof(eobOffsetBits), max: 12},
+		{name: "eobToPosSmall", size: unsafe.Sizeof(eobToPosSmall), max: 33},
+		{name: "eobToPosLarge", size: unsafe.Sizeof(eobToPosLarge), max: 17},
+		{name: "eobMultiSizeTable", size: unsafe.Sizeof(eobMultiSizeTable), max: 19},
 		{name: "LumaCoeffStats", size: unsafe.Sizeof(LumaCoeffStats{}), max: 12},
 		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: 9492},
+		{name: "TXBSkipRequest", size: unsafe.Sizeof(TXBSkipRequest{}), max: 2},
+		{name: "CoeffTokenRequest", size: unsafe.Sizeof(CoeffTokenRequest{}), max: 3},
 		{name: "TXBDecodeRequest", size: unsafe.Sizeof(TXBDecodeRequest{}), max: 56},
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},

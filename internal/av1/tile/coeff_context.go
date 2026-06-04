@@ -168,7 +168,7 @@ func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	req.Plane = plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
 	req.DCSignContext = txbCtx.DCSignContext
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: int(req.TXBSkipContext)})
+	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
 	if err != nil {
 		return TXBDecodeRequest{}, false, err
 	}

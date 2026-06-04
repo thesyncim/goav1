@@ -1120,7 +1120,7 @@ func FuzzReadCoeffPrimitives(f *testing.F) {
 		}
 		if _, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{
 			Size:    size,
-			Context: int(rawCoeffCtx % TXBSkipContexts),
+			Context: rawCoeffCtx % TXBSkipContexts,
 		}); err != nil {
 			t.Fatalf("ReadTXBSkip err=%v", err)
 		}
@@ -1134,21 +1134,21 @@ func FuzzReadCoeffPrimitives(f *testing.F) {
 		if _, err := state.ReadCoeffBaseEOB(&cdfs, CoeffTokenRequest{
 			Size:    size,
 			Plane:   plane,
-			Context: int(rawCoeffCtx % EOBBaseContexts),
+			Context: rawCoeffCtx % EOBBaseContexts,
 		}); err != nil {
 			t.Fatalf("ReadCoeffBaseEOB err=%v", err)
 		}
 		if _, err := state.ReadCoeffBase(&cdfs, CoeffTokenRequest{
 			Size:    size,
 			Plane:   plane,
-			Context: int(rawCoeffCtx % CoeffBaseContexts),
+			Context: rawCoeffCtx % CoeffBaseContexts,
 		}); err != nil {
 			t.Fatalf("ReadCoeffBase err=%v", err)
 		}
 		if _, err := state.ReadCoeffBR(&cdfs, CoeffTokenRequest{
 			Size:    size,
 			Plane:   plane,
-			Context: int(rawCoeffCtx % CoeffBRContexts),
+			Context: rawCoeffCtx % CoeffBRContexts,
 		}); err != nil {
 			t.Fatalf("ReadCoeffBR err=%v", err)
 		}

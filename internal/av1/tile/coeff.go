@@ -49,7 +49,7 @@ type CoeffCDFs struct {
 
 type TXBSkipRequest struct {
 	Size    TransformSize
-	Context int
+	Context uint8
 }
 
 type EOBRequest struct {
@@ -68,7 +68,7 @@ type EOBResult struct {
 type CoeffTokenRequest struct {
 	Size    TransformSize
 	Plane   CoeffPlaneType
-	Context int
+	Context uint8
 }
 
 type TXBDecodeRequest struct {
@@ -102,16 +102,16 @@ type TXBDecodeResult struct {
 	AllZero     bool
 }
 
-var eobGroupStart = [12]int{0, 1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513}
-var eobOffsetBits = [12]int{0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-var eobToPosSmall = [33]int{
+var eobGroupStart = [12]uint16{0, 1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513}
+var eobOffsetBits = [12]uint8{0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+var eobToPosSmall = [33]uint8{
 	0, 1, 2,
 	3, 3,
 	4, 4, 4, 4,
 	5, 5, 5, 5, 5, 5, 5, 5,
 	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
 }
-var eobToPosLarge = [17]int{
+var eobToPosLarge = [17]uint8{
 	6,
 	7,
 	8, 8,
@@ -119,7 +119,7 @@ var eobToPosLarge = [17]int{
 	10, 10, 10, 10, 10, 10, 10, 10,
 	11,
 }
-var eobMultiSizeTable = [transformSizeCount]int{
+var eobMultiSizeTable = [transformSizeCount]uint8{
 	TransformSize4x4:   0,
 	TransformSize8x8:   2,
 	TransformSize16x16: 4,
@@ -322,14 +322,14 @@ func EOBMultiSize(size TransformSize) (int, error) {
 	if !size.Valid() {
 		return 0, ErrInvalidDecodeState
 	}
-	return eobMultiSizeTable[size], nil
+	return int(eobMultiSizeTable[size]), nil
 }
 
 func RecEOBPosition(token int, extra int) (int, error) {
 	if token < 0 || token >= len(eobGroupStart) || extra < 0 {
 		return 0, ErrInvalidDecodeState
 	}
-	eob := eobGroupStart[token]
+	eob := int(eobGroupStart[token])
 	if eob > 2 {
 		eob += extra
 	}
@@ -341,12 +341,12 @@ func EOBPositionToken(eob int) (token int, extra int, err error) {
 		return 0, 0, ErrInvalidDecodeState
 	}
 	if eob < len(eobToPosSmall) {
-		token = eobToPosSmall[eob]
+		token = int(eobToPosSmall[eob])
 	} else {
 		index := min((eob-1)>>5, 16)
-		token = eobToPosLarge[index]
+		token = int(eobToPosLarge[index])
 	}
-	extra = eob - eobGroupStart[token]
+	extra = eob - int(eobGroupStart[token])
 	if extra < 0 || extra >= 1<<eobOffsetBits[token] {
 		return 0, 0, ErrInvalidDecodeState
 	}
@@ -632,7 +632,7 @@ func (s *DecodeState) ReadTXBSkip(cdfs *CoeffCDFs, req TXBSkipRequest) (bool, er
 	if s == nil {
 		return false, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.TXBSkipCDF(req.Size, req.Context)
+	cdf, err := cdfs.TXBSkipCDF(req.Size, int(req.Context))
 	if err != nil {
 		return false, err
 	}
@@ -691,7 +691,7 @@ func (s *DecodeState) ReadCoeffBaseEOB(cdfs *CoeffCDFs, req CoeffTokenRequest) (
 	if s == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.CoeffBaseEOBCDF(req.Size, req.Plane, req.Context)
+	cdf, err := cdfs.CoeffBaseEOBCDF(req.Size, req.Plane, int(req.Context))
 	if err != nil {
 		return 0, err
 	}
@@ -706,7 +706,7 @@ func (s *DecodeState) ReadCoeffBase(cdfs *CoeffCDFs, req CoeffTokenRequest) (int
 	if s == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.CoeffBaseCDF(req.Size, req.Plane, req.Context)
+	cdf, err := cdfs.CoeffBaseCDF(req.Size, req.Plane, int(req.Context))
 	if err != nil {
 		return 0, err
 	}
@@ -717,7 +717,7 @@ func (s *DecodeState) ReadCoeffBR(cdfs *CoeffCDFs, req CoeffTokenRequest) (int, 
 	if s == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.CoeffBRCDF(req.Size, req.Plane, req.Context)
+	cdf, err := cdfs.CoeffBRCDF(req.Size, req.Plane, int(req.Context))
 	if err != nil {
 		return 0, err
 	}
@@ -764,7 +764,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	allZero := req.TXBSkip
 	if !req.TXBSkipKnown {
 		var err error
-		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: int(req.TXBSkipContext)})
+		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
 		if err != nil {
 			return TXBDecodeResult{}, err
 		}
