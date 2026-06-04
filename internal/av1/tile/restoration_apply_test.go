@@ -120,7 +120,7 @@ func TestApplyRestorationUnitSGRProjMatchesPrimitive(t *testing.T) {
 	if result != (RestorationUnitApplyResult{Type: parser.RestorationSGRProj, Filtered: true}) {
 		t.Fatalf("result=%+v", result)
 	}
-	if err := av1restoration.ApplySelfguidedRestoration(src, stride, origin, want, width, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQDInt(), bitDepth, make([]int32, sizes.SGRProj)); err != nil {
+	if err := av1restoration.ApplySelfguidedRestoration(src, stride, origin, want, width, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQD, bitDepth, make([]int32, sizes.SGRProj)); err != nil {
 		t.Fatal(err)
 	}
 	assertSamplesEqual(t, got, want)

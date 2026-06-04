@@ -123,11 +123,11 @@ func TestPublicRestorationSelfguidedConstantBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	xq := av1.DecodeRestorationSGRXQ([2]int{13, -9}, params)
+	xq := av1.DecodeRestorationSGRXQ([2]int8{13, -9}, params)
 	if xq[0] != 13 || xq[1] == 0 {
 		t.Fatalf("xq=%+v", xq)
 	}
-	if err := av1.ApplyRestorationSelfguided(src, stride, origin, dst, width, width, height, 0, [2]int{13, -9}, 10, make([]int32, scratchLen)); err != nil {
+	if err := av1.ApplyRestorationSelfguided(src, stride, origin, dst, width, width, height, 0, [2]int8{13, -9}, 10, make([]int32, scratchLen)); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -189,7 +189,7 @@ func TestPublicPostFilterAllocs(t *testing.T) {
 		if err := av1.ApplyRestorationWiener(wienerSrc, wienerStride, wienerOrigin, wienerDst, width, width, height, av1.DefaultRestorationWienerInfo(), 8, wienerScratch); err != nil {
 			t.Fatalf("ApplyRestorationWiener err=%v", err)
 		}
-		if err := av1.ApplyRestorationSelfguided(sgrSrc, sgrStride, sgrOrigin, sgrDst, width, width, height, 0, [2]int{13, -9}, 10, sgrScratch); err != nil {
+		if err := av1.ApplyRestorationSelfguided(sgrSrc, sgrStride, sgrOrigin, sgrDst, width, width, height, 0, [2]int8{13, -9}, 10, sgrScratch); err != nil {
 			t.Fatalf("ApplyRestorationSelfguided err=%v", err)
 		}
 	})

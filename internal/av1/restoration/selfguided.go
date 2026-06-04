@@ -108,18 +108,20 @@ func SelfguidedScratchLen(width int, height int) (int, error) {
 }
 
 // DecodeSGRXQ ports av1_decode_xq.
-func DecodeSGRXQ(xqd [2]int, params SGRParams) [2]int {
-	var xq [2]int
+func DecodeSGRXQ(xqd [2]int8, params SGRParams) [2]int16 {
+	var xq [2]int16
+	x0 := int16(xqd[0])
+	x1 := int16(xqd[1])
 	switch {
 	case params.Radius[0] == 0:
 		xq[0] = 0
-		xq[1] = (1 << SGRProjPrjBits) - xqd[1]
+		xq[1] = (1 << SGRProjPrjBits) - x1
 	case params.Radius[1] == 0:
-		xq[0] = xqd[0]
+		xq[0] = x0
 		xq[1] = 0
 	default:
-		xq[0] = xqd[0]
-		xq[1] = (1 << SGRProjPrjBits) - xq[0] - xqd[1]
+		xq[0] = x0
+		xq[1] = (1 << SGRProjPrjBits) - xq[0] - x1
 	}
 	return xq
 }
@@ -127,7 +129,7 @@ func DecodeSGRXQ(xqd [2]int, params SGRParams) [2]int {
 // ApplySelfguidedRestoration ports av1_apply_selfguided_restoration_c for
 // sample slices. srcOrigin identifies the top-left pixel of the unit and src
 // must include a 3-pixel border around that origin.
-func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, paramsIndex int, xqd [2]int, bitDepth uint8, scratch []int32) error {
+func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, paramsIndex int, xqd [2]int8, bitDepth uint8, scratch []int32) error {
 	max, err := maxSample(bitDepth)
 	if err != nil {
 		return err

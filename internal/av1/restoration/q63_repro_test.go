@@ -40,7 +40,7 @@ func TestSGRq63HighBitDepthConstantRegionPreservesInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			scratch := make([]int32, scratchLen)
-			if err := ApplySelfguidedRestoration(src, stride, origin, dst, width, width, height, 9, [2]int{31, -32}, bitDepth, scratch); err != nil {
+			if err := ApplySelfguidedRestoration(src, stride, origin, dst, width, width, height, 9, [2]int8{31, -32}, bitDepth, scratch); err != nil {
 				t.Fatal(err)
 			}
 			for i, got := range dst {

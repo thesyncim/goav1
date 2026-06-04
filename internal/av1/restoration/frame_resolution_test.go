@@ -154,7 +154,7 @@ func TestApplyRestorationCovers1280x720Frame(t *testing.T) {
 			if needS > sgrScratch {
 				t.Fatalf("sgr scratch grew with tile: need=%d cap=%d", needS, sgrScratch)
 			}
-			if err := ApplySelfguidedRestoration(src, stride, tileOrigin, sgrDst, dstW, w, h, 0, [2]int{20, -7}, bitDepth, sgrBuf[:needS]); err != nil {
+			if err := ApplySelfguidedRestoration(src, stride, tileOrigin, sgrDst, dstW, w, h, 0, [2]int8{20, -7}, bitDepth, sgrBuf[:needS]); err != nil {
 				t.Fatalf("ApplySelfguidedRestoration tile=(%d,%d) %dx%d: %v", left, top, w, h, err)
 			}
 			for i := 0; i < dstW*dstH; i++ {

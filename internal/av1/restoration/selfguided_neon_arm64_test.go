@@ -74,7 +74,7 @@ func TestSGRBlendNEONMatchesPureGo(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				xqd := [2]int{rnd.pseudoUniform(96) - 48, rnd.pseudoUniform(96) - 48}
+				xqd := [2]int8{int8(rnd.pseudoUniform(96) - 48), int8(rnd.pseudoUniform(96) - 48)}
 
 				gotDst := make([]uint16, sz.w*sz.h)
 				scratch := make([]int32, scratchLen)
@@ -128,6 +128,6 @@ func BenchmarkApplySelfguidedRestorationPureGo(b *testing.B) {
 	boxsumImpl, selfguidedImpl, selfguidedFastImpl = boxsum, selfguided, selfguidedFast
 	defer func() { boxsumImpl, selfguidedImpl, selfguidedFastImpl = pb, ps, pf }()
 	for b.Loop() {
-		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int{8, 11}, 12, scratch)
+		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int8{8, 11}, 12, scratch)
 	}
 }

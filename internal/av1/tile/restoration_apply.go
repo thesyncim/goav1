@@ -271,7 +271,7 @@ func ApplyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint
 		wienerDebugPostApply(dst, dstStride, width, height)
 		return RestorationUnitApplyResult{Type: parser.RestorationWiener, Filtered: true}, nil
 	case parser.RestorationSGRProj:
-		err := av1restoration.ApplySelfguidedRestoration(src, srcStride, srcOrigin, dst, dstStride, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQDInt(), bitDepth, scratch.SGRProj)
+		err := av1restoration.ApplySelfguidedRestoration(src, srcStride, srcOrigin, dst, dstStride, width, height, int(unit.SGRProj.ParamsIndex), unit.SGRProj.XQD, bitDepth, scratch.SGRProj)
 		if err != nil {
 			return RestorationUnitApplyResult{}, err
 		}

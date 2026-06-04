@@ -309,7 +309,7 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 		return ErrInvalidFrameHeader
 	}
 
-	refFrameList := [InterRefsPerFrame - 2]int{1, 2, 4, 5, 6}
+	refFrameList := [InterRefsPerFrame - 2]uint8{1, 2, 4, 5, 6}
 	refIdx := 0
 	for ; refIdx < len(refFrameList); refIdx++ {
 		slot := refFrameList[refIdx]
@@ -343,7 +343,7 @@ func setShortFrameReferences(seq SequenceHeader, prefix FrameHeaderPrefix, refs 
 	return nil
 }
 
-func assignRef(size *FrameSize, set *[InterRefsPerFrame]bool, slot int, mapIdx uint8) {
+func assignRef(size *FrameSize, set *[InterRefsPerFrame]bool, slot uint8, mapIdx uint8) {
 	size.RefFrameIdx[slot] = mapIdx
 	set[slot] = true
 }

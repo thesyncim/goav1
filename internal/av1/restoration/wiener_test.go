@@ -236,7 +236,7 @@ func TestApplySelfguidedRestorationRejectsOverflowStride(t *testing.T) {
 	dst := make([]uint16, 16)
 	src := make([]uint16, 16)
 	const maxInt = int(^uint(0) >> 1)
-	err = ApplySelfguidedRestoration(src, maxInt/2, 0, dst, 4, 4, 4, 0, [2]int{}, 8, scratch)
+	err = ApplySelfguidedRestoration(src, maxInt/2, 0, dst, 4, 4, 4, 0, [2]int8{}, 8, scratch)
 	if !errors.Is(err, ErrInvalidRestoration) {
 		t.Fatalf("err=%v want %v", err, ErrInvalidRestoration)
 	}

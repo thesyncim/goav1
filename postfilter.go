@@ -168,13 +168,13 @@ func RestorationSGRParamsByIndex(index int) (RestorationSGRParams, error) {
 // DecodeRestorationSGRXQ derives the (xq0, xq1) projection coefficients used
 // by the self-guided restoration filter from the transmitted xqd pair and
 // the active SGR parameter set.
-func DecodeRestorationSGRXQ(xqd [2]int, params RestorationSGRParams) [2]int {
+func DecodeRestorationSGRXQ(xqd [2]int8, params RestorationSGRParams) [2]int16 {
 	return internalrestoration.DecodeSGRXQ(xqd, params)
 }
 
 // ApplyRestorationSelfguided applies the AV1 self-guided restoration filter
 // described by (paramsIndex, xqd) to src, writing into dst. scratch is
 // caller-owned and must be sized via RestorationSelfguidedScratchLen.
-func ApplyRestorationSelfguided(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, paramsIndex int, xqd [2]int, bitDepth uint8, scratch []int32) error {
+func ApplyRestorationSelfguided(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, paramsIndex int, xqd [2]int8, bitDepth uint8, scratch []int32) error {
 	return internalrestoration.ApplySelfguidedRestoration(src, srcStride, srcOrigin, dst, dstStride, width, height, paramsIndex, xqd, bitDepth, scratch)
 }

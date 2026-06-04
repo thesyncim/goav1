@@ -73,12 +73,12 @@ func TestDecodeSGRXQMatchesLibaom(t *testing.T) {
 	tests := []struct {
 		name   string
 		params SGRParams
-		xqd    [2]int
-		want   [2]int
+		xqd    [2]int8
+		want   [2]int16
 	}{
-		{name: "two-radii", params: SGRParameterTable[0], xqd: [2]int{20, -7}, want: [2]int{20, 115}},
-		{name: "first-disabled", params: SGRParameterTable[10], xqd: [2]int{99, 13}, want: [2]int{0, 115}},
-		{name: "second-disabled", params: SGRParameterTable[14], xqd: [2]int{-12, 44}, want: [2]int{-12, 0}},
+		{name: "two-radii", params: SGRParameterTable[0], xqd: [2]int8{20, -7}, want: [2]int16{20, 115}},
+		{name: "first-disabled", params: SGRParameterTable[10], xqd: [2]int8{99, 13}, want: [2]int16{0, 115}},
+		{name: "second-disabled", params: SGRParameterTable[14], xqd: [2]int8{-12, 44}, want: [2]int16{-12, 0}},
 	}
 	for _, tt := range tests {
 		if got := DecodeSGRXQ(tt.xqd, tt.params); got != tt.want {
@@ -107,7 +107,7 @@ func TestSelfguidedRestorationConstantBlocksStayInRange(t *testing.T) {
 					t.Fatal(err)
 				}
 				scratch := make([]int32, scratchLen)
-				if err := ApplySelfguidedRestoration(src, stride, origin, dst, size.width, size.width, size.height, eps, [2]int{13, -9}, bitDepth, scratch); err != nil {
+				if err := ApplySelfguidedRestoration(src, stride, origin, dst, size.width, size.width, size.height, eps, [2]int8{13, -9}, bitDepth, scratch); err != nil {
 					t.Fatalf("bitDepth=%d size=%dx%d eps=%d: %v", bitDepth, size.width, size.height, eps, err)
 				}
 				for i, got := range dst {
@@ -131,12 +131,12 @@ func TestSelfguidedRestorationDeterministicCorpus(t *testing.T) {
 			width  int
 			height int
 			eps    int
-			xqd    [2]int
+			xqd    [2]int8
 		}{
-			{8, 8, 0, [2]int{0, 0}},
-			{13, 11, 7, [2]int{19, -5}},
-			{64, 16, 10, [2]int{4, 33}},
-			{31, 64, 14, [2]int{-20, 0}},
+			{8, 8, 0, [2]int8{0, 0}},
+			{13, 11, 7, [2]int8{19, -5}},
+			{64, 16, 10, [2]int8{4, 33}},
+			{31, 64, 14, [2]int8{-20, 0}},
 		} {
 			stride := tc.width + 2*SGRProjBorderHorz + 5
 			origin := SGRProjBorderVert*stride + SGRProjBorderHorz
@@ -184,7 +184,7 @@ func TestSelfguidedScratchLenAndAllocs(t *testing.T) {
 		src[i] = uint16(rnd.pseudoUniform(1 << 12))
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int{8, 11}, 12, scratch); err != nil {
+		if err := ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int8{8, 11}, 12, scratch); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -210,7 +210,7 @@ func BenchmarkApplySelfguidedRestoration(b *testing.B) {
 	b.SetBytes(int64(64 * 64 * 2))
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int{8, 11}, 12, scratch)
+		_ = ApplySelfguidedRestoration(src, stride, origin, dst, 64, 64, 64, 15, [2]int8{8, 11}, 12, scratch)
 	}
 }
 
@@ -229,27 +229,27 @@ func TestSelfguidedRestorationRejectsInvalidInputs(t *testing.T) {
 		fn   func() error
 	}{
 		{name: "bad-size", fn: func() error {
-			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 0, 8, 0, [2]int{}, 8, scratch)
+			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 0, 8, 0, [2]int8{}, 8, scratch)
 		}},
 		{name: "bad-eps", fn: func() error {
-			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 16, [2]int{}, 8, scratch)
+			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 16, [2]int8{}, 8, scratch)
 		}},
 		{name: "bad-depth", fn: func() error {
-			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 0, [2]int{}, 9, scratch)
+			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 0, [2]int8{}, 9, scratch)
 		}},
 		{name: "short-src", fn: func() error {
-			return ApplySelfguidedRestoration(src[:origin], stride, origin, dst, 8, 8, 8, 0, [2]int{}, 8, scratch)
+			return ApplySelfguidedRestoration(src[:origin], stride, origin, dst, 8, 8, 8, 0, [2]int8{}, 8, scratch)
 		}},
 		{name: "short-dst", fn: func() error {
-			return ApplySelfguidedRestoration(src, stride, origin, dst[:8], 8, 8, 8, 0, [2]int{}, 8, scratch)
+			return ApplySelfguidedRestoration(src, stride, origin, dst[:8], 8, 8, 8, 0, [2]int8{}, 8, scratch)
 		}},
 		{name: "short-scratch", fn: func() error {
-			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 0, [2]int{}, 8, scratch[:scratchLen-1])
+			return ApplySelfguidedRestoration(src, stride, origin, dst, 8, 8, 8, 0, [2]int8{}, 8, scratch[:scratchLen-1])
 		}},
 		{name: "sample-out-of-range", fn: func() error {
 			bad := slices.Clone(src)
 			bad[origin] = 256
-			return ApplySelfguidedRestoration(bad, stride, origin, dst, 8, 8, 8, 0, [2]int{}, 8, scratch)
+			return ApplySelfguidedRestoration(bad, stride, origin, dst, 8, 8, 8, 0, [2]int8{}, 8, scratch)
 		}},
 	}
 	for _, tt := range tests {
@@ -282,7 +282,7 @@ func FuzzApplySelfguidedRestoration(f *testing.F) {
 			t.Fatalf("SelfguidedScratchLen err=%v", err)
 		}
 		scratch := make([]int32, scratchLen)
-		err = ApplySelfguidedRestoration(src, stride, origin, dst, width, width, height, int(rawEps%SGRProjParams), [2]int{int(rawX0 % 96), int(rawX1 % 96)}, bitDepth, scratch)
+		err = ApplySelfguidedRestoration(src, stride, origin, dst, width, width, height, int(rawEps%SGRProjParams), [2]int8{int8(rawX0 % 96), int8(rawX1 % 96)}, bitDepth, scratch)
 		if err != nil {
 			t.Fatalf("ApplySelfguidedRestoration err=%v", err)
 		}

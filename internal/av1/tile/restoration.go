@@ -280,10 +280,6 @@ func sgrProjXQD(v int) (int8, bool) {
 	return int8(v), true
 }
 
-func (info SGRProjInfo) XQDInt() [2]int {
-	return [2]int{int(info.XQD[0]), int(info.XQD[1])}
-}
-
 func validRestorationReferences(refs RestorationReferences) bool {
 	if !validDecodedWienerInfo(refs.Wiener) {
 		return false

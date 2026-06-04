@@ -118,6 +118,6 @@ func readSignedBits(r *bitstream.Reader, n uint8) (int16, error) {
 	if err != nil {
 		return 0, err
 	}
-	shift := 64 - n
-	return int16(int64(v<<shift) >> shift), nil
+	shift := 32 - n
+	return int16(int32(uint32(v)<<shift) >> shift), nil
 }

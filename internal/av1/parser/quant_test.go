@@ -115,24 +115,40 @@ func TestParseQuantizationParamsMonoChrome(t *testing.T) {
 func TestReadSignedBits(t *testing.T) {
 	cases := []struct {
 		bits uint64
+		n    uint8
 		want int16
 	}{
-		{bits: 0b0000101, want: 5},
-		{bits: 0b1111111, want: -1},
-		{bits: 0b1111110, want: -2},
-		{bits: 0b1000000, want: -64},
+		{bits: 0b0000101, n: 7, want: 5},
+		{bits: 0b1111111, n: 7, want: -1},
+		{bits: 0b1111110, n: 7, want: -2},
+		{bits: 0b1000000, n: 7, want: -64},
+		{bits: 0b0_1111_1111, n: 9, want: 255},
+		{bits: 0b1_1111_1111, n: 9, want: -1},
+		{bits: 0b1_0000_0000, n: 9, want: -256},
 	}
 	for _, tc := range cases {
 		var w testBitWriter
-		w.writeBits(tc.bits, 7)
+		w.writeBits(tc.bits, tc.n)
 		r := bitstream.NewReader(w.bytes())
-		got, err := readSignedBits(&r, 7)
+		got, err := readSignedBits(&r, tc.n)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got != tc.want {
-			t.Fatalf("readSignedBits(%07b)=%d want %d", tc.bits, got, tc.want)
+			t.Fatalf("readSignedBits(%b,%d)=%d want %d", tc.bits, tc.n, got, tc.want)
 		}
+	}
+}
+
+func BenchmarkReadSignedBits(b *testing.B) {
+	var w testBitWriter
+	w.writeBits(0b1_0000_0000, 9)
+	payload := w.bytes()
+
+	b.ReportAllocs()
+	for b.Loop() {
+		r := bitstream.NewReader(payload)
+		_, _ = readSignedBits(&r, 9)
 	}
 }
 
