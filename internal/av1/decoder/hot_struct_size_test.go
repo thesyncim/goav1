@@ -23,6 +23,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkCDEFPostFilterResult", size: unsafe.Sizeof(FrameWorkCDEFPostFilterResult{}), max: 12},
 		{name: "FrameWorkSuperResPostFilterPlanePlan", size: unsafe.Sizeof(FrameWorkSuperResPostFilterPlanePlan{}), max: 24},
 		{name: "FrameWorkSuperResPostFilterPlan", size: unsafe.Sizeof(FrameWorkSuperResPostFilterPlan{}), max: 160},
+		{name: "FrameWorkSuperResPostFilterResult", size: unsafe.Sizeof(FrameWorkSuperResPostFilterResult{}), max: 432},
 		{name: "FrameWorkFilmGrainPostFilterPlanePlan", size: unsafe.Sizeof(FrameWorkFilmGrainPostFilterPlanePlan{}), max: 16},
 		{name: "FrameWorkFilmGrainPostFilterPlan", size: unsafe.Sizeof(FrameWorkFilmGrainPostFilterPlan{}), max: 264},
 		{name: "FrameWorkFilmGrainPostFilterResult", size: unsafe.Sizeof(FrameWorkFilmGrainPostFilterResult{}), max: 288},

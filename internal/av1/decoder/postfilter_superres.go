@@ -95,7 +95,7 @@ type FrameWorkSuperResPostFilterResult struct {
 	Plan       FrameWorkSuperResPostFilterPlan
 	Output     frame.Frame
 	OutputSize int
-	Planes     int
+	Planes     uint8
 }
 
 // SuperResPostFilterPlan returns the frame-level superres geometry for the
