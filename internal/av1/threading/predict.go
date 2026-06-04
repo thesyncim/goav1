@@ -621,9 +621,12 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	if err != nil || !present {
 		return err
 	}
-	region, err := b.JobRegion(index)
-	if err != nil {
-		return err
+	region, regionOK := b.cachedJobRegionTrusted(index)
+	if !regionOK {
+		region, err = b.JobRegion(index)
+		if err != nil {
+			return err
+		}
 	}
 	if !frameWorkBlockWithinJobRegion(region, visit.Block) {
 		return ErrInvalidBatch
