@@ -156,6 +156,61 @@ func TestPublicEncoderFrameHeaderPrefixPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderFrameHeaderIntraPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	prefix := av1.EncoderFrameHeaderPrefix{
+		FrameType:          av1.EncoderFrameHeaderTypeKey,
+		ShowFrame:          true,
+		ErrorResilientMode: true,
+		ForceIntegerMV:     true,
+		OrderHint:          5,
+		PrimaryRefFrame:    av1.EncoderPrimaryRefNone,
+	}
+	size := av1.EncoderIntraFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	payloadSize, err := av1.EncoderFrameHeaderIntraPayloadSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("EncoderFrameHeaderIntraPayloadSize: %v", err)
+	}
+	var buf [32]byte
+	payload, err := av1.AppendEncoderFrameHeaderIntraPayload(buf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendEncoderFrameHeaderIntraPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsedPrefix, err := av1.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	parsedSize, err := av1.ParseIntraFrameSize(payload, parsedSeq, parsedPrefix, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseIntraFrameSize: %v", err)
+	}
+	if parsedSize.RefreshFrameFlags != 0xff || parsedSize.UpscaledWidth != 640 || parsedSize.Height != 360 {
+		t.Fatalf("parsed size=%+v", parsedSize)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

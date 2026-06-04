@@ -81,6 +81,7 @@ type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
 type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
 type EncoderFrameHeaderType = internalencoder.FrameHeaderType
 type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
+type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -187,4 +188,12 @@ func EncoderFrameHeaderPrefixPayloadSize(seq EncoderSequenceHeader, prefix Encod
 
 func AppendEncoderFrameHeaderPrefixPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix) ([]byte, error) {
 	return internalencoder.AppendFrameHeaderPrefixPayload(dst, seq, prefix)
+}
+
+func EncoderFrameHeaderIntraPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
+	return internalencoder.FrameHeaderIntraPayloadSize(seq, prefix, size)
+}
+
+func AppendEncoderFrameHeaderIntraPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
+	return internalencoder.AppendFrameHeaderIntraPayload(dst, seq, prefix, size)
 }
