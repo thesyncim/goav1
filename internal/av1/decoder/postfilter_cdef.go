@@ -76,9 +76,9 @@ type FrameWorkCDEFPostFilterRequest struct {
 
 // FrameWorkCDEFPostFilterResult summarizes CDEF frame filtering work.
 type FrameWorkCDEFPostFilterResult struct {
-	Units  int
-	Planes int
-	Blocks int
+	Units  uint32
+	Blocks uint32
+	Planes uint8
 }
 
 // CDEFPostFilterScratchLen reports scratch lengths needed to apply CDEF to
@@ -249,9 +249,9 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (int, int, error) {
-	units := 0
-	blocksTotal := 0
+func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+	var units uint32
+	var blocksTotal uint32
 	unitSizeX := cdef.BlockSize >> xDec
 	unitSizeY := cdef.BlockSize >> yDec
 	blockWidth := 8 >> xDec
@@ -340,7 +340,7 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 				return units, blocksTotal, err
 			}
 			units++
-			blocksTotal += len(blocks)
+			blocksTotal += uint32(len(blocks))
 		}
 	}
 	return units, blocksTotal, nil
