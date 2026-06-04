@@ -139,7 +139,7 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 				TreeRequest:           req.Transform,
 				Tree:                  tree,
 				Color:                 req.Transform.Color,
-				Plane:                 plane,
+				Plane:                 uint8(plane),
 				Class:                 chromaClass[plane-1],
 				TransformType:         req.ChromaType[plane-1],
 				UseTransformType:      true,

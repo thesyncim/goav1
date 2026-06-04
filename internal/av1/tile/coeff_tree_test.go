@@ -516,8 +516,8 @@ func FuzzDecodeChromaCoefficients(f *testing.F) {
 			t.Fatal("invalid normalized block")
 		}
 		color := parser.ColorConfig{SubsamplingX: rawSSX&1 != 0, SubsamplingY: rawSSY&1 != 0}
-		plane := 1 + int(rawPlane%2)
-		uv, err := MaxTransformSize(block, color, plane)
+		plane := uint8(1 + rawPlane%2)
+		uv, err := MaxTransformSize(block, color, int(plane))
 		if err != nil {
 			return
 		}

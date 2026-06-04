@@ -974,7 +974,7 @@ func TestReadCoefficientsTXBTrackedLevelDirtyClearsScratch(t *testing.T) {
 	}
 
 	var levelDirty [maxCoeffScanLen]int16
-	var levelDirtyLen int
+	var levelDirtyLen uint16
 	req := TXBDecodeRequest{
 		Size:              TransformSize8x8,
 		Plane:             CoeffPlaneY,
@@ -1014,7 +1014,7 @@ func TestReadCoefficientsTXBTrackedLevelDirtyClearsScratch(t *testing.T) {
 		if levelDirtyLen == 0 {
 			t.Fatal("levelDirtyLen=0 after nonzero eob decode")
 		}
-		for i := 0; i < levelDirtyLen; i++ {
+		for i := 0; i < int(levelDirtyLen); i++ {
 			padded := int(levelDirty[i])
 			if padded < 0 || padded >= len(levels) {
 				t.Fatalf("levelDirty[%d]=%d out of range len=%d", i, padded, len(levels))

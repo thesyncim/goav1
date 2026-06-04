@@ -73,9 +73,9 @@ type CoeffTokenRequest struct {
 
 type TXBDecodeRequest struct {
 	coeffDirtyPos     *[maxCoeffScanLen]int16
-	coeffDirtyLen     *int
+	coeffDirtyLen     *uint16
 	levelDirtyPos     *[maxCoeffScanLen]int16
-	levelDirtyLen     *int
+	levelDirtyLen     *uint16
 	levelDirtyScratch *[maxCoeffScratchLen]uint8
 
 	Size            TransformSize
@@ -830,7 +830,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	trackDirty := dirtyPos != nil && dirtyLen != nil
 	dirtyNext := 0
 	if trackDirty {
-		dirtyNext = *dirtyLen
+		dirtyNext = int(*dirtyLen)
 	}
 	levelDirtyPos := req.levelDirtyPos
 	levelDirtyLen := req.levelDirtyLen
@@ -883,7 +883,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
 			(*dirtyPos)[dirtyNext] = int16(lastPos)
 			dirtyNext++
-			*dirtyLen = dirtyNext
+			*dirtyLen = uint16(dirtyNext)
 		}
 
 		culLevel := lastLevel
@@ -912,7 +912,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if req.levelDirtyScratch != nil {
 			levelClearScratch = req.levelDirtyScratch[:]
 		}
-		for i := 0; i < *levelDirtyLen; i++ {
+		for i := 0; i < int(*levelDirtyLen); i++ {
 			padded := int((*levelDirtyPos)[i])
 			if uint(padded) < uint(len(levelClearScratch)) {
 				levelClearScratch[padded] = 0
@@ -931,7 +931,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if trackLevelDirty {
 		(*levelDirtyPos)[levelDirtyNext] = int16(lastPadded)
 		levelDirtyNext++
-		*levelDirtyLen = levelDirtyNext
+		*levelDirtyLen = uint16(levelDirtyNext)
 	}
 	headC := lastC
 	// Internal scratch callers can reuse the dirty-position array as a temporary
@@ -989,7 +989,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					*levelDirtyLen = levelDirtyNext
+					*levelDirtyLen = uint16(levelDirtyNext)
 				}
 				if useDirtyScanList {
 					(*dirtyPos)[nonzeroScanLen] = int16(c)
@@ -1025,7 +1025,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					*levelDirtyLen = levelDirtyNext
+					*levelDirtyLen = uint16(levelDirtyNext)
 				}
 				if useDirtyScanList {
 					(*dirtyPos)[nonzeroScanLen] = int16(c)
@@ -1109,7 +1109,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			coeffs[pos] = signed
 			(*dirtyPos)[i] = int16(pos)
 		}
-		*dirtyLen = nonzeroScanLen
+		*dirtyLen = uint16(nonzeroScanLen)
 	} else {
 		for c := headC; c >= 0; {
 			pos := int(scan[c])
@@ -1176,7 +1176,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			c = nextC
 		}
 		if trackDirty {
-			*dirtyLen = dirtyNext
+			*dirtyLen = uint16(dirtyNext)
 		}
 	}
 

@@ -32,15 +32,15 @@ type LumaCoeffTreeScratch struct {
 	LevelDirty  [maxCoeffScanLen]int16
 	Levels      [maxCoeffScratchLen]uint8
 
-	coeffDirtyLen int
-	levelDirtyLen int
+	coeffDirtyLen uint16
+	levelDirtyLen uint16
 }
 
 func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
 	if s == nil {
 		return
 	}
-	for i := 0; i < s.coeffDirtyLen; i++ {
+	for i := 0; i < int(s.coeffDirtyLen); i++ {
 		pos := int(s.InverseScan[i])
 		if uint(pos) < uint(len(s.Coeffs)) {
 			s.Coeffs[pos] = 0
@@ -79,7 +79,7 @@ type ChromaCoeffTreeRequest struct {
 	Tree        TransformTreeResult
 
 	Color parser.ColorConfig
-	Plane int
+	Plane uint8
 
 	Class            transform.Class
 	TransformType    transform.Type
@@ -91,7 +91,7 @@ type ChromaCoeffTreeRequest struct {
 }
 
 type ChromaCoeffBlock struct {
-	Plane     int
+	Plane     uint8
 	Block     TransformBlock
 	Transform transform.Type
 
@@ -103,7 +103,7 @@ type ChromaCoeffBlock struct {
 type ChromaCoeffVisitor func(ChromaCoeffBlock) error
 
 type CoeffTransformRequest struct {
-	Plane int
+	Plane uint8
 	Block TransformBlock
 }
 
@@ -284,7 +284,7 @@ type chromaCoeffPlanePrep struct {
 // once-per-block SkipTransform context reset, and returns the plane geometry.
 // HasChroma is false when the block has no chroma to decode for this plane.
 func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req ChromaCoeffTreeRequest) (chromaCoeffPlanePrep, error) {
-	if s == nil || ctx == nil || req.Plane < 1 || req.Plane > 2 || !req.Class.Valid() {
+	if s == nil || ctx == nil || req.Plane == 0 || req.Plane > 2 || !req.Class.Valid() {
 		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
 	}
 	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
@@ -296,7 +296,7 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 	if !HasChromaBlock(req.TreeRequest, req.Color) {
 		return chromaCoeffPlanePrep{}, nil
 	}
-	planeBlock, err := PlaneBlockSize(req.TreeRequest.Size, req.Color, req.Plane)
+	planeBlock, err := PlaneBlockSize(req.TreeRequest.Size, req.Color, int(req.Plane))
 	if err != nil {
 		return chromaCoeffPlanePrep{}, err
 	}
@@ -316,7 +316,7 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 	}
 
 	if req.TreeRequest.SkipTransform {
-		if err := ctx.ResetBlock(req.Plane, planeBlock, x4, y4); err != nil {
+		if err := ctx.ResetBlock(int(req.Plane), planeBlock, x4, y4); err != nil {
 			return chromaCoeffPlanePrep{}, err
 		}
 		return chromaCoeffPlanePrep{}, nil
@@ -391,7 +391,7 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
 			}
 			ctxReq := CoeffContextRequest{
-				Plane:      uint8(req.Plane),
+				Plane:      req.Plane,
 				PlaneBlock: planeBlock,
 				Size:       block.Size,
 				X4:         block.X4,
@@ -533,7 +533,7 @@ func eobMultiContextForClass(class transform.Class) uint8 {
 	return 1
 }
 
-func resolveCoeffTransform(selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, plane int, block TransformBlock) (transform.Type, transform.Class, error) {
+func resolveCoeffTransform(selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, plane uint8, block TransformBlock) (transform.Type, transform.Class, error) {
 	if selector != nil {
 		selected, err := selector.SelectCoeffTransform(CoeffTransformRequest{Plane: plane, Block: block})
 		if err != nil {

@@ -124,7 +124,7 @@ func TestPublicReconstructDecoderFrameWorkCoeffReplayAdapters(t *testing.T) {
 	}
 	chromaCtx := publicDecoderBlockCoeffReplayContext(t, chromaBatch, chromaReq, chromaPlane)
 	chromaBlock := av1.TileChromaCoeffBlock{
-		Plane:     int(chromaReq.Block.Plane),
+		Plane:     chromaReq.Block.Plane,
 		Block:     chromaReq.Block.Block,
 		Transform: chromaReq.Transform,
 		Result:    chromaReq.Block.Result,
