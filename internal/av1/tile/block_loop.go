@@ -953,8 +953,8 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		fullSuperblock = dims.W4 == req.SBSizeMIB && dims.H4 == req.SBSizeMIB
 	}
 	delta := BlockDeltaContext{
-		MICol:          block.MICol,
-		MIRow:          block.MIRow,
+		MICol:          uint16(block.MICol),
+		MIRow:          uint16(block.MIRow),
 		SBSizeMIB:      req.SBSizeMIB,
 		FullSuperblock: fullSuperblock,
 		SkipTransform:  prefix.SkipTransform,

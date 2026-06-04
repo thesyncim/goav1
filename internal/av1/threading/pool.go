@@ -468,8 +468,8 @@ func (b *FrameWorkBatch) JobBlockDeltaContext(index int, miCol uint32, miRow uin
 		return tile.BlockDeltaContext{}, ErrInvalidBatch
 	}
 	return tile.BlockDeltaContext{
-		MICol:          miCol,
-		MIRow:          miRow,
+		MICol:          uint16(miCol),
+		MIRow:          uint16(miRow),
 		SBSizeMIB:      b.Sequence.SBSizeMIB,
 		FullSuperblock: fullSuperblock,
 		SkipTransform:  skipTransform,

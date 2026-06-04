@@ -359,8 +359,8 @@ func FuzzDecodeStateBlockDeltas(f *testing.F) {
 			DeltaLFMulti:   multi,
 		}
 		block := BlockDeltaContext{
-			MICol:          uint32(miCol),
-			MIRow:          uint32(miRow),
+			MICol:          uint16(miCol),
+			MIRow:          uint16(miRow),
 			SBSizeMIB:      sbSize,
 			FullSuperblock: fullSB,
 			SkipTransform:  skipTransform,

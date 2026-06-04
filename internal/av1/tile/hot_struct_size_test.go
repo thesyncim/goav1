@@ -23,6 +23,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TXBSkipRequest", size: unsafe.Sizeof(TXBSkipRequest{}), max: 2},
 		{name: "CoeffTokenRequest", size: unsafe.Sizeof(CoeffTokenRequest{}), max: 3},
 		{name: "TXBDecodeRequest", size: unsafe.Sizeof(TXBDecodeRequest{}), max: 56},
+		{name: "BlockDeltaContext", size: unsafe.Sizeof(BlockDeltaContext{}), max: 8},
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},
 		{name: "coeffUnitWindow", size: unsafe.Sizeof(coeffUnitWindow{}), max: 4},

@@ -33,8 +33,8 @@ type DecodeState struct {
 // BlockDeltaContext identifies the block currently being decoded for AV1
 // delta-q and delta-loopfilter syntax.
 type BlockDeltaContext struct {
-	MICol uint32
-	MIRow uint32
+	MICol uint16
+	MIRow uint16
 
 	SBSizeMIB uint8
 
@@ -149,7 +149,7 @@ func shouldReadBlockDelta(block BlockDeltaContext) (bool, error) {
 	if block.SBSizeMIB == 0 {
 		return false, ErrInvalidDecodeState
 	}
-	if block.MICol%uint32(block.SBSizeMIB) != 0 || block.MIRow%uint32(block.SBSizeMIB) != 0 {
+	if block.MICol%uint16(block.SBSizeMIB) != 0 || block.MIRow%uint16(block.SBSizeMIB) != 0 {
 		return false, nil
 	}
 	return !block.FullSuperblock || !block.SkipTransform, nil
