@@ -925,10 +925,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		clear(levelsScratch[:scratchLen])
 	}
 	lastPadded := int(posSlice[lastPos].padded)
-	if lastPadded < 0 || lastPadded >= len(levelsScratch) {
-		reader.CommitStateTo(&s.Reader)
-		return TXBDecodeResult{}, ErrInvalidDecodeState
-	}
 	levelsScratch[lastPadded] = uint8(lastLevel)
 	if trackLevelDirty {
 		(*levelDirtyPos)[levelDirtyNext] = int16(lastPadded)
@@ -958,10 +954,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			p := posSlice[pos]
 			padded := int(p.padded)
-			if padded >= len(levelsScratch) {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			ctx := 0
 			if pos != 0 {
 				s1 := padded + stride
@@ -1011,10 +1003,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
 			padded := int(posSlice[pos].padded)
-			if padded >= len(levelsScratch) {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
 			level := reader.ReadCDF4Unchecked(&baseArr[ctx])
 			if level > NumBaseLevels {
@@ -1059,10 +1047,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
 			padded := int(posSlice[pos].padded)
-			if padded >= len(levelsScratch) {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			level := int(levelsScratch[padded])
 			if level == 0 {
 				reader.CommitStateTo(&s.Reader)
@@ -1121,10 +1105,6 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			}
 			nextC := int(coeffs[pos]) - 1
 			padded := int(posSlice[pos].padded)
-			if padded >= len(levelsScratch) {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, ErrInvalidDecodeState
-			}
 			level := int(levelsScratch[padded])
 			if level == 0 {
 				reader.CommitStateTo(&s.Reader)

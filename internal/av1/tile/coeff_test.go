@@ -525,6 +525,36 @@ func TestCoeffInitLevelsMatchesLibaomEncodeTxbInitLevel(t *testing.T) {
 	}
 }
 
+func TestCoeffGeometryPositionTablesFitScratch(t *testing.T) {
+	for size := range transformSizeCount {
+		geo := coeffGeometryTable[size]
+		if !geo.valid {
+			continue
+		}
+		posSlice := coeffPosTable[size]
+		if len(posSlice) < int(geo.maxEOB) {
+			t.Fatalf("size=%d pos table len=%d maxEOB=%d", size, len(posSlice), geo.maxEOB)
+		}
+		stride := int(geo.stride)
+		scratchLen := int(geo.scratchLen)
+		for pos := 0; pos < int(geo.maxEOB); pos++ {
+			p := posSlice[pos]
+			padded := int(p.padded)
+			if padded < 0 || padded >= scratchLen {
+				t.Fatalf("size=%d pos=%d padded=%d scratch=%d", size, pos, padded, scratchLen)
+			}
+			maxLower := maxInt(padded+4, padded+4*stride)
+			maxBR := maxInt(padded+4, padded+2*stride+2)
+			if maxLower >= scratchLen {
+				t.Fatalf("size=%d pos=%d lower max=%d scratch=%d", size, pos, maxLower, scratchLen)
+			}
+			if maxBR >= scratchLen {
+				t.Fatalf("size=%d pos=%d br max=%d scratch=%d", size, pos, maxBR, scratchLen)
+			}
+		}
+	}
+}
+
 func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
 	rnd := newCoeffContextRandom(0x1532a5)
 	for isInter := range 2 {
