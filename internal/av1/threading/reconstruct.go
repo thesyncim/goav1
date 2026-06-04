@@ -153,7 +153,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 // ownership, so this path can hand exact-cap scratch/window slices to the
 // reconstruction core without re-running the public API guard rails.
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
-	geom, err := b.blockCoeffGeometry(index, visit, block)
+	geom, err := b.blockCoeffGeometryTrusted(index, visit, block)
 	if err != nil {
 		return err
 	}
@@ -310,6 +310,52 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 		return frameWorkBlockCoeffGeometry{}, err
 	}
 	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
+}
+
+func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+	plane, ssX, ssY, err := b.blockCoeffPlane(block.Plane)
+	if err != nil {
+		return frameWorkBlockCoeffGeometry{}, err
+	}
+	region, regionOK := b.cachedJobRegionTrusted(index)
+	if !regionOK {
+		region, err = b.JobRegion(index)
+		if err != nil {
+			return frameWorkBlockCoeffGeometry{}, err
+		}
+	}
+	window, windowOK := b.cachedJobOutputPlaneTrusted(index, plane)
+	if !windowOK {
+		window, err = b.JobOutputPlane(index, plane)
+		if err != nil {
+			return frameWorkBlockCoeffGeometry{}, err
+		}
+	}
+	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
+}
+
+func (b *FrameWorkBatch) cachedJobRegionTrusted(index int) (FrameWorkJobRegion, bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok ||
+		c.validMask&frameWorkJobGeometryRegionValid == 0 ||
+		c.regionIndex != cacheIndex {
+		return FrameWorkJobRegion{}, false
+	}
+	return c.region, true
+}
+
+func (b *FrameWorkBatch) cachedJobOutputPlaneTrusted(index int, plane FrameWorkPlane) (FrameWorkPlaneRegion, bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok || plane > FrameWorkPlaneV {
+		return FrameWorkPlaneRegion{}, false
+	}
+	planeMask := frameWorkJobGeometryPlaneMask(plane)
+	if c.validMask&planeMask == 0 || c.planeIndex[plane] != cacheIndex {
+		return FrameWorkPlaneRegion{}, false
+	}
+	return c.plane[plane], true
 }
 
 func (b *FrameWorkBatch) blockCoeffGeometryKnown(region FrameWorkJobRegion, window FrameWorkPlaneRegion, plane FrameWorkPlane, ssX uint, ssY uint, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
