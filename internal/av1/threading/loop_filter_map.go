@@ -66,16 +66,16 @@ type FrameWorkLoopFilterBlockRecord struct {
 // allocating in the block loop.
 type FrameWorkLoopFilterMap struct {
 	Records []FrameWorkLoopFilterBlockRecord
-	Stride  int
-	Rows    int
+	Stride  uint32
+	Rows    uint32
 }
 
 // FrameWorkLoopFilterMapStats summarizes decoded loop-filter metadata coverage
 // for a frame-level MI grid.
 type FrameWorkLoopFilterMapStats struct {
-	Cells   int
-	Blocks  int
-	Missing int
+	Cells   int32
+	Blocks  int32
+	Missing int32
 }
 
 // LoopFilterMapShape returns the frame-level MI grid dimensions.
@@ -110,8 +110,8 @@ func (b *FrameWorkBatch) BindLoopFilterMap(records []FrameWorkLoopFilterBlockRec
 	}
 	out := FrameWorkLoopFilterMap{
 		Records: records[:length],
-		Stride:  cols,
-		Rows:    rows,
+		Stride:  uint32(cols),
+		Rows:    uint32(rows),
 	}
 	if err := out.Reset(); err != nil {
 		return FrameWorkLoopFilterMap{}, err
@@ -125,7 +125,7 @@ func (m FrameWorkLoopFilterMap) Reset() error {
 	if err := m.validate(); err != nil {
 		return err
 	}
-	clear(m.Records[:m.Stride*m.Rows])
+	clear(m.Records[:int(m.Stride)*int(m.Rows)])
 	return nil
 }
 
@@ -148,7 +148,7 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 	if blockVisit.MIColEnd <= blockVisit.MICol || blockVisit.MIRowEnd <= blockVisit.MIRow {
 		return ErrInvalidBatch
 	}
-	if blockVisit.MIColEnd > uint32(m.Stride) || blockVisit.MIRowEnd > uint32(m.Rows) {
+	if blockVisit.MIColEnd > m.Stride || blockVisit.MIRowEnd > m.Rows {
 		return ErrInvalidBatch
 	}
 	block, err := FrameWorkLoopFilterBlockFromVisit(blockVisit)
@@ -174,8 +174,9 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 		DeltaLFFromBase: state.DeltaLFFromBase,
 		DeltaLF:         state.DeltaLF,
 	}
+	stride := int(m.Stride)
 	for miRow := block.MIRow; miRow < block.MIRowEnd; miRow++ {
-		row := int(miRow) * m.Stride
+		row := int(miRow) * stride
 		for miCol := block.MICol; miCol < block.MIColEnd; miCol++ {
 			m.Records[row+int(miCol)] = record
 		}
@@ -189,10 +190,10 @@ func (m FrameWorkLoopFilterMap) RecordAt(miCol uint32, miRow uint32) (FrameWorkL
 	if err := m.validate(); err != nil {
 		return FrameWorkLoopFilterBlockRecord{}, false, err
 	}
-	if miCol >= uint32(m.Stride) || miRow >= uint32(m.Rows) {
+	if miCol >= m.Stride || miRow >= m.Rows {
 		return FrameWorkLoopFilterBlockRecord{}, false, ErrInvalidBatch
 	}
-	record := m.Records[int(miRow)*m.Stride+int(miCol)]
+	record := m.Records[int(miRow)*int(m.Stride)+int(miCol)]
 	if !record.Valid {
 		return FrameWorkLoopFilterBlockRecord{}, false, nil
 	}
@@ -207,8 +208,9 @@ func (m FrameWorkLoopFilterMap) CoverageStats(cols int, rows int) (FrameWorkLoop
 		return FrameWorkLoopFilterMapStats{}, err
 	}
 	var stats FrameWorkLoopFilterMapStats
+	stride := int(m.Stride)
 	for row := range rows {
-		base := row * m.Stride
+		base := row * stride
 		for col := range cols {
 			record := m.Records[base+col]
 			if !record.Valid {
@@ -230,7 +232,7 @@ func (m FrameWorkLoopFilterMap) CoverageStats(cols int, rows int) (FrameWorkLoop
 // ForEachBlock visits each unique block record once in raster MI order. Cells
 // covered by the same block are skipped after the block's top-left cell.
 func (m FrameWorkLoopFilterMap) ForEachBlock(visit func(FrameWorkLoopFilterBlockRecord) error) error {
-	return m.ForEachBlockInGrid(m.Stride, m.Rows, visit)
+	return m.ForEachBlockInGrid(int(m.Stride), int(m.Rows), visit)
 }
 
 // ForEachBlockInGrid visits each unique block record once inside the requested
@@ -242,8 +244,9 @@ func (m FrameWorkLoopFilterMap) ForEachBlockInGrid(cols int, rows int, visit fun
 	if err := m.validateGrid(cols, rows); err != nil {
 		return err
 	}
+	stride := int(m.Stride)
 	for row := range rows {
-		base := row * m.Stride
+		base := row * stride
 		for col := range cols {
 			record := m.Records[base+col]
 			if !record.Valid {
@@ -268,12 +271,10 @@ func (m FrameWorkLoopFilterMap) validate() error {
 		return ErrInvalidBatch
 	}
 	maxInt := int(^uint(0) >> 1)
-	if m.Stride > maxInt/m.Rows ||
-		uint64(m.Stride) > uint64(^uint32(0)) ||
-		uint64(m.Rows) > uint64(^uint32(0)) {
+	if uint64(m.Stride)*uint64(m.Rows) > uint64(maxInt) {
 		return ErrInvalidBatch
 	}
-	length := m.Stride * m.Rows
+	length := int(m.Stride) * int(m.Rows)
 	if len(m.Records) < length {
 		return ErrInvalidBatch
 	}
@@ -284,7 +285,7 @@ func (m FrameWorkLoopFilterMap) validateGrid(cols int, rows int) error {
 	if err := m.validate(); err != nil {
 		return err
 	}
-	if cols <= 0 || rows <= 0 || cols > m.Stride || rows > m.Rows {
+	if cols <= 0 || rows <= 0 || uint32(cols) > m.Stride || uint32(rows) > m.Rows {
 		return ErrInvalidBatch
 	}
 	return nil

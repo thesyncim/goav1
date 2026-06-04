@@ -2090,7 +2090,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	if stats := runner.Workers[0].Stats; stats.Loop.Blocks == 0 || stats.CoefficientBlocks == 0 || stats.TXBs == 0 {
 		t.Fatalf("residual runner stats=%+v", stats)
 	}
-	coverage, err := side.LoopFilterMap.CoverageStats(side.LoopFilterMap.Stride, side.LoopFilterMap.Rows)
+	coverage, err := side.LoopFilterMap.CoverageStats(int(side.LoopFilterMap.Stride), int(side.LoopFilterMap.Rows))
 	if err != nil {
 		t.Fatal(err)
 	}

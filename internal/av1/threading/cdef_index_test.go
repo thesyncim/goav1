@@ -26,7 +26,7 @@ func TestFrameWorkBatchCDEFIndexMapShapeAndBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stride != cols || got.Rows != rows || len(got.Index) != length || len(got.Read) != length {
+	if got.Stride != uint32(cols) || got.Rows != uint32(rows) || len(got.Index) != length || len(got.Read) != length {
 		t.Fatalf("map=%+v len(index)=%d len(read)=%d", got, len(got.Index), len(got.Read))
 	}
 

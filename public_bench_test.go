@@ -336,7 +336,7 @@ func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += stats.TXBs
+		sum += int(stats.TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -386,7 +386,7 @@ func BenchmarkPublicTileBlockCoefficientDecode(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += result.TotalStats().TXBs
+		sum += int(result.TotalStats().TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -517,7 +517,7 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += loopMap.Stride + loopReq.Map.Rows + len(loopReq.Edges) + cdefReq.IndexMap.Rows + len(postReq.CDEF.InputScratch) + len(arenaReq.CDEF.InputScratch)
+		sum += int(loopMap.Stride) + int(loopReq.Map.Rows) + len(loopReq.Edges) + int(cdefReq.IndexMap.Rows) + len(postReq.CDEF.InputScratch) + len(arenaReq.CDEF.InputScratch)
 	}
 	publicBenchmarkSink = sum
 }
@@ -813,7 +813,7 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += stats.Residuals + stats.TXBs
+		sum += int(stats.Residuals + stats.TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -876,7 +876,7 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += stats.Residuals + stats.TXBs
+		sum += int(stats.Residuals + stats.TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -935,7 +935,7 @@ func BenchmarkPublicDecoderResidualBatchRunner(b *testing.B) {
 		if err := runner.Run(batch); err != nil {
 			b.Fatal(err)
 		}
-		sum += runner.Stats[0].Residuals + runner.Stats[0].TXBs
+		sum += int(runner.Stats[0].Residuals + runner.Stats[0].TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -1029,7 +1029,7 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		if !postRunner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) || postRunner.Context.RemainingPostFilters() != 0 {
 			b.Fatalf("postfilter result=%+v remaining=%b", postRunner.Result, postRunner.Context.RemainingPostFilters())
 		}
-		sum += stats.Residuals + stats.TXBs
+		sum += int(stats.Residuals + stats.TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -1112,7 +1112,7 @@ func BenchmarkPublicDecoderResidualEventListRunner(b *testing.B) {
 		if result.Count != len(events) || result.ExecutedTileWork != 1 || result.CompletedFrames != 1 {
 			b.Fatalf("result=%+v", result)
 		}
-		sum += stats.Residuals + stats.TXBs
+		sum += int(stats.Residuals + stats.TXBs)
 	}
 	publicBenchmarkSink = sum
 }
@@ -1219,7 +1219,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 1 {
 				b.Fatalf("result=%+v", result)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1241,7 +1241,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 2 {
 				b.Fatalf("result=%+v", result)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1263,7 +1263,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 2 {
 				b.Fatalf("result=%+v", result)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1285,7 +1285,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
 				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1307,7 +1307,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
 				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1329,7 +1329,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
 				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1357,7 +1357,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if result.Run.CompletedFrames != 1 || runner.RTPUsed != 0 {
 				b.Fatalf("result=%+v retained=%d", result, runner.RTPUsed)
 			}
-			sum += stats.Residuals + stats.TXBs
+			sum += int(stats.Residuals + stats.TXBs)
 		}
 		publicBenchmarkSink = sum
 	})
@@ -1532,7 +1532,7 @@ func BenchmarkPublicDecoderBlockCoeffDecodeReconstruction(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		sum += result.TotalStats().TXBs + int(output.Y.Pix[i%len(output.Y.Pix)])
+		sum += int(result.TotalStats().TXBs) + int(output.Y.Pix[i%len(output.Y.Pix)])
 	}
 	publicBenchmarkSink = sum
 }

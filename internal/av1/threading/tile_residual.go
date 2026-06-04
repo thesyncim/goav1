@@ -622,16 +622,16 @@ type FrameWorkTileResidualRunner struct {
 type FrameWorkTileResidualStats struct {
 	Loop tile.BlockLoopStats
 
-	CoefficientBlocks int
-	SkippedBlocks     int
+	CoefficientBlocks int32
+	SkippedBlocks     int32
 
-	TXBs             int
-	NonZero          int
-	AllZero          int
-	EOBTotal         int
-	Residuals        int
-	Predictions      int
-	RestorationUnits int
+	TXBs             int32
+	NonZero          int32
+	AllZero          int32
+	EOBTotal         int32
+	Residuals        int32
+	Predictions      int32
+	RestorationUnits int32
 }
 
 // Run implements FrameWorkBatchRunner for the default residual decode path.
@@ -1158,7 +1158,7 @@ func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockL
 	if err != nil {
 		return err
 	}
-	c.stats.RestorationUnits += n
+	c.stats.RestorationUnits += int32(n)
 	return nil
 }
 

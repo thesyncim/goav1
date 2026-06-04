@@ -13,8 +13,8 @@ const frameWorkCDEFUnitMI = 16
 type FrameWorkCDEFIndexMap struct {
 	Index  []uint8
 	Read   []bool
-	Stride int
-	Rows   int
+	Stride uint32
+	Rows   uint32
 }
 
 // Reset clears all decoded CDEF-unit state while preserving caller-owned
@@ -71,8 +71,8 @@ func (b *FrameWorkBatch) BindCDEFIndexMap(index []uint8, read []bool) (FrameWork
 	return FrameWorkCDEFIndexMap{
 		Index:  index,
 		Read:   read,
-		Stride: cols,
-		Rows:   rows,
+		Stride: uint32(cols),
+		Rows:   uint32(rows),
 	}, nil
 }
 
@@ -118,8 +118,9 @@ func (m FrameWorkCDEFIndexMap) MarkBlockPtr(params parser.CDEFParams, visit *til
 	if unitColEnd >= uint32(m.Stride) || unitRowEnd >= uint32(m.Rows) {
 		return ErrInvalidBatch
 	}
+	stride := int(m.Stride)
 	for unitRow := unitRowStart; unitRow <= unitRowEnd; unitRow++ {
-		row := int(unitRow) * m.Stride
+		row := int(unitRow) * stride
 		for unitCol := unitColStart; unitCol <= unitColEnd; unitCol++ {
 			offset := row + int(unitCol)
 			m.Index[offset] = index
@@ -134,12 +135,10 @@ func (m FrameWorkCDEFIndexMap) validate() error {
 		return ErrInvalidBatch
 	}
 	maxInt := int(^uint(0) >> 1)
-	if m.Stride > maxInt/m.Rows ||
-		uint64(m.Stride) > uint64(^uint32(0)) ||
-		uint64(m.Rows) > uint64(^uint32(0)) {
+	if uint64(m.Stride)*uint64(m.Rows) > uint64(maxInt) {
 		return ErrInvalidBatch
 	}
-	length := m.Stride * m.Rows
+	length := int(m.Stride) * int(m.Rows)
 	if len(m.Index) < length || len(m.Read) < length {
 		return ErrInvalidBatch
 	}

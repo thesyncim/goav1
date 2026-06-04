@@ -407,14 +407,14 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					if err := ctx.RetainTileResidualCDFStorage(j, &decodeState, &storage); err != nil {
 						return err
 					}
-					stats.partitionReads += jobStats.Loop.PartitionReads
-					stats.blockPrefixReads += jobStats.Loop.Prefixes
-					stats.blockDeltaPaths += jobStats.Loop.Blocks
-					stats.predictionModeReads += jobStats.Loop.PredictionModes
-					stats.intraModeReads += jobStats.Loop.IntraModes
-					stats.residualTXBs += jobStats.TXBs
-					stats.residuals += jobStats.Residuals
-					stats.predictions += jobStats.Predictions
+					stats.partitionReads += int(jobStats.Loop.PartitionReads)
+					stats.blockPrefixReads += int(jobStats.Loop.Prefixes)
+					stats.blockDeltaPaths += int(jobStats.Loop.Blocks)
+					stats.predictionModeReads += int(jobStats.Loop.PredictionModes)
+					stats.intraModeReads += int(jobStats.Loop.IntraModes)
+					stats.residualTXBs += int(jobStats.TXBs)
+					stats.residuals += int(jobStats.Residuals)
+					stats.predictions += int(jobStats.Predictions)
 					if _, err := ctx.JobOutputPlane(j, threading.FrameWorkPlaneY); err != nil {
 						return err
 					}

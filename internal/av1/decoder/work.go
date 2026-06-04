@@ -1345,8 +1345,8 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		}
 		lfMap := threading.FrameWorkLoopFilterMap{
 			Records: r.LoopFilterRecords[:length],
-			Stride:  cols,
-			Rows:    rows,
+			Stride:  uint32(cols),
+			Rows:    uint32(rows),
 		}
 		if err := s.SetLoopFilterMap(lfMap); err != nil {
 			return err

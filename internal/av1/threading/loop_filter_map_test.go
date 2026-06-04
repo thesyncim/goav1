@@ -35,7 +35,7 @@ func TestFrameWorkBatchLoopFilterMapShapeAndBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stride != cols || got.Rows != rows || len(got.Records) != length {
+	if got.Stride != uint32(cols) || got.Rows != uint32(rows) || len(got.Records) != length {
 		t.Fatalf("map=%+v len(records)=%d", got, len(got.Records))
 	}
 	if got.Records[0].Valid {
@@ -97,7 +97,7 @@ func TestFrameWorkLoopFilterMapMarkBlockRecordsInterMetadata(t *testing.T) {
 
 	for miRow := uint32(2); miRow < 5; miRow++ {
 		for miCol := uint32(4); miCol < 7; miCol++ {
-			got := filterMap.Records[int(miRow)*filterMap.Stride+int(miCol)]
+			got := filterMap.Records[int(miRow)*int(filterMap.Stride)+int(miCol)]
 			if !got.Valid || got.Block != wantBlock || got.TransformTree != visit.Coefficients.Tree {
 				t.Fatalf("record[%d,%d]=%+v", miCol, miRow, got)
 			}

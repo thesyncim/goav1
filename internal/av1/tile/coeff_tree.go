@@ -57,10 +57,10 @@ type LumaCoeffBlock struct {
 }
 
 type LumaCoeffStats struct {
-	TXBs     int
-	NonZero  int
-	AllZero  int
-	EOBTotal int
+	TXBs     int32
+	NonZero  int32
+	AllZero  int32
+	EOBTotal int32
 }
 
 type LumaCoeffVisitor func(LumaCoeffBlock) error
@@ -202,7 +202,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 				}
 
 				stats.TXBs++
-				stats.EOBTotal += int(result.EOB)
+				stats.EOBTotal += int32(result.EOB)
 				if result.AllZero {
 					stats.AllZero++
 				} else {
@@ -244,7 +244,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		}
 
 		stats.TXBs++
-		stats.EOBTotal += int(result.EOB)
+		stats.EOBTotal += int32(result.EOB)
 		if result.AllZero {
 			stats.AllZero++
 		} else {
@@ -402,7 +402,7 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
 			}
 			stats.TXBs++
-			stats.EOBTotal += int(result.EOB)
+			stats.EOBTotal += int32(result.EOB)
 			if result.AllZero {
 				stats.AllZero++
 			} else {

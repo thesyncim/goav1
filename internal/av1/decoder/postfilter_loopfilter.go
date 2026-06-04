@@ -65,8 +65,8 @@ func (s FrameWorkLoopFilterPostFilterScratchSize) Max(other FrameWorkLoopFilterP
 // FrameWorkLoopFilterPostFilterLevelStats summarizes resolved levels for one
 // plane/edge class.
 type FrameWorkLoopFilterPostFilterLevelStats struct {
-	Blocks   int
-	NonZero  int
+	Blocks   int32
+	NonZero  int32
 	MaxLevel uint8
 }
 
@@ -261,8 +261,9 @@ func frameWorkLoopFilterForEachValidatedBlock(filterMap FrameWorkLoopFilterMap, 
 	if plan == nil || visit == nil {
 		return threading.ErrInvalidBatch
 	}
+	stride := int(filterMap.Stride)
 	for row := 0; row < rows; row++ {
-		base := row * filterMap.Stride
+		base := row * stride
 		for col := 0; col < cols; col++ {
 			record := &filterMap.Records[base+col]
 			if !record.Valid {
@@ -503,14 +504,15 @@ func frameWorkLoopFilterMIExtent(pixels uint32) (uint32, bool) {
 }
 
 func frameWorkValidateLoopFilterMap(filterMap FrameWorkLoopFilterMap, cols int, rows int) error {
-	if filterMap.Stride < cols || filterMap.Rows < rows || filterMap.Stride <= 0 || filterMap.Rows <= 0 {
+	if filterMap.Stride <= 0 || filterMap.Rows <= 0 ||
+		uint32(cols) > filterMap.Stride || uint32(rows) > filterMap.Rows {
 		return threading.ErrInvalidBatch
 	}
 	limit := int(^uint(0) >> 1)
-	if filterMap.Stride > limit/filterMap.Rows {
+	if uint64(filterMap.Stride)*uint64(filterMap.Rows) > uint64(limit) {
 		return threading.ErrInvalidBatch
 	}
-	length := filterMap.Stride * filterMap.Rows
+	length := int(filterMap.Stride) * int(filterMap.Rows)
 	if len(filterMap.Records) < length {
 		return threading.ErrInvalidBatch
 	}
@@ -992,10 +994,11 @@ func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge lo
 	if prevCol < 0 || prevRow < 0 {
 		return nil, false, nil
 	}
-	if prevCol >= cols || prevRow >= rows || prevRow >= filterMap.Rows || prevCol >= filterMap.Stride {
+	if prevCol >= cols || prevRow >= rows ||
+		uint32(prevRow) >= filterMap.Rows || uint32(prevCol) >= filterMap.Stride {
 		return nil, false, threading.ErrInvalidBatch
 	}
-	record := &filterMap.Records[prevRow*filterMap.Stride+prevCol]
+	record := &filterMap.Records[prevRow*int(filterMap.Stride)+prevCol]
 	if !record.Valid {
 		return nil, false, threading.ErrInvalidBatch
 	}
@@ -1809,10 +1812,11 @@ func frameWorkLoopFilterPreviousChromaRecordWithShifts(filterMap FrameWorkLoopFi
 	if prevCol < 0 || prevRow < 0 {
 		return nil, false, nil
 	}
-	if prevCol >= cols || prevRow >= rows || prevRow >= filterMap.Rows || prevCol >= filterMap.Stride {
+	if prevCol >= cols || prevRow >= rows ||
+		uint32(prevRow) >= filterMap.Rows || uint32(prevCol) >= filterMap.Stride {
 		return nil, false, threading.ErrInvalidBatch
 	}
-	record := &filterMap.Records[prevRow*filterMap.Stride+prevCol]
+	record := &filterMap.Records[prevRow*int(filterMap.Stride)+prevCol]
 	if !record.Valid {
 		return nil, false, threading.ErrInvalidBatch
 	}

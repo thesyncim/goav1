@@ -139,11 +139,12 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanIgnoresPaddedMapCells
 	record := testFrameWorkLoopFilterPostFilterRecord(cols, rows)
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, (cols+2)*(rows+1)),
-		Stride:  cols + 2,
-		Rows:    rows + 1,
+		Stride:  uint32(cols + 2),
+		Rows:    uint32(rows + 1),
 	}
+	stride := int(filterMap.Stride)
 	for miRow := record.Block.MIRow; miRow < record.Block.MIRowEnd; miRow++ {
-		row := int(miRow) * filterMap.Stride
+		row := int(miRow) * stride
 		for miCol := record.Block.MICol; miCol < record.Block.MIColEnd; miCol++ {
 			filterMap.Records[row+int(miCol)] = record
 		}
@@ -1978,8 +1979,8 @@ func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanRejectsIncompleteMap(
 	}
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, cols*rows),
-		Stride:  cols,
-		Rows:    rows,
+		Stride:  uint32(cols),
+		Rows:    uint32(rows),
 	}
 	filterMap.Records[0] = testFrameWorkLoopFilterPostFilterRecord(cols, rows)
 	ctx := FrameWorkPostFilterContext{
@@ -2199,12 +2200,13 @@ func testFrameWorkLoopFilterPostFilterMap(t testing.TB, size parser.FrameSize, r
 	}
 	filterMap := FrameWorkLoopFilterMap{
 		Records: make([]threading.FrameWorkLoopFilterBlockRecord, cols*rows),
-		Stride:  cols,
-		Rows:    rows,
+		Stride:  uint32(cols),
+		Rows:    uint32(rows),
 	}
+	stride := int(filterMap.Stride)
 	for _, record := range records {
 		for miRow := record.Block.MIRow; miRow < record.Block.MIRowEnd; miRow++ {
-			row := int(miRow) * filterMap.Stride
+			row := int(miRow) * stride
 			for miCol := record.Block.MICol; miCol < record.Block.MIColEnd; miCol++ {
 				filterMap.Records[row+int(miCol)] = record
 			}

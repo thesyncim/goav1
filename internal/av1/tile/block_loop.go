@@ -251,31 +251,31 @@ type BlockLoopVisit struct {
 }
 
 type BlockLoopStats struct {
-	PartitionReads      int
-	Blocks              int
-	SegmentPredictions  int
-	SegmentIDs          int
-	Prefixes            int
-	PredictionModes     int
-	IntraModes          int
-	InterEntries        int
-	InterReferences     int
-	InterModes          int
-	RefMVStacks         int
-	DRLIndices          int
-	InterMVReferences   int
-	MotionVectors       int
-	MVResiduals         int
-	InterpFilters       int
-	InterIntras         int
-	MotionModes         int
-	CompoundBlends      int
-	CoefficientBlocks   int
-	CoefficientTXBs     int
-	CoefficientNonZero  int
-	CoefficientAllZero  int
-	CoefficientEOBTotal int
-	DeltaReads          int
+	PartitionReads      int32
+	Blocks              int32
+	SegmentPredictions  int32
+	SegmentIDs          int32
+	Prefixes            int32
+	PredictionModes     int32
+	IntraModes          int32
+	InterEntries        int32
+	InterReferences     int32
+	InterModes          int32
+	RefMVStacks         int32
+	DRLIndices          int32
+	InterMVReferences   int32
+	MotionVectors       int32
+	MVResiduals         int32
+	InterpFilters       int32
+	InterIntras         int32
+	MotionModes         int32
+	CompoundBlends      int32
+	CoefficientBlocks   int32
+	CoefficientTXBs     int32
+	CoefficientNonZero  int32
+	CoefficientAllZero  int32
+	CoefficientEOBTotal int32
+	DeltaReads          int32
 }
 
 type BlockLoopSuperblockVisitor func(BlockLoopSuperblockVisit) error
@@ -440,7 +440,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 									stats.MVResiduals++
 								}
 							}
-							stats.InterpFilters += visitInfo.Prediction.InterpFilterReads
+							stats.InterpFilters += int32(visitInfo.Prediction.InterpFilterReads)
 							if visitInfo.Prediction.InterIntraValid {
 								stats.InterIntras++
 							}
@@ -470,7 +470,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				}
 				return visit(visitInfo)
 			})
-			stats.PartitionReads += walkStats.PartitionReads
+			stats.PartitionReads += int32(walkStats.PartitionReads)
 			if err != nil {
 				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}

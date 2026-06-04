@@ -24,7 +24,7 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filterMap.Stride != cols || filterMap.Rows != rows || len(filterMap.Records) != length {
+	if filterMap.Stride != uint32(cols) || filterMap.Rows != uint32(rows) || len(filterMap.Records) != length {
 		t.Fatalf("map=%+v", filterMap)
 	}
 	if filterMap.Records[0].Valid {
@@ -139,7 +139,7 @@ func TestPublicDecoderSideMapsMarkAndReset(t *testing.T) {
 	if err := av1.MarkDecoderFrameWorkLoopFilterMapBlock(loopMap, visit, state); err != nil {
 		t.Fatal(err)
 	}
-	record := loopMap.Records[4*loopMap.Stride+4]
+	record := loopMap.Records[4*int(loopMap.Stride)+4]
 	if !record.Valid || record.Block.MICol != 4 || record.Block.MIRow != 4 ||
 		record.DeltaLFFromBase != -2 || record.DeltaLF != state.DeltaLF {
 		t.Fatalf("loop-filter record=%+v state=%+v", record, state)
@@ -785,7 +785,7 @@ func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cdefMap.Stride != cols || cdefMap.Rows != rows || len(cdefMap.Index) != length || len(cdefMap.Read) != length {
+	if cdefMap.Stride != uint32(cols) || cdefMap.Rows != uint32(rows) || len(cdefMap.Index) != length || len(cdefMap.Read) != length {
 		t.Fatalf("map=%+v", cdefMap)
 	}
 	badIndex := []uint8{4}
@@ -1371,7 +1371,7 @@ func publicDecoderLoopFilterRecordAt(col0 int, row0 int, col1 int, row1 int) av1
 func publicFillDecoderLoopFilterMap(filterMap av1.DecoderFrameWorkLoopFilterMap, records ...av1.DecoderFrameWorkLoopFilterBlockRecord) {
 	for _, record := range records {
 		for row := record.Block.MIRow; row < record.Block.MIRowEnd; row++ {
-			base := int(row) * filterMap.Stride
+			base := int(row) * int(filterMap.Stride)
 			for col := record.Block.MICol; col < record.Block.MIColEnd; col++ {
 				filterMap.Records[base+int(col)] = record
 			}

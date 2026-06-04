@@ -256,9 +256,10 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 	unitSizeY := cdef.BlockSize >> yDec
 	blockWidth := 8 >> xDec
 	blockHeight := 8 >> yDec
+	indexStride := int(indexMap.Stride)
 	for unitRow := range rows {
 		for unitCol := range cols {
-			mapOffset := unitRow*indexMap.Stride + unitCol
+			mapOffset := unitRow*indexStride + unitCol
 			if !indexMap.Read[mapOffset] {
 				continue
 			}
@@ -558,11 +559,12 @@ func frameWorkCDEFBlockAllSkipped(skipMap *FrameWorkLoopFilterMap, unitRow int, 
 	if miColStart < 0 || miRowStart < 0 {
 		return false
 	}
-	if miColStart+miPerBlock > skipMap.Stride || miRowStart+miPerBlock > skipMap.Rows {
+	if miColStart+miPerBlock > int(skipMap.Stride) || miRowStart+miPerBlock > int(skipMap.Rows) {
 		return false
 	}
+	stride := int(skipMap.Stride)
 	for dy := range miPerBlock {
-		row := (miRowStart + dy) * skipMap.Stride
+		row := (miRowStart + dy) * stride
 		for dx := range miPerBlock {
 			record := skipMap.Records[row+miColStart+dx]
 			if !record.Valid {
@@ -589,13 +591,15 @@ func frameWorkCDEFUnitGrid(size parser.FrameSize) (int, int, error) {
 }
 
 func frameWorkValidateCDEFIndexMap(indexMap FrameWorkCDEFIndexMap, cols int, rows int) error {
-	if indexMap.Stride < cols || indexMap.Rows < rows || indexMap.Stride <= 0 || indexMap.Rows <= 0 {
+	if indexMap.Stride <= 0 || indexMap.Rows <= 0 ||
+		uint32(cols) > indexMap.Stride || uint32(rows) > indexMap.Rows {
 		return threading.ErrInvalidBatch
 	}
-	if indexMap.Stride > int(^uint(0)>>1)/indexMap.Rows {
+	limit := int(^uint(0) >> 1)
+	if uint64(indexMap.Stride)*uint64(indexMap.Rows) > uint64(limit) {
 		return threading.ErrInvalidBatch
 	}
-	length := indexMap.Stride * indexMap.Rows
+	length := int(indexMap.Stride) * int(indexMap.Rows)
 	if len(indexMap.Index) < length || len(indexMap.Read) < length {
 		return threading.ErrInvalidBatch
 	}

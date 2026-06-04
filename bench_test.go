@@ -512,7 +512,7 @@ func (h *decodeBenchmarkHarness) runOnce() (int, int, error) {
 	if err := h.runner.RunLowOverheadsInto(&result, h.payloads, nil); err != nil {
 		return 0, 0, err
 	}
-	return result.Run.CompletedFrames, h.stats.TXBs, nil
+	return result.Run.CompletedFrames, int(h.stats.TXBs), nil
 }
 
 func bindBenchFramePool(b testing.TB, format av1.FrameFormat, count int) av1.FramePool {
