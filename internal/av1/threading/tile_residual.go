@@ -67,6 +67,25 @@ type frameWorkReconEvent struct {
 }
 
 const (
+	frameWorkReconMaxIndex        = int32(1<<31 - 1)
+	frameWorkReconMaxWavefrontCol = frameWorkReconMaxIndex - 2
+)
+
+func frameWorkReconIndex(v int) (int32, bool) {
+	if v < 0 || v > int(frameWorkReconMaxIndex) {
+		return 0, false
+	}
+	return int32(v), true
+}
+
+func frameWorkReconWavefrontCol(v int) (int32, bool) {
+	if v < 0 || v > int(frameWorkReconMaxWavefrontCol) {
+		return 0, false
+	}
+	return int32(v), true
+}
+
+const (
 	frameWorkReconPaletteY uint8 = 1 << iota
 	frameWorkReconPaletteUV
 )
@@ -76,8 +95,8 @@ const (
 // complete. Keeping the binding out of frameWorkReconEvent avoids growing every
 // non-palette event for a rare screen-content path.
 type frameWorkReconPaletteBinding struct {
-	visitIndex   int
-	paletteIndex int
+	visitIndex   int32
+	paletteIndex int32
 	mask         uint8
 }
 
@@ -326,7 +345,7 @@ func (s *FrameWorkTileResidualScratch) PreallocCallbackScratch() {
 // state. Numeric per-worker scratch is carved from flat arenas to avoid one
 // backing allocation per worker. All buffers retain capacity across frames.
 type frameWorkReconWavefront struct {
-	rowStart       []int
+	rowStart       []int32
 	sbSpans        []frameWorkReconSB
 	events         []frameWorkReconEvent
 	visits         []tile.BlockLoopVisit
@@ -358,6 +377,15 @@ func (wf *frameWorkReconWavefront) sbs() []frameWorkReconSB {
 
 func (wf *frameWorkReconWavefront) eventSpan(start int, end int) []frameWorkReconEvent {
 	return wf.events[start:end]
+}
+
+func (wf *frameWorkReconWavefront) appendRowStart(sbCount int) error {
+	idx, ok := frameWorkReconIndex(sbCount)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	wf.rowStart = append(wf.rowStart, idx)
+	return nil
 }
 
 // ensureDone grows the per-row done-counter backing to rowCount entries,
@@ -488,25 +516,36 @@ func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoop
 	return visit, paletteIndex, mask
 }
 
-func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, mask uint8) {
+func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, mask uint8) error {
 	if mask == 0 {
-		return
+		return nil
+	}
+	visitIndex32, ok := frameWorkReconIndex(visitIndex)
+	if !ok {
+		return ErrInvalidBatch
+	}
+	paletteIndex32, ok := frameWorkReconIndex(paletteIndex)
+	if !ok {
+		return ErrInvalidBatch
 	}
 	s.paletteBindings = append(s.paletteBindings, frameWorkReconPaletteBinding{
-		visitIndex:   visitIndex,
-		paletteIndex: paletteIndex,
+		visitIndex:   visitIndex32,
+		paletteIndex: paletteIndex32,
 		mask:         mask,
 	})
+	return nil
 }
 
 func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
 	for i := range s.paletteBindings {
 		binding := &s.paletteBindings[i]
-		if binding.visitIndex < 0 || binding.visitIndex >= len(s.reconVisits) || binding.paletteIndex < 0 || binding.paletteIndex >= len(s.paletteArena) {
+		visitIndex := int(binding.visitIndex)
+		paletteIndex := int(binding.paletteIndex)
+		if binding.visitIndex < 0 || visitIndex >= len(s.reconVisits) || binding.paletteIndex < 0 || paletteIndex >= len(s.paletteArena) {
 			return ErrInvalidBatch
 		}
-		visit := &s.reconVisits[binding.visitIndex]
-		store := &s.paletteArena[binding.paletteIndex]
+		visit := &s.reconVisits[visitIndex]
+		store := &s.paletteArena[paletteIndex]
 		pal := &visit.Prediction.Palette
 		if binding.mask&frameWorkReconPaletteY != 0 {
 			pal.YMap = &store.Y
@@ -1200,12 +1239,18 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 	if c.deferReconstruction {
 		bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
 		visitIndex := len(c.scratch.reconVisits)
+		visitIndex32, ok := frameWorkReconIndex(visitIndex)
+		if !ok {
+			return ErrInvalidBatch
+		}
 		c.scratch.reconVisits = append(c.scratch.reconVisits, bufferedVisit)
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			index: int32(visitIndex),
+			index: visitIndex32,
 		})
-		c.scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask)
+		if err := c.scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask); err != nil {
+			return err
+		}
 		return nil
 	}
 	return c.fusedReconState().predictBlockBegin(visit)
@@ -1411,7 +1456,9 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		return ErrInvalidBatch
 	}
 	if c.deferReconstruction {
-		c.bufferReconTXB(visit, block, c.state.CurrentBaseQIdx)
+		if err := c.bufferReconTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
+			return err
+		}
 	} else if err := c.fusedReconState().reconstructTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
 		return err
 	}
@@ -1429,7 +1476,12 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 // event's coefficients. Scan is kept by reference to the immutable scan table
 // so deferred reconstruction can use the same sparse dequant path as the fused
 // path without copying per-TXB scan data.
-func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) {
+func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
+	blockIndex := len(c.scratch.reconBlocks)
+	blockIndex32, ok := frameWorkReconIndex(blockIndex)
+	if !ok {
+		return ErrInvalidBatch
+	}
 	buffered := *block
 	if block.Result.AllZero {
 		buffered.Coeffs = nil
@@ -1440,13 +1492,13 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 	} else {
 		buffered.Coeffs = nil
 	}
-	blockIndex := len(c.scratch.reconBlocks)
 	c.scratch.reconBlocks = append(c.scratch.reconBlocks, buffered)
 	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 		kind:          frameWorkReconEventTXB,
-		index:         int32(blockIndex),
+		index:         blockIndex32,
 		currentQIndex: currentQIndex,
 	})
+	return nil
 }
 
 // replayDeferredReconstruction runs the buffered predict and reconstruct events
@@ -1495,9 +1547,9 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 // the SB column within its row. Events for one SB are contiguous because the
 // block loop decodes superblocks in raster order.
 type frameWorkReconSB struct {
-	start int
-	end   int
-	col   int
+	start int32
+	end   int32
+	col   int32
 }
 
 // replayDeferredReconstructionWavefront replays the buffered reconstruction
@@ -1525,6 +1577,10 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		return ErrInvalidBatch
 	}
 	workers := min(c.wavefrontWorkers, rowCount)
+	eventLimit, ok := frameWorkReconIndex(len(c.scratch.reconEvents))
+	if !ok {
+		return ErrInvalidBatch
+	}
 
 	if c.scratch.wavefront == nil {
 		c.scratch.wavefront = &frameWorkReconWavefront{}
@@ -1541,6 +1597,10 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		ev := &c.scratch.reconEvents[i]
 		if ev.kind != frameWorkReconEventBlockBegin {
 			continue
+		}
+		eventIndex, ok := frameWorkReconIndex(i)
+		if !ok {
+			return ErrInvalidBatch
 		}
 		idx := int(ev.index)
 		if ev.index < 0 || idx >= len(c.scratch.reconVisits) {
@@ -1562,17 +1622,25 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		}
 		// Close the previous SB span.
 		if len(sbs) > 0 {
-			sbs[len(sbs)-1].end = i
+			sbs[len(sbs)-1].end = eventIndex
 		}
 		// Open new row spans up to and including sbRow.
 		for len(wf.rowStart) <= sbRow {
-			wf.rowStart = append(wf.rowStart, len(sbs))
+			if err := wf.appendRowStart(len(sbs)); err != nil {
+				return err
+			}
 		}
-		sbs = append(sbs, frameWorkReconSB{start: i, end: len(c.scratch.reconEvents), col: sbCol})
+		sbCol32, ok := frameWorkReconWavefrontCol(sbCol)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		sbs = append(sbs, frameWorkReconSB{start: eventIndex, end: eventLimit, col: sbCol32})
 		prevRow, prevCol = sbRow, sbCol
 	}
 	for len(wf.rowStart) <= rowCount {
-		wf.rowStart = append(wf.rowStart, len(sbs))
+		if err := wf.appendRowStart(len(sbs)); err != nil {
+			return err
+		}
 	}
 	wf.commitSBs(sbs)
 
@@ -1636,9 +1704,14 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 		return ErrInvalidBatch
 	}
 	sbs := wf.sbs()
-	lo := wf.rowStart[row]
-	hi := wf.rowStart[row+1]
-	if lo < 0 || hi < lo || hi > len(sbs) {
+	lo32 := wf.rowStart[row]
+	hi32 := wf.rowStart[row+1]
+	if lo32 < 0 || hi32 < lo32 {
+		return ErrInvalidBatch
+	}
+	lo := int(lo32)
+	hi := int(hi32)
+	if hi > len(sbs) {
 		return ErrInvalidBatch
 	}
 	sbs = sbs[lo:hi]
@@ -1651,8 +1724,17 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 	var donePrev *atomic.Int32
 	aboveCount := 0
 	if row > 0 {
-		aboveCount = wf.rowStart[row] - wf.rowStart[row-1]
+		prevStart := wf.rowStart[row-1]
+		curStart := wf.rowStart[row]
+		if prevStart < 0 || curStart < prevStart {
+			return ErrInvalidBatch
+		}
+		aboveCount = int(curStart - prevStart)
 		donePrev = &wf.done[row-1]
+	}
+	eventCount, ok := frameWorkReconIndex(len(wf.events))
+	if !ok {
+		return ErrInvalidBatch
 	}
 	for k := range sbs {
 		sb := sbs[k]
@@ -1663,7 +1745,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 			// reconstructed, but clamp to the number of superblocks actually in
 			// row R-1: if (R-1,C+1) does not exist (right edge), done[R-1] tops
 			// out at the row-above SB count and waiting for C+2 would deadlock.
-			need := int32(sb.col + 2)
+			need := sb.col + 2
 			if int(need) > aboveCount {
 				need = int32(aboveCount)
 			}
@@ -1674,10 +1756,13 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 				runtime.Gosched()
 			}
 		}
-		if err := frameWorkReplayReconEvents(st, wf.eventSpan(sb.start, sb.end), wf.visits, wf.blocks); err != nil {
+		if sb.start < 0 || sb.end < sb.start || sb.end > eventCount {
+			return ErrInvalidBatch
+		}
+		if err := frameWorkReplayReconEvents(st, wf.eventSpan(int(sb.start), int(sb.end)), wf.visits, wf.blocks); err != nil {
 			return err
 		}
-		doneCur.Store(int32(sb.col + 1))
+		doneCur.Store(sb.col + 1)
 	}
 	return nil
 }

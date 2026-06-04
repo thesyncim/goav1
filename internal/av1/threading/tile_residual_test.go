@@ -201,7 +201,9 @@ func TestFrameWorkDeferredReconPreservesScanSlice(t *testing.T) {
 		Scan:      scan,
 	}
 
-	controller.bufferReconTXB(&tile.BlockLoopVisit{}, &block, 7)
+	if err := controller.bufferReconTXB(&tile.BlockLoopVisit{}, &block, 7); err != nil {
+		t.Fatalf("buffer recon txb: %v", err)
+	}
 
 	if len(scratch.reconBlocks) != 1 {
 		t.Fatalf("recon blocks=%d want 1", len(scratch.reconBlocks))
@@ -1198,12 +1200,18 @@ func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
 	appendVisit := func(visit tile.BlockLoopVisit) {
 		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(visit)
 		visitIndex := len(scratch.reconVisits)
+		visitIndex32, ok := frameWorkReconIndex(visitIndex)
+		if !ok {
+			t.Fatalf("visit index overflow: %d", visitIndex)
+		}
 		scratch.reconVisits = append(scratch.reconVisits, buffered)
 		scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
-			index: int32(visitIndex),
+			index: visitIndex32,
 		})
-		scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask)
+		if err := scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask); err != nil {
+			t.Fatalf("remember deferred palette: %v", err)
+		}
 	}
 	appendVisit(tile.BlockLoopVisit{
 		Prediction: tile.BlockPredictionModeResult{

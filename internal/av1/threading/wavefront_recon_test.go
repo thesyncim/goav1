@@ -79,10 +79,14 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 			}
 			visit.Prefix.SkipTransform = true
 			visitIndex := len(scratch.reconVisits)
+			visitIndex32, ok := frameWorkReconIndex(visitIndex)
+			if !ok {
+				t.Fatalf("visit index overflow: %d", visitIndex)
+			}
 			scratch.reconVisits = append(scratch.reconVisits, visit)
 			scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 				kind:  frameWorkReconEventBlockBegin,
-				index: int32(visitIndex),
+				index: visitIndex32,
 			})
 		}
 	}
