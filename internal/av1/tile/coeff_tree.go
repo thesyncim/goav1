@@ -499,6 +499,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	req.levelDirtyPos = &scratch.LevelDirty
 	req.levelDirtyLen = &scratch.levelDirtyLen
 	req.levelDirtyScratch = &scratch.Levels
+	req.trustedScan = true
 	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)

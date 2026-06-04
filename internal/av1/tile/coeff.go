@@ -93,6 +93,7 @@ type TXBDecodeRequest struct {
 	SkipAllZeroCoeffClear bool
 
 	skipNonZeroCoeffClear bool
+	trustedScan           bool
 }
 
 type TXBDecodeResult struct {
@@ -799,6 +800,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	posSlice = posSlice[:maxEOB]
+	trustedScan := req.trustedScan
 	// Hoist the CoeffBase/CoeffBR CDF-array selection out of the per-coefficient
 	// loop. CoeffBaseCDF/CoeffBRCDF re-derive the transform-size context (a
 	// Dimensions() lookup) and re-validate the plane on every symbol read; here
@@ -843,7 +845,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 
 	lastC := eobPos - 1
 	lastPos := int(scan[lastC])
-	if lastPos < 0 || lastPos >= maxEOB {
+	if !trustedScan && (lastPos < 0 || lastPos >= maxEOB) {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	lastCtx := coeffLowerLevelsCtxEOBFast(maxEOB, lastC)
@@ -957,7 +959,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if cdfUpdate {
 			for c := eobPos - 2; c >= 0; c-- {
 				pos := int(scan[c])
-				if pos < 0 || pos >= maxEOB {
+				if !trustedScan && (pos < 0 || pos >= maxEOB) {
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
@@ -1006,7 +1008,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		} else {
 			for c := eobPos - 2; c >= 0; c-- {
 				pos := int(scan[c])
-				if pos < 0 || pos >= maxEOB {
+				if !trustedScan && (pos < 0 || pos >= maxEOB) {
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
@@ -1058,7 +1060,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		if cdfUpdate {
 			for c := eobPos - 2; c >= 0; c-- {
 				pos := int(scan[c])
-				if pos < 0 || pos >= maxEOB {
+				if !trustedScan && (pos < 0 || pos >= maxEOB) {
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
@@ -1089,7 +1091,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		} else {
 			for c := eobPos - 2; c >= 0; c-- {
 				pos := int(scan[c])
-				if pos < 0 || pos >= maxEOB {
+				if !trustedScan && (pos < 0 || pos >= maxEOB) {
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
@@ -1181,7 +1183,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	} else {
 		for c := headC; c >= 0; {
 			pos := int(scan[c])
-			if pos < 0 || pos >= maxEOB {
+			if !trustedScan && (pos < 0 || pos >= maxEOB) {
 				reader.CommitStateTo(&s.Reader)
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
