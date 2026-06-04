@@ -14,8 +14,8 @@ import "github.com/thesyncim/goav1/internal/av1/bitstream"
 // memory and parsing does not allocate.
 type Unit struct {
 	Header    Header
-	HeaderLen int
-	SizeLen   int
+	HeaderLen uint8
+	SizeLen   uint8
 	Size      uint32
 	Payload   []byte
 	Raw       []byte
@@ -35,7 +35,7 @@ func ParseElement(element []byte) (Unit, error) {
 		payload := element[headerLen:]
 		return Unit{
 			Header:    h,
-			HeaderLen: headerLen,
+			HeaderLen: uint8(headerLen),
 			Size:      uint32(len(payload)),
 			Payload:   payload,
 			Raw:       element,
@@ -55,8 +55,8 @@ func ParseElement(element []byte) (Unit, error) {
 
 	return Unit{
 		Header:    h,
-		HeaderLen: headerLen,
-		SizeLen:   sizeLen,
+		HeaderLen: uint8(headerLen),
+		SizeLen:   uint8(sizeLen),
 		Size:      size,
 		Payload:   element[start:end],
 		Raw:       element[:end],
@@ -86,8 +86,8 @@ func ParseLowOverhead(src []byte) (Unit, int, error) {
 
 	return Unit{
 		Header:    h,
-		HeaderLen: headerLen,
-		SizeLen:   sizeLen,
+		HeaderLen: uint8(headerLen),
+		SizeLen:   uint8(sizeLen),
 		Size:      size,
 		Payload:   src[start:end],
 		Raw:       src[:end],

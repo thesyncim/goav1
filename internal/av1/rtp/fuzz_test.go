@@ -211,9 +211,9 @@ func FuzzAssembleFrame(f *testing.F) {
 			if info.Header != unit.Header ||
 				info.Offset != offset ||
 				info.Length != len(unit.Raw) ||
-				info.PrefixSize != unit.HeaderLen+unit.SizeLen ||
+				info.PrefixSize != int(unit.HeaderLen)+int(unit.SizeLen) ||
 				info.PayloadSize != len(unit.Payload) ||
-				info.PayloadOffset() != offset+unit.HeaderLen+unit.SizeLen ||
+				info.PayloadOffset() != offset+int(unit.HeaderLen)+int(unit.SizeLen) ||
 				info.PayloadEnd() != offset+len(unit.Raw) {
 				t.Fatalf("metadata[%d]=%+v unit=%+v offset=%d", index, info, unit, offset)
 			}
