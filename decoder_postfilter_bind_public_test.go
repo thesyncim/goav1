@@ -785,7 +785,7 @@ func TestPublicDecoderCDEFIndexMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cdefMap.Stride != uint32(cols) || cdefMap.Rows != uint32(rows) || len(cdefMap.Index) != length || len(cdefMap.Read) != length {
+	if cdefMap.Stride != uint16(cols) || cdefMap.Rows != uint16(rows) || len(cdefMap.Index) != length || len(cdefMap.Read) != length {
 		t.Fatalf("map=%+v", cdefMap)
 	}
 	badIndex := []uint8{4}

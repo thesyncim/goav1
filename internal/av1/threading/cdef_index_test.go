@@ -26,7 +26,7 @@ func TestFrameWorkBatchCDEFIndexMapShapeAndBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stride != uint32(cols) || got.Rows != uint32(rows) || len(got.Index) != length || len(got.Read) != length {
+	if got.Stride != uint16(cols) || got.Rows != uint16(rows) || len(got.Index) != length || len(got.Read) != length {
 		t.Fatalf("map=%+v len(index)=%d len(read)=%d", got, len(got.Index), len(got.Read))
 	}
 
@@ -52,6 +52,11 @@ func TestFrameWorkBatchCDEFIndexMapShapeAndBind(t *testing.T) {
 	emptyBatch := FrameWorkBatch{}
 	if _, _, _, err := emptyBatch.CDEFIndexMapShape(); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("invalid batch shape err=%v want %v", err, ErrInvalidBatch)
+	}
+
+	oversized := testFrameWorkCDEFIndexBatch(1<<22, 64, 2)
+	if _, _, _, err := oversized.CDEFIndexMapShape(); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("oversized cdef shape err=%v want %v", err, ErrInvalidBatch)
 	}
 }
 

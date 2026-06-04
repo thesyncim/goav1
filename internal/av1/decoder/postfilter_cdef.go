@@ -592,7 +592,7 @@ func frameWorkCDEFUnitGrid(size parser.FrameSize) (int, int, error) {
 
 func frameWorkValidateCDEFIndexMap(indexMap FrameWorkCDEFIndexMap, cols int, rows int) error {
 	if indexMap.Stride <= 0 || indexMap.Rows <= 0 ||
-		uint32(cols) > indexMap.Stride || uint32(rows) > indexMap.Rows {
+		cols > int(indexMap.Stride) || rows > int(indexMap.Rows) {
 		return threading.ErrInvalidBatch
 	}
 	limit := int(^uint(0) >> 1)

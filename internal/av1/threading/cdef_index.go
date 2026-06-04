@@ -13,8 +13,8 @@ const frameWorkCDEFUnitMI = 16
 type FrameWorkCDEFIndexMap struct {
 	Index  []uint8
 	Read   []bool
-	Stride uint32
-	Rows   uint32
+	Stride uint16
+	Rows   uint16
 }
 
 // Reset clears all decoded CDEF-unit state while preserving caller-owned
@@ -23,8 +23,9 @@ func (m FrameWorkCDEFIndexMap) Reset() error {
 	if err := m.validate(); err != nil {
 		return err
 	}
-	clear(m.Index[:m.Stride*m.Rows])
-	clear(m.Read[:m.Stride*m.Rows])
+	length := int(m.Stride) * int(m.Rows)
+	clear(m.Index[:length])
+	clear(m.Read[:length])
 	return nil
 }
 
@@ -46,6 +47,9 @@ func (b *FrameWorkBatch) CDEFIndexMapShape() (cols int, rows int, length int, er
 	length64 := uint64(cdefCols) * uint64(cdefRows)
 	maxInt := uint64(^uint(0) >> 1)
 	if cdefCols == 0 || cdefRows == 0 || length64 > maxInt {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	if cdefCols > uint32(^uint16(0)) || cdefRows > uint32(^uint16(0)) {
 		return 0, 0, 0, ErrInvalidBatch
 	}
 	return int(cdefCols), int(cdefRows), int(length64), nil
@@ -71,8 +75,8 @@ func (b *FrameWorkBatch) BindCDEFIndexMap(index []uint8, read []bool) (FrameWork
 	return FrameWorkCDEFIndexMap{
 		Index:  index,
 		Read:   read,
-		Stride: uint32(cols),
-		Rows:   uint32(rows),
+		Stride: uint16(cols),
+		Rows:   uint16(rows),
 	}, nil
 }
 
