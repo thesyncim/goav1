@@ -96,3 +96,89 @@ func TestAppendLowOverheadOBUAllocs(t *testing.T) {
 		t.Fatalf("AppendLowOverheadOBU allocated: %f", allocs)
 	}
 }
+
+func TestAppendLowOverheadTemporalUnit(t *testing.T) {
+	units := [...]OBU{
+		{Type: obu.TypeSequenceHeader, Payload: []byte{0x01, 0x02}},
+		{Type: obu.TypeFrame, TemporalID: 1, SpatialID: 1, Payload: []byte{0xaa}},
+	}
+	size, err := LowOverheadTemporalUnitSize(units[:])
+	if err != nil {
+		t.Fatalf("LowOverheadTemporalUnitSize: %v", err)
+	}
+	var buf [16]byte
+	out, err := AppendLowOverheadTemporalUnit(buf[:0], units[:])
+	if err != nil {
+		t.Fatalf("AppendLowOverheadTemporalUnit: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("temporal unit len=%d want %d", len(out), size)
+	}
+	want := []byte{
+		0x12, 0x00,
+		0x0a, 0x02, 0x01, 0x02,
+		0x36, 0x28, 0x01, 0xaa,
+	}
+	if !bytes.Equal(out, want) {
+		t.Fatalf("temporal unit = % x; want % x", out, want)
+	}
+	it := obu.NewTemporalUnitIterator(out)
+	tu, ok, err := it.Next()
+	if err != nil {
+		t.Fatalf("TemporalUnitIterator.Next: %v", err)
+	}
+	if !ok || !bytes.Equal(tu.Raw, out) {
+		t.Fatalf("temporal unit parsed ok=%v raw=% x", ok, tu.Raw)
+	}
+	_, ok, err = it.Next()
+	if err != nil || ok {
+		t.Fatalf("TemporalUnitIterator second ok=%v err=%v", ok, err)
+	}
+}
+
+func TestAppendLowOverheadTemporalUnitRejectsBeforeWrite(t *testing.T) {
+	var buf [16]byte
+	dst := buf[:1]
+	dst[0] = 0xee
+	if _, err := AppendLowOverheadTemporalUnit(dst, nil); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("empty temporal unit err=%v; want ErrInvalidFrame", err)
+	}
+	if _, err := AppendLowOverheadTemporalUnit(dst, []OBU{{Type: obu.TypeTemporalDelimiter}}); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("nested temporal delimiter err=%v; want ErrInvalidFrame", err)
+	}
+	out, err := AppendLowOverheadTemporalUnit(dst, []OBU{{Type: obu.TypeFrame}, {Type: obu.TypeReserved}})
+	if !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("bad temporal unit err=%v; want ErrInvalidFrame", err)
+	}
+	if len(out) != len(dst) || out[0] != 0xee {
+		t.Fatalf("invalid temporal unit mutated output: % x", out)
+	}
+}
+
+func TestAppendLowOverheadTemporalUnitShortBuffer(t *testing.T) {
+	var buf [5]byte
+	dst := buf[:1]
+	dst[0] = 0xee
+	out, err := AppendLowOverheadTemporalUnit(dst, []OBU{{Type: obu.TypeFrame, Payload: []byte{0xaa, 0xbb}}})
+	if !errors.Is(err, bitstream.ErrShortBuffer) {
+		t.Fatalf("short temporal unit err=%v; want ErrShortBuffer", err)
+	}
+	if len(out) != len(dst) || out[0] != 0xee {
+		t.Fatalf("short temporal unit mutated output: % x", out)
+	}
+}
+
+func TestAppendLowOverheadTemporalUnitAllocs(t *testing.T) {
+	payload := [...]byte{0xaa, 0xbb}
+	units := [...]OBU{{Type: obu.TypeFrame, Payload: payload[:]}}
+	var buf [8]byte
+	if _, err := AppendLowOverheadTemporalUnit(buf[:0], units[:]); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = AppendLowOverheadTemporalUnit(buf[:0], units[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadTemporalUnit allocated: %f", allocs)
+	}
+}

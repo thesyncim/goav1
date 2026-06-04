@@ -56,6 +56,50 @@ func AppendLowOverheadOBU(dst []byte, unit OBU) ([]byte, error) {
 	return out, nil
 }
 
+// LowOverheadTemporalUnitSize returns the exact number of bytes required to emit
+// a low-overhead temporal unit: one temporal-delimiter OBU followed by obus.
+func LowOverheadTemporalUnitSize(obus []OBU) (int, error) {
+	if len(obus) == 0 {
+		return 0, ErrInvalidFrame
+	}
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
+	for i := range obus {
+		unit := obus[i]
+		if unit.Type == obu.TypeTemporalDelimiter {
+			return 0, ErrInvalidFrame
+		}
+		if err := validateOBU(unit); err != nil {
+			return 0, err
+		}
+		size += lowOverheadOBUSizeUnchecked(unit)
+	}
+	return size, nil
+}
+
+// AppendLowOverheadTemporalUnit appends one temporal-delimiter OBU followed by
+// obus. The function never grows dst and validates the full unit before writing,
+// so errors leave dst length unchanged.
+func AppendLowOverheadTemporalUnit(dst []byte, obus []OBU) ([]byte, error) {
+	size, err := LowOverheadTemporalUnitSize(obus)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	for i := range obus {
+		out, err = AppendLowOverheadOBU(out, obus[i])
+		if err != nil {
+			return dst, err
+		}
+	}
+	return out, nil
+}
+
 func validateOBU(unit OBU) error {
 	if unit.Type > 15 || unit.Type.Reserved() {
 		return ErrInvalidFrame

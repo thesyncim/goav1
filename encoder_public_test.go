@@ -79,3 +79,29 @@ func TestPublicEncoderLowOverheadOBU(t *testing.T) {
 		t.Fatalf("payload=% x want % x", parsed.Payload, unit.Payload)
 	}
 }
+
+func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
+	units := [...]av1.EncoderOBU{
+		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
+	}
+	size, err := av1.EncoderLowOverheadTemporalUnitSize(units[:])
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadTemporalUnitSize: %v", err)
+	}
+	var buf [8]byte
+	out, err := av1.AppendEncoderLowOverheadTemporalUnit(buf[:0], units[:])
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadTemporalUnit: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("temporal unit len=%d want %d", len(out), size)
+	}
+	it := av1.NewTemporalUnitIterator(out)
+	tu, ok, err := it.Next()
+	if err != nil {
+		t.Fatalf("TemporalUnitIterator.Next: %v", err)
+	}
+	if !ok || !bytes.Equal(tu.Raw, out) {
+		t.Fatalf("temporal unit parsed ok=%v raw=% x", ok, tu.Raw)
+	}
+}

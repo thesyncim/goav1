@@ -134,3 +134,11 @@ func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {
 func AppendEncoderLowOverheadOBU(dst []byte, unit EncoderOBU) ([]byte, error) {
 	return internalencoder.AppendLowOverheadOBU(dst, unit)
 }
+
+func EncoderLowOverheadTemporalUnitSize(obus []EncoderOBU) (int, error) {
+	return internalencoder.LowOverheadTemporalUnitSize(obus)
+}
+
+func AppendEncoderLowOverheadTemporalUnit(dst []byte, obus []EncoderOBU) ([]byte, error) {
+	return internalencoder.AppendLowOverheadTemporalUnit(dst, obus)
+}
