@@ -25,6 +25,13 @@ type WebRTCDeltaFrameTemporalUnit struct {
 	Control  WebRTCTemporalUnitControl
 }
 
+type WebRTCPictureTemporalUnit struct {
+	Key       bool
+	KeyUnit   WebRTCKeyFrameTemporalUnit
+	Delta     bool
+	DeltaUnit WebRTCDeltaFrameTemporalUnit
+}
+
 type WebRTCEncoderState struct {
 	ReferenceState           ReferenceBufferState
 	FrameIDState             FrameIDBufferState
@@ -163,6 +170,32 @@ func WebRTCKeyFrameTemporalUnitForState(config Config, state WebRTCEncoderState)
 		return WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
 	return unit, next, nil
+}
+
+func WebRTCNextTemporalUnitForState(config Config, state WebRTCEncoderState, forceKeyFrame bool) (WebRTCPictureTemporalUnit, WebRTCEncoderState, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	if forceKeyFrame || webRTCEncoderStateNeedsKey(config, state) {
+		key, next, err := WebRTCKeyFrameTemporalUnitForState(config, state)
+		if err != nil {
+			return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
+		}
+		return WebRTCPictureTemporalUnit{Key: true, KeyUnit: key}, next, nil
+	}
+	delta, next, err := WebRTCDeltaFrameTemporalUnitForState(config, state)
+	if err != nil {
+		return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return WebRTCPictureTemporalUnit{Delta: true, DeltaUnit: delta}, next, nil
+}
+
+func webRTCEncoderStateNeedsKey(config Config, state WebRTCEncoderState) bool {
+	if !state.DependencyStructureState.Valid || state.DeltaPictureIndex == 0 {
+		return true
+	}
+	return config.KeyFrameInterval > 0 && state.DeltaPictureIndex >= uint64(config.KeyFrameInterval)
 }
 
 func WebRTCDeltaFrameTemporalUnitForState(config Config, state WebRTCEncoderState) (WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {

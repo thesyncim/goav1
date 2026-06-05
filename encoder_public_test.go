@@ -681,6 +681,55 @@ func TestPublicEncoderWebRTCStateTemporalUnits(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCNextTemporalUnitForState(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		KeyFrameInterval:  3,
+	}
+	state := av1.EncoderWebRTCState{NextFrameID: 50}
+	unit, state, err := av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState initial: %v", err)
+	}
+	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 || state.NextFrameID != 52 {
+		t.Fatalf("initial unit=%+v state=%+v", unit, state)
+	}
+	unit, state, err = av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState delta: %v", err)
+	}
+	if !unit.Delta || unit.DeltaUnit.Frames[0].TemporalID != 1 ||
+		unit.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != 52 {
+		t.Fatalf("delta unit=%+v state=%+v", unit, state)
+	}
+	unit, state, err = av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState delta2: %v", err)
+	}
+	if !unit.Delta || unit.DeltaUnit.Frames[0].TemporalID != 0 {
+		t.Fatalf("delta2 unit=%+v state=%+v", unit, state)
+	}
+	unit, _, err = av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState interval key: %v", err)
+	}
+	if !unit.Key || !unit.KeyUnit.Control.HasDependencyStructure {
+		t.Fatalf("interval key unit=%+v", unit)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 	got, err := av1.EncoderWebRTCTemporalIDForDeltaPicture(3, 4)
 	if err != nil {

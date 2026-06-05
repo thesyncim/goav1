@@ -384,6 +384,85 @@ func TestWebRTCEncoderStateTemporalUnits(t *testing.T) {
 	}
 }
 
+func TestWebRTCNextTemporalUnitForStateKeyInterval(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		KeyFrameInterval:  3,
+	}
+	state := WebRTCEncoderState{NextFrameID: 100}
+
+	unit, state, err := WebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("initial next temporal unit: %v", err)
+	}
+	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 ||
+		state.NextFrameID != 102 || state.DeltaPictureIndex != 1 ||
+		!state.DependencyStructureState.Valid {
+		t.Fatalf("initial unit=%+v state=%+v", unit, state)
+	}
+
+	want := [...]struct {
+		key      bool
+		temporal uint8
+		firstID  uint64
+	}{
+		{temporal: 1, firstID: 102},
+		{temporal: 0, firstID: 104},
+		{key: true, firstID: 106},
+		{temporal: 1, firstID: 108},
+	}
+	for i, want := range want {
+		unit, next, err := WebRTCNextTemporalUnitForState(cfg, state, false)
+		if err != nil {
+			t.Fatalf("next %d: %v", i, err)
+		}
+		if want.key {
+			if !unit.Key || unit.Delta || unit.KeyUnit.Control.Frames[0].GenericFrameInfo.FrameID != want.firstID ||
+				!unit.KeyUnit.Control.HasDependencyStructure || next.DeltaPictureIndex != 1 {
+				t.Fatalf("next %d key unit=%+v next=%+v", i, unit, next)
+			}
+		} else {
+			if !unit.Delta || unit.Key || unit.DeltaUnit.Frames[0].TemporalID != want.temporal ||
+				unit.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != want.firstID ||
+				unit.DeltaUnit.Control.HasDependencyStructure {
+				t.Fatalf("next %d delta unit=%+v", i, unit)
+			}
+		}
+		state = next
+	}
+}
+
+func TestWebRTCNextTemporalUnitForStateForceKey(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL1T1}
+	unit, state, err := WebRTCNextTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 9}, false)
+	if err != nil {
+		t.Fatalf("initial next: %v", err)
+	}
+	if !unit.Key || state.NextFrameID != 10 {
+		t.Fatalf("initial unit=%+v state=%+v", unit, state)
+	}
+	unit, state, err = WebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("delta next: %v", err)
+	}
+	if !unit.Delta || unit.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != 10 {
+		t.Fatalf("delta unit=%+v state=%+v", unit, state)
+	}
+	unit, state, err = WebRTCNextTemporalUnitForState(cfg, state, true)
+	if err != nil {
+		t.Fatalf("forced key next: %v", err)
+	}
+	if !unit.Key || unit.KeyUnit.Control.Frames[0].GenericFrameInfo.FrameID != 11 ||
+		!unit.KeyUnit.Control.HasDependencyStructure || state.DeltaPictureIndex != 1 {
+		t.Fatalf("forced unit=%+v state=%+v", unit, state)
+	}
+}
+
 func TestWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 	tests := [...]struct {
 		layers uint8
@@ -440,5 +519,22 @@ func TestWebRTCEncoderStateTemporalUnitsAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("WebRTCDeltaFrameTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
+func TestWebRTCNextTemporalUnitForStateAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2, KeyFrameInterval: 10}
+	_, state, err := WebRTCNextTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1}, false)
+	if err != nil {
+		t.Fatalf("initial next: %v", err)
+	}
+	if _, _, err := WebRTCNextTemporalUnitForState(cfg, state, false); err != nil {
+		t.Fatalf("delta preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = WebRTCNextTemporalUnitForState(cfg, state, false)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCNextTemporalUnitForState allocated: %f", allocs)
 	}
 }
