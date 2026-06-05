@@ -557,6 +557,55 @@ func TestPublicEncoderLoopFilterParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderCDEFParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	size := av1.EncoderIntraFrameSize{
+		UpscaledWidth:       640,
+		Height:              360,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	cdef := av1.EncoderCDEFParams{Damping: 5, Bits: 2}
+	for i := uint8(0); i < 4; i++ {
+		cdef.YStrength[i] = 10 + i
+		cdef.UVStrength[i] = 20 + i
+	}
+	payloadSize, err := av1.EncoderCDEFParamsPayloadSize(seq, size, false, cdef)
+	if err != nil {
+		t.Fatalf("EncoderCDEFParamsPayloadSize: %v", err)
+	}
+	var buf [16]byte
+	payload, err := av1.AppendEncoderCDEFParamsPayload(buf[:0], seq, size, false, cdef)
+	if err != nil {
+		t.Fatalf("AppendEncoderCDEFParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsed, err := av1.ParseCDEFParams(payload, parsedSeq, av1.FrameSize{}, av1.SegmentationParams{}, av1.LoopFilterParams{})
+	if err != nil {
+		t.Fatalf("ParseCDEFParams: %v", err)
+	}
+	if parsed.Damping != 5 || parsed.Bits != 2 || parsed.StrengthCount != 4 ||
+		parsed.YStrength[3] != 13 || parsed.UVStrength[3] != 23 {
+		t.Fatalf("parsed cdef=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

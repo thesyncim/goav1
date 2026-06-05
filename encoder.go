@@ -105,6 +105,7 @@ type EncoderSegmentationParams = internalencoder.SegmentationParams
 type EncoderDeltaParams = internalencoder.DeltaParams
 type EncoderLoopFilterDeltas = internalencoder.LoopFilterDeltas
 type EncoderLoopFilterParams = internalencoder.LoopFilterParams
+type EncoderCDEFParams = internalencoder.CDEFParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -975,6 +976,22 @@ func EncoderLoopFilterParamsInterPayloadSize(seq EncoderSequenceHeader, prefix E
 
 func AppendEncoderLoopFilterParamsInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) ([]byte, error) {
 	return internalencoder.AppendLoopFilterParamsInterPayload(dst, seq, prefix, size, allLossless, lf, previous)
+}
+
+func EncoderCDEFParamsPayloadSize(seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, cdef EncoderCDEFParams) (int, error) {
+	return internalencoder.CDEFParamsPayloadSize(seq, size, allLossless, cdef)
+}
+
+func AppendEncoderCDEFParamsPayload(dst []byte, seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, cdef EncoderCDEFParams) ([]byte, error) {
+	return internalencoder.AppendCDEFParamsPayload(dst, seq, size, allLossless, cdef)
+}
+
+func EncoderCDEFParamsInterPayloadSize(seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, cdef EncoderCDEFParams) (int, error) {
+	return internalencoder.CDEFParamsInterPayloadSize(seq, size, allLossless, cdef)
+}
+
+func AppendEncoderCDEFParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, cdef EncoderCDEFParams) ([]byte, error) {
+	return internalencoder.AppendCDEFParamsInterPayload(dst, seq, size, allLossless, cdef)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
