@@ -125,37 +125,74 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 }
 
 func finishDirection(partial *[8][15]int32) (int, int32) {
-	var cost [8]int32
-	for i := range 8 {
-		cost[2] += partial[2][i] * partial[2][i]
-		cost[6] += partial[6][i] * partial[6][i]
-	}
-	cost[2] *= cdefDirectionDivTable[8]
-	cost[6] *= cdefDirectionDivTable[8]
-	for i := range 7 {
-		cost[0] += (partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * cdefDirectionDivTable[i+1]
-		cost[4] += (partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * cdefDirectionDivTable[i+1]
-	}
-	cost[0] += partial[0][7] * partial[0][7] * cdefDirectionDivTable[8]
-	cost[4] += partial[4][7] * partial[4][7] * cdefDirectionDivTable[8]
-	for i := 1; i < 8; i += 2 {
-		for j := range 5 {
-			cost[i] += partial[i][3+j] * partial[i][3+j]
-		}
-		cost[i] *= cdefDirectionDivTable[8]
-		for j := range 3 {
-			cost[i] += (partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * cdefDirectionDivTable[2*j+2]
-		}
-	}
-	bestCost := int32(0)
+	c0 := finishDirectionDiagonalCost(&partial[0])
+	c1 := finishDirectionOddCost(&partial[1])
+	c2 := finishDirectionStraightCost(&partial[2])
+	c3 := finishDirectionOddCost(&partial[3])
+	c4 := finishDirectionDiagonalCost(&partial[4])
+	c5 := finishDirectionOddCost(&partial[5])
+	c6 := finishDirectionStraightCost(&partial[6])
+	c7 := finishDirectionOddCost(&partial[7])
+
 	bestDir := 0
-	for i := range 8 {
-		if cost[i] > bestCost {
-			bestCost = cost[i]
-			bestDir = i
-		}
+	bestCost := c0
+	opposite := c4
+	if c1 > bestCost {
+		bestDir, bestCost, opposite = 1, c1, c5
 	}
-	return bestDir, (bestCost - cost[(bestDir+4)&7]) >> 10
+	if c2 > bestCost {
+		bestDir, bestCost, opposite = 2, c2, c6
+	}
+	if c3 > bestCost {
+		bestDir, bestCost, opposite = 3, c3, c7
+	}
+	if c4 > bestCost {
+		bestDir, bestCost, opposite = 4, c4, c0
+	}
+	if c5 > bestCost {
+		bestDir, bestCost, opposite = 5, c5, c1
+	}
+	if c6 > bestCost {
+		bestDir, bestCost, opposite = 6, c6, c2
+	}
+	if c7 > bestCost {
+		bestDir, bestCost, opposite = 7, c7, c3
+	}
+	return bestDir, (bestCost - opposite) >> 10
+}
+
+func finishDirectionStraightCost(partial *[15]int32) int32 {
+	sum := partial[0]*partial[0] +
+		partial[1]*partial[1] +
+		partial[2]*partial[2] +
+		partial[3]*partial[3] +
+		partial[4]*partial[4] +
+		partial[5]*partial[5] +
+		partial[6]*partial[6] +
+		partial[7]*partial[7]
+	return sum * cdefDirectionDivTable[8]
+}
+
+func finishDirectionDiagonalCost(partial *[15]int32) int32 {
+	return (partial[0]*partial[0]+partial[14]*partial[14])*cdefDirectionDivTable[1] +
+		(partial[1]*partial[1]+partial[13]*partial[13])*cdefDirectionDivTable[2] +
+		(partial[2]*partial[2]+partial[12]*partial[12])*cdefDirectionDivTable[3] +
+		(partial[3]*partial[3]+partial[11]*partial[11])*cdefDirectionDivTable[4] +
+		(partial[4]*partial[4]+partial[10]*partial[10])*cdefDirectionDivTable[5] +
+		(partial[5]*partial[5]+partial[9]*partial[9])*cdefDirectionDivTable[6] +
+		(partial[6]*partial[6]+partial[8]*partial[8])*cdefDirectionDivTable[7] +
+		partial[7]*partial[7]*cdefDirectionDivTable[8]
+}
+
+func finishDirectionOddCost(partial *[15]int32) int32 {
+	return (partial[3]*partial[3]+
+		partial[4]*partial[4]+
+		partial[5]*partial[5]+
+		partial[6]*partial[6]+
+		partial[7]*partial[7])*cdefDirectionDivTable[8] +
+		(partial[0]*partial[0]+partial[10]*partial[10])*cdefDirectionDivTable[2] +
+		(partial[1]*partial[1]+partial[9]*partial[9])*cdefDirectionDivTable[4] +
+		(partial[2]*partial[2]+partial[8]*partial[8])*cdefDirectionDivTable[6]
 }
 
 func blockFits(length int, stride int, width int, height int) bool {
