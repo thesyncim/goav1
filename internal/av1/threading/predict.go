@@ -2140,9 +2140,12 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 	if err != nil || !ok {
 		return frameWorkPredictionPlaneGeometry{}, ok, err
 	}
-	window, err := b.JobOutputPlane(index, plane)
-	if err != nil {
-		return frameWorkPredictionPlaneGeometry{}, false, err
+	window, windowOK := b.cachedJobOutputPlaneTrusted(index, plane)
+	if !windowOK {
+		window, err = b.JobOutputPlane(index, plane)
+		if err != nil {
+			return frameWorkPredictionPlaneGeometry{}, false, err
+		}
 	}
 	if b.Output == nil {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
