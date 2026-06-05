@@ -243,6 +243,9 @@ func frameWorkReconQuantKey(currentQIndex uint8, segmentID uint8) uint16 {
 }
 
 func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
+	if !b.Quantization.UsingQMatrix || lossless || txType >= transform.TypeIDTX {
+		return nil, nil
+	}
 	if cache != nil &&
 		cache.matrixValid &&
 		cache.matrixPlane == qPlane &&
@@ -267,6 +270,9 @@ func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, q
 }
 
 func (b *FrameWorkBatch) cachedInverseQMatrixTrusted(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
+	if !b.Quantization.UsingQMatrix || lossless || txType >= transform.TypeIDTX {
+		return nil, nil
+	}
 	if cache.matrixValid &&
 		cache.matrixPlane == qPlane &&
 		cache.matrixSize == size &&
