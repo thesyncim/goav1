@@ -314,13 +314,13 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 		split += ecMinProb
 		window := split << (ecWindow - 16)
 
-		takeUpper := uint32(0)
+		bit := uint8(1)
+		nextRange := split
 		if dif >= window {
-			takeUpper = 1
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
 		}
-		dif -= window * takeUpper
-		nextRange := split + takeUpper*(rangeValue-2*split)
-		bit := uint8(1 - takeUpper)
 
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
@@ -356,13 +356,13 @@ func (c *Cursor) ReadBitTrusted() uint8 {
 	split += ecMinProb
 	window := split << (ecWindow - 16)
 
-	takeUpper := uint32(0)
+	bit := uint8(1)
+	nextRange := split
 	if dif >= window {
-		takeUpper = 1
+		dif -= window
+		nextRange = rangeValue - split
+		bit = 0
 	}
-	dif -= window * takeUpper
-	nextRange := split + takeUpper*(rangeValue-2*split)
-	bit := uint8(1 - takeUpper)
 
 	if traceEntropyReads {
 		pos = int(c.pos)
@@ -414,13 +414,13 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		split += ecMinProb
 		window := split << (ecWindow - 16)
 
-		takeUpper := uint32(0)
+		bit := uint8(1)
+		nextRange := split
 		if dif >= window {
-			takeUpper = 1
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
 		}
-		dif -= window * takeUpper
-		nextRange := split + takeUpper*(rangeValue-2*split)
-		bit := uint8(1 - takeUpper)
 
 		if traceEntropyReads {
 			if !posLoaded {
