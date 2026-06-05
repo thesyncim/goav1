@@ -210,7 +210,7 @@ func (c *CoeffEntropyContext) MarkTXB(req CoeffContextRequest, result TXBDecodeR
 
 func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, result TXBDecodeResult) error {
 	value := uint8(0)
-	if !result.AllZero && result.EOB > 0 {
+	if result.EOB > 0 {
 		if !validCoeffEntropyValue(result.CulLevel) {
 			return ErrInvalidDecodeState
 		}
