@@ -436,10 +436,11 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		// never races. The cache is per-job; reset it before use.
 		st := &wf.states[w]
 		st.batch = c.batch
+		st.index = c.index
 		st.geom.reset()
 		st.batch.geomCache = &st.geom
 		_ = frameWorkPrimeLumaReconGeometry(&st.batch, c.index)
-		st.index = c.index
+		st.bindPrimedLumaReconGeometry()
 		st.localStats = FrameWorkTileResidualStats{}
 		st.stats = &st.localStats
 		st.predict = c.req.Predict
@@ -1112,6 +1113,7 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 		int32Scratch:      req.Int32Scratch,
 		residualScratch:   req.ResidualScratch,
 	}
+	scratch.controller.recon.bindPrimedLumaReconGeometry()
 	scratch.controller.reconHot = &scratch.controller.recon
 	if loopReq.BeforeSuperblock != nil || readRestoration {
 		if scratch.beforeSuperblock == nil {
@@ -1257,10 +1259,23 @@ type frameWorkReconState struct {
 	// merged into the controller stats after the wavefront joins.
 	geom       frameWorkJobGeometryCache
 	localStats FrameWorkTileResidualStats
+	lumaReady  bool
 
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
 	cflVisit             tile.BlockLoopVisit
+}
+
+func (s *frameWorkReconState) bindPrimedLumaReconGeometry() {
+	cacheIndex, ok := frameWorkJobCacheIndex(s.index)
+	c := s.batch.geomCache
+	if c == nil || !ok ||
+		c.validMask&(frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid) != frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid ||
+		c.regionIndex != cacheIndex || c.planeIndex[FrameWorkPlaneY] != cacheIndex {
+		s.lumaReady = false
+		return
+	}
+	s.lumaReady = true
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockLoopSuperblockVisit) error {
@@ -1351,6 +1366,7 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 		if c.scratch != nil {
 			c.recon.cflScratch = &c.scratch.CFL
 		}
+		c.recon.bindPrimedLumaReconGeometry()
 	}
 	c.reconHot = &c.recon
 	return c.reconHot
@@ -1881,6 +1897,18 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
 	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
 	// reads exactly the fields the struct path forwarded.
+	if block.Plane == 0 && s.lumaReady {
+		c := s.batch.geomCache
+		geom, err := s.batch.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit.Block, block)
+		if err != nil {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		}
+		if err := s.batch.reconstructBlockCoeffCoreWithGeometry(geom, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		}
+		s.stats.Residuals++
+		return nil
+	}
 	if ok, err := s.batch.reconstructBlockCoeffLumaPrimed(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	} else if ok {
