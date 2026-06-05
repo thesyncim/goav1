@@ -1,6 +1,9 @@
 package goav1
 
-import internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+import (
+	internalbitstream "github.com/thesyncim/goav1/internal/av1/bitstream"
+	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+)
 
 const (
 	EncoderMaxLayers                           = internalencoder.MaxLayers
@@ -154,6 +157,7 @@ var (
 	ErrEncoderInvalidConfig = internalencoder.ErrInvalidConfig
 	ErrEncoderInvalidFrame  = internalencoder.ErrInvalidFrame
 	ErrEncoderUnsupported   = internalencoder.ErrUnsupported
+	ErrEncoderShortBuffer   = internalbitstream.ErrShortBuffer
 )
 
 func ParseEncoderProfile(profile string) (EncoderProfile, bool) {
@@ -340,6 +344,40 @@ func AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(dst []byte, unit
 		return dst, err
 	}
 	return internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, control.GenericFrameInfo, firstPacketInFrame, lastPacketInFrame, attachStructure)
+}
+
+func EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (int, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+	if err != nil {
+		return 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	size, err := internalencoder.LowOverheadOBUSize(internalencoder.OBU{
+		Type:       OBUFrame,
+		TemporalID: control.Settings.TemporalID,
+		SpatialID:  control.Settings.SpatialID,
+		Payload:    payload,
+	})
+	if err != nil {
+		return 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	return size, control, structure, nil
+}
+
+func AppendEncoderWebRTCPictureTemporalUnitFrameOBU(dst []byte, payload []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) ([]byte, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+	_, control, structure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, frameIndex)
+	if err != nil {
+		return dst, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	out, err := internalencoder.AppendLowOverheadOBU(dst, internalencoder.OBU{
+		Type:       OBUFrame,
+		TemporalID: control.Settings.TemporalID,
+		SpatialID:  control.Settings.SpatialID,
+		Payload:    payload,
+	})
+	if err != nil {
+		return dst, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	return out, control, structure, nil
 }
 
 func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitRTPScratchSize, error) {

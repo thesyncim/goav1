@@ -1,6 +1,9 @@
 package goav1
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func appendPublicLowOverheadOBU(dst []byte, typ OBUType, payload []byte) []byte {
 	if len(payload) > 0x7f {
@@ -422,6 +425,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	}
 	var payloadBuf [64]byte
 	var descriptorBuf [64]byte
+	var frameOBUBuf [32]byte
 	var spans [4]EncoderWebRTCRTPPacketSpan
 	allocs := testing.AllocsPerRun(1000, func() {
 		p := packetizer
@@ -431,6 +435,8 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		_, _ = EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit, state, 1, false)
 		_, _ = EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit, state, 1)
 		_, _ = AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(descriptorBuf[:0], unit, state, 1, true, true, false)
+		_, _, _, _ = EncoderWebRTCPictureTemporalUnitFrameOBUSize(frame, unit, state, 1)
+		_, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUBuf[:0], frame, unit, state, 1)
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitRTPPacketSize(&p, unit, state, 1)
 		_, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitRTPPacket(payloadBuf[:0], descriptorBuf[:0], &p, unit, state, 1)
 		_, _, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadBuf[:0], descriptorBuf[:0], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
@@ -438,6 +444,58 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("scheduled picture RTP helper allocated: %f", allocs)
+	}
+}
+
+func TestPublicRTPScheduledPictureFrameOBU(t *testing.T) {
+	cfg := EncoderConfig{
+		Resolution:        EncoderResolution{Width: 640, Height: 360},
+		Scalability:       EncoderScalabilityModeL2T2,
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	unit, state, err := EncoderWebRTCNextTemporalUnitForState(cfg, EncoderWebRTCState{NextFrameID: 100}, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState key: %v", err)
+	}
+	payload := []byte{0xaa, 0xbb, 0xcc}
+	size, wantControl, wantStructure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, 1)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitFrameOBUSize: %v", err)
+	}
+	if wantControl.Settings.SpatialID != 1 || wantControl.Settings.TemporalID != 0 || wantStructure.TemplateNum == 0 {
+		t.Fatalf("control=%+v structure=%+v", wantControl, wantStructure)
+	}
+	var buf [16]byte
+	out, gotControl, gotStructure, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(buf[:0], payload, unit, state, 1)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCPictureTemporalUnitFrameOBU: %v", err)
+	}
+	if len(out) != size || gotControl != wantControl || gotStructure != wantStructure {
+		t.Fatalf("len=%d want=%d control=%+v/%+v structure=%+v/%+v", len(out), size, gotControl, wantControl, gotStructure, wantStructure)
+	}
+	parsed, consumed, err := ParseLowOverheadOBU(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(out) || parsed.Header.Type != OBUFrame || !parsed.Header.Extension ||
+		parsed.Header.TemporalID != wantControl.Settings.TemporalID || parsed.Header.SpatialID != wantControl.Settings.SpatialID ||
+		string(parsed.Payload) != string(payload) {
+		t.Fatalf("parsed=%+v consumed=%d payload=% x", parsed.Header, consumed, parsed.Payload)
+	}
+	dst := buf[:1]
+	dst[0] = 0xee
+	short, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(dst[:1:1], payload, unit, state, 1)
+	if !errors.Is(err, ErrEncoderShortBuffer) {
+		t.Fatalf("short buffer err=%v want %v", err, ErrEncoderShortBuffer)
+	}
+	if len(short) != len(dst) || short[0] != 0xee {
+		t.Fatalf("short buffer mutated out=% x", short)
+	}
+	if _, _, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, 2); err != ErrEncoderInvalidFrame {
+		t.Fatalf("bad frame index err=%v want %v", err, ErrEncoderInvalidFrame)
 	}
 }
 
