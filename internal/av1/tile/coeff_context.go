@@ -224,16 +224,12 @@ func (c *CoeffEntropyContext) MarkTXB(req CoeffContextRequest, result TXBDecodeR
 	return c.setTXBContext(req, value)
 }
 
-func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, result TXBDecodeResult) error {
+func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, result TXBDecodeResult) {
 	value := uint8(0)
 	if result.EOB > 0 {
-		if !validCoeffEntropyValue(result.CulLevel) {
-			return ErrInvalidDecodeState
-		}
 		value = result.CulLevel
 	}
 	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
-	return nil
 }
 
 func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 int) error {

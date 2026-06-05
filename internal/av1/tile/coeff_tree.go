@@ -550,9 +550,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	}
 	if allZero && req.SkipAllZeroCoeffClear {
 		result := TXBDecodeResult{AllZero: true}
-		if err := ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result); err != nil {
-			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
-		}
+		ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result)
 		if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
 			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
 		}
@@ -584,9 +582,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}
-	if err := ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result); err != nil {
-		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
-	}
+	ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result)
 	if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
 	}
