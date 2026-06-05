@@ -115,6 +115,11 @@ type EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
 	DescriptorBytes int
 }
 
+type EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo struct {
+	FrameOBUBytes int
+	RTP           EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo
+}
+
 type EncoderWebRTCRTPPacketSpan struct {
 	PayloadOffset    int
 	PayloadLength    int
@@ -378,6 +383,43 @@ func AppendEncoderWebRTCPictureTemporalUnitFrameOBU(dst []byte, payload []byte, 
 		return dst, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
 	}
 	return out, control, structure, nil
+}
+
+func EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+	frameOBUSize, control, structure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayload, unit, state, frameIndex)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	frameOBU, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	rtpSize, rtpControl, rtpStructure, err := EncoderWebRTCPictureTemporalUnitRTPPacketsSize(frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	if rtpControl != control || rtpStructure != structure {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+	}
+	return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{
+		FrameOBUBytes: frameOBUSize,
+		RTP:           rtpSize,
+	}, control, structure, nil
+}
+
+func AppendEncoderWebRTCPictureTemporalUnitFrameRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, frameOBUScratch []byte, framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (frameOBU []byte, rtpPayloads []byte, descriptors []byte, packetCount int, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, err error) {
+	frameOBU, control, structure, err = AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
+	if err != nil {
+		return frameOBUScratch[:0], payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	rtpPayloads, descriptors, packetCount, rtpControl, rtpStructure, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst, descriptorDst, spans, frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return frameOBU, payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	if rtpControl != control || rtpStructure != structure {
+		return frameOBU, payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+	}
+	return frameOBU, rtpPayloads, descriptors, packetCount, control, structure, nil
 }
 
 func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitRTPScratchSize, error) {
