@@ -437,3 +437,11 @@ func EncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(config EncoderCon
 func AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config EncoderConfig, orderHint uint8, firstFrameID uint64) ([]byte, EncoderWebRTCKeyFrameTemporalUnit, error) {
 	return internalencoder.AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst, config, orderHint, firstFrameID)
 }
+
+func EncoderLowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config EncoderConfig, state EncoderWebRTCState) (int, EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config, state)
+}
+
+func AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForState(dst []byte, config EncoderConfig, state EncoderWebRTCState) ([]byte, EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(dst, config, state)
+}

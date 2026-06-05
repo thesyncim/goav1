@@ -172,6 +172,30 @@ func WebRTCKeyFrameTemporalUnitForState(config Config, state WebRTCEncoderState)
 	return unit, next, nil
 }
 
+func LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config Config, state WebRTCEncoderState) (int, WebRTCKeyFrameTemporalUnit, WebRTCEncoderState, error) {
+	unit, next, err := WebRTCKeyFrameTemporalUnitForState(config, state)
+	if err != nil {
+		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	size, err := LowOverheadIntraHeaderTemporalUnitSize(unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	if err != nil {
+		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return size, unit, next, nil
+}
+
+func AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(dst []byte, config Config, state WebRTCEncoderState) ([]byte, WebRTCKeyFrameTemporalUnit, WebRTCEncoderState, error) {
+	_, unit, next, err := LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config, state)
+	if err != nil {
+		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	if err != nil {
+		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return out, unit, next, nil
+}
+
 func WebRTCNextTemporalUnitForState(config Config, state WebRTCEncoderState, forceKeyFrame bool) (WebRTCPictureTemporalUnit, WebRTCEncoderState, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {

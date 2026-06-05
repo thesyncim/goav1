@@ -229,6 +229,56 @@ func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfigAllocs(t *testing.T
 	}
 }
 
+func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForState(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	state := WebRTCEncoderState{NextOrderHint: 17, NextFrameID: 600}
+	size, wantUnit, wantState, err := LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(cfg, state)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCKeyFrameTemporalUnitForStateSize: %v", err)
+	}
+	var buf [192]byte
+	out, gotUnit, gotState, err := AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(buf[:0], cfg, state)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if len(out) != size || gotUnit != wantUnit || gotState != wantState ||
+		gotUnit.Header.Prefix.OrderHint != 17 || gotUnit.Control.Frames[0].GenericFrameInfo.FrameID != 600 ||
+		gotState.NextFrameID != 602 || gotState.DeltaPictureIndex != 1 || !gotState.DependencyStructureState.Valid {
+		t.Fatalf("len=%d want=%d unit=%+v wantUnit=%+v state=%+v wantState=%+v", len(out), size, gotUnit, wantUnit, gotState, wantState)
+	}
+	it := obu.NewTemporalUnitIterator(out)
+	tu, ok, err := it.Next()
+	if err != nil || !ok || len(tu.Raw) != len(out) {
+		t.Fatalf("temporal unit ok=%v err=%v len=%d want=%d", ok, err, len(tu.Raw), len(out))
+	}
+	var tiny [1]byte
+	if _, _, _, err := AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(tiny[:0], cfg, state); !errors.Is(err, bitstream.ErrShortBuffer) {
+		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
+	}
+}
+
+func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForStateAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	state := WebRTCEncoderState{NextFrameID: 1}
+	var buf [192]byte
+	if _, _, _, err := AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(buf[:0], cfg, state); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _, _ = AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(buf[:0], cfg, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadWebRTCKeyFrameTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
 func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
