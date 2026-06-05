@@ -744,6 +744,8 @@ func (c *Cursor) ReadCDFUnchecked(cdf *CDF) int {
 		return c.readCDF3Known(&cdf.values)
 	case 4:
 		return c.ReadCDF4Unchecked(cdf)
+	case 8:
+		return c.readCDF8Known(&cdf.values)
 	default:
 		return c.readSymbolKnown(&cdf.values, symbols)
 	}
@@ -759,6 +761,8 @@ func (c *Cursor) ReadCDFSymbolsUnchecked(cdf *CDF, symbols int) int {
 		return c.readCDF3Known(&cdf.values)
 	case 4:
 		return c.readCDF4Known(&cdf.values)
+	case 8:
+		return c.readCDF8Known(&cdf.values)
 	default:
 		return c.readSymbolKnown(&cdf.values, symbols)
 	}
@@ -913,6 +917,126 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 		}
 		if count < MaxCDFCount {
 			values[symbols] = count + 1
+		}
+	}
+	c.pos = uint32(pos)
+	c.dif = dif
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	c.tellOffs = int16(tellOffs)
+	return symbol
+}
+
+//go:nosplit
+func (c *Cursor) readCDF8Known(values *[MaxSymbols + 1]uint16) int {
+	src := c.src
+	pos := int(c.pos)
+	dif := c.dif
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	tellOffs := int32(c.tellOffs)
+
+	rangeValue := rng
+	rngHi := rangeValue >> 8
+	coded := dif >> (ecWindow - 16)
+	upper := rangeValue
+	c0 := uint32(values[0])
+	c1 := uint32(values[1])
+	c2 := uint32(values[2])
+	c3 := uint32(values[3])
+	c4 := uint32(values[4])
+	c5 := uint32(values[5])
+	c6 := uint32(values[6])
+	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 7*ecMinProb
+	symbol := 0
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
+		if coded < lower {
+			symbol = 2
+			upper = lower
+			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
+			if coded < lower {
+				symbol = 3
+				upper = lower
+				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
+				if coded < lower {
+					symbol = 4
+					upper = lower
+					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+					if coded < lower {
+						symbol = 5
+						upper = lower
+						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+						if coded < lower {
+							symbol = 6
+							upper = lower
+							lower = ((rngHi * (c6 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+							if coded < lower {
+								symbol = 7
+								upper = lower
+								lower = 0
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if traceEntropyReads {
+		traceCDFRead(uint16(c0), 8, dif, rng, readerTell(pos, cnt, tellOffs))
+	}
+	dif -= lower << (ecWindow - 16)
+	rng = upper - lower
+	shift := int32(16 - bits.Len32(rng))
+	cnt -= shift
+	dif = ((dif + 1) << uint(shift)) - 1
+	rng <<= uint(shift)
+	if cnt < 0 {
+		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+	}
+	if c.allowCDFUpdate {
+		count := values[8]
+		rate := uint(5 + (count >> 4))
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
+		}
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if symbol > 2 {
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		} else {
+			values[2] = uint16(c2 - (c2 >> rate))
+		}
+		if symbol > 3 {
+			values[3] = uint16(c3 + ((CDFProbTop - c3) >> rate))
+		} else {
+			values[3] = uint16(c3 - (c3 >> rate))
+		}
+		if symbol > 4 {
+			values[4] = uint16(c4 + ((CDFProbTop - c4) >> rate))
+		} else {
+			values[4] = uint16(c4 - (c4 >> rate))
+		}
+		if symbol > 5 {
+			values[5] = uint16(c5 + ((CDFProbTop - c5) >> rate))
+		} else {
+			values[5] = uint16(c5 - (c5 >> rate))
+		}
+		if symbol > 6 {
+			values[6] = uint16(c6 + ((CDFProbTop - c6) >> rate))
+		} else {
+			values[6] = uint16(c6 - (c6 >> rate))
+		}
+		if count < MaxCDFCount {
+			values[8] = count + 1
 		}
 	}
 	c.pos = uint32(pos)
