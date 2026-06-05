@@ -4632,16 +4632,8 @@ func frameWorkPlaneSampleOffset(plane frame.Plane, bytesPerSample int, x int, y 
 	if x < 0 || y < 0 || x >= plane.Width || y >= plane.Height {
 		return 0, false
 	}
-	rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
-	if !ok {
-		return 0, false
-	}
-	colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
-	if !ok {
-		return 0, false
-	}
-	offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
-	if !ok || offset < 0 {
+	offset := y*plane.Stride + x*bytesPerSample
+	if offset < 0 {
 		return 0, false
 	}
 	return offset, true
@@ -4651,16 +4643,8 @@ func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, v
 	if x < 0 || y < 0 || x >= plane.Width || y >= plane.Height {
 		return false
 	}
-	rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
-	if !ok {
-		return false
-	}
-	colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
-	if !ok {
-		return false
-	}
-	offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
-	if !ok || offset < 0 {
+	offset := y*plane.Stride + x*bytesPerSample
+	if offset < 0 {
 		return false
 	}
 	switch bytesPerSample {
