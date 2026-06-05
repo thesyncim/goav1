@@ -990,7 +990,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					s1 := padded + stride
 					s1p1 := s1 + 1
 					p1 := padded + 1
@@ -1031,7 +1031,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					s1 := padded + stride
 					s1p1 := s1 + 1
 					p1 := padded + 1
@@ -1075,7 +1075,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					s1 := padded + stride
 					s1p1 := s1 + 1
 					p1 := padded + 1
@@ -1123,7 +1123,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					s1 := padded + stride
 					s1p1 := s1 + 1
 					p1 := padded + 1
@@ -1160,7 +1160,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				padded := int(posSlice[pos].padded)
 				ctx := coeffLowerLevelsCtxHorizFast(levelsScratch, geoPtr, posSlice, pos)
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					brCtx := int(coeffBRContextHorizFast(levelsScratch, geoPtr, posSlice, pos))
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
@@ -1190,7 +1190,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				padded := int(posSlice[pos].padded)
 				ctx := coeffLowerLevelsCtxHorizFast(levelsScratch, geoPtr, posSlice, pos)
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					brCtx := int(coeffBRContextHorizFast(levelsScratch, geoPtr, posSlice, pos))
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
@@ -1222,7 +1222,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				padded := int(posSlice[pos].padded)
 				ctx := coeffLowerLevelsCtxVertFast(levelsScratch, geoPtr, posSlice, pos)
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					brCtx := int(coeffBRContextVertFast(levelsScratch, geoPtr, posSlice, pos))
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
@@ -1252,7 +1252,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				padded := int(posSlice[pos].padded)
 				ctx := coeffLowerLevelsCtxVertFast(levelsScratch, geoPtr, posSlice, pos)
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
-				if level > NumBaseLevels {
+				if level == NumBaseLevels+1 {
 					brCtx := int(coeffBRContextVertFast(levelsScratch, geoPtr, posSlice, pos))
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
