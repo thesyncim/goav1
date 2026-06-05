@@ -351,6 +351,63 @@ func TestPublicEncoderFrameHeaderInterPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderQuantizationParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.ColorConfig.SeparateUVDeltaQ = true
+	quant := av1.EncoderQuantizationParams{
+		BaseQIdx:      37,
+		YDCDelta:      -2,
+		UDCDelta:      5,
+		UACDelta:      -3,
+		VDCDelta:      7,
+		VACDelta:      -9,
+		DiffUVDeltas:  true,
+		UsingQMatrix:  true,
+		QMatrixLevelY: 2,
+		QMatrixLevelU: 3,
+		QMatrixLevelV: 4,
+	}
+	payloadSize, err := av1.EncoderQuantizationParamsPayloadSize(seq, quant)
+	if err != nil {
+		t.Fatalf("EncoderQuantizationParamsPayloadSize: %v", err)
+	}
+	var buf [16]byte
+	payload, err := av1.AppendEncoderQuantizationParamsPayload(buf[:0], seq, quant)
+	if err != nil {
+		t.Fatalf("AppendEncoderQuantizationParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsed, err := av1.ParseQuantizationParams(payload, parsedSeq, av1.TileInfo{})
+	if err != nil {
+		t.Fatalf("ParseQuantizationParams: %v", err)
+	}
+	if parsed.BaseQIdx != quant.BaseQIdx || parsed.YDCDelta != quant.YDCDelta ||
+		parsed.UDCDelta != quant.UDCDelta || parsed.UACDelta != quant.UACDelta ||
+		parsed.VDCDelta != quant.VDCDelta || parsed.VACDelta != quant.VACDelta {
+		t.Fatalf("parsed quant=%+v want %+v", parsed, quant)
+	}
+	if !parsed.UsingQMatrix || parsed.QMatrixLevelY != 2 || parsed.QMatrixLevelU != 3 || parsed.QMatrixLevelV != 4 {
+		t.Fatalf("parsed qmatrix=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
