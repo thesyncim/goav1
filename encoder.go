@@ -298,6 +298,30 @@ func EncoderWebRTCPictureTemporalUnitFrameControl(unit EncoderWebRTCPictureTempo
 	return unit.DeltaUnit.Control.Frames[frameIndex], state.DependencyStructureState.Structure, nil
 }
 
+func EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, attachStructure bool) (int, error) {
+	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+	if err != nil {
+		return 0, err
+	}
+	return internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, attachStructure)
+}
+
+func EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (int, error) {
+	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+	if err != nil {
+		return 0, err
+	}
+	return internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
+}
+
+func AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(dst []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
+	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+	if err != nil {
+		return dst, err
+	}
+	return internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, control.GenericFrameInfo, firstPacketInFrame, lastPacketInFrame, attachStructure)
+}
+
 func EncoderWebRTCPictureTemporalUnitRTPPacketSize(packetizer *RTPPacketizer, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (payloadSize int, descriptorSize int, ok bool, err error) {
 	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
