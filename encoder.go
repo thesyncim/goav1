@@ -97,6 +97,7 @@ type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
 type EncoderFrameHeaderType = internalencoder.FrameHeaderType
 type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameHeaderParams = internalencoder.IntraFrameHeaderParams
+type EncoderInterFrameHeaderParams = internalencoder.InterFrameHeaderParams
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 type EncoderInterFrameSize = internalencoder.InterFrameSize
 type EncoderQuantizationParams = internalencoder.QuantizationParams
@@ -982,6 +983,14 @@ func EncoderIntraFrameHeaderPayloadSize(seq EncoderSequenceHeader, header Encode
 
 func AppendEncoderIntraFrameHeaderPayload(dst []byte, seq EncoderSequenceHeader, header EncoderIntraFrameHeaderParams) ([]byte, error) {
 	return internalencoder.AppendIntraFrameHeaderPayload(dst, seq, header)
+}
+
+func EncoderInterFrameHeaderPayloadSize(seq EncoderSequenceHeader, header EncoderInterFrameHeaderParams) (int, error) {
+	return internalencoder.InterFrameHeaderPayloadSize(seq, header)
+}
+
+func AppendEncoderInterFrameHeaderPayload(dst []byte, seq EncoderSequenceHeader, header EncoderInterFrameHeaderParams) ([]byte, error) {
+	return internalencoder.AppendInterFrameHeaderPayload(dst, seq, header)
 }
 
 func EncoderTileInfoPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) (int, error) {

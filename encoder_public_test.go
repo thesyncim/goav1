@@ -1004,6 +1004,111 @@ func TestPublicEncoderIntraFrameHeaderPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderInterFrameHeaderPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.SeqForceScreenContentTools = 1
+	seq.SeqForceIntegerMV = 1
+	seq.EnableCDEF = true
+	var refs av1.ReferenceState
+	for i := uint8(0); i < av1.RefFrames; i++ {
+		refs.Frames[i] = av1.ReferenceFrame{
+			Valid: true,
+			Size: av1.FrameSize{
+				CodedWidth:          64,
+				UpscaledWidth:       64,
+				Height:              64,
+				RenderWidth:         64,
+				RenderHeight:        64,
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	header := av1.EncoderInterFrameHeaderParams{
+		Prefix: av1.EncoderFrameHeaderPrefix{
+			FrameType:               av1.EncoderFrameHeaderTypeInter,
+			ShowFrame:               true,
+			ShowableFrame:           true,
+			AllowScreenContentTools: true,
+			ForceIntegerMV:          true,
+			PrimaryRefFrame:         av1.EncoderPrimaryRefNone,
+		},
+		Size: av1.EncoderInterFrameSize{
+			UpscaledWidth:       64,
+			Height:              64,
+			RenderWidth:         64,
+			RenderHeight:        64,
+			SuperResDenominator: 8,
+			RefreshFrameFlags:   0x02,
+		},
+		Tile: av1.EncoderTileInfo{
+			InterpolationFilter: av1.EncoderInterpolationEightTap,
+			RefreshContext:      true,
+			SBCols:              1,
+			SBRows:              1,
+			Cols:                1,
+			Rows:                1,
+			ColStartSB:          [av1.EncoderMaxTileCols + 1]uint16{0, 1},
+			RowStartSB:          [av1.EncoderMaxTileRows + 1]uint16{0, 1},
+		},
+		Quantization: av1.EncoderQuantizationParams{BaseQIdx: 50},
+		LoopFilter: av1.EncoderLoopFilterParams{
+			LevelY:              [2]uint8{4, 4},
+			ModeRefDeltaEnabled: false,
+			Deltas: av1.EncoderLoopFilterDeltas{
+				Ref: [8]int8{1, 0, 0, 0, -1, 0, -1, -1},
+			},
+		},
+		CDEF: av1.EncoderCDEFParams{
+			Damping:    3,
+			YStrength:  [8]uint8{1},
+			UVStrength: [8]uint8{1},
+		},
+		TransformRef: av1.EncoderTransformReferenceParams{
+			TransformMode: av1.EncoderTransformModeLargest,
+			ReferenceMode: av1.EncoderReferenceModeSingle,
+		},
+		GlobalMotion: av1.EncoderDefaultGlobalMotionParams(),
+		References:   &refs,
+	}
+	payloadSize, err := av1.EncoderInterFrameHeaderPayloadSize(seq, header)
+	if err != nil {
+		t.Fatalf("EncoderInterFrameHeaderPayloadSize: %v", err)
+	}
+	var buf [256]byte
+	payload, err := av1.AppendEncoderInterFrameHeaderPayload(buf[:0], seq, header)
+	if err != nil {
+		t.Fatalf("AppendEncoderInterFrameHeaderPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	prefix, err := av1.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	size, err := av1.ParseFrameSize(payload, parsedSeq, prefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	if prefix.FrameType != av1.FrameTypeInter || size.RefreshFrameFlags != 0x02 || size.RefFrameIdx[0] != 0 {
+		t.Fatalf("parsed inter header prefix=%+v size=%+v", prefix, size)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
