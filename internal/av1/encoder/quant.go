@@ -103,7 +103,12 @@ func writeDeltaQ(w *bitWriter, delta int16) error {
 	if err := w.writeBool(true); err != nil {
 		return err
 	}
-	return w.writeBits(uint64(uint16(delta)&0x7f), 7)
+	return writeSignedBits(w, delta, 7)
+}
+
+func writeSignedBits(w *bitWriter, value int16, bits uint8) error {
+	mask := uint16((uint32(1) << bits) - 1)
+	return w.writeBits(uint64(uint16(value)&mask), bits)
 }
 
 func validateQuantizationParams(seq SequenceHeader, quant QuantizationParams) error {

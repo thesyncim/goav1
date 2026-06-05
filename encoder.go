@@ -103,6 +103,8 @@ type EncoderSegmentData = internalencoder.SegmentData
 type EncoderSegmentationData = internalencoder.SegmentationData
 type EncoderSegmentationParams = internalencoder.SegmentationParams
 type EncoderDeltaParams = internalencoder.DeltaParams
+type EncoderLoopFilterDeltas = internalencoder.LoopFilterDeltas
+type EncoderLoopFilterParams = internalencoder.LoopFilterParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -957,6 +959,22 @@ func EncoderDeltaParamsInterPayloadSize(size EncoderInterFrameSize, quant Encode
 
 func AppendEncoderDeltaParamsInterPayload(dst []byte, size EncoderInterFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) ([]byte, error) {
 	return internalencoder.AppendDeltaParamsInterPayload(dst, size, quant, delta)
+}
+
+func EncoderLoopFilterParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) (int, error) {
+	return internalencoder.LoopFilterParamsPayloadSize(seq, prefix, size, allLossless, lf, previous)
+}
+
+func AppendEncoderLoopFilterParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) ([]byte, error) {
+	return internalencoder.AppendLoopFilterParamsPayload(dst, seq, prefix, size, allLossless, lf, previous)
+}
+
+func EncoderLoopFilterParamsInterPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) (int, error) {
+	return internalencoder.LoopFilterParamsInterPayloadSize(seq, prefix, size, allLossless, lf, previous)
+}
+
+func AppendEncoderLoopFilterParamsInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) ([]byte, error) {
+	return internalencoder.AppendLoopFilterParamsInterPayload(dst, seq, prefix, size, allLossless, lf, previous)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {

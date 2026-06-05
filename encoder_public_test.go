@@ -492,6 +492,71 @@ func TestPublicEncoderDeltaParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderLoopFilterParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	prefix := av1.EncoderFrameHeaderPrefix{PrimaryRefFrame: av1.EncoderPrimaryRefNone}
+	size := av1.EncoderIntraFrameSize{
+		UpscaledWidth:       640,
+		Height:              360,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	lf := av1.EncoderLoopFilterParams{
+		LevelY:              [2]uint8{10, 0},
+		LevelU:              5,
+		LevelV:              6,
+		Sharpness:           3,
+		ModeRefDeltaEnabled: true,
+		ModeRefDeltaUpdate:  true,
+		Deltas: av1.EncoderLoopFilterDeltas{
+			Ref:  [8]int8{-2, 0, 0, 0, -1, 0, -1, -1},
+			Mode: [2]int8{0, 3},
+		},
+	}
+	payloadSize, err := av1.EncoderLoopFilterParamsPayloadSize(seq, prefix, size, false, lf, nil)
+	if err != nil {
+		t.Fatalf("EncoderLoopFilterParamsPayloadSize: %v", err)
+	}
+	var buf [16]byte
+	payload, err := av1.AppendEncoderLoopFilterParamsPayload(buf[:0], seq, prefix, size, false, lf, nil)
+	if err != nil {
+		t.Fatalf("AppendEncoderLoopFilterParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsed, err := av1.ParseLoopFilterParams(
+		payload,
+		parsedSeq,
+		av1.FrameHeaderPrefix{PrimaryRefFrame: av1.PrimaryRefNone},
+		av1.FrameSize{},
+		av1.SegmentationParams{},
+		av1.DeltaParams{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ParseLoopFilterParams: %v", err)
+	}
+	if parsed.LevelY != [2]uint8{10, 0} || parsed.LevelU != 5 || parsed.LevelV != 6 ||
+		parsed.Sharpness != 3 || parsed.Deltas.Ref[0] != -2 || parsed.Deltas.Mode[1] != 3 {
+		t.Fatalf("parsed loopfilter=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
