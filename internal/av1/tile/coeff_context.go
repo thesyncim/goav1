@@ -98,12 +98,13 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
+	above := c.Above[plane][x4 : x4+int(txDims.W4)]
+	left := c.Left[plane][y4 : y4+int(txDims.H4)]
 	topMag := uint8(0)
 	leftMag := uint8(0)
 	topNonZero := false
 	leftNonZero := false
-	for k := 0; k < int(txDims.W4); k++ {
-		value := c.Above[plane][x4+k]
+	for _, value := range above {
 		topMag |= value
 		topNonZero = topNonZero || value != 0
 		sign := value >> CoeffContextBits
@@ -113,8 +114,7 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			dcSign++
 		}
 	}
-	for k := 0; k < int(txDims.H4); k++ {
-		value := c.Left[plane][y4+k]
+	for _, value := range left {
 		leftMag |= value
 		leftNonZero = leftNonZero || value != 0
 		sign := value >> CoeffContextBits
@@ -257,19 +257,21 @@ func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
-	for k := 0; k < int(txDims.W4); k++ {
+	above := c.Above[plane][x4 : x4+int(txDims.W4)]
+	left := c.Left[plane][y4 : y4+int(txDims.H4)]
+	for k := range above {
 		next := uint8(0)
 		if k < visibleW {
 			next = value
 		}
-		c.Above[plane][x4+k] = next
+		above[k] = next
 	}
-	for k := 0; k < int(txDims.H4); k++ {
+	for k := range left {
 		next := uint8(0)
 		if k < visibleH {
 			next = value
 		}
-		c.Left[plane][y4+k] = next
+		left[k] = next
 	}
 }
 
