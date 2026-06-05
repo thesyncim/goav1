@@ -49,6 +49,19 @@ func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
 		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[1])] = 0
 		s.coeffDirtyLen = 0
 		return
+	case 3:
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[0])] = 0
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[1])] = 0
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[2])] = 0
+		s.coeffDirtyLen = 0
+		return
+	case 4:
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[0])] = 0
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[1])] = 0
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[2])] = 0
+		s.Coeffs[coeffDirtyPackedPos(s.InverseScan[3])] = 0
+		s.coeffDirtyLen = 0
+		return
 	}
 	dirty := s.InverseScan[:s.coeffDirtyLen:s.coeffDirtyLen]
 	for _, pos := range dirty {
