@@ -1342,6 +1342,33 @@ func TestFrameWorkTileResidualRunnerExecuteFrameWorkAllocs(t *testing.T) {
 	}
 }
 
+func TestFrameWorkTileResidualRunnerPoolRunnerAllocs(t *testing.T) {
+	ctx, _, _, _, req := testFrameWorkResidualDriver(t)
+	var batches [1]Batch
+	n, err := BuildBatches(batches[:], ctx.Jobs, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var runner FrameWorkTileResidualRunner
+	runner.Workers = make([]FrameWorkTileResidualRunnerWorker, 1)
+	runner.Workers[0].Int32Scratch = req.Int32Scratch
+	runner.Workers[0].ResidualScratch = req.ResidualScratch
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := pool.ExecuteFrameWorkRunner(batches[:n], ctx.Jobs, ctx, &runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FrameWorkTileResidualRunner Pool.ExecuteFrameWorkRunner allocated: %f", allocs)
+	}
+}
+
 func FuzzFrameWorkBatchDecodeAndReconstructJobResiduals(f *testing.F) {
 	f.Add([]byte{0x00, 0x00, 0x00, 0x00}, uint8(64))
 	f.Add([]byte{0xff, 0x80, 0x00, 0x7f}, uint8(3))
