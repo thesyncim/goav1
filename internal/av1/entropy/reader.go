@@ -1690,7 +1690,6 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 
 //go:nosplit
 func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
@@ -1720,7 +1719,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, int32(c.tellOffs)))
+		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
@@ -1729,12 +1728,13 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
+		pos := int(c.pos)
 		tellOffs := int32(c.tellOffs)
 		src := c.src
 		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		c.pos = uint32(pos)
 		c.tellOffs = int16(tellOffs)
 	}
-	c.pos = uint32(pos)
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
@@ -1743,7 +1743,6 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 
 //go:nosplit
 func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
@@ -1773,7 +1772,7 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, int32(c.tellOffs)))
+		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
@@ -1782,9 +1781,11 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
+		pos := int(c.pos)
 		tellOffs := int32(c.tellOffs)
 		src := c.src
 		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		c.pos = uint32(pos)
 		c.tellOffs = int16(tellOffs)
 	}
 	count := values[4]
@@ -1807,7 +1808,6 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
-	c.pos = uint32(pos)
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
