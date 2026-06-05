@@ -2073,20 +2073,23 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 	}
 	rate := uint(5 + (count >> 4))
-	if symbol > 0 {
-		c0 += (CDFProbTop - c0) >> rate
-	} else {
+	switch symbol {
+	case 0:
 		c0 -= c0 >> rate
-	}
-	if symbol > 1 {
-		c1 += (CDFProbTop - c1) >> rate
-	} else {
 		c1 -= c1 >> rate
-	}
-	if symbol > 2 {
-		c2 += (CDFProbTop - c2) >> rate
-	} else {
 		c2 -= c2 >> rate
+	case 1:
+		c0 += (CDFProbTop - c0) >> rate
+		c1 -= c1 >> rate
+		c2 -= c2 >> rate
+	case 2:
+		c0 += (CDFProbTop - c0) >> rate
+		c1 += (CDFProbTop - c1) >> rate
+		c2 -= c2 >> rate
+	default:
+		c0 += (CDFProbTop - c0) >> rate
+		c1 += (CDFProbTop - c1) >> rate
+		c2 += (CDFProbTop - c2) >> rate
 	}
 	if count < MaxCDFCount {
 		count++
@@ -2138,20 +2141,23 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 				pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 			}
 			rate := uint(5 + (count >> 4))
-			if symbol > 0 {
-				c0 += (CDFProbTop - c0) >> rate
-			} else {
+			switch symbol {
+			case 0:
 				c0 -= c0 >> rate
-			}
-			if symbol > 1 {
-				c1 += (CDFProbTop - c1) >> rate
-			} else {
 				c1 -= c1 >> rate
-			}
-			if symbol > 2 {
-				c2 += (CDFProbTop - c2) >> rate
-			} else {
 				c2 -= c2 >> rate
+			case 1:
+				c0 += (CDFProbTop - c0) >> rate
+				c1 -= c1 >> rate
+				c2 -= c2 >> rate
+			case 2:
+				c0 += (CDFProbTop - c0) >> rate
+				c1 += (CDFProbTop - c1) >> rate
+				c2 -= c2 >> rate
+			default:
+				c0 += (CDFProbTop - c0) >> rate
+				c1 += (CDFProbTop - c1) >> rate
+				c2 += (CDFProbTop - c2) >> rate
 			}
 			if count < MaxCDFCount {
 				count++
@@ -2349,20 +2355,23 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	c0u := uint32(c0)
 	c1u := uint32(c1)
 	c2u := uint32(c2)
-	if symbol > 0 {
-		c0u += (CDFProbTop - c0u) >> rate
-	} else {
+	switch symbol {
+	case 0:
 		c0u -= c0u >> rate
-	}
-	if symbol > 1 {
-		c1u += (CDFProbTop - c1u) >> rate
-	} else {
 		c1u -= c1u >> rate
-	}
-	if symbol > 2 {
-		c2u += (CDFProbTop - c2u) >> rate
-	} else {
 		c2u -= c2u >> rate
+	case 1:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u -= c1u >> rate
+		c2u -= c2u >> rate
+	case 2:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u += (CDFProbTop - c1u) >> rate
+		c2u -= c2u >> rate
+	default:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u += (CDFProbTop - c1u) >> rate
+		c2u += (CDFProbTop - c2u) >> rate
 	}
 	values[0] = uint16(c0u)
 	values[1] = uint16(c1u)
