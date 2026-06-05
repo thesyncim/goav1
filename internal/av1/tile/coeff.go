@@ -1539,7 +1539,11 @@ func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobSymbols 
 			extra += 1 << (offsetBits - 1)
 		}
 		if offsetBits > 1 {
-			extra += int(reader.ReadBitsTrusted(offsetBits - 1))
+			if offsetBits == 2 {
+				extra += int(reader.ReadBitTrusted())
+			} else {
+				extra += int(reader.ReadBitsTrusted(offsetBits - 1))
+			}
 		}
 	}
 	pos := int(eobGroupStart[token])
@@ -1563,7 +1567,12 @@ func readCoeffGolombCursor(reader *entropy.Cursor) (int, error) {
 		}
 	}
 	if length > 1 {
-		suffix := reader.ReadBitsTrusted(uint8(length - 1))
+		var suffix uint32
+		if length == 2 {
+			suffix = uint32(reader.ReadBitTrusted())
+		} else {
+			suffix = reader.ReadBitsTrusted(uint8(length - 1))
+		}
 		x = (1 << (length - 1)) | int(suffix)
 	}
 	return x - 1, nil
