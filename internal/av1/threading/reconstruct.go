@@ -164,11 +164,11 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 	visibleHeight := int(geom.visibleHeight)
 	scanStride := int(geom.scanSize.Height)
 	qPlane := quantize.Plane(geom.plane)
-	q, lossless, err := b.cachedBlockQuantizer(cache, currentQIndex, segmentID, qPlane)
+	q, lossless, err := b.cachedBlockQuantizerTrusted(cache, currentQIndex, segmentID, qPlane)
 	if err != nil {
 		return err
 	}
-	iqMatrix, err := b.cachedInverseQMatrix(cache, qPlane, geom.size, txType, lossless)
+	iqMatrix, err := b.cachedInverseQMatrixTrusted(cache, qPlane, geom.size, txType, lossless)
 	if err != nil {
 		return ErrInvalidBatch
 	}
@@ -218,6 +218,26 @@ func (b *FrameWorkBatch) cachedBlockQuantizer(cache *frameWorkReconQuantCache, c
 	return q, lossless, nil
 }
 
+func (b *FrameWorkBatch) cachedBlockQuantizerTrusted(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
+	if cache.quantValid &&
+		cache.currentQ == currentQIndex &&
+		cache.segmentID == segmentID &&
+		cache.qPlane == qPlane {
+		return cache.quantizer, cache.lossless, nil
+	}
+	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
+	if err != nil {
+		return quantize.Quantizer{}, false, err
+	}
+	cache.quantValid = true
+	cache.currentQ = currentQIndex
+	cache.segmentID = segmentID
+	cache.qPlane = qPlane
+	cache.quantizer = q
+	cache.lossless = lossless
+	return q, lossless, nil
+}
+
 func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
 	if cache != nil &&
 		cache.matrixValid &&
@@ -239,6 +259,27 @@ func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, q
 		cache.matrixLoss = lossless
 		cache.matrix = matrix
 	}
+	return matrix, nil
+}
+
+func (b *FrameWorkBatch) cachedInverseQMatrixTrusted(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
+	if cache.matrixValid &&
+		cache.matrixPlane == qPlane &&
+		cache.matrixSize == size &&
+		cache.matrixType == txType &&
+		cache.matrixLoss == lossless {
+		return cache.matrix, nil
+	}
+	matrix, err := quantize.InverseQMatrix(b.Quantization, qPlane, size, txType, lossless)
+	if err != nil {
+		return nil, err
+	}
+	cache.matrixValid = true
+	cache.matrixPlane = qPlane
+	cache.matrixSize = size
+	cache.matrixType = txType
+	cache.matrixLoss = lossless
+	cache.matrix = matrix
 	return matrix, nil
 }
 
