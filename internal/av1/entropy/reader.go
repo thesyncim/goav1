@@ -33,6 +33,12 @@ func readerTell(pos int, cnt int32, tellOffs int32) int {
 	return pos*8 - int(cnt) + int(tellOffs)
 }
 
+func normShift16(rng uint32) int32 {
+	// AV1 range renormalization keeps rng in 1..65535, so a 16-bit CLZ is
+	// equivalent to 16-bits.Len32(rng) without the wider length calculation.
+	return int32(bits.LeadingZeros16(uint16(rng)))
+}
+
 // refillState extends dif with the AV1 range decoder's next bytes. The common
 // range-decoder case needs two or three bytes, so keep that path branch-collapsed;
 // rare short-tail cases fall back to the byte loop.
@@ -584,7 +590,7 @@ func (r *Reader) ReadSymbol(cdf []uint16, symbols int) (int, error) {
 	// arithmetic matches (*Reader).normalize exactly.
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -2031,7 +2037,7 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		}
 		dif -= lower << (ecWindow - 16)
 		rng = upper - lower
-		shift := int32(16 - bits.Len32(rng))
+		shift := normShift16(rng)
 		cnt -= shift
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng <<= uint(shift)
@@ -2113,7 +2119,7 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -2184,7 +2190,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
