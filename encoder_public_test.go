@@ -606,6 +606,58 @@ func TestPublicEncoderCDEFParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderRestorationParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.EnableRestoration = true
+	size := av1.EncoderIntraFrameSize{
+		UpscaledWidth:       640,
+		Height:              360,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	restoration := av1.EncoderRestorationParams{
+		Type:           [3]av1.EncoderRestorationType{av1.EncoderRestorationWiener, av1.EncoderRestorationSGRProj, av1.EncoderRestorationNone},
+		UnitSizeYLog2:  7,
+		UnitSizeUVLog2: 6,
+		UnitSizeY:      128,
+		UnitSizeUV:     64,
+	}
+	payloadSize, err := av1.EncoderRestorationParamsPayloadSize(seq, size, false, restoration)
+	if err != nil {
+		t.Fatalf("EncoderRestorationParamsPayloadSize: %v", err)
+	}
+	var buf [8]byte
+	payload, err := av1.AppendEncoderRestorationParamsPayload(buf[:0], seq, size, false, restoration)
+	if err != nil {
+		t.Fatalf("AppendEncoderRestorationParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsed, err := av1.ParseRestorationParams(payload, parsedSeq, av1.FrameSize{}, av1.SegmentationParams{}, av1.CDEFParams{})
+	if err != nil {
+		t.Fatalf("ParseRestorationParams: %v", err)
+	}
+	if parsed.Type[0] != av1.RestorationWiener || parsed.Type[1] != av1.RestorationSGRProj ||
+		parsed.UnitSizeY != 128 || parsed.UnitSizeUV != 64 {
+		t.Fatalf("parsed restoration=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

@@ -106,6 +106,8 @@ type EncoderDeltaParams = internalencoder.DeltaParams
 type EncoderLoopFilterDeltas = internalencoder.LoopFilterDeltas
 type EncoderLoopFilterParams = internalencoder.LoopFilterParams
 type EncoderCDEFParams = internalencoder.CDEFParams
+type EncoderRestorationType = internalencoder.RestorationType
+type EncoderRestorationParams = internalencoder.RestorationParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -196,6 +198,11 @@ const (
 	EncoderDecodeTargetDiscardable = internalencoder.DecodeTargetDiscardable
 	EncoderDecodeTargetSwitch      = internalencoder.DecodeTargetSwitch
 	EncoderDecodeTargetRequired    = internalencoder.DecodeTargetRequired
+
+	EncoderRestorationNone       = internalencoder.RestorationNone
+	EncoderRestorationSwitchable = internalencoder.RestorationSwitchable
+	EncoderRestorationWiener     = internalencoder.RestorationWiener
+	EncoderRestorationSGRProj    = internalencoder.RestorationSGRProj
 )
 
 var (
@@ -992,6 +999,22 @@ func EncoderCDEFParamsInterPayloadSize(seq EncoderSequenceHeader, size EncoderIn
 
 func AppendEncoderCDEFParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, cdef EncoderCDEFParams) ([]byte, error) {
 	return internalencoder.AppendCDEFParamsInterPayload(dst, seq, size, allLossless, cdef)
+}
+
+func EncoderRestorationParamsPayloadSize(seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, restoration EncoderRestorationParams) (int, error) {
+	return internalencoder.RestorationParamsPayloadSize(seq, size, allLossless, restoration)
+}
+
+func AppendEncoderRestorationParamsPayload(dst []byte, seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, restoration EncoderRestorationParams) ([]byte, error) {
+	return internalencoder.AppendRestorationParamsPayload(dst, seq, size, allLossless, restoration)
+}
+
+func EncoderRestorationParamsInterPayloadSize(seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, restoration EncoderRestorationParams) (int, error) {
+	return internalencoder.RestorationParamsInterPayloadSize(seq, size, allLossless, restoration)
+}
+
+func AppendEncoderRestorationParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, restoration EncoderRestorationParams) ([]byte, error) {
+	return internalencoder.AppendRestorationParamsInterPayload(dst, seq, size, allLossless, restoration)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
