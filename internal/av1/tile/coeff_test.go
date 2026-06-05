@@ -902,8 +902,14 @@ func BenchmarkCoeffCDFsInitDefault(b *testing.B) {
 }
 
 func BenchmarkReadCoefficientsTXB8x8Class2D(b *testing.B) {
-	size := TransformSize8x8
-	class := transform.Class2D
+	benchmarkReadCoefficientsTXB(b, TransformSize8x8, transform.Class2D)
+}
+
+func BenchmarkReadCoefficientsTXB8x8ClassHoriz(b *testing.B) {
+	benchmarkReadCoefficientsTXB(b, TransformSize8x8, transform.ClassHoriz)
+}
+
+func benchmarkReadCoefficientsTXB(b *testing.B, size TransformSize, class transform.Class) {
 	txSize, err := size.TransformSize()
 	if err != nil {
 		b.Fatal(err)

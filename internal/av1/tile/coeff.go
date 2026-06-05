@@ -1063,10 +1063,20 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
 				padded := int(posSlice[pos].padded)
-				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
+				var ctx uint8
+				if class == transform.ClassHoriz {
+					ctx = coeffLowerLevelsCtxHorizFast(levelsScratch, geoPtr, posSlice, pos)
+				} else {
+					ctx = coeffLowerLevelsCtxVertFast(levelsScratch, geoPtr, posSlice, pos)
+				}
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 				if level > NumBaseLevels {
-					brCtx := int(coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos))
+					brCtx := 0
+					if class == transform.ClassHoriz {
+						brCtx = int(coeffBRContextHorizFast(levelsScratch, geoPtr, posSlice, pos))
+					} else {
+						brCtx = int(coeffBRContextVertFast(levelsScratch, geoPtr, posSlice, pos))
+					}
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
@@ -1093,10 +1103,20 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
 				padded := int(posSlice[pos].padded)
-				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
+				var ctx uint8
+				if class == transform.ClassHoriz {
+					ctx = coeffLowerLevelsCtxHorizFast(levelsScratch, geoPtr, posSlice, pos)
+				} else {
+					ctx = coeffLowerLevelsCtxVertFast(levelsScratch, geoPtr, posSlice, pos)
+				}
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 				if level > NumBaseLevels {
-					brCtx := int(coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos))
+					brCtx := 0
+					if class == transform.ClassHoriz {
+						brCtx = int(coeffBRContextHorizFast(levelsScratch, geoPtr, posSlice, pos))
+					} else {
+						brCtx = int(coeffBRContextVertFast(levelsScratch, geoPtr, posSlice, pos))
+					}
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
@@ -1737,6 +1757,38 @@ func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, str
 	return uint8(ctx + int(p.lower2DOffset))
 }
 
+func coeffLowerLevelsCtxHorizFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {
+	p := posSlice[pos]
+	padded := int(p.padded)
+	stride := int(geo.stride)
+	s1 := padded + stride
+	s2 := s1 + stride
+	s3 := s2 + stride
+	s4 := s3 + stride
+	p1 := padded + 1
+	_ = levels[s4]
+	mag := clipMax3(levels[s1]) + clipMax3(levels[p1]) +
+		clipMax3(levels[s2]) + clipMax3(levels[s3]) + clipMax3(levels[s4])
+	ctx := minInt((mag+1)>>1, 4)
+	return uint8(ctx + coeff1DContextOffset(int(p.col)))
+}
+
+func coeffLowerLevelsCtxVertFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {
+	p := posSlice[pos]
+	padded := int(p.padded)
+	stride := int(geo.stride)
+	s1 := padded + stride
+	p1 := padded + 1
+	p2 := padded + 2
+	p3 := padded + 3
+	p4 := padded + 4
+	_ = levels[p4]
+	mag := clipMax3(levels[s1]) + clipMax3(levels[p1]) +
+		clipMax3(levels[p2]) + clipMax3(levels[p3]) + clipMax3(levels[p4])
+	ctx := minInt((mag+1)>>1, 4)
+	return uint8(ctx + coeff1DContextOffset(int(p.row)))
+}
+
 // coeffBRContextFast is the hot-loop variant of CoeffBRContext using the
 // hoisted geometry and position slice.
 func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, class transform.Class, pos int) uint8 {
@@ -1805,6 +1857,44 @@ func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride i
 	_ = levels[s1p1]
 	mag := int(levels[p1]) + int(levels[s1]) + int(levels[s1p1])
 	return uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
+}
+
+func coeffBRContextHorizFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {
+	p := posSlice[pos]
+	padded := int(p.padded)
+	stride := int(geo.stride)
+	s1 := padded + stride
+	s2 := s1 + stride
+	p1 := padded + 1
+	_ = levels[s2]
+	mag := int(levels[p1]) + int(levels[s1]) + int(levels[s2])
+	mag = minInt((mag+1)>>1, 6)
+	if pos == 0 {
+		return uint8(mag)
+	}
+	if p.col == 0 {
+		return uint8(mag + 7)
+	}
+	return uint8(mag + 14)
+}
+
+func coeffBRContextVertFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {
+	p := posSlice[pos]
+	padded := int(p.padded)
+	stride := int(geo.stride)
+	s1 := padded + stride
+	p1 := padded + 1
+	p2 := padded + 2
+	_ = levels[p2]
+	mag := int(levels[p1]) + int(levels[s1]) + int(levels[p2])
+	mag = minInt((mag+1)>>1, 6)
+	if pos == 0 {
+		return uint8(mag)
+	}
+	if p.row == 0 {
+		return uint8(mag + 7)
+	}
+	return uint8(mag + 14)
 }
 
 func coeffBRContextEOBFast(p coeffPos, class transform.Class, pos int) uint8 {
