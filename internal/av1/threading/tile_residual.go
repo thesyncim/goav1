@@ -438,6 +438,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.batch = c.batch
 		st.geom.reset()
 		st.batch.geomCache = &st.geom
+		_ = frameWorkPrimeLumaReconGeometry(&st.batch, c.index)
 		st.index = c.index
 		st.localStats = FrameWorkTileResidualStats{}
 		st.stats = &st.localStats
@@ -1066,6 +1067,9 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	scratch.geomCache.reset()
 	scratch.resetDeferredReconBuffers()
 	b.geomCache = &scratch.geomCache
+	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
+		return FrameWorkTileResidualStats{}, err
+	}
 	// The deferred wavefront engages only when the pool offered idle lanes
 	// (single-tile frame on a multi-worker pool) and the tile clears the size
 	// threshold. The GOAV1_DEFER_RECON force-on hook keeps the serial deferred
@@ -1877,6 +1881,12 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
 	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
 	// reads exactly the fields the struct path forwarded.
+	if ok, err := s.batch.reconstructBlockCoeffLumaPrimed(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+	} else if ok {
+		s.stats.Residuals++
+		return nil
+	}
 	if err := s.batch.reconstructBlockCoeffCoreTrusted(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}

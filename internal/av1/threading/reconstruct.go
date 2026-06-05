@@ -151,6 +151,39 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.
 	return b.reconstructBlockCoeffCoreWithGeometry(geom, block, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
 }
 
+func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
+	if _, err := b.JobRegion(index); err != nil {
+		return err
+	}
+	if _, err := b.JobOutputPlane(index, FrameWorkPlaneY); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reconstructBlockCoeffLumaPrimed reconstructs the residual for a luma TXB
+// using the job geometry entries that DecodeAndReconstructJobResidualsPtr
+// primes once per tile job. The public and chroma paths keep the fully checked
+// geometry route; this hot path only skips the per-TXB cache lookup ladder when
+// the already-keyed region and Y plane are present for the current job.
+func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) (bool, error) {
+	if block.Plane != 0 {
+		return false, nil
+	}
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok ||
+		c.validMask&(frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid) != frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid ||
+		c.regionIndex != cacheIndex || c.planeIndex[FrameWorkPlaneY] != cacheIndex {
+		return false, nil
+	}
+	geom, err := b.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit, block)
+	if err != nil {
+		return true, err
+	}
+	return true, b.reconstructBlockCoeffCoreWithGeometry(geom, block, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+}
+
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
