@@ -690,6 +690,42 @@ func TestPublicEncoderTransformReferenceParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderFrameModeParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.EnableWarpedMotion = true
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeInter}
+	params := av1.EncoderFrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true}
+	payloadSize, err := av1.EncoderFrameModeParamsPayloadSize(seq, prefix, params)
+	if err != nil {
+		t.Fatalf("EncoderFrameModeParamsPayloadSize: %v", err)
+	}
+	var buf [1]byte
+	payload, err := av1.AppendEncoderFrameModeParamsPayload(buf[:0], seq, prefix, params)
+	if err != nil {
+		t.Fatalf("AppendEncoderFrameModeParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseFrameModeParams(
+		payload,
+		av1.SequenceHeader{EnableWarpedMotion: true},
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeInter},
+		av1.SkipModeParams{},
+	)
+	if err != nil {
+		t.Fatalf("ParseFrameModeParams: %v", err)
+	}
+	if !parsed.AllowWarpedMotion || !parsed.ReducedTxSet {
+		t.Fatalf("parsed frame mode=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

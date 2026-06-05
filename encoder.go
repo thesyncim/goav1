@@ -111,6 +111,7 @@ type EncoderRestorationParams = internalencoder.RestorationParams
 type EncoderTransformMode = internalencoder.TransformMode
 type EncoderReferenceMode = internalencoder.ReferenceMode
 type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
+type EncoderFrameModeParams = internalencoder.FrameModeParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -1034,6 +1035,14 @@ func EncoderTransformReferenceParamsPayloadSize(prefix EncoderFrameHeaderPrefix,
 
 func AppendEncoderTransformReferenceParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) ([]byte, error) {
 	return internalencoder.AppendTransformReferenceParamsPayload(dst, prefix, allLossless, params)
+}
+
+func EncoderFrameModeParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) (int, error) {
+	return internalencoder.FrameModeParamsPayloadSize(seq, prefix, params)
+}
+
+func AppendEncoderFrameModeParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) ([]byte, error) {
+	return internalencoder.AppendFrameModeParamsPayload(dst, seq, prefix, params)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
