@@ -173,6 +173,18 @@ func DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dst []int32, dstStride int, 
 	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
 }
 
+// DequantizeDCCoeffBitDepthTrusted dequantizes only the DC coefficient for the
+// decoder's DC-only inverse transform fast path. Callers must have validated
+// q, txScale, iqMatrix, and bitDepth exactly as the trusted block path does.
+func DequantizeDCCoeffBitDepthTrusted(coeff int16, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int32 {
+	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
+	scale := q.DC
+	if iqMatrix != nil {
+		scale = (int32(iqMatrix[0])*scale + (1 << (qmBits - 1))) >> qmBits
+	}
+	return dequantScalar(int32(coeff), scale, txScale, dqMin, dqMax)
+}
+
 func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if width <= 0 || height <= 0 {
 		return ErrInvalidQuantizer
@@ -305,6 +317,17 @@ func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, 
 		for col := range width {
 			clear(dst[col*dstStride : col*dstStride+height])
 		}
+	}
+	if iqMatrix == nil && dstStride == height && coeffStride == height {
+		for i := 0; i < eob; i++ {
+			pos := int(scan[i])
+			scale := q.AC
+			if pos == 0 {
+				scale = q.DC
+			}
+			dst[pos] = dequantScalar(int32(coeff[pos]), scale, txScale, dqMin, dqMax)
+		}
+		return
 	}
 	for i := 0; i < eob; i++ {
 		pos := int(scan[i])

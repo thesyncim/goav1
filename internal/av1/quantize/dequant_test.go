@@ -337,6 +337,45 @@ func TestDequantizeBlockScaledQMatrixBitDepthEOBMatchesFull(t *testing.T) {
 	}
 }
 
+func TestDequantizeDCCoeffBitDepthTrustedMatchesFull(t *testing.T) {
+	const width, height = 4, 4
+	q := Quantizer{DC: 91, AC: 137}
+	iqMatrix := []uint16{
+		32, 40, 48, 56,
+		64, 72, 80, 88,
+		96, 104, 112, 120,
+		128, 136, 144, 152,
+	}
+	for _, tc := range []struct {
+		name     string
+		coeff    int16
+		txScale  uint8
+		iqMatrix []uint16
+		bitDepth uint8
+	}{
+		{name: "8 bit", coeff: 3, txScale: 0, bitDepth: 8},
+		{name: "10 bit scaled", coeff: -7, txScale: 1, bitDepth: 10},
+		{name: "12 bit qmatrix", coeff: 11, txScale: 2, iqMatrix: iqMatrix, bitDepth: 12},
+	} {
+		coeff := make([]int16, width*height)
+		coeff[0] = tc.coeff
+		want := make([]int32, width*height)
+		var err error
+		if tc.iqMatrix != nil {
+			err = DequantizeBlockScaledQMatrixBitDepth(want, height, coeff, height, width, height, q, tc.txScale, tc.iqMatrix, tc.bitDepth)
+		} else {
+			err = DequantizeBlockScaledBitDepth(want, height, coeff, height, width, height, q, tc.txScale, tc.bitDepth)
+		}
+		if err != nil {
+			t.Fatalf("%s full dequant err=%v", tc.name, err)
+		}
+		got := DequantizeDCCoeffBitDepthTrusted(tc.coeff, q, tc.txScale, tc.iqMatrix, tc.bitDepth)
+		if got != want[0] {
+			t.Fatalf("%s dc=%d want %d", tc.name, got, want[0])
+		}
+	}
+}
+
 func TestDequantizeBlockScaledBitDepthEOBRejectsInvalidScan(t *testing.T) {
 	dst := make([]int32, 4)
 	coeff := make([]int16, 4)

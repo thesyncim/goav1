@@ -167,6 +167,16 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	residual := residualScratch[:blockLen:blockLen]
 
 	eob := int(cfg.EOB)
+	if !cfg.Lossless && cfg.Transform == transform.TypeDCTDCT && eob == 1 {
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(quantized[0], cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dc, transformScratch, cfg.Size, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		return nil
+	}
+
 	useSparseDequant := eob > 0 && len(scan) >= eob && eob*4 <= dequantLen
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
@@ -183,10 +193,6 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	}
 	if cfg.Lossless {
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, eob); err != nil {
-			return ErrInvalidBlock
-		}
-	} else if cfg.Transform == transform.TypeDCTDCT && eob == 1 {
-		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dequant[0], transformScratch, cfg.Size, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {

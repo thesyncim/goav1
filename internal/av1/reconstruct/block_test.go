@@ -667,6 +667,27 @@ func BenchmarkReconstructPlaneBlockDCT8x8(b *testing.B) {
 	}
 }
 
+func BenchmarkReconstructPlaneBlockTrustedDCT8x8DCOnly(b *testing.B) {
+	const width, height = 8, 8
+	dst := make([]byte, width*height)
+	quantized := make([]int16, width*height)
+	quantized[0] = 3
+	scan := []int16{0}
+	cfg := Block{
+		Size:      transform.Size{Width: width, Height: height},
+		Transform: transform.TypeDCTDCT,
+		Quantizer: quantize.Quantizer{DC: 91, AC: 137},
+		EOB:       1,
+	}
+	int32Len, int16Len, _ := ScratchLen(cfg)
+	int32Scratch := make([]int32, int32Len)
+	residualScratch := make([]int16, int16Len)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, width, 1, 8, width, height, quantized, height, scan, cfg.Size, 0, int32Scratch, residualScratch, cfg)
+	}
+}
+
 func BenchmarkReconstructPlaneBlockIDTX16x16(b *testing.B) {
 	plane, _ := testPlane(16, 16, 1, 16)
 	quantized := make([]int16, 16*16)
