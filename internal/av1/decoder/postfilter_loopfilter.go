@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"errors"
+	"math/bits"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -514,7 +515,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedule(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
 	var counts [3][2]uint32
-	var levelUsed [loopfilter.MaxLevel + 1]bool
+	var levelMask uint64
 	for i := range edges {
 		edge := &edges[i]
 		if edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
@@ -522,13 +523,11 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedu
 			return loopfilter.ErrInvalidFilter
 		}
 		counts[edge.Plane][edge.Edge]++
-		levelUsed[edge.Level] = true
+		levelMask |= uint64(1) << edge.Level
 	}
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
-	for level := uint8(1); level <= loopfilter.MaxLevel; level++ {
-		if !levelUsed[level] {
-			continue
-		}
+	for mask := levelMask; mask != 0; mask &= mask - 1 {
+		level := uint8(bits.TrailingZeros64(mask))
 		th, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness)
 		if err != nil {
 			return err
