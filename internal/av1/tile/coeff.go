@@ -855,9 +855,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		brCtx := coeffBRContextEOBFast(lastCoeffPos, req.Class, lastPos)
 		var extra uint8
 		if cdfUpdate {
-			extra = readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+			extra = readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, int(brCtx))
 		} else {
-			extra = readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+			extra = readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, int(brCtx))
 		}
 		lastLevel += int(extra)
 	}
@@ -985,8 +985,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
-					extra := readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
 				levelsScratch[padded] = uint8(level)
@@ -1033,8 +1033,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
-					extra := readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
 				levelsScratch[padded] = uint8(level)
@@ -1066,8 +1066,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 				if level > NumBaseLevels {
-					brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
-					extra := readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
+					brCtx := int(coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos))
+					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
 				levelsScratch[padded] = uint8(level)
@@ -1096,8 +1096,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				ctx := coeffLowerLevelsCtxFast(levelsScratch, geoPtr, posSlice, class, pos)
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 				if level > NumBaseLevels {
-					brCtx := coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos)
-					extra := readBaseRangeFromArrCursorNoUpdate(&reader, brArr, brCtx)
+					brCtx := int(coeffBRContextFast(levelsScratch, geoPtr, posSlice, class, pos))
+					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
 				levelsScratch[padded] = uint8(level)
@@ -1300,7 +1300,7 @@ func readBaseRangeFromArrCursorUpdate(reader *entropy.Cursor, arr *[CoeffBRConte
 	if ctx >= CoeffBRContexts {
 		panic("invalid coefficient base range context")
 	}
-	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[ctx])
+	return readBaseRangeFromArrCursorUpdateTrusted(reader, arr, ctx)
 }
 
 func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
@@ -1308,7 +1308,15 @@ func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRCon
 	if ctx >= CoeffBRContexts {
 		panic("invalid coefficient base range context")
 	}
-	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[ctx])
+	return readBaseRangeFromArrCursorNoUpdateTrusted(reader, arr, ctx)
+}
+
+func readBaseRangeFromArrCursorUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
+	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[context])
+}
+
+func readBaseRangeFromArrCursorNoUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
+	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[context])
 }
 
 func coeffTraceScanIndex(scan []int16, pos int, eobPos int) int {
