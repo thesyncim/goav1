@@ -687,3 +687,37 @@ func TestExtendBordersNoopWhenFilled(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkExtendBorders8BitPartialSuperblock(b *testing.B) {
+	format := Format{Width: 160, Height: 128, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, layout.Size)
+	f, err := Bind(buf, format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		f.ExtendBorders()
+	}
+}
+
+func BenchmarkExtendBorders10BitPartialSuperblock(b *testing.B) {
+	format := Format{Width: 160, Height: 128, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, layout.Size)
+	f, err := Bind(buf, format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		f.ExtendBorders()
+	}
+}

@@ -256,12 +256,34 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 	// padding columns [width, allocWidth).
 	if width < allocWidth {
 		lastCol := (width - 1) * bytesPerSample
-		for y := 0; y < height; y++ {
-			row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
-			edge := row[lastCol : lastCol+bytesPerSample]
-			for x := width; x < allocWidth; x++ {
-				dst := x * bytesPerSample
-				copy(row[dst:dst+bytesPerSample], edge)
+		switch bytesPerSample {
+		case 1:
+			for y := 0; y < height; y++ {
+				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+				edge := row[lastCol]
+				for x := width; x < allocWidth; x++ {
+					row[x] = edge
+				}
+			}
+		case 2:
+			for y := 0; y < height; y++ {
+				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+				lo := row[lastCol]
+				hi := row[lastCol+1]
+				for x := width; x < allocWidth; x++ {
+					dst := x * 2
+					row[dst] = lo
+					row[dst+1] = hi
+				}
+			}
+		default:
+			for y := 0; y < height; y++ {
+				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+				edge := row[lastCol : lastCol+bytesPerSample]
+				for x := width; x < allocWidth; x++ {
+					dst := x * bytesPerSample
+					copy(row[dst:dst+bytesPerSample], edge)
+				}
 			}
 		}
 	}
