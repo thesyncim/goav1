@@ -780,6 +780,10 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if !ok {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
+	return s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levelsScratch, geo)
+}
+
+func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8, geo coeffGeometry) (TXBDecodeResult, error) {
 	maxEOB := int(geo.maxEOB)
 	if len(coeffs) < maxEOB || len(scan) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState

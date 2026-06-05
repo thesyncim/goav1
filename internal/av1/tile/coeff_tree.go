@@ -559,7 +559,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 		return selected, result, nil, nil, nil
 	}
 
-	coeffs, scan, levels, err := scratch.coeffBuffers(ctxReq.Size, selectedClass)
+	coeffs, scan, levels, err := scratch.coeffBuffersWithGeo(ctxReq.Size, selectedClass, geo)
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("prepare coeff buffers size=%v class=%v: %w", ctxReq.Size, selectedClass, err)
 	}
@@ -579,7 +579,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	req.levelDirtyLen = &scratch.levelDirtyLen
 	req.levelDirtyScratch = &scratch.Levels
 	req.trustedScan = true
-	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levels)
+	result, err := s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levels, geo)
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}
@@ -644,6 +644,13 @@ func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.
 	}
 	geo, ok := coeffGeo(size)
 	if !ok || !class.Valid() {
+		return nil, nil, nil, ErrInvalidDecodeState
+	}
+	return s.coeffBuffersWithGeo(size, class, geo)
+}
+
+func (s *LumaCoeffTreeScratch) coeffBuffersWithGeo(size TransformSize, class transform.Class, geo coeffGeometry) ([]int16, []int16, []uint8, error) {
+	if s == nil || !geo.valid || !class.Valid() {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
 	scanLen := int(geo.maxEOB)
