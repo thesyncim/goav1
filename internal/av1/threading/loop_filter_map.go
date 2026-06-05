@@ -176,10 +176,13 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 		DeltaLF:         state.DeltaLF,
 	}
 	stride := int(m.Stride)
+	miColStart := int(block.MICol)
+	miColEnd := int(block.MIColEnd)
 	for miRow := block.MIRow; miRow < block.MIRowEnd; miRow++ {
 		row := int(miRow) * stride
-		for miCol := block.MICol; miCol < block.MIColEnd; miCol++ {
-			m.Records[row+int(miCol)] = record
+		cells := m.Records[row+miColStart : row+miColEnd : row+miColEnd]
+		for i := range cells {
+			cells[i] = record
 		}
 	}
 	return nil
