@@ -216,6 +216,7 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
+		row := iy * ref.Stride
 		sx := sx4 + beta*(k+4)
 		for l := -4; l < 4; l++ {
 			ix := ix4 + l - 3
@@ -226,18 +227,20 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 			coeffs := warpedFilter[offs]
 			sum := 1 << offsetBitsHoriz
 			if ix >= 0 && ix+filterTaps <= ref.Width {
-				sum += int(loadHighBDSample(ref, ix+0, iy)) * int(coeffs[0])
-				sum += int(loadHighBDSample(ref, ix+1, iy)) * int(coeffs[1])
-				sum += int(loadHighBDSample(ref, ix+2, iy)) * int(coeffs[2])
-				sum += int(loadHighBDSample(ref, ix+3, iy)) * int(coeffs[3])
-				sum += int(loadHighBDSample(ref, ix+4, iy)) * int(coeffs[4])
-				sum += int(loadHighBDSample(ref, ix+5, iy)) * int(coeffs[5])
-				sum += int(loadHighBDSample(ref, ix+6, iy)) * int(coeffs[6])
-				sum += int(loadHighBDSample(ref, ix+7, iy)) * int(coeffs[7])
+				base := row + ix*2
+				sum += int(uint16(ref.Pix[base+0])|uint16(ref.Pix[base+1])<<8) * int(coeffs[0])
+				sum += int(uint16(ref.Pix[base+2])|uint16(ref.Pix[base+3])<<8) * int(coeffs[1])
+				sum += int(uint16(ref.Pix[base+4])|uint16(ref.Pix[base+5])<<8) * int(coeffs[2])
+				sum += int(uint16(ref.Pix[base+6])|uint16(ref.Pix[base+7])<<8) * int(coeffs[3])
+				sum += int(uint16(ref.Pix[base+8])|uint16(ref.Pix[base+9])<<8) * int(coeffs[4])
+				sum += int(uint16(ref.Pix[base+10])|uint16(ref.Pix[base+11])<<8) * int(coeffs[5])
+				sum += int(uint16(ref.Pix[base+12])|uint16(ref.Pix[base+13])<<8) * int(coeffs[6])
+				sum += int(uint16(ref.Pix[base+14])|uint16(ref.Pix[base+15])<<8) * int(coeffs[7])
 			} else {
 				for m := range filterTaps {
 					sampleX := clampInt(ix+m, 0, ref.Width-1)
-					sum += int(loadHighBDSample(ref, sampleX, iy)) * int(coeffs[m])
+					sample := row + sampleX*2
+					sum += int(uint16(ref.Pix[sample])|uint16(ref.Pix[sample+1])<<8) * int(coeffs[m])
 				}
 			}
 			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))

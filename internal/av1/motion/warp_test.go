@@ -74,6 +74,24 @@ func BenchmarkPredictWarpedPlaneBlock8Bit64(b *testing.B) {
 	}
 }
 
+func BenchmarkPredictWarpedPlaneBlockHighBD64(b *testing.B) {
+	ref, _ := testPlane(96, 96, 2, 192)
+	dst, _ := testPlane(96, 96, 2, 192)
+	for y := 0; y < ref.Height; y++ {
+		for x := 0; x < ref.Width; x++ {
+			storeHighBDSample(ref, x, y, uint16((x*17+y*29+x*y)&0x3ff))
+		}
+	}
+	matrix := [6]int32{42805, -7571, 65230, -57, 0, 65509}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := PredictWarpedPlaneBlockBitDepth(dst, ref, 2, 10, 16, 16, 64, 64, matrix, -320, -64, 0, -64, false, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // FuzzPredictWarpedPlaneBlockBitDepth stresses the warped affine prediction
 // dispatcher with random matrix coefficients, alpha/beta/gamma/delta scales,
 // block placements, and subsampling. Out-of-range parameters are clipped to
