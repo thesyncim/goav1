@@ -354,6 +354,96 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(t *testing.T) {
 	assertParsedDeltaHeader(t, delta.Headers[0])
 }
 
+func TestAppendLowOverheadWebRTCDeltaHeaderTemporalUnit(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 10})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != 2 {
+		t.Fatalf("key frame num=%d", key.FrameNum)
+	}
+	size, wantUnit, wantState, err := LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(cfg, state)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize: %v", err)
+	}
+	var buf [192]byte
+	out, gotUnit, gotState, err := AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(buf[:0], cfg, state)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState: %v", err)
+	}
+	if len(out) != size || gotUnit != wantUnit || gotState != wantState {
+		t.Fatalf("len=%d want=%d unit=%+v want=%+v state=%+v wantState=%+v", len(out), size, gotUnit, wantUnit, gotState, wantState)
+	}
+
+	it := obu.NewLowOverheadIterator(out)
+	td, ok, err := it.Next()
+	if err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter || len(td.Payload) != 0 {
+		t.Fatalf("temporal delimiter ok=%v err=%v header=%+v payload=% x", ok, err, td.Header, td.Payload)
+	}
+	for i := uint8(0); i < gotUnit.FrameNum; i++ {
+		frameUnit, ok, err := it.Next()
+		if err != nil || !ok {
+			t.Fatalf("frame header %d ok=%v err=%v", i, ok, err)
+		}
+		header := gotUnit.Headers[i]
+		if frameUnit.Header.Type != obu.TypeFrameHeader ||
+			frameUnit.Header.TemporalID != header.TemporalID ||
+			frameUnit.Header.SpatialID != header.SpatialID {
+			t.Fatalf("frame header %d obu=%+v header=%+v", i, frameUnit.Header, header)
+		}
+		parsedSeq := parseEncoderSequenceHeader(t, header.Sequence)
+		parsedPrefix, err := parser.ParseFrameHeaderPrefix(frameUnit.Payload, parsedSeq)
+		if err != nil {
+			t.Fatalf("ParseFrameHeaderPrefix %d: %v", i, err)
+		}
+		refs := parserReferenceState(header.Sequence, header.Size.RefFrameIdx[:])
+		parsedSize, err := parser.ParseFrameSize(frameUnit.Payload, parsedSeq, parsedPrefix, &refs, header.TemporalID, header.SpatialID)
+		if err != nil {
+			t.Fatalf("ParseFrameSize %d: %v", i, err)
+		}
+		if parsedPrefix.OrderHint != header.Prefix.OrderHint ||
+			parsedSize.RefreshFrameFlags != header.Size.RefreshFrameFlags ||
+			parsedSize.UpscaledWidth != header.Size.UpscaledWidth ||
+			parsedSize.Height != header.Size.Height {
+			t.Fatalf("parsed %d prefix=%+v size=%+v header=%+v", i, parsedPrefix, parsedSize, header)
+		}
+	}
+	if extra, ok, err := it.Next(); err != nil || ok {
+		t.Fatalf("extra ok=%v err=%v header=%+v", ok, err, extra.Header)
+	}
+
+	var tiny [1]byte
+	if out, _, _, err := AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(tiny[:0], cfg, state); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
+	}
+}
+
+func TestAppendLowOverheadWebRTCDeltaHeaderTemporalUnitAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	var buf [192]byte
+	if _, _, _, err := AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(buf[:0], cfg, state); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _, _ = AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(buf[:0], cfg, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
 func TestWebRTCDeltaFrameTemporalUnitForConfigSimulcast(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},

@@ -676,21 +676,23 @@ func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
 		t.Fatalf("delta header=%+v", delta.Headers[1])
 	}
 	var headerBuf [80]byte
-	headerOBU, err := av1.AppendEncoderLowOverheadFrameHeaderInterOBU(
-		headerBuf[:0],
-		delta.Headers[1].Sequence,
-		delta.Headers[1].Prefix,
-		delta.Headers[1].Size,
-	)
+	headerSize, err := av1.EncoderLowOverheadInterHeaderFrameOBUSize(delta.Headers[1])
 	if err != nil {
-		t.Fatalf("AppendEncoderLowOverheadFrameHeaderInterOBU: %v", err)
+		t.Fatalf("EncoderLowOverheadInterHeaderFrameOBUSize: %v", err)
+	}
+	headerOBU, err := av1.AppendEncoderLowOverheadInterHeaderFrameOBU(headerBuf[:0], delta.Headers[1])
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadInterHeaderFrameOBU: %v", err)
 	}
 	unit, consumed, err := av1.ParseLowOverheadOBU(headerOBU)
 	if err != nil {
 		t.Fatalf("ParseLowOverheadOBU: %v", err)
 	}
-	if consumed != len(headerOBU) || unit.Header.Type != av1.OBUFrameHeader {
-		t.Fatalf("header obu=%+v consumed=%d len=%d", unit.Header, consumed, len(headerOBU))
+	if len(headerOBU) != headerSize || consumed != len(headerOBU) ||
+		unit.Header.Type != av1.OBUFrameHeader ||
+		unit.Header.TemporalID != delta.Headers[1].TemporalID ||
+		unit.Header.SpatialID != delta.Headers[1].SpatialID {
+		t.Fatalf("header obu=%+v consumed=%d len=%d wantSize=%d", unit.Header, consumed, len(headerOBU), headerSize)
 	}
 
 	ordered, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 500, 13)
@@ -819,6 +821,21 @@ func TestPublicEncoderWebRTCStateTemporalUnits(t *testing.T) {
 		if delta.FrameNum != 3 || delta.Frames[0].TemporalID != want ||
 			delta.Control.Frames[0].GenericFrameInfo.FrameID != state.NextFrameID {
 			t.Fatalf("delta %d=%+v state=%+v", i, delta, state)
+		}
+		if i == 0 {
+			headerSize, sizedUnit, sizedNext, err := av1.EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(cfg, state)
+			if err != nil {
+				t.Fatalf("EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize: %v", err)
+			}
+			var headerBuf [256]byte
+			headerTU, appendedUnit, appendedNext, err := av1.AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForState(headerBuf[:0], cfg, state)
+			if err != nil {
+				t.Fatalf("AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForState: %v", err)
+			}
+			if len(headerTU) != headerSize || appendedUnit != sizedUnit || appendedNext != sizedNext ||
+				appendedUnit.Control.Frames[0].GenericFrameInfo.FrameID != delta.Control.Frames[0].GenericFrameInfo.FrameID {
+				t.Fatalf("header temporal unit len=%d want=%d unit=%+v sized=%+v next=%+v sizedNext=%+v", len(headerTU), headerSize, appendedUnit, sizedUnit, appendedNext, sizedNext)
+			}
 		}
 		var descriptorBuf [32]byte
 		descriptor, err := av1.AppendEncoderWebRTCDependencyDescriptor(

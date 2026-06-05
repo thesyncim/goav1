@@ -894,6 +894,30 @@ func AppendEncoderLowOverheadFrameHeaderInterOBU(dst []byte, seq EncoderSequence
 	return internalencoder.AppendLowOverheadFrameHeaderInterOBU(dst, seq, prefix, size)
 }
 
+func EncoderLowOverheadInterHeaderFrameOBUSize(header EncoderInterHeaderFrame) (int, error) {
+	return internalencoder.LowOverheadInterHeaderFrameOBUSize(header)
+}
+
+func AppendEncoderLowOverheadInterHeaderFrameOBU(dst []byte, header EncoderInterHeaderFrame) ([]byte, error) {
+	return internalencoder.AppendLowOverheadInterHeaderFrameOBU(dst, header)
+}
+
+func EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit EncoderWebRTCDeltaFrameTemporalUnit) (int, error) {
+	return internalencoder.LowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit)
+}
+
+func AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnit(dst []byte, unit EncoderWebRTCDeltaFrameTemporalUnit) ([]byte, error) {
+	return internalencoder.AppendLowOverheadWebRTCDeltaHeaderTemporalUnit(dst, unit)
+}
+
+func EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config EncoderConfig, state EncoderWebRTCState) (int, EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config, state)
+}
+
+func AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForState(dst []byte, config EncoderConfig, state EncoderWebRTCState) ([]byte, EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(dst, config, state)
+}
+
 func EncoderLowOverheadIntraHeaderTemporalUnitSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
 	return internalencoder.LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
 }

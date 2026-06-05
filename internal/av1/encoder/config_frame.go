@@ -1,5 +1,10 @@
 package encoder
 
+import (
+	"github.com/thesyncim/goav1/internal/av1/bitstream"
+	"github.com/thesyncim/goav1/internal/av1/obu"
+)
+
 // IntraHeaderTemporalUnit describes the syntax descriptors used to emit the
 // initial WebRTC keyframe-header temporal unit for a normalized config.
 type IntraHeaderTemporalUnit struct {
@@ -14,6 +19,9 @@ type InterHeaderFrame struct {
 	Sequence SequenceHeader
 	Prefix   FrameHeaderPrefix
 	Size     InterFrameSize
+
+	TemporalID uint8
+	SpatialID  uint8
 }
 
 // WebRTCKeyFrameTemporalUnit describes the config-derived initial key temporal
@@ -330,6 +338,132 @@ func AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config Con
 	return out, unit, nil
 }
 
+// LowOverheadInterHeaderFrameOBUSize returns the exact size of one low-
+// overhead frame-header OBU, including temporal/spatial extension fields.
+func LowOverheadInterHeaderFrameOBUSize(header InterHeaderFrame) (int, error) {
+	payloadSize, err := FrameHeaderInterPayloadSize(header.Sequence, header.Prefix, header.Size)
+	if err != nil {
+		return 0, err
+	}
+	if header.TemporalID > 7 || header.SpatialID > 3 {
+		return 0, ErrInvalidFrame
+	}
+	obuHeaderSize := 1
+	if header.TemporalID != 0 || header.SpatialID != 0 {
+		obuHeaderSize = 2
+	}
+	return obuHeaderSize + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize, nil
+}
+
+func AppendLowOverheadInterHeaderFrameOBU(dst []byte, header InterHeaderFrame) ([]byte, error) {
+	payloadSize, err := FrameHeaderInterPayloadSize(header.Sequence, header.Prefix, header.Size)
+	if err != nil {
+		return dst, err
+	}
+	if header.TemporalID > 7 || header.SpatialID > 3 {
+		return dst, ErrInvalidFrame
+	}
+	obuHeaderSize := 1
+	if header.TemporalID != 0 || header.SpatialID != 0 {
+		obuHeaderSize = 2
+	}
+	obuSize := obuHeaderSize + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize
+	if cap(dst)-len(dst) < obuSize {
+		return dst, bitstream.ErrShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+obuSize]
+	n, err := obu.PutHeader(out[off:], obu.Header{
+		Type:         obu.TypeFrameHeader,
+		Extension:    header.TemporalID != 0 || header.SpatialID != 0,
+		HasSizeField: true,
+		TemporalID:   header.TemporalID,
+		SpatialID:    header.SpatialID,
+	})
+	if err != nil {
+		return dst, err
+	}
+	off += n
+	n, err = bitstream.PutLEB128(out[off:], uint32(payloadSize))
+	if err != nil {
+		return dst, err
+	}
+	off += n
+	w := newBitWriter(out[off:])
+	if err := writeFrameHeaderPrefixPayload(&w, header.Sequence, header.Prefix); err != nil {
+		return dst, err
+	}
+	if err := writeInterFrameSizePayload(&w, header.Sequence, header.Prefix, header.Size); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// LowOverheadWebRTCDeltaHeaderTemporalUnitSize returns the exact byte size of a
+// low-overhead temporal unit carrying the scheduled delta frame-header OBUs.
+func LowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit WebRTCDeltaFrameTemporalUnit) (int, error) {
+	if unit.FrameNum == 0 || unit.FrameNum > WebRTCMaxSpatialLayers {
+		return 0, ErrInvalidFrame
+	}
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		headerSize, err := LowOverheadInterHeaderFrameOBUSize(unit.Headers[i])
+		if err != nil {
+			return 0, err
+		}
+		size += headerSize
+	}
+	return size, nil
+}
+
+// AppendLowOverheadWebRTCDeltaHeaderTemporalUnit appends one temporal
+// delimiter followed by the scheduled delta frame-header OBUs. It never grows
+// dst and validates/sizes before writing so errors leave dst length unchanged.
+func AppendLowOverheadWebRTCDeltaHeaderTemporalUnit(dst []byte, unit WebRTCDeltaFrameTemporalUnit) ([]byte, error) {
+	size, err := LowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		out, err = AppendLowOverheadInterHeaderFrameOBU(out, unit.Headers[i])
+		if err != nil {
+			return dst, err
+		}
+	}
+	return out, nil
+}
+
+func LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config Config, state WebRTCEncoderState) (int, WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
+	unit, next, err := WebRTCDeltaFrameTemporalUnitForState(config, state)
+	if err != nil {
+		return 0, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	size, err := LowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit)
+	if err != nil {
+		return 0, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return size, unit, next, nil
+}
+
+func AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(dst []byte, config Config, state WebRTCEncoderState) ([]byte, WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
+	_, unit, next, err := LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config, state)
+	if err != nil {
+		return dst, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	out, err := AppendLowOverheadWebRTCDeltaHeaderTemporalUnit(dst, unit)
+	if err != nil {
+		return dst, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return out, unit, next, nil
+}
+
 // WebRTCDeltaFrameTemporalUnitForConfig maps a WebRTC config and existing
 // reference state into the next refreshing delta temporal-unit controls.
 func WebRTCDeltaFrameTemporalUnitForConfig(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64) (WebRTCDeltaFrameTemporalUnit, error) {
@@ -431,5 +565,11 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 	if err := validateInterFrameSize(seq, prefix, size); err != nil {
 		return InterHeaderFrame{}, err
 	}
-	return InterHeaderFrame{Sequence: seq, Prefix: prefix, Size: size}, nil
+	return InterHeaderFrame{
+		Sequence:   seq,
+		Prefix:     prefix,
+		Size:       size,
+		TemporalID: settings.TemporalID,
+		SpatialID:  settings.SpatialID,
+	}, nil
 }
