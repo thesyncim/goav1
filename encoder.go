@@ -646,6 +646,50 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDs
 	)
 }
 
+func EncoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
+	unit, next, err := EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+	}
+	size, err := EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, next, frameOBUScratch, obuScratch)
+	if err != nil {
+		return size, unit, next, err
+	}
+	return size, unit, next, nil
+}
+
+func EncoderWebRTCNextTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
+	unit, next, err := EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+	}
+	size, err := EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads, limits, unit, next, frameOBUScratch, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, unit, next, err
+	}
+	return size, unit, next, nil
+}
+
+func AppendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit EncoderWebRTCPictureTemporalUnit, next EncoderWebRTCState, err error) {
+	unit, next, err = EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+	if err != nil {
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+	}
+	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, err = AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(
+		payloadDst,
+		descriptorDst,
+		scratch,
+		framePayloads,
+		limits,
+		unit,
+		next,
+	)
+	if err != nil {
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+	}
+	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, next, nil
+}
+
 func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitRTPScratchSize, error) {
 	packetizer, err := RTPPacketizerScratchLen(payload, limits, obuScratch)
 	size := EncoderWebRTCPictureTemporalUnitRTPScratchSize{Packetizer: packetizer}
