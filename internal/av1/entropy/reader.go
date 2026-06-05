@@ -2307,19 +2307,19 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	rngHi := rangeValue >> 8
 	coded := dif >> (ecWindow - 16)
 	upper := rangeValue
-	c0 := uint32(values[0])
-	c1 := uint32(values[1])
-	c2 := uint32(values[2])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	c0 := values[0]
+	c1 := values[1]
+	c2 := values[2]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
 	symbol := 0
 	if coded < lower {
 		symbol = 1
 		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 		if coded < lower {
 			symbol = 2
 			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+			lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 			if coded < lower {
 				symbol = 3
 				upper = lower
@@ -2328,7 +2328,7 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
+		traceCDFRead(c0, 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
