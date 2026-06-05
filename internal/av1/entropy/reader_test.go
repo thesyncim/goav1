@@ -673,6 +673,22 @@ func BenchmarkCursorReadBitTrustedStream(b *testing.B) {
 	benchmarkReaderSink = sum
 }
 
+func BenchmarkCursorReadBitsTrustedStream(b *testing.B) {
+	src := benchStream()
+	var sum uint32
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		c := r.Cursor()
+		for range benchSymbolsPerOp {
+			sum += c.ReadBitsTrusted(3)
+		}
+	}
+	benchmarkReaderSink = int(sum)
+}
+
 func BenchmarkReaderReadBits(b *testing.B) {
 	src := benchStream()
 
@@ -846,6 +862,14 @@ func BenchmarkCursorCDF4Stream(b *testing.B) {
 
 func BenchmarkCursorCDF4StreamNoUpdate(b *testing.B) {
 	benchmarkCursorCDF4Stream(b, false)
+}
+
+func BenchmarkCursorCDFStream2(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 2)
+}
+
+func BenchmarkCursorCDFSymbolsStream2(b *testing.B) {
+	benchmarkCursorCDFSymbolsStream(b, 2)
 }
 
 func BenchmarkCursorCDFStream5(b *testing.B) {
