@@ -83,6 +83,52 @@ func scaleLUT(lut []uint8, index int, bitDepth uint8) uint8 {
 	return uint8(start + roundPowerOfTwo((end-start)*rem, shift))
 }
 
+func scaleLUT8(lut []uint8, index int) uint8 {
+	if uint(index) < ScalingLUTSize {
+		return lut[index]
+	}
+	if index < 0 {
+		return lut[0]
+	}
+	return lut[ScalingLUTSize-1]
+}
+
+func scaleLUT10(lut []uint8, index int) uint8 {
+	if uint(index) >= 1<<10 {
+		if index < 0 {
+			index = 0
+		} else {
+			index = (1 << 10) - 1
+		}
+	}
+	x := index >> 2
+	if x == ScalingLUTSize-1 {
+		return lut[x]
+	}
+	rem := index & 3
+	start := int(lut[x])
+	end := int(lut[x+1])
+	return uint8(start + roundPowerOfTwo((end-start)*rem, 2))
+}
+
+func scaleLUT12(lut []uint8, index int) uint8 {
+	if uint(index) >= 1<<12 {
+		if index < 0 {
+			index = 0
+		} else {
+			index = (1 << 12) - 1
+		}
+	}
+	x := index >> 4
+	if x == ScalingLUTSize-1 {
+		return lut[x]
+	}
+	rem := index & 15
+	start := int(lut[x])
+	end := int(lut[x+1])
+	return uint8(start + roundPowerOfTwo((end-start)*rem, 4))
+}
+
 func validateScalingPoints(points []ScalingPoint) error {
 	previous := int(-1)
 	for _, point := range points {

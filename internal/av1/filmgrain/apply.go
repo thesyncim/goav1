@@ -153,6 +153,7 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
 	minValue, maxValue := lumaClipBounds(params)
 	var scaleBuf [LumaBlockSize]uint16
+	bitDepth := params.BitDepth
 	for y := yStart; y < params.Height; y++ {
 		// Non-overlap interior: dst, src and the grain run are all
 		// contiguous in x, so gather the scaling-LUT values once and let the
@@ -164,8 +165,23 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 			gbase := lumaGrainSampleIndex(offsets[0][0], 0, 0, xStart, y)
 			grainRow := grain[gbase : gbase+n]
 			scale := scaleBuf[:n]
-			for x := 0; x < n; x++ {
-				scale[x] = uint16(scaleLUT(scaling, int(srcRow[x]), params.BitDepth))
+			switch bitDepth {
+			case 8:
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT8(scaling, int(srcRow[x])))
+				}
+			case 10:
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT10(scaling, int(srcRow[x])))
+				}
+			case 12:
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT12(scaling, int(srcRow[x])))
+				}
+			default:
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT(scaling, int(srcRow[x]), bitDepth))
+				}
 			}
 			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
@@ -202,6 +218,7 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
 	minValue, maxValue := chromaClipBounds(params)
 	var scaleBuf [LumaBlockSize]uint16
+	bitDepth := params.BitDepth
 	for y := yStart; y < params.Height; y++ {
 		// Non-overlap interior: dst, src and the grain run are contiguous in
 		// x. The scaling index still depends on the (possibly subsampled)
@@ -214,9 +231,27 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 			gbase := chromaGrainSampleIndex(offsets[0][0], shiftX, shiftY, 0, 0, xStart, y)
 			grainRow := grain[gbase : gbase+n]
 			scale := scaleBuf[:n]
-			for x := 0; x < n; x++ {
-				idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-				scale[x] = uint16(scaleLUT(scaling, idx, params.BitDepth))
+			switch bitDepth {
+			case 8:
+				for x := 0; x < n; x++ {
+					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+					scale[x] = uint16(scaleLUT8(scaling, idx))
+				}
+			case 10:
+				for x := 0; x < n; x++ {
+					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+					scale[x] = uint16(scaleLUT10(scaling, idx))
+				}
+			case 12:
+				for x := 0; x < n; x++ {
+					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+					scale[x] = uint16(scaleLUT12(scaling, idx))
+				}
+			default:
+				for x := 0; x < n; x++ {
+					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+					scale[x] = uint16(scaleLUT(scaling, idx, bitDepth))
+				}
 			}
 			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
