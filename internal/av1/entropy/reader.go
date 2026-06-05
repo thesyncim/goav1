@@ -2005,73 +2005,137 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 	c2 := uint32(values[2])
 	count := values[4]
 
-	level := uint8(0)
-	for range 4 {
-		rangeValue := rng
-		rngHi := rangeValue >> 8
-		coded := dif >> (ecWindow - 16)
-		upper := rangeValue
-		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-		symbol := uint8(0)
+	rangeValue := rng
+	rngHi := rangeValue >> 8
+	coded := dif >> (ecWindow - 16)
+	upper := rangeValue
+	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	symbol := uint8(0)
+	if coded < lower {
+		symbol = 1
+		upper = lower
+		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 		if coded < lower {
-			symbol = 1
+			symbol = 2
 			upper = lower
-			lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 			if coded < lower {
-				symbol = 2
+				symbol = 3
 				upper = lower
-				lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+				lower = 0
+			}
+		}
+	}
+	if traceEntropyReads {
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
+		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
+	}
+	dif -= lower << (ecWindow - 16)
+	rng = upper - lower
+	shift := normShift16(rng)
+	cnt -= shift
+	dif = ((dif + 1) << uint(shift)) - 1
+	rng <<= uint(shift)
+	if cnt < 0 {
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
+		pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
+	}
+	rate := uint(5 + (count >> 4))
+	if symbol > 0 {
+		c0 += (CDFProbTop - c0) >> rate
+	} else {
+		c0 -= c0 >> rate
+	}
+	if symbol > 1 {
+		c1 += (CDFProbTop - c1) >> rate
+	} else {
+		c1 -= c1 >> rate
+	}
+	if symbol > 2 {
+		c2 += (CDFProbTop - c2) >> rate
+	} else {
+		c2 -= c2 >> rate
+	}
+	if count < MaxCDFCount {
+		count++
+	}
+	level := symbol
+	if symbol == 3 {
+		for range 3 {
+			rangeValue := rng
+			rngHi := rangeValue >> 8
+			coded := dif >> (ecWindow - 16)
+			upper := rangeValue
+			lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+			symbol = 0
+			if coded < lower {
+				symbol = 1
+				upper = lower
+				lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 				if coded < lower {
-					symbol = 3
+					symbol = 2
 					upper = lower
-					lower = 0
+					lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+					if coded < lower {
+						symbol = 3
+						upper = lower
+						lower = 0
+					}
 				}
 			}
-		}
-		if traceEntropyReads {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
+			if traceEntropyReads {
+				if !posLoaded {
+					pos = int(c.pos)
+					tellOffs = int32(c.tellOffs)
+					posLoaded = true
+				}
+				traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 			}
-			traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
-		}
-		dif -= lower << (ecWindow - 16)
-		rng = upper - lower
-		shift := normShift16(rng)
-		cnt -= shift
-		dif = ((dif + 1) << uint(shift)) - 1
-		rng <<= uint(shift)
-		if cnt < 0 {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
+			dif -= lower << (ecWindow - 16)
+			rng = upper - lower
+			shift := normShift16(rng)
+			cnt -= shift
+			dif = ((dif + 1) << uint(shift)) - 1
+			rng <<= uint(shift)
+			if cnt < 0 {
+				if !posLoaded {
+					pos = int(c.pos)
+					tellOffs = int32(c.tellOffs)
+					posLoaded = true
+				}
+				pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 			}
-			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
-		}
-		rate := uint(5 + (count >> 4))
-		if symbol > 0 {
-			c0 += (CDFProbTop - c0) >> rate
-		} else {
-			c0 -= c0 >> rate
-		}
-		if symbol > 1 {
-			c1 += (CDFProbTop - c1) >> rate
-		} else {
-			c1 -= c1 >> rate
-		}
-		if symbol > 2 {
-			c2 += (CDFProbTop - c2) >> rate
-		} else {
-			c2 -= c2 >> rate
-		}
-		if count < MaxCDFCount {
-			count++
-		}
-		level += symbol
-		if symbol != 3 {
-			break
+			rate := uint(5 + (count >> 4))
+			if symbol > 0 {
+				c0 += (CDFProbTop - c0) >> rate
+			} else {
+				c0 -= c0 >> rate
+			}
+			if symbol > 1 {
+				c1 += (CDFProbTop - c1) >> rate
+			} else {
+				c1 -= c1 >> rate
+			}
+			if symbol > 2 {
+				c2 += (CDFProbTop - c2) >> rate
+			} else {
+				c2 -= c2 >> rate
+			}
+			if count < MaxCDFCount {
+				count++
+			}
+			level += symbol
+			if symbol != 3 {
+				break
+			}
 		}
 	}
 
