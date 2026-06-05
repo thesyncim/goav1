@@ -471,6 +471,159 @@ func TestAppendLowOverheadWebRTCDeltaHeaderTemporalUnitAllocs(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		RateControl:       RateControlCQP,
+		Quantizer:         37,
+	}
+	state := WebRTCEncoderState{NextOrderHint: 11, NextFrameID: 50}
+	size, wantUnit, wantState, wantHeader, err := LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize(cfg, state)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize: %v", err)
+	}
+	var buf [512]byte
+	out, gotUnit, gotState, gotHeader, err := AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(buf[:0], cfg, state)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState: %v", err)
+	}
+	if len(out) != size || gotUnit != wantUnit || gotState != wantState || gotHeader != wantHeader {
+		t.Fatalf("len=%d want=%d unit=%+v want=%+v state=%+v want=%+v header=%+v want=%+v", len(out), size, gotUnit, wantUnit, gotState, wantState, gotHeader, wantHeader)
+	}
+	if gotHeader.Quantization.BaseQIdx != 37 || gotHeader.Tile.Cols == 0 || gotHeader.Tile.Rows == 0 ||
+		gotHeader.TransformRef.TransformMode != TransformModeLargest {
+		t.Fatalf("complete key header=%+v", gotHeader)
+	}
+
+	it := obu.NewLowOverheadIterator(out)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	seqUnit, ok, err := it.Next()
+	if err != nil || !ok || seqUnit.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("seq ok=%v err=%v header=%+v", ok, err, seqUnit.Header)
+	}
+	parsedSeq, err := parser.ParseSequenceHeader(seqUnit.Payload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	frameUnit, ok, err := it.Next()
+	if err != nil || !ok || frameUnit.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("frame ok=%v err=%v header=%+v", ok, err, frameUnit.Header)
+	}
+	wantPayload, parsed := appendAndParseIntraFrameHeader(t, gotUnit.Header.Sequence, gotHeader)
+	if string(frameUnit.Payload) != string(wantPayload) {
+		t.Fatalf("frame payload=% x want % x", frameUnit.Payload, wantPayload)
+	}
+	if parsedSeq.MaxFrameWidth != parsed.Size.UpscaledWidth || parsed.Quant.BaseQIdx != 37 ||
+		parsed.Tile.Cols != gotHeader.Tile.Cols || parsed.Tile.Rows != gotHeader.Tile.Rows {
+		t.Fatalf("parsed seq=%+v parsed=%+v header=%+v", parsedSeq, parsed, gotHeader)
+	}
+	if extra, ok, err := it.Next(); err != nil || ok {
+		t.Fatalf("extra ok=%v err=%v header=%+v", ok, err, extra.Header)
+	}
+
+	var tiny [1]byte
+	if out, _, _, _, err := AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(tiny[:0], cfg, state); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
+	}
+}
+
+func TestAppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		RateControl:       RateControlCQP,
+		Quantizer:         29,
+	}
+	_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 80})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	size, wantUnit, wantState, err := LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForStateSize(cfg, state)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForStateSize: %v", err)
+	}
+	var buf [512]byte
+	out, gotUnit, gotState, err := AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(buf[:0], cfg, state)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState: %v", err)
+	}
+	if len(out) != size || gotUnit != wantUnit || gotState != wantState {
+		t.Fatalf("len=%d want=%d unit=%+v want=%+v state=%+v want=%+v", len(out), size, gotUnit, wantUnit, gotState, wantState)
+	}
+
+	it := obu.NewLowOverheadIterator(out)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	for i := uint8(0); i < gotUnit.FrameNum; i++ {
+		frameUnit, ok, err := it.Next()
+		if err != nil || !ok {
+			t.Fatalf("frame %d ok=%v err=%v", i, ok, err)
+		}
+		header := gotUnit.Headers[i]
+		if frameUnit.Header.Type != obu.TypeFrameHeader ||
+			frameUnit.Header.TemporalID != header.TemporalID ||
+			frameUnit.Header.SpatialID != header.SpatialID {
+			t.Fatalf("frame %d obu=%+v header=%+v", i, frameUnit.Header, header)
+		}
+		var refs parser.ReferenceState
+		fullHeader, err := completeInterFrameHeaderParams(header, gotUnit.Frames[i], &refs)
+		if err != nil {
+			t.Fatalf("completeInterFrameHeaderParams %d: %v", i, err)
+		}
+		wantPayload, parsed := appendAndParseInterFrameHeader(t, header.Sequence, fullHeader, &refs)
+		if string(frameUnit.Payload) != string(wantPayload) {
+			t.Fatalf("frame %d payload=% x want % x", i, frameUnit.Payload, wantPayload)
+		}
+		if parsed.Quant.BaseQIdx != 29 || parsed.Size.UpscaledWidth != header.Size.UpscaledWidth ||
+			parsed.Tile.Cols != fullHeader.Tile.Cols || parsed.Tile.Rows != fullHeader.Tile.Rows {
+			t.Fatalf("frame %d parsed=%+v full=%+v", i, parsed, fullHeader)
+		}
+	}
+	if extra, ok, err := it.Next(); err != nil || ok {
+		t.Fatalf("extra ok=%v err=%v header=%+v", ok, err, extra.Header)
+	}
+
+	var tiny [1]byte
+	if out, _, _, err := AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(tiny[:0], cfg, state); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
+	}
+}
+
+func TestAppendLowOverheadWebRTCCompleteHeaderTemporalUnitsAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	var keyBuf [512]byte
+	if _, _, _, _, err := AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(keyBuf[:0], cfg, WebRTCEncoderState{NextFrameID: 1}); err != nil {
+		t.Fatalf("key preflight: %v", err)
+	}
+	var deltaBuf [512]byte
+	if _, _, _, err := AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(deltaBuf[:0], cfg, state); err != nil {
+		t.Fatalf("delta preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _, _, _ = AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(keyBuf[:0], cfg, WebRTCEncoderState{NextFrameID: 1})
+		_, _, _, _ = AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(deltaBuf[:0], cfg, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadWebRTCCompleteHeaderTemporalUnits allocated: %f", allocs)
+	}
+}
+
 func TestAppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},

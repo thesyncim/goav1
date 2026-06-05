@@ -3,6 +3,7 @@ package encoder
 import (
 	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // IntraHeaderTemporalUnit describes the syntax descriptors used to emit the
@@ -257,6 +258,159 @@ func AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst []byte, config
 		return out, unit, next, nil
 	}
 	return dst, WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, ErrInvalidFrame
+}
+
+// LowOverheadCompleteIntraHeaderTemporalUnitSize returns the exact size of one
+// temporal unit containing a temporal delimiter, sequence header, and complete
+// intra frame-header OBU.
+func LowOverheadCompleteIntraHeaderTemporalUnitSize(seq SequenceHeader, header IntraFrameHeaderParams) (int, error) {
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
+	seqSize, err := LowOverheadSequenceHeaderOBUSize(seq)
+	if err != nil {
+		return 0, err
+	}
+	frameSize, err := LowOverheadIntraFrameHeaderOBUSize(seq, header, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	return size + seqSize + frameSize, nil
+}
+
+// AppendLowOverheadCompleteIntraHeaderTemporalUnit appends one temporal unit
+// containing a temporal delimiter, sequence header, and complete intra
+// frame-header OBU. It validates and sizes before writing, so errors leave dst
+// length unchanged.
+func AppendLowOverheadCompleteIntraHeaderTemporalUnit(dst []byte, seq SequenceHeader, header IntraFrameHeaderParams) ([]byte, error) {
+	size, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadSequenceHeaderOBU(out, seq)
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadIntraFrameHeaderOBU(out, seq, header, 0, 0)
+	if err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize returns the
+// exact emitted byte size for the next config/state-derived WebRTC key temporal
+// unit with a complete frame-header OBU.
+func LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize(config Config, state WebRTCEncoderState) (int, WebRTCKeyFrameTemporalUnit, WebRTCEncoderState, IntraFrameHeaderParams, error) {
+	unit, next, err := WebRTCKeyFrameTemporalUnitForState(config, state)
+	if err != nil {
+		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
+	}
+	header, err := completeIntraFrameHeaderParams(unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size, unit.Frames[0].RateControl, unit.Frames[0].Quantizer)
+	if err != nil {
+		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
+	}
+	size, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(unit.Header.Sequence, header)
+	if err != nil {
+		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
+	}
+	return size, unit, next, header, nil
+}
+
+// AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState appends the
+// next config/state-derived WebRTC key temporal unit with a complete frame-
+// header OBU.
+func AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(dst []byte, config Config, state WebRTCEncoderState) ([]byte, WebRTCKeyFrameTemporalUnit, WebRTCEncoderState, IntraFrameHeaderParams, error) {
+	_, unit, next, header, err := LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize(config, state)
+	if err != nil {
+		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
+	}
+	out, err := AppendLowOverheadCompleteIntraHeaderTemporalUnit(dst, unit.Header.Sequence, header)
+	if err != nil {
+		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
+	}
+	return out, unit, next, header, nil
+}
+
+// LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitSize returns the exact byte
+// size of a low-overhead temporal unit carrying complete delta frame-header
+// OBUs for each scheduled spatial layer.
+func LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitSize(unit WebRTCDeltaFrameTemporalUnit) (int, error) {
+	if unit.FrameNum == 0 || unit.FrameNum > WebRTCMaxSpatialLayers {
+		return 0, ErrInvalidFrame
+	}
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		var refs parser.ReferenceState
+		header, err := completeInterFrameHeaderParams(unit.Headers[i], unit.Frames[i], &refs)
+		if err != nil {
+			return 0, err
+		}
+		headerSize, err := LowOverheadInterFrameHeaderOBUSize(unit.Headers[i].Sequence, header, unit.Headers[i].TemporalID, unit.Headers[i].SpatialID)
+		if err != nil {
+			return 0, err
+		}
+		size += headerSize
+	}
+	return size, nil
+}
+
+// AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnit appends one temporal
+// delimiter followed by complete delta frame-header OBUs for each scheduled
+// spatial layer.
+func AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnit(dst []byte, unit WebRTCDeltaFrameTemporalUnit) ([]byte, error) {
+	size, err := LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitSize(unit)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		var refs parser.ReferenceState
+		header, err := completeInterFrameHeaderParams(unit.Headers[i], unit.Frames[i], &refs)
+		if err != nil {
+			return dst, err
+		}
+		out, err = AppendLowOverheadInterFrameHeaderOBU(out, unit.Headers[i].Sequence, header, unit.Headers[i].TemporalID, unit.Headers[i].SpatialID)
+		if err != nil {
+			return dst, err
+		}
+	}
+	return out, nil
+}
+
+func LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForStateSize(config Config, state WebRTCEncoderState) (int, WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
+	unit, next, err := WebRTCDeltaFrameTemporalUnitForState(config, state)
+	if err != nil {
+		return 0, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	size, err := LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitSize(unit)
+	if err != nil {
+		return 0, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return size, unit, next, nil
+}
+
+func AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(dst []byte, config Config, state WebRTCEncoderState) ([]byte, WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
+	_, unit, next, err := LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForStateSize(config, state)
+	if err != nil {
+		return dst, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	out, err := AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnit(dst, unit)
+	if err != nil {
+		return dst, WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return out, unit, next, nil
 }
 
 func WebRTCNextTemporalUnitForState(config Config, state WebRTCEncoderState, forceKeyFrame bool) (WebRTCPictureTemporalUnit, WebRTCEncoderState, error) {
@@ -621,4 +775,182 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 		TemporalID: settings.TemporalID,
 		SpatialID:  settings.SpatialID,
 	}, nil
+}
+
+func completeIntraFrameHeaderParams(seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize, rc RateControlMode, quantizer uint8) (IntraFrameHeaderParams, error) {
+	quant, allLossless, err := defaultCompleteHeaderQuantization(rc, quantizer)
+	if err != nil {
+		return IntraFrameHeaderParams{}, err
+	}
+	tiles, err := defaultCompleteHeaderTileInfo(seq, prefix, codedWidthFromIntraFrameSize(size), size.Height)
+	if err != nil {
+		return IntraFrameHeaderParams{}, err
+	}
+	header := IntraFrameHeaderParams{
+		Prefix:       prefix,
+		Size:         size,
+		Tile:         tiles,
+		Quantization: quant,
+		LoopFilter:   defaultCompleteHeaderLoopFilter(allLossless),
+		CDEF:         defaultCompleteHeaderCDEF(seq, allLossless, size.AllowIntrabc),
+		Restoration:  RestorationParams{},
+		TransformRef: defaultCompleteHeaderTransform(prefix, allLossless),
+		FrameMode:    FrameModeParams{},
+		FilmGrain:    FilmGrainParams{},
+		AllLossless:  allLossless,
+	}
+	if _, err := IntraFrameHeaderPayloadSize(seq, header); err != nil {
+		return IntraFrameHeaderParams{}, err
+	}
+	return header, nil
+}
+
+func completeInterFrameHeaderParams(frame InterHeaderFrame, settings FrameEncodeSettings, refs *parser.ReferenceState) (InterFrameHeaderParams, error) {
+	if refs == nil {
+		return InterFrameHeaderParams{}, ErrInvalidFrame
+	}
+	quant, allLossless, err := defaultCompleteHeaderQuantization(settings.RateControl, settings.Quantizer)
+	if err != nil {
+		return InterFrameHeaderParams{}, err
+	}
+	tiles, err := defaultCompleteHeaderTileInfo(frame.Sequence, frame.Prefix, codedWidthFromInterFrameSize(frame.Size), frame.Size.Height)
+	if err != nil {
+		return InterFrameHeaderParams{}, err
+	}
+	*refs = completeHeaderReferenceState(frame)
+	header := InterFrameHeaderParams{
+		Prefix:       frame.Prefix,
+		Size:         frame.Size,
+		Tile:         tiles,
+		Quantization: quant,
+		LoopFilter:   defaultCompleteHeaderLoopFilter(allLossless),
+		CDEF:         defaultCompleteHeaderCDEF(frame.Sequence, allLossless, false),
+		Restoration:  RestorationParams{},
+		TransformRef: defaultCompleteHeaderTransform(frame.Prefix, allLossless),
+		SkipMode:     SkipModeParams{},
+		FrameMode:    FrameModeParams{},
+		GlobalMotion: DefaultGlobalMotionParams(),
+		FilmGrain:    FilmGrainParams{},
+		AllLossless:  allLossless,
+		References:   refs,
+	}
+	if _, err := InterFrameHeaderPayloadSize(frame.Sequence, header); err != nil {
+		return InterFrameHeaderParams{}, err
+	}
+	return header, nil
+}
+
+func defaultCompleteHeaderQuantization(rc RateControlMode, quantizer uint8) (QuantizationParams, bool, error) {
+	if !rc.Valid() {
+		return QuantizationParams{}, false, ErrInvalidFrame
+	}
+	baseQ := uint8(32)
+	if rc == RateControlCQP {
+		if quantizer > WebRTCMaxQuantizer {
+			return QuantizationParams{}, false, ErrInvalidFrame
+		}
+		baseQ = quantizer
+	}
+	quant := QuantizationParams{BaseQIdx: baseQ}
+	return quant, baseQ == 0, nil
+}
+
+func defaultCompleteHeaderLoopFilter(allLossless bool) LoopFilterParams {
+	lf := LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
+	if allLossless {
+		lf.ModeRefDeltaEnabled = true
+		lf.ModeRefDeltaUpdate = true
+	}
+	return lf
+}
+
+func defaultCompleteHeaderCDEF(seq SequenceHeader, allLossless bool, allowIntrabc bool) CDEFParams {
+	if allLossless || !seq.EnableCDEF || allowIntrabc {
+		return CDEFParams{}
+	}
+	return CDEFParams{Damping: 3}
+}
+
+func defaultCompleteHeaderTransform(prefix FrameHeaderPrefix, allLossless bool) TransformReferenceParams {
+	if allLossless {
+		return TransformReferenceParams{TransformMode: TransformMode4x4Only, ReferenceMode: ReferenceModeSingle}
+	}
+	return TransformReferenceParams{TransformMode: TransformModeLargest, ReferenceMode: ReferenceModeSingle}
+}
+
+func defaultCompleteHeaderTileInfo(seq SequenceHeader, prefix FrameHeaderPrefix, codedWidth uint32, height uint32) (TileInfo, error) {
+	derived, err := deriveEncoderTileInfo(seq, codedWidth, height, TileInfo{})
+	if err != nil {
+		return TileInfo{}, err
+	}
+	tiles := TileInfo{
+		RefreshContext:      !seq.ReducedStillPictureHeader && !prefix.DisableCDFUpdate,
+		UniformSpacing:      true,
+		SBCols:              derived.SBCols,
+		SBRows:              derived.SBRows,
+		MinLog2Cols:         derived.MinLog2Cols,
+		MaxLog2Cols:         derived.MaxLog2Cols,
+		MaxLog2Rows:         derived.MaxLog2Rows,
+		MinLog2Tiles:        derived.MinLog2Tiles,
+		Log2Cols:            derived.MinLog2Cols,
+		InterpolationFilter: InterpolationEightTap,
+	}
+	if !prefix.FrameType.interOrSwitch() {
+		tiles.InterpolationFilter = 0
+	}
+	minRows := uint8(0)
+	if derived.MinLog2Tiles > tiles.Log2Cols {
+		minRows = derived.MinLog2Tiles - tiles.Log2Cols
+	}
+	tiles.MinLog2Rows = minRows
+	tiles.Log2Rows = minRows
+	fillUniformTileStarts(&tiles, derived)
+	if tiles.Log2Cols != 0 || tiles.Log2Rows != 0 {
+		tiles.TileSizeBytes = 4
+	}
+	if err := validateTileInfo(seq, prefix, tiles, derived); err != nil {
+		return TileInfo{}, err
+	}
+	return tiles, nil
+}
+
+func fillUniformTileStarts(tiles *TileInfo, derived encoderTileDerived) {
+	tileW := uint16(1 + ((uint32(derived.SBCols) - 1) >> tiles.Log2Cols))
+	cols := uint8(0)
+	for sbx := uint16(0); sbx < derived.SBCols && cols < MaxTileCols; sbx += tileW {
+		tiles.ColStartSB[cols] = sbx
+		cols++
+	}
+	tiles.ColStartSB[cols] = derived.SBCols
+	tiles.Cols = cols
+
+	tileH := uint16(1 + ((uint32(derived.SBRows) - 1) >> tiles.Log2Rows))
+	rows := uint8(0)
+	for sby := uint16(0); sby < derived.SBRows && rows < MaxTileRows; sby += tileH {
+		tiles.RowStartSB[rows] = sby
+		rows++
+	}
+	tiles.RowStartSB[rows] = derived.SBRows
+	tiles.Rows = rows
+}
+
+func completeHeaderReferenceState(frame InterHeaderFrame) parser.ReferenceState {
+	var refs parser.ReferenceState
+	defaultGlobal := parser.DefaultGlobalMotionParams()
+	for i := uint8(0); i < parser.RefFrames; i++ {
+		refs.Frames[i] = parser.ReferenceFrame{
+			Valid:        true,
+			OrderHint:    frame.Prefix.OrderHint,
+			GlobalMotion: defaultGlobal,
+			Size: parser.FrameSize{
+				CodedWidth:          codedWidthFromInterFrameSize(frame.Size),
+				UpscaledWidth:       frame.Size.UpscaledWidth,
+				Height:              frame.Size.Height,
+				RenderWidth:         frame.Size.RenderWidth,
+				RenderHeight:        frame.Size.RenderHeight,
+				SuperResDenominator: frame.Size.SuperResDenominator,
+			},
+		}
+	}
+	return refs
 }
