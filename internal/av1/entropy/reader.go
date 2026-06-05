@@ -1083,7 +1083,7 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 	tellOffs := int32(c.tellOffs)
 
 	level := uint8(0)
-	for {
+	for range 4 {
 		rangeValue := rng
 		rngHi := rangeValue >> 8
 		coded := dif >> (ecWindow - 16)
@@ -1144,7 +1144,7 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 			values[4] = count + 1
 		}
 		level += symbol
-		if symbol != 3 || level == cdf4HighTokenMax {
+		if symbol != 3 {
 			break
 		}
 	}
