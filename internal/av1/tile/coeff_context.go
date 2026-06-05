@@ -310,7 +310,7 @@ func coeffVisibleSpan(req CoeffContextRequest, txDims TransformDimensions) (int,
 	if req.VisibleH4 != 0 {
 		visibleH = int(req.VisibleH4)
 	}
-	if visibleW < 0 || visibleH < 0 || visibleW > int(txDims.W4) || visibleH > int(txDims.H4) {
+	if visibleW > int(txDims.W4) || visibleH > int(txDims.H4) {
 		return 0, 0, ErrInvalidDecodeState
 	}
 	return visibleW, visibleH, nil
