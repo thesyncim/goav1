@@ -2491,8 +2491,8 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 	if edge.LevelFromPrevious {
 		plan.PreviousLevelEdges++
 	}
-	storedEdges, ok := frameWorkLoopFilterCounterLen(plan.StoredEdges)
-	if ok && storedEdges < len(edges) {
+	if plan.StoredEdges < uint32(len(edges)) {
+		storedEdges := int(plan.StoredEdges)
 		edges[storedEdges] = edge
 		plan.StoredEdges++
 		return
