@@ -2254,19 +2254,19 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 	rngHi := rangeValue >> 8
 	coded := dif >> (ecWindow - 16)
 	upper := rangeValue
-	c0 := uint32(values[0])
-	c1 := uint32(values[1])
-	c2 := uint32(values[2])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+	c0 := values[0]
+	c1 := values[1]
+	c2 := values[2]
+	lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
 	symbol := 0
 	if coded < lower {
 		symbol = 1
 		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
 		if coded < lower {
 			symbol = 2
 			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+			lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
 			if coded < lower {
 				symbol = 3
 				upper = lower
@@ -2275,7 +2275,7 @@ func (c *Cursor) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
-		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
+		traceCDFRead(c0, 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
@@ -2346,24 +2346,27 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	count := values[4]
 	rate := uint(5 + (count >> 4))
+	c0u := uint32(c0)
+	c1u := uint32(c1)
+	c2u := uint32(c2)
 	if symbol > 0 {
-		c0 += (CDFProbTop - c0) >> rate
+		c0u += (CDFProbTop - c0u) >> rate
 	} else {
-		c0 -= c0 >> rate
+		c0u -= c0u >> rate
 	}
 	if symbol > 1 {
-		c1 += (CDFProbTop - c1) >> rate
+		c1u += (CDFProbTop - c1u) >> rate
 	} else {
-		c1 -= c1 >> rate
+		c1u -= c1u >> rate
 	}
 	if symbol > 2 {
-		c2 += (CDFProbTop - c2) >> rate
+		c2u += (CDFProbTop - c2u) >> rate
 	} else {
-		c2 -= c2 >> rate
+		c2u -= c2u >> rate
 	}
-	values[0] = uint16(c0)
-	values[1] = uint16(c1)
-	values[2] = uint16(c2)
+	values[0] = uint16(c0u)
+	values[1] = uint16(c1u)
+	values[2] = uint16(c2u)
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
