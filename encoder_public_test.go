@@ -453,6 +453,66 @@ func TestPublicEncoderLowOverheadIntraHeaderTemporalUnitForConfig(t *testing.T) 
 	}
 }
 
+func TestPublicEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	unitSize, wantUnit, err := av1.EncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(cfg, 12, 300)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfigSize: %v", err)
+	}
+	var buf [192]byte
+	out, gotUnit, err := av1.AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(buf[:0], cfg, 12, 300)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	if len(out) != unitSize || gotUnit != wantUnit || gotUnit.FrameNum != 2 ||
+		gotUnit.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 300 {
+		t.Fatalf("len=%d want=%d got=%+v want=%+v", len(out), unitSize, gotUnit, wantUnit)
+	}
+
+	it := av1.NewTemporalUnitIterator(out)
+	tu, ok, err := it.Next()
+	if err != nil || !ok || !bytes.Equal(tu.Raw, out) {
+		t.Fatalf("temporal unit ok=%v err=%v raw=% x", ok, err, tu.Raw)
+	}
+	descriptorSize, err := av1.EncoderWebRTCDependencyDescriptorSize(
+		gotUnit.Control.DependencyStructure,
+		gotUnit.Control.Frames[0].GenericFrameInfo,
+		gotUnit.Control.Frames[0].AttachDependencyStructure,
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDependencyDescriptorSize: %v", err)
+	}
+	var descriptorBuf [64]byte
+	descriptor, err := av1.AppendEncoderWebRTCDependencyDescriptor(
+		descriptorBuf[:0],
+		gotUnit.Control.DependencyStructure,
+		gotUnit.Control.Frames[0].GenericFrameInfo,
+		true,
+		gotUnit.FrameNum == 1,
+		gotUnit.Control.Frames[0].AttachDependencyStructure,
+	)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor: %v", err)
+	}
+	if len(descriptor) != descriptorSize {
+		t.Fatalf("descriptor len=%d want=%d", len(descriptor), descriptorSize)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = av1.AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(buf[:0], cfg, 12, 300)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	seq := av1.EncoderSequenceHeader{
 		Profile:               av1.EncoderProfile0,
