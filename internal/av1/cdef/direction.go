@@ -23,6 +23,9 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 }
 
 func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int32) {
+	if coeffShift == 0 {
+		return findDirection8Unchecked(img, stride)
+	}
 	var partial [8][15]int32
 	shift := uint(coeffShift)
 	for i := range 8 {
@@ -30,6 +33,26 @@ func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int3
 		iHalf := i >> 1
 		for j := range 8 {
 			x := int32(img[rowBase+j]>>shift) - 128
+			partial[0][i+j] += x
+			partial[1][i+(j>>1)] += x
+			partial[2][i] += x
+			partial[3][3+i-(j>>1)] += x
+			partial[4][7+i-j] += x
+			partial[5][3-iHalf+j] += x
+			partial[6][j] += x
+			partial[7][iHalf+j] += x
+		}
+	}
+	return finishDirection(&partial)
+}
+
+func findDirection8Unchecked(img []uint16, stride int) (int, int32) {
+	var partial [8][15]int32
+	for i := range 8 {
+		rowBase := i * stride
+		iHalf := i >> 1
+		for j := range 8 {
+			x := int32(img[rowBase+j]) - 128
 			partial[0][i+j] += x
 			partial[1][i+(j>>1)] += x
 			partial[2][i] += x
@@ -55,6 +78,9 @@ func FindDirectionDual(img1 []uint16, img2 []uint16, stride int, coeffShift int)
 }
 
 func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
+	if coeffShift == 0 {
+		return findDirectionDual8Unchecked(img1, img2, stride)
+	}
 	var partial1 [8][15]int32
 	var partial2 [8][15]int32
 	shift := uint(coeffShift)
@@ -199,6 +225,172 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 
 		x1 = int32(row1[7]>>shift) - 128
 		x2 = int32(row2[7]>>shift) - 128
+		partial1[0][i+7] += x1
+		partial1[1][i+3] += x1
+		partial1[2][i] += x1
+		partial1[3][i] += x1
+		partial1[4][i] += x1
+		partial1[5][10-iHalf] += x1
+		partial1[6][7] += x1
+		partial1[7][iHalf+7] += x1
+		partial2[0][i+7] += x2
+		partial2[1][i+3] += x2
+		partial2[2][i] += x2
+		partial2[3][i] += x2
+		partial2[4][i] += x2
+		partial2[5][10-iHalf] += x2
+		partial2[6][7] += x2
+		partial2[7][iHalf+7] += x2
+	}
+	dir1, var1 := finishDirection(&partial1)
+	dir2, var2 := finishDirection(&partial2)
+	return dir1, var1, dir2, var2
+}
+
+func findDirectionDual8Unchecked(img1 []uint16, img2 []uint16, stride int) (int, int32, int, int32) {
+	var partial1 [8][15]int32
+	var partial2 [8][15]int32
+	for i := range 8 {
+		rowBase := i * stride
+		iHalf := i >> 1
+		row1 := img1[rowBase : rowBase+8]
+		row2 := img2[rowBase : rowBase+8]
+
+		x1 := int32(row1[0]) - 128
+		x2 := int32(row2[0]) - 128
+		partial1[0][i] += x1
+		partial1[1][i] += x1
+		partial1[2][i] += x1
+		partial1[3][i+3] += x1
+		partial1[4][i+7] += x1
+		partial1[5][3-iHalf] += x1
+		partial1[6][0] += x1
+		partial1[7][iHalf] += x1
+		partial2[0][i] += x2
+		partial2[1][i] += x2
+		partial2[2][i] += x2
+		partial2[3][i+3] += x2
+		partial2[4][i+7] += x2
+		partial2[5][3-iHalf] += x2
+		partial2[6][0] += x2
+		partial2[7][iHalf] += x2
+
+		x1 = int32(row1[1]) - 128
+		x2 = int32(row2[1]) - 128
+		partial1[0][i+1] += x1
+		partial1[1][i] += x1
+		partial1[2][i] += x1
+		partial1[3][i+3] += x1
+		partial1[4][i+6] += x1
+		partial1[5][4-iHalf] += x1
+		partial1[6][1] += x1
+		partial1[7][iHalf+1] += x1
+		partial2[0][i+1] += x2
+		partial2[1][i] += x2
+		partial2[2][i] += x2
+		partial2[3][i+3] += x2
+		partial2[4][i+6] += x2
+		partial2[5][4-iHalf] += x2
+		partial2[6][1] += x2
+		partial2[7][iHalf+1] += x2
+
+		x1 = int32(row1[2]) - 128
+		x2 = int32(row2[2]) - 128
+		partial1[0][i+2] += x1
+		partial1[1][i+1] += x1
+		partial1[2][i] += x1
+		partial1[3][i+2] += x1
+		partial1[4][i+5] += x1
+		partial1[5][5-iHalf] += x1
+		partial1[6][2] += x1
+		partial1[7][iHalf+2] += x1
+		partial2[0][i+2] += x2
+		partial2[1][i+1] += x2
+		partial2[2][i] += x2
+		partial2[3][i+2] += x2
+		partial2[4][i+5] += x2
+		partial2[5][5-iHalf] += x2
+		partial2[6][2] += x2
+		partial2[7][iHalf+2] += x2
+
+		x1 = int32(row1[3]) - 128
+		x2 = int32(row2[3]) - 128
+		partial1[0][i+3] += x1
+		partial1[1][i+1] += x1
+		partial1[2][i] += x1
+		partial1[3][i+2] += x1
+		partial1[4][i+4] += x1
+		partial1[5][6-iHalf] += x1
+		partial1[6][3] += x1
+		partial1[7][iHalf+3] += x1
+		partial2[0][i+3] += x2
+		partial2[1][i+1] += x2
+		partial2[2][i] += x2
+		partial2[3][i+2] += x2
+		partial2[4][i+4] += x2
+		partial2[5][6-iHalf] += x2
+		partial2[6][3] += x2
+		partial2[7][iHalf+3] += x2
+
+		x1 = int32(row1[4]) - 128
+		x2 = int32(row2[4]) - 128
+		partial1[0][i+4] += x1
+		partial1[1][i+2] += x1
+		partial1[2][i] += x1
+		partial1[3][i+1] += x1
+		partial1[4][i+3] += x1
+		partial1[5][7-iHalf] += x1
+		partial1[6][4] += x1
+		partial1[7][iHalf+4] += x1
+		partial2[0][i+4] += x2
+		partial2[1][i+2] += x2
+		partial2[2][i] += x2
+		partial2[3][i+1] += x2
+		partial2[4][i+3] += x2
+		partial2[5][7-iHalf] += x2
+		partial2[6][4] += x2
+		partial2[7][iHalf+4] += x2
+
+		x1 = int32(row1[5]) - 128
+		x2 = int32(row2[5]) - 128
+		partial1[0][i+5] += x1
+		partial1[1][i+2] += x1
+		partial1[2][i] += x1
+		partial1[3][i+1] += x1
+		partial1[4][i+2] += x1
+		partial1[5][8-iHalf] += x1
+		partial1[6][5] += x1
+		partial1[7][iHalf+5] += x1
+		partial2[0][i+5] += x2
+		partial2[1][i+2] += x2
+		partial2[2][i] += x2
+		partial2[3][i+1] += x2
+		partial2[4][i+2] += x2
+		partial2[5][8-iHalf] += x2
+		partial2[6][5] += x2
+		partial2[7][iHalf+5] += x2
+
+		x1 = int32(row1[6]) - 128
+		x2 = int32(row2[6]) - 128
+		partial1[0][i+6] += x1
+		partial1[1][i+3] += x1
+		partial1[2][i] += x1
+		partial1[3][i] += x1
+		partial1[4][i+1] += x1
+		partial1[5][9-iHalf] += x1
+		partial1[6][6] += x1
+		partial1[7][iHalf+6] += x1
+		partial2[0][i+6] += x2
+		partial2[1][i+3] += x2
+		partial2[2][i] += x2
+		partial2[3][i] += x2
+		partial2[4][i+1] += x2
+		partial2[5][9-iHalf] += x2
+		partial2[6][6] += x2
+		partial2[7][iHalf+6] += x2
+
+		x1 = int32(row1[7]) - 128
+		x2 = int32(row2[7]) - 128
 		partial1[0][i+7] += x1
 		partial1[1][i+3] += x1
 		partial1[2][i] += x1
