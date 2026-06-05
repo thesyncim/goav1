@@ -818,11 +818,12 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	baseEOBArr := &cdfs.CoeffBaseEOB[txCtx][req.Plane]
 	brArr := &cdfs.CoeffBR[txBR][req.Plane]
 	eobCDF := eobFlagCDFKnown(cdfs, req.Size, req.Plane, req.EOBMultiContext)
+	eobSymbols := int(eobMultiSizeTable[req.Size]) + 5
 	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
 	cdfUpdate := s.Reader.AllowCDFUpdate()
 	reader := s.Reader.Cursor()
-	eob, err := readEOBCursorKnown(&reader, eobCDF, eobExtraArr)
+	eob, err := readEOBCursorKnown(&reader, eobCDF, eobSymbols, eobExtraArr)
 	if err != nil {
 		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{}, err
@@ -1373,7 +1374,8 @@ func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 		return EOBResult{}, ErrInvalidDecodeState
 	}
 	var eobCDF *entropy.CDF
-	switch eobMultiSizeTable[size] {
+	eobMultiSize := eobMultiSizeTable[size]
+	switch eobMultiSize {
 	case 0:
 		eobCDF = &cdfs.EOBFlag16[plane][context]
 	case 1:
@@ -1390,11 +1392,11 @@ func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 		eobCDF = &cdfs.EOBFlag1024[plane][context]
 	}
 
-	return readEOBCursorKnown(reader, eobCDF, &cdfs.EOBExtra[txCtx][plane])
+	return readEOBCursorKnown(reader, eobCDF, int(eobMultiSize)+5, &cdfs.EOBExtra[txCtx][plane])
 }
 
-func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobExtraArr *[EOBCoefContexts]entropy.CDF) (EOBResult, error) {
-	token := reader.ReadCDFUnchecked(eobCDF) + 1
+func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobSymbols int, eobExtraArr *[EOBCoefContexts]entropy.CDF) (EOBResult, error) {
+	token := reader.ReadCDFSymbolsUnchecked(eobCDF, eobSymbols) + 1
 	offsetBits := eobOffsetBits[token]
 	extra := 0
 	if offsetBits > 0 {

@@ -749,6 +749,21 @@ func (c *Cursor) ReadCDFUnchecked(cdf *CDF) int {
 	}
 }
 
+// ReadCDFSymbolsUnchecked decodes one symbol from cursor state with the symbol
+// count supplied by a caller that already proved the CDF shape.
+func (c *Cursor) ReadCDFSymbolsUnchecked(cdf *CDF, symbols int) int {
+	switch symbols {
+	case 2:
+		return c.readBinaryCDFKnown(&cdf.values)
+	case 3:
+		return c.readCDF3Known(&cdf.values)
+	case 4:
+		return c.readCDF4Known(&cdf.values)
+	default:
+		return c.readSymbolKnown(&cdf.values, symbols)
+	}
+}
+
 // readSymbolKnown is the fixed-array core for trusted CDF objects with more
 // than four symbols. It matches the cursor helper's raw CDF-row shape while
 // preserving Reader's invalid-range guard for public ReadCDF callers.
