@@ -627,6 +627,23 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(frameOBUDst []byte, 
 	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, nil
 }
 
+func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, err error) {
+	return AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(
+		scratch.FrameOBU,
+		payloadDst,
+		descriptorDst,
+		scratch.FrameSpans,
+		scratch.PacketSpans,
+		framePayloads,
+		limits,
+		unit,
+		state,
+		scratch.OBUs,
+		scratch.Packets,
+		scratch.Work,
+	)
+}
+
 func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitRTPScratchSize, error) {
 	packetizer, err := RTPPacketizerScratchLen(payload, limits, obuScratch)
 	size := EncoderWebRTCPictureTemporalUnitRTPScratchSize{Packetizer: packetizer}
