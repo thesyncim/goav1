@@ -428,6 +428,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	var frameOBUBuf [32]byte
 	var frameRTPBuf [32]byte
 	var spans [4]EncoderWebRTCRTPPacketSpan
+	var obuSpans [2]EncoderWebRTCFrameOBUSpan
 	var frameSpans [2]EncoderWebRTCFrameRTPPacketSpan
 	framePayloads := [...][]byte{frame, frame}
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -440,6 +441,8 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		_, _ = AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(descriptorBuf[:0], unit, state, 1, true, true, false)
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitFrameOBUSize(frame, unit, state, 1)
 		_, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUBuf[:0], frame, unit, state, 1)
+		_, _ = EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads[:], unit, state)
+		_, _, _ = AppendEncoderWebRTCPictureTemporalUnitFramesOBU(frameRTPBuf[:0], obuSpans[:], framePayloads[:], unit, state)
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(frame, limits, unit, state, 1, frameRTPBuf[:0], obuScratch[:], packetScratch[:], workScratch[:])
 		_, _, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFrameRTPPackets(payloadBuf[:0], descriptorBuf[:0], spans[:], frameRTPBuf[:0], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
 		_, _ = EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads[:], limits, unit, state, frameRTPBuf[:0], obuScratch[:], packetScratch[:], workScratch[:])
@@ -503,6 +506,70 @@ func TestPublicRTPScheduledPictureFrameOBU(t *testing.T) {
 	}
 	if _, _, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, 2); err != ErrEncoderInvalidFrame {
 		t.Fatalf("bad frame index err=%v want %v", err, ErrEncoderInvalidFrame)
+	}
+}
+
+func TestPublicRTPScheduledPictureFramesOBU(t *testing.T) {
+	cfg := EncoderConfig{
+		Resolution:        EncoderResolution{Width: 640, Height: 360},
+		Scalability:       EncoderScalabilityModeL2T2,
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	unit, state, err := EncoderWebRTCNextTemporalUnitForState(cfg, EncoderWebRTCState{NextFrameID: 40}, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState key: %v", err)
+	}
+	framePayloads := [][]byte{
+		{0xaa, 0xbb},
+		{0xcc, 0xdd, 0xee},
+	}
+	size, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitFramesOBUSize: %v", err)
+	}
+	frame0, control0, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayloads[0], unit, state, 0)
+	if err != nil {
+		t.Fatalf("frame0 size: %v", err)
+	}
+	frame1, control1, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayloads[1], unit, state, 1)
+	if err != nil {
+		t.Fatalf("frame1 size: %v", err)
+	}
+	if size != frame0+frame1 || control0.Settings.SpatialID != 0 || control1.Settings.SpatialID != 1 {
+		t.Fatalf("size=%d frame0=%d frame1=%d control0=%+v control1=%+v", size, frame0, frame1, control0, control1)
+	}
+
+	buf := make([]byte, 0, size)
+	var spans [2]EncoderWebRTCFrameOBUSpan
+	out, frameCount, err := AppendEncoderWebRTCPictureTemporalUnitFramesOBU(buf, spans[:], framePayloads, unit, state)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCPictureTemporalUnitFramesOBU: %v", err)
+	}
+	if len(out) != size || frameCount != 2 || spans[0].Offset != 0 || spans[0].Length != frame0 ||
+		spans[1].Offset != frame0 || spans[1].Length != frame1 {
+		t.Fatalf("len=%d/%d frameCount=%d spans=%+v", len(out), size, frameCount, spans)
+	}
+	for i, span := range spans {
+		parsed, consumed, err := ParseLowOverheadOBU(out[span.Offset : span.Offset+span.Length])
+		if err != nil {
+			t.Fatalf("ParseLowOverheadOBU frame %d: %v", i, err)
+		}
+		if consumed != span.Length || parsed.Header.Type != OBUFrame || parsed.Header.SpatialID != uint8(i) ||
+			string(parsed.Payload) != string(framePayloads[i]) {
+			t.Fatalf("frame %d parsed=%+v consumed=%d span=%+v payload=% x", i, parsed.Header, consumed, span, parsed.Payload)
+		}
+	}
+	if _, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads[:1], unit, state); err != ErrEncoderInvalidFrame {
+		t.Fatalf("short payload list size err=%v want %v", err, ErrEncoderInvalidFrame)
+	}
+	if _, _, err := AppendEncoderWebRTCPictureTemporalUnitFramesOBU(buf[:0], spans[:1], framePayloads, unit, state); !errors.Is(err, ErrEncoderShortBuffer) {
+		t.Fatalf("short spans err=%v want %v", err, ErrEncoderShortBuffer)
+	}
+	if out, _, err := AppendEncoderWebRTCPictureTemporalUnitFramesOBU(buf[:0:1], spans[:], framePayloads, unit, state); !errors.Is(err, ErrEncoderShortBuffer) || len(out) != 0 {
+		t.Fatalf("short dst out=% x err=%v want %v", out, err, ErrEncoderShortBuffer)
 	}
 }
 

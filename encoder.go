@@ -120,6 +120,11 @@ type EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo struct {
 	RTP           EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo
 }
 
+type EncoderWebRTCFrameOBUSpan struct {
+	Offset int
+	Length int
+}
+
 type EncoderWebRTCFrameRTPPacketSpan struct {
 	FrameOBUOffset int
 	FrameOBULength int
@@ -392,6 +397,46 @@ func AppendEncoderWebRTCPictureTemporalUnitFrameOBU(dst []byte, payload []byte, 
 	return out, control, structure, nil
 }
 
+func EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads [][]byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) (int, error) {
+	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum == 0 || len(framePayloads) != int(frameNum) {
+		return 0, ErrEncoderInvalidFrame
+	}
+	size := 0
+	for i := uint8(0); i < frameNum; i++ {
+		frameSize, _, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayloads[i], unit, state, i)
+		if err != nil {
+			return 0, err
+		}
+		size += frameSize
+	}
+	return size, nil
+}
+
+func AppendEncoderWebRTCPictureTemporalUnitFramesOBU(dst []byte, spans []EncoderWebRTCFrameOBUSpan, framePayloads [][]byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) ([]byte, int, error) {
+	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum == 0 || len(framePayloads) != int(frameNum) {
+		return dst, 0, ErrEncoderInvalidFrame
+	}
+	if len(spans) < int(frameNum) {
+		return dst, 0, ErrEncoderShortBuffer
+	}
+	out := dst
+	for i := uint8(0); i < frameNum; i++ {
+		start := len(out)
+		next, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(out, framePayloads[i], unit, state, i)
+		if err != nil {
+			return dst, 0, err
+		}
+		out = next
+		spans[i] = EncoderWebRTCFrameOBUSpan{
+			Offset: start,
+			Length: len(out) - start,
+		}
+	}
+	return out, int(frameNum), nil
+}
+
 func EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
 	frameOBUSize, control, structure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayload, unit, state, frameIndex)
 	if err != nil {
@@ -434,8 +479,12 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
 		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, ErrEncoderInvalidFrame
 	}
+	frameOBUBytes, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
+	}
 	frameOBUs := frameOBUScratch[:0]
-	var size EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo
+	size := EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{FrameOBUBytes: frameOBUBytes}
 	for i := uint8(0); i < frameNum; i++ {
 		frameStart := len(frameOBUs)
 		nextFrameOBUs, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
@@ -451,7 +500,6 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte
 		size.RTP.PayloadBytes += rtpSize.PayloadBytes
 		size.RTP.DescriptorBytes += rtpSize.DescriptorBytes
 	}
-	size.FrameOBUBytes = len(frameOBUs)
 	return size, nil
 }
 
