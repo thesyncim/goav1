@@ -400,12 +400,12 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
 	}
-	src := c.src
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 	var v uint32
 	for range n {
 		rangeValue := rng
@@ -423,6 +423,11 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		bit := uint8(1 - takeUpper)
 
 		if traceEntropyReads {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
 		}
 		shift := normShift16(nextRange)
@@ -430,15 +435,23 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng = nextRange << uint(shift)
 		if cnt < 0 {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			src := c.src
 			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 		}
 		v = (v << 1) | uint32(bit)
 	}
-	c.pos = uint32(pos)
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 	return v
 }
 
