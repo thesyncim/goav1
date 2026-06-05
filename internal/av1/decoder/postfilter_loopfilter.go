@@ -817,19 +817,20 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	reqY4 := int(req.Y4)
 	xEnd := reqX4 + int(req.VisibleW4)
 	yEnd := reqY4 + int(req.VisibleH4)
+	frameBaseX4 := int(block.MICol) + reqX4 - blockX4
+	frameY4 := int(block.MIRow) + reqY4 - blockY4
 	for y4 := reqY4; y4 < yEnd; y4 += int(dims.H4) {
 		visibleH4 := minInt(int(dims.H4), yEnd-y4)
 		if visibleH4 <= 0 {
 			return threading.ErrInvalidBatch
 		}
+		frameX4 := frameBaseX4
 		for x4 := reqX4; x4 < xEnd; x4 += int(dims.W4) {
 			visibleW4 := minInt(int(dims.W4), xEnd-x4)
 			if visibleW4 <= 0 {
 				return threading.ErrInvalidBatch
 			}
 			plan.LumaTXBs++
-			frameX4 := int(block.MICol) + x4 - blockX4
-			frameY4 := int(block.MIRow) + y4 - blockY4
 			if frameX4 > 0 {
 				if !haveVerticalWidth {
 					verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
@@ -854,7 +855,9 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 					return err
 				}
 			}
+			frameX4 += int(dims.W4)
 		}
+		frameY4 += int(dims.H4)
 	}
 	return nil
 }
