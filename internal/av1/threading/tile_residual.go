@@ -1021,6 +1021,12 @@ func (b *FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) 
 // caller's prediction hook, decodes residual TXBs, and reconstructs each decoded
 // TXB into the batch output frame.
 func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) (FrameWorkTileResidualStats, error) {
+	return (&b).DecodeAndReconstructJobResidualsPtr(index, state, cdfs, scratch, req)
+}
+
+// DecodeAndReconstructJobResidualsPtr is the pointer-core form used by typed
+// residual runners that already own a stack-local batch context.
+func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) (FrameWorkTileResidualStats, error) {
 	if state == nil || scratch == nil || (req.Transforms == nil && !req.UseDefaultTransforms) {
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
 	}
@@ -1067,12 +1073,13 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	// goroutines. When neither is set, the fused single-thread path runs
 	// verbatim at zero added cost.
 	wavefrontWorkers := uint16(0)
-	if req.Predict == nil && frameWorkWavefrontEligible(b, index) {
+	if req.Predict == nil && frameWorkWavefrontEligible(*b, index) {
 		wavefrontWorkers = b.WavefrontWorkers
 	}
 	deferReconstruction := frameWorkDeferReconstruction || wavefrontWorkers > 1
+	batchValue := *b
 	scratch.controller = frameWorkTileResidualLoopController{
-		batch:                  b,
+		batch:                  batchValue,
 		index:                  index,
 		state:                  state,
 		cdfs:                   cdfs,
@@ -1092,7 +1099,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 	// pays no extra copy: it dereferences exactly the buffers the previous
 	// inline calls used.
 	scratch.controller.recon = frameWorkReconState{
-		batch:             b,
+		batch:             batchValue,
 		index:             index,
 		stats:             &scratch.stats,
 		predict:           req.Predict,
@@ -1173,7 +1180,7 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsDefault(index int, stat
 	if err != nil {
 		return FrameWorkTileResidualStats{}, err
 	}
-	return b.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, FrameWorkTileResidualRequest{
+	return b.DecodeAndReconstructJobResidualsPtr(index, state, cdfs, scratch, FrameWorkTileResidualRequest{
 		Loop:                 loopReq,
 		TransformMode:        b.TransformRef.TransformMode,
 		PredictionScratch:    req.PredictionScratch,

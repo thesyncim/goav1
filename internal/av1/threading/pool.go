@@ -1252,6 +1252,32 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	return firstErr
 }
 
+func ValidateSingleWorkerFrameWorkBatches(p *Pool, batches []Batch, jobs []tile.Job) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if len(p.workers) != 1 {
+		return ErrInvalidWorkerCount
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches) > len(p.workers) {
+		return ErrInvalidBatch
+	}
+	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+	p.mu.Unlock()
+	return nil
+}
+
 func (p *Pool) Close() {
 	if p == nil {
 		return

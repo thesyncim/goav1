@@ -158,6 +158,13 @@ func BindTileBlockLoopContextCarrier(rootColumns int, above []TileBlockLoopRootA
 // segment-map stride, and block-loop context carrier into the
 // returned request.
 func DecoderFrameWorkJobBlockLoopRequest(batch DecoderFrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16, carrier *TileBlockLoopContextCarrier) (TileBlockLoopRequest, error) {
+	return decoderFrameWorkJobBlockLoopRequestPtr(&batch, index, currentSegmentMap, previousSegmentMap, segmentMapStride, carrier)
+}
+
+func decoderFrameWorkJobBlockLoopRequestPtr(batch *DecoderFrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16, carrier *TileBlockLoopContextCarrier) (TileBlockLoopRequest, error) {
+	if batch == nil {
+		return TileBlockLoopRequest{}, ErrThreadingInvalidBatch
+	}
 	req, err := batch.JobBlockLoopRequest(index, currentSegmentMap, previousSegmentMap, segmentMapStride)
 	if err != nil {
 		return TileBlockLoopRequest{}, err
@@ -524,7 +531,17 @@ func decoderFrameWorkBatchResidualRunnerScratchErr(size DecoderFrameWorkBatchRes
 // by batch.Batch.Worker. It is the DecoderFrameWorkBatchFunc form of
 // the runner; pass r.Run to ExecuteDecoderFrameWorkStepWithContext.
 func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) error {
-	worker, err := r.workerIndex(batch)
+	return r.RunPtr(&batch)
+}
+
+// RunPtr decodes every residual in batch without copying the frame-work
+// context into the runner call. It is used by the internal single-worker typed
+// path; public callers should keep using Run.
+func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatch) error {
+	if batch == nil {
+		return ErrThreadingInvalidBatch
+	}
+	worker, err := r.workerIndex(*batch)
 	if err != nil {
 		return err
 	}
@@ -537,10 +554,10 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 	if req.Tile.Transforms == nil {
 		req.Tile.UseDefaultTransforms = true
 	}
-	if err := InitDecoderFrameWorkTileResidualCDFStorage(batch, &r.Storages[worker]); err != nil {
+	if err := InitDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
 		return err
 	}
-	stats, err := DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req)
+	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req)
 	r.Stats[worker] = stats
 	return err
 }
@@ -634,7 +651,14 @@ func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatc
 // reusable, lower-level building block underneath
 // DecoderFrameWorkBatchResidualRunner.Run.
 func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+	return decodeAndRetainDecoderFrameWorkBatchResidualsPtr(&batch, state, storage, scratch, req)
+}
+
+func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
 	if state == nil || storage == nil || scratch == nil {
+		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
+	}
+	if batch == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
 	}
 	var total DecoderFrameWorkTileResidualStats
@@ -650,17 +674,17 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 		// adapted CDFs (RetainDecoderFrameWorkTileResidualCDFStorage copies them
 		// out before the next iteration re-initializes the shared storage).
 		if i > 0 {
-			if err := InitDecoderFrameWorkTileResidualCDFStorage(batch, storage); err != nil {
+			if err := batch.InitTileResidualCDFStorage(storage); err != nil {
 				return total, err
 			}
 		}
 		tileReq := req.Tile
-		loopReq, err := DecoderFrameWorkJobBlockLoopRequest(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
+		loopReq, err := decoderFrameWorkJobBlockLoopRequestPtr(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
 		if err != nil {
 			return total, err
 		}
 		if req.LoopContextAbove != nil {
-			rootColumns, err := DecoderFrameWorkJobBlockLoopContextRootColumns(batch, i)
+			rootColumns, err := batch.JobBlockLoopContextRootColumns(i)
 			if err != nil {
 				return total, err
 			}
@@ -679,13 +703,30 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 		}
 		decoderFrameWorkApplyBatchResidualLoopOverrides(&loopReq, req.Tile.Loop)
 		tileReq.Loop = loopReq
-		stats, err := DecodeAndRetainDecoderFrameWorkJobResiduals(batch, i, state, storage, scratch, tileReq)
+		stats, err := decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch, i, state, storage, scratch, tileReq)
 		decoderFrameWorkAccumulateResidualStats(&total, stats)
 		if err != nil {
 			return total, err
 		}
 	}
 	return total, nil
+}
+
+func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+	if storage == nil || batch == nil {
+		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
+	}
+	if err := batch.JobDecodeState(index, state); err != nil {
+		return DecoderFrameWorkTileResidualStats{}, err
+	}
+	stats, err := batch.DecodeAndReconstructJobResidualsPtr(index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+	if err != nil {
+		return stats, err
+	}
+	if err := batch.RetainTileResidualCDFStorage(index, state, storage); err != nil {
+		return stats, err
+	}
+	return stats, nil
 }
 
 func (r *DecoderFrameWorkBatchResidualRunner) workerIndex(batch DecoderFrameWorkBatch) (int, error) {

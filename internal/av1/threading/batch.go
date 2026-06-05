@@ -94,6 +94,10 @@ func (b Batch) jobSlice(jobs []tile.Job) ([]tile.Job, error) {
 	return jobs[start:end], nil
 }
 
+func (b Batch) JobSlice(jobs []tile.Job) ([]tile.Job, error) {
+	return b.jobSlice(jobs)
+}
+
 func chooseBatchCount(jobs []tile.Job, target uint32, remainingBatches int) int {
 	units := uint32(0)
 	count := 0

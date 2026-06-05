@@ -68,6 +68,17 @@ type FrameWorkEventResult struct {
 	Run            FrameWorkStepResult
 }
 
+type FrameWorkPreparedPayloadStep struct {
+	Base           FrameWorkBatch
+	JobCount       int
+	BatchCount     int
+	ReferenceCount uint8
+	HasTileWork    bool
+	CDEFIndexMap   *threading.FrameWorkCDEFIndexMap
+	LoopFilterMap  *threading.FrameWorkLoopFilterMap
+	Restoration    *threading.FrameWorkRestorationFrameBuffers
+}
+
 // FrameWorkPostFilterContext is supplied after final tile work succeeds and
 // before the decoded surface is published to reference slots.
 type FrameWorkPostFilterContext struct {
@@ -1070,6 +1081,49 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 	}, nil
 }
 
+func PrepareFrameWorkStepWithPayloadContext(s *FrameWorkState, event Event, step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch) (FrameWorkPreparedPayloadStep, error) {
+	if !frameWorkStepMatchesEvent(event, step) {
+		return FrameWorkPreparedPayloadStep{}, ErrInvalidFrameWorkStep
+	}
+	frameContext := frameWorkFrameContext(event, s.sequenceContext())
+	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
+	var retainedTileResidualCDFsValid *bool
+	if s != nil && s.tileResidualCurrentCDFsValid {
+		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
+		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
+		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
+	}
+	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
+	return prepareFrameWorkStepWithPayload(step, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches)
+}
+
+func CompleteFrameWorkPreparedPayloadStep(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
+	if output == nil {
+		var err error
+		output, err = frameWorkPostFilterOutput(event, framePool, step, post)
+		if err != nil {
+			return FrameWorkStepResult{ExecutedTileWork: executed}, err
+		}
+	}
+	if err := runFrameWorkPostFilter(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.Restoration, post); err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     totalReleaseCount,
+	}, nil
+}
+
 func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
@@ -1650,29 +1704,41 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 }
 
 func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
-	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, payload, validatePayload, frameContext, disableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, motion, cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches)
+	if err != nil || !prepared.HasTileWork {
+		return false, err
+	}
+	err = pool.ExecuteFrameWorkRunner(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner)
 	if err != nil {
 		return false, err
 	}
+	return true, nil
+}
+
+func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch) (FrameWorkPreparedPayloadStep, error) {
+	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil {
+		return FrameWorkPreparedPayloadStep{}, err
+	}
 	if !hasTile {
-		return false, nil
+		return FrameWorkPreparedPayloadStep{ReferenceCount: referenceCount}, nil
 	}
 	if err := validateTileWorkPlan(plan, jobs, batches); err != nil {
-		return false, err
+		return FrameWorkPreparedPayloadStep{}, err
 	}
 	if plan.JobCount == 0 {
-		return false, nil
+		return FrameWorkPreparedPayloadStep{ReferenceCount: referenceCount}, nil
 	}
 	referenceCountN := int(referenceCount)
 	if referenceCountN > parser.InterRefsPerFrame {
-		return false, ErrInvalidTileWork
+		return FrameWorkPreparedPayloadStep{}, ErrInvalidTileWork
 	}
 	if len(references) < referenceCountN {
-		return false, ErrSurfaceReferenceBufferTooSmall
+		return FrameWorkPreparedPayloadStep{}, ErrSurfaceReferenceBufferTooSmall
 	}
 	if validatePayload {
 		if err := tile.ValidatePayloads(payload, jobs[:plan.JobCount]); err != nil {
-			return false, err
+			return FrameWorkPreparedPayloadStep{}, err
 		}
 	}
 
@@ -1693,11 +1759,16 @@ func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.P
 		LoopFilterMap:                 loopFilterMap,
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
-	err = pool.ExecuteFrameWorkRunner(batches[:plan.BatchCount], jobs[:plan.JobCount], base, runner)
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return FrameWorkPreparedPayloadStep{
+		Base:           base,
+		JobCount:       plan.JobCount,
+		BatchCount:     plan.BatchCount,
+		ReferenceCount: referenceCount,
+		HasTileWork:    true,
+		CDEFIndexMap:   cdefIndexMap,
+		LoopFilterMap:  loopFilterMap,
+		Restoration:    restorationFrameBuffers,
+	}, nil
 }
 
 func frameWorkFrameContext(event Event, fallback threading.FrameWorkSequenceContext) FrameWorkFrameContext {

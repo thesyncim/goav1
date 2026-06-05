@@ -1,5 +1,10 @@
 package goav1
 
+import (
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+)
+
 // DecoderFrameWorkResidualEventRequest carries caller-owned state for running
 // one decoder frame-work event with DecoderFrameWorkBatchResidualRunner.
 type DecoderFrameWorkResidualEventRequest struct {
@@ -665,6 +670,8 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	var run DecoderFrameWorkStepResult
 	if req.PostRunner != nil {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
+	} else if req.WorkerPool != nil && req.WorkerPool.WorkerCount() == 1 {
+		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, event, step, output, references)
 	} else {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
@@ -685,6 +692,39 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame) (DecoderFrameWorkStepResult, error) {
+	prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(req.State, event, step, output, references, event.Unit.Payload, req.Jobs, req.Batches)
+	if err != nil {
+		return DecoderFrameWorkStepResult{}, err
+	}
+	if !prepared.HasTileWork {
+		return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, false, req.Post)
+	}
+	batches := req.Batches[:prepared.BatchCount]
+	jobs := req.Jobs[:prepared.JobCount]
+	if err := internalthreading.ValidateSingleWorkerFrameWorkBatches(req.WorkerPool, batches, jobs); err != nil {
+		return DecoderFrameWorkStepResult{}, err
+	}
+	var firstErr error
+	for i := range batches {
+		batch := batches[i]
+		batchJobs, err := batch.JobSlice(jobs)
+		if err != nil {
+			return DecoderFrameWorkStepResult{}, err
+		}
+		ctx := prepared.Base
+		ctx.Batch = batch
+		ctx.Jobs = batchJobs
+		if err := req.Runner.RunPtr(&ctx); firstErr == nil && err != nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return DecoderFrameWorkStepResult{}, firstErr
+	}
+	return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.Post)
 }
 
 func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
