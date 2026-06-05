@@ -325,3 +325,19 @@ func EncoderFrameHeaderIntraPayloadSize(seq EncoderSequenceHeader, prefix Encode
 func AppendEncoderFrameHeaderIntraPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
 	return internalencoder.AppendFrameHeaderIntraPayload(dst, seq, prefix, size)
 }
+
+func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
+	return internalencoder.LowOverheadFrameHeaderIntraOBUSize(seq, prefix, size)
+}
+
+func AppendEncoderLowOverheadFrameHeaderIntraOBU(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
+	return internalencoder.AppendLowOverheadFrameHeaderIntraOBU(dst, seq, prefix, size)
+}
+
+func EncoderLowOverheadIntraHeaderTemporalUnitSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
+	return internalencoder.LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
+}
+
+func AppendEncoderLowOverheadIntraHeaderTemporalUnit(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
+	return internalencoder.AppendLowOverheadIntraHeaderTemporalUnit(dst, seq, prefix, size)
+}
