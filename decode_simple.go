@@ -754,12 +754,13 @@ func (a *decoderArena) takeBools(n int) []bool {
 
 func decoderPostFilterScratchFromArena(size DecoderFrameWorkPostFilterRequestScratchSize, arena *decoderArena) DecoderFrameWorkPostFilterRequestScratch {
 	return DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
-		CDEFDirectionGrid: make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:  make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
-		ByteScratch:       arena.takeBytes(size.ByteScratch),
-		Uint16Scratch:     arena.takeUint16s(size.Uint16Scratch),
-		Int16Scratch:      arena.takeInt16s(size.Int16Scratch),
-		Int32Scratch:      arena.takeInt32s(size.Int32Scratch),
+		LoopFilterEdges:    make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
+		CDEFDirectionGrid:  make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:        arena.takeBytes(size.ByteScratch),
+		Uint16Scratch:      arena.takeUint16s(size.Uint16Scratch),
+		Int16Scratch:       arena.takeInt16s(size.Int16Scratch),
+		Int32Scratch:       arena.takeInt32s(size.Int32Scratch),
 	}
 }

@@ -933,6 +933,7 @@ func publicFrameBacking(f *av1.Frame) ([]byte, error) {
 
 func publicPostFilterScratchTooSmall(s av1.DecoderFrameWorkPostFilterRequestScratch, size av1.DecoderFrameWorkPostFilterRequestScratchSize) bool {
 	return len(s.LoopFilterEdges) < size.LoopFilterEdges ||
+		len(s.LoopFilterSchedule) < size.LoopFilterSchedule ||
 		len(s.CDEFDirectionGrid) < size.CDEFDirectionGrid ||
 		len(s.CDEFVarianceGrid) < size.CDEFVarianceGrid ||
 		len(s.ByteScratch) < size.ByteScratch ||
@@ -943,13 +944,14 @@ func publicPostFilterScratchTooSmall(s av1.DecoderFrameWorkPostFilterRequestScra
 
 func publicPostFilterScratch(size av1.DecoderFrameWorkPostFilterRequestScratchSize) av1.DecoderFrameWorkPostFilterRequestScratch {
 	return av1.DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
-		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
-		ByteScratch:       make([]byte, size.ByteScratch),
-		Uint16Scratch:     make([]uint16, size.Uint16Scratch),
-		Int16Scratch:      make([]int16, size.Int16Scratch),
-		Int32Scratch:      make([]int32, size.Int32Scratch),
+		LoopFilterEdges:    make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
+		CDEFDirectionGrid:  make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:        make([]byte, size.ByteScratch),
+		Uint16Scratch:      make([]uint16, size.Uint16Scratch),
+		Int16Scratch:       make([]int16, size.Int16Scratch),
+		Int32Scratch:       make([]int32, size.Int32Scratch),
 	}
 }
 

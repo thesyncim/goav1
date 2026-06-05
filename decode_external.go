@@ -120,6 +120,7 @@ func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event Decod
 			return DecoderFrameWorkPostFilterScratchSize{}, err
 		}
 		size.LoopFilter.Edges = edges
+		size.LoopFilter.Schedule = edges
 	}
 	if remaining.Has(DecoderFrameWorkPostFilterCDEF) {
 		cdefSize, err := ctx.CDEFPostFilterScratchLen()
@@ -412,6 +413,7 @@ func decoderFrameBacking(f *Frame) ([]byte, error) {
 
 func decoderPostFilterScratchTooSmall(s DecoderFrameWorkPostFilterRequestScratch, size DecoderFrameWorkPostFilterRequestScratchSize) bool {
 	return len(s.LoopFilterEdges) < size.LoopFilterEdges ||
+		len(s.LoopFilterSchedule) < size.LoopFilterSchedule ||
 		len(s.CDEFDirectionGrid) < size.CDEFDirectionGrid ||
 		len(s.CDEFVarianceGrid) < size.CDEFVarianceGrid ||
 		len(s.ByteScratch) < size.ByteScratch ||
@@ -422,12 +424,13 @@ func decoderPostFilterScratchTooSmall(s DecoderFrameWorkPostFilterRequestScratch
 
 func decoderPostFilterScratch(size DecoderFrameWorkPostFilterRequestScratchSize) DecoderFrameWorkPostFilterRequestScratch {
 	return DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
-		CDEFDirectionGrid: make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:  make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
-		ByteScratch:       make([]byte, size.ByteScratch),
-		Uint16Scratch:     make([]uint16, size.Uint16Scratch),
-		Int16Scratch:      make([]int16, size.Int16Scratch),
-		Int32Scratch:      make([]int32, size.Int32Scratch),
+		LoopFilterEdges:    make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
+		CDEFDirectionGrid:  make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:        make([]byte, size.ByteScratch),
+		Uint16Scratch:      make([]uint16, size.Uint16Scratch),
+		Int16Scratch:       make([]int16, size.Int16Scratch),
+		Int32Scratch:       make([]int32, size.Int32Scratch),
 	}
 }

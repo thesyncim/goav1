@@ -58,7 +58,7 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(scratch, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, scratch.Edges))
+	req, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(scratch, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, scratch.Edges), make([]uint32, scratch.Schedule))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,16 +76,19 @@ func TestPublicDecoderLoopFilterMapAndPostFilterRequestBinding(t *testing.T) {
 		t.Fatalf("U horizontal=%+v", got)
 	}
 
-	manualSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 3}
-	manualReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4))
+	manualSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 3, Schedule: 3}
+	manualReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4), make([]uint32, 4))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manualReq.Edges) != 3 {
-		t.Fatalf("manual edges=%d want 3", len(manualReq.Edges))
+	if len(manualReq.Edges) != 3 || len(manualReq.Schedule) != 3 {
+		t.Fatalf("manual req=%+v", manualReq)
 	}
-	if _, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 2)); !errors.Is(err, av1.ErrFrameShortBuffer) {
+	if _, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 2), make([]uint32, 4)); !errors.Is(err, av1.ErrFrameShortBuffer) {
 		t.Fatalf("short loop-filter request err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	if _, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(manualSize, filterMap, make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4), make([]uint32, 2)); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short loop-filter schedule err=%v want %v", err, av1.ErrFrameShortBuffer)
 	}
 }
 
@@ -422,31 +425,34 @@ func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
 
 func TestPublicDecoderFrameWorkPostFilterScratchSizeMax(t *testing.T) {
 	arenaA := av1.DecoderFrameWorkPostFilterRequestScratchSize{
-		LoopFilterEdges:   1,
-		CDEFDirectionGrid: 7,
-		CDEFVarianceGrid:  3,
-		ByteScratch:       11,
-		Uint16Scratch:     5,
-		Int16Scratch:      13,
-		Int32Scratch:      2,
+		LoopFilterEdges:    1,
+		LoopFilterSchedule: 6,
+		CDEFDirectionGrid:  7,
+		CDEFVarianceGrid:   3,
+		ByteScratch:        11,
+		Uint16Scratch:      5,
+		Int16Scratch:       13,
+		Int32Scratch:       2,
 	}
 	arenaB := av1.DecoderFrameWorkPostFilterRequestScratchSize{
-		LoopFilterEdges:   4,
-		CDEFDirectionGrid: 2,
-		CDEFVarianceGrid:  8,
-		ByteScratch:       6,
-		Uint16Scratch:     20,
-		Int16Scratch:      1,
-		Int32Scratch:      9,
+		LoopFilterEdges:    4,
+		LoopFilterSchedule: 3,
+		CDEFDirectionGrid:  2,
+		CDEFVarianceGrid:   8,
+		ByteScratch:        6,
+		Uint16Scratch:      20,
+		Int16Scratch:       1,
+		Int32Scratch:       9,
 	}
 	if got, want := arenaA.Max(arenaB), (av1.DecoderFrameWorkPostFilterRequestScratchSize{
-		LoopFilterEdges:   4,
-		CDEFDirectionGrid: 7,
-		CDEFVarianceGrid:  8,
-		ByteScratch:       11,
-		Uint16Scratch:     20,
-		Int16Scratch:      13,
-		Int32Scratch:      9,
+		LoopFilterEdges:    4,
+		LoopFilterSchedule: 6,
+		CDEFDirectionGrid:  7,
+		CDEFVarianceGrid:   8,
+		ByteScratch:        11,
+		Uint16Scratch:      20,
+		Int16Scratch:       13,
+		Int32Scratch:       9,
 	}); got != want {
 		t.Fatalf("postfilter scratch max=%+v want %+v", got, want)
 	}
@@ -980,7 +986,7 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 	}
 
 	scratch := av1.DecoderFrameWorkPostFilterScratchSize{
-		LoopFilter: av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 3},
+		LoopFilter: av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 3, Schedule: 5},
 		CDEF: av1.DecoderFrameWorkCDEFPostFilterScratchSize{
 			Samples:       [3]int{64, 16, 16},
 			Dst:           [3]int{64, 16, 16},
@@ -1020,8 +1026,10 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 		outputScratch[plane] = make([]uint16, scratch.SuperRes.OutputSamples[plane]+1)
 	}
 	buffers := av1.DecoderFrameWorkPostFilterRequestBuffers{
-		LoopFilterMap:   loopFilterMap,
-		LoopFilterEdges: make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, scratch.LoopFilter.Edges+1),
+		LoopFilterMap:             loopFilterMap,
+		LoopFilterTrustedCoverage: true,
+		LoopFilterEdges:           make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, scratch.LoopFilter.Edges+1),
+		LoopFilterSchedule:        make([]uint32, scratch.LoopFilter.Schedule+1),
 
 		CDEFIndexMap:       cdefMap,
 		CDEFSampleScratch:  sampleScratch,
@@ -1056,6 +1064,8 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(req.LoopFilter.Edges) != scratch.LoopFilter.Edges ||
+		len(req.LoopFilter.Schedule) != scratch.LoopFilter.Schedule ||
+		!req.LoopFilter.TrustedCoverage ||
 		len(req.CDEF.SampleScratch[0]) != scratch.CDEF.Samples[0] ||
 		len(req.CDEF.InputScratch) != scratch.CDEF.Input ||
 		len(req.SuperRes.OutputFrame) != scratch.SuperRes.OutputFrame ||
@@ -1090,6 +1100,7 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 	}
 	wantInt16Scratch := scratch.FilmGrain.LumaGrain + scratch.FilmGrain.ChromaGrain[0] + scratch.FilmGrain.ChromaGrain[1]
 	if arenaSize.LoopFilterEdges != scratch.LoopFilter.Edges ||
+		arenaSize.LoopFilterSchedule != scratch.LoopFilter.Schedule ||
 		arenaSize.CDEFDirectionGrid != scratch.CDEF.DirectionGrid ||
 		arenaSize.CDEFVarianceGrid != scratch.CDEF.VarianceGrid ||
 		arenaSize.ByteScratch != scratch.SuperRes.OutputFrame+scratch.FilmGrain.OutputFrame ||
@@ -1099,20 +1110,22 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 		t.Fatalf("arena size=%+v want uint16=%d int16=%d", arenaSize, wantUint16Scratch, wantInt16Scratch)
 	}
 	side := av1.DecoderFrameWorkPostFilterRequestSideData{
-		LoopFilterMap:         loopFilterMap,
-		CDEFIndexMap:          cdefMap,
-		RestorationRecords:    buffers.RestorationRecords,
-		RestorationBoundaries: buffers.RestorationBoundaries,
-		RestorationOptimized:  buffers.RestorationOptimized,
+		LoopFilterMap:             loopFilterMap,
+		LoopFilterTrustedCoverage: true,
+		CDEFIndexMap:              cdefMap,
+		RestorationRecords:        buffers.RestorationRecords,
+		RestorationBoundaries:     buffers.RestorationBoundaries,
+		RestorationOptimized:      buffers.RestorationOptimized,
 	}
 	flatScratch := av1.DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, arenaSize.LoopFilterEdges+1),
-		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, arenaSize.CDEFDirectionGrid+1),
-		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, arenaSize.CDEFVarianceGrid+1),
-		ByteScratch:       make([]byte, arenaSize.ByteScratch+1),
-		Uint16Scratch:     make([]uint16, arenaSize.Uint16Scratch+1),
-		Int16Scratch:      make([]int16, arenaSize.Int16Scratch+1),
-		Int32Scratch:      make([]int32, arenaSize.Int32Scratch+1),
+		LoopFilterEdges:    make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, arenaSize.LoopFilterEdges+1),
+		LoopFilterSchedule: make([]uint32, arenaSize.LoopFilterSchedule+1),
+		CDEFDirectionGrid:  make([]av1.CDEFDirectionGrid, arenaSize.CDEFDirectionGrid+1),
+		CDEFVarianceGrid:   make([]av1.CDEFVarianceGrid, arenaSize.CDEFVarianceGrid+1),
+		ByteScratch:        make([]byte, arenaSize.ByteScratch+1),
+		Uint16Scratch:      make([]uint16, arenaSize.Uint16Scratch+1),
+		Int16Scratch:       make([]int16, arenaSize.Int16Scratch+1),
+		Int32Scratch:       make([]int32, arenaSize.Int32Scratch+1),
 	}
 	arenaReq, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(scratch, side, flatScratch)
 	if err != nil {
@@ -1146,8 +1159,9 @@ func TestPublicDecoderPostFilterRequestBinding(t *testing.T) {
 func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	sequence := publicDecoderPostFilterSequence()
 	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
-	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4}
+	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4, Schedule: 4}
 	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, loopFilterSize.Edges)
+	loopFilterSchedule := make([]uint32, loopFilterSize.Schedule)
 	cdefParams := av1.CDEFParams{Bits: 1, StrengthCount: 2}
 	restorationBuffersParams := av1.RestorationParams{
 		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
@@ -1211,7 +1225,8 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 		FilmGrain:   filmSize,
 	}
 	postFilterBuffers := av1.DecoderFrameWorkPostFilterRequestBuffers{
-		LoopFilterEdges: loopFilterEdges,
+		LoopFilterEdges:    loopFilterEdges,
+		LoopFilterSchedule: loopFilterSchedule,
 
 		CDEFSampleScratch:  sampleScratch,
 		CDEFDstScratch:     dstScratch,
@@ -1239,13 +1254,14 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 	postFilterArenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(postFilterSize)
 	postFilterSide := av1.DecoderFrameWorkPostFilterRequestSideData{}
 	postFilterArena := av1.DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
-		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
-		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
-		ByteScratch:       make([]byte, postFilterArenaSize.ByteScratch),
-		Uint16Scratch:     make([]uint16, postFilterArenaSize.Uint16Scratch),
-		Int16Scratch:      make([]int16, postFilterArenaSize.Int16Scratch),
-		Int32Scratch:      make([]int32, postFilterArenaSize.Int32Scratch),
+		LoopFilterEdges:    make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
+		LoopFilterSchedule: make([]uint32, postFilterArenaSize.LoopFilterSchedule),
+		CDEFDirectionGrid:  make([]av1.CDEFDirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]av1.CDEFVarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
+		ByteScratch:        make([]byte, postFilterArenaSize.ByteScratch),
+		Uint16Scratch:      make([]uint16, postFilterArenaSize.Uint16Scratch),
+		Int16Scratch:       make([]int16, postFilterArenaSize.Int16Scratch),
+		Int32Scratch:       make([]int32, postFilterArenaSize.Int32Scratch),
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -1259,7 +1275,7 @@ func TestPublicDecoderPostFilterBindingAllocs(t *testing.T) {
 		postFilterBuffers.RestorationRecords = sideData.RestorationFrameBuffers.Records
 		postFilterBuffers.RestorationBoundaries = sideData.RestorationFrameBuffers.Boundaries
 		postFilterSide = av1.DecoderFrameWorkPostFilterSideData(sideData)
-		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, sideData.LoopFilterMap, loopFilterEdges)
+		_, err = av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, sideData.LoopFilterMap, loopFilterEdges, loopFilterSchedule)
 		if err != nil {
 			return
 		}
@@ -1336,13 +1352,14 @@ func publicDecoderPostFilterFrame(t testing.TB, format av1.FrameFormat) *av1.Fra
 
 func publicDecoderPostFilterRequestScratch(size av1.DecoderFrameWorkPostFilterRequestScratchSize) av1.DecoderFrameWorkPostFilterRequestScratch {
 	return av1.DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:   make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
-		CDEFDirectionGrid: make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:  make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
-		ByteScratch:       make([]byte, size.ByteScratch),
-		Uint16Scratch:     make([]uint16, size.Uint16Scratch),
-		Int16Scratch:      make([]int16, size.Int16Scratch),
-		Int32Scratch:      make([]int32, size.Int32Scratch),
+		LoopFilterEdges:    make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
+		CDEFDirectionGrid:  make([]av1.CDEFDirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]av1.CDEFVarianceGrid, size.CDEFVarianceGrid),
+		ByteScratch:        make([]byte, size.ByteScratch),
+		Uint16Scratch:      make([]uint16, size.Uint16Scratch),
+		Int16Scratch:       make([]int16, size.Int16Scratch),
+		Int32Scratch:       make([]int32, size.Int32Scratch),
 	}
 }
 
