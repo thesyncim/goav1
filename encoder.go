@@ -133,6 +133,26 @@ type WebRTCEncoder struct {
 	state  EncoderWebRTCState
 }
 
+type EncoderFrameSamplePlanes struct {
+	Y FrameSamplePlane
+	U FrameSamplePlane
+	V FrameSamplePlane
+}
+
+type EncoderWebRTCPictureSampleScratchSize struct {
+	Samples  int
+	FrameNum int
+}
+
+type EncoderWebRTCPictureSampleScratch struct {
+	Samples []uint16
+}
+
+type EncoderWebRTCPictureSamplePlanes struct {
+	Frames   [EncoderWebRTCMaxSpatialLayers]EncoderFrameSamplePlanes
+	FrameNum uint8
+}
+
 type EncoderWebRTCPictureTemporalUnitRTPScratchSize struct {
 	Packetizer         RTPPacketizerScratchSize
 	MaxPayloadBytes    int
@@ -1011,6 +1031,42 @@ func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnitForFrames(dst 
 	return out, unit, nil
 }
 
+func (e *WebRTCEncoder) PictureSampleScratchSize(frames []Frame, forceKeyFrame bool) (EncoderWebRTCPictureSampleScratchSize, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	_, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
+		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	size, err := encoderPictureSampleScratchSize(frames)
+	if err != nil {
+		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	return size, unit, nil
+}
+
+func (e *WebRTCEncoder) LoadPictureSamplePlanes(scratch EncoderWebRTCPictureSampleScratch, frames []Frame, forceKeyFrame bool) (EncoderWebRTCPictureSamplePlanes, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	size, unit, err := e.PictureSampleScratchSize(frames, forceKeyFrame)
+	if err != nil {
+		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	if len(scratch.Samples) < size.Samples {
+		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, ErrFrameShortBuffer
+	}
+	planes, err := loadEncoderPictureSamplePlanes(scratch.Samples[:size.Samples], frames)
+	if err != nil {
+		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	return planes, unit, nil
+}
+
 func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, error) {
 	if e == nil {
 		return EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
@@ -1039,6 +1095,103 @@ func validateEncoderPictureFrames(frames []Frame, unit EncoderWebRTCPictureTempo
 		}
 	}
 	return nil
+}
+
+func encoderPictureSampleScratchSize(frames []Frame) (EncoderWebRTCPictureSampleScratchSize, error) {
+	total := 0
+	for i := range frames {
+		frame := frames[i]
+		layout, err := FrameRequiredSize(frame.Format)
+		if err != nil {
+			return EncoderWebRTCPictureSampleScratchSize{}, err
+		}
+		need, err := FrameSamplePlaneLen(frame.Y, layout.BytesPerSample)
+		if err != nil {
+			return EncoderWebRTCPictureSampleScratchSize{}, err
+		}
+		if !checkedAddEncoderInt(&total, need) {
+			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+		}
+		if frame.Format.MonoChrome {
+			continue
+		}
+		need, err = FrameSamplePlaneLen(frame.U, layout.BytesPerSample)
+		if err != nil {
+			return EncoderWebRTCPictureSampleScratchSize{}, err
+		}
+		if !checkedAddEncoderInt(&total, need) {
+			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+		}
+		need, err = FrameSamplePlaneLen(frame.V, layout.BytesPerSample)
+		if err != nil {
+			return EncoderWebRTCPictureSampleScratchSize{}, err
+		}
+		if !checkedAddEncoderInt(&total, need) {
+			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+		}
+	}
+	return EncoderWebRTCPictureSampleScratchSize{Samples: total, FrameNum: len(frames)}, nil
+}
+
+func loadEncoderPictureSamplePlanes(samples []uint16, frames []Frame) (EncoderWebRTCPictureSamplePlanes, error) {
+	var out EncoderWebRTCPictureSamplePlanes
+	if len(frames) > EncoderWebRTCMaxSpatialLayers {
+		return EncoderWebRTCPictureSamplePlanes{}, ErrEncoderInvalidFrame
+	}
+	off := 0
+	for i := range frames {
+		frame := frames[i]
+		layout, err := FrameRequiredSize(frame.Format)
+		if err != nil {
+			return EncoderWebRTCPictureSamplePlanes{}, err
+		}
+		yNeed, err := FrameSamplePlaneLen(frame.Y, layout.BytesPerSample)
+		if err != nil {
+			return EncoderWebRTCPictureSamplePlanes{}, err
+		}
+		y, err := LoadFrameSamplePlane(samples[off:off+yNeed], frame.Y, layout.BytesPerSample)
+		if err != nil {
+			return EncoderWebRTCPictureSamplePlanes{}, err
+		}
+		off += yNeed
+		out.Frames[i].Y = y
+		if !frame.Format.MonoChrome {
+			uNeed, err := FrameSamplePlaneLen(frame.U, layout.BytesPerSample)
+			if err != nil {
+				return EncoderWebRTCPictureSamplePlanes{}, err
+			}
+			u, err := LoadFrameSamplePlane(samples[off:off+uNeed], frame.U, layout.BytesPerSample)
+			if err != nil {
+				return EncoderWebRTCPictureSamplePlanes{}, err
+			}
+			off += uNeed
+			vNeed, err := FrameSamplePlaneLen(frame.V, layout.BytesPerSample)
+			if err != nil {
+				return EncoderWebRTCPictureSamplePlanes{}, err
+			}
+			v, err := LoadFrameSamplePlane(samples[off:off+vNeed], frame.V, layout.BytesPerSample)
+			if err != nil {
+				return EncoderWebRTCPictureSamplePlanes{}, err
+			}
+			off += vNeed
+			out.Frames[i].U = u
+			out.Frames[i].V = v
+		}
+	}
+	out.FrameNum = uint8(len(frames))
+	return out, nil
+}
+
+func checkedAddEncoderInt(dst *int, add int) bool {
+	if add < 0 {
+		return false
+	}
+	maxInt := int(^uint(0) >> 1)
+	if *dst > maxInt-add {
+		return false
+	}
+	*dst += add
+	return true
 }
 
 func encoderPictureUnitFrameSettings(unit EncoderWebRTCPictureTemporalUnit, frameIndex uint8) (EncoderFrameEncodeSettings, bool) {

@@ -1903,6 +1903,83 @@ func TestPublicWebRTCEncoderPictureHeaderTemporalUnitsForFrames(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderPictureSamplePlanes(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 200})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	normalized := enc.Config()
+	var frames [2]av1.Frame
+	var backing [2][]byte
+	for i := range frames {
+		layer := normalized.SpatialLayers[i]
+		format := av1.FrameFormat{
+			Width:        int(layer.Resolution.Width),
+			Height:       int(layer.Resolution.Height),
+			BitDepth:     normalized.BitDepth,
+			SubsamplingX: true,
+			SubsamplingY: true,
+			Align:        64,
+		}
+		layout, err := av1.FrameRequiredSize(format)
+		if err != nil {
+			t.Fatalf("FrameRequiredSize layer %d: %v", i, err)
+		}
+		backing[i] = make([]byte, layout.Size)
+		frames[i], err = av1.BindFrame(backing[i], format)
+		if err != nil {
+			t.Fatalf("BindFrame layer %d: %v", i, err)
+		}
+		frames[i].Y.Pix[2*frames[i].Y.Stride+3] = byte(20 + i)
+		frames[i].U.Pix[1*frames[i].U.Stride+2] = byte(40 + i)
+		frames[i].V.Pix[1*frames[i].V.Stride+2] = byte(60 + i)
+	}
+	size, unit, err := enc.PictureSampleScratchSize(frames[:], false)
+	if err != nil {
+		t.Fatalf("PictureSampleScratchSize: %v", err)
+	}
+	if size.Samples == 0 || size.FrameNum != 2 || !unit.Key {
+		t.Fatalf("scratch size=%+v unit=%+v", size, unit)
+	}
+	if _, _, err := enc.LoadPictureSamplePlanes(av1.EncoderWebRTCPictureSampleScratch{Samples: make([]uint16, size.Samples-1)}, frames[:], false); !errors.Is(err, av1.ErrFrameShortBuffer) {
+		t.Fatalf("short scratch err=%v want %v", err, av1.ErrFrameShortBuffer)
+	}
+	samples := make([]uint16, size.Samples)
+	planes, gotUnit, err := enc.LoadPictureSamplePlanes(av1.EncoderWebRTCPictureSampleScratch{Samples: samples}, frames[:], false)
+	if err != nil {
+		t.Fatalf("LoadPictureSamplePlanes: %v", err)
+	}
+	if gotUnit != unit || planes.FrameNum != 2 {
+		t.Fatalf("planes=%+v unit=%+v want=%+v", planes, gotUnit, unit)
+	}
+	if planes.Frames[0].Y.Pix[2*planes.Frames[0].Y.Stride+3] != 20 ||
+		planes.Frames[1].Y.Pix[2*planes.Frames[1].Y.Stride+3] != 21 ||
+		planes.Frames[0].U.Pix[1*planes.Frames[0].U.Stride+2] != 40 ||
+		planes.Frames[1].V.Pix[1*planes.Frames[1].V.Stride+2] != 61 {
+		t.Fatalf("loaded samples layer0=%+v layer1=%+v", planes.Frames[0], planes.Frames[1])
+	}
+
+	base, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 200})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder alloc base: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		local := base
+		_, _, _ = local.LoadPictureSamplePlanes(av1.EncoderWebRTCPictureSampleScratch{Samples: samples}, frames[:], false)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCEncoder LoadPictureSamplePlanes allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 	got, err := av1.EncoderWebRTCTemporalIDForDeltaPicture(3, 4)
 	if err != nil {
