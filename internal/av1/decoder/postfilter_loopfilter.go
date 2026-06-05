@@ -857,6 +857,28 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	yEnd := reqY4 + int(req.VisibleH4)
 	frameBaseX4 := int(block.MICol) + reqX4 - blockX4
 	frameY4 := int(block.MIRow) + reqY4 - blockY4
+	if req.VisibleW4 > 0 && req.VisibleH4 > 0 && dims.W4 >= req.VisibleW4 && dims.H4 >= req.VisibleH4 {
+		plan.LumaTXBs++
+		if frameBaseX4 > 0 {
+			verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
+			if err != nil {
+				return err
+			}
+			if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameBaseX4, frameY4, int(req.VisibleH4), record.TransformTree.Y, verticalWidth, currentVertical); err != nil {
+				return err
+			}
+		}
+		if frameY4 > 0 {
+			horizontalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeHorizontal, record.TransformTree.Y)
+			if err != nil {
+				return err
+			}
+			if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeHorizontal, frameBaseX4, frameY4, int(req.VisibleW4), record.TransformTree.Y, horizontalWidth, currentHorizontal); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for y4 := reqY4; y4 < yEnd; y4 += int(dims.H4) {
 		visibleH4 := minInt(int(dims.H4), yEnd-y4)
 		if visibleH4 <= 0 {
