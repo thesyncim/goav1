@@ -23,7 +23,6 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 }
 
 func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int32) {
-	var cost [8]int32
 	var partial [8][15]int32
 	for i := range 8 {
 		rowBase := i * stride
@@ -40,37 +39,7 @@ func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int3
 			partial[7][iHalf+j] += x
 		}
 	}
-	for i := range 8 {
-		cost[2] += partial[2][i] * partial[2][i]
-		cost[6] += partial[6][i] * partial[6][i]
-	}
-	cost[2] *= cdefDirectionDivTable[8]
-	cost[6] *= cdefDirectionDivTable[8]
-	for i := range 7 {
-		cost[0] += (partial[0][i]*partial[0][i] + partial[0][14-i]*partial[0][14-i]) * cdefDirectionDivTable[i+1]
-		cost[4] += (partial[4][i]*partial[4][i] + partial[4][14-i]*partial[4][14-i]) * cdefDirectionDivTable[i+1]
-	}
-	cost[0] += partial[0][7] * partial[0][7] * cdefDirectionDivTable[8]
-	cost[4] += partial[4][7] * partial[4][7] * cdefDirectionDivTable[8]
-	for i := 1; i < 8; i += 2 {
-		for j := range 5 {
-			cost[i] += partial[i][3+j] * partial[i][3+j]
-		}
-		cost[i] *= cdefDirectionDivTable[8]
-		for j := range 3 {
-			cost[i] += (partial[i][j]*partial[i][j] + partial[i][10-j]*partial[i][10-j]) * cdefDirectionDivTable[2*j+2]
-		}
-	}
-	bestCost := int32(0)
-	bestDir := 0
-	for i := range 8 {
-		if cost[i] > bestCost {
-			bestCost = cost[i]
-			bestDir = i
-		}
-	}
-	variance := (bestCost - cost[(bestDir+4)&7]) >> 10
-	return bestDir, variance
+	return finishDirection(&partial)
 }
 
 // FindDirectionDual runs FindDirection for two adjacent 8x8 blocks.
