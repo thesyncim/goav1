@@ -41,15 +41,16 @@ func (w *bitWriter) writeBit(bit uint8) error {
 	if byteIndex >= len(w.dst) {
 		return bitstream.ErrShortBuffer
 	}
+	dst := w.dst[:byteIndex+1]
 
 	shift := uint(7 - (w.bit & 7))
 	if shift == 7 {
-		w.dst[byteIndex] = 0
+		dst[byteIndex] = 0
 	}
 	if bit != 0 {
-		w.dst[byteIndex] |= 1 << shift
+		dst[byteIndex] |= 1 << shift
 	} else {
-		w.dst[byteIndex] &^= 1 << shift
+		dst[byteIndex] &^= 1 << shift
 	}
 	w.bit++
 	return nil
@@ -75,9 +76,11 @@ func (w *bitWriter) writeBits(value uint64, n uint8) error {
 	}
 
 	endBit := w.bit + int(n)
-	if (endBit+7)>>3 > len(w.dst) {
+	endByte := (endBit + 7) >> 3
+	if endByte > len(w.dst) {
 		return bitstream.ErrShortBuffer
 	}
+	dst := w.dst[:endByte]
 
 	remaining := int(n)
 	for remaining > 0 {
@@ -95,9 +98,9 @@ func (w *bitWriter) writeBits(value uint64, n uint8) error {
 		dstShift := uint(space - take)
 		mask := byte(maskBits << dstShift)
 		if bitOffset == 0 {
-			w.dst[byteIndex] = 0
+			dst[byteIndex] = 0
 		}
-		w.dst[byteIndex] = (w.dst[byteIndex] &^ mask) | (chunk << dstShift)
+		dst[byteIndex] = (dst[byteIndex] &^ mask) | (chunk << dstShift)
 
 		w.bit += take
 		remaining -= take
