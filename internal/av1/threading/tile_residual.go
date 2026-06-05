@@ -1101,6 +1101,7 @@ func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.
 		int32Scratch:      req.Int32Scratch,
 		residualScratch:   req.ResidualScratch,
 	}
+	scratch.controller.reconHot = &scratch.controller.recon
 	if loopReq.BeforeSuperblock != nil || readRestoration {
 		if scratch.beforeSuperblock == nil {
 			scratch.beforeSuperblock = scratch.controller.BeforeSuperblock
@@ -1215,7 +1216,8 @@ type frameWorkTileResidualLoopController struct {
 	// the serial deferred replay. The multi-worker wavefront uses its own
 	// per-goroutine states instead. It is wired to the controller's request
 	// scratch so the fused path pays no extra copy.
-	recon frameWorkReconState
+	recon    frameWorkReconState
+	reconHot *frameWorkReconState
 }
 
 // frameWorkReconState is the per-goroutine reconstruction state: the CFL
@@ -1307,7 +1309,11 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 		}
 		return nil
 	}
-	return c.fusedReconState().predictBlockBegin(visit)
+	recon := c.reconHot
+	if recon == nil {
+		recon = c.fusedReconState()
+	}
+	return recon.predictBlockBegin(visit)
 }
 
 // fusedReconState returns the controller's reconstruction state for the fused
@@ -1318,6 +1324,9 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 // wiring the state by hand. The bind is a single nil check per block on the hot
 // path.
 func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconState {
+	if c.reconHot != nil {
+		return c.reconHot
+	}
 	if c.recon.stats == nil {
 		c.recon = frameWorkReconState{
 			batch:             c.batch,
@@ -1332,7 +1341,8 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 			c.recon.cflScratch = &c.scratch.CFL
 		}
 	}
-	return &c.recon
+	c.reconHot = &c.recon
+	return c.reconHot
 }
 
 // predictBlockBegin runs the predict portion of a block-loop visit: it resets
@@ -1513,8 +1523,14 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		if err := c.bufferReconTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
-	} else if err := c.fusedReconState().reconstructTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
-		return err
+	} else {
+		recon := c.reconHot
+		if recon == nil {
+			recon = c.fusedReconState()
+		}
+		if err := recon.reconstructTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
+			return err
+		}
 	}
 	if c.userCoeffVisitor != nil {
 		return c.userCoeffVisitor(*visit, *block)
