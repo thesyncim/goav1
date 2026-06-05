@@ -137,6 +137,11 @@ type WebRTCFrameDependencyStructure struct {
 	ResolutionNum                uint8
 }
 
+type WebRTCDependencyStructureState struct {
+	Valid     bool
+	Structure WebRTCFrameDependencyStructure
+}
+
 type WebRTCFrameControl struct {
 	Settings                  FrameEncodeSettings
 	LibaomSVCRefFrameConfig   LibaomSVCRefFrameConfig
@@ -207,6 +212,34 @@ func WebRTCTemporalUnitControlForFrames(config Config, frames []FrameEncodeSetti
 		}
 	}
 	return control, nil
+}
+
+func WebRTCDependencyStructureStateForTemporalUnit(control WebRTCTemporalUnitControl, state WebRTCDependencyStructureState) (WebRTCDependencyStructureState, WebRTCFrameDependencyStructure, error) {
+	if control.FrameNum == 0 || control.FrameNum > WebRTCMaxSpatialLayers {
+		return WebRTCDependencyStructureState{}, WebRTCFrameDependencyStructure{}, ErrInvalidFrame
+	}
+
+	structure := state.Structure
+	if control.HasDependencyStructure {
+		structure = control.DependencyStructure
+	} else if !state.Valid {
+		return WebRTCDependencyStructureState{}, WebRTCFrameDependencyStructure{}, ErrInvalidFrame
+	}
+
+	if err := validateWebRTCDependencyStructure(structure); err != nil {
+		return WebRTCDependencyStructureState{}, WebRTCFrameDependencyStructure{}, err
+	}
+	for i := uint8(0); i < control.FrameNum; i++ {
+		if _, err := webRTCDependencyDescriptorMatchFrame(structure, control.Frames[i].GenericFrameInfo); err != nil {
+			return WebRTCDependencyStructureState{}, WebRTCFrameDependencyStructure{}, err
+		}
+	}
+
+	next := WebRTCDependencyStructureState{
+		Valid:     true,
+		Structure: structure,
+	}
+	return next, structure, nil
 }
 
 func WebRTCTemplateIDForFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (uint8, error) {

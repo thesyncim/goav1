@@ -84,6 +84,7 @@ type EncoderFrameIDBufferState = internalencoder.FrameIDBufferState
 type EncoderWebRTCGenericFrameInfo = internalencoder.WebRTCGenericFrameInfo
 type EncoderWebRTCFrameDependencyTemplate = internalencoder.WebRTCFrameDependencyTemplate
 type EncoderWebRTCFrameDependencyStructure = internalencoder.WebRTCFrameDependencyStructure
+type EncoderWebRTCDependencyStructureState = internalencoder.WebRTCDependencyStructureState
 type EncoderWebRTCFrameControl = internalencoder.WebRTCFrameControl
 type EncoderWebRTCTemporalUnitControl = internalencoder.WebRTCTemporalUnitControl
 type EncoderOBU = internalencoder.OBU
@@ -271,6 +272,10 @@ func AppendEncoderWebRTCFrameControlRTPPacket(payloadDst []byte, descriptorDst [
 
 func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
 	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
+}
+
+func EncoderWebRTCDependencyStructureStateForTemporalUnit(control EncoderWebRTCTemporalUnitControl, state EncoderWebRTCDependencyStructureState) (EncoderWebRTCDependencyStructureState, EncoderWebRTCFrameDependencyStructure, error) {
+	return internalencoder.WebRTCDependencyStructureStateForTemporalUnit(control, state)
 }
 
 func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolution) (EncoderRational, bool) {

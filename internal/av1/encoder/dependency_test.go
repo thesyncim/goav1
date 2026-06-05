@@ -209,6 +209,92 @@ func TestWebRTCTemporalUnitControlForFramesKeyUnit(t *testing.T) {
 	}
 }
 
+func TestWebRTCDependencyStructureStateForTemporalUnit(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2,
+	}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 100)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	state, structure, err := WebRTCDependencyStructureStateForTemporalUnit(key.Control, WebRTCDependencyStructureState{})
+	if err != nil {
+		t.Fatalf("key structure state: %v", err)
+	}
+	if !state.Valid || structure != key.Control.DependencyStructure || state.Structure != key.Control.DependencyStructure {
+		t.Fatalf("key state=%+v structure=%+v control=%+v", state, structure, key.Control.DependencyStructure)
+	}
+
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+	}
+	next, carried, err := WebRTCDependencyStructureStateForTemporalUnit(delta.Control, state)
+	if err != nil {
+		t.Fatalf("delta structure state: %v", err)
+	}
+	if !next.Valid || next.Structure != state.Structure || carried != state.Structure {
+		t.Fatalf("delta state=%+v carried=%+v previous=%+v", next, carried, state.Structure)
+	}
+
+	var descriptorBuf [16]byte
+	descriptor, err := AppendWebRTCDependencyDescriptor(
+		descriptorBuf[:0],
+		carried,
+		delta.Control.Frames[1].GenericFrameInfo,
+		true,
+		true,
+		delta.Control.Frames[1].AttachDependencyStructure,
+	)
+	if err != nil {
+		t.Fatalf("AppendWebRTCDependencyDescriptor: %v", err)
+	}
+	if len(descriptor) == 0 {
+		t.Fatal("empty dependency descriptor")
+	}
+}
+
+func TestWebRTCDependencyStructureStateForTemporalUnitRejectsMissingState(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL1T1,
+	}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 10)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 11)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+	}
+	if _, _, err := WebRTCDependencyStructureStateForTemporalUnit(delta.Control, WebRTCDependencyStructureState{}); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("missing carried structure err=%v want %v", err, ErrInvalidFrame)
+	}
+}
+
+func TestWebRTCDependencyStructureStateForTemporalUnitAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 100)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	state, _, err := WebRTCDependencyStructureStateForTemporalUnit(key.Control, WebRTCDependencyStructureState{})
+	if err != nil {
+		t.Fatalf("key structure state: %v", err)
+	}
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = WebRTCDependencyStructureStateForTemporalUnit(delta.Control, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCDependencyStructureStateForTemporalUnit allocated: %f", allocs)
+	}
+}
+
 func TestWebRTCTemporalUnitControlForFramesDeltaUnit(t *testing.T) {
 	cfg := Config{
 		Resolution:  Resolution{Width: 640, Height: 360},
