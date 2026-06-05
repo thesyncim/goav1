@@ -107,6 +107,49 @@ func AppendLowOverheadFrameHeaderIntraOBU(dst []byte, seq SequenceHeader, prefix
 	return out, nil
 }
 
+// LowOverheadIntraHeaderTemporalUnitSize returns the exact size of one
+// low-overhead temporal unit carrying a temporal delimiter, sequence header,
+// and key/intra-only frame-header OBU through frame_size().
+func LowOverheadIntraHeaderTemporalUnitSize(seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize) (int, error) {
+	seqSize, err := LowOverheadSequenceHeaderOBUSize(seq)
+	if err != nil {
+		return 0, err
+	}
+	frameSize, err := LowOverheadFrameHeaderIntraOBUSize(seq, prefix, size)
+	if err != nil {
+		return 0, err
+	}
+	return lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter}) + seqSize + frameSize, nil
+}
+
+// AppendLowOverheadIntraHeaderTemporalUnit appends one low-overhead temporal
+// unit carrying a temporal delimiter, sequence header, and key/intra-only
+// frame-header OBU. It validates and sizes before writing, so errors leave dst
+// length unchanged.
+func AppendLowOverheadIntraHeaderTemporalUnit(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize) ([]byte, error) {
+	unitSize, err := LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < unitSize {
+		return dst, bitstream.ErrShortBuffer
+	}
+
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadSequenceHeaderOBU(out, seq)
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadFrameHeaderIntraOBU(out, seq, prefix, size)
+	if err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
 func writeIntraFrameSizePayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize) error {
 	if err := validateIntraFrameSize(seq, prefix, size); err != nil {
 		return err

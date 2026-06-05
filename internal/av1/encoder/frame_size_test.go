@@ -83,6 +83,70 @@ func TestAppendLowOverheadFrameHeaderIntraOBU(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadIntraHeaderTemporalUnit(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := shownKeyFrameHeaderPrefix(false)
+	size := IntraFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	unitSize, err := LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("LowOverheadIntraHeaderTemporalUnitSize: %v", err)
+	}
+	var buf [192]byte
+	out, err := AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadIntraHeaderTemporalUnit: %v", err)
+	}
+	if len(out) != unitSize {
+		t.Fatalf("temporal unit len=%d want %d", len(out), unitSize)
+	}
+
+	it := obu.NewLowOverheadIterator(out)
+	td, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("temporal delimiter ok=%v err=%v", ok, err)
+	}
+	if td.Header.Type != obu.TypeTemporalDelimiter || len(td.Payload) != 0 {
+		t.Fatalf("temporal delimiter=%+v payload=% x", td.Header, td.Payload)
+	}
+	seqUnit, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("sequence header ok=%v err=%v", ok, err)
+	}
+	if seqUnit.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("sequence unit type=%v", seqUnit.Header.Type)
+	}
+	parsedSeq, err := parser.ParseSequenceHeader(seqUnit.Payload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	frameUnit, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("frame header ok=%v err=%v", ok, err)
+	}
+	if frameUnit.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("frame unit type=%v", frameUnit.Header.Type)
+	}
+	parsedPrefix, err := parser.ParseFrameHeaderPrefix(frameUnit.Payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	parsedSize, err := parser.ParseIntraFrameSize(frameUnit.Payload, parsedSeq, parsedPrefix, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseIntraFrameSize: %v", err)
+	}
+	if parsedSize.RefreshFrameFlags != 0xff || parsedSize.UpscaledWidth != seq.MaxFrameWidth || parsedSize.Height != seq.MaxFrameHeight {
+		t.Fatalf("parsed size=%+v", parsedSize)
+	}
+	if extra, ok, err := it.Next(); err != nil || ok {
+		t.Fatalf("extra unit ok=%v err=%v unit=%+v", ok, err, extra.Header)
+	}
+}
+
 func TestAppendFrameHeaderIntraPayloadOverrideSuperresRender(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	seq.MaxFrameWidth = 64
@@ -200,6 +264,27 @@ func TestAppendLowOverheadFrameHeaderIntraOBUShortBuffer(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadIntraHeaderTemporalUnitShortBuffer(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := shownKeyFrameHeaderPrefix(false)
+	size := IntraFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	var buf [8]byte
+	dst := buf[:1]
+	dst[0] = 0xee
+	out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, seq, prefix, size)
+	if !errors.Is(err, bitstream.ErrShortBuffer) {
+		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
+	}
+	if len(out) != len(dst) || out[0] != 0xee {
+		t.Fatalf("short buffer mutated output: % x", out)
+	}
+}
+
 func TestAppendFrameHeaderIntraPayloadRejectsInvalid(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	basePrefix := shownKeyFrameHeaderPrefix(false)
@@ -286,6 +371,27 @@ func TestAppendLowOverheadFrameHeaderIntraOBUAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AppendLowOverheadFrameHeaderIntraOBU allocated: %f", allocs)
+	}
+}
+
+func TestAppendLowOverheadIntraHeaderTemporalUnitAllocs(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := shownKeyFrameHeaderPrefix(false)
+	size := IntraFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	var buf [192]byte
+	if _, err := AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadIntraHeaderTemporalUnit allocated: %f", allocs)
 	}
 }
 
