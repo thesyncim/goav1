@@ -913,6 +913,35 @@ func BenchmarkReadCoefficientsTXB8x8Class2DTracked(b *testing.B) {
 	benchmarkReadCoefficientsTXBTracked(b, TransformSize8x8, transform.Class2D)
 }
 
+func BenchmarkReadCoeffGolombCursor(b *testing.B) {
+	src := make([]byte, 4096)
+	x := uint32(0x9e3779b9)
+	for i := range src {
+		x ^= x << 13
+		x ^= x >> 17
+		x ^= x << 5
+		src[i] = byte(x)
+	}
+	sum := 0
+
+	b.ReportAllocs()
+	b.SetBytes(512)
+	for b.Loop() {
+		r := entropy.NewReader(src)
+		cursor := r.Cursor()
+		for range 512 {
+			v, err := readCoeffGolombCursor(&cursor)
+			if err != nil {
+				r = entropy.NewReader(src)
+				cursor = r.Cursor()
+				continue
+			}
+			sum += v
+		}
+	}
+	coeffBenchmarkSink = sum
+}
+
 func benchmarkReadCoefficientsTXB(b *testing.B, size TransformSize, class transform.Class) {
 	txSize, err := size.TransformSize()
 	if err != nil {
