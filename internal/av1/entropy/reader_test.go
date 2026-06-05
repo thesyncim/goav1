@@ -856,6 +856,22 @@ func BenchmarkCursorCDFSymbolsStream5(b *testing.B) {
 	benchmarkCursorCDFSymbolsStream(b, 5)
 }
 
+func BenchmarkCursorCDFStream6(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 6)
+}
+
+func BenchmarkCursorCDFSymbolsStream6(b *testing.B) {
+	benchmarkCursorCDFSymbolsStream(b, 6)
+}
+
+func BenchmarkCursorCDFStream7(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 7)
+}
+
+func BenchmarkCursorCDFSymbolsStream7(b *testing.B) {
+	benchmarkCursorCDFSymbolsStream(b, 7)
+}
+
 func BenchmarkCursorCDFStream8(b *testing.B) {
 	benchmarkCursorCDFStreamSymbols(b, 8)
 }
