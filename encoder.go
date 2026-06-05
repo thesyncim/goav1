@@ -345,6 +345,26 @@ func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPay
 	return size, nil
 }
 
+func NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (RTPPacketizer, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+	if err != nil {
+		return RTPPacketizer{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	packetizer, err := NewRTPPacketizer(
+		payload,
+		limits,
+		control.Settings.Type == EncoderFrameTypeKey,
+		frameIndex+1 == EncoderWebRTCPictureTemporalUnitFrameNum(unit),
+		obuScratch,
+		packetScratch,
+		workScratch,
+	)
+	if err != nil {
+		return RTPPacketizer{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	return packetizer, control, structure, nil
+}
+
 func EncoderWebRTCPictureTemporalUnitRTPPacketSize(packetizer *RTPPacketizer, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (payloadSize int, descriptorSize int, ok bool, err error) {
 	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
