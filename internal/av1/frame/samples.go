@@ -354,7 +354,18 @@ func loadSampleRows(dst []uint16, dstStride int, src []byte, srcStride int, widt
 		for y := 0; y < height; y++ {
 			srcLine := src[srcOff : srcOff+width : srcOff+width]
 			dstLine := dst[dstOff : dstOff+width : dstOff+width]
-			for x := 0; x < width; x++ {
+			x := 0
+			for ; x+8 <= width; x += 8 {
+				dstLine[x+0] = uint16(srcLine[x+0])
+				dstLine[x+1] = uint16(srcLine[x+1])
+				dstLine[x+2] = uint16(srcLine[x+2])
+				dstLine[x+3] = uint16(srcLine[x+3])
+				dstLine[x+4] = uint16(srcLine[x+4])
+				dstLine[x+5] = uint16(srcLine[x+5])
+				dstLine[x+6] = uint16(srcLine[x+6])
+				dstLine[x+7] = uint16(srcLine[x+7])
+			}
+			for ; x < width; x++ {
 				dstLine[x] = uint16(srcLine[x])
 			}
 			srcOff += srcStride

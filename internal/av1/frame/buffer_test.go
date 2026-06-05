@@ -542,33 +542,48 @@ func BenchmarkBindFrame(b *testing.B) {
 }
 
 func BenchmarkSamplePlaneLoadStore(b *testing.B) {
-	plane := Plane{Pix: make([]byte, 1920*2*1080), Stride: 1920 * 2, Width: 1920, Height: 1080}
-	scratch := make([]uint16, 1920*1080)
-	dst := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+	for _, bytesPerSample := range [...]int{1, 2} {
+		b.Run(samplePlaneBenchmarkName(bytesPerSample), func(b *testing.B) {
+			plane := Plane{Pix: make([]byte, 1920*bytesPerSample*1080), Stride: 1920 * bytesPerSample, Width: 1920, Height: 1080}
+			scratch := make([]uint16, 1920*1080)
+			dst := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
 
-	b.ResetTimer()
-	b.ReportAllocs()
-	for b.Loop() {
-		samples, _ := LoadSamplePlane(scratch, plane, 2)
-		_ = StoreSamplePlane(dst, 2, samples)
+			b.ResetTimer()
+			b.ReportAllocs()
+			for b.Loop() {
+				samples, _ := LoadSamplePlane(scratch, plane, bytesPerSample)
+				_ = StoreSamplePlane(dst, bytesPerSample, samples)
+			}
+		})
 	}
 }
 
 func BenchmarkBorderedSamplePlaneLoadStore(b *testing.B) {
-	plane := Plane{Pix: make([]byte, 1920*2*1080), Stride: 1920 * 2, Width: 1920, Height: 1080}
-	layout, err := BorderedSamplePlaneLen(plane, 2, 32, 32, 64)
-	if err != nil {
-		b.Fatal(err)
-	}
-	scratch := make([]uint16, layout.Len)
-	dst := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+	for _, bytesPerSample := range [...]int{1, 2} {
+		b.Run(samplePlaneBenchmarkName(bytesPerSample), func(b *testing.B) {
+			plane := Plane{Pix: make([]byte, 1920*bytesPerSample*1080), Stride: 1920 * bytesPerSample, Width: 1920, Height: 1080}
+			layout, err := BorderedSamplePlaneLen(plane, bytesPerSample, 32, 32, 64)
+			if err != nil {
+				b.Fatal(err)
+			}
+			scratch := make([]uint16, layout.Len)
+			dst := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
 
-	b.ResetTimer()
-	b.ReportAllocs()
-	for b.Loop() {
-		samples, _ := LoadBorderedSamplePlane(scratch, plane, 2, 32, 32, 64)
-		_ = StoreBorderedSamplePlane(dst, 2, samples)
+			b.ResetTimer()
+			b.ReportAllocs()
+			for b.Loop() {
+				samples, _ := LoadBorderedSamplePlane(scratch, plane, bytesPerSample, 32, 32, 64)
+				_ = StoreBorderedSamplePlane(dst, bytesPerSample, samples)
+			}
+		})
 	}
+}
+
+func samplePlaneBenchmarkName(bytesPerSample int) string {
+	if bytesPerSample == 1 {
+		return "8bit"
+	}
+	return "16bit"
 }
 
 func getTestPlaneSample(plane Plane, bytesPerSample int, x int, y int) uint16 {
