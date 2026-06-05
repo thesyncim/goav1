@@ -667,6 +667,39 @@ func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
 		delta.Control.Frames[1].GenericFrameInfo.Dependencies[1] != 500 {
 		t.Fatalf("delta=%+v", delta)
 	}
+	if delta.Headers[1].Prefix.FrameType != av1.EncoderFrameHeaderTypeInter ||
+		delta.Headers[1].Size.UpscaledWidth != 640 ||
+		delta.Headers[1].Size.Height != 360 ||
+		delta.Headers[1].Size.RefreshFrameFlags != 0x02 ||
+		delta.Headers[1].Size.RefFrameIdx[0] != 1 ||
+		delta.Headers[1].Size.RefFrameIdx[1] != 0 {
+		t.Fatalf("delta header=%+v", delta.Headers[1])
+	}
+	var headerBuf [80]byte
+	headerOBU, err := av1.AppendEncoderLowOverheadFrameHeaderInterOBU(
+		headerBuf[:0],
+		delta.Headers[1].Sequence,
+		delta.Headers[1].Prefix,
+		delta.Headers[1].Size,
+	)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadFrameHeaderInterOBU: %v", err)
+	}
+	unit, consumed, err := av1.ParseLowOverheadOBU(headerOBU)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(headerOBU) || unit.Header.Type != av1.OBUFrameHeader {
+		t.Fatalf("header obu=%+v consumed=%d len=%d", unit.Header, consumed, len(headerOBU))
+	}
+
+	ordered, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 500, 13)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint: %v", err)
+	}
+	if ordered.Headers[0].Prefix.OrderHint != 13 {
+		t.Fatalf("ordered header hint=%d want 13", ordered.Headers[0].Prefix.OrderHint)
+	}
 
 	structure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(cfg)
 	if err != nil {

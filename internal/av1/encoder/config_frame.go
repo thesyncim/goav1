@@ -8,6 +8,14 @@ type IntraHeaderTemporalUnit struct {
 	Size     IntraFrameSize
 }
 
+// InterHeaderFrame describes the syntax descriptors used to emit one WebRTC
+// delta frame-header OBU for a normalized config.
+type InterHeaderFrame struct {
+	Sequence SequenceHeader
+	Prefix   FrameHeaderPrefix
+	Size     InterFrameSize
+}
+
 // WebRTCKeyFrameTemporalUnit describes the config-derived initial key temporal
 // unit: emitted AV1 headers plus WebRTC frame-control/dependency metadata.
 type WebRTCKeyFrameTemporalUnit struct {
@@ -20,6 +28,7 @@ type WebRTCKeyFrameTemporalUnit struct {
 // WebRTCDeltaFrameTemporalUnit describes a config-derived steady-state delta
 // temporal unit plus WebRTC frame-control/dependency metadata.
 type WebRTCDeltaFrameTemporalUnit struct {
+	Headers  [WebRTCMaxSpatialLayers]InterHeaderFrame
 	Frames   [WebRTCMaxSpatialLayers]FrameEncodeSettings
 	FrameNum uint8
 	Control  WebRTCTemporalUnitControl
@@ -231,7 +240,7 @@ func WebRTCDeltaFrameTemporalUnitForState(config Config, state WebRTCEncoderStat
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
-	unit, err := WebRTCDeltaFrameTemporalUnitForConfig(config, state.ReferenceState, state.FrameIDState, temporalID, state.NextFrameID)
+	unit, err := WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, state.ReferenceState, state.FrameIDState, temporalID, state.NextFrameID, state.NextOrderHint)
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
@@ -324,6 +333,10 @@ func AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config Con
 // WebRTCDeltaFrameTemporalUnitForConfig maps a WebRTC config and existing
 // reference state into the next refreshing delta temporal-unit controls.
 func WebRTCDeltaFrameTemporalUnitForConfig(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64) (WebRTCDeltaFrameTemporalUnit, error) {
+	return WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, 0)
+}
+
+func WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (WebRTCDeltaFrameTemporalUnit, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, err
@@ -361,5 +374,62 @@ func WebRTCDeltaFrameTemporalUnitForConfig(config Config, referenceState Referen
 		return WebRTCDeltaFrameTemporalUnit{}, err
 	}
 	unit.Control = control
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		header, err := interHeaderFrameForSettings(config, unit.Frames[i], firstFrameID+uint64(i), orderHint)
+		if err != nil {
+			return WebRTCDeltaFrameTemporalUnit{}, err
+		}
+		unit.Headers[i] = header
+	}
 	return unit, nil
+}
+
+func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, frameID uint64, orderHint uint8) (InterHeaderFrame, error) {
+	seq, err := SequenceHeaderForConfig(config)
+	if err != nil {
+		return InterHeaderFrame{}, err
+	}
+	if seq.EnableOrderHint && uint16(orderHint) >= uint16(1)<<seq.OrderHintBits {
+		return InterHeaderFrame{}, ErrInvalidFrame
+	}
+	if !seq.EnableOrderHint && orderHint != 0 {
+		return InterHeaderFrame{}, ErrInvalidFrame
+	}
+	if settings.ReferenceCount == 0 || settings.ReferenceCount > WebRTCMaxFrameReferences ||
+		!settings.UpdateBufferSet || settings.UpdateBuffer >= WebRTCReferenceBuffers {
+		return InterHeaderFrame{}, ErrInvalidFrame
+	}
+
+	prefix := FrameHeaderPrefix{
+		FrameType:          FrameHeaderTypeInter,
+		ShowFrame:          true,
+		ShowableFrame:      true,
+		ErrorResilientMode: true,
+		FrameSizeOverride:  true,
+		OrderHint:          orderHint,
+		PrimaryRefFrame:    EncoderPrimaryRefNone,
+	}
+	if seq.FrameIDNumbersPresent {
+		prefix.FrameID = uint16(frameID & uint64((uint32(1)<<sequenceFrameIDBits(seq))-1))
+	}
+	size := InterFrameSize{
+		UpscaledWidth:       uint32(settings.Resolution.Width),
+		Height:              uint32(settings.Resolution.Height),
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   1 << settings.UpdateBuffer,
+	}
+	firstRef := settings.ReferenceBuffers[0]
+	for i := range size.RefFrameIdx {
+		size.RefFrameIdx[i] = firstRef
+	}
+	for i := uint8(0); i < settings.ReferenceCount; i++ {
+		size.RefFrameIdx[i] = settings.ReferenceBuffers[i]
+	}
+	if err := validateFrameHeaderPrefix(seq, prefix); err != nil {
+		return InterHeaderFrame{}, err
+	}
+	if err := validateInterFrameSize(seq, prefix, size); err != nil {
+		return InterHeaderFrame{}, err
+	}
+	return InterHeaderFrame{Sequence: seq, Prefix: prefix, Size: size}, nil
 }

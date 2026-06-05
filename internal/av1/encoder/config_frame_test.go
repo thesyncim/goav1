@@ -317,6 +317,41 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
 	if delta.Control.FrameIDState.FrameIDs[0] != 200 || delta.Control.FrameIDState.FrameIDs[1] != 201 {
 		t.Fatalf("delta frame id state=%+v", delta.Control.FrameIDState)
 	}
+	if delta.Headers[0].Prefix.FrameType != FrameHeaderTypeInter ||
+		!delta.Headers[0].Prefix.ErrorResilientMode ||
+		delta.Headers[0].Prefix.OrderHint != 0 ||
+		delta.Headers[0].Size.UpscaledWidth != 320 ||
+		delta.Headers[0].Size.Height != 180 ||
+		delta.Headers[0].Size.RefreshFrameFlags != 0x01 ||
+		delta.Headers[0].Size.RefFrameIdx[0] != 0 {
+		t.Fatalf("base delta header=%+v", delta.Headers[0])
+	}
+	if delta.Headers[1].Size.UpscaledWidth != 640 ||
+		delta.Headers[1].Size.Height != 360 ||
+		delta.Headers[1].Size.RefreshFrameFlags != 0x02 ||
+		delta.Headers[1].Size.RefFrameIdx[0] != 1 ||
+		delta.Headers[1].Size.RefFrameIdx[1] != 0 {
+		t.Fatalf("upper delta header=%+v", delta.Headers[1])
+	}
+	for i := uint8(0); i < delta.FrameNum; i++ {
+		assertParsedDeltaHeader(t, delta.Headers[i])
+	}
+}
+
+func TestWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL1T1}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 1)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 2, 37)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint: %v", err)
+	}
+	if delta.Headers[0].Prefix.OrderHint != 37 {
+		t.Fatalf("delta header order hint=%d want 37", delta.Headers[0].Prefix.OrderHint)
+	}
+	assertParsedDeltaHeader(t, delta.Headers[0])
 }
 
 func TestWebRTCDeltaFrameTemporalUnitForConfigSimulcast(t *testing.T) {
@@ -408,7 +443,8 @@ func TestWebRTCEncoderStateTemporalUnits(t *testing.T) {
 		}
 		if delta.FrameNum != 3 || delta.Frames[0].TemporalID != want ||
 			delta.Control.Frames[0].GenericFrameInfo.FrameID != wantFirstID ||
-			delta.Control.HasDependencyStructure {
+			delta.Control.HasDependencyStructure ||
+			delta.Headers[0].Prefix.OrderHint != state.NextOrderHint {
 			t.Fatalf("delta %d unit=%+v", i, delta)
 		}
 		if next.NextFrameID != wantFirstID+3 || next.DeltaPictureIndex != state.DeltaPictureIndex+1 ||
@@ -431,6 +467,32 @@ func TestWebRTCEncoderStateTemporalUnits(t *testing.T) {
 		}
 		state = next
 		wantFirstID += 3
+	}
+}
+
+func assertParsedDeltaHeader(t *testing.T, header InterHeaderFrame) {
+	t.Helper()
+	var buf [80]byte
+	payload, err := AppendFrameHeaderInterPayload(buf[:0], header.Sequence, header.Prefix, header.Size)
+	if err != nil {
+		t.Fatalf("AppendFrameHeaderInterPayload: %v", err)
+	}
+	parsedSeq := parseEncoderSequenceHeader(t, header.Sequence)
+	parsedPrefix, err := parser.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	refs := parserReferenceState(header.Sequence, header.Size.RefFrameIdx[:])
+	parsedSize, err := parser.ParseFrameSize(payload, parsedSeq, parsedPrefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	if parsedPrefix.FrameType != parser.FrameTypeInter ||
+		parsedPrefix.OrderHint != header.Prefix.OrderHint ||
+		parsedSize.RefreshFrameFlags != header.Size.RefreshFrameFlags ||
+		parsedSize.UpscaledWidth != header.Size.UpscaledWidth ||
+		parsedSize.Height != header.Size.Height {
+		t.Fatalf("parsed prefix=%+v size=%+v header=%+v", parsedPrefix, parsedSize, header)
 	}
 }
 

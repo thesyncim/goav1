@@ -99,6 +99,7 @@ type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 type EncoderInterFrameSize = internalencoder.InterFrameSize
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
+type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
 type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTemporalUnit
 type EncoderWebRTCPictureTemporalUnit = internalencoder.WebRTCPictureTemporalUnit
@@ -799,6 +800,10 @@ func EncoderWebRTCKeyFrameTemporalUnitForConfig(config EncoderConfig, orderHint 
 
 func EncoderWebRTCDeltaFrameTemporalUnitForConfig(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
 	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfig(config, referenceState, frameIDState, temporalID, firstFrameID)
+}
+
+func EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
+	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint)
 }
 
 func EncoderWebRTCKeyFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
