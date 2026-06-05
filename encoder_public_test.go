@@ -1822,6 +1822,87 @@ func TestPublicWebRTCEncoderPictureHeaderTemporalUnits(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderPictureHeaderTemporalUnitsForFrames(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 120})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	normalized := enc.Config()
+	var frames [2]av1.Frame
+	var backing [2][]byte
+	for i := range frames {
+		layer := normalized.SpatialLayers[i]
+		format := av1.FrameFormat{
+			Width:        int(layer.Resolution.Width),
+			Height:       int(layer.Resolution.Height),
+			BitDepth:     normalized.BitDepth,
+			SubsamplingX: true,
+			SubsamplingY: true,
+			Align:        64,
+		}
+		layout, err := av1.FrameRequiredSize(format)
+		if err != nil {
+			t.Fatalf("FrameRequiredSize layer %d: %v", i, err)
+		}
+		backing[i] = make([]byte, layout.Size)
+		frames[i], err = av1.BindFrame(backing[i], format)
+		if err != nil {
+			t.Fatalf("BindFrame layer %d: %v", i, err)
+		}
+	}
+	size, sizedUnit, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize(frames[:], false)
+	if err != nil {
+		t.Fatalf("LowOverheadPictureHeaderTemporalUnitForFramesSize key: %v", err)
+	}
+	if !sizedUnit.Key || sizedUnit.KeyUnit.FrameNum != 2 {
+		t.Fatalf("sized unit=%+v", sizedUnit)
+	}
+	state := enc.State()
+	var tiny [1]byte
+	short, _, err := enc.AppendLowOverheadPictureHeaderTemporalUnitForFrames(tiny[:0:1], frames[:], false)
+	if !errors.Is(err, av1.ErrEncoderShortBuffer) || len(short) != 0 || enc.State() != state {
+		t.Fatalf("short out=% x err=%v state=%+v want=%+v", short, err, enc.State(), state)
+	}
+
+	var outBuf [256]byte
+	out, unit, err := enc.AppendLowOverheadPictureHeaderTemporalUnitForFrames(outBuf[:0], frames[:], false)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadPictureHeaderTemporalUnitForFrames key: %v", err)
+	}
+	if len(out) != size || unit != sizedUnit || enc.State().NextFrameID != 122 {
+		t.Fatalf("out len=%d want=%d unit=%+v sized=%+v state=%+v", len(out), size, unit, sizedUnit, enc.State())
+	}
+
+	bad := frames
+	bad[1].Format.Width--
+	if _, _, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize(bad[:], false); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+		t.Fatalf("bad frame err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+	}
+	if _, _, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize(frames[:1], false); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+		t.Fatalf("short frame list err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+	}
+
+	base, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 120})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder alloc base: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		local := base
+		_, _, _ = local.AppendLowOverheadPictureHeaderTemporalUnitForFrames(outBuf[:0], frames[:], false)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCEncoder AppendLowOverheadPictureHeaderTemporalUnitForFrames allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 	got, err := av1.EncoderWebRTCTemporalIDForDeltaPicture(3, 4)
 	if err != nil {

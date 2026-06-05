@@ -975,6 +975,42 @@ func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnit(dst []byte, f
 	return out, unit, nil
 }
 
+func (e *WebRTCEncoder) LowOverheadPictureHeaderTemporalUnitForFramesSize(frames []Frame, forceKeyFrame bool) (int, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	size, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return 0, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
+		return 0, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	return size, unit, nil
+}
+
+func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnitForFrames(dst []byte, frames []Frame, forceKeyFrame bool) ([]byte, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	_, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	out, appended, next, err := internalencoder.AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst, e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	if appended != unit {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidFrame
+	}
+	e.state = next
+	return out, unit, nil
+}
+
 func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, error) {
 	if e == nil {
 		return EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
@@ -985,6 +1021,94 @@ func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictu
 	}
 	e.state = next
 	return unit, nil
+}
+
+func validateEncoderPictureFrames(frames []Frame, unit EncoderWebRTCPictureTemporalUnit, config EncoderConfig) error {
+	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum == 0 || len(frames) != int(frameNum) {
+		return ErrEncoderInvalidFrame
+	}
+	seq, err := internalencoder.SequenceHeaderForConfig(config)
+	if err != nil {
+		return err
+	}
+	for i := uint8(0); i < frameNum; i++ {
+		settings, ok := encoderPictureUnitFrameSettings(unit, i)
+		if !ok || !encoderFrameMatchesSettings(frames[i], settings, seq) {
+			return ErrEncoderInvalidFrame
+		}
+	}
+	return nil
+}
+
+func encoderPictureUnitFrameSettings(unit EncoderWebRTCPictureTemporalUnit, frameIndex uint8) (EncoderFrameEncodeSettings, bool) {
+	if unit.Key == unit.Delta {
+		return EncoderFrameEncodeSettings{}, false
+	}
+	if unit.Key {
+		if frameIndex >= unit.KeyUnit.FrameNum {
+			return EncoderFrameEncodeSettings{}, false
+		}
+		return unit.KeyUnit.Frames[frameIndex], true
+	}
+	if frameIndex >= unit.DeltaUnit.FrameNum {
+		return EncoderFrameEncodeSettings{}, false
+	}
+	return unit.DeltaUnit.Frames[frameIndex], true
+}
+
+func encoderFrameMatchesSettings(f Frame, settings EncoderFrameEncodeSettings, seq EncoderSequenceHeader) bool {
+	if !settings.Output || settings.Resolution.Width <= 0 || settings.Resolution.Height <= 0 {
+		return false
+	}
+	if f.Format.Width != int(settings.Resolution.Width) || f.Format.Height != int(settings.Resolution.Height) ||
+		f.Format.BitDepth != seq.ColorConfig.BitDepth || f.Format.MonoChrome != seq.ColorConfig.MonoChrome ||
+		f.Format.SubsamplingX != seq.ColorConfig.SubsamplingX || f.Format.SubsamplingY != seq.ColorConfig.SubsamplingY {
+		return false
+	}
+	layout, err := FrameRequiredSize(f.Format)
+	if err != nil || layout.BytesPerSample <= 0 {
+		return false
+	}
+	if f.Y.Width != f.Format.Width || f.Y.Height != f.Format.Height ||
+		!encoderPlaneFits(f.Y, layout.BytesPerSample) {
+		return false
+	}
+	if f.Format.MonoChrome {
+		return len(f.U.Pix) == 0 && len(f.V.Pix) == 0 && f.U.Stride == 0 && f.V.Stride == 0
+	}
+	return f.U.Width == layout.ChromaWidth && f.U.Height == layout.ChromaHeight &&
+		f.V.Width == layout.ChromaWidth && f.V.Height == layout.ChromaHeight &&
+		encoderPlaneFits(f.U, layout.BytesPerSample) && encoderPlaneFits(f.V, layout.BytesPerSample)
+}
+
+func encoderPlaneFits(p FramePlane, bytesPerSample int) bool {
+	if bytesPerSample != 1 && bytesPerSample != 2 {
+		return false
+	}
+	if p.Width < 0 || p.Height < 0 || p.Stride < 0 {
+		return false
+	}
+	if p.Width == 0 || p.Height == 0 {
+		return len(p.Pix) == 0
+	}
+	maxInt := int(^uint(0) >> 1)
+	if p.Width > maxInt/bytesPerSample {
+		return false
+	}
+	rowBytes := p.Width * bytesPerSample
+	if p.Stride < rowBytes {
+		return false
+	}
+	if p.Height-1 > maxInt/p.Stride {
+		return false
+	}
+	lastRow := (p.Height - 1) * p.Stride
+	if lastRow > maxInt-rowBytes {
+		return false
+	}
+	need := lastRow + rowBytes
+	return need >= rowBytes && len(p.Pix) >= need
 }
 
 func EncoderWebRTCTemporalIDForDeltaPicture(temporalLayers uint8, deltaPictureIndex uint64) (uint8, error) {
