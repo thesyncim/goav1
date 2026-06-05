@@ -193,9 +193,16 @@ type coeffPos struct {
 	br2DOffset    int8
 }
 
+type coeffPosHot struct {
+	padded        uint16
+	lower2DOffset int8
+	br2DOffset    int8
+}
+
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
 // valid coefficient index of size, indexed in [0, maxEOB).
 var coeffPosTable [transformSizeCount][]coeffPos
+var coeffPosHotTable [transformSizeCount][]coeffPosHot
 var coeffScanTable [transformSizeCount][3][]int16
 
 func init() {
@@ -274,6 +281,15 @@ func init() {
 			}
 		}
 		coeffPosTable[size] = positions
+		hotPositions := make([]coeffPosHot, maxEOB)
+		for idx, p := range positions {
+			hotPositions[idx] = coeffPosHot{
+				padded:        p.padded,
+				lower2DOffset: p.lower2DOffset,
+				br2DOffset:    p.br2DOffset,
+			}
+		}
+		coeffPosHotTable[size] = hotPositions
 		for class := transform.Class2D; class <= transform.ClassVert; class++ {
 			scan := make([]int16, maxEOB)
 			inverse := make([]int16, maxEOB)
@@ -825,6 +841,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	posSlice = posSlice[:maxEOB]
+	hotPosSlice := coeffPosHotTable[req.Size]
+	if len(hotPosSlice) < maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	hotPosSlice = hotPosSlice[:maxEOB]
 	trustedScan := req.trustedScan
 	// Hoist the CoeffBase/CoeffBR CDF-array selection out of the per-coefficient
 	// loop. CoeffBaseCDF/CoeffBRCDF re-derive the transform-size context (a
@@ -995,7 +1016,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				p := posSlice[pos]
+				p := hotPosSlice[pos]
 				padded := int(p.padded)
 				ctx := 0
 				if pos != 0 {
@@ -1043,7 +1064,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				p := posSlice[pos]
+				p := hotPosSlice[pos]
 				padded := int(p.padded)
 				ctx := 0
 				if pos != 0 {
@@ -1094,7 +1115,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				p := posSlice[pos]
+				p := hotPosSlice[pos]
 				padded := int(p.padded)
 				ctx := 0
 				if pos != 0 {
@@ -1149,7 +1170,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					reader.CommitStateTo(&s.Reader)
 					return TXBDecodeResult{}, ErrInvalidDecodeState
 				}
-				p := posSlice[pos]
+				p := hotPosSlice[pos]
 				padded := int(p.padded)
 				ctx := 0
 				if pos != 0 {
