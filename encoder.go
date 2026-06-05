@@ -108,6 +108,9 @@ type EncoderLoopFilterParams = internalencoder.LoopFilterParams
 type EncoderCDEFParams = internalencoder.CDEFParams
 type EncoderRestorationType = internalencoder.RestorationType
 type EncoderRestorationParams = internalencoder.RestorationParams
+type EncoderTransformMode = internalencoder.TransformMode
+type EncoderReferenceMode = internalencoder.ReferenceMode
+type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -203,6 +206,14 @@ const (
 	EncoderRestorationSwitchable = internalencoder.RestorationSwitchable
 	EncoderRestorationWiener     = internalencoder.RestorationWiener
 	EncoderRestorationSGRProj    = internalencoder.RestorationSGRProj
+
+	EncoderTransformMode4x4Only    = internalencoder.TransformMode4x4Only
+	EncoderTransformModeLargest    = internalencoder.TransformModeLargest
+	EncoderTransformModeSwitchable = internalencoder.TransformModeSwitchable
+
+	EncoderReferenceModeSingle   = internalencoder.ReferenceModeSingle
+	EncoderReferenceModeCompound = internalencoder.ReferenceModeCompound
+	EncoderReferenceModeSelect   = internalencoder.ReferenceModeSelect
 )
 
 var (
@@ -1015,6 +1026,14 @@ func EncoderRestorationParamsInterPayloadSize(seq EncoderSequenceHeader, size En
 
 func AppendEncoderRestorationParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, restoration EncoderRestorationParams) ([]byte, error) {
 	return internalencoder.AppendRestorationParamsInterPayload(dst, seq, size, allLossless, restoration)
+}
+
+func EncoderTransformReferenceParamsPayloadSize(prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) (int, error) {
+	return internalencoder.TransformReferenceParamsPayloadSize(prefix, allLossless, params)
+}
+
+func AppendEncoderTransformReferenceParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) ([]byte, error) {
+	return internalencoder.AppendTransformReferenceParamsPayload(dst, prefix, allLossless, params)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {

@@ -658,6 +658,38 @@ func TestPublicEncoderRestorationParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderTransformReferenceParamsPayload(t *testing.T) {
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeInter}
+	params := av1.EncoderTransformReferenceParams{
+		TransformMode: av1.EncoderTransformModeSwitchable,
+		ReferenceMode: av1.EncoderReferenceModeSelect,
+	}
+	payloadSize, err := av1.EncoderTransformReferenceParamsPayloadSize(prefix, false, params)
+	if err != nil {
+		t.Fatalf("EncoderTransformReferenceParamsPayloadSize: %v", err)
+	}
+	var buf [2]byte
+	payload, err := av1.AppendEncoderTransformReferenceParamsPayload(buf[:0], prefix, false, params)
+	if err != nil {
+		t.Fatalf("AppendEncoderTransformReferenceParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseTransformReferenceParams(
+		payload,
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeInter},
+		av1.SegmentationParams{},
+		av1.RestorationParams{},
+	)
+	if err != nil {
+		t.Fatalf("ParseTransformReferenceParams: %v", err)
+	}
+	if parsed.TransformMode != av1.TransformModeSwitchable || parsed.ReferenceMode != av1.ReferenceModeSelect {
+		t.Fatalf("parsed transform/reference=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
