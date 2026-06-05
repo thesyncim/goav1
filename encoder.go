@@ -118,6 +118,15 @@ type EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize struct {
 	MaxDescriptorBytes int
 }
 
+type EncoderWebRTCPictureTemporalUnitFramesRTPScratch struct {
+	FrameOBU    []byte
+	FrameSpans  []EncoderWebRTCFrameRTPPacketSpan
+	PacketSpans []EncoderWebRTCRTPPacketSpan
+	OBUs        []RTPPacketizerOBU
+	Packets     []RTPPacketPlan
+	Work        []RTPPacketPlan
+}
+
 type EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
 	PacketCount     int
 	PayloadBytes    int
@@ -493,6 +502,25 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte,
 		}
 	}
 	return size, nil
+}
+
+func BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch) (EncoderWebRTCPictureTemporalUnitFramesRTPScratch, error) {
+	if size.FrameOBUBytes < 0 || size.FrameSpans < 0 || size.PacketSpans < 0 ||
+		size.Packetizer.OBUs < 0 || size.Packetizer.Packets < 0 || size.Packetizer.Work < 0 {
+		return EncoderWebRTCPictureTemporalUnitFramesRTPScratch{}, ErrEncoderShortBuffer
+	}
+	if cap(scratch.FrameOBU) < size.FrameOBUBytes || len(scratch.FrameSpans) < size.FrameSpans ||
+		len(scratch.PacketSpans) < size.PacketSpans || len(scratch.OBUs) < size.Packetizer.OBUs ||
+		len(scratch.Packets) < size.Packetizer.Packets || len(scratch.Work) < size.Packetizer.Work {
+		return EncoderWebRTCPictureTemporalUnitFramesRTPScratch{}, ErrEncoderShortBuffer
+	}
+	scratch.FrameOBU = scratch.FrameOBU[:0]
+	scratch.FrameSpans = scratch.FrameSpans[:size.FrameSpans]
+	scratch.PacketSpans = scratch.PacketSpans[:size.PacketSpans]
+	scratch.OBUs = scratch.OBUs[:size.Packetizer.OBUs]
+	scratch.Packets = scratch.Packets[:size.Packetizer.Packets]
+	scratch.Work = scratch.Work[:size.Packetizer.Work]
+	return scratch, nil
 }
 
 func EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
