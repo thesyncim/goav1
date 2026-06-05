@@ -862,12 +862,18 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	dirtyLen := req.coeffDirtyLen
 	trackDirty := dirtyPos != nil && dirtyLen != nil
 	dirtyNext := 0
+	var dirtyArr *[maxCoeffScanLen]int16
 	if trackDirty {
+		dirtyArr = dirtyPos
 		dirtyNext = int(*dirtyLen)
 	}
 	levelDirtyPos := req.levelDirtyPos
 	levelDirtyLen := req.levelDirtyLen
 	trackLevelDirty := levelDirtyPos != nil && levelDirtyLen != nil
+	var levelDirtyArr *[maxCoeffScanLen]int16
+	if trackLevelDirty {
+		levelDirtyArr = levelDirtyPos
+	}
 
 	lastC := eobPos - 1
 	lastPos := int(scan[lastC])
@@ -920,7 +926,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 		}
 		coeffs[lastPos] = signed
 		if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
-			(*dirtyPos)[dirtyNext] = int16(lastPos)
+			dirtyArr[dirtyNext] = int16(lastPos)
 			dirtyNext++
 			*dirtyLen = uint16(dirtyNext)
 		}
@@ -952,7 +958,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			levelClearScratch = req.levelDirtyScratch[:]
 		}
 		for i := 0; i < int(*levelDirtyLen); i++ {
-			padded := int((*levelDirtyPos)[i])
+			padded := int(levelDirtyArr[i])
 			if uint(padded) < uint(len(levelClearScratch)) {
 				levelClearScratch[padded] = 0
 			}
@@ -964,7 +970,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	lastPadded := int(posSlice[lastPos].padded)
 	levelsScratch[lastPadded] = uint8(lastLevel)
 	if trackLevelDirty {
-		(*levelDirtyPos)[levelDirtyNext] = int16(lastPadded)
+		levelDirtyArr[levelDirtyNext] = int16(lastPadded)
 		levelDirtyNext++
 	}
 	headC := lastC
@@ -974,7 +980,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	useDirtyScanList := trackDirty && dirtyNext == 0
 	nonzeroScanLen := 0
 	if useDirtyScanList {
-		(*dirtyPos)[0] = packCoeffDirty(lastPos, lastLevel)
+		dirtyArr[0] = packCoeffDirty(lastPos, lastLevel)
 		nonzeroScanLen = 1
 	} else {
 		coeffs[lastPos] = 0
@@ -1024,9 +1030,9 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				}
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
-					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+					levelDirtyArr[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+					dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 					nonzeroScanLen++
 				}
 			}
@@ -1072,9 +1078,9 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				}
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
-					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+					levelDirtyArr[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+					dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 					nonzeroScanLen++
 				}
 			}
@@ -1124,11 +1130,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1179,11 +1185,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1211,11 +1217,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1241,11 +1247,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1273,11 +1279,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1303,11 +1309,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				levelsScratch[padded] = uint8(level)
 				if level != 0 {
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
-						(*levelDirtyPos)[levelDirtyNext] = int16(padded)
+						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1332,9 +1338,9 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 		// validated scan positions, and only non-zero levels are recorded. Replay
 		// it as trusted token state, like dav1d's compact coefficient links.
 		i := nonzeroScanLen - 1
-		if i >= 0 && coeffDirtyPackedPos((*dirtyPos)[i]) == 0 {
+		if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
 			pos := 0
-			level := int(uint16((*dirtyPos)[i]) >> 10)
+			level := int(uint16(dirtyArr[i]) >> 10)
 			negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 			baseLevel := level
 			golombExtra := 0
@@ -1369,7 +1375,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			i--
 		}
 		for ; i >= 0; i-- {
-			packed := uint16((*dirtyPos)[i])
+			packed := uint16(dirtyArr[i])
 			pos := int(packed) & coeffDirtyPosMask
 			level := int(packed >> 10)
 			if pos > maxScanLine {
@@ -1464,7 +1470,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			}
 			coeffs[pos] = signed
 			if trackDirty && uint(dirtyNext) < maxCoeffScanLen {
-				(*dirtyPos)[dirtyNext] = int16(pos)
+				dirtyArr[dirtyNext] = int16(pos)
 				dirtyNext++
 			}
 			c = nextC
