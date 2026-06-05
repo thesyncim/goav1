@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/bitstream"
+	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -146,6 +147,124 @@ func TestAppendInterFrameHeaderPayloadAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AppendInterFrameHeaderPayload allocated: %f", allocs)
+	}
+}
+
+func TestAppendLowOverheadIntraFrameHeaderOBU(t *testing.T) {
+	seq := fullHeaderSequence()
+	header := fullHeaderKeyFrame()
+	payload, _ := appendAndParseIntraFrameHeader(t, seq, header)
+	obuSize, err := LowOverheadIntraFrameHeaderOBUSize(seq, header, 2, 1)
+	if err != nil {
+		t.Fatalf("LowOverheadIntraFrameHeaderOBUSize: %v", err)
+	}
+	var buf [256]byte
+	out, err := AppendLowOverheadIntraFrameHeaderOBU(buf[:0], seq, header, 2, 1)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadIntraFrameHeaderOBU: %v", err)
+	}
+	if len(out) != obuSize {
+		t.Fatalf("obu len=%d want %d", len(out), obuSize)
+	}
+	unit, consumed, err := obu.ParseLowOverhead(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverhead: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != obu.TypeFrameHeader || !unit.Header.Extension ||
+		unit.Header.TemporalID != 2 || unit.Header.SpatialID != 1 {
+		t.Fatalf("parsed obu header=%+v consumed=%d", unit.Header, consumed)
+	}
+	if string(unit.Payload) != string(payload) {
+		t.Fatalf("payload=% x want % x", unit.Payload, payload)
+	}
+}
+
+func TestAppendLowOverheadInterFrameHeaderOBU(t *testing.T) {
+	seq := fullHeaderSequence()
+	header, refs := fullHeaderInterFrame(seq)
+	payload, _ := appendAndParseInterFrameHeader(t, seq, header, &refs)
+	header.References = &refs
+	obuSize, err := LowOverheadInterFrameHeaderOBUSize(seq, header, 3, 2)
+	if err != nil {
+		t.Fatalf("LowOverheadInterFrameHeaderOBUSize: %v", err)
+	}
+	var buf [256]byte
+	out, err := AppendLowOverheadInterFrameHeaderOBU(buf[:0], seq, header, 3, 2)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadInterFrameHeaderOBU: %v", err)
+	}
+	if len(out) != obuSize {
+		t.Fatalf("obu len=%d want %d", len(out), obuSize)
+	}
+	unit, consumed, err := obu.ParseLowOverhead(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverhead: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != obu.TypeFrameHeader || !unit.Header.Extension ||
+		unit.Header.TemporalID != 3 || unit.Header.SpatialID != 2 {
+		t.Fatalf("parsed obu header=%+v consumed=%d", unit.Header, consumed)
+	}
+	if string(unit.Payload) != string(payload) {
+		t.Fatalf("payload=% x want % x", unit.Payload, payload)
+	}
+}
+
+func TestAppendLowOverheadFrameHeaderOBURejectsInvalidExtension(t *testing.T) {
+	seq := fullHeaderSequence()
+	intra := fullHeaderKeyFrame()
+	if _, err := LowOverheadIntraFrameHeaderOBUSize(seq, intra, 8, 0); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("LowOverheadIntraFrameHeaderOBUSize temporal err=%v want ErrInvalidFrame", err)
+	}
+	var buf [256]byte
+	if _, err := AppendLowOverheadIntraFrameHeaderOBU(buf[:0], seq, intra, 0, 4); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("AppendLowOverheadIntraFrameHeaderOBU spatial err=%v want ErrInvalidFrame", err)
+	}
+
+	inter, refs := fullHeaderInterFrame(seq)
+	inter.References = &refs
+	if _, err := LowOverheadInterFrameHeaderOBUSize(seq, inter, 8, 0); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("LowOverheadInterFrameHeaderOBUSize temporal err=%v want ErrInvalidFrame", err)
+	}
+	if _, err := AppendLowOverheadInterFrameHeaderOBU(buf[:0], seq, inter, 0, 4); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("AppendLowOverheadInterFrameHeaderOBU spatial err=%v want ErrInvalidFrame", err)
+	}
+}
+
+func TestAppendLowOverheadFrameHeaderOBUShortBuffer(t *testing.T) {
+	seq := fullHeaderSequence()
+	header := fullHeaderKeyFrame()
+	var buf [1]byte
+	dst := buf[:1]
+	dst[0] = 0xee
+	out, err := AppendLowOverheadIntraFrameHeaderOBU(dst, seq, header, 0, 0)
+	if !errors.Is(err, bitstream.ErrShortBuffer) {
+		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
+	}
+	if len(out) != len(dst) || out[0] != 0xee {
+		t.Fatalf("short buffer mutated output=% x", out)
+	}
+}
+
+func TestAppendLowOverheadFrameHeaderOBUAllocs(t *testing.T) {
+	seq := fullHeaderSequence()
+	intra := fullHeaderKeyFrame()
+	inter, refs := fullHeaderInterFrame(seq)
+	inter.References = &refs
+	var buf [256]byte
+	if _, err := AppendLowOverheadIntraFrameHeaderOBU(buf[:0], seq, intra, 2, 1); err != nil {
+		t.Fatalf("intra preflight: %v", err)
+	}
+	if _, err := AppendLowOverheadInterFrameHeaderOBU(buf[:0], seq, inter, 3, 2); err != nil {
+		t.Fatalf("inter preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = LowOverheadIntraFrameHeaderOBUSize(seq, intra, 2, 1)
+		_, _ = AppendLowOverheadIntraFrameHeaderOBU(buf[:0], seq, intra, 2, 1)
+		_, _ = LowOverheadInterFrameHeaderOBUSize(seq, inter, 3, 2)
+		_, _ = AppendLowOverheadInterFrameHeaderOBU(buf[:0], seq, inter, 3, 2)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadFrameHeaderOBU allocated: %f", allocs)
 	}
 }
 
