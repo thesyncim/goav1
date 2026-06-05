@@ -301,14 +301,12 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 }
 
 func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
-	plane := FrameWorkPlaneY
-	ssX, ssY := uint(0), uint(0)
-	var err error
-	if block.Plane != 0 {
-		plane, ssX, ssY, err = b.blockCoeffPlane(block.Plane)
-		if err != nil {
-			return frameWorkBlockCoeffGeometry{}, err
-		}
+	if block.Plane == 0 {
+		return b.blockCoeffGeometryLumaTrusted(index, visit, block)
+	}
+	plane, ssX, ssY, err := b.blockCoeffPlane(block.Plane)
+	if err != nil {
+		return frameWorkBlockCoeffGeometry{}, err
 	}
 	region, regionOK := b.cachedJobRegionTrusted(index)
 	if !regionOK {
@@ -325,6 +323,26 @@ func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVi
 		}
 	}
 	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
+}
+
+func (b *FrameWorkBatch) blockCoeffGeometryLumaTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+	region, regionOK := b.cachedJobRegionTrusted(index)
+	if !regionOK {
+		var err error
+		region, err = b.JobRegion(index)
+		if err != nil {
+			return frameWorkBlockCoeffGeometry{}, err
+		}
+	}
+	window, windowOK := b.cachedJobOutputPlaneTrusted(index, FrameWorkPlaneY)
+	if !windowOK {
+		var err error
+		window, err = b.JobOutputPlane(index, FrameWorkPlaneY)
+		if err != nil {
+			return frameWorkBlockCoeffGeometry{}, err
+		}
+	}
+	return b.blockCoeffGeometryLumaKnown(region, window, visit, block)
 }
 
 func (b *FrameWorkBatch) cachedJobRegionTrusted(index int) (FrameWorkJobRegion, bool) {
@@ -415,6 +433,66 @@ func (b *FrameWorkBatch) blockCoeffGeometryKnown(region FrameWorkJobRegion, wind
 		visibleHeight: geomVisibleHeight,
 		txScale:       txScale,
 		plane:         plane,
+	}, nil
+}
+
+func (b *FrameWorkBatch) blockCoeffGeometryLumaKnown(region FrameWorkJobRegion, window FrameWorkPlaneRegion, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+	meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	if visit.MICol < region.MIColStart || visit.MIRow < region.MIRowStart ||
+		visit.MIColEnd > region.MIColEnd || visit.MIRowEnd > region.MIRowEnd ||
+		visit.MIColEnd <= visit.MICol || visit.MIRowEnd <= visit.MIRow {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	txX4 := uint16(block.Block.X4)
+	txY4 := uint16(block.Block.Y4)
+	blockX4 := uint16(visit.X4)
+	blockY4 := uint16(visit.Y4)
+	visibleW4 := uint16(block.Block.VisibleW4)
+	visibleH4 := uint16(block.Block.VisibleH4)
+	if visibleW4 == 0 || visibleH4 == 0 ||
+		txX4 < blockX4 || txY4 < blockY4 ||
+		txX4+visibleW4 > blockX4+uint16(visit.VisibleW4) ||
+		txY4+visibleH4 > blockY4+uint16(visit.VisibleH4) ||
+		visibleW4<<2 > uint16(meta.size.Width) ||
+		visibleH4<<2 > uint16(meta.size.Height) {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	x := (uint32(visit.MICol) + uint32(txX4-blockX4)) << 2
+	y := (uint32(visit.MIRow) + uint32(txY4-blockY4)) << 2
+	width := int(meta.size.Width)
+	height := int(meta.size.Height)
+	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, int(x), int(y), width, height)
+	if !ok {
+		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, FrameWorkPlaneY, int(x), int(y)) {
+			return frameWorkBlockCoeffGeometry{
+				window:   window,
+				size:     meta.size,
+				scanSize: meta.scanSize,
+				x:        x,
+				y:        y,
+				txScale:  meta.txScale,
+				plane:    FrameWorkPlaneY,
+			}, nil
+		}
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	geomVisibleWidth, geomVisibleHeight, ok := frameWorkBlockCoeffVisiblePixels(visibleWidth, visibleHeight)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	return frameWorkBlockCoeffGeometry{
+		window:        window,
+		size:          meta.size,
+		scanSize:      meta.scanSize,
+		x:             x,
+		y:             y,
+		visibleWidth:  geomVisibleWidth,
+		visibleHeight: geomVisibleHeight,
+		txScale:       meta.txScale,
+		plane:         FrameWorkPlaneY,
 	}, nil
 }
 
