@@ -16,6 +16,12 @@ const (
 type InterpolationFilter = parser.InterpolationFilter
 type TileInfo = parser.TileInfo
 
+// TilePayload is one tile bitstream payload for tile_group_obu(). Data aliases
+// caller memory and is copied into the destination by AppendTileGroupPayload.
+type TilePayload struct {
+	Data []byte
+}
+
 const (
 	InterpolationEightTap   = parser.InterpolationEightTap
 	InterpolationSmooth     = parser.InterpolationSmooth
@@ -45,6 +51,56 @@ func AppendTileInfoPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPre
 	w := newBitWriter(out[off:])
 	if err := writeTileInfoPayload(&w, seq, prefix, codedWidth, height, tiles); err != nil {
 		return dst, err
+	}
+	return out, nil
+}
+
+// TileGroupPayloadSize returns the byte count for a standalone tile_group_obu()
+// payload covering startTile through endTile, including tile-size prefixes for
+// every tile except the last tile in the group.
+func TileGroupPayloadSize(tiles TileInfo, startTile uint16, endTile uint16, payloads []TilePayload) (int, error) {
+	header, err := tileGroupHeaderPayloadSize(tiles, startTile, endTile)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateTileGroupPayloads(tiles, startTile, endTile, payloads); err != nil {
+		return 0, err
+	}
+	size := header
+	for i := range payloads {
+		if i != len(payloads)-1 {
+			size += int(tiles.TileSizeBytes)
+		}
+		size += len(payloads[i].Data)
+	}
+	return size, nil
+}
+
+// AppendTileGroupPayload appends a standalone tile_group_obu() payload without
+// growing dst. Callers must provide one payload for each tile in the group.
+func AppendTileGroupPayload(dst []byte, tiles TileInfo, startTile uint16, endTile uint16, payloads []TilePayload) ([]byte, error) {
+	payloadSize, err := TileGroupPayloadSize(tiles, startTile, endTile, payloads)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < payloadSize {
+		return dst, bitstream.ErrShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+payloadSize]
+	w := newBitWriter(out[off:])
+	if err := writeTileGroupHeaderPayload(&w, tiles, startTile, endTile); err != nil {
+		return dst, err
+	}
+	off += w.bytesWritten()
+	for i := range payloads {
+		if i != len(payloads)-1 {
+			if err := putTileSize(out[off:], tiles.TileSizeBytes, len(payloads[i].Data)); err != nil {
+				return dst, err
+			}
+			off += int(tiles.TileSizeBytes)
+		}
+		off += copy(out[off:], payloads[i].Data)
 	}
 	return out, nil
 }
@@ -106,6 +162,105 @@ func writeTileInfoPayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPr
 		return w.writeBits(uint64(tiles.TileSizeBytes-1), 2)
 	}
 	return nil
+}
+
+func tileGroupHeaderPayloadSize(tiles TileInfo, startTile uint16, endTile uint16) (int, error) {
+	w := newSizingBitWriter()
+	if err := writeTileGroupHeaderPayload(&w, tiles, startTile, endTile); err != nil {
+		return 0, err
+	}
+	return w.bytesWritten(), nil
+}
+
+func writeTileGroupHeaderPayload(w *bitWriter, tiles TileInfo, startTile uint16, endTile uint16) error {
+	numTiles, err := validateTileGroupRange(tiles, startTile, endTile)
+	if err != nil {
+		return err
+	}
+	if numTiles > 1 {
+		present := startTile != 0 || endTile != numTiles-1
+		if err := w.writeBool(present); err != nil {
+			return err
+		}
+		if present {
+			tileBits := tiles.Log2Cols + tiles.Log2Rows
+			if tileBits == 0 {
+				return ErrInvalidFrame
+			}
+			if err := w.writeBits(uint64(startTile), tileBits); err != nil {
+				return err
+			}
+			if err := w.writeBits(uint64(endTile), tileBits); err != nil {
+				return err
+			}
+		}
+	}
+	return w.writeZeroByteAlignment()
+}
+
+func validateTileGroupPayloads(tiles TileInfo, startTile uint16, endTile uint16, payloads []TilePayload) error {
+	if _, err := validateTileGroupRange(tiles, startTile, endTile); err != nil {
+		return err
+	}
+	count := int(endTile - startTile + 1)
+	if len(payloads) != count {
+		return ErrInvalidFrame
+	}
+	for i := range payloads {
+		size := len(payloads[i].Data)
+		if size == 0 || uint64(size) > uint64(^uint32(0)) {
+			return ErrInvalidFrame
+		}
+		if i != len(payloads)-1 {
+			if tiles.TileSizeBytes == 0 || tiles.TileSizeBytes > 4 || !tileSizeFits(tiles.TileSizeBytes, size) {
+				return ErrInvalidFrame
+			}
+		}
+	}
+	return nil
+}
+
+func validateTileGroupRange(tiles TileInfo, startTile uint16, endTile uint16) (uint16, error) {
+	if tiles.Cols == 0 || tiles.Rows == 0 || tiles.Cols > MaxTileCols || tiles.Rows > MaxTileRows {
+		return 0, ErrInvalidFrame
+	}
+	numTiles := uint16(tiles.Cols) * uint16(tiles.Rows)
+	if numTiles == 0 || startTile > endTile || endTile >= numTiles {
+		return 0, ErrInvalidFrame
+	}
+	if numTiles > 1 {
+		tileBits := tiles.Log2Cols + tiles.Log2Rows
+		if tileBits == 0 || uint16(1)<<tileBits < numTiles {
+			return 0, ErrInvalidFrame
+		}
+		if tiles.TileSizeBytes == 0 || tiles.TileSizeBytes > 4 {
+			return 0, ErrInvalidFrame
+		}
+	} else if startTile != 0 || endTile != 0 {
+		return 0, ErrInvalidFrame
+	}
+	return numTiles, nil
+}
+
+func putTileSize(dst []byte, tileSizeBytes uint8, size int) error {
+	if tileSizeBytes == 0 || tileSizeBytes > 4 || !tileSizeFits(tileSizeBytes, size) || len(dst) < int(tileSizeBytes) {
+		return ErrInvalidFrame
+	}
+	v := uint32(size - 1)
+	for i := uint8(0); i < tileSizeBytes; i++ {
+		dst[i] = byte(v >> (8 * uint(i)))
+	}
+	return nil
+}
+
+func tileSizeFits(tileSizeBytes uint8, size int) bool {
+	if size <= 0 || tileSizeBytes == 0 || tileSizeBytes > 4 {
+		return false
+	}
+	if tileSizeBytes == 4 {
+		return true
+	}
+	return uint64(size-1) < uint64(1)<<(8*uint(tileSizeBytes))
 }
 
 type encoderTileDerived struct {

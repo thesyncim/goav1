@@ -281,6 +281,31 @@ func TestPublicEncoderFrameHeaderIntraPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderTileGroupPayload(t *testing.T) {
+	tiles := av1.EncoderTileInfo{
+		Cols:          2,
+		Rows:          1,
+		Log2Cols:      1,
+		TileSizeBytes: 1,
+	}
+	payloads := [...]av1.EncoderTilePayload{
+		{Data: []byte{0x80}},
+		{Data: []byte{0x81, 0x82}},
+	}
+	size, err := av1.EncoderTileGroupPayloadSize(tiles, 0, 1, payloads[:])
+	if err != nil {
+		t.Fatalf("EncoderTileGroupPayloadSize: %v", err)
+	}
+	var buf [8]byte
+	out, err := av1.AppendEncoderTileGroupPayload(buf[:0], tiles, 0, 1, payloads[:])
+	if err != nil {
+		t.Fatalf("AppendEncoderTileGroupPayload: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("payload len=%d want %d", len(out), size)
+	}
+}
+
 func TestPublicEncoderFrameHeaderInterPayload(t *testing.T) {
 	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
 		Resolution: av1.EncoderResolution{Width: 640, Height: 360},

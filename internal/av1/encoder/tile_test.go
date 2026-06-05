@@ -161,6 +161,193 @@ func TestAppendTileInfoPayloadAllocs(t *testing.T) {
 	}
 }
 
+func TestAppendTileGroupPayloadSingleTile(t *testing.T) {
+	tiles := TileInfo{
+		Cols: 1,
+		Rows: 1,
+	}
+	payloads := [...]TilePayload{{Data: []byte{0x80}}}
+	var buf [8]byte
+	size, err := TileGroupPayloadSize(tiles, 0, 0, payloads[:])
+	if err != nil {
+		t.Fatalf("TileGroupPayloadSize: %v", err)
+	}
+	out, err := AppendTileGroupPayload(buf[:0], tiles, 0, 0, payloads[:])
+	if err != nil {
+		t.Fatalf("AppendTileGroupPayload: %v", err)
+	}
+	if len(out) != size || len(out) != 1 || out[0] != 0x80 {
+		t.Fatalf("payload=% x size=%d", out, size)
+	}
+	group, err := parser.ParseTileGroupHeader(out, tiles, 0, 0, false)
+	if err != nil {
+		t.Fatalf("ParseTileGroupHeader: %v", err)
+	}
+	var spans [1]parser.TileSpan
+	n, err := parser.SplitTileGroup(out, tiles, group, spans[:])
+	if err != nil {
+		t.Fatalf("SplitTileGroup: %v", err)
+	}
+	if n != 1 || spans[0].Offset != 0 || spans[0].Size != 1 {
+		t.Fatalf("spans=%+v n=%d group=%+v", spans, n, group)
+	}
+}
+
+func TestAppendTileGroupPayloadMultiTileRoundTrip(t *testing.T) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          2,
+		Log2Cols:      1,
+		Log2Rows:      1,
+		TileSizeBytes: 2,
+	}
+	payloads := [...]TilePayload{
+		{Data: []byte{0x11, 0x12}},
+		{Data: []byte{0x21, 0x22, 0x23}},
+		{Data: []byte{0x31}},
+		{Data: []byte{0x41, 0x42, 0x43, 0x44}},
+	}
+	var buf [32]byte
+	size, err := TileGroupPayloadSize(tiles, 0, 3, payloads[:])
+	if err != nil {
+		t.Fatalf("TileGroupPayloadSize: %v", err)
+	}
+	out, err := AppendTileGroupPayload(buf[:0], tiles, 0, 3, payloads[:])
+	if err != nil {
+		t.Fatalf("AppendTileGroupPayload: %v", err)
+	}
+	if len(out) != size {
+		t.Fatalf("payload len=%d want %d", len(out), size)
+	}
+	group, err := parser.ParseTileGroupHeader(out, tiles, 0, 0, false)
+	if err != nil {
+		t.Fatalf("ParseTileGroupHeader: %v", err)
+	}
+	if group.TileStartAndEndPresent || group.DataOffset != 1 || group.TileCount != 4 || !group.Final {
+		t.Fatalf("group=%+v", group)
+	}
+	var spans [4]parser.TileSpan
+	n, err := parser.SplitTileGroup(out, tiles, group, spans[:])
+	if err != nil {
+		t.Fatalf("SplitTileGroup: %v", err)
+	}
+	if n != len(payloads) {
+		t.Fatalf("span count=%d want %d", n, len(payloads))
+	}
+	for i := range payloads {
+		span := spans[i]
+		got := out[span.Offset : span.Offset+span.Size]
+		if string(got) != string(payloads[i].Data) || span.Tile != uint16(i) {
+			t.Fatalf("span %d=%+v data=% x want % x", i, span, got, payloads[i].Data)
+		}
+	}
+}
+
+func TestAppendTileGroupPayloadSubsetRoundTrip(t *testing.T) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          2,
+		Log2Cols:      1,
+		Log2Rows:      1,
+		TileSizeBytes: 1,
+	}
+	payloads := [...]TilePayload{
+		{Data: []byte{0x51, 0x52}},
+		{Data: []byte{0x61}},
+	}
+	var buf [16]byte
+	out, err := AppendTileGroupPayload(buf[:0], tiles, 1, 2, payloads[:])
+	if err != nil {
+		t.Fatalf("AppendTileGroupPayload: %v", err)
+	}
+	group, err := parser.ParseTileGroupHeader(out, tiles, 0, 1, false)
+	if err != nil {
+		t.Fatalf("ParseTileGroupHeader: %v", err)
+	}
+	if !group.TileStartAndEndPresent || group.StartTile != 1 || group.EndTile != 2 || group.DataOffset != 1 {
+		t.Fatalf("group=%+v", group)
+	}
+	var spans [2]parser.TileSpan
+	n, err := parser.SplitTileGroup(out, tiles, group, spans[:])
+	if err != nil {
+		t.Fatalf("SplitTileGroup: %v", err)
+	}
+	if n != 2 || spans[0].Tile != 1 || spans[1].Tile != 2 || spans[0].Size != 2 || spans[1].Size != 1 {
+		t.Fatalf("spans=%+v n=%d", spans, n)
+	}
+}
+
+func TestAppendTileGroupPayloadRejectsInvalid(t *testing.T) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          1,
+		Log2Cols:      1,
+		TileSizeBytes: 1,
+	}
+	valid := [...]TilePayload{{Data: []byte{0x80}}, {Data: []byte{0x81}}}
+	empty := [...]TilePayload{{Data: []byte{}}, {Data: []byte{0x81}}}
+	tooLargeForSizeByte := [...]TilePayload{{Data: make([]byte, 257)}, {Data: []byte{0x81}}}
+	cases := []struct {
+		name     string
+		tiles    TileInfo
+		start    uint16
+		end      uint16
+		payloads []TilePayload
+	}{
+		{name: "range", tiles: tiles, start: 1, end: 0, payloads: valid[:]},
+		{name: "count", tiles: tiles, start: 0, end: 1, payloads: valid[:1]},
+		{name: "empty", tiles: tiles, start: 0, end: 1, payloads: empty[:]},
+		{name: "size", tiles: tiles, start: 0, end: 1, payloads: tooLargeForSizeByte[:]},
+	}
+	var buf [8]byte
+	for _, tc := range cases {
+		if _, err := AppendTileGroupPayload(buf[:0], tc.tiles, tc.start, tc.end, tc.payloads); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("%s err=%v want ErrInvalidFrame", tc.name, err)
+		}
+	}
+}
+
+func TestAppendTileGroupPayloadShortBuffer(t *testing.T) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          1,
+		Log2Cols:      1,
+		TileSizeBytes: 1,
+	}
+	payloads := [...]TilePayload{{Data: []byte{0x80}}, {Data: []byte{0x81}}}
+	var buf [1]byte
+	dst := buf[:1]
+	dst[0] = 0xee
+	out, err := AppendTileGroupPayload(dst, tiles, 0, 1, payloads[:])
+	if !errors.Is(err, bitstream.ErrShortBuffer) {
+		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
+	}
+	if len(out) != len(dst) || out[0] != 0xee {
+		t.Fatalf("short buffer mutated output=% x", out)
+	}
+}
+
+func TestAppendTileGroupPayloadAllocs(t *testing.T) {
+	tiles := TileInfo{
+		Cols:          2,
+		Rows:          1,
+		Log2Cols:      1,
+		TileSizeBytes: 1,
+	}
+	payloads := [...]TilePayload{{Data: []byte{0x80}}, {Data: []byte{0x81}}}
+	var buf [8]byte
+	if _, err := AppendTileGroupPayload(buf[:0], tiles, 0, 1, payloads[:]); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = TileGroupPayloadSize(tiles, 0, 1, payloads[:])
+		_, _ = AppendTileGroupPayload(buf[:0], tiles, 0, 1, payloads[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendTileGroupPayload allocated: %f", allocs)
+	}
+}
+
 func appendAndParseTileInfo(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, codedWidth uint32, height uint32, tiles TileInfo) ([]byte, parser.TileInfo) {
 	t.Helper()
 	payloadSize, err := TileInfoPayloadSize(seq, prefix, codedWidth, height, tiles)

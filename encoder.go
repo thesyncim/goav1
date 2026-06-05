@@ -112,6 +112,7 @@ type EncoderRestorationType = internalencoder.RestorationType
 type EncoderRestorationParams = internalencoder.RestorationParams
 type EncoderInterpolationFilter = internalencoder.InterpolationFilter
 type EncoderTileInfo = internalencoder.TileInfo
+type EncoderTilePayload = internalencoder.TilePayload
 type EncoderTransformMode = internalencoder.TransformMode
 type EncoderReferenceMode = internalencoder.ReferenceMode
 type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
@@ -1378,6 +1379,14 @@ func EncoderTileInfoPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHe
 
 func AppendEncoderTileInfoPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) ([]byte, error) {
 	return internalencoder.AppendTileInfoPayload(dst, seq, prefix, codedWidth, height, tiles)
+}
+
+func EncoderTileGroupPayloadSize(tiles EncoderTileInfo, startTile uint16, endTile uint16, payloads []EncoderTilePayload) (int, error) {
+	return internalencoder.TileGroupPayloadSize(tiles, startTile, endTile, payloads)
+}
+
+func AppendEncoderTileGroupPayload(dst []byte, tiles EncoderTileInfo, startTile uint16, endTile uint16, payloads []EncoderTilePayload) ([]byte, error) {
+	return internalencoder.AppendTileGroupPayload(dst, tiles, startTile, endTile, payloads)
 }
 
 func EncoderQuantizationParamsPayloadSize(seq EncoderSequenceHeader, quant EncoderQuantizationParams) (int, error) {

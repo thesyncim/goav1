@@ -119,3 +119,12 @@ func (w *bitWriter) writeTrailingBits() error {
 	}
 	return nil
 }
+
+func (w *bitWriter) writeZeroByteAlignment() error {
+	for !w.byteAligned() {
+		if err := w.writeBit(0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
