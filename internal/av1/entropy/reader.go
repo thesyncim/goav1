@@ -325,7 +325,7 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
 		}
-		shift := int32(16 - bits.Len32(nextRange))
+		shift := normShift16(nextRange)
 		cnt -= shift
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng = nextRange << uint(shift)
@@ -414,7 +414,7 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
 		}
-		shift := int32(16 - bits.Len32(nextRange))
+		shift := normShift16(nextRange)
 		cnt -= shift
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng = nextRange << uint(shift)
