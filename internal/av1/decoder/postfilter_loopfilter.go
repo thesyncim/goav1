@@ -177,22 +177,60 @@ func frameWorkLoopFilterPlanningContextFor(ctx FrameWorkPostFilterContext) (fram
 		ssX:   frameWorkLoopFilterSubsamplingShift(color.SubsamplingX),
 		ssY:   frameWorkLoopFilterSubsamplingShift(color.SubsamplingY),
 	}
-	bounds, err := frameWorkLoopFilterPlaneBounds(ctx, loopfilter.PlaneY)
+	bounds, err := frameWorkLoopFilterPlanningBoundsFor(ctx, color)
 	if err != nil {
 		return frameWorkLoopFilterPlanningContext{}, err
 	}
-	planning.bounds[loopfilter.PlaneY] = bounds
-	if color.MonoChrome {
-		return planning, nil
-	}
-	for plane := loopfilter.PlaneU; plane <= loopfilter.PlaneV; plane++ {
-		bounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
-		if err != nil {
-			return frameWorkLoopFilterPlanningContext{}, err
-		}
-		planning.bounds[plane] = bounds
-	}
+	planning.bounds = bounds
 	return planning, nil
+}
+
+func frameWorkLoopFilterPlanningBoundsFor(ctx FrameWorkPostFilterContext, color parser.ColorConfig) ([3]frameWorkLoopFilterBounds, error) {
+	width, ok := frameWorkLoopFilterFrameDimension32(ctx.Event.FrameSize.CodedWidth)
+	if !ok {
+		return [3]frameWorkLoopFilterBounds{}, threading.ErrInvalidBatch
+	}
+	height, ok := frameWorkLoopFilterFrameDimension32(ctx.Event.FrameSize.Height)
+	if !ok {
+		return [3]frameWorkLoopFilterBounds{}, threading.ErrInvalidBatch
+	}
+	alignedW, ok := frameWorkLoopFilterAligned8Dimension(ctx.Event.FrameSize.CodedWidth)
+	if !ok {
+		return [3]frameWorkLoopFilterBounds{}, threading.ErrInvalidBatch
+	}
+	alignedH, ok := frameWorkLoopFilterAligned8Dimension(ctx.Event.FrameSize.Height)
+	if !ok {
+		return [3]frameWorkLoopFilterBounds{}, threading.ErrInvalidBatch
+	}
+	var bounds [3]frameWorkLoopFilterBounds
+	bounds[loopfilter.PlaneY] = frameWorkLoopFilterBounds{
+		posWidth:  frameWorkLoopFilterMIAlignedLength(width),
+		posHeight: frameWorkLoopFilterMIAlignedLength(height),
+		bufWidth:  alignedW,
+		bufHeight: alignedH,
+	}
+	if color.MonoChrome {
+		return bounds, nil
+	}
+	chromaPosW := frameWorkLoopFilterMIAlignedLength(frameWorkLoopFilterSubsampledLength(width, color.SubsamplingX))
+	chromaPosH := frameWorkLoopFilterMIAlignedLength(frameWorkLoopFilterSubsampledLength(height, color.SubsamplingY))
+	chromaBufW := alignedW
+	chromaBufH := alignedH
+	if color.SubsamplingX {
+		chromaBufW >>= 1
+	}
+	if color.SubsamplingY {
+		chromaBufH >>= 1
+	}
+	chromaBounds := frameWorkLoopFilterBounds{
+		posWidth:  chromaPosW,
+		posHeight: chromaPosH,
+		bufWidth:  chromaBufW,
+		bufHeight: chromaBufH,
+	}
+	bounds[loopfilter.PlaneU] = chromaBounds
+	bounds[loopfilter.PlaneV] = chromaBounds
+	return bounds, nil
 }
 
 // FrameWorkLoopFilterPostFilterApplyResult summarizes application of stored
