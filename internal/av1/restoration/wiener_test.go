@@ -129,6 +129,38 @@ func TestApplyWienerRestorationMatchesReferenceCorpus(t *testing.T) {
 	}
 }
 
+func TestApplyWienerRestorationTrustedMatchesChecked(t *testing.T) {
+	const width = 64
+	const height = 37
+	const bitDepth = uint8(10)
+	stride := width + 2*WienerHalfwin
+	origin := WienerHalfwin*stride + WienerHalfwin
+	src := make([]uint16, stride*(height+2*WienerHalfwin))
+	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x91)
+	for i := range src {
+		src[i] = uint16(rnd.pseudoUniform(1 << bitDepth))
+	}
+	info := WienerInfo{
+		VFilter: NewWienerFilter(-4, -13, 29),
+		HFilter: NewWienerFilter(7, -5, 13),
+	}
+	scratchLen, err := WienerScratchLen(width, height)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := make([]uint16, width*height)
+	trusted := make([]uint16, width*height)
+	if err := ApplyWienerRestoration(src, stride, origin, checked, width, width, height, info, bitDepth, make([]uint16, scratchLen)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWienerRestorationTrusted(src, stride, origin, trusted, width, width, height, info, bitDepth, make([]uint16, scratchLen)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(trusted, checked) {
+		t.Fatal("trusted Wiener output differs from checked output")
+	}
+}
+
 func TestWienerScratchLenAndAllocs(t *testing.T) {
 	scratchLen, err := WienerScratchLen(64, 64)
 	if err != nil {
@@ -304,6 +336,31 @@ func BenchmarkApplyWienerRestoration(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		if err := ApplyWienerRestoration(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkApplyWienerRestorationTrusted(b *testing.B) {
+	scratchLen, err := WienerScratchLen(64, 64)
+	if err != nil {
+		b.Fatal(err)
+	}
+	scratch := make([]uint16, scratchLen)
+	stride := 64 + 2*WienerHalfwin
+	origin := WienerHalfwin*stride + WienerHalfwin
+	src := make([]uint16, stride*(64+2*WienerHalfwin))
+	dst := make([]uint16, 64*64)
+	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0xabc)
+	for i := range src {
+		src[i] = uint16(rnd.pseudoUniform(1 << 12))
+	}
+	info := DefaultWienerInfo()
+	b.ReportAllocs()
+	b.SetBytes(64 * 64 * 2)
+	b.ResetTimer()
+	for b.Loop() {
+		if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
 			b.Fatal(err)
 		}
 	}

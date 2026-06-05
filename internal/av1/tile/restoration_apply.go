@@ -264,7 +264,7 @@ func ApplyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint
 		return RestorationUnitApplyResult{Type: parser.RestorationNone}, nil
 	case parser.RestorationWiener:
 		wienerDebugPreApply(src, srcStride, srcOrigin, width, height, unit.Wiener)
-		err := av1restoration.ApplyWienerRestoration(src, srcStride, srcOrigin, dst, dstStride, width, height, unit.Wiener, bitDepth, scratch.Wiener)
+		err := av1restoration.ApplyWienerRestorationTrusted(src, srcStride, srcOrigin, dst, dstStride, width, height, unit.Wiener, bitDepth, scratch.Wiener)
 		if err != nil {
 			return RestorationUnitApplyResult{}, err
 		}

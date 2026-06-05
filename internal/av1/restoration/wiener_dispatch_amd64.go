@@ -21,9 +21,11 @@ func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.AVX2 {
 		wienerHorizontalImpl = wienerHorizontalAVX2
+		wienerHorizontalTrustedImpl = wienerHorizontalAVX2Trusted
 		wienerVerticalImpl = wienerVerticalAVX2
 		return
 	}
 	wienerHorizontalImpl = wienerHorizontal
+	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 }

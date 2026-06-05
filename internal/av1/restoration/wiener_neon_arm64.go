@@ -112,6 +112,28 @@ func wienerHorizontalNEON(src []uint16, srcStride int, srcOrigin int, width int,
 	return true
 }
 
+func wienerHorizontalNEONTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
+	if width < 8 || width%8 != 0 {
+		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+		return
+	}
+	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
+	offset := int32(1 << (bitDepth + WienerFilterBits - 1))
+	taps := adjustedWienerTaps(filter)
+	ctx := wienerNEONHorizCtx{
+		dst:    &temp[0],
+		src:    &src[srcOrigin-WienerHalfwin*srcStride-WienerHalfwin],
+		srcStr: uintptr(srcStride),
+		width:  uintptr(width),
+		rows:   uintptr(height + 2*WienerHalfwin),
+		taps:   &taps[0],
+		seed:   offset + roundBias(round0),
+		shift:  int32(-round0),
+		maxCl:  uint16(limit - 1),
+	}
+	wienerHorizontalNEONAsm(&ctx)
+}
+
 func wienerVerticalNEON(temp []uint16, tempStride int, dst []uint16, dstStride int, width int, height int, filter WienerFilter, bitDepth int, round1 int, max uint16) {
 	if width < 8 || width%8 != 0 {
 		wienerVertical(temp, tempStride, dst, dstStride, width, height, filter, bitDepth, round1, max)

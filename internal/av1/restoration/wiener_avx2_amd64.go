@@ -111,6 +111,28 @@ func wienerHorizontalAVX2(src []uint16, srcStride int, srcOrigin int, width int,
 	return true
 }
 
+func wienerHorizontalAVX2Trusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
+	if width < 8 || width%8 != 0 {
+		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+		return
+	}
+	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
+	offset := int32(1 << (bitDepth + WienerFilterBits - 1))
+	taps := adjustedWienerTapsI32(filter)
+	ctx := wienerAVX2HorizCtx{
+		dst:    &temp[0],
+		src:    &src[srcOrigin-WienerHalfwin*srcStride-WienerHalfwin],
+		srcStr: uintptr(srcStride),
+		width:  uintptr(width),
+		rows:   uintptr(height + 2*WienerHalfwin),
+		taps:   &taps,
+		seed:   offset + roundBiasAVX2(round0),
+		shift:  int32(round0),
+		maxCl:  limit - 1,
+	}
+	wienerHorizontalAVX2Asm(&ctx)
+}
+
 func wienerVerticalAVX2(temp []uint16, tempStride int, dst []uint16, dstStride int, width int, height int, filter WienerFilter, bitDepth int, round1 int, max uint16) {
 	if width < 8 || width%8 != 0 {
 		wienerVertical(temp, tempStride, dst, dstStride, width, height, filter, bitDepth, round1, max)

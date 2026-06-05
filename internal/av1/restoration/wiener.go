@@ -81,6 +81,33 @@ func ApplyWienerRestoration(src []uint16, srcStride int, srcOrigin int, dst []ui
 	return nil
 }
 
+// ApplyWienerRestorationTrusted is the decoder-owned variant of
+// ApplyWienerRestoration. It preserves geometry, filter, bit-depth, and scratch
+// validation, but assumes the bordered source samples are already clipped to
+// bitDepth and skips the redundant per-sample validation scan in SIMD wrappers.
+func ApplyWienerRestorationTrusted(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, info WienerInfo, bitDepth uint8, scratch []uint16) error {
+	max, err := maxSample(bitDepth)
+	if err != nil {
+		return err
+	}
+	if !validRestorationBlock(width, height) ||
+		!validWienerInfo(info) ||
+		!borderedBlockFits(len(src), srcStride, srcOrigin, width, height, WienerHalfwin, WienerHalfwin) ||
+		!blockFits(len(dst), dstStride, width, height) {
+		return ErrInvalidRestoration
+	}
+	need, err := WienerScratchLen(width, height)
+	if err != nil || len(scratch) < need {
+		return ErrInvalidRestoration
+	}
+
+	round0, round1 := wienerRounds(int(bitDepth))
+	temp := scratch[:need]
+	wienerHorizontalTrustedImpl(src, srcStride, srcOrigin, width, height, info.HFilter, int(bitDepth), round0, max, temp)
+	wienerVerticalImpl(temp, width, dst, dstStride, width, height, info.VFilter, int(bitDepth), round1, max)
+	return nil
+}
+
 // wienerHorizontalImpl and wienerVerticalImpl are the dispatch slots for the two
 // separable Wiener passes. They are resolved exactly once, at package init (see
 // wiener_dispatch_*.go), so the per-call cost is a single indirect call with no
@@ -90,8 +117,9 @@ func ApplyWienerRestoration(src []uint16, srcStride int, srcOrigin int, dst []ui
 // [0,max] clamps). Tests and benchmarks must not mutate these concurrently with
 // live decoding.
 var (
-	wienerHorizontalImpl = wienerHorizontal
-	wienerVerticalImpl   = wienerVertical
+	wienerHorizontalImpl        = wienerHorizontal
+	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
+	wienerVerticalImpl          = wienerVertical
 )
 
 func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) bool {
@@ -129,6 +157,33 @@ func wienerHorizontal(src []uint16, srcStride int, srcOrigin int, width int, hei
 		}
 	}
 	return true
+}
+
+func wienerHorizontalTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
+	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
+	offset := int32(1 << (bitDepth + WienerFilterBits - 1))
+	maxClamp := limit - 1
+	f0 := int32(filter[0])
+	f1 := int32(filter[1])
+	f2 := int32(filter[2])
+	f3 := int32(filter[3])
+	f4 := int32(filter[4])
+	f5 := int32(filter[5])
+	f6 := int32(filter[6])
+	for row := -WienerHalfwin; row < height+WienerHalfwin; row++ {
+		dstRow := (row + WienerHalfwin) * width
+		srcStart := srcOrigin + row*srcStride - WienerHalfwin
+		srcRow := src[srcStart : srcStart+width+2*WienerHalfwin]
+		dstSlice := temp[dstRow : dstRow+width]
+		for col := range width {
+			w := srcRow[col : col+WienerWin : col+WienerWin]
+			s0, s1, s2, s3, s4, s5, s6 := w[0], w[1], w[2], w[3], w[4], w[5], w[6]
+			sum := int32(s3)<<WienerFilterBits + offset
+			sum += int32(s0)*f0 + int32(s1)*f1 + int32(s2)*f2 + int32(s3)*f3 +
+				int32(s4)*f4 + int32(s5)*f5 + int32(s6)*f6
+			dstSlice[col] = uint16(clampInt32(roundPowerOfTwo(sum, round0), 0, maxClamp))
+		}
+	}
 }
 
 func wienerVertical(temp []uint16, tempStride int, dst []uint16, dstStride int, width int, height int, filter WienerFilter, bitDepth int, round1 int, max uint16) {

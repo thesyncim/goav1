@@ -22,9 +22,11 @@ func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
 		wienerHorizontalImpl = wienerHorizontalNEON
+		wienerHorizontalTrustedImpl = wienerHorizontalNEONTrusted
 		wienerVerticalImpl = wienerVerticalNEON
 		return
 	}
 	wienerHorizontalImpl = wienerHorizontal
+	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 }

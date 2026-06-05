@@ -11,5 +11,6 @@ package restoration
 // excluded. This file only keeps the dispatch wiring symmetric across builds.
 func init() {
 	wienerHorizontalImpl = wienerHorizontal
+	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 }
