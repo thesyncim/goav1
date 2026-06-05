@@ -668,10 +668,10 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}
 
 	var run DecoderFrameWorkStepResult
-	if req.PostRunner != nil {
-		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
-	} else if req.WorkerPool != nil && req.WorkerPool.WorkerCount() == 1 {
+	if req.WorkerPool != nil && req.WorkerPool.WorkerCount() == 1 {
 		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, event, step, output, references)
+	} else if req.PostRunner != nil {
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
 	} else {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
@@ -723,6 +723,9 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 	}
 	if firstErr != nil {
 		return DecoderFrameWorkStepResult{}, firstErr
+	}
+	if req.PostRunner != nil {
+		return internaldecoder.CompleteFrameWorkPreparedPayloadStepRunner(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.PostRunner)
 	}
 	return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.Post)
 }

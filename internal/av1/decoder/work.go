@@ -1124,6 +1124,32 @@ func CompleteFrameWorkPreparedPayloadStep(s *FrameWorkState, refs *SurfaceRefere
 	}, nil
 }
 
+func CompleteFrameWorkPreparedPayloadStepRunner(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
+	if output == nil {
+		var err error
+		output, err = frameWorkPostFilterRunnerOutput(event, framePool, step, post)
+		if err != nil {
+			return FrameWorkStepResult{ExecutedTileWork: executed}, err
+		}
+	}
+	if err := runFrameWorkPostFilterRunner(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.Restoration, post); err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	totalReleaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, releaseCount)
+	if err != nil {
+		return FrameWorkStepResult{ExecutedTileWork: executed}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: executed,
+		CompletedFrame:   completed,
+		ReleaseCount:     totalReleaseCount,
+	}, nil
+}
+
 func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
