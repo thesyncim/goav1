@@ -27,6 +27,25 @@ var planeBlockSizeLookup = [blockSizeCount][2][2]BlockSize{
 	BlockSize4x4:     {{BlockSize4x4, BlockSize4x4}, {BlockSize4x4, BlockSize4x4}},
 }
 
+var chromaBlockParityMask = func() [blockSizeCount][2][2]uint8 {
+	var table [blockSizeCount][2][2]uint8
+	for size, dims := range blockDimensions {
+		for ssX := range 2 {
+			for ssY := range 2 {
+				var mask uint8
+				if int(dims.W4) <= ssX {
+					mask |= 1
+				}
+				if int(dims.H4) <= ssY {
+					mask |= 2
+				}
+				table[size][ssX][ssY] = mask
+			}
+		}
+	}
+	return table
+}()
+
 func PlaneBlockSize(block BlockSize, color parser.ColorConfig, plane int) (BlockSize, error) {
 	if block >= blockSizeCount || plane < 0 || plane > 2 {
 		return 0, ErrInvalidDecodeState
@@ -59,9 +78,8 @@ func hasChromaForBlock(size BlockSize, x4, y4 int, color parser.ColorConfig) boo
 	if color.MonoChrome || size >= blockSizeCount {
 		return false
 	}
-	dims := &blockDimensions[size]
 	ssX := int(boolToShift(color.SubsamplingX))
 	ssY := int(boolToShift(color.SubsamplingY))
-	return (int(dims.W4) > ssX || x4&1 != 0) &&
-		(int(dims.H4) > ssY || y4&1 != 0)
+	mask := chromaBlockParityMask[size][ssX][ssY]
+	return (mask&1 == 0 || x4&1 != 0) && (mask&2 == 0 || y4&1 != 0)
 }

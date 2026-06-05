@@ -62,3 +62,19 @@ func TestHasChromaBlockMatchesDav1dCondition(t *testing.T) {
 		t.Fatal("monochrome block unexpectedly has chroma")
 	}
 }
+
+func BenchmarkHasChromaForBlock420(b *testing.B) {
+	color := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	sizes := [...]BlockSize{BlockSize4x4, BlockSize4x8, BlockSize8x4, BlockSize8x8, BlockSize16x16}
+	sum := 0
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		size := sizes[i%len(sizes)]
+		if hasChromaForBlock(size, i&3, (i>>2)&3, color) {
+			sum++
+		}
+	}
+	planeBlockSink = sum
+}
+
+var planeBlockSink int
