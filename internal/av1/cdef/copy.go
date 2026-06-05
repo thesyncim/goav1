@@ -14,8 +14,23 @@ func CopyRect8To16(dst []uint16, dstStride int, src []uint8, srcStride int, widt
 		return ErrInvalidCDEF
 	}
 	for row := range height {
-		for col := range width {
-			dst[row*dstStride+col] = uint16(src[row*srcStride+col])
+		dstOff := row * dstStride
+		srcOff := row * srcStride
+		dstRow := dst[dstOff : dstOff+width]
+		srcRow := src[srcOff : srcOff+width]
+		col := 0
+		for ; col+8 <= width; col += 8 {
+			dstRow[col+0] = uint16(srcRow[col+0])
+			dstRow[col+1] = uint16(srcRow[col+1])
+			dstRow[col+2] = uint16(srcRow[col+2])
+			dstRow[col+3] = uint16(srcRow[col+3])
+			dstRow[col+4] = uint16(srcRow[col+4])
+			dstRow[col+5] = uint16(srcRow[col+5])
+			dstRow[col+6] = uint16(srcRow[col+6])
+			dstRow[col+7] = uint16(srcRow[col+7])
+		}
+		for ; col < width; col++ {
+			dstRow[col] = uint16(srcRow[col])
 		}
 	}
 	return nil
