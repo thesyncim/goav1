@@ -9,6 +9,64 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/obu"
 )
 
+var bitWriterBenchSink byte
+
+func TestBitWriterWriteBitsMatchesReference(t *testing.T) {
+	fields := [...]struct {
+		value uint64
+		bits  uint8
+	}{
+		{value: 0x1, bits: 1},
+		{value: 0x2, bits: 2},
+		{value: 0x15, bits: 5},
+		{value: 0x0, bits: 3},
+		{value: 0xff, bits: 8},
+		{value: 0x155, bits: 9},
+		{value: 0xabc, bits: 12},
+		{value: 0x12345678, bits: 32},
+		{value: 0xffffffffffffffff, bits: 64},
+	}
+	var got [32]byte
+	var want [32]byte
+	w := newBitWriter(got[:])
+	refBit := 0
+	for _, field := range fields {
+		if err := w.writeBits(field.value, field.bits); err != nil {
+			t.Fatalf("writeBits(%x,%d): %v", field.value, field.bits, err)
+		}
+		writeBitsReference(want[:], &refBit, field.value, field.bits)
+	}
+	gotLen := w.bytesWritten()
+	wantLen := (refBit + 7) >> 3
+	if gotLen != wantLen || !bytes.Equal(got[:gotLen], want[:wantLen]) {
+		t.Fatalf("writeBits bytes=% x/%d want % x/%d", got[:gotLen], gotLen, want[:wantLen], wantLen)
+	}
+}
+
+func BenchmarkBitWriterWriteBits(b *testing.B) {
+	fields := [...]struct {
+		value uint64
+		bits  uint8
+	}{
+		{value: 0x1, bits: 1},
+		{value: 0x3, bits: 2},
+		{value: 0x15, bits: 5},
+		{value: 0xff, bits: 8},
+		{value: 0x155, bits: 9},
+		{value: 0xabc, bits: 12},
+		{value: 0x12345678, bits: 32},
+	}
+	var buf [16]byte
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		w := newBitWriter(buf[:])
+		for _, field := range fields {
+			_ = w.writeBits(field.value, field.bits)
+		}
+		bitWriterBenchSink ^= buf[0]
+	}
+}
+
 func TestAppendLowOverheadOBU(t *testing.T) {
 	unit := OBU{
 		Type:       obu.TypeFrame,
@@ -180,5 +238,21 @@ func TestAppendLowOverheadTemporalUnitAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AppendLowOverheadTemporalUnit allocated: %f", allocs)
+	}
+}
+
+func writeBitsReference(dst []byte, bit *int, value uint64, n uint8) {
+	for i := int(n) - 1; i >= 0; i-- {
+		byteIndex := *bit >> 3
+		shift := uint(7 - (*bit & 7))
+		if shift == 7 {
+			dst[byteIndex] = 0
+		}
+		if (value>>uint(i))&1 != 0 {
+			dst[byteIndex] |= 1 << shift
+		} else {
+			dst[byteIndex] &^= 1 << shift
+		}
+		(*bit)++
 	}
 }

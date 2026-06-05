@@ -66,10 +66,41 @@ func (w *bitWriter) writeBits(value uint64, n uint8) error {
 	if n > 64 {
 		return bitstream.ErrInvalidBitCount
 	}
-	for i := int(n) - 1; i >= 0; i-- {
-		if err := w.writeBit(uint8((value >> uint(i)) & 1)); err != nil {
-			return err
+	if n == 0 {
+		return nil
+	}
+	if w.sizing {
+		w.bit += int(n)
+		return nil
+	}
+
+	endBit := w.bit + int(n)
+	if (endBit+7)>>3 > len(w.dst) {
+		return bitstream.ErrShortBuffer
+	}
+
+	remaining := int(n)
+	for remaining > 0 {
+		byteIndex := w.bit >> 3
+		bitOffset := w.bit & 7
+		space := 8 - bitOffset
+		take := remaining
+		if take > space {
+			take = space
 		}
+
+		shift := uint(remaining - take)
+		maskBits := uint16(1<<uint(take)) - 1
+		chunk := byte((value >> shift) & uint64(maskBits))
+		dstShift := uint(space - take)
+		mask := byte(maskBits << dstShift)
+		if bitOffset == 0 {
+			w.dst[byteIndex] = 0
+		}
+		w.dst[byteIndex] = (w.dst[byteIndex] &^ mask) | (chunk << dstShift)
+
+		w.bit += take
+		remaining -= take
 	}
 	return nil
 }
