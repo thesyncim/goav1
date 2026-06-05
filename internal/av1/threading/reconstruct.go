@@ -360,10 +360,19 @@ func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVi
 	if block.Plane == 0 {
 		return b.blockCoeffGeometryLumaTrusted(index, visit, block)
 	}
-	plane, ssX, ssY, err := b.blockCoeffPlane(block.Plane)
-	if err != nil {
-		return frameWorkBlockCoeffGeometry{}, err
+	color := b.Sequence.ColorConfig
+	if color.MonoChrome {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
 	}
+	ssX := uint(frameWorkSubsampleShift(color.SubsamplingX))
+	ssY := uint(frameWorkSubsampleShift(color.SubsamplingY))
+	plane := FrameWorkPlaneU
+	if block.Plane == 2 {
+		plane = FrameWorkPlaneV
+	} else if block.Plane != 1 {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	var err error
 	region, regionOK := b.cachedJobRegionTrusted(index)
 	if !regionOK {
 		region, err = b.JobRegion(index)
