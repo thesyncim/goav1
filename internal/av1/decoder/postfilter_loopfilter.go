@@ -855,7 +855,6 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	}
 	var verticalWidth uint8
 	var horizontalWidth uint8
-	var err error
 	haveVerticalWidth := false
 	haveHorizontalWidth := false
 	block := record.Block
@@ -870,19 +869,13 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 	if req.VisibleW4 > 0 && req.VisibleH4 > 0 && dims.W4 >= req.VisibleW4 && dims.H4 >= req.VisibleH4 {
 		plan.LumaTXBs++
 		if frameBaseX4 > 0 {
-			verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
-			if err != nil {
-				return err
-			}
+			verticalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
 			if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameBaseX4, frameY4, int(req.VisibleH4), record.TransformTree.Y, verticalWidth, currentVertical); err != nil {
 				return err
 			}
 		}
 		if frameY4 > 0 {
-			horizontalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeHorizontal, record.TransformTree.Y)
-			if err != nil {
-				return err
-			}
+			horizontalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, loopfilter.EdgeHorizontal, record.TransformTree.Y)
 			if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeHorizontal, frameBaseX4, frameY4, int(req.VisibleW4), record.TransformTree.Y, horizontalWidth, currentHorizontal); err != nil {
 				return err
 			}
@@ -903,10 +896,7 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 			plan.LumaTXBs++
 			if frameX4 > 0 {
 				if !haveVerticalWidth {
-					verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
-					if err != nil {
-						return err
-					}
+					verticalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, loopfilter.EdgeVertical, record.TransformTree.Y)
 					haveVerticalWidth = true
 				}
 				if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeVertical, frameX4, frameY4, visibleH4, record.TransformTree.Y, verticalWidth, currentVertical); err != nil {
@@ -915,10 +905,7 @@ func frameWorkAppendLoopFilterFixedLumaTXBs(ctx FrameWorkPostFilterContext, leve
 			}
 			if frameY4 > 0 {
 				if !haveHorizontalWidth {
-					horizontalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, loopfilter.EdgeHorizontal, record.TransformTree.Y)
-					if err != nil {
-						return err
-					}
+					horizontalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, loopfilter.EdgeHorizontal, record.TransformTree.Y)
 					haveHorizontalWidth = true
 				}
 				if err := frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, loopfilter.EdgeHorizontal, frameX4, frameY4, visibleW4, record.TransformTree.Y, horizontalWidth, currentHorizontal); err != nil {
@@ -1069,10 +1056,7 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 	if !frameWorkLoopFilterPreviousLumaRunInBlock(previous, edge, x4, y4, length4) {
 		return false, nil
 	}
-	previousWidth, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, previous.TransformTree.Y)
-	if err != nil {
-		return true, err
-	}
+	previousWidth := frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, previous.TransformTree.Y)
 	level := currentLevel
 	fromPrevious := false
 	if level == 0 && needPreviousLevel {
@@ -1422,16 +1406,10 @@ func frameWorkAppendLoopFilterChromaTXBs(ctx FrameWorkPostFilterContext, levelCt
 	var verticalWidth uint8
 	var horizontalWidth uint8
 	if verticalFusedUV {
-		verticalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneU, loopfilter.EdgeVertical, record.TransformTree.UV)
-		if err != nil {
-			return err
-		}
+		verticalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneU, loopfilter.EdgeVertical, record.TransformTree.UV)
 	}
 	if horizontalFusedUV {
-		horizontalWidth, err = frameWorkLoopFilterWidth(loopfilter.PlaneU, loopfilter.EdgeHorizontal, record.TransformTree.UV)
-		if err != nil {
-			return err
-		}
+		horizontalWidth = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneU, loopfilter.EdgeHorizontal, record.TransformTree.UV)
 	}
 	for y := 0; y < int(block.VisibleH4); y += int(uvDims.H4) {
 		for x := 0; x < int(block.VisibleW4); x += int(uvDims.W4) {
@@ -2413,6 +2391,13 @@ func frameWorkLoopFilterWidth(plane loopfilter.Plane, edge loopfilter.Edge, tx t
 		return 0, threading.ErrInvalidBatch
 	}
 	return frameWorkLoopFilterWidthByTX[tx][0][edge], nil
+}
+
+func frameWorkLoopFilterWidthTrusted(plane loopfilter.Plane, edge loopfilter.Edge, tx tile.TransformSize) uint8 {
+	if plane == loopfilter.PlaneY {
+		return frameWorkLoopFilterWidthByTX[tx][0][edge]
+	}
+	return frameWorkLoopFilterWidthByTX[tx][1][edge]
 }
 
 // frameWorkLoopFilterPlaneSize returns the per-plane deblock extent in pixels.
