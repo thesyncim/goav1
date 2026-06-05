@@ -813,6 +813,61 @@ func TestPublicEncoderGlobalMotionParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderFilmGrainParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.FilmGrainParamsPresent = true
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
+	params := av1.EncoderFilmGrainParams{
+		Apply:           true,
+		Update:          true,
+		Seed:            0x1234,
+		NumYPoints:      1,
+		ScalingShift:    9,
+		ARCoeffShift:    8,
+		GrainScaleShift: 3,
+		Overlap:         true,
+	}
+	params.YPoints[0] = [2]uint8{10, 20}
+	payloadSize, err := av1.EncoderFilmGrainParamsPayloadSize(seq, prefix, av1.EncoderInterFrameSize{}, nil, params)
+	if err != nil {
+		t.Fatalf("EncoderFilmGrainParamsPayloadSize: %v", err)
+	}
+	var buf [32]byte
+	payload, err := av1.AppendEncoderFilmGrainParamsPayload(buf[:0], seq, prefix, av1.EncoderInterFrameSize{}, nil, params)
+	if err != nil {
+		t.Fatalf("AppendEncoderFilmGrainParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseFilmGrainParams(
+		payload,
+		av1.SequenceHeader{
+			FilmGrainParamsPresent: true,
+			ColorConfig: av1.ColorConfig{
+				BitDepth:     8,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			},
+		},
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeKey, ShowFrame: true},
+		av1.FrameSize{},
+		nil,
+		av1.GlobalMotionParams{},
+	)
+	if err != nil {
+		t.Fatalf("ParseFilmGrainParams: %v", err)
+	}
+	if !parsed.Apply || !parsed.Update || parsed.Seed != 0x1234 || parsed.YPoints[0] != [2]uint8{10, 20} {
+		t.Fatalf("parsed film grain=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

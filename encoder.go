@@ -116,6 +116,7 @@ type EncoderFrameModeParams = internalencoder.FrameModeParams
 type EncoderGlobalMotionType = internalencoder.GlobalMotionType
 type EncoderWarpedMotionParams = internalencoder.WarpedMotionParams
 type EncoderGlobalMotionParams = internalencoder.GlobalMotionParams
+type EncoderFilmGrainParams = internalencoder.FilmGrainParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -224,6 +225,11 @@ const (
 	EncoderGlobalMotionTranslation = internalencoder.GlobalMotionTranslation
 	EncoderGlobalMotionRotZoom     = internalencoder.GlobalMotionRotZoom
 	EncoderGlobalMotionAffine      = internalencoder.GlobalMotionAffine
+
+	EncoderMaxFilmGrainYPoints  = internalencoder.MaxFilmGrainYPoints
+	EncoderMaxFilmGrainUVPoints = internalencoder.MaxFilmGrainUVPoints
+	EncoderMaxFilmGrainYCoeffs  = internalencoder.MaxFilmGrainYCoeffs
+	EncoderMaxFilmGrainUVCoeffs = internalencoder.MaxFilmGrainUVCoeffs
 )
 
 var (
@@ -1076,6 +1082,14 @@ func EncoderGlobalMotionParamsPayloadSize(prefix EncoderFrameHeaderPrefix, size 
 
 func AppendEncoderGlobalMotionParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, tiles TileInfo, refs *ReferenceState, params EncoderGlobalMotionParams) ([]byte, error) {
 	return internalencoder.AppendGlobalMotionParamsPayload(dst, prefix, size, tiles, refs, params)
+}
+
+func EncoderFilmGrainParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, params EncoderFilmGrainParams) (int, error) {
+	return internalencoder.FilmGrainParamsPayloadSize(seq, prefix, size, refs, params)
+}
+
+func AppendEncoderFilmGrainParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, params EncoderFilmGrainParams) ([]byte, error) {
+	return internalencoder.AppendFilmGrainParamsPayload(dst, seq, prefix, size, refs, params)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
