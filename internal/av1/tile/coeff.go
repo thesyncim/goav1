@@ -2088,10 +2088,9 @@ func coeffLowerLevelsCtxEOBFast(maxEOB int, scanIndex int) uint8 {
 }
 
 func clipMax3(v uint8) int {
-	if v > 3 {
-		return 3
-	}
-	return int(v)
+	x := int(v)
+	// Branchless min(x, 3): for x < 3, the signed shift is -1 and keeps x-3.
+	return 3 + ((x - 3) & ((x - 3) >> 31))
 }
 
 func coeffAbsClamp127(v int16) uint8 {
