@@ -1444,13 +1444,45 @@ func (c *Cursor) readCDF9Known(values *[MaxSymbols + 1]uint16) int {
 	if c.allowCDFUpdate {
 		count := values[9]
 		rate := uint(5 + (count >> 4))
-		for i := 0; i < symbol; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
 		}
-		for i := symbol; i < 8; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v - (v >> rate))
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if symbol > 2 {
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		} else {
+			values[2] = uint16(c2 - (c2 >> rate))
+		}
+		if symbol > 3 {
+			values[3] = uint16(c3 + ((CDFProbTop - c3) >> rate))
+		} else {
+			values[3] = uint16(c3 - (c3 >> rate))
+		}
+		if symbol > 4 {
+			values[4] = uint16(c4 + ((CDFProbTop - c4) >> rate))
+		} else {
+			values[4] = uint16(c4 - (c4 >> rate))
+		}
+		if symbol > 5 {
+			values[5] = uint16(c5 + ((CDFProbTop - c5) >> rate))
+		} else {
+			values[5] = uint16(c5 - (c5 >> rate))
+		}
+		if symbol > 6 {
+			values[6] = uint16(c6 + ((CDFProbTop - c6) >> rate))
+		} else {
+			values[6] = uint16(c6 - (c6 >> rate))
+		}
+		if symbol > 7 {
+			values[7] = uint16(c7 + ((CDFProbTop - c7) >> rate))
+		} else {
+			values[7] = uint16(c7 - (c7 >> rate))
 		}
 		if count < MaxCDFCount {
 			values[9] = count + 1
@@ -1549,13 +1581,50 @@ func (c *Cursor) readCDF10Known(values *[MaxSymbols + 1]uint16) int {
 	if c.allowCDFUpdate {
 		count := values[10]
 		rate := uint(5 + (count >> 4))
-		for i := 0; i < symbol; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
 		}
-		for i := symbol; i < 9; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v - (v >> rate))
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if symbol > 2 {
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		} else {
+			values[2] = uint16(c2 - (c2 >> rate))
+		}
+		if symbol > 3 {
+			values[3] = uint16(c3 + ((CDFProbTop - c3) >> rate))
+		} else {
+			values[3] = uint16(c3 - (c3 >> rate))
+		}
+		if symbol > 4 {
+			values[4] = uint16(c4 + ((CDFProbTop - c4) >> rate))
+		} else {
+			values[4] = uint16(c4 - (c4 >> rate))
+		}
+		if symbol > 5 {
+			values[5] = uint16(c5 + ((CDFProbTop - c5) >> rate))
+		} else {
+			values[5] = uint16(c5 - (c5 >> rate))
+		}
+		if symbol > 6 {
+			values[6] = uint16(c6 + ((CDFProbTop - c6) >> rate))
+		} else {
+			values[6] = uint16(c6 - (c6 >> rate))
+		}
+		if symbol > 7 {
+			values[7] = uint16(c7 + ((CDFProbTop - c7) >> rate))
+		} else {
+			values[7] = uint16(c7 - (c7 >> rate))
+		}
+		if symbol > 8 {
+			values[8] = uint16(c8 + ((CDFProbTop - c8) >> rate))
+		} else {
+			values[8] = uint16(c8 - (c8 >> rate))
 		}
 		if count < MaxCDFCount {
 			values[10] = count + 1
@@ -1660,13 +1729,55 @@ func (c *Cursor) readCDF11Known(values *[MaxSymbols + 1]uint16) int {
 	if c.allowCDFUpdate {
 		count := values[11]
 		rate := uint(5 + (count >> 4))
-		for i := 0; i < symbol; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
+		if symbol > 0 {
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+		} else {
+			values[0] = uint16(c0 - (c0 >> rate))
 		}
-		for i := symbol; i < 10; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v - (v >> rate))
+		if symbol > 1 {
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+		} else {
+			values[1] = uint16(c1 - (c1 >> rate))
+		}
+		if symbol > 2 {
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		} else {
+			values[2] = uint16(c2 - (c2 >> rate))
+		}
+		if symbol > 3 {
+			values[3] = uint16(c3 + ((CDFProbTop - c3) >> rate))
+		} else {
+			values[3] = uint16(c3 - (c3 >> rate))
+		}
+		if symbol > 4 {
+			values[4] = uint16(c4 + ((CDFProbTop - c4) >> rate))
+		} else {
+			values[4] = uint16(c4 - (c4 >> rate))
+		}
+		if symbol > 5 {
+			values[5] = uint16(c5 + ((CDFProbTop - c5) >> rate))
+		} else {
+			values[5] = uint16(c5 - (c5 >> rate))
+		}
+		if symbol > 6 {
+			values[6] = uint16(c6 + ((CDFProbTop - c6) >> rate))
+		} else {
+			values[6] = uint16(c6 - (c6 >> rate))
+		}
+		if symbol > 7 {
+			values[7] = uint16(c7 + ((CDFProbTop - c7) >> rate))
+		} else {
+			values[7] = uint16(c7 - (c7 >> rate))
+		}
+		if symbol > 8 {
+			values[8] = uint16(c8 + ((CDFProbTop - c8) >> rate))
+		} else {
+			values[8] = uint16(c8 - (c8 >> rate))
+		}
+		if symbol > 9 {
+			values[9] = uint16(c9 + ((CDFProbTop - c9) >> rate))
+		} else {
+			values[9] = uint16(c9 - (c9 >> rate))
 		}
 		if count < MaxCDFCount {
 			values[11] = count + 1
