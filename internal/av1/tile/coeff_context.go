@@ -120,6 +120,50 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	}
 
 	txbSkipCtx := uint8(0)
+	if w4 == 1 && h4 == 1 {
+		top := aboveRow[x4]
+		left := leftRow[y4]
+		topSign := top >> CoeffContextBits
+		if topSign == 1 {
+			dcSign--
+		} else if topSign == 2 {
+			dcSign++
+		}
+		leftSign := left >> CoeffContextBits
+		if leftSign == 1 {
+			dcSign--
+		} else if leftSign == 2 {
+			dcSign++
+		}
+		if req.Plane == 0 {
+			if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
+				top &= CoeffContextMask
+				if top > 4 {
+					top = 4
+				}
+				left &= CoeffContextMask
+				if left > 4 {
+					left = 4
+				}
+				txbSkipCtx = coeffSkipContexts[top][left]
+			}
+		} else {
+			if top != 0 {
+				txbSkipCtx++
+			}
+			if left != 0 {
+				txbSkipCtx++
+			}
+			txbSkipCtx += 7
+			if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
+				txbSkipCtx += 3
+			}
+		}
+		return TXBContext{
+			TXBSkipContext: txbSkipCtx,
+			DCSignContext:  coeffDCSignContext(dcSign),
+		}
+	}
 	if req.Plane == 0 {
 		topMag := uint8(0)
 		for k := 0; k < w4; k++ {
