@@ -233,6 +233,14 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	if _, _, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, 2); err != ErrEncoderInvalidFrame {
 		t.Fatalf("bad key frame index err=%v want %v", err, ErrEncoderInvalidFrame)
 	}
+	firstScratch, err := EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 0, nil)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitRTPScratchLen key first: %v", err)
+	}
+	if firstScratch.Packetizer.OBUs != 1 || firstScratch.Packetizer.Packets != 0 ||
+		firstScratch.MaxPayloadBytes != limits.MaxPayloadLen || firstScratch.MaxDescriptorBytes == 0 {
+		t.Fatalf("key first scratch=%+v", firstScratch)
+	}
 	keyDescriptorSize, err := EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit, state, 0, true)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize key: %v", err)
@@ -259,6 +267,14 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	var obuScratch [2]RTPPacketizerOBU
 	var packetScratch [4]RTPPacketPlan
 	var workScratch [4]RTPPacketPlan
+	fullScratch, err := EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 0, obuScratch[:])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitRTPScratchLen key full: %v", err)
+	}
+	if fullScratch.Packetizer.OBUs != 1 || fullScratch.Packetizer.Packets != 1 ||
+		fullScratch.Packetizer.Work != 0 || fullScratch.MaxDescriptorBytes != keyDescriptorSize {
+		t.Fatalf("key full scratch=%+v descriptor=%d", fullScratch, keyDescriptorSize)
+	}
 	packetizer, err := NewRTPPacketizer(frame, limits, true, true, obuScratch[:], packetScratch[:], workScratch[:])
 	if err != nil {
 		t.Fatalf("NewRTPPacketizer key: %v", err)
@@ -285,6 +301,13 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncoderWebRTCNextTemporalUnitForState delta: %v", err)
 	}
+	fullScratch, err = EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 1, obuScratch[:])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitRTPScratchLen delta full: %v", err)
+	}
+	if fullScratch.Packetizer.Packets != 1 || fullScratch.MaxPayloadBytes != limits.MaxPayloadLen {
+		t.Fatalf("delta full scratch=%+v", fullScratch)
+	}
 	packetizer, err = NewRTPPacketizer(frame, limits, false, true, obuScratch[:], packetScratch[:], workScratch[:])
 	if err != nil {
 		t.Fatalf("NewRTPPacketizer delta: %v", err)
@@ -299,6 +322,9 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	}
 	if descriptorSize != deltaDescriptorSize {
 		t.Fatalf("delta packet descriptor size=%d direct=%d", descriptorSize, deltaDescriptorSize)
+	}
+	if fullScratch.MaxDescriptorBytes != deltaDescriptorSize {
+		t.Fatalf("delta max descriptor=%d direct=%d scratch=%+v", fullScratch.MaxDescriptorBytes, deltaDescriptorSize, fullScratch)
 	}
 	packetizer, err = NewRTPPacketizer(frame, limits, false, true, obuScratch[:], packetScratch[:], workScratch[:])
 	if err != nil {
@@ -343,6 +369,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	var descriptorBuf [64]byte
 	allocs := testing.AllocsPerRun(1000, func() {
 		p := packetizer
+		_, _ = EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 1, obuScratch[:])
 		_, _ = EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit, state, 1, false)
 		_, _ = EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit, state, 1)
 		_, _ = AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(descriptorBuf[:0], unit, state, 1, true, true, false)
