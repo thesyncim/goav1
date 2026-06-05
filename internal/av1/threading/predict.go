@@ -3614,6 +3614,12 @@ func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y in
 	if clipHeight <= 0 {
 		clipHeight = window.Height
 	}
+	relX := x - windowX
+	relY := y - windowY
+	if uint64(relX)+uint64(width) <= uint64(clipWidth) &&
+		uint64(relY)+uint64(height) <= uint64(clipHeight) {
+		return width, height, true
+	}
 	windowXEnd, ok := frameWorkCheckedAdd(windowX, int(clipWidth))
 	if !ok {
 		return 0, 0, false
