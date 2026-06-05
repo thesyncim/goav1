@@ -427,6 +427,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		p := packetizer
 		_, _ = EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 1, obuScratch[:])
 		_, _, _, _ = NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
+		_, _, _, _ = EncoderWebRTCPictureTemporalUnitRTPPacketsSize(frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
 		_, _ = EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit, state, 1, false)
 		_, _ = EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit, state, 1)
 		_, _ = AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(descriptorBuf[:0], unit, state, 1, true, true, false)
@@ -469,12 +470,20 @@ func TestPublicRTPScheduledPictureAppendPackets(t *testing.T) {
 	}
 	var packetScratch [8]RTPPacketPlan
 	var workScratch [8]RTPPacketPlan
-	var payloadBuf [64]byte
-	var descriptorBuf [128]byte
+	size, sizeControl, sizeStructure, err := EncoderWebRTCPictureTemporalUnitRTPPacketsSize(frame, limits, unit, state, 0, obuScratch[:], packetScratch[:], workScratch[:])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitRTPPacketsSize: %v", err)
+	}
+	if size.PacketCount != scratch.Packetizer.Packets || size.PacketCount < 2 || size.PayloadBytes == 0 || size.DescriptorBytes == 0 ||
+		sizeControl.GenericFrameInfo.FrameID != 11 || sizeStructure.TemplateNum == 0 {
+		t.Fatalf("size=%+v scratch=%+v control=%+v structure=%+v", size, scratch, sizeControl, sizeStructure)
+	}
+	payloadBuf := make([]byte, 0, size.PayloadBytes)
+	descriptorBuf := make([]byte, 0, size.DescriptorBytes)
 	var spans [8]EncoderWebRTCRTPPacketSpan
 	payloads, descriptors, packetCount, control, _, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(
-		payloadBuf[:0],
-		descriptorBuf[:0],
+		payloadBuf,
+		descriptorBuf,
 		spans[:],
 		frame,
 		limits,
@@ -490,6 +499,9 @@ func TestPublicRTPScheduledPictureAppendPackets(t *testing.T) {
 	}
 	if packetCount != scratch.Packetizer.Packets || control.GenericFrameInfo.FrameID != 11 {
 		t.Fatalf("packetCount=%d scratch=%+v control=%+v", packetCount, scratch, control)
+	}
+	if packetCount != size.PacketCount || len(payloads) != size.PayloadBytes || len(descriptors) != size.DescriptorBytes {
+		t.Fatalf("appended packets=%d/%d payload=%d/%d descriptors=%d/%d", packetCount, size.PacketCount, len(payloads), size.PayloadBytes, len(descriptors), size.DescriptorBytes)
 	}
 	if len(payloads) == 0 || len(descriptors) == 0 || !spans[packetCount-1].Marker {
 		t.Fatalf("payloads=%d descriptors=%d spans=%+v", len(payloads), len(descriptors), spans[:packetCount])

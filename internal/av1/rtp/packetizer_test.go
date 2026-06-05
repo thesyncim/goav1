@@ -188,6 +188,9 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	if !ok || size != 6 {
 		t.Fatalf("first size=%d ok=%v want 6,true", size, ok)
 	}
+	if remaining := packetizer.RemainingPacketPayloadSize(); remaining != 14 {
+		t.Fatalf("remaining payload size=%d want 14", remaining)
+	}
 	plan, ok := packetizer.NextPacketPlan()
 	if !ok || plan.PacketSize+1 != size || plan.FirstOBU != 0 || plan.NumOBUElements != 1 || plan.FirstOBUOffset != 0 || plan.LastOBUSize != 5 {
 		t.Fatalf("first plan=%+v ok=%v size=%d", plan, ok, size)
@@ -204,6 +207,7 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 	}
 
 	var payload [16]byte
+	wantRemaining := [...]int{8, 2, 0}
 	for i := range 3 {
 		size, ok := packetizer.NextPacketSize()
 		if !ok {
@@ -215,6 +219,9 @@ func TestPacketizerNextPacketSize(t *testing.T) {
 		}
 		if !ok || n != size {
 			t.Fatalf("packet %d n=%d ok=%v want %d,true", i, n, ok, size)
+		}
+		if remaining := packetizer.RemainingPacketPayloadSize(); remaining != wantRemaining[i] {
+			t.Fatalf("packet %d remaining payload size=%d want %d", i, remaining, wantRemaining[i])
 		}
 	}
 	if size, ok := packetizer.NextPacketSize(); ok || size != 0 {

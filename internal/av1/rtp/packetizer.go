@@ -120,6 +120,16 @@ func (p *Packetizer) NumPackets() int {
 	return len(p.packets) - p.packetIndex
 }
 
+// RemainingPacketPayloadSize reports the exact number of RTP payload bytes that
+// the remaining NextPacket calls will write.
+func (p *Packetizer) RemainingPacketPayloadSize() int {
+	size := 0
+	for i := p.packetIndex; i < len(p.packets); i++ {
+		size += 1 + p.packets[i].PacketSize
+	}
+	return size
+}
+
 // NextPacketSize reports the exact dst length required by the next NextPacket
 // call without advancing the packetizer.
 func (p *Packetizer) NextPacketSize() (int, bool) {

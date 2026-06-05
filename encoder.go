@@ -106,6 +106,12 @@ type EncoderWebRTCPictureTemporalUnitRTPScratchSize struct {
 	MaxDescriptorBytes int
 }
 
+type EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
+	PacketCount     int
+	PayloadBytes    int
+	DescriptorBytes int
+}
+
 type EncoderWebRTCRTPPacketSpan struct {
 	PayloadOffset    int
 	PayloadLength    int
@@ -371,6 +377,33 @@ func NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload []byte, limits RTP
 		return RTPPacketizer{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
 	}
 	return packetizer, control, structure, nil
+}
+
+func EncoderWebRTCPictureTemporalUnitRTPPacketsSize(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+	packetizer, control, structure, err := NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	size := EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{
+		PacketCount:  packetizer.NumPackets(),
+		PayloadBytes: RTPPacketizerRemainingPayloadSize(&packetizer),
+	}
+	if size.PacketCount == 0 {
+		return size, control, structure, nil
+	}
+	firstDescriptor, err := internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+	}
+	size.DescriptorBytes = firstDescriptor
+	if size.PacketCount > 1 {
+		descriptor, err := internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, false)
+		if err != nil {
+			return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		}
+		size.DescriptorBytes += descriptor * (size.PacketCount - 1)
+	}
+	return size, control, structure, nil
 }
 
 func AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadDst []byte, descriptorDst []byte, payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayload []byte, descriptor []byte, marker bool, ok bool, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, err error) {

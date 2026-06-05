@@ -131,6 +131,10 @@ func NextRTPPacketDependencyDescriptorFlags(packetizer *RTPPacketizer) (RTPPacke
 	return packetizer.NextPacketDependencyDescriptorFlags()
 }
 
+func RTPPacketizerRemainingPayloadSize(packetizer *RTPPacketizer) int {
+	return packetizer.RemainingPacketPayloadSize()
+}
+
 // RTPPacketizerScratchLen reports the OBU and packet scratch capacities the
 // packetizer requires for payload under the supplied limits. obuScratch can
 // be nil; if non-nil it is used to compute the OBU element count.
