@@ -561,6 +561,58 @@ func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
 	}
 }
 
+func TestInterCoeffTransformSelectorResetInvalidatesLumaMapGeneration(t *testing.T) {
+	var state DecodeState
+	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var selector InterCoeffTransformSelector
+	color := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	selector.ResetForColor(&state, nil, false, false, false, 64, color)
+	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
+	}, transform.TypeADSTDCT); err != nil {
+		t.Fatal(err)
+	}
+	firstGeneration := selector.Map.generation
+	if firstGeneration == 0 {
+		t.Fatal("generation was not initialized")
+	}
+	selector.ResetForColor(&state, nil, false, false, false, 64, color)
+	if selector.Map.generation == firstGeneration {
+		t.Fatalf("generation did not advance: %d", firstGeneration)
+	}
+	if _, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
+	}); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("stale tx type map err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
+		Plane: 0,
+		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
+	}, transform.TypeFlipADSTDCT); err != nil {
+		t.Fatal(err)
+	}
+	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
+		Plane: 1,
+		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != transform.TypeFlipADSTDCT {
+		t.Fatalf("fresh chroma tx type=%d want %d", got, transform.TypeFlipADSTDCT)
+	}
+	selector.Map.generation = 255
+	selector.Map.Valid[0][0] = 255
+	selector.Map.Reset()
+	if selector.Map.generation != 1 || selector.Map.Valid[0][0] != 0 {
+		t.Fatalf("generation wrap did not clear valid map: generation=%d valid00=%d", selector.Map.generation, selector.Map.Valid[0][0])
+	}
+}
+
 func TestInterCoeffTransformSelectorChromaReusesOddSubsampledLumaMap(t *testing.T) {
 	var state DecodeState
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {

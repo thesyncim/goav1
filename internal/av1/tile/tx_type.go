@@ -81,8 +81,9 @@ type InterCoeffTransformSelector struct {
 }
 
 type InterTransformTypeMap struct {
-	Type  [MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
-	Valid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+	Type       [MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
+	Valid      [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+	generation uint8
 }
 
 func (s *IntraCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, qIndex uint8, lumaMode IntraMode, chromaMode ChromaIntraMode) {
@@ -119,26 +120,27 @@ func (s *IntraCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 }
 
 func (s *InterCoeffTransformSelector) Reset(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool) {
-	*s = InterCoeffTransformSelector{
-		State:         state,
-		CDFs:          cdfs,
-		ReducedTXSet:  reducedTXSet,
-		SkipTransform: skipTransform,
-		Lossless:      lossless,
-	}
+	s.State = state
+	s.CDFs = cdfs
+	s.ReducedTXSet = reducedTXSet
+	s.SkipTransform = skipTransform
+	s.Lossless = lossless
+	s.QIndexKnown = false
+	s.QIndex = 0
+	s.Color = parser.ColorConfig{}
+	s.Map.Reset()
 }
 
 func (s *InterCoeffTransformSelector) ResetForColor(state *DecodeState, cdfs *TransformTypeCDFs, reducedTXSet bool, skipTransform bool, lossless bool, qIndex uint8, color parser.ColorConfig) {
-	*s = InterCoeffTransformSelector{
-		State:         state,
-		CDFs:          cdfs,
-		ReducedTXSet:  reducedTXSet,
-		SkipTransform: skipTransform,
-		Lossless:      lossless,
-		QIndexKnown:   true,
-		QIndex:        qIndex,
-		Color:         color,
-	}
+	s.State = state
+	s.CDFs = cdfs
+	s.ReducedTXSet = reducedTXSet
+	s.SkipTransform = skipTransform
+	s.Lossless = lossless
+	s.QIndexKnown = true
+	s.QIndex = qIndex
+	s.Color = color
+	s.Map.Reset()
 }
 
 func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformRequest) (transform.Type, error) {
@@ -201,7 +203,13 @@ func (m *InterTransformTypeMap) Reset() {
 	if m == nil {
 		return
 	}
-	*m = InterTransformTypeMap{}
+	m.generation++
+	if m.generation == 0 {
+		for y := range m.Valid {
+			clear(m.Valid[y][:])
+		}
+		m.generation = 1
+	}
 }
 
 func (m *InterTransformTypeMap) Set(block TransformBlock, typ transform.Type) error {
@@ -216,10 +224,15 @@ func (m *InterTransformTypeMap) Set(block TransformBlock, typ transform.Type) er
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
+	generation := m.generation
+	if generation == 0 {
+		generation = 1
+		m.generation = generation
+	}
 	for y := 0; y < int(dims.H4); y++ {
 		for x := 0; x < int(dims.W4); x++ {
 			m.Type[y4+y][x4+x] = typ
-			m.Valid[y4+y][x4+x] = 1
+			m.Valid[y4+y][x4+x] = generation
 		}
 	}
 	return nil
@@ -227,7 +240,7 @@ func (m *InterTransformTypeMap) Set(block TransformBlock, typ transform.Type) er
 
 func (m *InterTransformTypeMap) At(x4 int, y4 int) (transform.Type, error) {
 	if m == nil || x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots ||
-		m.Valid[y4][x4] == 0 {
+		m.generation == 0 || m.Valid[y4][x4] != m.generation {
 		return 0, ErrInvalidDecodeState
 	}
 	return m.Type[y4][x4], nil
