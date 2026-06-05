@@ -423,7 +423,19 @@ func frameWorkFillCDEFInputSentinels(input []uint16, unitW int, unitH int) error
 }
 
 func frameWorkFillCDEFInputSentinelRow(row []uint16, width int) {
-	for i := range row[:width] {
+	row = row[:width]
+	i := 0
+	for ; i+8 <= width; i += 8 {
+		row[i+0] = cdef.VeryLarge
+		row[i+1] = cdef.VeryLarge
+		row[i+2] = cdef.VeryLarge
+		row[i+3] = cdef.VeryLarge
+		row[i+4] = cdef.VeryLarge
+		row[i+5] = cdef.VeryLarge
+		row[i+6] = cdef.VeryLarge
+		row[i+7] = cdef.VeryLarge
+	}
+	for ; i < width; i++ {
 		row[i] = cdef.VeryLarge
 	}
 }
