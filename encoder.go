@@ -97,6 +97,7 @@ type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
 type EncoderFrameHeaderType = internalencoder.FrameHeaderType
 type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
+type EncoderInterFrameSize = internalencoder.InterFrameSize
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
 type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTemporalUnit
@@ -864,12 +865,28 @@ func AppendEncoderFrameHeaderIntraPayload(dst []byte, seq EncoderSequenceHeader,
 	return internalencoder.AppendFrameHeaderIntraPayload(dst, seq, prefix, size)
 }
 
+func EncoderFrameHeaderInterPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) (int, error) {
+	return internalencoder.FrameHeaderInterPayloadSize(seq, prefix, size)
+}
+
+func AppendEncoderFrameHeaderInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) ([]byte, error) {
+	return internalencoder.AppendFrameHeaderInterPayload(dst, seq, prefix, size)
+}
+
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
 	return internalencoder.LowOverheadFrameHeaderIntraOBUSize(seq, prefix, size)
 }
 
 func AppendEncoderLowOverheadFrameHeaderIntraOBU(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
 	return internalencoder.AppendLowOverheadFrameHeaderIntraOBU(dst, seq, prefix, size)
+}
+
+func EncoderLowOverheadFrameHeaderInterOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) (int, error) {
+	return internalencoder.LowOverheadFrameHeaderInterOBUSize(seq, prefix, size)
+}
+
+func AppendEncoderLowOverheadFrameHeaderInterOBU(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) ([]byte, error) {
+	return internalencoder.AppendLowOverheadFrameHeaderInterOBU(dst, seq, prefix, size)
 }
 
 func EncoderLowOverheadIntraHeaderTemporalUnitSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {

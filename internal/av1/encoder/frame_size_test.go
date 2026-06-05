@@ -374,6 +374,150 @@ func TestAppendLowOverheadFrameHeaderIntraOBUAllocs(t *testing.T) {
 	}
 }
 
+func TestAppendFrameHeaderInterPayloadDirectSize(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := interFrameHeaderPrefix(false)
+	size := InterFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0x01,
+	}
+	payload, parsedPrefix, parsedSize := appendAndParseFrameHeaderInter(t, seq, prefix, size)
+	payloadSize, err := FrameHeaderInterPayloadSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("FrameHeaderInterPayloadSize: %v", err)
+	}
+	if len(payload) != payloadSize || parsedPrefix.FrameType != parser.FrameTypeInter || !parsedPrefix.ShowableFrame {
+		t.Fatalf("payload len=%d want=%d prefix=%+v", len(payload), payloadSize, parsedPrefix)
+	}
+	if parsedSize.RefreshFrameFlags != 0x01 || parsedSize.FrameRefsShortSignaling ||
+		parsedSize.UpscaledWidth != seq.MaxFrameWidth || parsedSize.Height != seq.MaxFrameHeight ||
+		parsedSize.SuperResEnabled || parsedSize.SuperResDenominator != 8 {
+		t.Fatalf("parsed inter size=%+v", parsedSize)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if parsedSize.RefFrameIdx[i] != 0 {
+			t.Fatalf("RefFrameIdx[%d]=%d want 0", i, parsedSize.RefFrameIdx[i])
+		}
+	}
+}
+
+func TestAppendFrameHeaderInterPayloadOverrideSuperresRender(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := interFrameHeaderPrefix(true)
+	size := InterFrameSize{
+		UpscaledWidth:       12,
+		Height:              6,
+		RenderWidth:         10,
+		RenderHeight:        5,
+		SuperResDenominator: 12,
+		HaveRenderSize:      true,
+		RefreshFrameFlags:   0x02,
+		RefFrameIdx:         [7]uint8{0, 1, 1, 0, 1, 0, 1},
+	}
+	_, _, parsedSize := appendAndParseFrameHeaderInter(t, seq, prefix, size)
+	if parsedSize.RefreshFrameFlags != 0x02 ||
+		parsedSize.UpscaledWidth != 12 || parsedSize.Height != 6 ||
+		!parsedSize.SuperResEnabled || parsedSize.SuperResDenominator != 12 ||
+		!parsedSize.HaveRenderSize || parsedSize.RenderWidth != 10 || parsedSize.RenderHeight != 5 {
+		t.Fatalf("parsed inter size=%+v", parsedSize)
+	}
+	for i := 0; i < parser.InterRefsPerFrame; i++ {
+		if parsedSize.RefFrameIdx[i] != size.RefFrameIdx[i] {
+			t.Fatalf("RefFrameIdx[%d]=%d want %d", i, parsedSize.RefFrameIdx[i], size.RefFrameIdx[i])
+		}
+	}
+}
+
+func TestAppendLowOverheadFrameHeaderInterOBU(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := interFrameHeaderPrefix(false)
+	size := InterFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0x01,
+	}
+	obuSize, err := LowOverheadFrameHeaderInterOBUSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("LowOverheadFrameHeaderInterOBUSize: %v", err)
+	}
+	var buf [64]byte
+	out, err := AppendLowOverheadFrameHeaderInterOBU(buf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadFrameHeaderInterOBU: %v", err)
+	}
+	if len(out) != obuSize {
+		t.Fatalf("obu len=%d want %d", len(out), obuSize)
+	}
+	unit, consumed, err := obu.ParseLowOverhead(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverhead: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != obu.TypeFrameHeader || !unit.Header.HasSizeField {
+		t.Fatalf("parsed obu header=%+v consumed=%d", unit.Header, consumed)
+	}
+	parsedSeq := parseEncoderSequenceHeader(t, seq)
+	parsedPrefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	refs := parserReferenceState(seq, size.RefFrameIdx[:])
+	parsedSize, err := parser.ParseFrameSize(unit.Payload, parsedSeq, parsedPrefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	if parsedSize.RefreshFrameFlags != size.RefreshFrameFlags {
+		t.Fatalf("parsed inter size=%+v", parsedSize)
+	}
+}
+
+func TestAppendFrameHeaderInterPayloadRejectsInvalid(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := interFrameHeaderPrefix(false)
+	size := InterFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0x01,
+	}
+	var buf [16]byte
+	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, shownKeyFrameHeaderPrefix(false), size); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("intra prefix err=%v want %v", err, ErrInvalidFrame)
+	}
+	bad := size
+	bad.RefFrameIdx[0] = 8
+	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, bad); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("bad ref idx err=%v want %v", err, ErrInvalidFrame)
+	}
+	var tiny [1]byte
+	if out, err := AppendFrameHeaderInterPayload(tiny[:0], seq, prefix, size); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
+	}
+}
+
+func TestAppendFrameHeaderInterPayloadAllocs(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	prefix := interFrameHeaderPrefix(false)
+	size := InterFrameSize{
+		UpscaledWidth:       seq.MaxFrameWidth,
+		Height:              seq.MaxFrameHeight,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0x01,
+	}
+	var buf [64]byte
+	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendFrameHeaderInterPayload allocated: %f", allocs)
+	}
+}
+
 func TestAppendLowOverheadIntraHeaderTemporalUnitAllocs(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	prefix := shownKeyFrameHeaderPrefix(false)
@@ -415,6 +559,27 @@ func appendAndParseFrameHeaderIntra(t *testing.T, seq SequenceHeader, prefix Fra
 	return payload, parsedPrefix, parsedSize
 }
 
+func appendAndParseFrameHeaderInter(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize) ([]byte, parser.FrameHeaderPrefix, parser.FrameSize) {
+	t.Helper()
+	parsedSeq := parseEncoderSequenceHeader(t, seq)
+
+	var buf [64]byte
+	payload, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendFrameHeaderInterPayload: %v", err)
+	}
+	parsedPrefix, err := parser.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	refs := parserReferenceState(seq, size.RefFrameIdx[:])
+	parsedSize, err := parser.ParseFrameSize(payload, parsedSeq, parsedPrefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	return payload, parsedPrefix, parsedSize
+}
+
 func parseEncoderSequenceHeader(t *testing.T, seq SequenceHeader) parser.SequenceHeader {
 	t.Helper()
 	var seqBuf [128]byte
@@ -429,6 +594,21 @@ func parseEncoderSequenceHeader(t *testing.T, seq SequenceHeader) parser.Sequenc
 	return parsedSeq
 }
 
+func parserReferenceState(seq SequenceHeader, indices []uint8) parser.ReferenceState {
+	var refs parser.ReferenceState
+	for _, idx := range indices {
+		refs.Frames[idx].Valid = true
+		refs.Frames[idx].OrderHint = 1
+		refs.Frames[idx].Size.UpscaledWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.CodedWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.Height = seq.MaxFrameHeight
+		refs.Frames[idx].Size.RenderWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.RenderHeight = seq.MaxFrameHeight
+		refs.Frames[idx].Size.SuperResDenominator = 8
+	}
+	return refs
+}
+
 func shownKeyFrameHeaderPrefix(frameSizeOverride bool) FrameHeaderPrefix {
 	return FrameHeaderPrefix{
 		FrameType:          FrameHeaderTypeKey,
@@ -437,6 +617,18 @@ func shownKeyFrameHeaderPrefix(frameSizeOverride bool) FrameHeaderPrefix {
 		ForceIntegerMV:     true,
 		FrameSizeOverride:  frameSizeOverride,
 		OrderHint:          3,
+		PrimaryRefFrame:    EncoderPrimaryRefNone,
+	}
+}
+
+func interFrameHeaderPrefix(frameSizeOverride bool) FrameHeaderPrefix {
+	return FrameHeaderPrefix{
+		FrameType:          FrameHeaderTypeInter,
+		ShowFrame:          true,
+		ShowableFrame:      true,
+		ErrorResilientMode: true,
+		FrameSizeOverride:  frameSizeOverride,
+		OrderHint:          4,
 		PrimaryRefFrame:    EncoderPrimaryRefNone,
 	}
 }

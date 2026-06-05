@@ -280,6 +280,77 @@ func TestPublicEncoderFrameHeaderIntraPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderFrameHeaderInterPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 640, Height: 360},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	prefix := av1.EncoderFrameHeaderPrefix{
+		FrameType:          av1.EncoderFrameHeaderTypeInter,
+		ShowFrame:          true,
+		ShowableFrame:      true,
+		ErrorResilientMode: true,
+		FrameSizeOverride:  true,
+		OrderHint:          6,
+		PrimaryRefFrame:    av1.EncoderPrimaryRefNone,
+	}
+	size := av1.EncoderInterFrameSize{
+		UpscaledWidth:       320,
+		Height:              180,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0x01,
+	}
+	payloadSize, err := av1.EncoderFrameHeaderInterPayloadSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("EncoderFrameHeaderInterPayloadSize: %v", err)
+	}
+	var buf [32]byte
+	payload, err := av1.AppendEncoderFrameHeaderInterPayload(buf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendEncoderFrameHeaderInterPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	parsedPrefix, err := av1.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	refs := publicEncoderReferenceState(seq, size.RefFrameIdx[:])
+	parsedSize, err := av1.ParseFrameSize(payload, parsedSeq, parsedPrefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	if parsedSize.RefreshFrameFlags != 0x01 || parsedSize.UpscaledWidth != 320 || parsedSize.Height != 180 {
+		t.Fatalf("parsed inter size=%+v", parsedSize)
+	}
+
+	obuSize, err := av1.EncoderLowOverheadFrameHeaderInterOBUSize(seq, prefix, size)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadFrameHeaderInterOBUSize: %v", err)
+	}
+	var obuBuf [40]byte
+	obuOut, err := av1.AppendEncoderLowOverheadFrameHeaderInterOBU(obuBuf[:0], seq, prefix, size)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadFrameHeaderInterOBU: %v", err)
+	}
+	if len(obuOut) != obuSize {
+		t.Fatalf("inter frame-header obu len=%d want %d", len(obuOut), obuSize)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
@@ -847,4 +918,19 @@ func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	if _, err := av1.ParseSequenceHeader(unit.Payload); err != nil {
 		t.Fatalf("ParseSequenceHeader: %v", err)
 	}
+}
+
+func publicEncoderReferenceState(seq av1.EncoderSequenceHeader, indices []uint8) av1.ReferenceState {
+	var refs av1.ReferenceState
+	for _, idx := range indices {
+		refs.Frames[idx].Valid = true
+		refs.Frames[idx].OrderHint = 1
+		refs.Frames[idx].Size.UpscaledWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.CodedWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.Height = seq.MaxFrameHeight
+		refs.Frames[idx].Size.RenderWidth = seq.MaxFrameWidth
+		refs.Frames[idx].Size.RenderHeight = seq.MaxFrameHeight
+		refs.Frames[idx].Size.SuperResDenominator = 8
+	}
+	return refs
 }
