@@ -21,6 +21,8 @@ type CoeffEntropyContext struct {
 	Left  [3][MaxBlockModeSlots]uint8
 }
 
+var coeffContextSignDelta = [32]int8{1: -1, 2: 1}
+
 var coeffSkipContexts = [5][5]uint8{
 	{1, 2, 2, 2, 3},
 	{2, 4, 4, 4, 5},
@@ -123,18 +125,8 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	if w4 == 1 && h4 == 1 {
 		top := aboveRow[x4]
 		left := leftRow[y4]
-		topSign := top >> CoeffContextBits
-		if topSign == 1 {
-			dcSign--
-		} else if topSign == 2 {
-			dcSign++
-		}
-		leftSign := left >> CoeffContextBits
-		if leftSign == 1 {
-			dcSign--
-		} else if leftSign == 2 {
-			dcSign++
-		}
+		dcSign += coeffContextSignDelta[top>>CoeffContextBits]
+		dcSign += coeffContextSignDelta[left>>CoeffContextBits]
 		if req.Plane == 0 {
 			if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 				top &= CoeffContextMask
@@ -169,23 +161,13 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		for k := 0; k < w4; k++ {
 			value := aboveRow[x4+k]
 			topMag |= value
-			sign := value >> CoeffContextBits
-			if sign == 1 {
-				dcSign--
-			} else if sign == 2 {
-				dcSign++
-			}
+			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
 		}
 		leftMag := uint8(0)
 		for k := 0; k < h4; k++ {
 			value := leftRow[y4+k]
 			leftMag |= value
-			sign := value >> CoeffContextBits
-			if sign == 1 {
-				dcSign--
-			} else if sign == 2 {
-				dcSign++
-			}
+			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
 		}
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 			top := topMag & CoeffContextMask
@@ -203,23 +185,13 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		for k := 0; k < w4; k++ {
 			value := aboveRow[x4+k]
 			topNonZero = topNonZero || value != 0
-			sign := value >> CoeffContextBits
-			if sign == 1 {
-				dcSign--
-			} else if sign == 2 {
-				dcSign++
-			}
+			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
 		}
 		leftNonZero := false
 		for k := 0; k < h4; k++ {
 			value := leftRow[y4+k]
 			leftNonZero = leftNonZero || value != 0
-			sign := value >> CoeffContextBits
-			if sign == 1 {
-				dcSign--
-			} else if sign == 2 {
-				dcSign++
-			}
+			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
 		}
 		ctxBase := uint8(0)
 		if topNonZero {
