@@ -675,7 +675,7 @@ func blockModeCDF(table *[BlockModeContexts]entropy.CDF, ctx int, symbols int) (
 	if cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func shouldReadSkipMode(req BlockModeRequest) (bool, error) {

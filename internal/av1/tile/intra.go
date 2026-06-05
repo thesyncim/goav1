@@ -506,7 +506,7 @@ func (c *IntraModeCDFs) IntrabcCDF() (*entropy.CDF, error) {
 	if c == nil || c.Intrabc.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return &c.Intrabc, c.Intrabc.Validate()
+	return &c.Intrabc, nil
 }
 
 // YModeCDF returns the initialized inter-frame luma intra-mode CDF for ctx.
@@ -525,7 +525,7 @@ func (c *IntraModeCDFs) KeyframeYModeCDF(above int, left int) (*entropy.CDF, err
 	if cdf.Symbols() != int(intraModeCount) {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // UVModeCDF returns the initialized UV intra-mode CDF for luma mode and CfL
@@ -544,7 +544,7 @@ func (c *IntraModeCDFs) UVModeCDF(cflAllowed bool, lumaMode IntraMode) (*entropy
 	if cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // AngleDeltaCDF returns the initialized directional intra angle-delta CDF.
@@ -556,7 +556,7 @@ func (c *IntraModeCDFs) AngleDeltaCDF(mode IntraMode) (*entropy.CDF, error) {
 	if cdf.Symbols() != 2*AngleDeltaMax+1 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // CFLSignCDF returns the initialized CfL joint-sign CDF.
@@ -564,7 +564,7 @@ func (c *IntraModeCDFs) CFLSignCDF() (*entropy.CDF, error) {
 	if c == nil || c.CFLSign.Symbols() != CFLJointSigns {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return &c.CFLSign, c.CFLSign.Validate()
+	return &c.CFLSign, nil
 }
 
 // CFLAlphaCDF returns the initialized CfL alpha-magnitude CDF for ctx.
@@ -576,7 +576,7 @@ func (c *IntraModeCDFs) CFLAlphaCDF(ctx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != CFLAlphabetSize {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // FilterIntraCDF returns the initialized filter-intra use flag CDF for size.
@@ -588,7 +588,7 @@ func (c *IntraModeCDFs) FilterIntraCDF(size BlockSize) (*entropy.CDF, error) {
 	if cdf.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // FilterIntraModeCDF returns the initialized filter-intra mode CDF.
@@ -596,7 +596,7 @@ func (c *IntraModeCDFs) FilterIntraModeCDF() (*entropy.CDF, error) {
 	if c == nil || c.FilterIntraMode.Symbols() != FilterIntraModes {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return &c.FilterIntraMode, c.FilterIntraMode.Validate()
+	return &c.FilterIntraMode, nil
 }
 
 // IntraContext returns dav1d's get_intra_ctx() value.
@@ -1109,7 +1109,7 @@ func intraModeCDF(c *IntraModeCDFs, kind intraCDFKind, ctx int, symbols int) (*e
 	if cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func frameTypeIsInterOrSwitch(frameType parser.FrameType) bool {

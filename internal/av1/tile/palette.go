@@ -132,7 +132,7 @@ func (c *IntraModeCDFs) PaletteYModeCDF(sizeCtx int, modeCtx int) (*entropy.CDF,
 	if cdf.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *IntraModeCDFs) PaletteYSizeCDF(sizeCtx int) (*entropy.CDF, error) {
@@ -143,7 +143,7 @@ func (c *IntraModeCDFs) PaletteYSizeCDF(sizeCtx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != PaletteSizes {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *IntraModeCDFs) PaletteUVModeCDF(modeCtx int) (*entropy.CDF, error) {
@@ -154,7 +154,7 @@ func (c *IntraModeCDFs) PaletteUVModeCDF(modeCtx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 func (c *IntraModeCDFs) PaletteUVSizeCDF(sizeCtx int) (*entropy.CDF, error) {
 	if c == nil || sizeCtx < 0 || sizeCtx >= PaletteBSizeContexts {
@@ -164,7 +164,7 @@ func (c *IntraModeCDFs) PaletteUVSizeCDF(sizeCtx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != PaletteSizes {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 func (c *IntraModeCDFs) PaletteYColorIndexCDF(colors int, ctx int) (*entropy.CDF, error) {
 	if c == nil || colors < PaletteMinSize || colors > PaletteMaxSize || ctx < 0 || ctx >= PaletteColorContexts {
@@ -174,7 +174,7 @@ func (c *IntraModeCDFs) PaletteYColorIndexCDF(colors int, ctx int) (*entropy.CDF
 	if cdf.Symbols() != colors {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *IntraModeCDFs) PaletteUVColorIndexCDF(colors int, ctx int) (*entropy.CDF, error) {
@@ -185,7 +185,7 @@ func (c *IntraModeCDFs) PaletteUVColorIndexCDF(colors int, ctx int) (*entropy.CD
 	if cdf.Symbols() != colors {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext, req PaletteModeRequest, dst *PaletteModeResult, mapScratch *PaletteModeScratch) error {

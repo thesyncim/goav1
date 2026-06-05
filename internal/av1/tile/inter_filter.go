@@ -74,7 +74,7 @@ func (c *InterpFilterCDFs) SwitchableCDF(ctx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != switchableFilterCount {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // ReadInterpFilters ports libaom's read_mb_interp_filter(). It returns the

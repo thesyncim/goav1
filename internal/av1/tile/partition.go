@@ -304,7 +304,7 @@ func (c *PartitionCDFs) CDF(level BlockLevel, ctx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != int(partitionSymbolCount[level]) {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // ReadPartition decodes one AV1 partition decision for level. Boundary cases

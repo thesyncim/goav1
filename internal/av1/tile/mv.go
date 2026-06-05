@@ -487,7 +487,7 @@ func mvCDF(cdf *entropy.CDF, symbols int) (*entropy.CDF, error) {
 	if cdf == nil || cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func motionVectorValid(v motion.Vector) bool {

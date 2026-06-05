@@ -192,7 +192,7 @@ func binaryInterRefCDF(cdf *entropy.CDF) (*entropy.CDF, error) {
 	if cdf == nil || cdf.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // ReferenceModeContext returns dav1d get_comp_ctx().

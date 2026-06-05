@@ -229,7 +229,7 @@ func (c *CompoundBlendCDFs) WedgeIndexCDF(size BlockSize) (*entropy.CDF, error) 
 	if cdf.Symbols() != MaxWedgeTypes {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *CompoundBlendCDFs) InterIntraCDF(group int) (*entropy.CDF, error) {
@@ -254,7 +254,7 @@ func (c *CompoundBlendCDFs) InterIntraModeCDFForGroup(group int) (*entropy.CDF, 
 	if cdf.Symbols() != int(interIntraModeCount) {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (s *DecodeState) ReadInterIntra(cdfs *CompoundBlendCDFs, req InterIntraRequest) (InterIntraResult, error) {

@@ -241,7 +241,7 @@ func (c *TransformCDFs) TxSizeCDF(category int, ctx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != wantSymbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // TxPartitionCDF returns the inter transform partition CDF for category/context.
@@ -254,7 +254,7 @@ func (c *TransformCDFs) TxPartitionCDF(category int, ctx int) (*entropy.CDF, err
 	if cdf.Symbols() != 2 {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 // SelectedTransformContext returns dav1d's get_tx_ctx() value for intra

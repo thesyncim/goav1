@@ -525,7 +525,7 @@ func (c *TransformTypeCDFs) IntraCDF(index int, square TransformSize, mode Intra
 	if cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *TransformTypeCDFs) InterCDF(index int, square TransformSize, symbols int) (*entropy.CDF, error) {
@@ -536,7 +536,7 @@ func (c *TransformTypeCDFs) InterCDF(index int, square TransformSize, symbols in
 	if cdf.Symbols() != symbols {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (s *DecodeState) ReadIntraTransformType(cdfs *TransformTypeCDFs, req IntraTransformTypeRequest) (transform.Type, error) {

@@ -207,7 +207,7 @@ func (c *MotionModeCDFs) MotionModeCDF(size BlockSize) (*entropy.CDF, error) {
 	if cdf.Symbols() != int(motionModeCount) {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func (c *MotionModeCDFs) OBMCCDF(size BlockSize) (*entropy.CDF, error) {

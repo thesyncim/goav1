@@ -199,7 +199,7 @@ func (c *InterModeCDFs) CompoundModeCDF(ctx int) (*entropy.CDF, error) {
 	if cdf.Symbols() != int(compoundInterModeCount) {
 		return nil, entropy.ErrInvalidCDF
 	}
-	return cdf, cdf.Validate()
+	return cdf, nil
 }
 
 func AnalyzeInterModeContext(raw uint16, compound bool) (int, error) {
