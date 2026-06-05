@@ -848,10 +848,11 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if !trustedScan && (lastPos < 0 || lastPos >= maxEOB) {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
+	lastCoeffPos := posSlice[lastPos]
 	lastCtx := coeffLowerLevelsCtxEOBFast(maxEOB, lastC)
 	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastCtx]) + 1
 	if lastLevel > NumBaseLevels {
-		brCtx := coeffBRContextEOBFast(posSlice, req.Class, lastPos)
+		brCtx := coeffBRContextEOBFast(lastCoeffPos, req.Class, lastPos)
 		var extra uint8
 		if cdfUpdate {
 			extra = readBaseRangeFromArrCursorUpdate(&reader, brArr, brCtx)
@@ -1798,11 +1799,10 @@ func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride i
 	return uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
 }
 
-func coeffBRContextEOBFast(posSlice []coeffPos, class transform.Class, pos int) uint8 {
+func coeffBRContextEOBFast(p coeffPos, class transform.Class, pos int) uint8 {
 	if pos == 0 {
 		return 0
 	}
-	p := posSlice[pos]
 	switch class {
 	case transform.Class2D:
 		if p.row < 2 && p.col < 2 {
