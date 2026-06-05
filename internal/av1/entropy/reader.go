@@ -1848,12 +1848,12 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 
 //go:nosplit
 func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
-	src := c.src
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -1874,6 +1874,9 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 		}
 	}
 	if traceEntropyReads {
+		pos = int(c.pos)
+		tellOffs = int32(c.tellOffs)
+		posLoaded = true
 		traceCDFRead(c0, 3, dif, rng, readerTell(pos, cnt, tellOffs))
 	}
 	dif -= lower << (ecWindow - 16)
@@ -1883,6 +1886,12 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
+		src := c.src
 		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 	}
 	if c.allowCDFUpdate {
@@ -1904,11 +1913,13 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 			values[3] = count + 1
 		}
 	}
-	c.pos = uint32(pos)
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
