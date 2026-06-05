@@ -1295,11 +1295,19 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 }
 
 func readBaseRangeFromArrCursorUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
-	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[context])
+	ctx := int(context)
+	if ctx >= CoeffBRContexts {
+		panic("invalid coefficient base range context")
+	}
+	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[ctx])
 }
 
 func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
-	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[context])
+	ctx := int(context)
+	if ctx >= CoeffBRContexts {
+		panic("invalid coefficient base range context")
+	}
+	return reader.ReadCDF4HighTokenNoUpdateUnchecked(&arr[ctx])
 }
 
 func coeffTraceScanIndex(scan []int16, pos int, eobPos int) int {
