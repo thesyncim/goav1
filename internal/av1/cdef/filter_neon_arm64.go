@@ -7,10 +7,9 @@
 package cdef
 
 // NEON-accelerated CDEF block filter. The .s file implements the per-row inner
-// loop for 8-wide blocks (every luma block and the 4:4:4 chroma block). The Go
-// wrapper here routes narrower shapes (8x4 / 4x8 / 4x4 chroma) to the pure-Go
-// reference, which keeps the asm to a single code path and the byte-exactness
-// contract easy to audit.
+// loop for 8-wide arithmetic. Width-4 chroma blocks use the same arithmetic
+// and store only the low four lanes, avoiding a temporary copy while preserving
+// the byte-exactness contract.
 //
 // Bit-exactness with filterBlockPureGo:
 //   - diff = sample - x is computed in int16 lanes (pixels and the 0x4000
@@ -56,21 +55,14 @@ type filterBlockNEONCtx struct {
 	enablePrimary   int64
 	enableSecondary int64
 	clipping        int64
+	width4          int64
 }
 
 //go:noescape
 func filterBlockNEONAsm(ctx *filterBlockNEONCtx)
 
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	if params.Width == 4 {
-		var tmp [8 * 8]uint16
-		filterBlockNEONWide(tmp[:], 8, 0, input, inputOrigin, params)
-		for row := 0; row < int(params.Height); row++ {
-			copy(dst[dstOrigin+row*dstStride:dstOrigin+row*dstStride+4], tmp[row*8:row*8+4])
-		}
-		return
-	}
-	if params.Width != 8 {
+	if params.Width != 4 && params.Width != 8 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
@@ -115,6 +107,7 @@ func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uin
 		enablePrimary:   boolToInt64(enablePrimary),
 		enableSecondary: boolToInt64(enableSecondary),
 		clipping:        boolToInt64(clippingRequired),
+		width4:          boolToInt64(params.Width == 4),
 	}
 	filterBlockNEONAsm(&ctx)
 }

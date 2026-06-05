@@ -24,11 +24,12 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 
 func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int32) {
 	var partial [8][15]int32
+	shift := uint(coeffShift)
 	for i := range 8 {
 		rowBase := i * stride
 		iHalf := i >> 1
 		for j := range 8 {
-			x := int32(img[rowBase+j]>>uint(coeffShift)) - 128
+			x := int32(img[rowBase+j]>>shift) - 128
 			partial[0][i+j] += x
 			partial[1][i+(j>>1)] += x
 			partial[2][i] += x
@@ -56,14 +57,15 @@ func FindDirectionDual(img1 []uint16, img2 []uint16, stride int, coeffShift int)
 func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
 	var partial1 [8][15]int32
 	var partial2 [8][15]int32
+	shift := uint(coeffShift)
 	for i := range 8 {
 		rowBase := i * stride
 		iHalf := i >> 1
 		row1 := img1[rowBase : rowBase+8]
 		row2 := img2[rowBase : rowBase+8]
 
-		x1 := int32(row1[0]>>uint(coeffShift)) - 128
-		x2 := int32(row2[0]>>uint(coeffShift)) - 128
+		x1 := int32(row1[0]>>shift) - 128
+		x2 := int32(row2[0]>>shift) - 128
 		partial1[0][i] += x1
 		partial1[1][i] += x1
 		partial1[2][i] += x1
@@ -81,8 +83,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][0] += x2
 		partial2[7][iHalf] += x2
 
-		x1 = int32(row1[1]>>uint(coeffShift)) - 128
-		x2 = int32(row2[1]>>uint(coeffShift)) - 128
+		x1 = int32(row1[1]>>shift) - 128
+		x2 = int32(row2[1]>>shift) - 128
 		partial1[0][i+1] += x1
 		partial1[1][i] += x1
 		partial1[2][i] += x1
@@ -100,8 +102,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][1] += x2
 		partial2[7][iHalf+1] += x2
 
-		x1 = int32(row1[2]>>uint(coeffShift)) - 128
-		x2 = int32(row2[2]>>uint(coeffShift)) - 128
+		x1 = int32(row1[2]>>shift) - 128
+		x2 = int32(row2[2]>>shift) - 128
 		partial1[0][i+2] += x1
 		partial1[1][i+1] += x1
 		partial1[2][i] += x1
@@ -119,8 +121,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][2] += x2
 		partial2[7][iHalf+2] += x2
 
-		x1 = int32(row1[3]>>uint(coeffShift)) - 128
-		x2 = int32(row2[3]>>uint(coeffShift)) - 128
+		x1 = int32(row1[3]>>shift) - 128
+		x2 = int32(row2[3]>>shift) - 128
 		partial1[0][i+3] += x1
 		partial1[1][i+1] += x1
 		partial1[2][i] += x1
@@ -138,8 +140,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][3] += x2
 		partial2[7][iHalf+3] += x2
 
-		x1 = int32(row1[4]>>uint(coeffShift)) - 128
-		x2 = int32(row2[4]>>uint(coeffShift)) - 128
+		x1 = int32(row1[4]>>shift) - 128
+		x2 = int32(row2[4]>>shift) - 128
 		partial1[0][i+4] += x1
 		partial1[1][i+2] += x1
 		partial1[2][i] += x1
@@ -157,8 +159,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][4] += x2
 		partial2[7][iHalf+4] += x2
 
-		x1 = int32(row1[5]>>uint(coeffShift)) - 128
-		x2 = int32(row2[5]>>uint(coeffShift)) - 128
+		x1 = int32(row1[5]>>shift) - 128
+		x2 = int32(row2[5]>>shift) - 128
 		partial1[0][i+5] += x1
 		partial1[1][i+2] += x1
 		partial1[2][i] += x1
@@ -176,8 +178,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][5] += x2
 		partial2[7][iHalf+5] += x2
 
-		x1 = int32(row1[6]>>uint(coeffShift)) - 128
-		x2 = int32(row2[6]>>uint(coeffShift)) - 128
+		x1 = int32(row1[6]>>shift) - 128
+		x2 = int32(row2[6]>>shift) - 128
 		partial1[0][i+6] += x1
 		partial1[1][i+3] += x1
 		partial1[2][i] += x1
@@ -195,8 +197,8 @@ func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffS
 		partial2[6][6] += x2
 		partial2[7][iHalf+6] += x2
 
-		x1 = int32(row1[7]>>uint(coeffShift)) - 128
-		x2 = int32(row2[7]>>uint(coeffShift)) - 128
+		x1 = int32(row1[7]>>shift) - 128
+		x2 = int32(row2[7]>>shift) - 128
 		partial1[0][i+7] += x1
 		partial1[1][i+3] += x1
 		partial1[2][i] += x1
