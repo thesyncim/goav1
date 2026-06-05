@@ -407,6 +407,22 @@ func TestDecodeLumaCoefficientsRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func BenchmarkLumaCoeffTreeScratchClearCoeffDirty(b *testing.B) {
+	var scratch LumaCoeffTreeScratch
+	for i := range scratch.Coeffs {
+		scratch.Coeffs[i] = int16(i + 1)
+	}
+	const dirtyLen = 128
+	for i := 0; i < dirtyLen; i++ {
+		scratch.InverseScan[i] = int16((i * 17) & (maxCoeffScanLen - 1))
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		scratch.coeffDirtyLen = dirtyLen
+		scratch.clearCoeffDirty()
+	}
+}
+
 func TestDecodeLumaCoefficientsAllocs(t *testing.T) {
 	var cdfs CoeffCDFs
 	if err := cdfs.InitDefault(0); err != nil {
