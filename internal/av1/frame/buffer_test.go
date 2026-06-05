@@ -267,6 +267,54 @@ func TestBorderedSamplePlaneLoadStoreHighBitDepth(t *testing.T) {
 	}
 }
 
+func TestStoreBorderedSamplePlaneTrustedMatchesChecked(t *testing.T) {
+	for _, bytesPerSample := range [...]int{1, 2} {
+		plane := Plane{Pix: make([]byte, 8*bytesPerSample*4), Stride: 8 * bytesPerSample, Width: 5, Height: 4}
+		for y := 0; y < plane.Height; y++ {
+			for x := 0; x < plane.Width; x++ {
+				setTestPlaneSample(plane, bytesPerSample, x, y, uint16(10+y*plane.Width+x))
+			}
+		}
+
+		layout, err := BorderedSamplePlaneLen(plane, bytesPerSample, 3, 2, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, err := LoadBorderedSamplePlane(make([]uint16, layout.Len), plane, bytesPerSample, 3, 2, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples.Pix[samples.Origin+1*samples.Stride+3] = 77
+		if bytesPerSample == 2 {
+			samples.Pix[samples.Origin+1*samples.Stride+3] = 4095
+		}
+
+		checked := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+		trusted := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+		if err := StoreBorderedSamplePlane(checked, bytesPerSample, samples); err != nil {
+			t.Fatal(err)
+		}
+		if err := StoreBorderedSamplePlaneTrusted(trusted, bytesPerSample, samples); err != nil {
+			t.Fatal(err)
+		}
+		if string(trusted.Pix) != string(checked.Pix) {
+			t.Fatalf("bytesPerSample=%d trusted=% x checked=% x", bytesPerSample, trusted.Pix, checked.Pix)
+		}
+	}
+}
+
+func TestStoreBorderedSamplePlaneTrustedRejectsInvalidGeometry(t *testing.T) {
+	src := BorderedSamplePlane{Pix: make([]uint16, 10), Stride: 4, Origin: 3, Width: 2, Height: 1}
+	dst := Plane{Pix: make([]byte, 2), Stride: 2, Width: 2, Height: 1}
+	if err := StoreBorderedSamplePlaneTrusted(dst, 1, src); !errors.Is(err, ErrInvalidPlane) {
+		t.Fatalf("cross-stride trusted store err=%v want %v", err, ErrInvalidPlane)
+	}
+	mismatch := BorderedSamplePlane{Pix: make([]uint16, 4), Stride: 2, Origin: 0, Width: 1, Height: 1}
+	if err := StoreBorderedSamplePlaneTrusted(dst, 1, mismatch); !errors.Is(err, ErrInvalidPlane) {
+		t.Fatalf("mismatch trusted store err=%v want %v", err, ErrInvalidPlane)
+	}
+}
+
 func TestBindBorderedSamplePlane(t *testing.T) {
 	plane := Plane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
 	layout, err := BorderedSamplePlaneLen(plane, 1, 3, 2, 8)

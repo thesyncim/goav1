@@ -143,7 +143,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
-		if err := av1frame.StoreBorderedSamplePlane(buffer, bytesPerSample, dstViews[plane]); err != nil {
+		if err := av1frame.StoreBorderedSamplePlaneTrusted(buffer, bytesPerSample, dstViews[plane]); err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
 	}

@@ -213,6 +213,20 @@ func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSampleP
 	return nil
 }
 
+// StoreBorderedSamplePlaneTrusted writes the visible region from src like
+// StoreBorderedSamplePlane, but assumes every sample already fits the
+// destination bit depth. It still validates plane geometry and buffer sizes.
+func StoreBorderedSamplePlaneTrusted(dst Plane, bytesPerSample int, src BorderedSamplePlane) error {
+	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
+		return err
+	}
+	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
+		return ErrInvalidPlane
+	}
+	storeSampleRowsTrusted(dst.Pix, dst.Stride, src.Pix[src.Origin:], src.Stride, src.Width, src.Height, bytesPerSample)
+	return nil
+}
+
 func samplePlaneLayout(plane Plane, bytesPerSample int, requirePix bool) (int, int, error) {
 	if bytesPerSample != 1 && bytesPerSample != 2 {
 		return 0, 0, ErrInvalidPlane
