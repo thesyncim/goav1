@@ -539,24 +539,40 @@ func (b *FrameWorkBatch) blockCoeffGeometryLumaKnown(region FrameWorkJobRegion, 
 	y := (uint32(visit.MIRow) + uint32(txY4-blockY4)) << 2
 	width := int(meta.size.Width)
 	height := int(meta.size.Height)
-	visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, int(x), int(y), width, height)
-	if !ok {
-		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, FrameWorkPlaneY, int(x), int(y)) {
-			return frameWorkBlockCoeffGeometry{
-				window:   window,
-				size:     meta.size,
-				scanSize: meta.scanSize,
-				x:        x,
-				y:        y,
-				txScale:  meta.txScale,
-				plane:    FrameWorkPlaneY,
-			}, nil
-		}
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	var geomVisibleWidth, geomVisibleHeight uint8
+	clipWidth := window.ClipWidth
+	if clipWidth == 0 {
+		clipWidth = window.Width
 	}
-	geomVisibleWidth, geomVisibleHeight, ok := frameWorkBlockCoeffVisiblePixels(visibleWidth, visibleHeight)
-	if !ok {
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	clipHeight := window.ClipHeight
+	if clipHeight == 0 {
+		clipHeight = window.Height
+	}
+	if x >= window.X && y >= window.Y &&
+		uint64(x-window.X)+uint64(uint32(width)) <= uint64(clipWidth) &&
+		uint64(y-window.Y)+uint64(uint32(height)) <= uint64(clipHeight) {
+		geomVisibleWidth = uint8(width)
+		geomVisibleHeight = uint8(height)
+	} else {
+		visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, int(x), int(y), width, height)
+		if !ok {
+			if frameWorkPlaneBlockStartsBeyondOutput(b.Output, FrameWorkPlaneY, int(x), int(y)) {
+				return frameWorkBlockCoeffGeometry{
+					window:   window,
+					size:     meta.size,
+					scanSize: meta.scanSize,
+					x:        x,
+					y:        y,
+					txScale:  meta.txScale,
+					plane:    FrameWorkPlaneY,
+				}, nil
+			}
+			return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+		}
+		geomVisibleWidth, geomVisibleHeight, ok = frameWorkBlockCoeffVisiblePixels(visibleWidth, visibleHeight)
+		if !ok {
+			return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+		}
 	}
 	return frameWorkBlockCoeffGeometry{
 		window:        window,
