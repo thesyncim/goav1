@@ -98,13 +98,29 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
-	above := c.Above[plane][x4 : x4+int(txDims.W4)]
-	left := c.Left[plane][y4 : y4+int(txDims.H4)]
+	var aboveRow, leftRow *[MaxBlockModeSlots]uint8
+	switch plane {
+	case 0:
+		aboveRow = &c.Above[0]
+		leftRow = &c.Left[0]
+	case 1:
+		aboveRow = &c.Above[1]
+		leftRow = &c.Left[1]
+	default:
+		aboveRow = &c.Above[2]
+		leftRow = &c.Left[2]
+	}
+	w4 := int(txDims.W4)
+	h4 := int(txDims.H4)
 	topMag := uint8(0)
 	leftMag := uint8(0)
 	topNonZero := false
 	leftNonZero := false
-	for _, value := range above {
+	if w4 > 0 {
+		_ = aboveRow[x4+w4-1]
+	}
+	for k := 0; k < w4; k++ {
+		value := aboveRow[x4+k]
 		topMag |= value
 		topNonZero = topNonZero || value != 0
 		sign := value >> CoeffContextBits
@@ -114,7 +130,11 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			dcSign++
 		}
 	}
-	for _, value := range left {
+	if h4 > 0 {
+		_ = leftRow[y4+h4-1]
+	}
+	for k := 0; k < h4; k++ {
+		value := leftRow[y4+k]
 		leftMag |= value
 		leftNonZero = leftNonZero || value != 0
 		sign := value >> CoeffContextBits
@@ -257,21 +277,39 @@ func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims
 	plane := int(req.Plane)
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
-	above := c.Above[plane][x4 : x4+int(txDims.W4)]
-	left := c.Left[plane][y4 : y4+int(txDims.H4)]
-	for k := range above {
+	var aboveRow, leftRow *[MaxBlockModeSlots]uint8
+	switch plane {
+	case 0:
+		aboveRow = &c.Above[0]
+		leftRow = &c.Left[0]
+	case 1:
+		aboveRow = &c.Above[1]
+		leftRow = &c.Left[1]
+	default:
+		aboveRow = &c.Above[2]
+		leftRow = &c.Left[2]
+	}
+	w4 := int(txDims.W4)
+	h4 := int(txDims.H4)
+	if w4 > 0 {
+		_ = aboveRow[x4+w4-1]
+	}
+	for k := 0; k < w4; k++ {
 		next := uint8(0)
 		if k < visibleW {
 			next = value
 		}
-		above[k] = next
+		aboveRow[x4+k] = next
 	}
-	for k := range left {
+	if h4 > 0 {
+		_ = leftRow[y4+h4-1]
+	}
+	for k := 0; k < h4; k++ {
 		next := uint8(0)
 		if k < visibleH {
 			next = value
 		}
-		left[k] = next
+		leftRow[y4+k] = next
 	}
 }
 
