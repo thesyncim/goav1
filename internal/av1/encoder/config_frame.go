@@ -25,6 +25,15 @@ type WebRTCDeltaFrameTemporalUnit struct {
 	Control  WebRTCTemporalUnitControl
 }
 
+type WebRTCEncoderState struct {
+	ReferenceState           ReferenceBufferState
+	FrameIDState             FrameIDBufferState
+	DependencyStructureState WebRTCDependencyStructureState
+	NextOrderHint            uint8
+	NextFrameID              uint64
+	DeltaPictureIndex        uint64
+}
+
 // IntraHeaderTemporalUnitForConfig maps a WebRTC encoder config into the
 // sequence header, shown-key frame-header prefix, and frame-size syntax used by
 // the first low-overhead temporal unit.
@@ -142,6 +151,88 @@ func WebRTCKeyFrameTemporalUnitForConfig(config Config, orderHint uint8, firstFr
 	}
 	unit.Control = control
 	return unit, nil
+}
+
+func WebRTCKeyFrameTemporalUnitForState(config Config, state WebRTCEncoderState) (WebRTCKeyFrameTemporalUnit, WebRTCEncoderState, error) {
+	unit, err := WebRTCKeyFrameTemporalUnitForConfig(config, state.NextOrderHint, state.NextFrameID)
+	if err != nil {
+		return WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	next, err := advanceWebRTCEncoderState(config, state, unit.FrameNum, unit.Control, 1)
+	if err != nil {
+		return WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return unit, next, nil
+}
+
+func WebRTCDeltaFrameTemporalUnitForState(config Config, state WebRTCEncoderState) (WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	temporalID, err := WebRTCTemporalIDForDeltaPicture(config.TemporalLayerCount, state.DeltaPictureIndex)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	unit, err := WebRTCDeltaFrameTemporalUnitForConfig(config, state.ReferenceState, state.FrameIDState, temporalID, state.NextFrameID)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	next, err := advanceWebRTCEncoderState(config, state, unit.FrameNum, unit.Control, state.DeltaPictureIndex+1)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	return unit, next, nil
+}
+
+func WebRTCTemporalIDForDeltaPicture(temporalLayers uint8, deltaPictureIndex uint64) (uint8, error) {
+	if temporalLayers == 0 || temporalLayers > WebRTCMaxTemporalLayers || deltaPictureIndex == 0 {
+		return 0, ErrInvalidConfig
+	}
+	var trailingZeroCount uint8
+	for value := deltaPictureIndex; value&1 == 0 && trailingZeroCount < temporalLayers-1; value >>= 1 {
+		trailingZeroCount++
+	}
+	return temporalLayers - 1 - trailingZeroCount, nil
+}
+
+func advanceWebRTCEncoderState(config Config, state WebRTCEncoderState, frameNum uint8, control WebRTCTemporalUnitControl, nextDeltaPictureIndex uint64) (WebRTCEncoderState, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCEncoderState{}, err
+	}
+	structureState, _, err := WebRTCDependencyStructureStateForTemporalUnit(control, state.DependencyStructureState)
+	if err != nil {
+		return WebRTCEncoderState{}, err
+	}
+	orderHint, err := advanceWebRTCOrderHint(config, state.NextOrderHint)
+	if err != nil {
+		return WebRTCEncoderState{}, err
+	}
+	state.ReferenceState = control.ReferenceState
+	state.FrameIDState = control.FrameIDState
+	state.DependencyStructureState = structureState
+	state.NextOrderHint = orderHint
+	state.NextFrameID += uint64(frameNum)
+	state.DeltaPictureIndex = nextDeltaPictureIndex
+	return state, nil
+}
+
+func advanceWebRTCOrderHint(config Config, orderHint uint8) (uint8, error) {
+	seq, err := SequenceHeaderForConfig(config)
+	if err != nil {
+		return 0, err
+	}
+	if !seq.EnableOrderHint {
+		if orderHint != 0 {
+			return 0, ErrInvalidFrame
+		}
+		return 0, nil
+	}
+	if seq.OrderHintBits == 0 || seq.OrderHintBits > 8 || uint16(orderHint) >= uint16(1)<<seq.OrderHintBits {
+		return 0, ErrInvalidFrame
+	}
+	return (orderHint + 1) & uint8((1<<seq.OrderHintBits)-1), nil
 }
 
 // LowOverheadWebRTCKeyFrameTemporalUnitForConfigSize returns the exact emitted

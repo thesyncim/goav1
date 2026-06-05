@@ -97,6 +97,7 @@ type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
 type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTemporalUnit
+type EncoderWebRTCState = internalencoder.WebRTCEncoderState
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -296,6 +297,18 @@ func EncoderWebRTCKeyFrameTemporalUnitForConfig(config EncoderConfig, orderHint 
 
 func EncoderWebRTCDeltaFrameTemporalUnitForConfig(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
 	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfig(config, referenceState, frameIDState, temporalID, firstFrameID)
+}
+
+func EncoderWebRTCKeyFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.WebRTCKeyFrameTemporalUnitForState(config, state)
+}
+
+func EncoderWebRTCDeltaFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
+	return internalencoder.WebRTCDeltaFrameTemporalUnitForState(config, state)
+}
+
+func EncoderWebRTCTemporalIDForDeltaPicture(temporalLayers uint8, deltaPictureIndex uint64) (uint8, error) {
+	return internalencoder.WebRTCTemporalIDForDeltaPicture(temporalLayers, deltaPictureIndex)
 }
 
 func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {

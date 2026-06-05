@@ -328,3 +328,117 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigAllocs(t *testing.T) {
 		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig allocated: %f", allocs)
 	}
 }
+
+func TestWebRTCEncoderStateTemporalUnits(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 960, Height: 540},
+		Scalability:       ScalabilityModeL3T3,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 800,
+	}
+	state := WebRTCEncoderState{NextOrderHint: 126, NextFrameID: 1000}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != 3 || key.Header.Prefix.OrderHint != 126 ||
+		state.NextOrderHint != 127 || state.NextFrameID != 1003 ||
+		state.DeltaPictureIndex != 1 || !state.DependencyStructureState.Valid {
+		t.Fatalf("key=%+v state=%+v", key, state)
+	}
+
+	wantTemporal := [...]uint8{2, 1, 2, 0}
+	wantFirstID := uint64(1003)
+	for i, want := range wantTemporal {
+		delta, next, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+		if err != nil {
+			t.Fatalf("delta %d: %v", i, err)
+		}
+		if delta.FrameNum != 3 || delta.Frames[0].TemporalID != want ||
+			delta.Control.Frames[0].GenericFrameInfo.FrameID != wantFirstID ||
+			delta.Control.HasDependencyStructure {
+			t.Fatalf("delta %d unit=%+v", i, delta)
+		}
+		if next.NextFrameID != wantFirstID+3 || next.DeltaPictureIndex != state.DeltaPictureIndex+1 ||
+			next.DependencyStructureState.Structure != state.DependencyStructureState.Structure {
+			t.Fatalf("delta %d next=%+v state=%+v", i, next, state)
+		}
+		if i == 0 && next.NextOrderHint != 0 {
+			t.Fatalf("delta %d order hint=%d want wrap to 0", i, next.NextOrderHint)
+		}
+		var descriptorBuf [32]byte
+		if _, err := AppendWebRTCDependencyDescriptor(
+			descriptorBuf[:0],
+			next.DependencyStructureState.Structure,
+			delta.Control.Frames[2].GenericFrameInfo,
+			true,
+			true,
+			false,
+		); err != nil {
+			t.Fatalf("delta %d descriptor: %v", i, err)
+		}
+		state = next
+		wantFirstID += 3
+	}
+}
+
+func TestWebRTCTemporalIDForDeltaPicture(t *testing.T) {
+	tests := [...]struct {
+		layers uint8
+		index  uint64
+		want   uint8
+	}{
+		{layers: 1, index: 1, want: 0},
+		{layers: 2, index: 1, want: 1},
+		{layers: 2, index: 2, want: 0},
+		{layers: 3, index: 1, want: 2},
+		{layers: 3, index: 2, want: 1},
+		{layers: 3, index: 3, want: 2},
+		{layers: 3, index: 4, want: 0},
+	}
+	for _, tt := range tests {
+		got, err := WebRTCTemporalIDForDeltaPicture(tt.layers, tt.index)
+		if err != nil {
+			t.Fatalf("layers=%d index=%d: %v", tt.layers, tt.index, err)
+		}
+		if got != tt.want {
+			t.Fatalf("layers=%d index=%d got=%d want=%d", tt.layers, tt.index, got, tt.want)
+		}
+	}
+	if _, err := WebRTCTemporalIDForDeltaPicture(3, 0); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("zero index err=%v want %v", err, ErrInvalidConfig)
+	}
+	if _, err := WebRTCTemporalIDForDeltaPicture(WebRTCMaxTemporalLayers+1, 1); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("too many layers err=%v want %v", err, ErrInvalidConfig)
+	}
+}
+
+func TestWebRTCEncoderStateRejectsDeltaBeforeKey(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL1T1}
+	_, _, err := WebRTCDeltaFrameTemporalUnitForState(cfg, WebRTCEncoderState{DeltaPictureIndex: 1})
+	if !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("delta before key err=%v want %v", err, ErrInvalidFrame)
+	}
+}
+
+func TestWebRTCEncoderStateTemporalUnitsAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != 2 || state.NextFrameID != 3 {
+		t.Fatalf("key=%+v state=%+v", key, state)
+	}
+	if _, _, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state); err != nil {
+		t.Fatalf("delta preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForState allocated: %f", allocs)
+	}
+}

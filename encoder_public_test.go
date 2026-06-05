@@ -625,6 +625,72 @@ func TestPublicEncoderWebRTCDependencyStructureStateForTemporalUnit(t *testing.T
 	}
 }
 
+func TestPublicEncoderWebRTCStateTemporalUnits(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 960, Height: 540},
+		Scalability:       av1.EncoderScalabilityModeL3T3,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 800,
+	}
+	state := av1.EncoderWebRTCState{NextOrderHint: 126, NextFrameID: 900}
+	key, state, err := av1.EncoderWebRTCKeyFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != 3 || key.Header.Prefix.OrderHint != 126 ||
+		state.NextOrderHint != 127 || state.NextFrameID != 903 ||
+		state.DeltaPictureIndex != 1 || !state.DependencyStructureState.Valid {
+		t.Fatalf("key=%+v state=%+v", key, state)
+	}
+
+	wantTemporal := [...]uint8{2, 1, 2, 0}
+	for i, want := range wantTemporal {
+		delta, next, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForState(cfg, state)
+		if err != nil {
+			t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForState %d: %v", i, err)
+		}
+		if delta.FrameNum != 3 || delta.Frames[0].TemporalID != want ||
+			delta.Control.Frames[0].GenericFrameInfo.FrameID != state.NextFrameID {
+			t.Fatalf("delta %d=%+v state=%+v", i, delta, state)
+		}
+		var descriptorBuf [32]byte
+		descriptor, err := av1.AppendEncoderWebRTCDependencyDescriptor(
+			descriptorBuf[:0],
+			next.DependencyStructureState.Structure,
+			delta.Control.Frames[2].GenericFrameInfo,
+			true,
+			true,
+			false,
+		)
+		if err != nil {
+			t.Fatalf("AppendEncoderWebRTCDependencyDescriptor %d: %v", i, err)
+		}
+		if len(descriptor) == 0 || next.NextFrameID != state.NextFrameID+3 {
+			t.Fatalf("delta %d descriptor=% x next=%+v state=%+v", i, descriptor, next, state)
+		}
+		state = next
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = av1.EncoderWebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
+func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
+	got, err := av1.EncoderWebRTCTemporalIDForDeltaPicture(3, 4)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCTemporalIDForDeltaPicture: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("temporal id=%d want 0", got)
+	}
+}
+
 func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	seq := av1.EncoderSequenceHeader{
 		Profile:               av1.EncoderProfile0,
