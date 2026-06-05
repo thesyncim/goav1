@@ -657,6 +657,22 @@ func BenchmarkReaderReadBit(b *testing.B) {
 	}
 }
 
+func BenchmarkCursorReadBitTrustedStream(b *testing.B) {
+	src := benchStream()
+	sum := 0
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		c := r.Cursor()
+		for range benchSymbolsPerOp {
+			sum += int(c.ReadBitTrusted())
+		}
+	}
+	benchmarkReaderSink = sum
+}
+
 func BenchmarkReaderReadBits(b *testing.B) {
 	src := benchStream()
 
