@@ -1173,6 +1173,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	if runner == nil {
 		return ErrInvalidCallback
 	}
+	residual, useResidual := runner.(*FrameWorkTileResidualRunner)
 	if len(batches) == 0 {
 		return nil
 	}
@@ -1201,8 +1202,14 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 			ctx := base
 			ctx.Batch = batch
 			ctx.Jobs = batchJobs
-			if err := runner.Run(ctx); firstErr == nil && err != nil {
-				firstErr = err
+			if useResidual {
+				if err := residual.RunPtr(&ctx); firstErr == nil && err != nil {
+					firstErr = err
+				}
+			} else {
+				if err := runner.Run(ctx); firstErr == nil && err != nil {
+					firstErr = err
+				}
 			}
 		}
 		return firstErr
@@ -1322,7 +1329,12 @@ func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 			ctx := task.frameBatch
 			ctx.Batch = task.batch
 			ctx.Jobs = task.jobs
-			done <- workerResult{err: task.frameRunner.Run(ctx)}
+			switch runner := task.frameRunner.(type) {
+			case *FrameWorkTileResidualRunner:
+				done <- workerResult{err: runner.RunPtr(&ctx)}
+			default:
+				done <- workerResult{err: runner.Run(ctx)}
+			}
 			continue
 		}
 		done <- workerResult{err: task.fn(task.batch, task.jobs)}
