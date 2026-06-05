@@ -990,7 +990,7 @@ func benchmarkReadCoefficientsTXBTracked(b *testing.B, size TransformSize, class
 	b.ResetTimer()
 	for b.Loop() {
 		for i := 0; i < int(dirtyLen); i++ {
-			coeffs[int(dirtyPos[i])] = 0
+			coeffs[coeffDirtyPackedPos(dirtyPos[i])] = 0
 		}
 		dirtyLen = 0
 		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {

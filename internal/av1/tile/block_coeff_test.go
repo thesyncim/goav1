@@ -222,7 +222,7 @@ func TestDecodeBlockCoefficientsDirtyCoeffClearFastPath(t *testing.T) {
 	if scratch.Coeff.Coeffs[17] != 0 {
 		t.Fatalf("stale coeff[17]=%d want dirty clear", scratch.Coeff.Coeffs[17])
 	}
-	if scratch.Coeff.coeffDirtyLen != 1 || scratch.Coeff.InverseScan[0] != 0 {
+	if scratch.Coeff.coeffDirtyLen != 1 || coeffDirtyPackedPos(scratch.Coeff.InverseScan[0]) != 0 {
 		t.Fatalf("dirtyLen=%d dirty0=%d want only coeff 0 tracked", scratch.Coeff.coeffDirtyLen, scratch.Coeff.InverseScan[0])
 	}
 }

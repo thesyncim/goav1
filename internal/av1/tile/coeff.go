@@ -24,6 +24,16 @@ const (
 	txPadHorizontal     = 4
 )
 
+const coeffDirtyPosMask = maxCoeffScanLen - 1
+
+func packCoeffDirty(pos int, level int) int16 {
+	return int16((level << 10) | pos)
+}
+
+func coeffDirtyPackedPos(pos int16) int {
+	return int(pos) & coeffDirtyPosMask
+}
+
 type CoeffPlaneType uint8
 
 const (
@@ -949,7 +959,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	useDirtyScanList := trackDirty && dirtyNext == 0
 	nonzeroScanLen := 0
 	if useDirtyScanList {
-		(*dirtyPos)[0] = int16(lastPos)
+		(*dirtyPos)[0] = packCoeffDirty(lastPos, lastLevel)
 		nonzeroScanLen = 1
 	} else {
 		coeffs[lastPos] = 0
@@ -994,7 +1004,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				if level != 0 {
 					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					(*dirtyPos)[nonzeroScanLen] = int16(pos)
+					(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 					nonzeroScanLen++
 				}
 			}
@@ -1035,7 +1045,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 				if level != 0 {
 					(*levelDirtyPos)[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
-					(*dirtyPos)[nonzeroScanLen] = int16(pos)
+					(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 					nonzeroScanLen++
 				}
 			}
@@ -1082,7 +1092,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1130,7 +1140,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1162,7 +1172,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1192,7 +1202,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1224,7 +1234,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1254,7 +1264,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 						levelDirtyNext++
 					}
 					if useDirtyScanList {
-						(*dirtyPos)[nonzeroScanLen] = int16(pos)
+						(*dirtyPos)[nonzeroScanLen] = packCoeffDirty(pos, level)
 						nonzeroScanLen++
 					} else {
 						coeffs[pos] = int16(headC + 1)
@@ -1279,10 +1289,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		// validated scan positions, and only non-zero levels are recorded. Replay
 		// it as trusted token state, like dav1d's compact coefficient links.
 		i := nonzeroScanLen - 1
-		if i >= 0 && (*dirtyPos)[i] == 0 {
+		if i >= 0 && coeffDirtyPackedPos((*dirtyPos)[i]) == 0 {
 			pos := 0
-			padded := int(posSlice[pos].padded)
-			level := int(levelsScratch[padded])
+			level := int(uint16((*dirtyPos)[i]) >> 10)
 			negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 			baseLevel := level
 			golombExtra := 0
@@ -1317,9 +1326,9 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			i--
 		}
 		for ; i >= 0; i-- {
-			pos := int((*dirtyPos)[i])
-			padded := int(posSlice[pos].padded)
-			level := int(levelsScratch[padded])
+			packed := uint16((*dirtyPos)[i])
+			pos := int(packed) & coeffDirtyPosMask
+			level := int(packed >> 10)
 			if pos > maxScanLine {
 				maxScanLine = pos
 			}
