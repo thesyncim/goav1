@@ -99,6 +99,9 @@ type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 type EncoderInterFrameSize = internalencoder.InterFrameSize
 type EncoderQuantizationParams = internalencoder.QuantizationParams
+type EncoderSegmentData = internalencoder.SegmentData
+type EncoderSegmentationData = internalencoder.SegmentationData
+type EncoderSegmentationParams = internalencoder.SegmentationParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -929,6 +932,14 @@ func EncoderQuantizationParamsPayloadSize(seq EncoderSequenceHeader, quant Encod
 
 func AppendEncoderQuantizationParamsPayload(dst []byte, seq EncoderSequenceHeader, quant EncoderQuantizationParams) ([]byte, error) {
 	return internalencoder.AppendQuantizationParamsPayload(dst, seq, quant)
+}
+
+func EncoderSegmentationParamsPayloadSize(prefix EncoderFrameHeaderPrefix, seg EncoderSegmentationParams) (int, error) {
+	return internalencoder.SegmentationParamsPayloadSize(prefix, seg)
+}
+
+func AppendEncoderSegmentationParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, seg EncoderSegmentationParams) ([]byte, error) {
+	return internalencoder.AppendSegmentationParamsPayload(dst, prefix, seg)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {

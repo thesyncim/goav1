@@ -408,6 +408,48 @@ func TestPublicEncoderQuantizationParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderSegmentationParamsPayload(t *testing.T) {
+	prefix := av1.EncoderFrameHeaderPrefix{PrimaryRefFrame: av1.EncoderPrimaryRefNone}
+	var data av1.EncoderSegmentationData
+	for i := 0; i < 8; i++ {
+		data.Segments[i].RefFrame = -1
+	}
+	data.Segments[0].DeltaQ = -8
+	data.Segments[2].RefFrame = 4
+	seg := av1.EncoderSegmentationParams{
+		Enabled:    true,
+		UpdateMap:  true,
+		UpdateData: true,
+		Data:       data,
+	}
+	payloadSize, err := av1.EncoderSegmentationParamsPayloadSize(prefix, seg)
+	if err != nil {
+		t.Fatalf("EncoderSegmentationParamsPayloadSize: %v", err)
+	}
+	var buf [96]byte
+	payload, err := av1.AppendEncoderSegmentationParamsPayload(buf[:0], prefix, seg)
+	if err != nil {
+		t.Fatalf("AppendEncoderSegmentationParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseSegmentationParams(
+		payload,
+		av1.FrameHeaderPrefix{PrimaryRefFrame: av1.PrimaryRefNone},
+		av1.QuantizationParams{BaseQIdx: 20},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ParseSegmentationParams: %v", err)
+	}
+	if !parsed.Enabled || !parsed.UpdateMap || !parsed.UpdateData ||
+		parsed.Data.Segments[0].DeltaQ != -8 || parsed.QIndex[0] != 12 ||
+		parsed.Data.Segments[2].RefFrame != 4 {
+		t.Fatalf("parsed segmentation=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
