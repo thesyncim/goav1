@@ -1130,20 +1130,12 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 		// The dirty-scan list is internal scratch populated above from already
 		// validated scan positions, and only non-zero levels are recorded. Replay
 		// it as trusted token state, like dav1d's compact coefficient links.
-		for i := nonzeroScanLen - 1; i >= 0; i-- {
-			pos := int((*dirtyPos)[i])
+		i := nonzeroScanLen - 1
+		if i >= 0 && (*dirtyPos)[i] == 0 {
+			pos := 0
 			padded := int(posSlice[pos].padded)
 			level := int(levelsScratch[padded])
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			negative := false
-			if pos == 0 {
-				negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
-			} else {
-				bit := reader.ReadBitTrusted()
-				negative = bit != 0
-			}
+			negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 			baseLevel := level
 			golombExtra := 0
 			if level >= MaxBaseBRRange {
@@ -1172,8 +1164,46 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 			if negative {
 				signed = -signed
 			}
-			if pos == 0 {
-				dcValue = int(signed)
+			dcValue = int(signed)
+			coeffs[pos] = signed
+			i--
+		}
+		for ; i >= 0; i-- {
+			pos := int((*dirtyPos)[i])
+			padded := int(posSlice[pos].padded)
+			level := int(levelsScratch[padded])
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			bit := reader.ReadBitTrusted()
+			negative := bit != 0
+			baseLevel := level
+			golombExtra := 0
+			if level >= MaxBaseBRRange {
+				tail, err := readCoeffGolombCursor(&reader)
+				if err != nil {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, err
+				}
+				golombExtra = tail
+				level += tail
+			}
+			signBit := 0
+			if negative {
+				signBit = 1
+			}
+			if coeffTraceEnabled {
+				c := coeffTraceScanIndex(scan, pos, eobPos)
+				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+			}
+			culLevel += level
+			if level > int(^uint16(0)>>1) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			signed := int16(level)
+			if negative {
+				signed = -signed
 			}
 			coeffs[pos] = signed
 		}
