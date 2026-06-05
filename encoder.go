@@ -95,6 +95,7 @@ type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
+type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTemporalUnit
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -286,6 +287,10 @@ func EncoderIntraHeaderTemporalUnitForConfig(config EncoderConfig, orderHint uin
 
 func EncoderWebRTCKeyFrameTemporalUnitForConfig(config EncoderConfig, orderHint uint8, firstFrameID uint64) (EncoderWebRTCKeyFrameTemporalUnit, error) {
 	return internalencoder.WebRTCKeyFrameTemporalUnitForConfig(config, orderHint, firstFrameID)
+}
+
+func EncoderWebRTCDeltaFrameTemporalUnitForConfig(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
+	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfig(config, referenceState, frameIDState, temporalID, firstFrameID)
 }
 
 func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {

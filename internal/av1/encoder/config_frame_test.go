@@ -228,3 +228,103 @@ func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfigAllocs(t *testing.T
 		t.Fatalf("AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig allocated: %f", allocs)
 	}
 }
+
+func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 100)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+	}
+	if delta.FrameNum != 2 || delta.Control.FrameNum != 2 || delta.Control.HasDependencyStructure {
+		t.Fatalf("delta counts/control=%+v", delta)
+	}
+	if delta.Frames[0].TemporalID != 1 || delta.Frames[0].ReferenceCount != 1 ||
+		delta.Frames[0].ReferenceBuffers[0] != 0 {
+		t.Fatalf("base delta=%+v", delta.Frames[0])
+	}
+	if delta.Frames[1].TemporalID != 1 || delta.Frames[1].ReferenceCount != 2 ||
+		delta.Frames[1].ReferenceBuffers[0] != 1 || delta.Frames[1].ReferenceBuffers[1] != 0 {
+		t.Fatalf("upper delta=%+v", delta.Frames[1])
+	}
+	if delta.Control.Frames[0].GenericFrameInfo.DependencyNum != 1 ||
+		delta.Control.Frames[0].GenericFrameInfo.Dependencies[0] != 100 ||
+		delta.Control.Frames[1].GenericFrameInfo.DependencyNum != 2 ||
+		delta.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 101 ||
+		delta.Control.Frames[1].GenericFrameInfo.Dependencies[1] != 200 {
+		t.Fatalf("delta generic info=%+v %+v", delta.Control.Frames[0].GenericFrameInfo, delta.Control.Frames[1].GenericFrameInfo)
+	}
+	if delta.Control.FrameIDState.FrameIDs[0] != 200 || delta.Control.FrameIDState.FrameIDs[1] != 201 {
+		t.Fatalf("delta frame id state=%+v", delta.Control.FrameIDState)
+	}
+}
+
+func TestWebRTCDeltaFrameTemporalUnitForConfigSimulcast(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeS2T1,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 10)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 20)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig simulcast: %v", err)
+	}
+	if delta.FrameNum != 2 || delta.Frames[0].ReferenceCount != 1 || delta.Frames[1].ReferenceCount != 1 ||
+		delta.Frames[0].ReferenceBuffers[0] != 0 || delta.Frames[1].ReferenceBuffers[0] != 1 {
+		t.Fatalf("simulcast delta frames=%+v", delta.Frames)
+	}
+	if delta.Control.Frames[1].GenericFrameInfo.DependencyNum != 1 ||
+		delta.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 11 {
+		t.Fatalf("simulcast delta control=%+v", delta.Control.Frames[1].GenericFrameInfo)
+	}
+}
+
+func TestWebRTCDeltaFrameTemporalUnitForConfigRejectsInvalidState(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	if _, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, ReferenceBufferState{}, FrameIDBufferState{}, 0, 1); !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("missing reference state err=%v want %v", err, ErrInvalidFrame)
+	}
+	ref := ReferenceBufferState{}
+	ids := FrameIDBufferState{}
+	ref.Valid[0] = true
+	ref.Resolutions[0] = Resolution{Width: 320, Height: 180}
+	ids.Valid[0] = true
+	ids.FrameIDs[0] = 1
+	if _, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, ref, ids, 2, 2); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("bad temporal id err=%v want %v", err, ErrInvalidConfig)
+	}
+}
+
+func TestWebRTCDeltaFrameTemporalUnitForConfigAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL1T1}
+	key, err := WebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 1)
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	if _, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 2); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 2)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig allocated: %f", allocs)
+	}
+}

@@ -17,6 +17,14 @@ type WebRTCKeyFrameTemporalUnit struct {
 	Control  WebRTCTemporalUnitControl
 }
 
+// WebRTCDeltaFrameTemporalUnit describes a config-derived steady-state delta
+// temporal unit plus WebRTC frame-control/dependency metadata.
+type WebRTCDeltaFrameTemporalUnit struct {
+	Frames   [WebRTCMaxSpatialLayers]FrameEncodeSettings
+	FrameNum uint8
+	Control  WebRTCTemporalUnitControl
+}
+
 // IntraHeaderTemporalUnitForConfig maps a WebRTC encoder config into the
 // sequence header, shown-key frame-header prefix, and frame-size syntax used by
 // the first low-overhead temporal unit.
@@ -163,4 +171,47 @@ func AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config Con
 		return dst, WebRTCKeyFrameTemporalUnit{}, err
 	}
 	return out, unit, nil
+}
+
+// WebRTCDeltaFrameTemporalUnitForConfig maps a WebRTC config and existing
+// reference state into the next refreshing delta temporal-unit controls.
+func WebRTCDeltaFrameTemporalUnitForConfig(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64) (WebRTCDeltaFrameTemporalUnit, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, err
+	}
+	if config.SpatialLayerCount == 0 || config.SpatialLayerCount > WebRTCMaxSpatialLayers ||
+		temporalID >= config.TemporalLayerCount {
+		return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidConfig
+	}
+
+	var unit WebRTCDeltaFrameTemporalUnit
+	unit.FrameNum = config.SpatialLayerCount
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		layer := config.SpatialLayers[i]
+		settings := FrameEncodeSettings{
+			Type:            FrameTypeDelta,
+			Resolution:      layer.Resolution,
+			SpatialID:       i,
+			TemporalID:      temporalID,
+			UpdateBuffer:    i,
+			UpdateBufferSet: true,
+			EffortLevel:     config.Speed,
+			RateControl:     config.RateControl,
+			Output:          true,
+		}
+		settings.ReferenceBuffers[settings.ReferenceCount] = i
+		settings.ReferenceCount++
+		if i > 0 && !config.Scalability.IsSimulcast() {
+			settings.ReferenceBuffers[settings.ReferenceCount] = i - 1
+			settings.ReferenceCount++
+		}
+		unit.Frames[i] = settings
+	}
+	control, err := WebRTCTemporalUnitControlForFrames(config, unit.Frames[:unit.FrameNum], referenceState, frameIDState, firstFrameID)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, err
+	}
+	unit.Control = control
+	return unit, nil
 }

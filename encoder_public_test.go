@@ -513,6 +513,61 @@ func TestPublicEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(t *testing.
 	}
 }
 
+func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	key, err := av1.EncoderWebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 400)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 500)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+	}
+	if delta.FrameNum != 2 || delta.Control.Frames[1].GenericFrameInfo.DependencyNum != 2 ||
+		delta.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 401 ||
+		delta.Control.Frames[1].GenericFrameInfo.Dependencies[1] != 500 {
+		t.Fatalf("delta=%+v", delta)
+	}
+
+	structure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(cfg)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	size, err := av1.EncoderWebRTCDependencyDescriptorSize(structure, delta.Control.Frames[1].GenericFrameInfo, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDependencyDescriptorSize: %v", err)
+	}
+	var descriptorBuf [16]byte
+	descriptor, err := av1.AppendEncoderWebRTCDependencyDescriptor(
+		descriptorBuf[:0],
+		structure,
+		delta.Control.Frames[1].GenericFrameInfo,
+		true,
+		true,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor: %v", err)
+	}
+	if len(descriptor) != size {
+		t.Fatalf("descriptor len=%d want %d", len(descriptor), size)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = av1.EncoderWebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 500)
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForConfig allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	seq := av1.EncoderSequenceHeader{
 		Profile:               av1.EncoderProfile0,
