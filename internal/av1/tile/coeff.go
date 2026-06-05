@@ -1395,15 +1395,9 @@ func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 
 func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobExtraArr *[EOBCoefContexts]entropy.CDF) (EOBResult, error) {
 	token := reader.ReadCDFUnchecked(eobCDF) + 1
-	if token >= len(eobOffsetBits) {
-		return EOBResult{}, ErrInvalidDecodeState
-	}
 	offsetBits := eobOffsetBits[token]
 	extra := 0
 	if offsetBits > 0 {
-		if token < 3 || token-3 >= EOBCoefContexts {
-			return EOBResult{}, ErrInvalidDecodeState
-		}
 		if reader.ReadBinaryCDFUnchecked(&eobExtraArr[token-3]) != 0 {
 			extra += 1 << (offsetBits - 1)
 		}
