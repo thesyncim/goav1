@@ -450,6 +450,48 @@ func TestPublicEncoderSegmentationParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderDeltaParamsPayload(t *testing.T) {
+	size := av1.EncoderIntraFrameSize{
+		UpscaledWidth:       640,
+		Height:              360,
+		SuperResDenominator: 8,
+		RefreshFrameFlags:   0xff,
+	}
+	quant := av1.EncoderQuantizationParams{BaseQIdx: 37}
+	delta := av1.EncoderDeltaParams{
+		DeltaQPresent:  true,
+		DeltaQResLog2:  1,
+		DeltaLFPresent: true,
+		DeltaLFResLog2: 2,
+		DeltaLFMulti:   true,
+	}
+	payloadSize, err := av1.EncoderDeltaParamsPayloadSize(size, quant, delta)
+	if err != nil {
+		t.Fatalf("EncoderDeltaParamsPayloadSize: %v", err)
+	}
+	var buf [2]byte
+	payload, err := av1.AppendEncoderDeltaParamsPayload(buf[:0], size, quant, delta)
+	if err != nil {
+		t.Fatalf("AppendEncoderDeltaParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseDeltaParams(
+		payload,
+		av1.FrameSize{},
+		av1.QuantizationParams{BaseQIdx: quant.BaseQIdx},
+		av1.SegmentationParams{},
+	)
+	if err != nil {
+		t.Fatalf("ParseDeltaParams: %v", err)
+	}
+	if !parsed.DeltaQPresent || parsed.DeltaQResLog2 != 1 ||
+		!parsed.DeltaLFPresent || parsed.DeltaLFResLog2 != 2 || !parsed.DeltaLFMulti {
+		t.Fatalf("parsed delta=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

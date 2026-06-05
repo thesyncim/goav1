@@ -102,6 +102,7 @@ type EncoderQuantizationParams = internalencoder.QuantizationParams
 type EncoderSegmentData = internalencoder.SegmentData
 type EncoderSegmentationData = internalencoder.SegmentationData
 type EncoderSegmentationParams = internalencoder.SegmentationParams
+type EncoderDeltaParams = internalencoder.DeltaParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -940,6 +941,22 @@ func EncoderSegmentationParamsPayloadSize(prefix EncoderFrameHeaderPrefix, seg E
 
 func AppendEncoderSegmentationParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, seg EncoderSegmentationParams) ([]byte, error) {
 	return internalencoder.AppendSegmentationParamsPayload(dst, prefix, seg)
+}
+
+func EncoderDeltaParamsPayloadSize(size EncoderIntraFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) (int, error) {
+	return internalencoder.DeltaParamsPayloadSize(size, quant, delta)
+}
+
+func AppendEncoderDeltaParamsPayload(dst []byte, size EncoderIntraFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) ([]byte, error) {
+	return internalencoder.AppendDeltaParamsPayload(dst, size, quant, delta)
+}
+
+func EncoderDeltaParamsInterPayloadSize(size EncoderInterFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) (int, error) {
+	return internalencoder.DeltaParamsInterPayloadSize(size, quant, delta)
+}
+
+func AppendEncoderDeltaParamsInterPayload(dst []byte, size EncoderInterFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) ([]byte, error) {
+	return internalencoder.AppendDeltaParamsInterPayload(dst, size, quant, delta)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
