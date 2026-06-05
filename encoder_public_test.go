@@ -2,6 +2,7 @@ package goav1_test
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	av1 "github.com/thesyncim/goav1"
@@ -1733,6 +1734,91 @@ func TestPublicEncoderWebRTCNextTemporalUnitForState(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("EncoderWebRTCNextTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
+func TestPublicWebRTCEncoderPictureHeaderTemporalUnits(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		KeyFrameInterval:  4,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 90})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	if got := enc.Config(); got.SpatialLayerCount != 2 || got.TemporalLayerCount != 2 {
+		t.Fatalf("normalized config=%+v", got)
+	}
+	initialState := enc.State()
+	keySize, sizedKey, err := enc.LowOverheadPictureHeaderTemporalUnitSize(false)
+	if err != nil {
+		t.Fatalf("LowOverheadPictureHeaderTemporalUnitSize key: %v", err)
+	}
+	if !sizedKey.Key || sizedKey.KeyUnit.FrameNum != 2 {
+		t.Fatalf("sized key=%+v", sizedKey)
+	}
+	var tiny [1]byte
+	short, _, err := enc.AppendLowOverheadPictureHeaderTemporalUnit(tiny[:0:1], false)
+	if !errors.Is(err, av1.ErrEncoderShortBuffer) || len(short) != 0 || enc.State() != initialState {
+		t.Fatalf("short out=% x err=%v state=%+v want=%+v", short, err, enc.State(), initialState)
+	}
+
+	var buf [256]byte
+	keyOut, gotKey, err := enc.AppendLowOverheadPictureHeaderTemporalUnit(buf[:0], false)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadPictureHeaderTemporalUnit key: %v", err)
+	}
+	keyState := enc.State()
+	if len(keyOut) != keySize || gotKey != sizedKey || keyState.NextFrameID != 92 ||
+		keyState.DeltaPictureIndex != 1 || !keyState.DependencyStructureState.Valid {
+		t.Fatalf("key len=%d want=%d unit=%+v sized=%+v state=%+v", len(keyOut), keySize, gotKey, sizedKey, keyState)
+	}
+	it := av1.NewTemporalUnitIterator(keyOut)
+	tu, ok, err := it.Next()
+	if err != nil || !ok || !bytes.Equal(tu.Raw, keyOut) {
+		t.Fatalf("key temporal unit ok=%v err=%v raw=% x", ok, err, tu.Raw)
+	}
+
+	deltaSize, sizedDelta, err := enc.LowOverheadPictureHeaderTemporalUnitSize(false)
+	if err != nil {
+		t.Fatalf("LowOverheadPictureHeaderTemporalUnitSize delta: %v", err)
+	}
+	deltaOut, gotDelta, err := enc.AppendLowOverheadPictureHeaderTemporalUnit(buf[:0], false)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadPictureHeaderTemporalUnit delta: %v", err)
+	}
+	if len(deltaOut) != deltaSize || gotDelta != sizedDelta || !gotDelta.Delta ||
+		gotDelta.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != 92 ||
+		enc.State().NextFrameID != 94 || enc.State().DeltaPictureIndex != 2 {
+		t.Fatalf("delta len=%d want=%d unit=%+v sized=%+v state=%+v", len(deltaOut), deltaSize, gotDelta, sizedDelta, enc.State())
+	}
+
+	if err := enc.ResetState(initialState); err != nil {
+		t.Fatalf("ResetState: %v", err)
+	}
+	unit, err := enc.NextTemporalUnit(true)
+	if err != nil {
+		t.Fatalf("NextTemporalUnit forced key: %v", err)
+	}
+	if !unit.Key || enc.State().NextFrameID != 92 {
+		t.Fatalf("forced unit=%+v state=%+v", unit, enc.State())
+	}
+
+	base, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 90})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder alloc base: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		local := base
+		_, _, _ = local.AppendLowOverheadPictureHeaderTemporalUnit(buf[:0], false)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCEncoder AppendLowOverheadPictureHeaderTemporalUnit allocated: %f", allocs)
 	}
 }
 

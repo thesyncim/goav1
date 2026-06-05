@@ -128,6 +128,11 @@ type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTempo
 type EncoderWebRTCPictureTemporalUnit = internalencoder.WebRTCPictureTemporalUnit
 type EncoderWebRTCState = internalencoder.WebRTCEncoderState
 
+type WebRTCEncoder struct {
+	config EncoderConfig
+	state  EncoderWebRTCState
+}
+
 type EncoderWebRTCPictureTemporalUnitRTPScratchSize struct {
 	Packetizer         RTPPacketizerScratchSize
 	MaxPayloadBytes    int
@@ -915,6 +920,71 @@ func EncoderWebRTCDeltaFrameTemporalUnitForState(config EncoderConfig, state Enc
 
 func EncoderWebRTCNextTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
 	return internalencoder.WebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+}
+
+func NewWebRTCEncoder(config EncoderConfig, state EncoderWebRTCState) (WebRTCEncoder, error) {
+	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCEncoder{}, err
+	}
+	if _, err := internalencoder.SequenceHeaderForConfig(normalized); err != nil {
+		return WebRTCEncoder{}, err
+	}
+	return WebRTCEncoder{config: normalized, state: state}, nil
+}
+
+func (e *WebRTCEncoder) Config() EncoderConfig {
+	if e == nil {
+		return EncoderConfig{}
+	}
+	return e.config
+}
+
+func (e *WebRTCEncoder) State() EncoderWebRTCState {
+	if e == nil {
+		return EncoderWebRTCState{}
+	}
+	return e.state
+}
+
+func (e *WebRTCEncoder) ResetState(state EncoderWebRTCState) error {
+	if e == nil {
+		return ErrEncoderInvalidConfig
+	}
+	e.state = state
+	return nil
+}
+
+func (e *WebRTCEncoder) LowOverheadPictureHeaderTemporalUnitSize(forceKeyFrame bool) (int, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	size, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
+	return size, unit, err
+}
+
+func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnit(dst []byte, forceKeyFrame bool) ([]byte, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	out, unit, next, err := internalencoder.AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst, e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	e.state = next
+	return out, unit, nil
+}
+
+func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	unit, next, err := internalencoder.WebRTCNextTemporalUnitForState(e.config, e.state, forceKeyFrame)
+	if err != nil {
+		return EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	e.state = next
+	return unit, nil
 }
 
 func EncoderWebRTCTemporalIDForDeltaPicture(temporalLayers uint8, deltaPictureIndex uint64) (uint8, error) {
