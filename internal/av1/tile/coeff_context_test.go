@@ -332,3 +332,38 @@ func coeffContextReq(plane int, block BlockSize, tx TransformSize, x4 int, y4 in
 		Y4:         uint8(y4),
 	}
 }
+
+func BenchmarkCoeffEntropyContextTXBContextTrustedLuma(b *testing.B) {
+	benchmarkCoeffEntropyContextTXBContextTrusted(b, 0)
+}
+
+func BenchmarkCoeffEntropyContextTXBContextTrustedChroma(b *testing.B) {
+	benchmarkCoeffEntropyContextTXBContextTrusted(b, 1)
+}
+
+func benchmarkCoeffEntropyContextTXBContextTrusted(b *testing.B, plane int) {
+	req := coeffContextReq(plane, BlockSize16x16, TransformSize4x4, 4, 5)
+	txDims, ok := req.Size.Dimensions()
+	if !ok {
+		b.Fatal("invalid transform size")
+	}
+	blockDims, ok := req.PlaneBlock.Dimensions()
+	if !ok {
+		b.Fatal("invalid block size")
+	}
+	var ctx CoeffEntropyContext
+	for i := 0; i < MaxBlockModeSlots; i++ {
+		ctx.Above[plane][i] = uint8((i % 7) + 1)
+		ctx.Left[plane][i] = uint8(((i + 3) % 7) + 1)
+	}
+
+	sum := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		txb := ctx.txbContextTrusted(req, txDims, blockDims)
+		sum += int(txb.TXBSkipContext) + int(txb.DCSignContext)
+	}
+	benchmarkCoeffContextSink = sum
+}
+
+var benchmarkCoeffContextSink int

@@ -112,41 +112,37 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	}
 	w4 := int(txDims.W4)
 	h4 := int(txDims.H4)
-	topMag := uint8(0)
-	leftMag := uint8(0)
-	topNonZero := false
-	leftNonZero := false
 	if w4 > 0 {
 		_ = aboveRow[x4+w4-1]
-	}
-	for k := 0; k < w4; k++ {
-		value := aboveRow[x4+k]
-		topMag |= value
-		topNonZero = topNonZero || value != 0
-		sign := value >> CoeffContextBits
-		if sign == 1 {
-			dcSign--
-		} else if sign == 2 {
-			dcSign++
-		}
 	}
 	if h4 > 0 {
 		_ = leftRow[y4+h4-1]
 	}
-	for k := 0; k < h4; k++ {
-		value := leftRow[y4+k]
-		leftMag |= value
-		leftNonZero = leftNonZero || value != 0
-		sign := value >> CoeffContextBits
-		if sign == 1 {
-			dcSign--
-		} else if sign == 2 {
-			dcSign++
-		}
-	}
 
 	txbSkipCtx := uint8(0)
 	if req.Plane == 0 {
+		topMag := uint8(0)
+		for k := 0; k < w4; k++ {
+			value := aboveRow[x4+k]
+			topMag |= value
+			sign := value >> CoeffContextBits
+			if sign == 1 {
+				dcSign--
+			} else if sign == 2 {
+				dcSign++
+			}
+		}
+		leftMag := uint8(0)
+		for k := 0; k < h4; k++ {
+			value := leftRow[y4+k]
+			leftMag |= value
+			sign := value >> CoeffContextBits
+			if sign == 1 {
+				dcSign--
+			} else if sign == 2 {
+				dcSign++
+			}
+		}
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 			top := topMag & CoeffContextMask
 			if top > 4 {
@@ -159,6 +155,28 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			txbSkipCtx = coeffSkipContexts[top][left]
 		}
 	} else {
+		topNonZero := false
+		for k := 0; k < w4; k++ {
+			value := aboveRow[x4+k]
+			topNonZero = topNonZero || value != 0
+			sign := value >> CoeffContextBits
+			if sign == 1 {
+				dcSign--
+			} else if sign == 2 {
+				dcSign++
+			}
+		}
+		leftNonZero := false
+		for k := 0; k < h4; k++ {
+			value := leftRow[y4+k]
+			leftNonZero = leftNonZero || value != 0
+			sign := value >> CoeffContextBits
+			if sign == 1 {
+				dcSign--
+			} else if sign == 2 {
+				dcSign++
+			}
+		}
 		ctxBase := uint8(0)
 		if topNonZero {
 			ctxBase++

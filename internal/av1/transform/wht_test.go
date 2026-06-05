@@ -83,6 +83,34 @@ func TestInverseWHT4x4BlockAllocs(t *testing.T) {
 	}
 }
 
+func BenchmarkInverseWHT4x4BlockEOB1(b *testing.B) {
+	coeff := make([]int32, 4*4)
+	coeff[0] = 64
+	dst := make([]int16, 4*4)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := InverseWHT4x4Block(dst, 4, coeff, 4, 1); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkInverseWHT4x4BlockEOB16(b *testing.B) {
+	coeff := make([]int32, 4*4)
+	for i := range coeff {
+		coeff[i] = int32(i*7 - 23)
+	}
+	dst := make([]int16, 4*4)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := InverseWHT4x4Block(dst, 4, coeff, 4, 16); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // FuzzInverseWHT4x4Block stresses the 4x4 inverse Walsh-Hadamard with random
 // coefficient values, strides, and EOB choices. The transform must complete
 // without panicking and must not write outside the requested block.
