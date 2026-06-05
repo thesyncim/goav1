@@ -2051,24 +2051,24 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		}
 		count := values[4]
 		rate := uint(5 + (count >> 4))
-		switch symbol {
-		case 0:
-			values[0] = uint16(c0 - (c0 >> rate))
-			values[1] = uint16(c1 - (c1 >> rate))
-			values[2] = uint16(c2 - (c2 >> rate))
-		case 1:
-			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-			values[1] = uint16(c1 - (c1 >> rate))
-			values[2] = uint16(c2 - (c2 >> rate))
-		case 2:
-			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-			values[2] = uint16(c2 - (c2 >> rate))
-		default:
-			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+		if symbol > 0 {
+			c0 += (CDFProbTop - c0) >> rate
+		} else {
+			c0 -= c0 >> rate
 		}
+		if symbol > 1 {
+			c1 += (CDFProbTop - c1) >> rate
+		} else {
+			c1 -= c1 >> rate
+		}
+		if symbol > 2 {
+			c2 += (CDFProbTop - c2) >> rate
+		} else {
+			c2 -= c2 >> rate
+		}
+		values[0] = uint16(c0)
+		values[1] = uint16(c1)
+		values[2] = uint16(c2)
 		if count < MaxCDFCount {
 			values[4] = count + 1
 		}
@@ -2257,24 +2257,24 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	count := values[4]
 	rate := uint(5 + (count >> 4))
-	switch symbol {
-	case 0:
-		values[0] = uint16(c0 - (c0 >> rate))
-		values[1] = uint16(c1 - (c1 >> rate))
-		values[2] = uint16(c2 - (c2 >> rate))
-	case 1:
-		values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-		values[1] = uint16(c1 - (c1 >> rate))
-		values[2] = uint16(c2 - (c2 >> rate))
-	case 2:
-		values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-		values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-		values[2] = uint16(c2 - (c2 >> rate))
-	default:
-		values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-		values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-		values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
+	if symbol > 0 {
+		c0 += (CDFProbTop - c0) >> rate
+	} else {
+		c0 -= c0 >> rate
 	}
+	if symbol > 1 {
+		c1 += (CDFProbTop - c1) >> rate
+	} else {
+		c1 -= c1 >> rate
+	}
+	if symbol > 2 {
+		c2 += (CDFProbTop - c2) >> rate
+	} else {
+		c2 -= c2 >> rate
+	}
+	values[0] = uint16(c0)
+	values[1] = uint16(c1)
+	values[2] = uint16(c2)
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
