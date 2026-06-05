@@ -533,7 +533,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	req.Plane = known.Plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
 	req.DCSignContext = txbCtx.DCSignContext
-	geo, ok := coeffGeo(req.Size)
+	geo, ok := coeffGeoPtr(req.Size)
 	if !ok || txbCtx.TXBSkipContext >= TXBSkipContexts {
 		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
 	}
@@ -642,15 +642,15 @@ func (s *LumaCoeffTreeScratch) coeffBuffers(size TransformSize, class transform.
 	if s == nil {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
-	geo, ok := coeffGeo(size)
+	geo, ok := coeffGeoPtr(size)
 	if !ok || !class.Valid() {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
 	return s.coeffBuffersWithGeo(size, class, geo)
 }
 
-func (s *LumaCoeffTreeScratch) coeffBuffersWithGeo(size TransformSize, class transform.Class, geo coeffGeometry) ([]int16, []int16, []uint8, error) {
-	if s == nil || !geo.valid || !class.Valid() {
+func (s *LumaCoeffTreeScratch) coeffBuffersWithGeo(size TransformSize, class transform.Class, geo *coeffGeometry) ([]int16, []int16, []uint8, error) {
+	if s == nil || geo == nil || !geo.valid || !class.Valid() {
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
 	scanLen := int(geo.maxEOB)

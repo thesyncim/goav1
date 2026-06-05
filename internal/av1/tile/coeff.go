@@ -302,10 +302,18 @@ func init() {
 // coeffGeo returns the precomputed scan geometry for size. The bool reports
 // whether size names a valid transform.
 func coeffGeo(size TransformSize) (coeffGeometry, bool) {
-	if size >= transformSizeCount {
+	g, ok := coeffGeoPtr(size)
+	if !ok {
 		return coeffGeometry{}, false
 	}
-	g := coeffGeometryTable[size]
+	return *g, true
+}
+
+func coeffGeoPtr(size TransformSize) (*coeffGeometry, bool) {
+	if size >= transformSizeCount {
+		return nil, false
+	}
+	g := &coeffGeometryTable[size]
 	return g, g.valid
 }
 
@@ -776,14 +784,14 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	if !req.Plane.Valid() || !req.Class.Valid() {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	geo, ok := coeffGeo(req.Size)
+	geo, ok := coeffGeoPtr(req.Size)
 	if !ok {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	return s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levelsScratch, geo)
 }
 
-func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8, geo coeffGeometry) (TXBDecodeResult, error) {
+func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8, geo *coeffGeometry) (TXBDecodeResult, error) {
 	maxEOB := int(geo.maxEOB)
 	if len(coeffs) < maxEOB || len(scan) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
@@ -824,7 +832,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	if req.Size >= transformSizeCount {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-	geoPtr := &coeffGeometryTable[req.Size]
+	geoPtr := geo
 	posSlice := coeffPosTable[req.Size]
 	if len(posSlice) < maxEOB {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
