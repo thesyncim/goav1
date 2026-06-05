@@ -390,6 +390,69 @@ func TestPublicEncoderLowOverheadIntraHeaderTemporalUnit(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderLowOverheadIntraHeaderTemporalUnitForConfig(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	unitSize, wantUnit, err := av1.EncoderLowOverheadIntraHeaderTemporalUnitForConfigSize(cfg, 11)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadIntraHeaderTemporalUnitForConfigSize: %v", err)
+	}
+	var buf [192]byte
+	out, gotUnit, err := av1.AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig(buf[:0], cfg, 11)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig: %v", err)
+	}
+	if len(out) != unitSize || gotUnit != wantUnit {
+		t.Fatalf("len=%d want %d gotUnit=%+v wantUnit=%+v", len(out), unitSize, gotUnit, wantUnit)
+	}
+
+	it := av1.NewLowOverheadIterator(out)
+	td, ok, err := it.Next()
+	if err != nil || !ok || td.Header.Type != av1.OBUTemporalDelimiter || len(td.Payload) != 0 {
+		t.Fatalf("temporal delimiter ok=%v err=%v unit=%+v payload=% x", ok, err, td.Header, td.Payload)
+	}
+	seqUnit, ok, err := it.Next()
+	if err != nil || !ok || seqUnit.Header.Type != av1.OBUSequenceHeader {
+		t.Fatalf("sequence ok=%v err=%v unit=%+v", ok, err, seqUnit.Header)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqUnit.Payload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	if parsedSeq.OperatingPointsCount != 4 || parsedSeq.MaxFrameWidth != 640 || parsedSeq.MaxFrameHeight != 360 {
+		t.Fatalf("parsed sequence=%+v", parsedSeq)
+	}
+	frameUnit, ok, err := it.Next()
+	if err != nil || !ok || frameUnit.Header.Type != av1.OBUFrameHeader {
+		t.Fatalf("frame ok=%v err=%v unit=%+v", ok, err, frameUnit.Header)
+	}
+	parsedPrefix, err := av1.ParseFrameHeaderPrefix(frameUnit.Payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	parsedSize, err := av1.ParseIntraFrameSize(frameUnit.Payload, parsedSeq, parsedPrefix, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseIntraFrameSize: %v", err)
+	}
+	if parsedPrefix.FrameType != av1.FrameTypeKey || !parsedPrefix.ShowFrame || parsedPrefix.OrderHint != 11 ||
+		parsedSize.RefreshFrameFlags != 0xff || parsedSize.UpscaledWidth != 640 || parsedSize.Height != 360 {
+		t.Fatalf("parsed prefix=%+v size=%+v", parsedPrefix, parsedSize)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = av1.AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig(buf[:0], cfg, 11)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	seq := av1.EncoderSequenceHeader{
 		Profile:               av1.EncoderProfile0,

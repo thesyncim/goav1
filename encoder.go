@@ -93,6 +93,7 @@ type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
 type EncoderFrameHeaderType = internalencoder.FrameHeaderType
 type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
 type EncoderIntraFrameSize = internalencoder.IntraFrameSize
+type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 
 const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
@@ -278,6 +279,10 @@ func EncoderSequenceHeaderForConfig(config EncoderConfig) (EncoderSequenceHeader
 	return internalencoder.SequenceHeaderForConfig(config)
 }
 
+func EncoderIntraHeaderTemporalUnitForConfig(config EncoderConfig, orderHint uint8) (EncoderIntraHeaderTemporalUnit, error) {
+	return internalencoder.IntraHeaderTemporalUnitForConfig(config, orderHint)
+}
+
 func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {
 	return internalencoder.LowOverheadOBUSize(unit)
 }
@@ -340,4 +345,12 @@ func EncoderLowOverheadIntraHeaderTemporalUnitSize(seq EncoderSequenceHeader, pr
 
 func AppendEncoderLowOverheadIntraHeaderTemporalUnit(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
 	return internalencoder.AppendLowOverheadIntraHeaderTemporalUnit(dst, seq, prefix, size)
+}
+
+func EncoderLowOverheadIntraHeaderTemporalUnitForConfigSize(config EncoderConfig, orderHint uint8) (int, EncoderIntraHeaderTemporalUnit, error) {
+	return internalencoder.LowOverheadIntraHeaderTemporalUnitForConfigSize(config, orderHint)
+}
+
+func AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig(dst []byte, config EncoderConfig, orderHint uint8) ([]byte, EncoderIntraHeaderTemporalUnit, error) {
+	return internalencoder.AppendLowOverheadIntraHeaderTemporalUnitForConfig(dst, config, orderHint)
 }
