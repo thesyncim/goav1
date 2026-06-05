@@ -909,6 +909,10 @@ func BenchmarkReadCoefficientsTXB8x8ClassHoriz(b *testing.B) {
 	benchmarkReadCoefficientsTXB(b, TransformSize8x8, transform.ClassHoriz)
 }
 
+func BenchmarkReadCoefficientsTXB8x8Class2DTracked(b *testing.B) {
+	benchmarkReadCoefficientsTXBTracked(b, TransformSize8x8, transform.Class2D)
+}
+
 func benchmarkReadCoefficientsTXB(b *testing.B, size TransformSize, class transform.Class) {
 	txSize, err := size.TransformSize()
 	if err != nil {
@@ -942,6 +946,61 @@ func benchmarkReadCoefficientsTXB(b *testing.B, size TransformSize, class transf
 			b.Fatal(err)
 		}
 		sum += int(result.EOB) + int(result.CulLevel)
+	}
+	coeffBenchmarkSink = sum
+}
+
+func benchmarkReadCoefficientsTXBTracked(b *testing.B, size TransformSize, class transform.Class) {
+	txSize, err := size.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, size, txSize, class)
+	var levelArena [maxCoeffScratchLen]uint8
+	levels := levelArena[:len(scratch)]
+	coeffs := make([]int16, len(scan))
+	payload := coeffBenchmarkTXBPayload(b, size, class, scan, scratch)
+	var dirtyPos [maxCoeffScanLen]int16
+	var dirtyLen uint16
+	var levelDirty [maxCoeffScanLen]int16
+	var levelDirtyLen uint16
+	req := TXBDecodeRequest{
+		Size:                  size,
+		Plane:                 CoeffPlaneY,
+		Class:                 class,
+		TXBSkipContext:        0,
+		DCSignContext:         0,
+		EOBMultiContext:       0,
+		SkipAllZeroCoeffClear: true,
+		skipNonZeroCoeffClear: true,
+		coeffDirtyPos:         &dirtyPos,
+		coeffDirtyLen:         &dirtyLen,
+		levelDirtyPos:         &levelDirty,
+		levelDirtyLen:         &levelDirtyLen,
+		levelDirtyScratch:     &levelArena,
+		trustedScan:           true,
+	}
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		b.Fatal(err)
+	}
+	var state DecodeState
+	sum := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for i := 0; i < int(dirtyLen); i++ {
+			coeffs[int(dirtyPos[i])] = 0
+		}
+		dirtyLen = 0
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sum += int(result.EOB) + int(result.CulLevel) + int(dirtyLen) + int(levelDirtyLen)
 	}
 	coeffBenchmarkSink = sum
 }
