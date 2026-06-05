@@ -328,22 +328,32 @@ func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims
 	if w4 > 0 {
 		_ = aboveRow[x4+w4-1]
 	}
-	for k := 0; k < w4; k++ {
-		next := uint8(0)
-		if k < visibleW {
-			next = value
+	if visibleW >= w4 {
+		for k := 0; k < w4; k++ {
+			aboveRow[x4+k] = value
 		}
-		aboveRow[x4+k] = next
+	} else {
+		for k := 0; k < visibleW; k++ {
+			aboveRow[x4+k] = value
+		}
+		for k := visibleW; k < w4; k++ {
+			aboveRow[x4+k] = 0
+		}
 	}
 	if h4 > 0 {
 		_ = leftRow[y4+h4-1]
 	}
-	for k := 0; k < h4; k++ {
-		next := uint8(0)
-		if k < visibleH {
-			next = value
+	if visibleH >= h4 {
+		for k := 0; k < h4; k++ {
+			leftRow[y4+k] = value
 		}
-		leftRow[y4+k] = next
+	} else {
+		for k := 0; k < visibleH; k++ {
+			leftRow[y4+k] = value
+		}
+		for k := visibleH; k < h4; k++ {
+			leftRow[y4+k] = 0
+		}
 	}
 }
 
