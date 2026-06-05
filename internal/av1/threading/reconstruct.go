@@ -173,7 +173,12 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 		return ErrInvalidBatch
 	}
 
-	dst := frameWorkPlaneFromWindow(geom.window)
+	bytesPerSample := int(geom.window.BytesPerSample)
+	dstStride := int(geom.window.Stride)
+	dstOffset := relY*dstStride + relX*bytesPerSample
+	rowBytes := visibleWidth * bytesPerSample
+	dstLen := (visibleHeight-1)*dstStride + rowBytes
+	dst := geom.window.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
 	cfg := reconstruct.Block{
 		Size:           geom.size,
 		Transform:      txType,
@@ -182,8 +187,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 		Lossless:       lossless,
 		EOB:            int16(block.Result.EOB),
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
-		relX, relY, visibleWidth, visibleHeight,
+	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		visibleWidth, visibleHeight,
 		block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
