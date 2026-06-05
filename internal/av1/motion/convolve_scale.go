@@ -158,9 +158,8 @@ func convolveScale2DHighBDIdentityStep(dst frame.Plane, ref frame.Plane, bitDept
 func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
 	const xBias = 1 << (8 + filterBits - 1)
-	offsetBits := 8 + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	const centerOffset = 1 << (8 - 1)
+	const finalRoundBits = filterBits - round0Bits
 	foX := filterTaps/2 - 1
 	baseY := int(scaledIntFloor(startY))
 	for y := range height {
@@ -195,9 +194,7 @@ func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY 
 					k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
 			}
 			imVal := roundPowerOfTwo(sum, round0Bits)
-			vSum := (1 << offsetBits) + 128*imVal
-			res := roundPowerOfTwo(vSum, round1Bits) - roundOffset
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+			dstRow[x] = byte(clipPixel(roundPowerOfTwo(imVal, finalRoundBits) - centerOffset))
 			xPos += xStep
 		}
 	}
@@ -207,9 +204,8 @@ func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth u
 	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
 	xBias := 1 << (int(bitDepth) + filterBits - 1)
 	round0Bias := 1 << (round0Bits - 1)
-	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	centerOffset := 1 << (int(bitDepth) - 1)
+	const finalRoundBits = filterBits - round0Bits
 	foX := filterTaps/2 - 1
 	baseY := int(scaledIntFloor(startY))
 	for y := range height {
@@ -257,9 +253,7 @@ func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth u
 					k7*int(uint16(ref.Pix[o7])|uint16(ref.Pix[o7+1])<<8)
 			}
 			imVal := (sum + round0Bias) >> round0Bits
-			vSum := (1 << offsetBits) + 128*imVal
-			res := roundPowerOfTwo(vSum, round1Bits) - roundOffset
-			v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
+			v := clipPixelHighBD(roundPowerOfTwo(imVal, finalRoundBits)-centerOffset, max)
 			o := x * 2
 			dstRow[o] = byte(v)
 			dstRow[o+1] = byte(v >> 8)
