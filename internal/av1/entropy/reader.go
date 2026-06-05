@@ -308,13 +308,13 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 		split += ecMinProb
 		window := split << (ecWindow - 16)
 
-		bit := uint8(1)
-		nextRange := split
+		takeUpper := uint32(0)
 		if dif >= window {
-			dif -= window
-			nextRange = rangeValue - split
-			bit = 0
+			takeUpper = 1
 		}
+		dif -= window * takeUpper
+		nextRange := split + takeUpper*(rangeValue-2*split)
+		bit := uint8(1 - takeUpper)
 
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
@@ -348,13 +348,13 @@ func (c *Cursor) ReadBitTrusted() uint8 {
 	split += ecMinProb
 	window := split << (ecWindow - 16)
 
-	bit := uint8(1)
-	nextRange := split
+	takeUpper := uint32(0)
 	if dif >= window {
-		dif -= window
-		nextRange = rangeValue - split
-		bit = 0
+		takeUpper = 1
 	}
+	dif -= window * takeUpper
+	nextRange := split + takeUpper*(rangeValue-2*split)
+	bit := uint8(1 - takeUpper)
 
 	if traceEntropyReads {
 		traceBoolRead(CDFProbTop/2, c.dif, rangeValue, readerTell(pos, cnt, int32(c.tellOffs)))
@@ -397,13 +397,13 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 		split += ecMinProb
 		window := split << (ecWindow - 16)
 
-		bit := uint8(1)
-		nextRange := split
+		takeUpper := uint32(0)
 		if dif >= window {
-			dif -= window
-			nextRange = rangeValue - split
-			bit = 0
+			takeUpper = 1
 		}
+		dif -= window * takeUpper
+		nextRange := split + takeUpper*(rangeValue-2*split)
+		bit := uint8(1 - takeUpper)
 
 		if traceEntropyReads {
 			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
@@ -2535,12 +2535,12 @@ func (c *Cursor) ReadBinaryCDFUnchecked(cdf *CDF) int {
 
 //go:nosplit
 func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
-	src := c.src
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 
 	rangeValue := rng
 	rngHi := rangeValue >> 8
@@ -2555,6 +2555,9 @@ func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 		lower = 0
 	}
 	if traceEntropyReads {
+		pos = int(c.pos)
+		tellOffs = int32(c.tellOffs)
+		posLoaded = true
 		traceCDFRead(c0, 2, dif, rng, readerTell(pos, cnt, tellOffs))
 	}
 	dif -= lower << (ecWindow - 16)
@@ -2564,16 +2567,23 @@ func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
-		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
+		pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 	}
 	if c.allowCDFUpdate {
 		updateCDF2(values, symbol)
 	}
-	c.pos = uint32(pos)
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 	return symbol
 }
 
