@@ -53,6 +53,17 @@ func GenerateLumaGrain(dst []int16, params LumaGrainParams) error {
 	roundingOffset := 1 << (coeffShift - 1)
 	grainMin := -(1 << (params.BitDepth - 1))
 	grainMax := (1 << (params.BitDepth - 1)) - 1
+	switch lag {
+	case 1:
+		generateLumaGrainARLag1(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
+		return nil
+	case 2:
+		generateLumaGrainARLag2(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
+		return nil
+	case 3:
+		generateLumaGrainARLag3(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
+		return nil
+	}
 	for y := 3; y < LumaGrainHeight; y++ {
 		for x := 3; x < LumaGrainWidth-3; x++ {
 			sum := 0
@@ -72,6 +83,82 @@ func GenerateLumaGrain(dst []int16, params LumaGrainParams) error {
 		}
 	}
 	return nil
+}
+
+func generateLumaGrainARLag1(grain []int16, params *LumaGrainParams, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
+	for y := 3; y < LumaGrainHeight; y++ {
+		row := y * LumaGrainWidth
+		rowM1 := row - LumaGrainWidth
+		for x := 3; x < LumaGrainWidth-3; x++ {
+			sum := int(params.ARCoeffs[0])*int(grain[rowM1+x-1]) +
+				int(params.ARCoeffs[1])*int(grain[rowM1+x]) +
+				int(params.ARCoeffs[2])*int(grain[rowM1+x+1]) +
+				int(params.ARCoeffs[3])*int(grain[row+x-1])
+			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
+			grain[row+x] = int16(clipInt(v, grainMin, grainMax))
+		}
+	}
+}
+
+func generateLumaGrainARLag2(grain []int16, params *LumaGrainParams, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
+	for y := 3; y < LumaGrainHeight; y++ {
+		row := y * LumaGrainWidth
+		rowM1 := row - LumaGrainWidth
+		rowM2 := row - 2*LumaGrainWidth
+		for x := 3; x < LumaGrainWidth-3; x++ {
+			sum := int(params.ARCoeffs[0])*int(grain[rowM2+x-2]) +
+				int(params.ARCoeffs[1])*int(grain[rowM2+x-1]) +
+				int(params.ARCoeffs[2])*int(grain[rowM2+x]) +
+				int(params.ARCoeffs[3])*int(grain[rowM2+x+1]) +
+				int(params.ARCoeffs[4])*int(grain[rowM2+x+2]) +
+				int(params.ARCoeffs[5])*int(grain[rowM1+x-2]) +
+				int(params.ARCoeffs[6])*int(grain[rowM1+x-1]) +
+				int(params.ARCoeffs[7])*int(grain[rowM1+x]) +
+				int(params.ARCoeffs[8])*int(grain[rowM1+x+1]) +
+				int(params.ARCoeffs[9])*int(grain[rowM1+x+2]) +
+				int(params.ARCoeffs[10])*int(grain[row+x-2]) +
+				int(params.ARCoeffs[11])*int(grain[row+x-1])
+			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
+			grain[row+x] = int16(clipInt(v, grainMin, grainMax))
+		}
+	}
+}
+
+func generateLumaGrainARLag3(grain []int16, params *LumaGrainParams, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
+	for y := 3; y < LumaGrainHeight; y++ {
+		row := y * LumaGrainWidth
+		rowM1 := row - LumaGrainWidth
+		rowM2 := row - 2*LumaGrainWidth
+		rowM3 := row - 3*LumaGrainWidth
+		for x := 3; x < LumaGrainWidth-3; x++ {
+			sum := int(params.ARCoeffs[0])*int(grain[rowM3+x-3]) +
+				int(params.ARCoeffs[1])*int(grain[rowM3+x-2]) +
+				int(params.ARCoeffs[2])*int(grain[rowM3+x-1]) +
+				int(params.ARCoeffs[3])*int(grain[rowM3+x]) +
+				int(params.ARCoeffs[4])*int(grain[rowM3+x+1]) +
+				int(params.ARCoeffs[5])*int(grain[rowM3+x+2]) +
+				int(params.ARCoeffs[6])*int(grain[rowM3+x+3]) +
+				int(params.ARCoeffs[7])*int(grain[rowM2+x-3]) +
+				int(params.ARCoeffs[8])*int(grain[rowM2+x-2]) +
+				int(params.ARCoeffs[9])*int(grain[rowM2+x-1]) +
+				int(params.ARCoeffs[10])*int(grain[rowM2+x]) +
+				int(params.ARCoeffs[11])*int(grain[rowM2+x+1]) +
+				int(params.ARCoeffs[12])*int(grain[rowM2+x+2]) +
+				int(params.ARCoeffs[13])*int(grain[rowM2+x+3]) +
+				int(params.ARCoeffs[14])*int(grain[rowM1+x-3]) +
+				int(params.ARCoeffs[15])*int(grain[rowM1+x-2]) +
+				int(params.ARCoeffs[16])*int(grain[rowM1+x-1]) +
+				int(params.ARCoeffs[17])*int(grain[rowM1+x]) +
+				int(params.ARCoeffs[18])*int(grain[rowM1+x+1]) +
+				int(params.ARCoeffs[19])*int(grain[rowM1+x+2]) +
+				int(params.ARCoeffs[20])*int(grain[rowM1+x+3]) +
+				int(params.ARCoeffs[21])*int(grain[row+x-3]) +
+				int(params.ARCoeffs[22])*int(grain[row+x-2]) +
+				int(params.ARCoeffs[23])*int(grain[row+x-1])
+			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
+			grain[row+x] = int16(clipInt(v, grainMin, grainMax))
+		}
+	}
 }
 
 func validateLumaGrainParams(dst []int16, params LumaGrainParams) error {
