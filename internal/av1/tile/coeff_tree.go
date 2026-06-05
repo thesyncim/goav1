@@ -37,9 +37,6 @@ type LumaCoeffTreeScratch struct {
 }
 
 func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
-	if s == nil {
-		return
-	}
 	for i := 0; i < int(s.coeffDirtyLen); i++ {
 		s.Coeffs[s.InverseScan[i]] = 0
 	}
