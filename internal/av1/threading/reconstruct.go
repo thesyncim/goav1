@@ -331,21 +331,31 @@ func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVi
 }
 
 func (b *FrameWorkBatch) blockCoeffGeometryLumaTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
-	region, regionOK := b.cachedJobRegionTrusted(index)
-	if !regionOK {
+	cacheIndex, cacheOK := frameWorkJobCacheIndex(index)
+	cache := b.geomCache
+	var region FrameWorkJobRegion
+	if cache == nil || !cacheOK ||
+		cache.validMask&frameWorkJobGeometryRegionValid == 0 ||
+		cache.regionIndex != cacheIndex {
 		var err error
 		region, err = b.JobRegion(index)
 		if err != nil {
 			return frameWorkBlockCoeffGeometry{}, err
 		}
+	} else {
+		region = cache.region
 	}
-	window, windowOK := b.cachedJobOutputPlaneTrusted(index, FrameWorkPlaneY)
-	if !windowOK {
+	var window FrameWorkPlaneRegion
+	if cache == nil || !cacheOK ||
+		cache.validMask&frameWorkJobGeometryPlaneYValid == 0 ||
+		cache.planeIndex[FrameWorkPlaneY] != cacheIndex {
 		var err error
 		window, err = b.JobOutputPlane(index, FrameWorkPlaneY)
 		if err != nil {
 			return frameWorkBlockCoeffGeometry{}, err
 		}
+	} else {
+		window = cache.plane[FrameWorkPlaneY]
 	}
 	return b.blockCoeffGeometryLumaKnown(region, window, visit, block)
 }
