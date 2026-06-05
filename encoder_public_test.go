@@ -911,6 +911,99 @@ func TestPublicEncoderTileInfoPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderIntraFrameHeaderPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.SeqForceScreenContentTools = 1
+	seq.SeqForceIntegerMV = 1
+	seq.EnableCDEF = true
+	seq.EnableRestoration = false
+	header := av1.EncoderIntraFrameHeaderParams{
+		Prefix: av1.EncoderFrameHeaderPrefix{
+			FrameType:               av1.EncoderFrameHeaderTypeKey,
+			ShowFrame:               true,
+			ErrorResilientMode:      true,
+			AllowScreenContentTools: true,
+			ForceIntegerMV:          true,
+			PrimaryRefFrame:         av1.EncoderPrimaryRefNone,
+		},
+		Size: av1.EncoderIntraFrameSize{
+			UpscaledWidth:       64,
+			Height:              64,
+			RenderWidth:         64,
+			RenderHeight:        64,
+			SuperResDenominator: 8,
+			RefreshFrameFlags:   0xff,
+		},
+		Tile: av1.EncoderTileInfo{
+			RefreshContext: true,
+			SBCols:         1,
+			SBRows:         1,
+			Cols:           1,
+			Rows:           1,
+			ColStartSB:     [av1.EncoderMaxTileCols + 1]uint16{0, 1},
+			RowStartSB:     [av1.EncoderMaxTileRows + 1]uint16{0, 1},
+		},
+		Quantization: av1.EncoderQuantizationParams{BaseQIdx: 50},
+		LoopFilter: av1.EncoderLoopFilterParams{
+			LevelY:              [2]uint8{4, 4},
+			ModeRefDeltaEnabled: false,
+			Deltas: av1.EncoderLoopFilterDeltas{
+				Ref: [8]int8{1, 0, 0, 0, -1, 0, -1, -1},
+			},
+		},
+		CDEF: av1.EncoderCDEFParams{
+			Damping:    3,
+			YStrength:  [8]uint8{1},
+			UVStrength: [8]uint8{1},
+		},
+		TransformRef: av1.EncoderTransformReferenceParams{
+			TransformMode: av1.EncoderTransformModeLargest,
+			ReferenceMode: av1.EncoderReferenceModeSingle,
+		},
+	}
+	payloadSize, err := av1.EncoderIntraFrameHeaderPayloadSize(seq, header)
+	if err != nil {
+		t.Fatalf("EncoderIntraFrameHeaderPayloadSize: %v", err)
+	}
+	var buf [256]byte
+	payload, err := av1.AppendEncoderIntraFrameHeaderPayload(buf[:0], seq, header)
+	if err != nil {
+		t.Fatalf("AppendEncoderIntraFrameHeaderPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	var seqBuf [128]byte
+	seqPayload, err := av1.AppendEncoderSequenceHeaderPayload(seqBuf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendEncoderSequenceHeaderPayload: %v", err)
+	}
+	parsedSeq, err := av1.ParseSequenceHeader(seqPayload)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	prefix, err := av1.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	size, err := av1.ParseIntraFrameSize(payload, parsedSeq, prefix, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseIntraFrameSize: %v", err)
+	}
+	tiles, err := av1.ParseTileInfo(payload, parsedSeq, prefix, size)
+	if err != nil {
+		t.Fatalf("ParseTileInfo: %v", err)
+	}
+	if prefix.FrameType != av1.FrameTypeKey || size.CodedWidth != 64 || tiles.Cols != 1 || tiles.Rows != 1 {
+		t.Fatalf("parsed header prefix=%+v size=%+v tiles=%+v", prefix, size, tiles)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},
