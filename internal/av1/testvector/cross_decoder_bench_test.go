@@ -451,19 +451,33 @@ func printCrossBenchReport(t *testing.T, vectors []crossBenchVector, results []d
 	for _, c := range cols {
 		fmt.Fprintf(&b, " %12s", c.name)
 	}
-	fmt.Fprintf(&b, "\n%s\n", strings.Repeat("-", 44+7+13*len(cols)))
+	fmt.Fprintf(&b, " %10s", "dav1d_x")
+	fmt.Fprintf(&b, "\n%s\n", strings.Repeat("-", 44+7+13*len(cols)+11))
 	for _, cv := range vectors {
 		fmt.Fprintf(&b, "%-44s %6d", truncate(cv.vector.Stream.Name, 44), cv.frames)
+		var goTime, dav1dTime time.Duration
 		for _, c := range cols {
 			if d, ok := c.perVector[cv.path]; ok {
+				if c.inProcess {
+					goTime = d
+				}
+				if c.name == "dav1d" {
+					dav1dTime = d
+				}
 				fmt.Fprintf(&b, " %12.3f", float64(d.Nanoseconds())/1e6)
 			} else {
 				fmt.Fprintf(&b, " %12s", "-")
 			}
 		}
+		if goTime > 0 && dav1dTime > 0 {
+			fmt.Fprintf(&b, " %9.2fx", float64(goTime)/float64(dav1dTime))
+		} else {
+			fmt.Fprintf(&b, " %10s", "-")
+		}
 		fmt.Fprintf(&b, "\n")
 	}
 	fmt.Fprintf(&b, "\n")
+	fmt.Fprintf(&b, "dav1d_x = goav1 raw ms / dav1d raw ms for that vector; higher is a larger gap.\n")
 	fmt.Fprintf(&b, "CAVEAT (do not hide this): on these tiny bundled clips the external decoders'\n")
 	fmt.Fprintf(&b, "raw numbers are dominated by per-process startup, NOT steady-state decode. Use\n")
 	fmt.Fprintf(&b, "adj_* for a closer steady-state estimate, or add a larger clip (see file header).\n")
