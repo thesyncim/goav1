@@ -111,22 +111,21 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 	buffer[0][0] = edges.AboveLeft
 	copy(buffer[0][1:predWidth+1], edges.Above[:predWidth])
 
+	taps := filterIntraTaps[mode]
 	for row := 1; row < predHeight+1; row += 2 {
 		for col := 1; col < predWidth+1; col += 4 {
-			p := [7]uint16{
-				buffer[row-1][col-1],
-				buffer[row-1][col],
-				buffer[row-1][col+1],
-				buffer[row-1][col+2],
-				buffer[row-1][col+3],
-				buffer[row][col-1],
-				buffer[row+1][col-1],
-			}
+			p0 := int(buffer[row-1][col-1])
+			p1 := int(buffer[row-1][col])
+			p2 := int(buffer[row-1][col+1])
+			p3 := int(buffer[row-1][col+2])
+			p4 := int(buffer[row-1][col+3])
+			p5 := int(buffer[row][col-1])
+			p6 := int(buffer[row+1][col-1])
 			for k := range 8 {
-				sum := 0
-				for i := range len(p) {
-					sum += int(filterIntraTaps[mode][k][i]) * int(p[i])
-				}
+				tap := taps[k]
+				sum := int(tap[0])*p0 + int(tap[1])*p1 + int(tap[2])*p2 +
+					int(tap[3])*p3 + int(tap[4])*p4 + int(tap[5])*p5 +
+					int(tap[6])*p6
 				sample := roundPowerOfTwo(sum, filterIntraScaleBits)
 				if sample < 0 {
 					sample = 0
