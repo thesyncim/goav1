@@ -199,6 +199,45 @@ func TestAddResidualPlaneBlock10BitClipBoundary(t *testing.T) {
 	}
 }
 
+func TestAddConstantResidualPlaneBlockTrustedMatchesResidualAdd(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		bytesPerSample int
+		bitDepth       uint8
+		fill           uint16
+		residual       int16
+		max            uint16
+	}{
+		{name: "8-bit", bytesPerSample: 1, bitDepth: 8, fill: 91, residual: -120, max: 255},
+		{name: "10-bit", bytesPerSample: 2, bitDepth: 10, fill: 512, residual: 400, max: 1023},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const width, height = 8, 4
+			want, _ := testPlane(width, height, tt.bytesPerSample, width*tt.bytesPerSample)
+			got, _ := testPlane(width, height, tt.bytesPerSample, width*tt.bytesPerSample)
+			if err := FillPlaneBlock(want, tt.bytesPerSample, 0, 0, width, height, tt.fill); err != nil {
+				t.Fatal(err)
+			}
+			if err := FillPlaneBlock(got, tt.bytesPerSample, 0, 0, width, height, tt.fill); err != nil {
+				t.Fatal(err)
+			}
+			residual := make([]int16, width*height)
+			for i := range residual {
+				residual[i] = tt.residual
+			}
+			if err := AddResidualPlaneBlock(want, tt.bytesPerSample, tt.bitDepth, 0, 0, width, height, residual, width); err != nil {
+				t.Fatal(err)
+			}
+			AddConstantResidualPlaneBlockTrusted(got.Pix, got.Stride, tt.bytesPerSample, tt.max, width, height, tt.residual)
+			for i := range want.Pix {
+				if got.Pix[i] != want.Pix[i] {
+					t.Fatalf("pix[%d]=%d want %d", i, got.Pix[i], want.Pix[i])
+				}
+			}
+		})
+	}
+}
+
 func TestPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	plane, _ := testPlane(4, 4, 1, 4)
 	if err := FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, ErrInvalidBlock) {

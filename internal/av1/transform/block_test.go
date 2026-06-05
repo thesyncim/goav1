@@ -156,9 +156,16 @@ func TestInverseDCTDCOnlyBlockBitDepthMatchesFullInverse(t *testing.T) {
 				if err := InverseDCTDCOnlyBlockBitDepth(got, width, dc, dcScratch, size, bitDepth); err != nil {
 					t.Fatalf("dc size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
 				}
+				sample, err := InverseDCTDCOnlySampleBitDepth(dc, dcScratch, size, bitDepth)
+				if err != nil {
+					t.Fatalf("dc sample size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
+				}
 				for i := range want {
 					if got[i] != want[i] {
 						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d want %d", size, bitDepth, dc, i, got[i], want[i])
+					}
+					if got[i] != sample {
+						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d sample %d", size, bitDepth, dc, i, got[i], sample)
 					}
 				}
 			}

@@ -109,6 +109,45 @@ func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int,
 	addResidualPlaneBlockImpl(block, bytesPerSample, max, width, residual, residualStride)
 }
 
+// AddConstantResidualPlaneBlockTrusted adds the same transform residual to
+// every sample in an already-validated destination block.
+func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual int16) {
+	switch bytesPerSample {
+	case 1:
+		maxInt := int(max)
+		r := int(residual)
+		for row := 0; row < height; row++ {
+			line := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
+			for col, sample := range line {
+				v := int(sample) + r
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[col] = byte(v)
+			}
+		}
+	case 2:
+		maxInt := int(max)
+		r := int(residual)
+		rowBytes := width * 2
+		for row := 0; row < height; row++ {
+			line := dst[row*dstStride : row*dstStride+rowBytes : row*dstStride+rowBytes]
+			for col := 0; col < rowBytes; col += 2 {
+				v := int(uint16(line[col])|uint16(line[col+1])<<8) + r
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[col] = byte(v)
+				line[col+1] = byte(v >> 8)
+			}
+		}
+	}
+}
+
 // addResidualPlaneBlockPureGo is the portable reference for the residual-add
 // inner loop. Every SIMD variant the dispatcher selects MUST produce bit-exact
 // output relative to this function. AddResidualPlaneBlock has already validated

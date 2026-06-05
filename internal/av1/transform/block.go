@@ -127,18 +127,39 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 // clamps as InverseBlockBitDepth, but evaluates only the single horizontal and
 // vertical DC basis before filling the block.
 func InverseDCTDCOnlyBlockBitDepth(dst []int16, dstStride int, dc int32, scratch []int32, size Size, bitDepth uint8) error {
-	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
-	if !ok {
-		return ErrInvalidTransform
-	}
-	idx := sizeIndex(size)
-	if idx < 0 || !sizeValidTable[idx] {
-		return ErrInvalidTransform
+	sample, err := InverseDCTDCOnlySampleBitDepth(dc, scratch, size, bitDepth)
+	if err != nil {
+		return err
 	}
 	width := int(size.Width)
 	height := int(size.Height)
-	if dstStride < width || len(scratch) < width+height || !blockFits(len(dst), dstStride, width, height) {
+	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
 		return ErrInvalidTransform
+	}
+	for rowIndex := 0; rowIndex < height; rowIndex++ {
+		dstLine := dst[rowIndex*dstStride : rowIndex*dstStride+width : rowIndex*dstStride+width]
+		for colIndex := range dstLine {
+			dstLine[colIndex] = sample
+		}
+	}
+	return nil
+}
+
+// InverseDCTDCOnlySampleBitDepth returns the constant residual sample for a
+// DCT_DCT block whose only non-zero coefficient is DC.
+func InverseDCTDCOnlySampleBitDepth(dc int32, scratch []int32, size Size, bitDepth uint8) (int16, error) {
+	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
+	if !ok {
+		return 0, ErrInvalidTransform
+	}
+	idx := sizeIndex(size)
+	if idx < 0 || !sizeValidTable[idx] {
+		return 0, ErrInvalidTransform
+	}
+	width := int(size.Width)
+	height := int(size.Height)
+	if len(scratch) < width+height {
+		return 0, ErrInvalidTransform
 	}
 	if size.IsRect2() {
 		dc = rect2Scale(dc)
@@ -160,15 +181,7 @@ func InverseDCTDCOnlyBlockBitDepth(dst []int16, dstStride int, dc int32, scratch
 	clear(col)
 	col[0] = v
 	inverse1D(col, 1, height, tx1DDCT, colMin, colMax)
-
-	for rowIndex := 0; rowIndex < height; rowIndex++ {
-		sample := clipInt16(int32(roundShift(int64(col[rowIndex]), 4)))
-		dstLine := dst[rowIndex*dstStride : rowIndex*dstStride+width : rowIndex*dstStride+width]
-		for colIndex := range dstLine {
-			dstLine[colIndex] = sample
-		}
-	}
-	return nil
+	return clipInt16(int32(roundShift(int64(col[0]), 4))), nil
 }
 
 // stageRangeBounds returns the libaom inverse-transform stage clamp bounds for

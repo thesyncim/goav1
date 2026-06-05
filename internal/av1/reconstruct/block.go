@@ -169,11 +169,12 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	eob := int(cfg.EOB)
 	if !cfg.Lossless && cfg.Transform == transform.TypeDCTDCT && eob == 1 {
 		dc := quantize.DequantizeDCCoeffBitDepthTrusted(quantized[0], cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
-		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dc, transformScratch, cfg.Size, bitDepth); err != nil {
+		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, transformScratch, cfg.Size, bitDepth)
+		if err != nil {
 			return ErrInvalidBlock
 		}
 		max := uint16((1 << bitDepth) - 1)
-		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		dsp.AddConstantResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, sample)
 		return nil
 	}
 
