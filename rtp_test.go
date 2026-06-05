@@ -422,6 +422,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	}
 	var payloadBuf [64]byte
 	var descriptorBuf [64]byte
+	var spans [4]EncoderWebRTCRTPPacketSpan
 	allocs := testing.AllocsPerRun(1000, func() {
 		p := packetizer
 		_, _ = EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 1, obuScratch[:])
@@ -432,9 +433,93 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitRTPPacketSize(&p, unit, state, 1)
 		_, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitRTPPacket(payloadBuf[:0], descriptorBuf[:0], &p, unit, state, 1)
 		_, _, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadBuf[:0], descriptorBuf[:0], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
+		_, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadBuf[:0], descriptorBuf[:0], spans[:], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
 	})
 	if allocs != 0 {
 		t.Fatalf("scheduled picture RTP helper allocated: %f", allocs)
+	}
+}
+
+func TestPublicRTPScheduledPictureAppendPackets(t *testing.T) {
+	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 6}
+	cfg := EncoderConfig{
+		Resolution:        EncoderResolution{Width: 640, Height: 360},
+		Scalability:       EncoderScalabilityModeL1T1,
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	unit, state, err := EncoderWebRTCNextTemporalUnitForState(cfg, EncoderWebRTCState{NextFrameID: 10}, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState key: %v", err)
+	}
+	unit, state, err = EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCNextTemporalUnitForState delta: %v", err)
+	}
+	var obuScratch [2]RTPPacketizerOBU
+	scratch, err := EncoderWebRTCPictureTemporalUnitRTPScratchLen(frame, limits, unit, state, 0, obuScratch[:])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCPictureTemporalUnitRTPScratchLen: %v", err)
+	}
+	if scratch.Packetizer.Packets < 2 {
+		t.Fatalf("scratch=%+v want fragmentation", scratch)
+	}
+	var packetScratch [8]RTPPacketPlan
+	var workScratch [8]RTPPacketPlan
+	var payloadBuf [64]byte
+	var descriptorBuf [128]byte
+	var spans [8]EncoderWebRTCRTPPacketSpan
+	payloads, descriptors, packetCount, control, _, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(
+		payloadBuf[:0],
+		descriptorBuf[:0],
+		spans[:],
+		frame,
+		limits,
+		unit,
+		state,
+		0,
+		obuScratch[:],
+		packetScratch[:],
+		workScratch[:],
+	)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCPictureTemporalUnitRTPPackets: %v", err)
+	}
+	if packetCount != scratch.Packetizer.Packets || control.GenericFrameInfo.FrameID != 11 {
+		t.Fatalf("packetCount=%d scratch=%+v control=%+v", packetCount, scratch, control)
+	}
+	if len(payloads) == 0 || len(descriptors) == 0 || !spans[packetCount-1].Marker {
+		t.Fatalf("payloads=%d descriptors=%d spans=%+v", len(payloads), len(descriptors), spans[:packetCount])
+	}
+	rtpPayloads := make([][]byte, packetCount)
+	for i := 0; i < packetCount; i++ {
+		span := spans[i]
+		if span.PayloadLength == 0 || span.DescriptorLength == 0 {
+			t.Fatalf("span[%d]=%+v", i, span)
+		}
+		if i != packetCount-1 && span.Marker {
+			t.Fatalf("early marker span[%d]=%+v", i, span)
+		}
+		rtpPayloads[i] = payloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+	}
+	assembledLen, obuCount, err := AssembleRTPFrameSize(rtpPayloads)
+	if err != nil {
+		t.Fatalf("AssembleRTPFrameSize: %v", err)
+	}
+	var assembled [32]byte
+	var obus [2]RTPFrameOBU
+	wrote, count, err := AssembleRTPFrame(assembled[:assembledLen], rtpPayloads, obus[:obuCount])
+	if err != nil {
+		t.Fatalf("AssembleRTPFrame: %v", err)
+	}
+	if wrote != len(frame) || count != 1 || string(assembled[:wrote]) != string(frame) {
+		t.Fatalf("assembled wrote=%d count=%d bytes=% x want=% x", wrote, count, assembled[:wrote], frame)
+	}
+	if _, _, _, _, _, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadBuf[:0], descriptorBuf[:0], spans[:packetCount-1], frame, limits, unit, state, 0, obuScratch[:], packetScratch[:], workScratch[:]); err != ErrRTPPacketPlanTooSmall {
+		t.Fatalf("short spans err=%v want %v", err, ErrRTPPacketPlanTooSmall)
 	}
 }
 
