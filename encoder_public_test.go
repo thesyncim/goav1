@@ -868,6 +868,49 @@ func TestPublicEncoderFilmGrainParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderTileInfoPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
+	tiles := av1.EncoderTileInfo{
+		RefreshContext: true,
+		SBCols:         1,
+		SBRows:         1,
+		Cols:           1,
+		Rows:           1,
+		ColStartSB:     [av1.EncoderMaxTileCols + 1]uint16{0, 1},
+		RowStartSB:     [av1.EncoderMaxTileRows + 1]uint16{0, 1},
+	}
+	payloadSize, err := av1.EncoderTileInfoPayloadSize(seq, prefix, 64, 64, tiles)
+	if err != nil {
+		t.Fatalf("EncoderTileInfoPayloadSize: %v", err)
+	}
+	var buf [2]byte
+	payload, err := av1.AppendEncoderTileInfoPayload(buf[:0], seq, prefix, 64, 64, tiles)
+	if err != nil {
+		t.Fatalf("AppendEncoderTileInfoPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseTileInfo(
+		payload,
+		av1.SequenceHeader{},
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeKey, ErrorResilientMode: true},
+		av1.FrameSize{CodedWidth: 64, Height: 64},
+	)
+	if err != nil {
+		t.Fatalf("ParseTileInfo: %v", err)
+	}
+	if !parsed.RefreshContext || parsed.Cols != 1 || parsed.Rows != 1 {
+		t.Fatalf("parsed tiles=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

@@ -108,6 +108,8 @@ type EncoderLoopFilterParams = internalencoder.LoopFilterParams
 type EncoderCDEFParams = internalencoder.CDEFParams
 type EncoderRestorationType = internalencoder.RestorationType
 type EncoderRestorationParams = internalencoder.RestorationParams
+type EncoderInterpolationFilter = internalencoder.InterpolationFilter
+type EncoderTileInfo = internalencoder.TileInfo
 type EncoderTransformMode = internalencoder.TransformMode
 type EncoderReferenceMode = internalencoder.ReferenceMode
 type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
@@ -213,6 +215,12 @@ const (
 	EncoderRestorationWiener     = internalencoder.RestorationWiener
 	EncoderRestorationSGRProj    = internalencoder.RestorationSGRProj
 
+	EncoderInterpolationEightTap   = internalencoder.InterpolationEightTap
+	EncoderInterpolationSmooth     = internalencoder.InterpolationSmooth
+	EncoderInterpolationSharp      = internalencoder.InterpolationSharp
+	EncoderInterpolationBilinear   = internalencoder.InterpolationBilinear
+	EncoderInterpolationSwitchable = internalencoder.InterpolationSwitchable
+
 	EncoderTransformMode4x4Only    = internalencoder.TransformMode4x4Only
 	EncoderTransformModeLargest    = internalencoder.TransformModeLargest
 	EncoderTransformModeSwitchable = internalencoder.TransformModeSwitchable
@@ -230,6 +238,9 @@ const (
 	EncoderMaxFilmGrainUVPoints = internalencoder.MaxFilmGrainUVPoints
 	EncoderMaxFilmGrainYCoeffs  = internalencoder.MaxFilmGrainYCoeffs
 	EncoderMaxFilmGrainUVCoeffs = internalencoder.MaxFilmGrainUVCoeffs
+
+	EncoderMaxTileRows = internalencoder.MaxTileRows
+	EncoderMaxTileCols = internalencoder.MaxTileCols
 )
 
 var (
@@ -962,6 +973,14 @@ func EncoderFrameHeaderInterPayloadSize(seq EncoderSequenceHeader, prefix Encode
 
 func AppendEncoderFrameHeaderInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) ([]byte, error) {
 	return internalencoder.AppendFrameHeaderInterPayload(dst, seq, prefix, size)
+}
+
+func EncoderTileInfoPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) (int, error) {
+	return internalencoder.TileInfoPayloadSize(seq, prefix, codedWidth, height, tiles)
+}
+
+func AppendEncoderTileInfoPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) ([]byte, error) {
+	return internalencoder.AppendTileInfoPayload(dst, seq, prefix, codedWidth, height, tiles)
 }
 
 func EncoderQuantizationParamsPayloadSize(seq EncoderSequenceHeader, quant EncoderQuantizationParams) (int, error) {
