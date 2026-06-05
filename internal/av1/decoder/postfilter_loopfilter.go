@@ -12,7 +12,10 @@ import (
 
 var errFrameWorkLoopFilterTransformFound = errors.New("loop filter transform found")
 
-const frameWorkLoopFilterApplyScheduleCap = 4096
+const (
+	frameWorkLoopFilterApplySmallScheduleCap = 256
+	frameWorkLoopFilterApplyScheduleCap      = 4096
+)
 
 // FrameWorkLoopFilterMap is the decoded frame-level loop-filter metadata map.
 type FrameWorkLoopFilterMap = threading.FrameWorkLoopFilterMap
@@ -494,6 +497,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 	expected, ok := frameWorkLoopFilterCounter(len(edges))
 	if !ok {
 		return loopfilter.ErrInvalidFilter
+	}
+	if len(edges) <= frameWorkLoopFilterApplySmallScheduleCap {
+		var schedule [frameWorkLoopFilterApplySmallScheduleCap]uint32
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], maxPlane, before, expected)
 	}
 	if len(edges) <= frameWorkLoopFilterApplyScheduleCap {
 		var schedule [frameWorkLoopFilterApplyScheduleCap]uint32
