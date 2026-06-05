@@ -367,8 +367,21 @@ func frameWorkStoreCDEFUnit(dst frame.Plane, bytesPerSample int, x int, y int, w
 		for row := range height {
 			dstOff := (y+row)*dst.Stride + x
 			srcOff := row * cdef.BStride
-			for col, sample := range src[srcOff : srcOff+width] {
-				dst.Pix[dstOff+col] = byte(sample)
+			dstRow := dst.Pix[dstOff : dstOff+width]
+			srcRow := src[srcOff : srcOff+width]
+			col := 0
+			for ; col+8 <= width; col += 8 {
+				dstRow[col+0] = byte(srcRow[col+0])
+				dstRow[col+1] = byte(srcRow[col+1])
+				dstRow[col+2] = byte(srcRow[col+2])
+				dstRow[col+3] = byte(srcRow[col+3])
+				dstRow[col+4] = byte(srcRow[col+4])
+				dstRow[col+5] = byte(srcRow[col+5])
+				dstRow[col+6] = byte(srcRow[col+6])
+				dstRow[col+7] = byte(srcRow[col+7])
+			}
+			for ; col < width; col++ {
+				dstRow[col] = byte(srcRow[col])
 			}
 		}
 	case 2:
