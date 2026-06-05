@@ -1,6 +1,9 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
+import (
+	"github.com/thesyncim/goav1/internal/av1/bitstream"
+	"github.com/thesyncim/goav1/internal/av1/obu"
+)
 
 const encoderRefFrames uint8 = 8
 
@@ -46,6 +49,54 @@ func AppendFrameHeaderIntraPayload(dst []byte, seq SequenceHeader, prefix FrameH
 	}
 	off := len(dst)
 	out := dst[:off+payloadSize]
+	w := newBitWriter(out[off:])
+	if err := writeFrameHeaderPrefixPayload(&w, seq, prefix); err != nil {
+		return dst, err
+	}
+	if err := writeIntraFrameSizePayload(&w, seq, prefix, size); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// LowOverheadFrameHeaderIntraOBUSize returns the exact size of a low-overhead
+// frame-header OBU for the key/intra-only path through frame_size().
+func LowOverheadFrameHeaderIntraOBUSize(seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize) (int, error) {
+	payloadSize, err := FrameHeaderIntraPayloadSize(seq, prefix, size)
+	if err != nil {
+		return 0, err
+	}
+	return 1 + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize, nil
+}
+
+// AppendLowOverheadFrameHeaderIntraOBU appends one low-overhead frame-header
+// OBU for the key/intra-only path through frame_size(). It validates and sizes
+// before writing, so errors leave dst length unchanged.
+func AppendLowOverheadFrameHeaderIntraOBU(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize) ([]byte, error) {
+	payloadSize, err := FrameHeaderIntraPayloadSize(seq, prefix, size)
+	if err != nil {
+		return dst, err
+	}
+	obuSize := 1 + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize
+	if cap(dst)-len(dst) < obuSize {
+		return dst, bitstream.ErrShortBuffer
+	}
+
+	off := len(dst)
+	out := dst[:off+obuSize]
+	n, err := obu.PutHeader(out[off:], obu.Header{
+		Type:         obu.TypeFrameHeader,
+		HasSizeField: true,
+	})
+	if err != nil {
+		return dst, err
+	}
+	off += n
+	n, err = bitstream.PutLEB128(out[off:], uint32(payloadSize))
+	if err != nil {
+		return dst, err
+	}
+	off += n
 	w := newBitWriter(out[off:])
 	if err := writeFrameHeaderPrefixPayload(&w, seq, prefix); err != nil {
 		return dst, err
