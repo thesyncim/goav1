@@ -2355,23 +2355,20 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	c0u := uint32(c0)
 	c1u := uint32(c1)
 	c2u := uint32(c2)
-	switch symbol {
-	case 0:
+	if symbol > 0 {
+		c0u += (CDFProbTop - c0u) >> rate
+	} else {
 		c0u -= c0u >> rate
-		c1u -= c1u >> rate
-		c2u -= c2u >> rate
-	case 1:
-		c0u += (CDFProbTop - c0u) >> rate
-		c1u -= c1u >> rate
-		c2u -= c2u >> rate
-	case 2:
-		c0u += (CDFProbTop - c0u) >> rate
+	}
+	if symbol > 1 {
 		c1u += (CDFProbTop - c1u) >> rate
-		c2u -= c2u >> rate
-	default:
-		c0u += (CDFProbTop - c0u) >> rate
-		c1u += (CDFProbTop - c1u) >> rate
+	} else {
+		c1u -= c1u >> rate
+	}
+	if symbol > 2 {
 		c2u += (CDFProbTop - c2u) >> rate
+	} else {
+		c2u -= c2u >> rate
 	}
 	values[0] = uint16(c0u)
 	values[1] = uint16(c1u)
