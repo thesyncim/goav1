@@ -944,6 +944,44 @@ func TestFrameWorkBatchReconstructBlockCoeffLuma(t *testing.T) {
 	}
 }
 
+func TestFrameWorkBatchReconstructBlockCoeffAllZeroNoOp(t *testing.T) {
+	got := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
+	want := testBatchFrame(t, got.Format)
+	testFillFrame(got, 127)
+	testFillFrame(want, 127)
+
+	ctx := FrameWorkBatch{
+		Output: got,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{BitDepth: 8},
+			}),
+			FrameSize:    parser.FrameSize{CodedWidth: 64, Height: 64},
+			Quantization: parser.QuantizationParams{BaseQIdx: 32},
+		},
+		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+	}
+	req := FrameWorkBlockCoeffReconstruction{
+		Visit: tile.BlockVisit{
+			MICol: 0, MIRow: 0, MIColEnd: 4, MIRowEnd: 4,
+			X4: 0, Y4: 0, Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4,
+		},
+		Block: tile.BlockCoeffBlock{
+			Plane:  0,
+			Block:  tile.TransformBlock{X4: 0, Y4: 0, Size: tile.TransformSize4x4, VisibleW4: 1, VisibleH4: 1},
+			Result: tile.TXBDecodeResult{AllZero: true},
+		},
+		Transform:     transform.TypeDCTDCT,
+		CurrentQIndex: 32,
+	}
+	if err := ctx.ReconstructBlockCoeff(0, req); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Y.Pix, want.Y.Pix) {
+		t.Fatalf("all-zero reconstruction changed luma plane")
+	}
+}
+
 func TestFrameWorkBatchReconstructBlockCoeffChroma420(t *testing.T) {
 	got := testBatchFrame(t, frame.Format{
 		Width:        160,

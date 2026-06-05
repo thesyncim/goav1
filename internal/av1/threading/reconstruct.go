@@ -107,6 +107,9 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
+	if block.Result.AllZero || block.Result.EOB == 0 {
+		return nil
+	}
 	relX := int(geom.x) - int(geom.window.X)
 	relY := int(geom.y) - int(geom.window.Y)
 	visibleWidth := int(geom.visibleWidth)
@@ -186,6 +189,9 @@ func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.B
 
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
+		return nil
+	}
+	if block.Result.AllZero || block.Result.EOB == 0 {
 		return nil
 	}
 	relX := int(geom.x) - int(geom.window.X)

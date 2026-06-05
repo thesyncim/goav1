@@ -21,6 +21,8 @@ type Block struct {
 	Lossless       bool
 }
 
+const sparseDequantWorkFactor = 8
+
 // ScratchLen returns the int32 and int16 scratch lengths needed by cfg.
 func ScratchLen(cfg Block) (int32Len int, int16Len int, err error) {
 	if cfg.Lossless && !losslessWHTSupported(cfg) {
@@ -178,7 +180,7 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		return nil
 	}
 
-	useSparseDequant := eob > 0 && len(scan) >= eob && eob*4 <= dequantLen
+	useSparseDequant := eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
 			quantize.DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
@@ -239,7 +241,7 @@ func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitD
 	residual := residualScratch[:blockLen]
 
 	eob := int(cfg.EOB)
-	useSparseDequant := eob > 0 && len(scan) >= eob && eob*4 <= dequantLen
+	useSparseDequant := eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
 			if err := quantize.DequantizeBlockScaledQMatrixBitDepthEOB(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
