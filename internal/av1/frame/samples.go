@@ -97,11 +97,7 @@ func LoadSamplePlane(dst []uint16, src Plane, bytesPerSample int) (SamplePlane, 
 		return SamplePlane{}, ErrShortBuffer
 	}
 	samples := dst[:need]
-	for y := 0; y < src.Height; y++ {
-		srcLine := src.Pix[y*src.Stride : y*src.Stride+src.Width*bytesPerSample]
-		dstLine := samples[y*strideSamples : y*strideSamples+src.Width]
-		loadSampleLine(dstLine, srcLine, bytesPerSample)
-	}
+	loadSampleRows(samples, strideSamples, src.Pix, src.Stride, src.Width, src.Height, bytesPerSample)
 	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, nil
 }
 
@@ -140,11 +136,7 @@ func LoadSamplePlaneFull(dst []uint16, src Plane, bytesPerSample int) (SamplePla
 	}
 	samples := dst[:need]
 	loadedWidth := strideSamples
-	for y := 0; y < src.Height; y++ {
-		srcLine := src.Pix[y*src.Stride : y*src.Stride+loadedWidth*bytesPerSample]
-		dstLine := samples[y*strideSamples : y*strideSamples+loadedWidth]
-		loadSampleLine(dstLine, srcLine, bytesPerSample)
-	}
+	loadSampleRows(samples, strideSamples, src.Pix, src.Stride, loadedWidth, src.Height, bytesPerSample)
 	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, loadedWidth, nil
 }
 
@@ -164,12 +156,7 @@ func LoadBorderedSamplePlane(dst []uint16, src Plane, bytesPerSample int, border
 		return BorderedSamplePlane{}, ErrShortBuffer
 	}
 	samples := dst[:layout.Len]
-	for y := 0; y < src.Height; y++ {
-		srcLine := src.Pix[y*src.Stride : y*src.Stride+src.Width*bytesPerSample]
-		dstStart := layout.Origin + y*layout.Stride
-		dstLine := samples[dstStart : dstStart+src.Width]
-		loadSampleLine(dstLine, srcLine, bytesPerSample)
-	}
+	loadSampleRows(samples[layout.Origin:], layout.Stride, src.Pix, src.Stride, src.Width, src.Height, bytesPerSample)
 	return BorderedSamplePlane{
 		Pix:        samples,
 		Stride:     layout.Stride,
@@ -190,12 +177,8 @@ func StoreSamplePlane(dst Plane, bytesPerSample int, src SamplePlane) error {
 	if !samplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
 		return ErrInvalidPlane
 	}
-	for y := 0; y < dst.Height; y++ {
-		dstLine := dst.Pix[y*dst.Stride : y*dst.Stride+dst.Width*bytesPerSample]
-		srcLine := src.Pix[y*src.Stride : y*src.Stride+src.Width]
-		if err := storeSampleLine(dstLine, srcLine, bytesPerSample); err != nil {
-			return err
-		}
+	if !storeSampleRows(dst.Pix, dst.Stride, src.Pix, src.Stride, src.Width, src.Height, bytesPerSample) {
+		return ErrInvalidPlane
 	}
 	return nil
 }
@@ -211,11 +194,7 @@ func StoreSamplePlaneTrusted(dst Plane, bytesPerSample int, src SamplePlane) err
 	if !samplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
 		return ErrInvalidPlane
 	}
-	for y := 0; y < dst.Height; y++ {
-		dstLine := dst.Pix[y*dst.Stride : y*dst.Stride+dst.Width*bytesPerSample]
-		srcLine := src.Pix[y*src.Stride : y*src.Stride+src.Width]
-		storeSampleLineTrusted(dstLine, srcLine, bytesPerSample)
-	}
+	storeSampleRowsTrusted(dst.Pix, dst.Stride, src.Pix, src.Stride, src.Width, src.Height, bytesPerSample)
 	return nil
 }
 
@@ -228,13 +207,8 @@ func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSampleP
 	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
 		return ErrInvalidPlane
 	}
-	for y := 0; y < dst.Height; y++ {
-		dstLine := dst.Pix[y*dst.Stride : y*dst.Stride+dst.Width*bytesPerSample]
-		srcStart := src.Origin + y*src.Stride
-		srcLine := src.Pix[srcStart : srcStart+src.Width]
-		if err := storeSampleLine(dstLine, srcLine, bytesPerSample); err != nil {
-			return err
-		}
+	if !storeSampleRows(dst.Pix, dst.Stride, src.Pix[src.Origin:], src.Stride, src.Width, src.Height, bytesPerSample) {
+		return ErrInvalidPlane
 	}
 	return nil
 }
@@ -372,50 +346,101 @@ func borderedSamplePlaneFits(plane BorderedSamplePlane) bool {
 	return ok && visibleEnd <= len(plane.Pix)
 }
 
-func loadSampleLine(dst []uint16, src []byte, bytesPerSample int) {
+func loadSampleRows(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int, bytesPerSample int) {
 	switch bytesPerSample {
 	case 1:
-		for x := range dst {
-			dst[x] = uint16(src[x])
-		}
-	case 2:
-		for x := range dst {
-			off := x * 2
-			dst[x] = uint16(src[off]) | uint16(src[off+1])<<8
-		}
-	}
-}
-
-func storeSampleLine(dst []byte, src []uint16, bytesPerSample int) error {
-	switch bytesPerSample {
-	case 1:
-		for x, sample := range src {
-			if sample > 0xff {
-				return ErrInvalidPlane
+		srcOff := 0
+		dstOff := 0
+		for y := 0; y < height; y++ {
+			srcLine := src[srcOff : srcOff+width : srcOff+width]
+			dstLine := dst[dstOff : dstOff+width : dstOff+width]
+			for x := 0; x < width; x++ {
+				dstLine[x] = uint16(srcLine[x])
 			}
-			dst[x] = byte(sample)
+			srcOff += srcStride
+			dstOff += dstStride
 		}
 	case 2:
-		for x, sample := range src {
-			off := x * 2
-			dst[off] = byte(sample)
-			dst[off+1] = byte(sample >> 8)
+		srcOff := 0
+		dstOff := 0
+		rowBytes := width * 2
+		for y := 0; y < height; y++ {
+			srcLine := src[srcOff : srcOff+rowBytes : srcOff+rowBytes]
+			dstLine := dst[dstOff : dstOff+width : dstOff+width]
+			for x := 0; x < width; x++ {
+				off := x * 2
+				dstLine[x] = uint16(srcLine[off]) | uint16(srcLine[off+1])<<8
+			}
+			srcOff += srcStride
+			dstOff += dstStride
 		}
 	}
-	return nil
 }
 
-func storeSampleLineTrusted(dst []byte, src []uint16, bytesPerSample int) {
+func storeSampleRows(dst []byte, dstStride int, src []uint16, srcStride int, width int, height int, bytesPerSample int) bool {
 	switch bytesPerSample {
 	case 1:
-		for x, sample := range src {
-			dst[x] = byte(sample)
+		dstOff := 0
+		srcOff := 0
+		for y := 0; y < height; y++ {
+			dstLine := dst[dstOff : dstOff+width : dstOff+width]
+			srcLine := src[srcOff : srcOff+width : srcOff+width]
+			for x, sample := range srcLine {
+				if sample > 0xff {
+					return false
+				}
+				dstLine[x] = byte(sample)
+			}
+			dstOff += dstStride
+			srcOff += srcStride
 		}
 	case 2:
-		for x, sample := range src {
-			off := x * 2
-			dst[off] = byte(sample)
-			dst[off+1] = byte(sample >> 8)
+		dstOff := 0
+		srcOff := 0
+		rowBytes := width * 2
+		for y := 0; y < height; y++ {
+			dstLine := dst[dstOff : dstOff+rowBytes : dstOff+rowBytes]
+			srcLine := src[srcOff : srcOff+width : srcOff+width]
+			for x, sample := range srcLine {
+				off := x * 2
+				dstLine[off] = byte(sample)
+				dstLine[off+1] = byte(sample >> 8)
+			}
+			dstOff += dstStride
+			srcOff += srcStride
+		}
+	}
+	return true
+}
+
+func storeSampleRowsTrusted(dst []byte, dstStride int, src []uint16, srcStride int, width int, height int, bytesPerSample int) {
+	switch bytesPerSample {
+	case 1:
+		dstOff := 0
+		srcOff := 0
+		for y := 0; y < height; y++ {
+			dstLine := dst[dstOff : dstOff+width : dstOff+width]
+			srcLine := src[srcOff : srcOff+width : srcOff+width]
+			for x, sample := range srcLine {
+				dstLine[x] = byte(sample)
+			}
+			dstOff += dstStride
+			srcOff += srcStride
+		}
+	case 2:
+		dstOff := 0
+		srcOff := 0
+		rowBytes := width * 2
+		for y := 0; y < height; y++ {
+			dstLine := dst[dstOff : dstOff+rowBytes : dstOff+rowBytes]
+			srcLine := src[srcOff : srcOff+width : srcOff+width]
+			for x, sample := range srcLine {
+				off := x * 2
+				dstLine[off] = byte(sample)
+				dstLine[off+1] = byte(sample >> 8)
+			}
+			dstOff += dstStride
+			srcOff += srcStride
 		}
 	}
 }
