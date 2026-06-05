@@ -26,6 +26,22 @@ const (
 
 const coeffDirtyPosMask = maxCoeffScanLen - 1
 
+var coeffLower2DMagCtx = [...]uint8{
+	0, 1, 1, 2,
+	2, 3, 3, 4,
+	4, 4, 4, 4,
+	4, 4, 4, 4,
+}
+
+var coeffBaseRange2DMagCtx = [...]uint8{
+	0, 1, 1, 2, 2, 3, 3, 4,
+	4, 5, 5, 6, 6, 6, 6, 6,
+	6, 6, 6, 6, 6, 6, 6, 6,
+	6, 6, 6, 6, 6, 6, 6, 6,
+	6, 6, 6, 6, 6, 6, 6, 6,
+	6, 6, 6, 6, 6, 6,
+}
+
 func packCoeffDirty(pos int, level int) int16 {
 	return int16((level << 10) | pos)
 }
@@ -987,7 +1003,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					_ = levelsScratch[p2]
 					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
 						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = int(coeffLower2DMagCtx[mag]) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 				if level == NumBaseLevels+1 {
@@ -996,7 +1012,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					brCtx := int(coeffBaseRange2DMagCtx[mag]) + int(p.br2DOffset)
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
@@ -1028,7 +1044,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					_ = levelsScratch[p2]
 					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
 						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = int(coeffLower2DMagCtx[mag]) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 				if level == NumBaseLevels+1 {
@@ -1037,7 +1053,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					brCtx := int(coeffBaseRange2DMagCtx[mag]) + int(p.br2DOffset)
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
@@ -1072,7 +1088,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					_ = levelsScratch[p2]
 					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
 						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = int(coeffLower2DMagCtx[mag]) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 				if level == NumBaseLevels+1 {
@@ -1081,7 +1097,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					brCtx := int(coeffBaseRange2DMagCtx[mag]) + int(p.br2DOffset)
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
@@ -1120,7 +1136,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					_ = levelsScratch[p2]
 					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
 						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = int(coeffLower2DMagCtx[mag]) + int(p.lower2DOffset)
 				}
 				level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 				if level == NumBaseLevels+1 {
@@ -1129,7 +1145,7 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 					p1 := padded + 1
 					_ = levelsScratch[s1p1]
 					mag := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
-					brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+					brCtx := int(coeffBaseRange2DMagCtx[mag]) + int(p.br2DOffset)
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
