@@ -1887,7 +1887,7 @@ func (c *Cursor) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
