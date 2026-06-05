@@ -848,13 +848,14 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
+			var baseSY int
 			if bytesPerSample == 1 {
-				warpHorizontal8(&tmp, ref, i, j, matrix, a, be, g, d, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+				baseSY = warpHorizontal8(&tmp, ref, i, j, matrix, a, be, g, d, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			} else {
-				warpHorizontalHighBD(&tmp, ref, i, j, matrix, a, be, g, d, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+				baseSY = warpHorizontalHighBD(&tmp, ref, i, j, matrix, a, be, g, d, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			}
 			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
-				sy := warpBlockSY(i, j, matrix, a, be, g, d, ssX, ssY) + d*(k+4)
+				sy := baseSY + d*(k+4)
 				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
 					offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
 					if offs < 0 || offs >= len(warpedFilter) {

@@ -111,9 +111,9 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 	rowShift := writeY - matY
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
-			warpHorizontal8(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+			baseSY := warpHorizontal8(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
-				sy := warpBlockSY(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY) + delta*(k+4)
+				sy := baseSY + delta*(k+4)
 				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
 					offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
 					if offs < 0 || offs >= len(warpedFilter) {
@@ -133,8 +133,8 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 	}
 }
 
-func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) {
-	ix4, sx4, iy4, _ := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
+func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) int {
+	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
 		sx := sx4 + beta*(k+4)
@@ -154,6 +154,7 @@ func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]in
 			sx += alpha
 		}
 	}
+	return sy4
 }
 
 func warpAffineHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
@@ -176,9 +177,9 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 	rowShift := writeY - matY
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
-			warpHorizontalHighBD(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+			baseSY := warpHorizontalHighBD(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
-				sy := warpBlockSY(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY) + delta*(k+4)
+				sy := baseSY + delta*(k+4)
 				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
 					offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
 					if offs < 0 || offs >= len(warpedFilter) {
@@ -198,8 +199,8 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 	}
 }
 
-func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) {
-	ix4, sx4, iy4, _ := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
+func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) int {
+	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
 		sx := sx4 + beta*(k+4)
@@ -219,10 +220,6 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 			sx += alpha
 		}
 	}
-}
-
-func warpBlockSY(i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) int {
-	_, _, _, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	return sy4
 }
 
