@@ -832,6 +832,18 @@ func BenchmarkCursorCDF4StreamNoUpdate(b *testing.B) {
 	benchmarkCursorCDF4Stream(b, false)
 }
 
+func BenchmarkCursorCDFStream5(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 5)
+}
+
+func BenchmarkCursorCDFStream8(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 8)
+}
+
+func BenchmarkCursorCDFStream11(b *testing.B) {
+	benchmarkCursorCDFStreamSymbols(b, 11)
+}
+
 func benchmarkCursorCDF4Stream(b *testing.B, update bool) {
 	b.Helper()
 	src := benchStream()
@@ -848,6 +860,27 @@ func benchmarkCursorCDF4Stream(b *testing.B, update bool) {
 		}
 		for range benchSymbolsPerOp {
 			sum += c.ReadCDF4Unchecked(&cdf)
+		}
+	}
+	benchmarkReaderSink = sum
+}
+
+func benchmarkCursorCDFStreamSymbols(b *testing.B, symbols int) {
+	b.Helper()
+	src := benchStream()
+	sum := 0
+
+	b.ReportAllocs()
+	b.SetBytes(benchSymbolsPerOp)
+	for b.Loop() {
+		r := NewReader(src)
+		c := r.Cursor()
+		var cdf CDF
+		if err := cdf.InitUniform(symbols); err != nil {
+			b.Fatal(err)
+		}
+		for range benchSymbolsPerOp {
+			sum += c.ReadCDFUnchecked(&cdf)
 		}
 	}
 	benchmarkReaderSink = sum
