@@ -773,6 +773,46 @@ func TestPublicEncoderFrameModeParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderGlobalMotionParamsPayload(t *testing.T) {
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeInter, PrimaryRefFrame: av1.EncoderPrimaryRefNone}
+	var size av1.EncoderInterFrameSize
+	var refs av1.ReferenceState
+	for i := uint8(0); i < av1.InterRefsPerFrame; i++ {
+		size.RefFrameIdx[i] = i
+		refs.Frames[i] = av1.ReferenceFrame{Valid: true}
+	}
+	params := av1.EncoderDefaultGlobalMotionParams()
+	params.Ref[0] = av1.EncoderDefaultWarpedMotionParams()
+	params.Ref[0].Type = av1.EncoderGlobalMotionTranslation
+	params.Ref[0].Matrix[0] = 2 << 13
+	payloadSize, err := av1.EncoderGlobalMotionParamsPayloadSize(prefix, size, av1.TileInfo{AllowHighPrecisionMV: true}, &refs, params)
+	if err != nil {
+		t.Fatalf("EncoderGlobalMotionParamsPayloadSize: %v", err)
+	}
+	var buf [32]byte
+	payload, err := av1.AppendEncoderGlobalMotionParamsPayload(buf[:0], prefix, size, av1.TileInfo{AllowHighPrecisionMV: true}, &refs, params)
+	if err != nil {
+		t.Fatalf("AppendEncoderGlobalMotionParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseGlobalMotionParams(
+		payload,
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeInter, PrimaryRefFrame: av1.PrimaryRefNone},
+		av1.FrameSize{RefFrameIdx: size.RefFrameIdx},
+		av1.TileInfo{AllowHighPrecisionMV: true},
+		&refs,
+		av1.FrameModeParams{},
+	)
+	if err != nil {
+		t.Fatalf("ParseGlobalMotionParams: %v", err)
+	}
+	if parsed.Ref[0].Type != av1.GlobalMotionTranslation || parsed.Ref[0].Matrix[0] != params.Ref[0].Matrix[0] {
+		t.Fatalf("parsed global motion ref[0]=%+v", parsed.Ref[0])
+	}
+}
+
 func TestPublicEncoderLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]av1.EncoderOBU{
 		{Type: av1.OBUFrame, Payload: []byte{0xaa}},

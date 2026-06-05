@@ -113,6 +113,9 @@ type EncoderReferenceMode = internalencoder.ReferenceMode
 type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
 type EncoderSkipModeParams = internalencoder.SkipModeParams
 type EncoderFrameModeParams = internalencoder.FrameModeParams
+type EncoderGlobalMotionType = internalencoder.GlobalMotionType
+type EncoderWarpedMotionParams = internalencoder.WarpedMotionParams
+type EncoderGlobalMotionParams = internalencoder.GlobalMotionParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
 type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
@@ -216,6 +219,11 @@ const (
 	EncoderReferenceModeSingle   = internalencoder.ReferenceModeSingle
 	EncoderReferenceModeCompound = internalencoder.ReferenceModeCompound
 	EncoderReferenceModeSelect   = internalencoder.ReferenceModeSelect
+
+	EncoderGlobalMotionIdentity    = internalencoder.GlobalMotionIdentity
+	EncoderGlobalMotionTranslation = internalencoder.GlobalMotionTranslation
+	EncoderGlobalMotionRotZoom     = internalencoder.GlobalMotionRotZoom
+	EncoderGlobalMotionAffine      = internalencoder.GlobalMotionAffine
 )
 
 var (
@@ -1052,6 +1060,22 @@ func EncoderFrameModeParamsPayloadSize(seq EncoderSequenceHeader, prefix Encoder
 
 func AppendEncoderFrameModeParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) ([]byte, error) {
 	return internalencoder.AppendFrameModeParamsPayload(dst, seq, prefix, params)
+}
+
+func EncoderDefaultWarpedMotionParams() EncoderWarpedMotionParams {
+	return internalencoder.DefaultWarpedMotionParams()
+}
+
+func EncoderDefaultGlobalMotionParams() EncoderGlobalMotionParams {
+	return internalencoder.DefaultGlobalMotionParams()
+}
+
+func EncoderGlobalMotionParamsPayloadSize(prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, tiles TileInfo, refs *ReferenceState, params EncoderGlobalMotionParams) (int, error) {
+	return internalencoder.GlobalMotionParamsPayloadSize(prefix, size, tiles, refs, params)
+}
+
+func AppendEncoderGlobalMotionParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, tiles TileInfo, refs *ReferenceState, params EncoderGlobalMotionParams) ([]byte, error) {
+	return internalencoder.AppendGlobalMotionParamsPayload(dst, prefix, size, tiles, refs, params)
 }
 
 func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
