@@ -76,12 +76,13 @@ func IntraHeaderTemporalUnitForConfig(config Config, orderHint uint8) (IntraHead
 	unit := IntraHeaderTemporalUnit{
 		Sequence: seq,
 		Prefix: FrameHeaderPrefix{
-			FrameType:          FrameHeaderTypeKey,
-			ShowFrame:          true,
-			ErrorResilientMode: true,
-			ForceIntegerMV:     true,
-			OrderHint:          orderHint,
-			PrimaryRefFrame:    EncoderPrimaryRefNone,
+			FrameType:               FrameHeaderTypeKey,
+			ShowFrame:               true,
+			ErrorResilientMode:      true,
+			AllowScreenContentTools: config.Content == ContentScreen,
+			ForceIntegerMV:          true,
+			OrderHint:               orderHint,
+			PrimaryRefFrame:         EncoderPrimaryRefNone,
 		},
 		Size: IntraFrameSize{
 			UpscaledWidth:       seq.MaxFrameWidth,
@@ -581,13 +582,15 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 	}
 
 	prefix := FrameHeaderPrefix{
-		FrameType:          FrameHeaderTypeInter,
-		ShowFrame:          true,
-		ShowableFrame:      true,
-		ErrorResilientMode: true,
-		FrameSizeOverride:  true,
-		OrderHint:          orderHint,
-		PrimaryRefFrame:    EncoderPrimaryRefNone,
+		FrameType:               FrameHeaderTypeInter,
+		ShowFrame:               true,
+		ShowableFrame:           true,
+		ErrorResilientMode:      true,
+		AllowScreenContentTools: config.Content == ContentScreen,
+		ForceIntegerMV:          config.Content == ContentScreen,
+		FrameSizeOverride:       true,
+		OrderHint:               orderHint,
+		PrimaryRefFrame:         EncoderPrimaryRefNone,
 	}
 	if seq.FrameIDNumbersPresent {
 		prefix.FrameID = uint16(frameID & uint64((uint32(1)<<sequenceFrameIDBits(seq))-1))

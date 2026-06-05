@@ -762,6 +762,32 @@ func TestPublicEncoderWebRTCQuantizerPropagation(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCScreenContentHeaders(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Content:           av1.EncoderContentScreen,
+	}
+	key, state, err := av1.EncoderWebRTCKeyFrameTemporalUnitForState(cfg, av1.EncoderWebRTCState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if !key.Header.Prefix.AllowScreenContentTools || !key.Header.Prefix.ForceIntegerMV {
+		t.Fatalf("key prefix=%+v", key.Header.Prefix)
+	}
+	delta, _, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForState: %v", err)
+	}
+	if !delta.Headers[1].Prefix.AllowScreenContentTools || !delta.Headers[1].Prefix.ForceIntegerMV {
+		t.Fatalf("delta headers=%+v", delta.Headers)
+	}
+}
+
 func TestPublicEncoderWebRTCDependencyStructureStateForTemporalUnit(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},

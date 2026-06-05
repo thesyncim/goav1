@@ -39,6 +39,33 @@ func TestIntraHeaderTemporalUnitForConfig(t *testing.T) {
 	}
 }
 
+func TestIntraHeaderTemporalUnitForScreenContent(t *testing.T) {
+	cfg := Config{
+		Resolution: Resolution{Width: 640, Height: 360},
+		Content:    ContentScreen,
+	}
+	unit, err := IntraHeaderTemporalUnitForConfig(cfg, 3)
+	if err != nil {
+		t.Fatalf("IntraHeaderTemporalUnitForConfig: %v", err)
+	}
+	if !unit.Prefix.AllowScreenContentTools || !unit.Prefix.ForceIntegerMV {
+		t.Fatalf("screen prefix=%+v", unit.Prefix)
+	}
+	var buf [64]byte
+	payload, err := AppendFrameHeaderIntraPayload(buf[:0], unit.Sequence, unit.Prefix, unit.Size)
+	if err != nil {
+		t.Fatalf("AppendFrameHeaderIntraPayload: %v", err)
+	}
+	parsedSeq := parseEncoderSequenceHeader(t, unit.Sequence)
+	parsedPrefix, err := parser.ParseFrameHeaderPrefix(payload, parsedSeq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	if !parsedPrefix.AllowScreenContentTools || !parsedPrefix.ForceIntegerMV {
+		t.Fatalf("parsed screen prefix=%+v", parsedPrefix)
+	}
+}
+
 func TestAppendLowOverheadIntraHeaderTemporalUnitForConfig(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
@@ -596,6 +623,36 @@ func TestWebRTCTemporalUnitsPropagateCQPQuantizer(t *testing.T) {
 	}
 }
 
+func TestWebRTCTemporalUnitsPropagateScreenContentTools(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Content:           ContentScreen,
+	}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if !key.Header.Prefix.AllowScreenContentTools || !key.Header.Prefix.ForceIntegerMV {
+		t.Fatalf("key prefix=%+v", key.Header.Prefix)
+	}
+	delta, _, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForState: %v", err)
+	}
+	if !delta.Headers[0].Prefix.AllowScreenContentTools || !delta.Headers[0].Prefix.ForceIntegerMV ||
+		!delta.Headers[1].Prefix.AllowScreenContentTools || !delta.Headers[1].Prefix.ForceIntegerMV {
+		t.Fatalf("delta headers=%+v", delta.Headers)
+	}
+	for i := uint8(0); i < delta.FrameNum; i++ {
+		assertParsedDeltaHeader(t, delta.Headers[i])
+	}
+}
+
 func TestWebRTCDeltaFrameTemporalUnitForConfigRejectsInvalidState(t *testing.T) {
 	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
 	if _, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, ReferenceBufferState{}, FrameIDBufferState{}, 0, 1); !errors.Is(err, ErrInvalidFrame) {
@@ -704,6 +761,8 @@ func assertParsedDeltaHeader(t *testing.T, header InterHeaderFrame) {
 	}
 	if parsedPrefix.FrameType != parser.FrameTypeInter ||
 		parsedPrefix.OrderHint != header.Prefix.OrderHint ||
+		parsedPrefix.AllowScreenContentTools != header.Prefix.AllowScreenContentTools ||
+		parsedPrefix.ForceIntegerMV != header.Prefix.ForceIntegerMV ||
 		parsedSize.RefreshFrameFlags != header.Size.RefreshFrameFlags ||
 		parsedSize.UpscaledWidth != header.Size.UpscaledWidth ||
 		parsedSize.Height != header.Size.Height {
