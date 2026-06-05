@@ -225,7 +225,7 @@ func (r *Reader) ReadBitTrusted() uint8 {
 	if traceEntropyReads {
 		traceBoolRead(CDFProbTop/2, r.dif, uint32(r.rng), r.BitsRead())
 	}
-	shift := int32(16 - bits.Len32(nextRange))
+	shift := normShift16(nextRange)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -267,7 +267,7 @@ func (r *Reader) ReadBoolQ15(prob uint16) (uint8, error) {
 	if traceEntropyReads {
 		traceBoolRead(prob, r.dif, uint32(r.rng), r.BitsRead())
 	}
-	shift := int32(16 - bits.Len32(nextRange))
+	shift := normShift16(nextRange)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -709,7 +709,7 @@ func (r *Reader) readSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 	// arithmetic matches (*Reader).normalize exactly.
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -857,7 +857,7 @@ func (r *Reader) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) (i
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -948,7 +948,7 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1026,7 +1026,7 @@ func (c *Cursor) readCDF5Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1119,7 +1119,7 @@ func (c *Cursor) readCDF6Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1223,7 +1223,7 @@ func (c *Cursor) readCDF7Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1338,7 +1338,7 @@ func (c *Cursor) readCDF8Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1464,7 +1464,7 @@ func (c *Cursor) readCDF9Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1601,7 +1601,7 @@ func (c *Cursor) readCDF10Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1749,7 +1749,7 @@ func (c *Cursor) readCDF11Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -1846,7 +1846,7 @@ func (r *Reader) readCDF3Known(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -2429,7 +2429,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
@@ -2474,7 +2474,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 		}
 		dif -= lower << (ecWindow - 16)
 		rng = upper - lower
-		shift = int32(16 - bits.Len32(rng))
+		shift = normShift16(rng)
 		cnt -= shift
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng <<= uint(shift)
@@ -2519,7 +2519,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 			}
 			dif -= lower << (ecWindow - 16)
 			rng = upper - lower
-			shift = int32(16 - bits.Len32(rng))
+			shift = normShift16(rng)
 			cnt -= shift
 			dif = ((dif + 1) << uint(shift)) - 1
 			rng <<= uint(shift)
@@ -2564,7 +2564,7 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 				}
 				dif -= lower << (ecWindow - 16)
 				rng = upper - lower
-				shift = int32(16 - bits.Len32(rng))
+				shift = normShift16(rng)
 				cnt -= shift
 				dif = ((dif + 1) << uint(shift)) - 1
 				rng <<= uint(shift)
@@ -2619,7 +2619,7 @@ func (r *Reader) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif := r.dif - (lower << (ecWindow - 16))
 	rng := upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt := int32(r.cnt) - shift
 	r.cnt = int16(cnt)
 	r.dif = ((dif + 1) << uint(shift)) - 1
@@ -2669,7 +2669,7 @@ func (c *Cursor) readBinaryCDFKnown(values *[MaxSymbols + 1]uint16) int {
 	}
 	dif -= lower << (ecWindow - 16)
 	rng = upper - lower
-	shift := int32(16 - bits.Len32(rng))
+	shift := normShift16(rng)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
