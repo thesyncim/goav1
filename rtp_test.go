@@ -309,6 +309,22 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	if !header.StartsNewCodedVideoSequence {
 		t.Fatalf("key aggregation header=%+v", header)
 	}
+	directPayload, directPacketDescriptor, directMarker, directOK, directControl, directStructure, err := AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(
+		payloadBuf[:0],
+		descriptorBuf[:0],
+		keyFrame,
+		limits,
+		unit,
+		state,
+		0,
+		obuScratch[:],
+		packetScratch[:],
+		workScratch[:],
+	)
+	if err != nil || !directOK || directMarker || len(directPayload) != len(payload) || len(directPacketDescriptor) != len(descriptor) ||
+		directControl != control || directStructure != structure {
+		t.Fatalf("direct key payload=%d/%d descriptor=%d/%d marker=%v ok=%v control=%+v structure=%+v err=%v", len(directPayload), len(payload), len(directPacketDescriptor), len(descriptor), directMarker, directOK, directControl, directStructure, err)
+	}
 
 	unit, state, err = EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
 	if err != nil {
@@ -357,6 +373,22 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	if header.StartsNewCodedVideoSequence {
 		t.Fatalf("delta aggregation header=%+v", header)
 	}
+	directPayload, directPacketDescriptor, directMarker, directOK, directControl, _, err = AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(
+		payloadBuf[:0],
+		descriptorBuf[:0],
+		frame,
+		limits,
+		unit,
+		state,
+		1,
+		obuScratch[:],
+		packetScratch[:],
+		workScratch[:],
+	)
+	if err != nil || !directOK || !directMarker || len(directPayload) != len(payload) || len(directPacketDescriptor) != len(descriptor) ||
+		directControl.Settings.Type != EncoderFrameTypeDelta {
+		t.Fatalf("direct delta payload=%d/%d descriptor=%d/%d marker=%v ok=%v control=%+v err=%v", len(directPayload), len(payload), len(directPacketDescriptor), len(descriptor), directMarker, directOK, directControl, err)
+	}
 	if _, _, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, EncoderWebRTCState{}, 1); err != ErrEncoderInvalidFrame {
 		t.Fatalf("missing delta structure err=%v want %v", err, ErrEncoderInvalidFrame)
 	}
@@ -399,6 +431,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		_, _ = AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(descriptorBuf[:0], unit, state, 1, true, true, false)
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitRTPPacketSize(&p, unit, state, 1)
 		_, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitRTPPacket(payloadBuf[:0], descriptorBuf[:0], &p, unit, state, 1)
+		_, _, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadBuf[:0], descriptorBuf[:0], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
 	})
 	if allocs != 0 {
 		t.Fatalf("scheduled picture RTP helper allocated: %f", allocs)
