@@ -2000,6 +2000,10 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 	pos := 0
 	tellOffs := int32(0)
 	posLoaded := false
+	c0 := uint32(values[0])
+	c1 := uint32(values[1])
+	c2 := uint32(values[2])
+	count := values[4]
 
 	level := uint8(0)
 	for range 4 {
@@ -2007,9 +2011,6 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		rngHi := rangeValue >> 8
 		coded := dif >> (ecWindow - 16)
 		upper := rangeValue
-		c0 := uint32(values[0])
-		c1 := uint32(values[1])
-		c2 := uint32(values[2])
 		lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
 		symbol := uint8(0)
 		if coded < lower {
@@ -2049,7 +2050,6 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 			}
 			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 		}
-		count := values[4]
 		rate := uint(5 + (count >> 4))
 		if symbol > 0 {
 			c0 += (CDFProbTop - c0) >> rate
@@ -2066,11 +2066,8 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		} else {
 			c2 -= c2 >> rate
 		}
-		values[0] = uint16(c0)
-		values[1] = uint16(c1)
-		values[2] = uint16(c2)
 		if count < MaxCDFCount {
-			values[4] = count + 1
+			count++
 		}
 		level += symbol
 		if symbol != 3 {
@@ -2085,6 +2082,10 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
+	values[0] = uint16(c0)
+	values[1] = uint16(c1)
+	values[2] = uint16(c2)
+	values[4] = count
 	return level
 }
 
