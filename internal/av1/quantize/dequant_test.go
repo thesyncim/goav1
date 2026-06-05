@@ -690,3 +690,21 @@ func BenchmarkDequantizeBlockEOB16(b *testing.B) {
 		_ = DequantizeBlockScaledBitDepthEOB(dst, height, coeff, height, scan, 16, width, height, q, 2, 8)
 	}
 }
+
+func BenchmarkDequantizeBlockEOB16Trusted(b *testing.B) {
+	const width, height = 64, 64
+	coeff := make([]int16, width*height)
+	scan := make([]int16, width*height)
+	for i := range scan {
+		scan[i] = int16(i)
+	}
+	for i := 0; i < 16; i++ {
+		coeff[i] = int16(i + 1)
+	}
+	dst := make([]int32, width*height)
+	q := Quantizer{DC: 80, AC: 97}
+	b.ReportAllocs()
+	for b.Loop() {
+		DequantizeBlockScaledBitDepthEOBTrusted(dst, height, coeff, height, scan, 16, width, height, q, 2, 8)
+	}
+}

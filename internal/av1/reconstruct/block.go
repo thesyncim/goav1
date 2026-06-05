@@ -170,17 +170,13 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	useSparseDequant := eob > 0 && len(scan) >= eob && eob*4 <= dequantLen
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
-			if err := quantize.DequantizeBlockScaledQMatrixBitDepthEOB(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
-				return ErrInvalidBlock
-			}
+			quantize.DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else {
 		if useSparseDequant {
-			if err := quantize.DequantizeBlockScaledBitDepthEOB(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth); err != nil {
-				return ErrInvalidBlock
-			}
+			quantize.DequantizeBlockScaledBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}

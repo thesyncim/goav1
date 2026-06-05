@@ -159,6 +159,20 @@ func DequantizeBlockScaledQMatrixBitDepthEOB(dst []int32, dstStride int, coeff [
 	return dequantizeBlockScaledEOB(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
 }
 
+// DequantizeBlockScaledBitDepthEOBTrusted is the decoder hot-path variant of
+// DequantizeBlockScaledBitDepthEOB for callers that already validated geometry,
+// scratch capacity, scan order, q, txScale, and bitDepth.
+func DequantizeBlockScaledBitDepthEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
+	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, nil, bitDepth)
+}
+
+// DequantizeBlockScaledQMatrixBitDepthEOBTrusted is
+// DequantizeBlockScaledBitDepthEOBTrusted with inverse quantization matrix
+// weighting.
+func DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
+	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
+}
+
 func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if width <= 0 || height <= 0 {
 		return ErrInvalidQuantizer
@@ -280,6 +294,31 @@ func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffSt
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
 	return nil
+}
+
+func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
+	samples := width * height
+	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
+	if dstStride == height {
+		clear(dst[:samples])
+	} else {
+		for col := range width {
+			clear(dst[col*dstStride : col*dstStride+height])
+		}
+	}
+	for i := 0; i < eob; i++ {
+		pos := int(scan[i])
+		col := pos / height
+		row := pos - col*height
+		scale := q.AC
+		if pos == 0 {
+			scale = q.DC
+		}
+		if iqMatrix != nil {
+			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+		}
+		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
+	}
 }
 
 // dequantScalar dequantizes a single coefficient. It is the canonical scalar
