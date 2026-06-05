@@ -85,18 +85,15 @@ func (b *FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoef
 }
 
 type frameWorkReconQuantCache struct {
-	quantValid  bool
-	currentQ    uint8
-	segmentID   uint8
-	qPlane      quantize.Plane
-	quantizer   quantize.Quantizer
-	lossless    bool
-	matrixValid bool
-	matrixPlane quantize.Plane
-	matrixSize  transform.Size
-	matrixType  transform.Type
-	matrixLoss  bool
-	matrix      []uint16
+	matrix        []uint16
+	quantizer     [3]quantize.Quantizer
+	quantKey      [3]uint16
+	matrixPlane   quantize.Plane
+	matrixSize    transform.Size
+	matrixType    transform.Type
+	losslessPlane uint8
+	matrixValid   bool
+	matrixLoss    bool
 }
 
 // reconstructBlockCoeffCore is the checked by-pointer reconstruction seam used
@@ -196,46 +193,53 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 }
 
 func (b *FrameWorkBatch) cachedBlockQuantizer(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
-	if cache != nil &&
-		cache.quantValid &&
-		cache.currentQ == currentQIndex &&
-		cache.segmentID == segmentID &&
-		cache.qPlane == qPlane {
-		return cache.quantizer, cache.lossless, nil
+	idx := int(qPlane)
+	key := frameWorkReconQuantKey(currentQIndex, segmentID)
+	if cache != nil && uint(idx) < uint(len(cache.quantKey)) &&
+		cache.quantKey[idx] == key {
+		return cache.quantizer[idx], cache.losslessPlane&(1<<uint(idx)) != 0, nil
 	}
 	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
 	if err != nil {
 		return quantize.Quantizer{}, false, err
 	}
-	if cache != nil {
-		cache.quantValid = true
-		cache.currentQ = currentQIndex
-		cache.segmentID = segmentID
-		cache.qPlane = qPlane
-		cache.quantizer = q
-		cache.lossless = lossless
+	if cache != nil && uint(idx) < uint(len(cache.quantKey)) {
+		cache.quantKey[idx] = key
+		cache.quantizer[idx] = q
+		if lossless {
+			cache.losslessPlane |= 1 << uint(idx)
+		} else {
+			cache.losslessPlane &^= 1 << uint(idx)
+		}
 	}
 	return q, lossless, nil
 }
 
 func (b *FrameWorkBatch) cachedBlockQuantizerTrusted(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
-	if cache.quantValid &&
-		cache.currentQ == currentQIndex &&
-		cache.segmentID == segmentID &&
-		cache.qPlane == qPlane {
-		return cache.quantizer, cache.lossless, nil
+	idx := int(qPlane)
+	key := frameWorkReconQuantKey(currentQIndex, segmentID)
+	if uint(idx) < uint(len(cache.quantKey)) &&
+		cache.quantKey[idx] == key {
+		return cache.quantizer[idx], cache.losslessPlane&(1<<uint(idx)) != 0, nil
 	}
 	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
 	if err != nil {
 		return quantize.Quantizer{}, false, err
 	}
-	cache.quantValid = true
-	cache.currentQ = currentQIndex
-	cache.segmentID = segmentID
-	cache.qPlane = qPlane
-	cache.quantizer = q
-	cache.lossless = lossless
+	if uint(idx) < uint(len(cache.quantKey)) {
+		cache.quantKey[idx] = key
+		cache.quantizer[idx] = q
+		if lossless {
+			cache.losslessPlane |= 1 << uint(idx)
+		} else {
+			cache.losslessPlane &^= 1 << uint(idx)
+		}
+	}
 	return q, lossless, nil
+}
+
+func frameWorkReconQuantKey(currentQIndex uint8, segmentID uint8) uint16 {
+	return 0x8000 | uint16(segmentID)<<8 | uint16(currentQIndex)
 }
 
 func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
