@@ -137,6 +137,7 @@ func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]in
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
+		row := iy * ref.Stride
 		sx := sx4 + beta*(k+4)
 		for l := -4; l < 4; l++ {
 			ix := ix4 + l - 3
@@ -146,9 +147,21 @@ func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]in
 			}
 			coeffs := warpedFilter[offs]
 			sum := 1 << offsetBitsHoriz
-			for m := range filterTaps {
-				sampleX := clampInt(ix+m, 0, ref.Width-1)
-				sum += int(ref.Pix[iy*ref.Stride+sampleX]) * int(coeffs[m])
+			if ix >= 0 && ix+filterTaps <= ref.Width {
+				base := row + ix
+				sum += int(ref.Pix[base+0]) * int(coeffs[0])
+				sum += int(ref.Pix[base+1]) * int(coeffs[1])
+				sum += int(ref.Pix[base+2]) * int(coeffs[2])
+				sum += int(ref.Pix[base+3]) * int(coeffs[3])
+				sum += int(ref.Pix[base+4]) * int(coeffs[4])
+				sum += int(ref.Pix[base+5]) * int(coeffs[5])
+				sum += int(ref.Pix[base+6]) * int(coeffs[6])
+				sum += int(ref.Pix[base+7]) * int(coeffs[7])
+			} else {
+				for m := range filterTaps {
+					sampleX := clampInt(ix+m, 0, ref.Width-1)
+					sum += int(ref.Pix[row+sampleX]) * int(coeffs[m])
+				}
 			}
 			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
 			sx += alpha
@@ -212,9 +225,20 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 			}
 			coeffs := warpedFilter[offs]
 			sum := 1 << offsetBitsHoriz
-			for m := range filterTaps {
-				sampleX := clampInt(ix+m, 0, ref.Width-1)
-				sum += int(loadHighBDSample(ref, sampleX, iy)) * int(coeffs[m])
+			if ix >= 0 && ix+filterTaps <= ref.Width {
+				sum += int(loadHighBDSample(ref, ix+0, iy)) * int(coeffs[0])
+				sum += int(loadHighBDSample(ref, ix+1, iy)) * int(coeffs[1])
+				sum += int(loadHighBDSample(ref, ix+2, iy)) * int(coeffs[2])
+				sum += int(loadHighBDSample(ref, ix+3, iy)) * int(coeffs[3])
+				sum += int(loadHighBDSample(ref, ix+4, iy)) * int(coeffs[4])
+				sum += int(loadHighBDSample(ref, ix+5, iy)) * int(coeffs[5])
+				sum += int(loadHighBDSample(ref, ix+6, iy)) * int(coeffs[6])
+				sum += int(loadHighBDSample(ref, ix+7, iy)) * int(coeffs[7])
+			} else {
+				for m := range filterTaps {
+					sampleX := clampInt(ix+m, 0, ref.Width-1)
+					sum += int(loadHighBDSample(ref, sampleX, iy)) * int(coeffs[m])
+				}
 			}
 			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
 			sx += alpha
