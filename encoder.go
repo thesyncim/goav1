@@ -109,6 +109,15 @@ type EncoderWebRTCPictureTemporalUnitRTPScratchSize struct {
 	MaxDescriptorBytes int
 }
 
+type EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize struct {
+	FrameOBUBytes      int
+	FrameSpans         int
+	PacketSpans        int
+	Packetizer         RTPPacketizerScratchSize
+	MaxPayloadBytes    int
+	MaxDescriptorBytes int
+}
+
 type EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
 	PacketCount     int
 	PayloadBytes    int
@@ -435,6 +444,55 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesOBU(dst []byte, spans []Encoder
 		}
 	}
 	return out, int(frameNum), nil
+}
+
+func EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, error) {
+	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum == 0 || len(framePayloads) != int(frameNum) {
+		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, ErrEncoderInvalidFrame
+	}
+	frameOBUBytes, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
+	size := EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{
+		FrameOBUBytes: frameOBUBytes,
+		FrameSpans:    int(frameNum),
+	}
+	if err != nil {
+		return size, err
+	}
+	if cap(frameOBUScratch)-len(frameOBUScratch) < frameOBUBytes {
+		return size, ErrEncoderShortBuffer
+	}
+
+	frameOBUs := frameOBUScratch[:0]
+	for i := uint8(0); i < frameNum; i++ {
+		frameStart := len(frameOBUs)
+		nextFrameOBUs, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
+		if err != nil {
+			return size, err
+		}
+		frameOBUs = nextFrameOBUs
+		scratch, err := EncoderWebRTCPictureTemporalUnitRTPScratchLen(frameOBUs[frameStart:], limits, unit, state, i, obuScratch)
+		if err != nil {
+			return size, err
+		}
+		size.PacketSpans += scratch.Packetizer.Packets
+		if scratch.Packetizer.OBUs > size.Packetizer.OBUs {
+			size.Packetizer.OBUs = scratch.Packetizer.OBUs
+		}
+		if scratch.Packetizer.Packets > size.Packetizer.Packets {
+			size.Packetizer.Packets = scratch.Packetizer.Packets
+		}
+		if scratch.Packetizer.Work > size.Packetizer.Work {
+			size.Packetizer.Work = scratch.Packetizer.Work
+		}
+		if scratch.MaxPayloadBytes > size.MaxPayloadBytes {
+			size.MaxPayloadBytes = scratch.MaxPayloadBytes
+		}
+		if scratch.MaxDescriptorBytes > size.MaxDescriptorBytes {
+			size.MaxDescriptorBytes = scratch.MaxDescriptorBytes
+		}
+	}
+	return size, nil
 }
 
 func EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {

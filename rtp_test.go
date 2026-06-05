@@ -443,6 +443,7 @@ func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 		_, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUBuf[:0], frame, unit, state, 1)
 		_, _ = EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads[:], unit, state)
 		_, _, _ = AppendEncoderWebRTCPictureTemporalUnitFramesOBU(frameRTPBuf[:0], obuSpans[:], framePayloads[:], unit, state)
+		_, _ = EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads[:], limits, unit, state, frameRTPBuf[:0], obuScratch[:])
 		_, _, _, _ = EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(frame, limits, unit, state, 1, frameRTPBuf[:0], obuScratch[:], packetScratch[:], workScratch[:])
 		_, _, _, _, _, _, _ = AppendEncoderWebRTCPictureTemporalUnitFrameRTPPackets(payloadBuf[:0], descriptorBuf[:0], spans[:], frameRTPBuf[:0], frame, limits, unit, state, 1, obuScratch[:], packetScratch[:], workScratch[:])
 		_, _ = EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads[:], limits, unit, state, frameRTPBuf[:0], obuScratch[:], packetScratch[:], workScratch[:])
@@ -691,12 +692,35 @@ func TestPublicRTPScheduledPictureFramesRTPPackets(t *testing.T) {
 	var packetScratch [8]RTPPacketPlan
 	var workScratch [8]RTPPacketPlan
 	var frameOBUScratch [64]byte
+	partialScratch, err := EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, state, nil, nil)
+	if !errors.Is(err, ErrEncoderShortBuffer) || partialScratch.FrameOBUBytes == 0 || partialScratch.FrameSpans != 2 ||
+		partialScratch.Packetizer != (RTPPacketizerScratchSize{}) {
+		t.Fatalf("partial scratch=%+v err=%v", partialScratch, err)
+	}
+	countOnlyScratch, err := EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, state, frameOBUScratch[:0], nil)
+	if err != nil {
+		t.Fatalf("count-only scratch: %v", err)
+	}
+	if countOnlyScratch.FrameOBUBytes != partialScratch.FrameOBUBytes || countOnlyScratch.FrameSpans != 2 ||
+		countOnlyScratch.Packetizer.OBUs != 1 || countOnlyScratch.Packetizer.Packets != 0 || countOnlyScratch.PacketSpans != 0 {
+		t.Fatalf("count-only scratch=%+v partial=%+v", countOnlyScratch, partialScratch)
+	}
+	fullScratch, err := EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, state, frameOBUScratch[:0], obuScratch[:])
+	if err != nil {
+		t.Fatalf("full scratch: %v", err)
+	}
+	if fullScratch.FrameOBUBytes != partialScratch.FrameOBUBytes || fullScratch.FrameSpans != 2 ||
+		fullScratch.Packetizer.OBUs != 1 || fullScratch.Packetizer.Packets == 0 ||
+		fullScratch.PacketSpans == 0 || fullScratch.MaxPayloadBytes != limits.MaxPayloadLen || fullScratch.MaxDescriptorBytes == 0 {
+		t.Fatalf("full scratch=%+v partial=%+v", fullScratch, partialScratch)
+	}
 	size, err := EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads, limits, unit, state, frameOBUScratch[:0], obuScratch[:], packetScratch[:], workScratch[:])
 	if err != nil {
 		t.Fatalf("EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize: %v", err)
 	}
-	if size.FrameOBUBytes == 0 || size.RTP.PacketCount < 2 || size.RTP.PayloadBytes == 0 || size.RTP.DescriptorBytes == 0 {
-		t.Fatalf("size=%+v", size)
+	if size.FrameOBUBytes != fullScratch.FrameOBUBytes || size.RTP.PacketCount != fullScratch.PacketSpans ||
+		size.RTP.PayloadBytes == 0 || size.RTP.DescriptorBytes == 0 {
+		t.Fatalf("size=%+v fullScratch=%+v", size, fullScratch)
 	}
 
 	frameOBUBuf := make([]byte, 0, size.FrameOBUBytes)
