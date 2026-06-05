@@ -341,6 +341,14 @@ func BenchmarkCoeffEntropyContextTXBContextTrustedChroma(b *testing.B) {
 	benchmarkCoeffEntropyContextTXBContextTrusted(b, 1)
 }
 
+func BenchmarkCoeffEntropyContextSetTXBContextKnownFull(b *testing.B) {
+	benchmarkCoeffEntropyContextSetTXBContextKnown(b, 4, 4)
+}
+
+func BenchmarkCoeffEntropyContextSetTXBContextKnownClipped(b *testing.B) {
+	benchmarkCoeffEntropyContextSetTXBContextKnown(b, 2, 3)
+}
+
 func benchmarkCoeffEntropyContextTXBContextTrusted(b *testing.B, plane int) {
 	req := coeffContextReq(plane, BlockSize16x16, TransformSize4x4, 4, 5)
 	txDims, ok := req.Size.Dimensions()
@@ -364,6 +372,22 @@ func benchmarkCoeffEntropyContextTXBContextTrusted(b *testing.B, plane int) {
 		sum += int(txb.TXBSkipContext) + int(txb.DCSignContext)
 	}
 	benchmarkCoeffContextSink = sum
+}
+
+func benchmarkCoeffEntropyContextSetTXBContextKnown(b *testing.B, visibleW int, visibleH int) {
+	req := coeffContextReq(0, BlockSize16x16, TransformSize4x4, 4, 5)
+	txDims, ok := req.Size.Dimensions()
+	if !ok {
+		b.Fatal("invalid transform size")
+	}
+	var ctx CoeffEntropyContext
+	value := uint8(CoeffContextMask + (2 << CoeffContextBits))
+
+	b.ReportAllocs()
+	for b.Loop() {
+		ctx.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+	}
+	benchmarkCoeffContextSink = int(ctx.Above[0][4]) + int(ctx.Left[0][5])
 }
 
 var benchmarkCoeffContextSink int
