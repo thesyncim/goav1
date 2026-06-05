@@ -1980,6 +1980,125 @@ func TestPublicWebRTCEncoderPictureSamplePlanes(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderPictureFramesRTPPackets(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 300})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	framePayloads := [...][]byte{
+		{0x10, 0x11, 0x12, 0x13},
+		{0x20, 0x21, 0x22, 0x23},
+	}
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 64}
+
+	var frameOBUProbe [64]byte
+	firstSize, firstUnit, err := enc.PictureTemporalUnitFramesRTPScratchSize(framePayloads[:], limits, false, frameOBUProbe[:0], nil)
+	if err != nil {
+		t.Fatalf("PictureTemporalUnitFramesRTPScratchSize first pass: %v", err)
+	}
+	if !firstUnit.Key || firstSize.FrameOBUBytes == 0 || firstSize.Packetizer.OBUs == 0 || firstSize.PacketSpans != 0 {
+		t.Fatalf("first size=%+v unit=%+v", firstSize, firstUnit)
+	}
+
+	var obuScratch [4]av1.RTPPacketizerOBU
+	size, unit, err := enc.PictureTemporalUnitFramesRTPScratchSize(framePayloads[:], limits, false, frameOBUProbe[:0], obuScratch[:firstSize.Packetizer.OBUs])
+	if err != nil {
+		t.Fatalf("PictureTemporalUnitFramesRTPScratchSize full pass: %v", err)
+	}
+	if unit != firstUnit || size.FrameSpans != 2 || size.PacketSpans != 2 ||
+		size.Packetizer.Packets == 0 || size.MaxPayloadBytes != limits.MaxPayloadLen ||
+		size.MaxDescriptorBytes <= av1.RTPDependencyDescriptorMandatorySize {
+		t.Fatalf("size=%+v unit=%+v first=%+v", size, unit, firstUnit)
+	}
+
+	var frameOBUs [64]byte
+	var frameSpans [2]av1.EncoderWebRTCFrameRTPPacketSpan
+	var packetSpans [4]av1.EncoderWebRTCRTPPacketSpan
+	var packets [4]av1.RTPPacketPlan
+	var work [4]av1.RTPPacketPlan
+	scratch, err := av1.BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size, av1.EncoderWebRTCPictureTemporalUnitFramesRTPScratch{
+		FrameOBU:    frameOBUs[:0],
+		FrameSpans:  frameSpans[:],
+		PacketSpans: packetSpans[:],
+		OBUs:        obuScratch[:],
+		Packets:     packets[:],
+		Work:        work[:],
+	})
+	if err != nil {
+		t.Fatalf("BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch: %v", err)
+	}
+	initialState := enc.State()
+	var payloads [128]byte
+	var tinyDescriptor [1]byte
+	shortFrameOBUs, shortPayloads, shortDescriptors, _, _, _, err := enc.AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloads[:0], tinyDescriptor[:0:1], scratch, framePayloads[:], limits, false)
+	if err == nil || !errors.Is(err, av1.ErrEncoderShortBuffer) && !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short descriptor err=%v", err)
+	}
+	if len(shortFrameOBUs) != 0 || len(shortPayloads) != 0 || len(shortDescriptors) != 0 || enc.State() != initialState {
+		t.Fatalf("short frameOBUs=% x payloads=% x descriptors=% x state=%+v want=%+v", shortFrameOBUs, shortPayloads, shortDescriptors, enc.State(), initialState)
+	}
+
+	scratch, err = av1.BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size, av1.EncoderWebRTCPictureTemporalUnitFramesRTPScratch{
+		FrameOBU:    frameOBUs[:0],
+		FrameSpans:  frameSpans[:],
+		PacketSpans: packetSpans[:],
+		OBUs:        obuScratch[:],
+		Packets:     packets[:],
+		Work:        work[:],
+	})
+	if err != nil {
+		t.Fatalf("BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch retry: %v", err)
+	}
+	var descriptors [128]byte
+	frameOBUOut, rtpPayloads, descriptorOut, frameCount, packetCount, gotUnit, err := enc.AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloads[:0], descriptors[:0], scratch, framePayloads[:], limits, false)
+	if err != nil {
+		t.Fatalf("AppendPictureTemporalUnitFramesRTPPacketsWithScratch: %v", err)
+	}
+	if gotUnit != unit || frameCount != 2 || packetCount != 2 || len(frameOBUOut) != size.FrameOBUBytes ||
+		len(rtpPayloads) == 0 || len(descriptorOut) <= av1.RTPDependencyDescriptorMandatorySize ||
+		enc.State().NextFrameID != 302 || enc.State().DeltaPictureIndex != 1 {
+		t.Fatalf("frameOBUs=%d/%d payloads=%d descriptors=%d frames=%d packets=%d unit=%+v sized=%+v state=%+v", len(frameOBUOut), size.FrameOBUBytes, len(rtpPayloads), len(descriptorOut), frameCount, packetCount, gotUnit, unit, enc.State())
+	}
+	header, _, err := av1.ParseRTPAggregationHeader(rtpPayloads[packetSpans[0].PayloadOffset:])
+	if err != nil {
+		t.Fatalf("ParseRTPAggregationHeader first packet: %v", err)
+	}
+	if header.ElementCount == 0 || !packetSpans[1].Marker {
+		t.Fatalf("header=%+v packetSpans=%+v", header, packetSpans[:packetCount])
+	}
+
+	base, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 300})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder alloc base: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		local := base
+		localScratch, bindErr := av1.BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size, av1.EncoderWebRTCPictureTemporalUnitFramesRTPScratch{
+			FrameOBU:    frameOBUs[:0],
+			FrameSpans:  frameSpans[:],
+			PacketSpans: packetSpans[:],
+			OBUs:        obuScratch[:],
+			Packets:     packets[:],
+			Work:        work[:],
+		})
+		if bindErr != nil {
+			t.Fatal(bindErr)
+		}
+		_, _, _, _, _, _, _ = local.AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloads[:0], descriptors[:0], localScratch, framePayloads[:], limits, false)
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCEncoder AppendPictureTemporalUnitFramesRTPPacketsWithScratch allocated: %f", allocs)
+	}
+}
+
 func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 	got, err := av1.EncoderWebRTCTemporalIDForDeltaPicture(3, 4)
 	if err != nil {

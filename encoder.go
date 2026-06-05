@@ -1067,6 +1067,38 @@ func (e *WebRTCEncoder) LoadPictureSamplePlanes(scratch EncoderWebRTCPictureSamp
 	return planes, unit, nil
 }
 
+func (e *WebRTCEncoder) PictureTemporalUnitFramesRTPScratchSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, EncoderWebRTCPictureTemporalUnit, error) {
+	if e == nil {
+		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	size, unit, _, err := EncoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads, limits, e.config, e.state, forceKeyFrame, frameOBUScratch, obuScratch)
+	if err != nil {
+		return size, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	return size, unit, nil
+}
+
+func (e *WebRTCEncoder) AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit EncoderWebRTCPictureTemporalUnit, err error) {
+	if e == nil {
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+	}
+	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, next, err := AppendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(
+		payloadDst,
+		descriptorDst,
+		scratch,
+		framePayloads,
+		limits,
+		e.config,
+		e.state,
+		forceKeyFrame,
+	)
+	if err != nil {
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, err
+	}
+	e.state = next
+	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, nil
+}
+
 func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, error) {
 	if e == nil {
 		return EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
