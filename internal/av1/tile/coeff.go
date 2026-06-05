@@ -809,8 +809,8 @@ func (s *DecodeState) ReadCoefficientsTXB(cdfs *CoeffCDFs, req TXBDecodeRequest,
 	// input but keep these one-time array indexes check-free.
 	txCtx := int(geo.txCtx)
 	txBR := int(geo.txBRCtx)
-	if txCtx < 0 || txCtx >= CoeffTxSizeContexts || txBR < 0 || txBR >= CoeffTxSizeContexts ||
-		!req.Plane.Valid() || cdfs == nil || req.DCSignContext >= 3 ||
+	if cdfs == nil || txCtx >= CoeffTxSizeContexts || txBR >= CoeffTxSizeContexts ||
+		req.DCSignContext >= 3 ||
 		req.EOBMultiContext >= maxEOBFlagContexts {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
