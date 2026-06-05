@@ -14,7 +14,7 @@ raw="$tmp/compiler.txt"
 escapes="$tmp/hot-escapes.txt"
 bce="$tmp/hot-bce.txt"
 
-packages="./internal/av1/entropy ./internal/av1/tile ./internal/av1/threading ./internal/av1/decoder ./internal/av1/motion ./internal/av1/transform ./internal/av1/cdef ./internal/av1/prediction ./internal/av1/reconstruct ./internal/av1/loopfilter ./internal/av1/restoration ."
+packages="./internal/av1/entropy ./internal/av1/tile ./internal/av1/threading ./internal/av1/decoder ./internal/av1/encoder ./internal/av1/motion ./internal/av1/transform ./internal/av1/cdef ./internal/av1/prediction ./internal/av1/reconstruct ./internal/av1/loopfilter ./internal/av1/restoration ."
 
 go build -gcflags='all=-m=2 -d=ssa/check_bce/debug=1' $packages >"$raw" 2>&1
 
@@ -24,12 +24,12 @@ awk '
 	next
 }
 own &&
-$0 ~ /^(decode|decoder|internal\/av1\/(entropy|tile|threading|decoder|motion|transform|cdef|prediction|reconstruct|loopfilter|restoration)\/)/ &&
+$0 ~ /^(decode|decoder|encoder|rtp|internal\/av1\/(entropy|tile|threading|decoder|encoder|motion|transform|cdef|prediction|reconstruct|loopfilter|restoration)\/)/ &&
 $0 ~ /(make\(|new\(|func literal|moved to heap)/ &&
 $0 ~ /(escapes to heap|moved to heap)/ {
 	print
 }
-' "$raw" | sort -u >"$escapes"
+' "$raw" | sed -E 's/^([^:]+):[0-9]+:[0-9]+:/\1:*:*:/' | sort -u >"$escapes"
 
 awk '
 /^# / {
@@ -37,7 +37,7 @@ awk '
 	next
 }
 own &&
-$0 ~ /^(decode|decoder|internal\/av1\/(entropy|tile|threading|decoder|motion|transform|cdef|prediction|reconstruct|loopfilter|restoration)\/)/ &&
+$0 ~ /^(decode|decoder|encoder|rtp|internal\/av1\/(entropy|tile|threading|decoder|encoder|motion|transform|cdef|prediction|reconstruct|loopfilter|restoration)\/)/ &&
 $0 ~ /Found (IsInBounds|IsSliceInBounds|IsSliceInBounds64)/ {
 	print
 }
