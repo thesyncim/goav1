@@ -120,6 +120,7 @@ type TXBDecodeRequest struct {
 
 	skipNonZeroCoeffClear bool
 	trustedScan           bool
+	knownNonZero          bool
 }
 
 type TXBDecodeResult struct {
@@ -804,19 +805,21 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	}
 	levelsScratch = levelsScratch[:scratchLen]
 
-	allZero := req.TXBSkip
-	if !req.TXBSkipKnown {
-		var err error
-		allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
-		if err != nil {
-			return TXBDecodeResult{}, err
+	if !req.knownNonZero {
+		allZero := req.TXBSkip
+		if !req.TXBSkipKnown {
+			var err error
+			allZero, err = s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
+			if err != nil {
+				return TXBDecodeResult{}, err
+			}
 		}
-	}
-	if allZero {
-		if !req.SkipAllZeroCoeffClear {
-			clear(coeffs[:maxEOB])
+		if allZero {
+			if !req.SkipAllZeroCoeffClear {
+				clear(coeffs[:maxEOB])
+			}
+			return TXBDecodeResult{AllZero: true}, nil
 		}
-		return TXBDecodeResult{AllZero: true}, nil
 	}
 	if !req.skipNonZeroCoeffClear {
 		clear(coeffs[:maxEOB])

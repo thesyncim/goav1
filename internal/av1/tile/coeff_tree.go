@@ -572,6 +572,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	req.EOBMultiContext = eobCtx
 	req.TXBSkipKnown = true
 	req.TXBSkip = allZero
+	req.knownNonZero = !allZero
 	req.skipNonZeroCoeffClear = req.SkipAllZeroCoeffClear
 	req.coeffDirtyPos = &scratch.InverseScan
 	req.coeffDirtyLen = &scratch.coeffDirtyLen
