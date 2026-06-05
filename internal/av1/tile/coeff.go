@@ -199,11 +199,19 @@ type coeffPosHot struct {
 	br2DOffset    int8
 }
 
+type coeffScanHot struct {
+	pos           uint16
+	padded        uint16
+	lower2DOffset int8
+	br2DOffset    int8
+}
+
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
 // valid coefficient index of size, indexed in [0, maxEOB).
 var coeffPosTable [transformSizeCount][]coeffPos
 var coeffPosHotTable [transformSizeCount][]coeffPosHot
 var coeffScanTable [transformSizeCount][3][]int16
+var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
 
 func init() {
 	for size := range transformSizeCount {
@@ -295,6 +303,20 @@ func init() {
 			inverse := make([]int16, maxEOB)
 			if err := transform.FillDefaultScan(scan, inverse, txSize, class); err == nil {
 				coeffScanTable[size][class] = scan
+				if class == transform.Class2D {
+					scanHot := make([]coeffScanHot, maxEOB)
+					for c, rawPos := range scan {
+						pos := int(rawPos)
+						p := hotPositions[pos]
+						scanHot[c] = coeffScanHot{
+							pos:           uint16(pos),
+							padded:        p.padded,
+							lower2DOffset: p.lower2DOffset,
+							br2DOffset:    p.br2DOffset,
+						}
+					}
+					coeffScanHotTable[size][class] = scanHot
+				}
 			}
 		}
 	}
@@ -847,6 +869,15 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	}
 	hotPosSlice = hotPosSlice[:maxEOB]
 	trustedScan := req.trustedScan
+	useScanHot := false
+	var scanHotSlice []coeffScanHot
+	if trustedScan && req.Class == transform.Class2D {
+		scanHotSlice = coeffScanHotTable[req.Size][req.Class]
+		if len(scanHotSlice) >= maxEOB {
+			scanHotSlice = scanHotSlice[:maxEOB]
+			useScanHot = true
+		}
+	}
 	// Hoist the CoeffBase/CoeffBR CDF-array selection out of the per-coefficient
 	// loop. CoeffBaseCDF/CoeffBRCDF re-derive the transform-size context (a
 	// Dimensions() lookup) and re-validate the plane on every symbol read; here
@@ -1010,51 +1041,97 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	if useDirtyScanList && trackLevelDirty && req.Class == transform.Class2D {
 		stride := int(geo.stride)
 		if cdfUpdate {
-			for c := eobPos - 2; c >= 0; c-- {
-				pos := int(scan[c])
-				if !trustedScan && (pos < 0 || pos >= maxEOB) {
-					reader.CommitStateTo(&s.Reader)
-					return TXBDecodeResult{}, ErrInvalidDecodeState
-				}
-				p := hotPosSlice[pos]
-				padded := int(p.padded)
-				ctx := 0
-				if pos != 0 {
-					s1 := padded + stride
-					s1p1 := s1 + 1
-					s2 := s1 + stride
-					p1 := padded + 1
-					p2 := padded + 2
-					_ = levelsScratch[s2]
-					_ = levelsScratch[p2]
-					mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-						clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-					ctx = (mag + 1) >> 1
-					if ctx > 4 {
-						ctx = 4
+			if useScanHot {
+				for c := eobPos - 2; c >= 0; c-- {
+					p := scanHotSlice[c]
+					pos := int(p.pos)
+					padded := int(p.padded)
+					ctx := 0
+					if pos != 0 {
+						s1 := padded + stride
+						s1p1 := s1 + 1
+						s2 := s1 + stride
+						p1 := padded + 1
+						p2 := padded + 2
+						_ = levelsScratch[s2]
+						_ = levelsScratch[p2]
+						mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+							clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+						ctx = (mag + 1) >> 1
+						if ctx > 4 {
+							ctx = 4
+						}
+						ctx += int(p.lower2DOffset)
 					}
-					ctx += int(p.lower2DOffset)
-				}
-				level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-				if level == NumBaseLevels+1 {
-					s1 := padded + stride
-					s1p1 := s1 + 1
-					p1 := padded + 1
-					_ = levelsScratch[s1p1]
-					mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
-					if mag > 6 {
-						mag = 6
+					level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+					if level == NumBaseLevels+1 {
+						s1 := padded + stride
+						s1p1 := s1 + 1
+						p1 := padded + 1
+						_ = levelsScratch[s1p1]
+						mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+						if mag > 6 {
+							mag = 6
+						}
+						brCtx := mag + int(p.br2DOffset)
+						extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
+						level += int(extra)
 					}
-					brCtx := mag + int(p.br2DOffset)
-					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
-					level += int(extra)
+					levelsScratch[padded] = uint8(level)
+					if level != 0 {
+						levelDirtyArr[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
+						nonzeroScanLen++
+					}
 				}
-				levelsScratch[padded] = uint8(level)
-				if level != 0 {
-					levelDirtyArr[levelDirtyNext] = int16(padded)
-					levelDirtyNext++
-					dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
-					nonzeroScanLen++
+			} else {
+				for c := eobPos - 2; c >= 0; c-- {
+					pos := int(scan[c])
+					if !trustedScan && (pos < 0 || pos >= maxEOB) {
+						reader.CommitStateTo(&s.Reader)
+						return TXBDecodeResult{}, ErrInvalidDecodeState
+					}
+					p := hotPosSlice[pos]
+					padded := int(p.padded)
+					ctx := 0
+					if pos != 0 {
+						s1 := padded + stride
+						s1p1 := s1 + 1
+						s2 := s1 + stride
+						p1 := padded + 1
+						p2 := padded + 2
+						_ = levelsScratch[s2]
+						_ = levelsScratch[p2]
+						mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+							clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+						ctx = (mag + 1) >> 1
+						if ctx > 4 {
+							ctx = 4
+						}
+						ctx += int(p.lower2DOffset)
+					}
+					level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+					if level == NumBaseLevels+1 {
+						s1 := padded + stride
+						s1p1 := s1 + 1
+						p1 := padded + 1
+						_ = levelsScratch[s1p1]
+						mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+						if mag > 6 {
+							mag = 6
+						}
+						brCtx := mag + int(p.br2DOffset)
+						extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
+						level += int(extra)
+					}
+					levelsScratch[padded] = uint8(level)
+					if level != 0 {
+						levelDirtyArr[levelDirtyNext] = int16(padded)
+						levelDirtyNext++
+						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
+						nonzeroScanLen++
+					}
 				}
 			}
 		} else {
