@@ -396,7 +396,30 @@ func storeSampleRows(dst []byte, dstStride int, src []uint16, srcStride int, wid
 		for y := 0; y < height; y++ {
 			dstLine := dst[dstOff : dstOff+width : dstOff+width]
 			srcLine := src[srcOff : srcOff+width : srcOff+width]
-			for x, sample := range srcLine {
+			x := 0
+			for ; x+8 <= width; x += 8 {
+				s0 := srcLine[x+0]
+				s1 := srcLine[x+1]
+				s2 := srcLine[x+2]
+				s3 := srcLine[x+3]
+				s4 := srcLine[x+4]
+				s5 := srcLine[x+5]
+				s6 := srcLine[x+6]
+				s7 := srcLine[x+7]
+				if s0|s1|s2|s3|s4|s5|s6|s7 > 0xff {
+					return false
+				}
+				dstLine[x+0] = byte(s0)
+				dstLine[x+1] = byte(s1)
+				dstLine[x+2] = byte(s2)
+				dstLine[x+3] = byte(s3)
+				dstLine[x+4] = byte(s4)
+				dstLine[x+5] = byte(s5)
+				dstLine[x+6] = byte(s6)
+				dstLine[x+7] = byte(s7)
+			}
+			for ; x < width; x++ {
+				sample := srcLine[x]
 				if sample > 0xff {
 					return false
 				}
@@ -432,8 +455,19 @@ func storeSampleRowsTrusted(dst []byte, dstStride int, src []uint16, srcStride i
 		for y := 0; y < height; y++ {
 			dstLine := dst[dstOff : dstOff+width : dstOff+width]
 			srcLine := src[srcOff : srcOff+width : srcOff+width]
-			for x, sample := range srcLine {
-				dstLine[x] = byte(sample)
+			x := 0
+			for ; x+8 <= width; x += 8 {
+				dstLine[x+0] = byte(srcLine[x+0])
+				dstLine[x+1] = byte(srcLine[x+1])
+				dstLine[x+2] = byte(srcLine[x+2])
+				dstLine[x+3] = byte(srcLine[x+3])
+				dstLine[x+4] = byte(srcLine[x+4])
+				dstLine[x+5] = byte(srcLine[x+5])
+				dstLine[x+6] = byte(srcLine[x+6])
+				dstLine[x+7] = byte(srcLine[x+7])
+			}
+			for ; x < width; x++ {
+				dstLine[x] = byte(srcLine[x])
 			}
 			dstOff += dstStride
 			srcOff += srcStride
