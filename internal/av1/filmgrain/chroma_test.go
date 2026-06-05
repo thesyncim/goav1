@@ -102,6 +102,53 @@ func TestGenerateChromaGrainAppliesChromaAR(t *testing.T) {
 	}
 }
 
+func TestGenerateChromaGrainARLagSpecializationsMatchReference(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		lag          uint8
+		subsamplingX bool
+		subsamplingY bool
+	}{
+		{name: "lag1-420", lag: 1, subsamplingX: true, subsamplingY: true},
+		{name: "lag2-420", lag: 2, subsamplingX: true, subsamplingY: true},
+		{name: "lag3-420", lag: 3, subsamplingX: true, subsamplingY: true},
+		{name: "lag1-444", lag: 1},
+		{name: "lag2-444", lag: 2},
+		{name: "lag3-444", lag: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			params := ChromaGrainParams{
+				Seed:            0x4567,
+				Plane:           ChromaPlaneCr,
+				BitDepth:        10,
+				NumYPoints:      1,
+				GrainScaleShift: 1,
+				SubsamplingX:    tt.subsamplingX,
+				SubsamplingY:    tt.subsamplingY,
+				ARCoeffLag:      tt.lag,
+				ARCoeffShift:    7,
+			}
+			for i := range params.ARCoeffs {
+				params.ARCoeffs[i] = int8((i%9)-4) * 3
+			}
+			luma := make([]int16, LumaGrainSamples)
+			for i := range luma {
+				luma[i] = int16((i % 31) - 15)
+			}
+			want := referenceChromaGrain(t, luma, params)
+			got := make([]int16, ChromaGrainSamples)
+			if err := GenerateChromaGrain(got, luma, params); err != nil {
+				t.Fatal(err)
+			}
+			for i := range got {
+				if got[i] != want[i] {
+					t.Fatalf("grain[%d]=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateChromaGrainRejectsInvalidInputs(t *testing.T) {
 	grain := make([]int16, ChromaGrainSamples)
 	luma := make([]int16, LumaGrainSamples)
@@ -127,6 +174,53 @@ func TestGenerateChromaGrainRejectsInvalidInputs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func referenceChromaGrain(t *testing.T, luma []int16, params ChromaGrainParams) []int16 {
+	t.Helper()
+	grain := make([]int16, ChromaGrainSamples)
+	rng, err := NewPlaneRandom(params.Seed, int(params.Plane))
+	if err != nil {
+		t.Fatal(err)
+	}
+	width, height := chromaGrainDimensions(params.SubsamplingX, params.SubsamplingY)
+	gaussianShift := int(12 - params.BitDepth + params.GrainScaleShift)
+	for y := range height {
+		for x := range width {
+			index, err := rng.Number(GaussianBits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			grain[y*ChromaGrainWidth+x] = int16(roundPowerOfTwo(int(Gaussian(index)), gaussianShift))
+		}
+	}
+	lag := int(params.ARCoeffLag)
+	coeffShift := int(params.ARCoeffShift)
+	roundingOffset := 1 << (coeffShift - 1)
+	grainMin := -(1 << (params.BitDepth - 1))
+	grainMax := (1 << (params.BitDepth - 1)) - 1
+	for y := 3; y < height; y++ {
+		for x := 3; x < width-3; x++ {
+			sum := 0
+			pos := 0
+			for deltaRow := -lag; deltaRow <= 0; deltaRow++ {
+				for deltaCol := -lag; deltaCol <= lag; deltaCol++ {
+					if deltaRow == 0 && deltaCol == 0 {
+						if params.NumYPoints != 0 {
+							sum += chromaLumaAverage(luma, x, y, params.SubsamplingX, params.SubsamplingY) * int(params.ARCoeffs[pos])
+						}
+						break
+					}
+					sample := int(grain[(y+deltaRow)*ChromaGrainWidth+x+deltaCol])
+					sum += int(params.ARCoeffs[pos]) * sample
+					pos++
+				}
+			}
+			v := int(grain[y*ChromaGrainWidth+x]) + ((sum + roundingOffset) >> coeffShift)
+			grain[y*ChromaGrainWidth+x] = int16(clipInt(v, grainMin, grainMax))
+		}
+	}
+	return grain
 }
 
 func TestGenerateChromaGrainAllocs(t *testing.T) {
