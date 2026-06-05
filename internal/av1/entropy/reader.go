@@ -346,10 +346,12 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 //
 //go:nosplit
 func (c *Cursor) ReadBitTrusted() uint8 {
-	pos := int(c.pos)
 	dif := c.dif
 	rangeValue := uint32(c.rng)
 	cnt := int32(c.cnt)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 	split := (rangeValue >> 8) << 7
 	split += ecMinProb
 	window := split << (ecWindow - 16)
@@ -363,19 +365,28 @@ func (c *Cursor) ReadBitTrusted() uint8 {
 	bit := uint8(1 - takeUpper)
 
 	if traceEntropyReads {
-		traceBoolRead(CDFProbTop/2, c.dif, rangeValue, readerTell(pos, cnt, int32(c.tellOffs)))
+		pos = int(c.pos)
+		tellOffs = int32(c.tellOffs)
+		posLoaded = true
+		traceBoolRead(CDFProbTop/2, c.dif, rangeValue, readerTell(pos, cnt, tellOffs))
 	}
 	shift := normShift16(nextRange)
 	cnt -= shift
 	dif = ((dif + 1) << uint(shift)) - 1
 	rangeValue = nextRange << uint(shift)
 	if cnt < 0 {
-		tellOffs := int32(c.tellOffs)
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
 		src := c.src
 		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+	}
+	if posLoaded {
+		c.pos = uint32(pos)
 		c.tellOffs = int16(tellOffs)
 	}
-	c.pos = uint32(pos)
 	c.cnt = int16(cnt)
 	c.dif = dif
 	c.rng = uint16(rangeValue)
