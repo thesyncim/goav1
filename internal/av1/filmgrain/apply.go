@@ -231,26 +231,81 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 			gbase := chromaGrainSampleIndex(offsets[0][0], shiftX, shiftY, 0, 0, xStart, y)
 			grainRow := grain[gbase : gbase+n]
 			scale := scaleBuf[:n]
-			switch bitDepth {
-			case 8:
-				for x := 0; x < n; x++ {
-					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-					scale[x] = uint16(scaleLUT8(scaling, idx))
+			if params.ChromaScalingFromLuma {
+				lumaY := y << shiftY
+				lumaBase := lumaY*params.LumaStride + ((blockX + xStart) << shiftX)
+				switch bitDepth {
+				case 8:
+					if shiftX != 0 {
+						for x := 0; x < n; x++ {
+							idx := lumaBase + (x << 1)
+							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+							scale[x] = uint16(scaleLUT8(scaling, avg))
+						}
+					} else {
+						for x := 0; x < n; x++ {
+							scale[x] = uint16(scaleLUT8(scaling, int(luma[lumaBase+x])))
+						}
+					}
+				case 10:
+					if shiftX != 0 {
+						for x := 0; x < n; x++ {
+							idx := lumaBase + (x << 1)
+							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+							scale[x] = uint16(scaleLUT10(scaling, avg))
+						}
+					} else {
+						for x := 0; x < n; x++ {
+							scale[x] = uint16(scaleLUT10(scaling, int(luma[lumaBase+x])))
+						}
+					}
+				case 12:
+					if shiftX != 0 {
+						for x := 0; x < n; x++ {
+							idx := lumaBase + (x << 1)
+							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+							scale[x] = uint16(scaleLUT12(scaling, avg))
+						}
+					} else {
+						for x := 0; x < n; x++ {
+							scale[x] = uint16(scaleLUT12(scaling, int(luma[lumaBase+x])))
+						}
+					}
+				default:
+					if shiftX != 0 {
+						for x := 0; x < n; x++ {
+							idx := lumaBase + (x << 1)
+							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+							scale[x] = uint16(scaleLUT(scaling, avg, bitDepth))
+						}
+					} else {
+						for x := 0; x < n; x++ {
+							scale[x] = uint16(scaleLUT(scaling, int(luma[lumaBase+x]), bitDepth))
+						}
+					}
 				}
-			case 10:
-				for x := 0; x < n; x++ {
-					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-					scale[x] = uint16(scaleLUT10(scaling, idx))
-				}
-			case 12:
-				for x := 0; x < n; x++ {
-					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-					scale[x] = uint16(scaleLUT12(scaling, idx))
-				}
-			default:
-				for x := 0; x < n; x++ {
-					idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-					scale[x] = uint16(scaleLUT(scaling, idx, bitDepth))
+			} else {
+				switch bitDepth {
+				case 8:
+					for x := 0; x < n; x++ {
+						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+						scale[x] = uint16(scaleLUT8(scaling, idx))
+					}
+				case 10:
+					for x := 0; x < n; x++ {
+						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+						scale[x] = uint16(scaleLUT10(scaling, idx))
+					}
+				case 12:
+					for x := 0; x < n; x++ {
+						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+						scale[x] = uint16(scaleLUT12(scaling, idx))
+					}
+				default:
+					for x := 0; x < n; x++ {
+						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
+						scale[x] = uint16(scaleLUT(scaling, idx, bitDepth))
+					}
 				}
 			}
 			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
