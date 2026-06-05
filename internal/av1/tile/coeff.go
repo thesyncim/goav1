@@ -1968,7 +1968,7 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 			minInt(int(levels[s1]), MaxBaseBRRange) +
 			minInt(int(levels[s1p1]), MaxBaseBRRange)
 		mag = minInt((mag+1)>>1, 6)
-		if row < 2 && col < 2 {
+		if row|col < 2 {
 			return uint8(mag + 7)
 		}
 		return uint8(mag + 14)
@@ -1989,7 +1989,7 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 	}
 	switch class {
 	case transform.Class2D:
-		if row < 2 && col < 2 {
+		if row|col < 2 {
 			return uint8(mag + 7)
 		}
 	case transform.ClassHoriz:
@@ -2059,7 +2059,7 @@ func coeffBRContextEOBFast(p coeffPos, class transform.Class, pos int) uint8 {
 	}
 	switch class {
 	case transform.Class2D:
-		if p.row < 2 && p.col < 2 {
+		if p.row|p.col < 2 {
 			return 7
 		}
 	case transform.ClassHoriz:
