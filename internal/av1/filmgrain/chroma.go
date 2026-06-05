@@ -96,6 +96,7 @@ func GenerateChromaGrain(dst []int16, luma []int16, params ChromaGrainParams) er
 
 func generateChromaGrainARLag1(grain []int16, luma []int16, params *ChromaGrainParams, width int, height int, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
 	hasLuma := params.NumYPoints != 0
+	luma444 := hasLuma && !params.SubsamplingX && !params.SubsamplingY
 	for y := 3; y < height; y++ {
 		row := y * ChromaGrainWidth
 		rowM1 := row - ChromaGrainWidth
@@ -104,7 +105,9 @@ func generateChromaGrainARLag1(grain []int16, luma []int16, params *ChromaGrainP
 				int(params.ARCoeffs[1])*int(grain[rowM1+x]) +
 				int(params.ARCoeffs[2])*int(grain[rowM1+x+1]) +
 				int(params.ARCoeffs[3])*int(grain[row+x-1])
-			if hasLuma {
+			if luma444 {
+				sum += int(luma[y*LumaGrainWidth+x]) * int(params.ARCoeffs[4])
+			} else if hasLuma {
 				sum += chromaLumaAverage(luma, x, y, params.SubsamplingX, params.SubsamplingY) * int(params.ARCoeffs[4])
 			}
 			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
@@ -115,6 +118,7 @@ func generateChromaGrainARLag1(grain []int16, luma []int16, params *ChromaGrainP
 
 func generateChromaGrainARLag2(grain []int16, luma []int16, params *ChromaGrainParams, width int, height int, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
 	hasLuma := params.NumYPoints != 0
+	luma444 := hasLuma && !params.SubsamplingX && !params.SubsamplingY
 	for y := 3; y < height; y++ {
 		row := y * ChromaGrainWidth
 		rowM1 := row - ChromaGrainWidth
@@ -132,7 +136,9 @@ func generateChromaGrainARLag2(grain []int16, luma []int16, params *ChromaGrainP
 				int(params.ARCoeffs[9])*int(grain[rowM1+x+2]) +
 				int(params.ARCoeffs[10])*int(grain[row+x-2]) +
 				int(params.ARCoeffs[11])*int(grain[row+x-1])
-			if hasLuma {
+			if luma444 {
+				sum += int(luma[y*LumaGrainWidth+x]) * int(params.ARCoeffs[12])
+			} else if hasLuma {
 				sum += chromaLumaAverage(luma, x, y, params.SubsamplingX, params.SubsamplingY) * int(params.ARCoeffs[12])
 			}
 			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
@@ -143,6 +149,7 @@ func generateChromaGrainARLag2(grain []int16, luma []int16, params *ChromaGrainP
 
 func generateChromaGrainARLag3(grain []int16, luma []int16, params *ChromaGrainParams, width int, height int, roundingOffset int, coeffShift int, grainMin int, grainMax int) {
 	hasLuma := params.NumYPoints != 0
+	luma444 := hasLuma && !params.SubsamplingX && !params.SubsamplingY
 	for y := 3; y < height; y++ {
 		row := y * ChromaGrainWidth
 		rowM1 := row - ChromaGrainWidth
@@ -173,7 +180,9 @@ func generateChromaGrainARLag3(grain []int16, luma []int16, params *ChromaGrainP
 				int(params.ARCoeffs[21])*int(grain[row+x-3]) +
 				int(params.ARCoeffs[22])*int(grain[row+x-2]) +
 				int(params.ARCoeffs[23])*int(grain[row+x-1])
-			if hasLuma {
+			if luma444 {
+				sum += int(luma[y*LumaGrainWidth+x]) * int(params.ARCoeffs[24])
+			} else if hasLuma {
 				sum += chromaLumaAverage(luma, x, y, params.SubsamplingX, params.SubsamplingY) * int(params.ARCoeffs[24])
 			}
 			v := int(grain[row+x]) + ((sum + roundingOffset) >> coeffShift)
