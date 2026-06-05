@@ -185,6 +185,10 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		if !ok {
 			return stats, ErrInvalidDecodeState
 		}
+		blockDims, ok := req.TreeRequest.Size.Dimensions()
+		if !ok {
+			return stats, ErrInvalidDecodeState
+		}
 		reqX4 := int(req.TreeRequest.X4)
 		reqY4 := int(req.TreeRequest.Y4)
 		yStart := maxInt(int(window.Y4Start), reqY4)
@@ -218,7 +222,13 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 					VisibleW4:  block.VisibleW4,
 					VisibleH4:  block.VisibleH4,
 				}
-				typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, txbReq, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+				typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, txbReq, coeffContextKnown{
+					Plane:    CoeffPlaneY,
+					TXDims:   dims,
+					Block:    blockDims,
+					VisibleW: visibleW,
+					VisibleH: visibleH,
+				}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
 					Plane: 0,
 					Block: block,
 				})
@@ -247,7 +257,15 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		return stats, nil
 	}
 
+	blockDims, ok := req.TreeRequest.Size.Dimensions()
+	if !ok {
+		return stats, ErrInvalidDecodeState
+	}
 	err = req.Tree.forEachLumaTXBInWindow(req.TreeRequest, window, func(block TransformBlock) error {
+		txDims, ok := block.Size.Dimensions()
+		if !ok {
+			return ErrInvalidDecodeState
+		}
 		ctxReq := CoeffContextRequest{
 			Plane:      0,
 			PlaneBlock: req.TreeRequest.Size,
@@ -257,9 +275,23 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 			VisibleW4:  block.VisibleW4,
 			VisibleH4:  block.VisibleH4,
 		}
-		typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
+		visibleW := int(block.VisibleW4)
+		if visibleW == 0 {
+			visibleW = int(txDims.W4)
+		}
+		visibleH := int(block.VisibleH4)
+		if visibleH == 0 {
+			visibleH = int(txDims.H4)
+		}
+		typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 			EOBMultiContext:       eobCtx,
 			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+		}, coeffContextKnown{
+			Plane:    CoeffPlaneY,
+			TXDims:   txDims,
+			Block:    blockDims,
+			VisibleW: visibleW,
+			VisibleH: visibleH,
 		}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
 			Plane: 0,
 			Block: block,
@@ -375,6 +407,10 @@ func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntrop
 // blk_row/blk_col range [row>>ss, ROUND_POWER_OF_TWO(min(row+mu,max),ss)).
 func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, window coeffUnitWindow, prep chromaCoeffPlanePrep, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
 	planeBlock := prep.PlaneBlock
+	blockDims, ok := planeBlock.Dimensions()
+	if !ok {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
 	x4, y4 := int(prep.X4), int(prep.Y4)
 	visibleW4, visibleH4 := int(prep.VisibleW4), int(prep.VisibleH4)
 	uvDims := prep.UVDims
@@ -420,9 +456,15 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				VisibleW4:  block.VisibleW4,
 				VisibleH4:  block.VisibleH4,
 			}
-			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithDeferredTransform(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
+			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 				EOBMultiContext:       eobCtx,
 				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+			}, coeffContextKnown{
+				Plane:    CoeffPlaneUV,
+				TXDims:   uvDims,
+				Block:    blockDims,
+				VisibleW: int(block.VisibleW4),
+				VisibleH: int(block.VisibleH4),
 			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
 				Plane: req.Plane,
 				Block: block,
@@ -456,6 +498,14 @@ type coeffTransformRecorder interface {
 	RecordCoeffTransform(CoeffTransformRequest, transform.Type) error
 }
 
+type coeffContextKnown struct {
+	Plane    CoeffPlaneType
+	TXDims   TransformDimensions
+	Block    BlockDimensions
+	VisibleW int
+	VisibleH int
+}
+
 func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
 	if cdfs == nil || ctx == nil {
 		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
@@ -468,15 +518,26 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, err
 	}
-	txbCtx := ctx.txbContextTrusted(ctxReq, txDims, blockDims)
+	return s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, req, coeffContextKnown{
+		Plane:    plane,
+		TXDims:   txDims,
+		Block:    blockDims,
+		VisibleW: visibleW,
+		VisibleH: visibleH,
+	}, selector, typ, useType, class, transformReq)
+}
+
+func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, known coeffContextKnown, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
+	txbCtx := ctx.txbContextTrusted(ctxReq, known.TXDims, known.Block)
 	req.Size = ctxReq.Size
-	req.Plane = plane
+	req.Plane = known.Plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
 	req.DCSignContext = txbCtx.DCSignContext
 	geo, ok := coeffGeo(req.Size)
 	if !ok || txbCtx.TXBSkipContext >= TXBSkipContexts {
 		return 0, TXBDecodeResult{}, nil, nil, ErrInvalidDecodeState
 	}
+	var err error
 	allZero := s.Reader.ReadBinaryCDFUnchecked(&cdfs.TXBSkip[geo.txCtx][txbCtx.TXBSkipContext]) != 0
 
 	selected := transform.TypeDCTDCT
@@ -489,7 +550,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	}
 	if allZero && req.SkipAllZeroCoeffClear {
 		result := TXBDecodeResult{AllZero: true}
-		if err := ctx.markTXBKnown(ctxReq, txDims, visibleW, visibleH, result); err != nil {
+		if err := ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result); err != nil {
 			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
 		}
 		if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
@@ -522,7 +583,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}
-	if err := ctx.markTXBKnown(ctxReq, txDims, visibleW, visibleH, result); err != nil {
+	if err := ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result); err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("mark txb result=%+v: %w", result, err)
 	}
 	if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
