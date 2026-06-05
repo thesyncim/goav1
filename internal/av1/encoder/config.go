@@ -494,6 +494,7 @@ type Config struct {
 	MaxBitrateKbps     int32
 	TargetBitrateKbps  int32
 	RateControl        RateControlMode
+	Quantizer          uint8
 	MaxThreads         int32
 	Speed              int8
 	Content            ContentHint
@@ -612,6 +613,12 @@ func normalizeConfig(config Config) (Config, error) {
 		return Config{}, ErrInvalidConfig
 	}
 	if config.TargetBitrateKbps != 0 && (config.TargetBitrateKbps < config.MinBitrateKbps || config.TargetBitrateKbps > config.MaxBitrateKbps) {
+		return Config{}, ErrInvalidConfig
+	}
+	if config.RateControl == RateControlCQP && config.Quantizer > WebRTCMaxQuantizer {
+		return Config{}, ErrInvalidConfig
+	}
+	if config.RateControl != RateControlCQP && config.Quantizer != 0 {
 		return Config{}, ErrInvalidConfig
 	}
 	if config.MaxThreads < 0 || config.KeyFrameInterval < 0 {

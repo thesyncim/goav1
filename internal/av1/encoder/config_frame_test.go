@@ -567,6 +567,35 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigSimulcast(t *testing.T) {
 	}
 }
 
+func TestWebRTCTemporalUnitsPropagateCQPQuantizer(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		RateControl:       RateControlCQP,
+		Quantizer:         37,
+	}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.Frames[0].RateControl != RateControlCQP || key.Frames[0].Quantizer != 37 ||
+		key.Frames[1].RateControl != RateControlCQP || key.Frames[1].Quantizer != 37 {
+		t.Fatalf("key frames=%+v", key.Frames)
+	}
+	delta, _, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("WebRTCDeltaFrameTemporalUnitForState: %v", err)
+	}
+	if delta.Frames[0].RateControl != RateControlCQP || delta.Frames[0].Quantizer != 37 ||
+		delta.Frames[1].RateControl != RateControlCQP || delta.Frames[1].Quantizer != 37 {
+		t.Fatalf("delta frames=%+v", delta.Frames)
+	}
+}
+
 func TestWebRTCDeltaFrameTemporalUnitForConfigRejectsInvalidState(t *testing.T) {
 	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
 	if _, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, ReferenceBufferState{}, FrameIDBufferState{}, 0, 1); !errors.Is(err, ErrInvalidFrame) {

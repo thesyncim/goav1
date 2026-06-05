@@ -187,6 +187,8 @@ func TestSetWebRTCSVCConfigRejectsInvalidConfig(t *testing.T) {
 		{name: "subfps", cfg: withFramerate(valid, Rational{Num: 1, Den: 2})},
 		{name: "bitrate", cfg: withBitrate(valid, 0, WebRTCMaxBitrateKbps+1, 0)},
 		{name: "target-outside", cfg: withBitrate(valid, 100, 500, 600)},
+		{name: "cbr-quantizer", cfg: withQuantizer(valid, RateControlCBR, 12)},
+		{name: "cqp-quantizer", cfg: withQuantizer(valid, RateControlCQP, WebRTCMaxQuantizer+1)},
 	} {
 		if _, err := SetWebRTCSVCConfig(tc.cfg, 0, 0); !errors.Is(err, ErrInvalidConfig) {
 			t.Fatalf("%s err = %v; want ErrInvalidConfig", tc.name, err)
@@ -208,6 +210,12 @@ func withBitrate(cfg Config, minBitrateKbps int32, maxBitrateKbps int32, targetB
 	cfg.MinBitrateKbps = minBitrateKbps
 	cfg.MaxBitrateKbps = maxBitrateKbps
 	cfg.TargetBitrateKbps = targetBitrateKbps
+	return cfg
+}
+
+func withQuantizer(cfg Config, rc RateControlMode, quantizer uint8) Config {
+	cfg.RateControl = rc
+	cfg.Quantizer = quantizer
 	return cfg
 }
 

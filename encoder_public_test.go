@@ -735,6 +735,33 @@ func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCQuantizerPropagation(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:       av1.EncoderScalabilityModeL2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		RateControl:       av1.EncoderRateControlCQP,
+		Quantizer:         42,
+	}
+	key, state, err := av1.EncoderWebRTCKeyFrameTemporalUnitForState(cfg, av1.EncoderWebRTCState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.Frames[0].RateControl != av1.EncoderRateControlCQP || key.Frames[0].Quantizer != 42 {
+		t.Fatalf("key frames=%+v", key.Frames)
+	}
+	delta, _, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForState: %v", err)
+	}
+	if delta.Frames[1].RateControl != av1.EncoderRateControlCQP || delta.Frames[1].Quantizer != 42 {
+		t.Fatalf("delta frames=%+v", delta.Frames)
+	}
+}
+
 func TestPublicEncoderWebRTCDependencyStructureStateForTemporalUnit(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},

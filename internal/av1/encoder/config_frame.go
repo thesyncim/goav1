@@ -156,6 +156,7 @@ func WebRTCKeyFrameTemporalUnitForConfig(config Config, orderHint uint8, firstFr
 			UpdateBufferSet: true,
 			EffortLevel:     config.Speed,
 			RateControl:     config.RateControl,
+			Quantizer:       config.Quantizer,
 			Output:          true,
 		}
 		if i > 0 {
@@ -537,6 +538,7 @@ func WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, reference
 			UpdateBufferSet: true,
 			EffortLevel:     config.Speed,
 			RateControl:     config.RateControl,
+			Quantizer:       config.Quantizer,
 			Output:          true,
 		}
 		settings.ReferenceBuffers[settings.ReferenceCount] = i
