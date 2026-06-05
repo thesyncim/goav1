@@ -102,6 +102,9 @@ type FrameWorkInterPredictionScratch struct {
 	// Compound keeps the translational 2D compound intermediate block
 	// caller-owned for hot inter-prediction paths.
 	Compound motion.CompoundConvolveScratch
+	// Convolve keeps translational 2D inter-prediction intermediates
+	// caller-owned for hot same-size reference paths.
+	Convolve motion.ConvolveScratch
 }
 
 func frameWorkScaledConvolveScratch(scratch *FrameWorkInterPredictionScratch) *motion.ScaledConvolveScratch {
@@ -109,6 +112,13 @@ func frameWorkScaledConvolveScratch(scratch *FrameWorkInterPredictionScratch) *m
 		return nil
 	}
 	return &scratch.Scaled
+}
+
+func frameWorkConvolveScratch(scratch *FrameWorkInterPredictionScratch) *motion.ConvolveScratch {
+	if scratch == nil {
+		return nil
+	}
+	return &scratch.Convolve
 }
 
 // FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
@@ -1876,7 +1886,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	// block size to the visible extent would wrongly switch to the 4-tap
 	// filter and diverge by +-1 on the edge chroma samples. For luma and
 	// interior chroma the un-clipped extent equals geom width/height (no-op).
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, writeWidth, writeHeight, filterW, filterH, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, refX, refY, writeWidth, writeHeight, filterW, filterH, subX, subY, filters, frameWorkConvolveScratch(scratch)); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -1924,7 +1934,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	// shrinks to <= 4 must still use the wide filter, or the staged inter
 	// predictor diverges by +-1 on the edge chroma samples (the surviving
 	// Class-B 10-bit reconstruction gap).
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.width(), geom.height(), filterW, filterH, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, refX, refY, geom.width(), geom.height(), filterW, filterH, subX, subY, filters, frameWorkConvolveScratch(scratch)); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -2119,7 +2129,7 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	if filterH <= 0 {
 		filterH = height
 	}
-	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, frameWorkConvolveScratch(scratch)); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

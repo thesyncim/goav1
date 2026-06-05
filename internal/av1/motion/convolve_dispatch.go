@@ -23,6 +23,8 @@ type convolve1DFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 
 type convolve2DFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16)
 
+type convolve2DWithScratchFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch)
+
 // High-bit-depth variants take the clipping bit depth and precomputed max.
 // convolveYHighBD does not need bitDepth (round bits are fixed for the vertical
 // pass) but the slot carries it for a uniform signature.
@@ -31,13 +33,15 @@ type convolveHighBD1DFunc func(dst frame.Plane, ref frame.Plane, bitDepth uint8,
 type convolveHighBD2DFunc func(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16)
 
 var (
-	convolveX8Impl  convolve1DFunc = convolveX8PureGo
-	convolveY8Impl  convolve1DFunc = convolveY8PureGo
-	convolve2D8Impl convolve2DFunc = convolve2D8PureGo
+	convolveX8Impl             convolve1DFunc            = convolveX8PureGo
+	convolveY8Impl             convolve1DFunc            = convolveY8PureGo
+	convolve2D8Impl            convolve2DFunc            = convolve2D8PureGo
+	convolve2D8WithScratchImpl convolve2DWithScratchFunc = convolve2D8WithScratchDefault
 
-	convolveX8ClampedImpl  convolve1DFunc = convolveX8ClampedPureGo
-	convolveY8ClampedImpl  convolve1DFunc = convolveY8ClampedPureGo
-	convolve2D8ClampedImpl convolve2DFunc = convolve2D8ClampedPureGo
+	convolveX8ClampedImpl             convolve1DFunc            = convolveX8ClampedPureGo
+	convolveY8ClampedImpl             convolve1DFunc            = convolveY8ClampedPureGo
+	convolve2D8ClampedImpl            convolve2DFunc            = convolve2D8ClampedPureGo
+	convolve2D8ClampedWithScratchImpl convolve2DWithScratchFunc = convolve2D8ClampedWithScratchDefault
 
 	convolveXHighBDImpl  convolveHighBD1DFunc = convolveXHighBDPureGo
 	convolveYHighBDImpl  convolveHighBD1DFunc = convolveYHighBDPureGo
@@ -47,3 +51,11 @@ var (
 	convolveYHighBDClampedImpl  convolveHighBD1DFunc = convolveYHighBDClampedPureGo
 	convolve2DHighBDClampedImpl convolveHighBD2DFunc = convolve2DHighBDClampedPureGo
 )
+
+func convolve2D8WithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
+	convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+func convolve2D8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
+	convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}

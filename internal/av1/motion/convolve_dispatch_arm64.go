@@ -25,12 +25,14 @@ func init() {
 		// The 2D NEON kernel handles width-4 and every width>=8 8-tap shape; its
 		// Go wrapper falls back to pure-Go only for non-multiple-of-8 widths != 4.
 		convolve2D8Impl = convolve2D8NEON
+		convolve2D8WithScratchImpl = convolve2D8NEONWithScratch
 
 		// Edge-clamped 8-bit: the wrappers route to the fast NEON path when the
 		// tap window is fully resident and clamp via pure-Go otherwise.
 		convolveX8ClampedImpl = convolveX8ClampedNEON
 		convolveY8ClampedImpl = convolveY8ClampedNEON
 		convolve2D8ClampedImpl = convolve2D8ClampedNEON
+		convolve2D8ClampedWithScratchImpl = convolve2D8ClampedNEONWithScratch
 
 		// High-bit-depth (10/12-bit). The 1D Y, 1D X and 2D non-clamped kernels
 		// have NEON; the clamped HBD variants reuse the same in-bounds fast-path
@@ -46,4 +48,5 @@ func init() {
 	convolveX8Impl = convolveX8PureGo
 	convolveY8Impl = convolveY8PureGo
 	convolve2D8Impl = convolve2D8PureGo
+	convolve2D8WithScratchImpl = convolve2D8WithScratchDefault
 }

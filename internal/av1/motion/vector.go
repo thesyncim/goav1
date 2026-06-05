@@ -217,7 +217,14 @@ func PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst frame.Plane, ref fra
 // filter. Callers that clip the output extent to the visible edge pass the
 // un-clipped plane block dimensions here so the kernel choice matches libaom.
 func PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
-	return predictInterPlaneBlockFromOriginWithFilterSize(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters)
+	return PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst, ref, bytesPerSample, bitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, nil)
+}
+
+// PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch is
+// PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSize using optional
+// caller-owned 2D convolution scratch for hot decode paths.
+func PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *ConvolveScratch) error {
+	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst, ref, bytesPerSample, bitDepth, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
 }
 
 func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
@@ -225,6 +232,10 @@ func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane
 }
 
 func predictInterPlaneBlockFromOriginWithFilterSize(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
+	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst, ref, bytesPerSample, bitDepth, explicitBitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, nil)
+}
+
+func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *ConvolveScratch) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
 	}
@@ -258,7 +269,7 @@ func predictInterPlaneBlockFromOriginWithFilterSize(dst frame.Plane, ref frame.P
 		}
 		return ErrInvalidMotion
 	}
-	if err := predictInterPlaneBlock8(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
+	if err := predictInterPlaneBlock8(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch); err != nil {
 		return ErrInvalidMotion
 	}
 	return nil
@@ -277,7 +288,7 @@ func referenceOriginQ4(dst int, mvQ4 int64) (int, int, error) {
 	return int(ref), int(pos & 15), nil
 }
 
-func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
+func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *ConvolveScratch) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -300,9 +311,9 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	switch {
 	case subX != 0 && subY != 0:
 		if planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-			convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2D8WithScratchImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		} else {
-			convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2D8ClampedWithScratchImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		}
 	case subX != 0:
 		if planeRegionFits(ref, 1, refX-foX, refY, width+filterTaps-1, height) {

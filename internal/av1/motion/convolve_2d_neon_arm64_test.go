@@ -58,15 +58,19 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 		}
 		ref := makeRef(side, randomize)
 		got, _ := testPlane(w, h, 1, w)
+		gotScratch, _ := testPlane(w, h, 1, w)
 		want, _ := testPlane(w, h, 1, w)
+		var scratch ConvolveScratch
 		convolve2D8NEON(got, ref, 0, 0, pad, pad, w, h, xk, yk)
+		convolve2D8NEONWithScratch(gotScratch, ref, 0, 0, pad, pad, w, h, xk, yk, &scratch)
 		convolve2D8PureGo(want, ref, 0, 0, pad, pad, w, h, xk, yk)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
 				g := got.Pix[y*got.Stride+x]
+				gs := gotScratch.Pix[y*gotScratch.Stride+x]
 				e := want.Pix[y*want.Stride+x]
-				if g != e {
-					t.Fatalf("w=%d h=%d (%d,%d): NEON=%d PureGo=%d xk=%v yk=%v", w, h, x, y, g, e, xk, yk)
+				if g != e || gs != e {
+					t.Fatalf("w=%d h=%d (%d,%d): NEON=%d NEON-scratch=%d PureGo=%d xk=%v yk=%v", w, h, x, y, g, gs, e, xk, yk)
 				}
 			}
 		}
@@ -100,10 +104,11 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 	dst, _ := testPlane(32, 32, 1, 32)
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
+	var scratch ConvolveScratch
 	allocs := testing.AllocsPerRun(50, func() {
-		convolve2D8NEON(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk)
+		convolve2D8NEONWithScratch(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk, &scratch)
 	})
 	if allocs != 0 {
-		t.Fatalf("convolve2D8NEON allocated %v times, want 0", allocs)
+		t.Fatalf("convolve2D8NEONWithScratch allocated %v times, want 0", allocs)
 	}
 }

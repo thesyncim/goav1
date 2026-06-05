@@ -134,8 +134,10 @@ const convolve2DNEONIMStride = maxBlockSize
 // so 4-tap kernels (which merely zero the end taps) are handled directly and
 // stay bit-exact because the zeroed taps contribute nothing to the sum.
 func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
-	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
+	convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8NEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	xk := xKernel
 	yk := yKernel
 	if width == 4 {
@@ -143,20 +145,12 @@ func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 		// zeroing of the scratch is ~1KB rather than the full 135KB the width>=8
 		// path needs. The asm walks the rows at imStr int16 elements.
 		const w4Stride = 4
-		var im [(maxBlockSize + filterTaps - 1) * w4Stride]int16
-		ctx := convolveNEONCtx{
-			dst:    &dst.Pix[dstY*dst.Stride+dstX],
-			ref:    &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
-			kernel: &yk[0],
-			xKern:  &xk[0],
-			dstStr: uintptr(dst.Stride),
-			refStr: uintptr(ref.Stride),
-			width:  uintptr(width),
-			height: uintptr(height),
-			im:     &im[0],
-			imStr:  uintptr(w4Stride),
+		if scratch != nil {
+			convolve2D8NEONWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &scratch.im[0], w4Stride)
+			return
 		}
-		convolve2D8NEONAsmW4(&ctx)
+		var im [(maxBlockSize + filterTaps - 1) * w4Stride]int16
+		convolve2D8NEONWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &im[0], w4Stride)
 		return
 	}
 	if !(width >= 8 && width%8 == 0) {
@@ -165,7 +159,17 @@ func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 	}
 	// Intermediate buffer: (height+filterTaps-1) rows of imStride int16. The
 	// array is the same size as convolve2D8PureGo's stack im and does not escape.
+	if scratch != nil {
+		convolve2D8NEONWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &scratch.im[0], convolve2DNEONIMStride)
+		return
+	}
 	var im [(maxBlockSize + filterTaps - 1) * convolve2DNEONIMStride]int16
+	convolve2D8NEONWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &im[0], convolve2DNEONIMStride)
+}
+
+func convolve2D8NEONWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xk [filterTaps]int16, yk [filterTaps]int16, im *int16, imStride int) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
 	ctx := convolveNEONCtx{
 		dst:    &dst.Pix[dstY*dst.Stride+dstX],
 		ref:    &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
@@ -175,8 +179,12 @@ func convolve2D8NEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 		refStr: uintptr(ref.Stride),
 		width:  uintptr(width),
 		height: uintptr(height),
-		im:     &im[0],
-		imStr:  uintptr(convolve2DNEONIMStride),
+		im:     im,
+		imStr:  uintptr(imStride),
+	}
+	if width == 4 {
+		convolve2D8NEONAsmW4(&ctx)
+		return
 	}
 	convolve2D8NEONAsm(&ctx)
 }
@@ -219,6 +227,10 @@ func convolveY8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 }
 
 func convolve2D8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2D8ClampedNEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
@@ -230,7 +242,7 @@ func convolve2D8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int
 	}
 	if neonWidth &&
 		planeRegionFits(ref, 1, refX-foX, refY-foY, haloW, height+filterTaps-1) {
-		convolve2D8NEON(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
 	convolve2D8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
