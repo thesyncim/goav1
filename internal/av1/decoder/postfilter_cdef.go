@@ -329,7 +329,7 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 					return units, blocksTotal, err
 				}
 			}
-			if err := cdef.FilterFrameBlocks(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
+			if err := cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
 				return units, blocksTotal, err
 			}
 			cdefDebugLogUnitDst(plane, unitRow, unitCol, unitDst)

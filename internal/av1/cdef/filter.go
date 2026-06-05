@@ -243,6 +243,18 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 	if err := validateFrameFilter(dst, dstStride, input, inputOrigin, directions, variances, params); err != nil {
 		return err
 	}
+	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, false)
+}
+
+// FilterFrameBlocksTrusted runs FilterFrameBlocks for decoder-owned CDEF unit
+// buffers whose geometry, block positions, and input halos were already
+// validated by the caller. It preserves the same filter math but skips repeated
+// exported-entry validation and uses unchecked direction search helpers.
+func FilterFrameBlocksTrusted(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
+	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true)
+}
+
+func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, trusted bool) error {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -269,11 +281,13 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 	blockWidth := 1 << bwLog2
 	blockHeight := 1 << bhLog2
 
-	for _, block := range blocks {
-		by := int(block.BY)
-		bx := int(block.BX)
-		if by >= NBlocks || bx >= NBlocks {
-			return ErrInvalidCDEF
+	if !trusted {
+		for _, block := range blocks {
+			by := int(block.BY)
+			bx := int(block.BX)
+			if by >= NBlocks || bx >= NBlocks {
+				return ErrInvalidCDEF
+			}
 		}
 	}
 	if params.Plane == PlaneY {
@@ -282,15 +296,22 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			by := int(block.BY)
 			bx := int(block.BX)
 			srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
-			if srcOrigin < 0 || srcOrigin >= len(input) {
+			if !trusted && (srcOrigin < 0 || srcOrigin >= len(input)) {
 				return ErrInvalidCDEF
 			}
 			nextOrigin := srcOrigin + blockWidth
 			if blockWidth == 8 && nextOrigin <= len(input) &&
 				i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
-				dir1, variance1, dir2, variance2, err := FindDirectionDual(input[srcOrigin:], input[nextOrigin:], BStride, coeffShift)
-				if err != nil {
-					return err
+				var dir1, dir2 int
+				var variance1, variance2 int32
+				if trusted {
+					dir1, variance1, dir2, variance2 = findDirectionDualUnchecked(input[srcOrigin:], input[nextOrigin:], BStride, coeffShift)
+				} else {
+					var err error
+					dir1, variance1, dir2, variance2, err = FindDirectionDual(input[srcOrigin:], input[nextOrigin:], BStride, coeffShift)
+					if err != nil {
+						return err
+					}
 				}
 				directions[by][bx] = uint8(dir1)
 				variances[by][bx] = variance1
@@ -299,9 +320,16 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 				i += 2
 				continue
 			}
-			dir, variance, err := FindDirection(input[srcOrigin:], BStride, coeffShift)
-			if err != nil {
-				return err
+			var dir int
+			var variance int32
+			if trusted {
+				dir, variance = findDirectionUnchecked(input[srcOrigin:], BStride, coeffShift)
+			} else {
+				var err error
+				dir, variance, err = FindDirection(input[srcOrigin:], BStride, coeffShift)
+				if err != nil {
+					return err
+				}
 			}
 			directions[by][bx] = uint8(dir)
 			variances[by][bx] = variance
@@ -327,12 +355,12 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 		srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
 		dstOrigin := (by<<bhLog2)*dstStride + (bx << bwLog2)
-		if strength > int(^uint8(0)) ||
+		if !trusted && (strength > int(^uint8(0)) ||
 			secondaryStrength > int(^uint8(0)) ||
 			damping > int(^uint8(0)) ||
 			blockWidth > int(^uint8(0)) ||
 			blockHeight > int(^uint8(0)) ||
-			!blockFitsAt(len(dst), dstOrigin, dstStride, blockWidth, blockHeight) {
+			!blockFitsAt(len(dst), dstOrigin, dstStride, blockWidth, blockHeight)) {
 			return ErrInvalidCDEF
 		}
 		blockParams := BlockFilterParams{
@@ -345,7 +373,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			Width:             uint8(blockWidth),
 			Height:            uint8(blockHeight),
 		}
-		if !cdefInputFits(len(input), srcOrigin, blockParams) {
+		if !trusted && !cdefInputFits(len(input), srcOrigin, blockParams) {
 			return ErrInvalidCDEF
 		}
 		filterBlockUnchecked(dst, dstStride, dstOrigin, input, srcOrigin, blockParams)
