@@ -111,6 +111,7 @@ type EncoderRestorationParams = internalencoder.RestorationParams
 type EncoderTransformMode = internalencoder.TransformMode
 type EncoderReferenceMode = internalencoder.ReferenceMode
 type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
+type EncoderSkipModeParams = internalencoder.SkipModeParams
 type EncoderFrameModeParams = internalencoder.FrameModeParams
 type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
 type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
@@ -1035,6 +1036,14 @@ func EncoderTransformReferenceParamsPayloadSize(prefix EncoderFrameHeaderPrefix,
 
 func AppendEncoderTransformReferenceParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) ([]byte, error) {
 	return internalencoder.AppendTransformReferenceParamsPayload(dst, prefix, allLossless, params)
+}
+
+func EncoderSkipModeParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, transformRef EncoderTransformReferenceParams, params EncoderSkipModeParams) (int, error) {
+	return internalencoder.SkipModeParamsPayloadSize(seq, prefix, size, refs, transformRef, params)
+}
+
+func AppendEncoderSkipModeParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, transformRef EncoderTransformReferenceParams, params EncoderSkipModeParams) ([]byte, error) {
+	return internalencoder.AppendSkipModeParamsPayload(dst, seq, prefix, size, refs, transformRef, params)
 }
 
 func EncoderFrameModeParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) (int, error) {

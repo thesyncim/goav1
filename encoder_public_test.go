@@ -690,6 +690,53 @@ func TestPublicEncoderTransformReferenceParamsPayload(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderSkipModeParamsPayload(t *testing.T) {
+	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
+		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
+	})
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	seq.EnableOrderHint = true
+	seq.OrderHintBits = 5
+	prefix := av1.EncoderFrameHeaderPrefix{FrameType: av1.EncoderFrameHeaderTypeInter, OrderHint: 16}
+	var size av1.EncoderInterFrameSize
+	var refs av1.ReferenceState
+	orderHints := [7]uint8{15, 17, 14, 18, 13, 19, 12}
+	for i := uint8(0); i < av1.InterRefsPerFrame; i++ {
+		size.RefFrameIdx[i] = i
+		refs.Frames[i] = av1.ReferenceFrame{Valid: true, OrderHint: orderHints[i]}
+	}
+	transformRef := av1.EncoderTransformReferenceParams{ReferenceMode: av1.EncoderReferenceModeSelect}
+	params := av1.EncoderSkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{0, 1}}
+	payloadSize, err := av1.EncoderSkipModeParamsPayloadSize(seq, prefix, size, &refs, transformRef, params)
+	if err != nil {
+		t.Fatalf("EncoderSkipModeParamsPayloadSize: %v", err)
+	}
+	var buf [1]byte
+	payload, err := av1.AppendEncoderSkipModeParamsPayload(buf[:0], seq, prefix, size, &refs, transformRef, params)
+	if err != nil {
+		t.Fatalf("AppendEncoderSkipModeParamsPayload: %v", err)
+	}
+	if len(payload) != payloadSize {
+		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+	}
+	parsed, err := av1.ParseSkipModeParams(
+		payload,
+		av1.SequenceHeader{EnableOrderHint: true, OrderHintBits: 5},
+		av1.FrameHeaderPrefix{FrameType: av1.FrameTypeInter, OrderHint: 16},
+		av1.FrameSize{RefFrameIdx: size.RefFrameIdx},
+		&refs,
+		av1.TransformReferenceParams{ReferenceMode: av1.ReferenceModeSelect},
+	)
+	if err != nil {
+		t.Fatalf("ParseSkipModeParams: %v", err)
+	}
+	if !parsed.Allowed || !parsed.Enabled || parsed.RefFrameIdx != [2]uint8{0, 1} {
+		t.Fatalf("parsed skip mode=%+v", parsed)
+	}
+}
+
 func TestPublicEncoderFrameModeParamsPayload(t *testing.T) {
 	seq, err := av1.EncoderSequenceHeaderForConfig(av1.EncoderConfig{
 		Resolution: av1.EncoderResolution{Width: 64, Height: 64},
