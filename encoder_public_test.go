@@ -881,6 +881,19 @@ func TestPublicEncoderWebRTCNextTemporalUnitForState(t *testing.T) {
 	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 || state.NextFrameID != 52 {
 		t.Fatalf("initial unit=%+v state=%+v", unit, state)
 	}
+	headerSize, headerUnit, headerNext, err := av1.EncoderLowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(cfg, state, false)
+	if err != nil {
+		t.Fatalf("EncoderLowOverheadWebRTCPictureHeaderTemporalUnitForStateSize: %v", err)
+	}
+	var headerBuf [256]byte
+	headerTU, appendedHeaderUnit, appendedHeaderNext, err := av1.AppendEncoderLowOverheadWebRTCPictureHeaderTemporalUnitForState(headerBuf[:0], cfg, state, false)
+	if err != nil {
+		t.Fatalf("AppendEncoderLowOverheadWebRTCPictureHeaderTemporalUnitForState: %v", err)
+	}
+	if len(headerTU) != headerSize || appendedHeaderUnit != headerUnit || appendedHeaderNext != headerNext ||
+		!appendedHeaderUnit.Delta || appendedHeaderUnit.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != 52 {
+		t.Fatalf("header TU len=%d want=%d unit=%+v sized=%+v next=%+v sizedNext=%+v", len(headerTU), headerSize, appendedHeaderUnit, headerUnit, appendedHeaderNext, headerNext)
+	}
 	unit, state, err = av1.EncoderWebRTCNextTemporalUnitForState(cfg, state, false)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCNextTemporalUnitForState delta: %v", err)

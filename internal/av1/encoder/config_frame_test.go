@@ -444,6 +444,102 @@ func TestAppendLowOverheadWebRTCDeltaHeaderTemporalUnitAllocs(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		KeyFrameInterval:  3,
+	}
+	state := WebRTCEncoderState{NextFrameID: 20}
+
+	keySize, wantKeyUnit, wantKeyState, err := LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(cfg, state, false)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize key: %v", err)
+	}
+	var keyBuf [192]byte
+	keyOut, gotKeyUnit, gotKeyState, err := AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(keyBuf[:0], cfg, state, false)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState key: %v", err)
+	}
+	if len(keyOut) != keySize || gotKeyUnit != wantKeyUnit || gotKeyState != wantKeyState ||
+		!gotKeyUnit.Key || gotKeyUnit.Delta || gotKeyUnit.KeyUnit.Control.Frames[0].GenericFrameInfo.FrameID != 20 {
+		t.Fatalf("key len=%d want=%d unit=%+v want=%+v state=%+v wantState=%+v", len(keyOut), keySize, gotKeyUnit, wantKeyUnit, gotKeyState, wantKeyState)
+	}
+	keyIt := obu.NewLowOverheadIterator(keyOut)
+	if td, ok, err := keyIt.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("key TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := keyIt.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("key seq ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	if fh, ok, err := keyIt.Next(); err != nil || !ok || fh.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("key frame header ok=%v err=%v header=%+v", ok, err, fh.Header)
+	}
+
+	deltaSize, wantDeltaUnit, wantDeltaState, err := LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(cfg, gotKeyState, false)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize delta: %v", err)
+	}
+	var deltaBuf [192]byte
+	deltaOut, gotDeltaUnit, gotDeltaState, err := AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(deltaBuf[:0], cfg, gotKeyState, false)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState delta: %v", err)
+	}
+	if len(deltaOut) != deltaSize || gotDeltaUnit != wantDeltaUnit || gotDeltaState != wantDeltaState ||
+		!gotDeltaUnit.Delta || gotDeltaUnit.Key || gotDeltaUnit.DeltaUnit.Control.Frames[0].GenericFrameInfo.FrameID != 22 {
+		t.Fatalf("delta len=%d want=%d unit=%+v want=%+v state=%+v wantState=%+v", len(deltaOut), deltaSize, gotDeltaUnit, wantDeltaUnit, gotDeltaState, wantDeltaState)
+	}
+	deltaIt := obu.NewLowOverheadIterator(deltaOut)
+	if td, ok, err := deltaIt.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("delta TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	for i := uint8(0); i < gotDeltaUnit.DeltaUnit.FrameNum; i++ {
+		fh, ok, err := deltaIt.Next()
+		if err != nil || !ok || fh.Header.Type != obu.TypeFrameHeader ||
+			fh.Header.TemporalID != gotDeltaUnit.DeltaUnit.Headers[i].TemporalID ||
+			fh.Header.SpatialID != gotDeltaUnit.DeltaUnit.Headers[i].SpatialID {
+			t.Fatalf("delta frame header %d ok=%v err=%v header=%+v unit=%+v", i, ok, err, fh.Header, gotDeltaUnit.DeltaUnit.Headers[i])
+		}
+	}
+	if extra, ok, err := deltaIt.Next(); err != nil || ok {
+		t.Fatalf("delta extra ok=%v err=%v header=%+v", ok, err, extra.Header)
+	}
+
+	var tiny [1]byte
+	if out, _, _, err := AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(tiny[:0], cfg, gotKeyState, false); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
+	}
+	forced, forcedUnit, _, err := LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(cfg, gotDeltaState, true)
+	if err != nil {
+		t.Fatalf("forced key size: %v", err)
+	}
+	if forced == 0 || !forcedUnit.Key || forcedUnit.Delta {
+		t.Fatalf("forced key size=%d unit=%+v", forced, forcedUnit)
+	}
+}
+
+func TestAppendLowOverheadWebRTCPictureHeaderTemporalUnitForStateAllocs(t *testing.T) {
+	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL2T2}
+	_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	var buf [192]byte
+	if _, _, _, err := AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(buf[:0], cfg, state, false); err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _, _ = AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(buf[:0], cfg, state, false)
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
 func TestWebRTCDeltaFrameTemporalUnitForConfigSimulcast(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
