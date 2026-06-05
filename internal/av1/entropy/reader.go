@@ -1977,12 +1977,12 @@ func (c *Cursor) ReadCDF4HighTokenNoUpdateUnchecked(cdf *CDF) uint8 {
 
 //go:nosplit
 func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uint8 {
-	src := c.src
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 
 	level := uint8(0)
 	for range 4 {
@@ -2011,6 +2011,11 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 			}
 		}
 		if traceEntropyReads {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
 			traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 		}
 		dif -= lower << (ecWindow - 16)
@@ -2020,7 +2025,12 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng <<= uint(shift)
 		if cnt < 0 {
-			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 		}
 		count := values[4]
 		rate := uint(5 + (count >> 4))
@@ -2051,11 +2061,13 @@ func (c *Cursor) readCDF4HighTokenUpdateLoop(values *[MaxSymbols + 1]uint16) uin
 		}
 	}
 
-	c.pos = uint32(pos)
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 	return level
 }
 
@@ -2254,12 +2266,12 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 
 //go:nosplit
 func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
-	src := c.src
-	pos := int(c.pos)
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
-	tellOffs := int32(c.tellOffs)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
 	c0 := uint32(values[0])
 	c1 := uint32(values[1])
 	c2 := uint32(values[2])
@@ -2287,6 +2299,11 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 		}
 	}
 	if traceEntropyReads {
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
 		traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 	}
 	dif -= lower << (ecWindow - 16)
@@ -2296,7 +2313,12 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 	dif = ((dif + 1) << uint(shift)) - 1
 	rng <<= uint(shift)
 	if cnt < 0 {
-		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		if !posLoaded {
+			pos = int(c.pos)
+			tellOffs = int32(c.tellOffs)
+			posLoaded = true
+		}
+		pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 	}
 	level += symbol
 	if symbol == 3 {
@@ -2322,6 +2344,11 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 			}
 		}
 		if traceEntropyReads {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
 			traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 		}
 		dif -= lower << (ecWindow - 16)
@@ -2331,7 +2358,12 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 		dif = ((dif + 1) << uint(shift)) - 1
 		rng <<= uint(shift)
 		if cnt < 0 {
-			pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 		}
 		level += symbol
 		if symbol == 3 {
@@ -2357,6 +2389,11 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 				}
 			}
 			if traceEntropyReads {
+				if !posLoaded {
+					pos = int(c.pos)
+					tellOffs = int32(c.tellOffs)
+					posLoaded = true
+				}
 				traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 			}
 			dif -= lower << (ecWindow - 16)
@@ -2366,7 +2403,12 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 			dif = ((dif + 1) << uint(shift)) - 1
 			rng <<= uint(shift)
 			if cnt < 0 {
-				pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+				if !posLoaded {
+					pos = int(c.pos)
+					tellOffs = int32(c.tellOffs)
+					posLoaded = true
+				}
+				pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 			}
 			level += symbol
 			if symbol == 3 {
@@ -2392,6 +2434,11 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 					}
 				}
 				if traceEntropyReads {
+					if !posLoaded {
+						pos = int(c.pos)
+						tellOffs = int32(c.tellOffs)
+						posLoaded = true
+					}
 					traceCDFRead(uint16(c0), 4, dif, rng, readerTell(pos, cnt, tellOffs))
 				}
 				dif -= lower << (ecWindow - 16)
@@ -2401,18 +2448,25 @@ func (c *Cursor) readCDF4HighTokenKnown(values *[MaxSymbols + 1]uint16) uint8 {
 				dif = ((dif + 1) << uint(shift)) - 1
 				rng <<= uint(shift)
 				if cnt < 0 {
-					pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+					if !posLoaded {
+						pos = int(c.pos)
+						tellOffs = int32(c.tellOffs)
+						posLoaded = true
+					}
+					pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
 				}
 				level += symbol
 			}
 		}
 	}
 
-	c.pos = uint32(pos)
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 	return level
 }
 
