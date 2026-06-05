@@ -1077,8 +1077,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 						extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 						level += int(extra)
 					}
-					levelsScratch[padded] = uint8(level)
 					if level != 0 {
+						levelsScratch[padded] = uint8(level)
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
@@ -1125,8 +1125,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 						extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 						level += int(extra)
 					}
-					levelsScratch[padded] = uint8(level)
 					if level != 0 {
+						levelsScratch[padded] = uint8(level)
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
 						dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
@@ -1174,8 +1174,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					levelDirtyArr[levelDirtyNext] = int16(padded)
 					levelDirtyNext++
 					dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
@@ -1225,8 +1225,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
@@ -1280,8 +1280,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
@@ -1312,8 +1312,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
@@ -1342,8 +1342,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
@@ -1374,8 +1374,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++
@@ -1404,8 +1404,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 					extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 					level += int(extra)
 				}
-				levelsScratch[padded] = uint8(level)
 				if level != 0 {
+					levelsScratch[padded] = uint8(level)
 					if trackLevelDirty && uint(levelDirtyNext) < maxCoeffScanLen {
 						levelDirtyArr[levelDirtyNext] = int16(padded)
 						levelDirtyNext++

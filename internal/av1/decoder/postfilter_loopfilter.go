@@ -1044,7 +1044,8 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 	if err := frameWorkLoopFilterValidateBlockVisible(previous); err != nil {
 		return true, err
 	}
-	if !frameWorkLoopFilterPreviousLumaRunInBlock(previous, edge, x4, y4, length4) {
+	if !frameWorkLoopFilterPreviousBlockVisibleCoversMIExtent(previous) &&
+		!frameWorkLoopFilterPreviousLumaRunInBlock(previous, edge, x4, y4, length4) {
 		return false, nil
 	}
 	previousWidth := frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, previous.TransformTree.Y)
@@ -1086,6 +1087,15 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 		BlockMIRow:        uint16(record.Block.MIRow),
 	})
 	return true, nil
+}
+
+func frameWorkLoopFilterPreviousBlockVisibleCoversMIExtent(record *threading.FrameWorkLoopFilterBlockRecord) bool {
+	if record == nil {
+		return false
+	}
+	block := record.Block
+	return int(block.VisibleW4) == int(block.MIColEnd)-int(block.MICol) &&
+		int(block.VisibleH4) == int(block.MIRowEnd)-int(block.MIRow)
 }
 
 func frameWorkLoopFilterPreviousRecordCoversRun(record *threading.FrameWorkLoopFilterBlockRecord, edge loopfilter.Edge, x4 int, y4 int, length4 int) bool {
@@ -1328,10 +1338,10 @@ func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge lo
 }
 
 func frameWorkAppendLoopFilterChromaEdges(ctx FrameWorkPostFilterContext, levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, planning frameWorkLoopFilterPlanningContext, req tile.TransformTreeRequest, levels [3][2]uint8) error {
-	if ctx.Event.SequenceHeader.ColorConfig.MonoChrome {
+	if levelCtx.monoChrome {
 		return nil
 	}
-	if ctx.Event.LoopFilter.LevelY[0] == 0 && ctx.Event.LoopFilter.LevelY[1] == 0 {
+	if levelCtx.lumaZero {
 		return nil
 	}
 	var planes [2]loopfilter.Plane
