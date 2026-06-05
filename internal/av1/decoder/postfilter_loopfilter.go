@@ -932,7 +932,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 	}
 	var previousCache frameWorkLoopFilterLumaPreviousCache
 	needPreviousLevel := currentLevel == 0
-	if handled, err := frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx, filterMap, ctx.Event.SequenceHeader.ColorConfig, record, plan, edges, bounds, edge, x4, y4, length4, tx, currentWidth, currentLevel, needPreviousLevel); handled || err != nil {
+	if handled, err := frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx, filterMap, record, plan, edges, bounds, edge, x4, y4, length4, tx, currentWidth, currentLevel, needPreviousLevel); handled || err != nil {
 		return err
 	}
 	for offset := range length4 {
@@ -971,7 +971,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 	return emit(segStart, length4)
 }
 
-func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, currentWidth uint8, currentLevel uint8, needPreviousLevel bool) (bool, error) {
+func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, currentWidth uint8, currentLevel uint8, needPreviousLevel bool) (bool, error) {
 	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, x4, y4, int(plan.MICols), int(plan.MIRows))
 	if err != nil {
 		return true, err
@@ -988,11 +988,10 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 	if !previous.TransformTree.Y.Valid() {
 		return true, threading.ErrInvalidBatch
 	}
-	req, err := frameWorkLoopFilterTransformTreeRequest(color, previous)
-	if err != nil {
+	if err := frameWorkLoopFilterValidateBlockVisible(previous); err != nil {
 		return true, err
 	}
-	if !frameWorkLoopFilterPreviousLumaRunInRequest(previous, req, edge, x4, y4, length4) {
+	if !frameWorkLoopFilterPreviousLumaRunInBlock(previous, edge, x4, y4, length4) {
 		return false, nil
 	}
 	previousWidth, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, previous.TransformTree.Y)
@@ -1080,6 +1079,41 @@ func frameWorkLoopFilterPreviousLumaRunInRequest(record *threading.FrameWorkLoop
 		endLocalX4 >= reqX4 && endLocalY4 >= reqY4 &&
 		endLocalX4 < reqX4+int(req.VisibleW4) &&
 		endLocalY4 < reqY4+int(req.VisibleH4)
+}
+
+func frameWorkLoopFilterValidateBlockVisible(record *threading.FrameWorkLoopFilterBlockRecord) error {
+	block := record.Block
+	dims, ok := block.Size.Dimensions()
+	if !ok || block.VisibleW4 == 0 || block.VisibleH4 == 0 ||
+		block.VisibleW4 > dims.W4 || block.VisibleH4 > dims.H4 {
+		return threading.ErrInvalidBatch
+	}
+	return nil
+}
+
+func frameWorkLoopFilterPreviousLumaRunInBlock(record *threading.FrameWorkLoopFilterBlockRecord, edge loopfilter.Edge, x4 int, y4 int, length4 int) bool {
+	startX4, startY4, err := frameWorkLoopFilterPreviousTarget4(edge, x4, y4)
+	if err != nil {
+		return false
+	}
+	endBoundaryX4, endBoundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, length4-1)
+	endX4, endY4, err := frameWorkLoopFilterPreviousTarget4(edge, endBoundaryX4, endBoundaryY4)
+	if err != nil {
+		return false
+	}
+	block := record.Block
+	startLocalX4 := int(block.X4) + startX4 - int(block.MICol)
+	startLocalY4 := int(block.Y4) + startY4 - int(block.MIRow)
+	endLocalX4 := int(block.X4) + endX4 - int(block.MICol)
+	endLocalY4 := int(block.Y4) + endY4 - int(block.MIRow)
+	reqX4 := int(block.X4)
+	reqY4 := int(block.Y4)
+	return startLocalX4 >= reqX4 && startLocalY4 >= reqY4 &&
+		startLocalX4 < reqX4+int(block.VisibleW4) &&
+		startLocalY4 < reqY4+int(block.VisibleH4) &&
+		endLocalX4 >= reqX4 && endLocalY4 >= reqY4 &&
+		endLocalX4 < reqX4+int(block.VisibleW4) &&
+		endLocalY4 < reqY4+int(block.VisibleH4)
 }
 
 type frameWorkLoopFilterLumaPreviousCache struct {
