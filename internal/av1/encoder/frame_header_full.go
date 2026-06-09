@@ -243,7 +243,13 @@ func writeIntraFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header Intra
 	if err := writeGlobalMotionParamsPayload(w, header.Prefix, InterFrameSize{}, TileInfo{}, nil, DefaultGlobalMotionParams()); err != nil {
 		return err
 	}
-	return writeFilmGrainParamsPayload(w, seq, header.Prefix, InterFrameSize{}, nil, header.FilmGrain)
+	if err := writeFilmGrainParamsPayload(w, seq, header.Prefix, InterFrameSize{}, nil, header.FilmGrain); err != nil {
+		return err
+	}
+	// A standalone OBU_FRAME_HEADER payload ends with trailing bits
+	// (trailing_one_bit plus zero alignment); the reference decoders enforce
+	// this even though the goav1 parser does not.
+	return w.writeTrailingBits()
 }
 
 func writeInterFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header InterFrameHeaderParams) error {
@@ -286,5 +292,9 @@ func writeInterFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header Inter
 	if err := writeGlobalMotionParamsPayload(w, header.Prefix, header.Size, header.Tile, header.References, header.GlobalMotion); err != nil {
 		return err
 	}
-	return writeFilmGrainParamsPayload(w, seq, header.Prefix, header.Size, header.References, header.FilmGrain)
+	if err := writeFilmGrainParamsPayload(w, seq, header.Prefix, header.Size, header.References, header.FilmGrain); err != nil {
+		return err
+	}
+	// Standalone OBU_FRAME_HEADER trailing bits; see the intra writer.
+	return w.writeTrailingBits()
 }
