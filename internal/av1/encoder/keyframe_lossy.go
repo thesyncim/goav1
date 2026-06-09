@@ -102,6 +102,7 @@ type lossyEncodeState struct {
 	intraCDFs tile.IntraModeCDFs
 	coeffCDFs tile.CoeffCDFs
 	txCDFs    tile.TransformTypeCDFs
+	mvCDFs    tile.MVCDFs
 
 	qIndex uint8
 	yQuant quantize.Quantizer

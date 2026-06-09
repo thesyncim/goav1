@@ -241,3 +241,10 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 	}
 	return nil
 }
+
+// BlockHasTopRight reports whether the reference-MV scan may use the top-right
+// neighbor for this block, exposed for the encoder so its
+// ReferenceMVStackRequest matches the decode loop's blockHasTopRight exactly.
+func BlockHasTopRight(sbSizeMIB uint8, block BlockVisit) bool {
+	return blockHasTopRight(sbSizeMIB, block)
+}

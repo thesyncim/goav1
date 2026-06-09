@@ -146,6 +146,9 @@ func (w *Writer) encodeQ15(fl, fh uint32, s, nsyms int) {
 // WriteBoolQ15 codes a single binary value val (0/1) where f is the Q15
 // probability that val is one. Port of od_ec_encode_bool_q15.
 func (w *Writer) WriteBoolQ15(val int, f uint32) {
+	if traceEntropyReads {
+		traceWriteBool(uint16(f))
+	}
 	l := w.low
 	r := w.rng
 	v := ((r >> 8) * (f >> ecProbShift)) >> (7 - ecProbShift)
@@ -163,6 +166,9 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 // CDF_PROB_TOP - cdf[i], monotone decreasing, icdf[nsyms-1] == 0) without
 // adapting it. Port of od_ec_encode_cdf_q15.
 func (w *Writer) WriteSymbol(s int, icdf []uint16, nsyms int) {
+	if traceEntropyReads {
+		traceWriteCDF(icdf[0], nsyms)
+	}
 	fl := uint32(CDFProbTop) // OD_ICDF(0)
 	if s > 0 {
 		fl = uint32(icdf[s-1])

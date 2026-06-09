@@ -122,6 +122,9 @@ func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame
 	if err := st.txCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
+	if err := st.mvCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
 	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
 		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
 		if err != nil {
@@ -232,13 +235,24 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		Y4:             block.Y4,
 		HaveTop:        block.HaveTop,
 		HaveLeft:       block.HaveLeft,
+		HaveTopRight:   tile.BlockHasTopRight(16, block),
 	}
 	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
 	if err != nil {
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
-	modeResult := tile.InterModeResult{Mode: tile.InterModeGlobalMV}
-	if err := tile.WriteSingleInterMode(st.w, interModeCDFs, stack.ModeContext, tile.InterModeGlobalMV); err != nil {
+
+	// Full-pel motion estimation on luma: even offsets keep chroma at integer
+	// positions too. Zero motion stays on the cheaper GLOBALMV path.
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	dx, dy := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
+	mode := tile.InterModeGlobalMV
+	if dx != 0 || dy != 0 {
+		mode = tile.InterModeNewMV
+	}
+	modeResult := tile.InterModeResult{Mode: mode}
+	if err := tile.WriteSingleInterMode(st.w, interModeCDFs, stack.ModeContext, mode); err != nil {
 		return fmt.Errorf("inter mode: %w", err)
 	}
 	drlReq, err := stack.Stack.DRLRequestForMode(modeResult)
@@ -248,9 +262,21 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	if err := tile.WriteDRLIndex(st.w, interModeCDFs, drlReq, 0); err != nil {
 		return fmt.Errorf("drl: %w", err)
 	}
+	mv := motion.Vector{}
+	if mode == tile.InterModeNewMV {
+		mvRefs, err := stack.Stack.ResolveInterMVReferences(modeResult, 0, false, false)
+		if err != nil {
+			return fmt.Errorf("resolve mv references: %w", err)
+		}
+		mv = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
+		if err := tile.WriteMotionVector(st.w, &st.mvCDFs, mv, mvRefs.Residual[0], tile.MVSubpelLow); err != nil {
+			return fmt.Errorf("motion vector: %w", err)
+		}
+	}
 
 	hasChroma := true // 8x8 blocks at 4:2:0 carry chroma
 	motionResult := tile.InterMotionResult{References: refs, Mode: modeResult}
+	motionResult.MV[0] = mv
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
 		return fmt.Errorf("mark inter motion: %w", err)
 	}
@@ -259,8 +285,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	}
 
 	// Residual: luma TX_8X8 with the inter tx_type symbol, then chroma TX_4X4.
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
 	txTypeReq := tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
 		QIndexKnown: true,
@@ -269,7 +293,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	afterSkip := func() error {
 		return tile.WriteInterTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
 	}
-	if err := st.encodeInterTXB(recon.Y, src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	if err := st.encodeInterTXB(recon.Y, src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
@@ -289,7 +313,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 			data, rdata, refData = src.V, recon.V, ref.V
 			q = st.vQuant
 		}
-		if err := st.encodeInterTXB(rdata, data, refData, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+		if err := st.encodeInterTXB(rdata, data, refData, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       tile.TransformSize4x4,
@@ -303,17 +327,19 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 }
 
 // encodeInterTXB codes one square n x n transform block of temporal residual:
-// the zero-motion prediction is the reference plane at the same position, the
-// residual goes through the forward transform and quantizer, and recon is
-// rebuilt through the decoder's dequant + inverse transform.
-func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte, stride, px, py, n int, q quantize.Quantizer,
+// the motion-compensated prediction is the reference plane at the block
+// position offset by the full-pel motion (dx, dy), the residual goes through
+// the forward transform and quantizer, and recon is rebuilt through the
+// decoder's dequant + inverse transform.
+func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte, stride, px, py, n, dx, dy int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
 
 	var residual [64]int16
 	for r := range n {
 		row := (py+r)*stride + px
+		refRow := (py+r+dy)*stride + px + dx
 		for c := range n {
-			residual[r*n+c] = int16(srcPlane[row+c]) - int16(refPlane[row+c])
+			residual[r*n+c] = int16(srcPlane[row+c]) - int16(refPlane[refRow+c])
 		}
 	}
 	var tran [64]int32
@@ -346,8 +372,9 @@ func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte
 	}
 	for r := range n {
 		row := (py+r)*stride + px
+		refRow := (py+r+dy)*stride + px + dx
 		for c := range n {
-			v := int(refPlane[row+c]) + int(res[r*n+c])
+			v := int(refPlane[refRow+c]) + int(res[r*n+c])
 			if v < 0 {
 				v = 0
 			} else if v > 255 {
@@ -357,4 +384,67 @@ func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte
 		}
 	}
 	return nil
+}
+
+// fullPelDiamondSearch finds the even full-pel offset (dx, dy) within an 8px
+// window that minimizes the luma SAD of the n x n block at (px, py) against
+// the reference plane, keeping the offset window fully inside the frame. Even
+// offsets keep chroma prediction at integer positions at 4:2:0. A small
+// diamond refinement around the best raster candidate keeps the search cheap.
+func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int) {
+	sad := func(dx, dy int) int {
+		total := 0
+		for r := range n {
+			row := (py+r)*stride + px
+			refRow := (py+r+dy)*stride + px + dx
+			for c := range n {
+				d := int(src[row+c]) - int(ref[refRow+c])
+				if d < 0 {
+					d = -d
+				}
+				total += d
+			}
+		}
+		return total
+	}
+	clampLo := func(v, lo int) int {
+		if v < lo {
+			return lo
+		}
+		return v
+	}
+	clampHi := func(v, hi int) int {
+		if v > hi {
+			return hi
+		}
+		return v
+	}
+	minDX := clampLo(-8, -px)
+	maxDX := clampHi(8, width-n-px)
+	minDY := clampLo(-8, -py)
+	maxDY := clampHi(8, height-n-py)
+
+	bestDX, bestDY := 0, 0
+	bestSAD := sad(0, 0)
+	// Coarse even-step raster, then a +-2 even diamond refinement.
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sad(dx, dy); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sad(dx, dy); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY
 }

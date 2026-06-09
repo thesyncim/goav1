@@ -218,7 +218,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 			Y4:             block.Y4,
 			HaveTop:        block.HaveTop,
 			HaveLeft:       block.HaveLeft,
-			HaveTopRight:   false,
+			HaveTopRight:   tile.BlockHasTopRight(sbSizeMIB, block),
 		}
 		stack, err := modeCtx.BuildReferenceMVStack(stackReq)
 		if err != nil {
