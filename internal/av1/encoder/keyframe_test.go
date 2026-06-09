@@ -22,6 +22,10 @@ func TestEncodeLosslessKeyframeDecodesBitExact(t *testing.T) {
 		{128, 64},  // horizontal carry
 		{64, 128},  // vertical carry (left-context reset per SB row)
 		{192, 128}, // both axes, 3x2 superblocks
+		{96, 96},   // partial SBs: 32px remainder, H/V/forced-split edges
+		{176, 144}, // QCIF: 48px and 16px remainders
+		{200, 120}, // 8px remainders: splits down to 8x8 blocks
+		{72, 72},   // tiny frame with 8px remainder on both axes
 	}
 	for _, sz := range sizes {
 		t.Run(fmt.Sprintf("%dx%d", sz.w, sz.h), func(t *testing.T) {
