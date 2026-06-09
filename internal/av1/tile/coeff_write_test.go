@@ -96,6 +96,116 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWriteCoefficientsTXBWithContextRoundTrip drives the carrier path: a
+// sequence of TXBs at random plane positions coded through the encoder-side
+// CoeffEntropyContext carrier must decode exactly through the decoder's
+// ReadCoefficientsTXBWithContext, with both carriers (txb_skip/dc_sign context
+// derivation and MarkTXB updates) and both CDF sets evolving in lockstep.
+func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
+	rng := rand.New(rand.NewSource(21))
+	sizes := []TransformSize{
+		TransformSize4x4, TransformSize8x8, TransformSize16x16,
+		TransformSize4x8, TransformSize8x4, TransformSize16x8,
+	}
+	classes := []transform.Class{transform.Class2D, transform.ClassHoriz, transform.ClassVert}
+	const q = 0
+
+	type rec struct {
+		ctxReq  CoeffContextRequest
+		class   transform.Class
+		coeffs  []int16
+		result  TXBDecodeResult
+		carrier CoeffEntropyContext // encoder carrier snapshot after this TXB
+	}
+
+	var encCDFs CoeffCDFs
+	if err := encCDFs.InitDefault(q); err != nil {
+		t.Fatal(err)
+	}
+	var encCarrier CoeffEntropyContext
+	w := entropy.NewWriter(make([]byte, 0, 1<<17))
+
+	const n = 400
+	recs := make([]rec, 0, n)
+	for range n {
+		size := sizes[rng.Intn(len(sizes))]
+		class := classes[rng.Intn(len(classes))]
+		txSize, err := size.TransformSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		txDims, ok := size.Dimensions()
+		if !ok {
+			t.Fatalf("no dims for %v", size)
+		}
+		scan, scratch := coeffScanAndScratch(t, size, txSize, class)
+		maxEOB := len(scan)
+		plane := uint8(rng.Intn(3))
+		planeBlock := BlockSize128x128 // larger than any tx: exercises the block!=tx contexts
+		if rng.Intn(3) == 0 {
+			planeBlock = BlockSize4x4 // equal/smaller: exercises the equal-size context path
+		}
+		ctxReq := CoeffContextRequest{
+			Plane:      plane,
+			PlaneBlock: planeBlock,
+			Size:       size,
+			X4:         uint8(rng.Intn(MaxBlockModeSlots - int(txDims.W4) + 1)),
+			Y4:         uint8(rng.Intn(MaxBlockModeSlots - int(txDims.H4) + 1)),
+		}
+		coeffs := randomCoeffs(rng, scan, maxEOB)
+		result, err := WriteCoefficientsTXBWithContext(&w, &encCDFs, &encCarrier, ctxReq, class, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("write with context: %v", err)
+		}
+		recs = append(recs, rec{ctxReq: ctxReq, class: class, coeffs: coeffs, result: result, carrier: encCarrier})
+	}
+	buf, err := w.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decCDFs CoeffCDFs
+	if err := decCDFs.InitDefault(q); err != nil {
+		t.Fatal(err)
+	}
+	var decCarrier CoeffEntropyContext
+	var state DecodeState
+	if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range recs {
+		txSize, err := r.ctxReq.Size.TransformSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan, scratch := coeffScanAndScratch(t, r.ctxReq.Size, txSize, r.class)
+		out := make([]int16, len(scan))
+		eobMultiCtx := uint8(0)
+		if r.class != transform.Class2D {
+			eobMultiCtx = 1
+		}
+		result, err := state.ReadCoefficientsTXBWithContext(&decCDFs, &decCarrier, r.ctxReq, TXBDecodeRequest{
+			Class:           r.class,
+			EOBMultiContext: eobMultiCtx,
+		}, out, scan, scratch)
+		if err != nil {
+			t.Fatalf("rec %d read with context: %v", i, err)
+		}
+		if result.AllZero != r.result.AllZero || result.EOB != r.result.EOB ||
+			result.CulLevel != r.result.CulLevel || result.MaxScanLine != r.result.MaxScanLine {
+			t.Fatalf("rec %d result=%+v want %+v", i, result, r.result)
+		}
+		for p := range out {
+			if out[p] != r.coeffs[p] {
+				t.Fatalf("rec %d coeff[%d]=%d want %d", i, p, out[p], r.coeffs[p])
+			}
+		}
+		if decCarrier != r.carrier {
+			t.Fatalf("rec %d carrier state diverged from encoder snapshot", i)
+		}
+	}
+}
+
 // randomCoeffs builds a random quantized coefficient block in raster order with a
 // random eob, exercising zero runs, base levels (1..3), base-range extension
 // (3..14), golomb tails (>=15), and both signs. Magnitudes stay below 256 so the
