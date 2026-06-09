@@ -471,7 +471,8 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, refPlane []byte, stride, 
 // offsets keep chroma prediction at integer positions at 4:2:0. A small
 // diamond refinement around the best raster candidate keeps the search cheap.
 func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int) {
-	sad := func(dx, dy int) int {
+	// sad accumulates with a row-granular early exit against the running best.
+	sad := func(dx, dy, limit int) int {
 		total := 0
 		for r := range n {
 			row := (py+r)*stride + px
@@ -482,6 +483,9 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 					d = -d
 				}
 				total += d
+			}
+			if total >= limit {
+				return total
 			}
 		}
 		return total
@@ -504,14 +508,21 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 	maxDY := clampHi(8, height-n-py)
 
 	bestDX, bestDY := 0, 0
-	bestSAD := sad(0, 0)
-	// Coarse even-step raster, then a +-2 even diamond refinement.
+	bestSAD := sad(0, 0, 1<<30)
+	// Static-content fast path: when zero motion is already a near-perfect
+	// match (below ~2 per sample, the quantizer's noise floor at realtime
+	// qindexes), searching cannot pay for its own cost.
+	if bestSAD <= n*n*2 {
+		return 0, 0
+	}
+	// Coarse even-step raster with row-granular early exit, then a +-2 even
+	// diamond refinement.
 	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
 		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
 			if dx == 0 && dy == 0 {
 				continue
 			}
-			if s := sad(dx, dy); s < bestSAD {
+			if s := sad(dx, dy, bestSAD); s < bestSAD {
 				bestSAD, bestDX, bestDY = s, dx, dy
 			}
 		}
@@ -521,7 +532,7 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
 			continue
 		}
-		if s := sad(dx, dy); s < bestSAD {
+		if s := sad(dx, dy, bestSAD); s < bestSAD {
 			bestSAD, bestDX, bestDY = s, dx, dy
 		}
 	}

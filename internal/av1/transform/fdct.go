@@ -33,11 +33,9 @@ func fwdHalfBtf13(w0, in0, w1, in1 int32) int32 {
 // -1): symmetric rounding right shift by one.
 func fwdRoundShift1(arr []int32) {
 	for i, v := range arr {
-		if v < 0 {
-			arr[i] = -((-v + 1) >> 1)
-		} else {
-			arr[i] = (v + 1) >> 1
-		}
+		// Branch-free symmetric rounding: identical to
+		// v<0 ? -((-v+1)>>1) : (v+1)>>1 for all int32 inputs.
+		arr[i] = (v + 1 + (v >> 31)) >> 1
 	}
 }
 
