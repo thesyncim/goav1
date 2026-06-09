@@ -77,7 +77,7 @@ func TestVideoEncoderCBRConvergesAndDecodes(t *testing.T) {
 			steadyBits += len(tu) * 8
 		}
 		tus = append(tus, tu)
-		recons = append(recons, enc.Recon())
+		recons = append(recons, cloneFrame(enc.Recon()))
 	}
 	if len(qSeen) < 3 {
 		t.Fatalf("rate controller never moved qindex: %v", qSeen)

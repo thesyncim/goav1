@@ -74,7 +74,7 @@ func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
 			interTotal += len(tu)
 		}
 		tus = append(tus, tu)
-		recons = append(recons, enc.Recon())
+		recons = append(recons, cloneFrame(enc.Recon()))
 	}
 	avgInter := interTotal / (frames - 1)
 	t.Logf("key %d bytes, avg P %d bytes", keySize, avgInter)
@@ -116,4 +116,14 @@ func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
 	if i != frames {
 		t.Fatalf("decoded %d frames, want %d", i, frames)
 	}
+}
+
+// cloneFrame deep-copies a reconstruction snapshot; the encoder ping-pongs its
+// internal recon buffers, so Recon() contents are only stable until the
+// next-but-one Encode call.
+func cloneFrame(f encoder.SourceFrame420) encoder.SourceFrame420 {
+	f.Y = append([]byte(nil), f.Y...)
+	f.U = append([]byte(nil), f.U...)
+	f.V = append([]byte(nil), f.V...)
+	return f
 }

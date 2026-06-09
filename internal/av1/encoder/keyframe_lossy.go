@@ -113,6 +113,13 @@ type lossyEncodeState struct {
 	levels       []uint8
 	invScratch   []int32
 	color        parser.ColorConfig
+
+	// Per-block scratch reused across blocks so the hot encode loop stays
+	// allocation-free: quantized coefficients per plane and the prebuilt
+	// after-skip tx_type hook (a closure built once per tile, not per block).
+	lumaQ, uQ, vQ  [64]int16
+	interTxTypeReq tile.InterTransformTypeRequest
+	afterSkipInter func() error
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {

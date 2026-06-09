@@ -19,6 +19,10 @@ type VideoEncoder struct {
 	rcPerFrameBits int
 	rcBuffer       int
 	rcMinQ, rcMaxQ uint8
+
+	pc        pframeCoder
+	reconBufs [2]SourceFrame420
+	reconIdx  int
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -120,17 +124,50 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
-	tu, recon, err := EncodePFrame(src, e.recon, e.qIndex)
+	tu, err := e.encodePReusing(src)
 	if err != nil {
 		return nil, false, err
 	}
-	e.recon = recon
 	e.rcUpdate(len(tu) * 8)
 	return tu, false, nil
 }
 
+// encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
+// coder state and double-buffered reconstruction planes so per-frame work
+// allocates only the emitted temporal unit.
+func (e *VideoEncoder) encodePReusing(src SourceFrame420) ([]byte, error) {
+	out := &e.reconBufs[e.reconIdx]
+	if out.Y == nil {
+		*out = SourceFrame420{
+			Y:            make([]byte, len(src.Y)),
+			U:            make([]byte, len(src.U)),
+			V:            make([]byte, len(src.V)),
+			YStride:      src.YStride,
+			ChromaStride: src.ChromaStride,
+			Width:        src.Width,
+			Height:       src.Height,
+		}
+	}
+	tilePayload, err := e.pc.encodeTile(src, e.recon, out, e.qIndex)
+	if err != nil {
+		return nil, fmt.Errorf("encode tile: %w", err)
+	}
+	seq := losslessKeyframeSequence(src.Width, src.Height)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex)
+	header.References = &refState
+	tu, err := assembleInterTU(seq, header, tilePayload)
+	if err != nil {
+		return nil, err
+	}
+	e.recon = *out
+	e.reconIdx ^= 1
+	return tu, nil
+}
+
 // Recon returns the most recent frame's reconstruction (what a conformant
-// decoder outputs for it).
+// decoder outputs for it). The returned planes alias encoder-owned buffers
+// that are reused two frames later; callers needing longer-lived snapshots
+// must copy.
 func (e *VideoEncoder) Recon() SourceFrame420 {
 	return e.recon
 }

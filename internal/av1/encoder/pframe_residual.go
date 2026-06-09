@@ -96,71 +96,116 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 	return out, nil
 }
 
-func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
-	var partCDFs tile.PartitionCDFs
-	var refCDFs tile.InterRefCDFs
-	var interModeCDFs tile.InterModeCDFs
-	if err := partCDFs.InitDefault(); err != nil {
-		return nil, err
+// pframeCoder is the reusable per-stream P-frame coding state: CDFs, scratch,
+// the superblock context carrier, and the entropy output buffer, so steady-
+// state frame encoding allocates nothing beyond the temporal-unit assembly.
+type pframeCoder struct {
+	st        lossyEncodeState
+	partCDFs  tile.PartitionCDFs
+	refCDFs   tile.InterRefCDFs
+	modeCDFs  tile.InterModeCDFs
+	scratch   tile.BlockLoopScratch
+	carrier   tile.BlockLoopContextCarrier
+	writerBuf []byte
+}
+
+// reset (re)initializes the per-frame CDF and quantizer state. Buffers are
+// allocated on first use and reused afterwards.
+func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
+	if err := pc.partCDFs.InitDefault(); err != nil {
+		return err
 	}
-	if err := refCDFs.InitDefault(); err != nil {
-		return nil, err
+	if err := pc.refCDFs.InitDefault(); err != nil {
+		return err
 	}
-	if err := interModeCDFs.InitDefault(); err != nil {
-		return nil, err
+	if err := pc.modeCDFs.InitDefault(); err != nil {
+		return err
 	}
-	st := &lossyEncodeState{qIndex: qIndex, color: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}}
+	st := &pc.st
+	st.qIndex = qIndex
+	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
 	if err := st.modeCDFs.InitDefault(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := st.intraCDFs.InitDefault(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := st.coeffCDFs.InitDefault(qIndex); err != nil {
-		return nil, err
+		return err
 	}
 	if err := st.txCDFs.InitDefault(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := st.mvCDFs.InitDefault(); err != nil {
-		return nil, err
+		return err
 	}
 	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
 		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		*dst = q
 	}
-	st.scan8 = make([]int16, 64)
-	inverse8 := make([]int16, 64)
-	if err := transform.FillDefaultScan(st.scan8, inverse8, transform.Size{Width: 8, Height: 8}, transform.Class2D); err != nil {
-		return nil, err
+	if st.scan8 == nil {
+		st.scan8 = make([]int16, 64)
+		inverse8 := make([]int16, 64)
+		if err := transform.FillDefaultScan(st.scan8, inverse8, transform.Size{Width: 8, Height: 8}, transform.Class2D); err != nil {
+			return err
+		}
+		st.scan4 = make([]int16, 16)
+		inverse4 := make([]int16, 16)
+		if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
+			return err
+		}
+		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize8x8)
+		if err != nil {
+			return err
+		}
+		st.levels = make([]uint8, scratchLen)
+		st.invScratch = make([]int32, 64)
 	}
-	st.scan4 = make([]int16, 16)
-	inverse4 := make([]int16, 16)
-	if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
-		return nil, err
+	if cap(pc.writerBuf) == 0 {
+		pc.writerBuf = make([]byte, 1<<18)
 	}
-	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize8x8)
-	if err != nil {
-		return nil, err
+	if len(pc.carrier.Above) < rootCols {
+		pc.carrier.Above = make([]tile.BlockLoopRootAboveContext, rootCols)
 	}
-	st.levels = make([]uint8, scratchLen)
-	st.invScratch = make([]int32, 64)
+	pc.carrier.Left = tile.BlockLoopRootLeftContext{}
+	for i := range pc.carrier.Above[:rootCols] {
+		pc.carrier.Above[i] = tile.BlockLoopRootAboveContext{}
+	}
+	return nil
+}
 
-	w := entropy.NewWriter(make([]byte, 0, 1<<18))
-	st.w = &w
+func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
+	var pc pframeCoder
+	return pc.encodeTile(src, ref, recon, qIndex)
+}
 
+// encodeTile codes one P-frame tile reusing the coder's buffers.
+func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
 	rootCols := (int(miCols) + sbSizeMIB - 1) / sbSizeMIB
-
-	var scratch tile.BlockLoopScratch
-	carrier := &tile.BlockLoopContextCarrier{
-		Above: make([]tile.BlockLoopRootAboveContext, rootCols),
+	if err := pc.reset(qIndex, rootCols); err != nil {
+		return nil, err
 	}
+	st := &pc.st
+
+	w := entropy.NewWriter(pc.writerBuf[:0])
+	st.w = &w
+	st.interTxTypeReq = tile.InterTransformTypeRequest{
+		Size:        tile.TransformSize8x8,
+		QIndexKnown: true,
+		QIndex:      qIndex,
+	}
+	st.afterSkipInter = func() error {
+		return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, transform.TypeDCTDCT)
+	}
+
+	scratch := &pc.scratch
+	carrier := &pc.carrier
 	walkReq := tile.BlockWalkRequest{
 		Root:     tile.BlockLevel64x64,
 		MIColEnd: miCols,
@@ -175,9 +220,9 @@ func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame
 
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodePBlock(src, ref, recon, block, scratch, &refCDFs, &interModeCDFs, refs, walkReq, miCols, miRows)
+		return st.encodePBlock(src, ref, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, refs, walkReq, miCols, miRows)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &partCDFs, &scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
 	return w.Finish()
@@ -206,10 +251,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	// Quantize all three transform blocks up front; a block whose residual
 	// quantizes to zero everywhere is coded as skip (no residual symbols, the
 	// reconstruction is the prediction itself).
-	var lumaQ, uQ, vQ [64]int16
-	lumaZero := st.prepareInterTXB(src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &lumaQ)
-	uZero := st.prepareInterTXB(src.U, ref.U, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.uQuant, &uQ)
-	vZero := st.prepareInterTXB(src.V, ref.V, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.vQuant, &vQ)
+	lumaZero := st.prepareInterTXB(src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &st.lumaQ)
+	uZero := st.prepareInterTXB(src.U, ref.U, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.uQuant, &st.uQ)
+	vZero := st.prepareInterTXB(src.V, ref.V, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.vQuant, &st.vQ)
 	skip := lumaZero && uZero && vZero
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
@@ -317,28 +361,20 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	}
 
 	// Residual: luma TX_8X8 with the inter tx_type symbol, then chroma TX_4X4.
-	txTypeReq := tile.InterTransformTypeRequest{
-		Size:        tile.TransformSize8x8,
-		QIndexKnown: true,
-		QIndex:      st.qIndex,
-	}
-	afterSkip := func() error {
-		return tile.WriteInterTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
-	}
-	if err := st.finishInterTXB(recon.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &lumaQ, tile.CoeffContextRequest{
+	if err := st.finishInterTXB(recon.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &st.lumaQ, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, afterSkip); err != nil {
+	}, coeffCtx, st.scan8, st.afterSkipInter); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
 	for plane := 1; plane <= 2; plane++ {
-		rdata, refData, qc := recon.U, ref.U, &uQ
+		rdata, refData, qc := recon.U, ref.U, &st.uQ
 		q := st.uQuant
 		if plane == 2 {
-			rdata, refData, qc = recon.V, ref.V, &vQ
+			rdata, refData, qc = recon.V, ref.V, &st.vQ
 			q = st.vQuant
 		}
 		if err := st.finishInterTXB(rdata, refData, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, q, qc, tile.CoeffContextRequest{
