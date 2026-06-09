@@ -217,6 +217,78 @@ func TestSymbolWriterRoundTripMixed(t *testing.T) {
 	}
 }
 
+// TestAdaptCDFMatchesDecoder pins the encoder's adaptCDF byte-for-byte to the
+// decoder's exported entropy.UpdateCDF over a long symbol sequence, so the two
+// adaptation implementations cannot drift apart.
+func TestAdaptCDFMatchesDecoder(t *testing.T) {
+	rng := rand.New(rand.NewSource(10))
+	for nsyms := 2; nsyms <= entropyMaxSymbols(); nsyms++ {
+		enc := make([]uint16, nsyms+1)
+		dec := make([]uint16, nsyms+1)
+		if err := entropy.InitUniformCDF(enc, nsyms); err != nil {
+			t.Fatalf("InitUniformCDF: %v", err)
+		}
+		copy(dec, enc)
+		for step := range 500 {
+			s := rng.Intn(nsyms)
+			adaptCDF(enc, s)
+			if err := entropy.UpdateCDF(dec, nsyms, s); err != nil {
+				t.Fatalf("UpdateCDF: %v", err)
+			}
+			for i := range enc {
+				if enc[i] != dec[i] {
+					t.Fatalf("nsyms=%d step=%d sym=%d slot=%d: adaptCDF=%d UpdateCDF=%d",
+						nsyms, step, s, i, enc[i], dec[i])
+				}
+			}
+		}
+	}
+}
+
+// TestSymbolWriterAdaptiveRoundTrip encodes a symbol stream with on-the-fly CDF
+// adaptation and decodes it with the decoder's adaptation enabled. Starting from
+// the same default CDFs, both sides must evolve identically and agree on every
+// symbol.
+func TestSymbolWriterAdaptiveRoundTrip(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+	const count = 8000
+	// One adaptive CDF per alphabet size, copied for the decoder side.
+	encCDF := make(map[int][]uint16)
+	decCDF := make(map[int][]uint16)
+	for nsyms := 2; nsyms <= entropyMaxSymbols(); nsyms++ {
+		c := make([]uint16, nsyms+1)
+		if err := entropy.InitUniformCDF(c, nsyms); err != nil {
+			t.Fatalf("InitUniformCDF: %v", err)
+		}
+		encCDF[nsyms] = c
+		decCDF[nsyms] = append([]uint16(nil), c...)
+	}
+	type rec struct{ nsyms, sym int }
+	recs := make([]rec, count)
+	w := newSymbolWriter(make([]byte, 0, 1<<16))
+	for i := range count {
+		nsyms := 2 + rng.Intn(entropyMaxSymbols()-1)
+		sym := rng.Intn(nsyms)
+		recs[i] = rec{nsyms, sym}
+		w.writeSymbolAdaptive(sym, encCDF[nsyms])
+	}
+	buf, err := w.finish()
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	r := entropy.NewReaderWithCDFUpdate(buf, true)
+	for i := range count {
+		cdf := decCDF[recs[i].nsyms]
+		got, err := r.ReadSymbol(cdf, recs[i].nsyms)
+		if err != nil {
+			t.Fatalf("ReadSymbol[%d]: %v", i, err)
+		}
+		if got != recs[i].sym {
+			t.Fatalf("adaptive symbol[%d] = %d, want %d (nsyms %d)", i, got, recs[i].sym, recs[i].nsyms)
+		}
+	}
+}
+
 // TestSymbolWriterZeroAlloc proves the hot encode path is allocation-free when the
 // caller-owned buffer is large enough (no growth). finish reslices in place.
 func TestSymbolWriterZeroAlloc(t *testing.T) {

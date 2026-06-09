@@ -25,6 +25,7 @@ import (
 //	od_ec_encode_bool_q15         -> (*symbolWriter).writeBoolQ15
 //	od_ec_encode_cdf_q15          -> (*symbolWriter).writeSymbol
 //	aom_write_bit / aom_write_literal -> (*symbolWriter).writeLiteral (bool path)
+//	update_cdf                    -> adaptCDF (+ (*symbolWriter).writeSymbolAdaptive)
 //	od_ec_enc_done                -> (*symbolWriter).finish
 //
 // Deviations from C widths, all value-preserving (the live range never exceeds
@@ -37,6 +38,7 @@ const (
 	ecMinProbEnc   = 4 // EC_MIN_PROB   (entcode.h)
 	cdfProbBitsEnc = 15
 	cdfProbTopEnc  = 1 << cdfProbBitsEnc // CDF_PROB_TOP == 32768 (prob.h)
+	maxCDFCountEnc = 32                  // entropy.MaxCDFCount: adaptation count cap
 )
 
 // errCarryUnderflow signals a carry that would propagate before the first output
@@ -187,6 +189,39 @@ func (w *symbolWriter) writeSymbol(s int, icdf []uint16, nsyms int) {
 		fl = uint32(icdf[s-1])
 	}
 	w.encodeQ15(fl, uint32(icdf[s]), s, nsyms)
+}
+
+// writeSymbolAdaptive codes symbol s from the adaptive inverse CDF cdf (which
+// must have len == nsyms+1, the trailing slot holding the adaptation count) and
+// then adapts cdf in place. It mirrors the decoder's adaptive ReadSymbol so both
+// sides start from the same default CDF and evolve it identically.
+func (w *symbolWriter) writeSymbolAdaptive(s int, cdf []uint16) {
+	w.writeSymbol(s, cdf, len(cdf)-1)
+	adaptCDF(cdf, s)
+}
+
+// adaptCDF applies libaom update_cdf to the inverse CDF after symbol s is coded,
+// byte-identical to the decoder's updateCDFWindow (entropy/cdf.go) so encoder and
+// decoder CDF state never drift. cdf is the inverse CDF with the adaptation count
+// in its final slot (len == nsyms+1).
+func adaptCDF(cdf []uint16, s int) {
+	symbols := len(cdf) - 1
+	count := cdf[symbols]
+	rate := uint(4 + (count >> 4))
+	if symbols > 3 {
+		rate++
+	}
+	for i := 0; i < s; i++ {
+		v := cdf[i]
+		cdf[i] = v + ((uint16(cdfProbTopEnc) - v) >> rate)
+	}
+	for i := s; i < symbols-1; i++ {
+		v := cdf[i]
+		cdf[i] = v - (v >> rate)
+	}
+	if count < maxCDFCountEnc {
+		cdf[symbols] = count + 1
+	}
 }
 
 // writeLiteral codes the low n bits of value MSB-first as equiprobable bits,
