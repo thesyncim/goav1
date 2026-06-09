@@ -813,7 +813,7 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 	default:
 		return false
 	}
-	if err := quantize.QuantizeBlockScaled(qcoeff, n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
+	if err := quantize.QuantizeBlockScaledFP(qcoeff, n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
 		return false
 	}
 	for _, v := range qcoeff {

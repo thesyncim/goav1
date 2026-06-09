@@ -1,16 +1,13 @@
 package quantize
 
 // quantize.go is the encoder's forward quantizer, the inverse of this
-// package's dequantization path. The rule is plain truncation toward zero of
-// the transform-domain magnitude scaled by the DC/AC step:
-//
-//	|q| = (|c| << txScale) / scale
-//
-// which inverts dequantScalar's (|q| * scale) >> txScale to within one step.
-// Rate-distortion-optimised rounding (libaom quantize_b's zbin/round shaping)
-// is a later quality refinement; any deterministic rule here yields a valid
-// bitstream because the encoder reconstructs through the same dequant the
-// decoder runs.
+// package's dequantization path. QuantizeBlockScaled is plain truncation
+// toward zero (|q| = (|c| << txScale) / scale, inverting dequantScalar to
+// within one step); QuantizeBlockScaledFP is the libaom realtime rule
+// (av1_quantize_fp_no_qmatrix: half-step rounding offset with a one-step
+// deadzone), which trades slightly more rate for noticeably less rounding
+// error. Any deterministic rule yields a valid bitstream because the encoder
+// reconstructs through the same dequant the decoder runs.
 
 // QuantizeBlockScaled quantizes transform-domain coefficients into qcoeff.
 // Both buffers use AV1 coefficient order (coeff_idx = col*stride + row); the
@@ -57,6 +54,71 @@ func quantizeScalar(coeff int32, scale int32, txScale uint8) int16 {
 	const maxLevel = int32(^uint16(0) >> 1)
 	if level > maxLevel {
 		level = maxLevel
+	}
+	if negative {
+		level = -level
+	}
+	return int16(level)
+}
+
+// QuantizeBlockScaledFP quantizes with libaom's realtime rounding, the port
+// of av1_quantize_fp_no_qmatrix (av1/encoder/av1_quantize.c) minus the
+// scan/eob bookkeeping (callers walk coefficient order directly):
+//
+//	quant_fp = (1 << 16) / dequant            (av1_build_quantizer)
+//	round_fp = (64 * dequant) >> 7            (qrounding_factor_fp, sharpness 0)
+//	rounding = ROUND_POWER_OF_TWO(round_fp, txScale)
+//	skip when (|c| << (1 + txScale)) < dequant
+//	level    = ((|c| + rounding) * quant_fp) >> (16 - txScale)
+func QuantizeBlockScaledFP(qcoeff []int16, qStride int, coeff []int32, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
+	if q.DC <= 0 || q.AC <= 0 ||
+		txScale > 2 ||
+		width <= 0 ||
+		height <= 0 ||
+		qStride < height ||
+		coeffStride < height {
+		return ErrInvalidQuantizer
+	}
+	if !coeffBlockFits(len(qcoeff), qStride, width, height) ||
+		!coeffBlockFits(len(coeff), coeffStride, width, height) {
+		return ErrInvalidQuantizer
+	}
+	quantDC := int64(1<<16) / int64(q.DC)
+	quantAC := int64(1<<16) / int64(q.AC)
+	roundDC := roundPowerOfTwo((64*int32(q.DC))>>7, txScale)
+	roundAC := roundPowerOfTwo((64*int32(q.AC))>>7, txScale)
+	for col := range width {
+		qCol := qcoeff[col*qStride : col*qStride+height]
+		cCol := coeff[col*coeffStride : col*coeffStride+height]
+		for row := range height {
+			scale, quant, round := q.AC, quantAC, roundAC
+			if col == 0 && row == 0 {
+				scale, quant, round = q.DC, quantDC, roundDC
+			}
+			qCol[row] = quantizeScalarFP(cCol[row], scale, quant, round, txScale)
+		}
+	}
+	return nil
+}
+
+// quantizeScalarFP applies the fp rounding rule to one coefficient.
+func quantizeScalarFP(coeff int32, dequant int32, quant int64, round int32, txScale uint8) int16 {
+	negative := coeff < 0
+	abs := coeff
+	if negative {
+		abs = -abs
+	}
+	if abs<<(1+txScale) < dequant {
+		return 0
+	}
+	a := int64(abs) + int64(round)
+	const maxInt16 = int64(^uint16(0) >> 1)
+	if a > maxInt16 {
+		a = maxInt16
+	}
+	level := (a * quant) >> (16 - txScale)
+	if level > maxInt16 {
+		level = maxInt16
 	}
 	if negative {
 		level = -level

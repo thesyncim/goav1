@@ -341,7 +341,7 @@ func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride
 	default:
 		return fmt.Errorf("encoder: unsupported txb size %d", n)
 	}
-	if err := quantize.QuantizeBlockScaled(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, 0); err != nil {
+	if err := quantize.QuantizeBlockScaledFP(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, 0); err != nil {
 		return err
 	}
 	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n*n], scan, st.levels, afterSkip); err != nil {
