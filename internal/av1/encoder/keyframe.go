@@ -323,7 +323,7 @@ func encodeLosslessTXB(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffE
 	ctxReq tile.CoeffContextRequest, plane []byte, stride, px, py int,
 	scan []int16, levels []uint8) error {
 
-	dc := dcPredict4x4(plane, stride, px, py)
+	dc := dcPredictN(plane, stride, px, py, 4)
 
 	var residual [16]int16
 	for r := range 4 {
@@ -342,30 +342,4 @@ func encodeLosslessTXB(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffE
 	}
 	_, err := tile.WriteCoefficientsTXBWithContext(w, cdfs, ctx, ctxReq, transform.Class2D, coeffs[:], scan, levels)
 	return err
-}
-
-// dcPredict4x4 is the decoder's DC predictor (prediction.dcPrediction) for one
-// 4x4 block at pixel (px,py): the rounded mean of the 4 above and 4 left
-// neighbors that exist, or 128 when neither edge does.
-func dcPredict4x4(plane []byte, stride, px, py int) uint8 {
-	sum := 0
-	count := 0
-	if py > 0 {
-		row := (py-1)*stride + px
-		for i := range 4 {
-			sum += int(plane[row+i])
-		}
-		count += 4
-	}
-	if px > 0 {
-		col := py*stride + px - 1
-		for i := range 4 {
-			sum += int(plane[col+i*stride])
-		}
-		count += 4
-	}
-	if count == 0 {
-		return 128
-	}
-	return uint8((sum + count/2) / count)
 }

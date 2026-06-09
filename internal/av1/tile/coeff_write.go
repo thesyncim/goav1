@@ -42,6 +42,12 @@ type TXBEncodeRequest struct {
 	Class          transform.Class
 	TXBSkipContext uint8
 	DCSignContext  uint8
+
+	// AfterSkip, when non-nil, runs after the txb_skip symbol for non-skipped
+	// blocks and before the eob token — the position av1_write_coeffs_txb
+	// emits the luma tx_type symbol (and the decoder's coefficient path
+	// invokes its transform-type selector).
+	AfterSkip func() error
 }
 
 // WriteCoefficientsTXB codes the quantized coefficients of one transform block
@@ -90,6 +96,13 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	w.WriteCDF(&cdfs.TXBSkip[txCtx][req.TXBSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return nil
+	}
+	if req.AfterSkip != nil {
+		// Luma tx_type position (av1_write_coeffs_txb: after txb_skip, before
+		// the eob token).
+		if err := req.AfterSkip(); err != nil {
+			return err
+		}
 	}
 
 	// 2) eob position token + extra offset bits.
@@ -192,6 +205,13 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 // decoder carrier state evolve in lockstep. It returns the same TXBDecodeResult
 // the decoder would produce for the block.
 func WriteCoefficientsTXBWithContext(w *entropy.Writer, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, class transform.Class, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {
+	return WriteCoefficientsTXBWithContextHook(w, cdfs, ctx, ctxReq, class, coeffs, scan, levels, nil)
+}
+
+// WriteCoefficientsTXBWithContextHook is WriteCoefficientsTXBWithContext with
+// the TXBEncodeRequest.AfterSkip hook exposed, for luma transform blocks that
+// code a tx_type symbol between txb_skip and the eob token.
+func WriteCoefficientsTXBWithContextHook(w *entropy.Writer, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, class transform.Class, coeffs []int16, scan []int16, levels []uint8, afterSkip func() error) (TXBDecodeResult, error) {
 	if ctx == nil {
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
@@ -209,6 +229,7 @@ func WriteCoefficientsTXBWithContext(w *entropy.Writer, cdfs *CoeffCDFs, ctx *Co
 		Class:          class,
 		TXBSkipContext: txbCtx.TXBSkipContext,
 		DCSignContext:  txbCtx.DCSignContext,
+		AfterSkip:      afterSkip,
 	}, coeffs, scan, levels); err != nil {
 		return TXBDecodeResult{}, err
 	}
