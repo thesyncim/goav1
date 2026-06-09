@@ -35,7 +35,7 @@ func EncodeRepeatPFrame(width, height int, qIndex uint8) ([]byte, error) {
 	}
 
 	seq := losslessKeyframeSequence(width, height)
-	header, refs := repeatPFrameHeader(width, height, qIndex)
+	header, refs := repeatPFrameHeader(width, height, qIndex, 0x01)
 	header.References = &refs
 
 	tdSize := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
@@ -76,7 +76,7 @@ func EncodeRepeatPFrame(width, height int, qIndex uint8) ([]byte, error) {
 
 // repeatPFrameHeader builds the inter frame header plus the reference state the
 // decoder holds after the keyframe (RefreshFrameFlags 0xff seeded every slot).
-func repeatPFrameHeader(width, height int, qIndex uint8) (InterFrameHeaderParams, parser.ReferenceState) {
+func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (InterFrameHeaderParams, parser.ReferenceState) {
 	var refs parser.ReferenceState
 	defaultGlobal := parser.DefaultGlobalMotionParams()
 	for i := range parser.RefFrames {
@@ -98,10 +98,11 @@ func repeatPFrameHeader(width, height int, qIndex uint8) (InterFrameHeaderParams
 	tiles.InterpolationFilter = InterpolationEightTap
 	header := InterFrameHeaderParams{
 		Prefix: FrameHeaderPrefix{
-			FrameType:       FrameHeaderTypeInter,
-			ShowFrame:       true,
-			ShowableFrame:   true,
-			PrimaryRefFrame: EncoderPrimaryRefNone, // default CDFs each frame
+			FrameType:          FrameHeaderTypeInter,
+			ShowFrame:          true,
+			ShowableFrame:      true,
+			ErrorResilientMode: true,
+			PrimaryRefFrame:    EncoderPrimaryRefNone, // default CDFs each frame
 		},
 		Size: InterFrameSize{
 			UpscaledWidth:       uint32(width),
@@ -109,7 +110,7 @@ func repeatPFrameHeader(width, height int, qIndex uint8) (InterFrameHeaderParams
 			RenderWidth:         uint32(width),
 			RenderHeight:        uint32(height),
 			SuperResDenominator: 8,
-			RefreshFrameFlags:   0x01, // refresh slot 0: this frame becomes the next LAST
+			RefreshFrameFlags:   refreshFlags,
 		},
 		Tile:         tiles,
 		Quantization: QuantizationParams{BaseQIdx: qIndex},

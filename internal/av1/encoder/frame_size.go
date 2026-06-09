@@ -434,9 +434,9 @@ func validateInterFrameSize(seq SequenceHeader, prefix FrameHeaderPrefix, size I
 		if size.RefreshFrameFlags != 0xff {
 			return ErrInvalidFrame
 		}
-	} else if size.RefreshFrameFlags == 0 {
-		return ErrInvalidFrame
 	}
+	// refresh_frame_flags may be zero for inter frames that no later frame
+	// references (temporal-layer droppable frames).
 	if !frameInterSizeReadsRefOrderHints(seq, prefix) {
 		for i := uint8(0); i < encoderRefFrames; i++ {
 			if size.RefOrderHints[i] != 0 {

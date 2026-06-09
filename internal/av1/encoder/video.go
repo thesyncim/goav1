@@ -23,6 +23,11 @@ type VideoEncoder struct {
 	pc        pframeCoder
 	reconBufs [2]SourceFrame420
 	reconIdx  int
+
+	temporalLayers int
+	frameIndex     int
+	t1Recon        SourceFrame420
+	lastRecon      SourceFrame420
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -107,9 +112,28 @@ func (e *VideoEncoder) QIndex() uint8 {
 	return e.qIndex
 }
 
+// SetTemporalLayers selects the temporal-layer count: 1 (default) or 2 for
+// the WebRTC L1T2 pattern, where odd frames are droppable (they refresh no
+// reference slot and always predict from the latest layer-0 frame).
+func (e *VideoEncoder) SetTemporalLayers(n int) error {
+	if n != 1 && n != 2 {
+		return fmt.Errorf("encoder: unsupported temporal layer count %d", n)
+	}
+	e.temporalLayers = n
+	return nil
+}
+
+// TemporalID reports the temporal layer the next frame will be coded in.
+func (e *VideoEncoder) TemporalID() uint8 {
+	if e.temporalLayers == 2 && e.haveKey && e.frameIndex%2 == 1 {
+		return 1
+	}
+	return 0
+}
+
 // Encode encodes one frame and returns its temporal unit plus whether it was
 // coded as a keyframe. The first frame (and any frame with forceKey set) is a
-// keyframe; every other frame predicts from the previous reconstruction.
+// keyframe; every other frame predicts from the latest layer-0 reconstruction.
 func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, error) {
 	if src.Width != e.width || src.Height != e.height {
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.width, e.height)
@@ -120,14 +144,18 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 			return nil, false, err
 		}
 		e.recon = recon
+		e.lastRecon = recon
 		e.haveKey = true
+		e.frameIndex = 1
 		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
-	tu, err := e.encodePReusing(src)
+	tid := e.TemporalID()
+	tu, err := e.encodePReusing(src, tid)
 	if err != nil {
 		return nil, false, err
 	}
+	e.frameIndex++
 	e.rcUpdate(len(tu) * 8)
 	return tu, false, nil
 }
@@ -135,8 +163,14 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 // encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
 // coder state and double-buffered reconstruction planes so per-frame work
 // allocates only the emitted temporal unit.
-func (e *VideoEncoder) encodePReusing(src SourceFrame420) ([]byte, error) {
-	out := &e.reconBufs[e.reconIdx]
+func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
+	droppable := temporalID > 0
+	var out *SourceFrame420
+	if droppable {
+		out = &e.t1Recon
+	} else {
+		out = &e.reconBufs[e.reconIdx]
+	}
 	if out.Y == nil {
 		*out = SourceFrame420{
 			Y:            make([]byte, len(src.Y)),
@@ -152,15 +186,22 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode tile: %w", err)
 	}
+	refresh := uint8(0x01)
+	if droppable {
+		refresh = 0 // layer-1 frames are never referenced
+	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
 	header.References = &refState
-	tu, err := assembleInterTU(seq, header, tilePayload)
+	tu, err := assembleInterTU(seq, header, tilePayload, temporalID)
 	if err != nil {
 		return nil, err
 	}
-	e.recon = *out
-	e.reconIdx ^= 1
+	e.lastRecon = *out
+	if !droppable {
+		e.recon = *out
+		e.reconIdx ^= 1
+	}
 	return tu, nil
 }
 
@@ -169,5 +210,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420) ([]byte, error) {
 // that are reused two frames later; callers needing longer-lived snapshots
 // must copy.
 func (e *VideoEncoder) Recon() SourceFrame420 {
+	if e.lastRecon.Y != nil {
+		return e.lastRecon
+	}
 	return e.recon
 }

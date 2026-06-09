@@ -48,10 +48,10 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	}
 
 	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
 	header.References = &refState
 
-	out, err := assembleInterTU(seq, header, tilePayload)
+	out, err := assembleInterTU(seq, header, tilePayload, 0)
 	if err != nil {
 		return nil, SourceFrame420{}, err
 	}
@@ -60,7 +60,7 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 
 // assembleInterTU wraps one coded tile into a TD + inter frame header + tile
 // group temporal unit.
-func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayload []byte) ([]byte, error) {
+func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayload []byte, temporalID uint8) ([]byte, error) {
 	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
 	if err != nil {
 		return nil, fmt.Errorf("size tile group: %w", err)
@@ -70,12 +70,12 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 	if err != nil {
 		return nil, fmt.Errorf("append tile group: %w", err)
 	}
-	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
+	groupOBU := OBU{Type: obu.TypeTileGroup, TemporalID: temporalID, Payload: group}
 	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
 	if err != nil {
 		return nil, err
 	}
-	frameSize, err := LowOverheadInterFrameHeaderOBUSize(seq, header, 0, 0)
+	frameSize, err := LowOverheadInterFrameHeaderOBUSize(seq, header, temporalID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("size inter header: %w", err)
 	}
@@ -85,7 +85,7 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 	if err != nil {
 		return nil, err
 	}
-	out, err = AppendLowOverheadInterFrameHeaderOBU(out, seq, header, 0, 0)
+	out, err = AppendLowOverheadInterFrameHeaderOBU(out, seq, header, temporalID, 0)
 	if err != nil {
 		return nil, fmt.Errorf("append inter header: %w", err)
 	}
