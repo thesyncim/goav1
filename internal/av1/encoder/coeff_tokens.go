@@ -1,5 +1,7 @@
 package encoder
 
+import "github.com/thesyncim/goav1/internal/av1/entropy"
+
 // coeff_tokens.go holds the coefficient-coding primitives that are the first
 // pieces of the forward of the decoder's tile.ReadCoefficientsTXB. They are
 // source-shaped ports of libaom av1/encoder/encodetxb.c and av1/common/
@@ -53,16 +55,16 @@ func eobPosToken(eob int) (token int, extra int) {
 // writeGolomb codes a non-negative coefficient-level tail with the AV1 Exp-Golomb
 // code as equiprobable bits, the exact inverse of the decoder's
 // readCoeffGolombCursor. Port of write_golomb (encodetxb.c).
-func writeGolomb(w *symbolWriter, level int) {
+func writeGolomb(w *entropy.Writer, level int) {
 	x := level + 1
 	length := 0
 	for i := x; i != 0; i >>= 1 {
 		length++
 	}
 	for range length - 1 {
-		w.writeLiteral(0, 1)
+		w.WriteLiteral(0, 1)
 	}
 	for i := length - 1; i >= 0; i-- {
-		w.writeLiteral(uint32((x>>uint(i))&1), 1)
+		w.WriteLiteral(uint32((x>>uint(i))&1), 1)
 	}
 }

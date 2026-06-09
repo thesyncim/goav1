@@ -1,10 +1,15 @@
 package encoder
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 )
+
+// errGolombTooLong guards the test golomb decoder against a malformed run; valid
+// writeGolomb output never trips it.
+var errGolombTooLong = errors.New("golomb run too long")
 
 // TestEOBPosTokenInverts checks the EOB position-token decomposition is exactly
 // invertible across the full eob range: the token's group start plus the coded
@@ -40,11 +45,11 @@ func TestWriteGolombRoundTrip(t *testing.T) {
 		levels = append(levels, (1<<i)-1, 1<<i, (1<<i)+1)
 	}
 
-	w := newSymbolWriter(make([]byte, 0, 1<<16))
+	w := entropy.NewWriter(make([]byte, 0, 1<<16))
 	for _, lv := range levels {
 		writeGolomb(&w, lv)
 	}
-	buf, err := w.finish()
+	buf, err := w.Finish()
 	if err != nil {
 		t.Fatalf("finish: %v", err)
 	}
@@ -73,7 +78,7 @@ func decodeGolomb(r *entropy.Reader) (int, error) {
 		}
 		length++
 		if length > 20 {
-			return 0, errCarryUnderflow // reuse a sentinel; never hit on valid input
+			return 0, errGolombTooLong
 		}
 		if bit != 0 {
 			break
@@ -92,11 +97,11 @@ func decodeGolomb(r *entropy.Reader) (int, error) {
 func TestWriteGolombZeroAlloc(t *testing.T) {
 	dst := make([]byte, 0, 4096)
 	allocs := testing.AllocsPerRun(100, func() {
-		w := newSymbolWriter(dst)
+		w := entropy.NewWriter(dst)
 		for lv := range 500 {
 			writeGolomb(&w, lv)
 		}
-		if _, err := w.finish(); err != nil {
+		if _, err := w.Finish(); err != nil {
 			t.Fatalf("finish: %v", err)
 		}
 	})
