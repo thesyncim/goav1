@@ -27,8 +27,8 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	if src.Width != ref.Width || src.Height != ref.Height {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: source %dx%d does not match reference %dx%d", src.Width, src.Height, ref.Width, ref.Height)
 	}
-	if src.Width <= 0 || src.Height <= 0 || src.Width%64 != 0 || src.Height%64 != 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: P-frame requires multiple-of-64 dimensions, got %dx%d", src.Width, src.Height)
+	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: P-frame requires multiple-of-8 dimensions, got %dx%d", src.Width, src.Height)
 	}
 	if qIndex == 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")

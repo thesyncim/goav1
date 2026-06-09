@@ -26,8 +26,8 @@ import (
 // EncodeRepeatPFrame encodes a P-frame that reproduces the previous frame's
 // reconstruction bit for bit. width/height must match the reference frame.
 func EncodeRepeatPFrame(width, height int, qIndex uint8) ([]byte, error) {
-	if width <= 0 || height <= 0 || width%64 != 0 || height%64 != 0 {
-		return nil, fmt.Errorf("encoder: repeat P-frame requires multiple-of-64 dimensions, got %dx%d", width, height)
+	if width <= 0 || height <= 0 || width%8 != 0 || height%8 != 0 {
+		return nil, fmt.Errorf("encoder: repeat P-frame requires multiple-of-8 dimensions, got %dx%d", width, height)
 	}
 	tilePayload, err := encodeRepeatPFrameTile(width, height)
 	if err != nil {
@@ -167,8 +167,13 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 		MIColEnd: miCols,
 		MIRowEnd: miRows,
 	}
+	// All blocks 8x8, matching the residual P-frame path: every leaf fits
+	// fully inside multiple-of-8 frames.
 	decide := func(level tile.BlockLevel, ctx int, haveRight, haveBottom bool) (tile.Partition, error) {
-		return tile.PartitionNone, nil
+		if level == tile.BlockLevel8x8 {
+			return tile.PartitionNone, nil
+		}
+		return tile.PartitionSplit, nil
 	}
 
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
@@ -240,7 +245,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 		// symbols, fixed EIGHTTAP filters (non-switchable, no symbols).
 
 		// 5) context marks, mirroring the decoder's motion-decoded path.
-		hasChroma := true // 64x64 blocks at 4:2:0 always carry chroma
+		hasChroma := true // 8x8 blocks at 4:2:0 always carry chroma
 		motionResult := tile.InterMotionResult{
 			References: refs,
 			Mode:       modeResult,

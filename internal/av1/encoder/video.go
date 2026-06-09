@@ -43,8 +43,8 @@ type RateControlConfig struct {
 // NewVideoEncoder creates a streaming encoder. Dimensions must be positive
 // multiples of 64 (the current P-frame constraint) and qIndex non-zero.
 func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
-	if width <= 0 || height <= 0 || width%64 != 0 || height%64 != 0 {
-		return nil, fmt.Errorf("encoder: dimensions must be positive multiples of 64, got %dx%d", width, height)
+	if width <= 0 || height <= 0 || width%8 != 0 || height%8 != 0 {
+		return nil, fmt.Errorf("encoder: dimensions must be positive multiples of 8, got %dx%d", width, height)
 	}
 	if qIndex == 0 {
 		return nil, fmt.Errorf("encoder: qindex must be non-zero")
