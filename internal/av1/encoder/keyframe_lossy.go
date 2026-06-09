@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
@@ -109,24 +110,44 @@ type lossyEncodeState struct {
 	uQuant quantize.Quantizer
 	vQuant quantize.Quantizer
 
-	scan8, scan4 []int16
-	levels       []uint8
-	invScratch   []int32
-	color        parser.ColorConfig
+	scan8, scan4, scan16 []int16
+	levels               []uint8
+	invScratch           []int32
+	color                parser.ColorConfig
 
 	// Per-block scratch reused across blocks so the hot encode loop stays
-	// allocation-free: quantized coefficients per plane and the prebuilt
-	// after-skip tx_type hook (a closure built once per tile, not per block).
-	lumaQ, uQ, vQ  [64]int16
+	// allocation-free: quantized coefficients per plane (sized for the largest
+	// coded TXB, 16x16 luma / 8x8 chroma) and the prebuilt after-skip tx_type
+	// hook (a closure built once per tile, not per block).
+	lumaQ          [256]int16
+	uQ, vQ         [64]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	afterSkipInter func() error
 
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
-	predY      [64]byte
-	predU      [16]byte
-	predV      [16]byte
-	sadScratch [64]byte
+	predY      [256]byte
+	predU      [64]byte
+	predV      [64]byte
+	sadScratch [256]byte
+
+	// Transform/quant scratch for the inter TXB pipeline (residual in,
+	// forward transform out, dequant + inverse residual back), state-owned so
+	// the per-block helpers stay allocation-free at 16x16 sizes.
+	resScratch  [256]int16
+	tranScratch [256]int32
+	dqScratch   [256]int32
+	invResidual [256]int16
+
+	// Per-frame motion partition grids filled by the 16x16 partition decider:
+	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
+	// split leaves do not repeat the search. sad < 0 marks an empty slot.
+	mv16Grid   []motion.Vector
+	sad16Grid  []int32
+	grid16Cols int
+	mv8Grid    []motion.Vector
+	sad8Grid   []int32
+	grid8Cols  int
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
@@ -190,7 +211,7 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8)
 	}
 	// All blocks 8x8: split every level above BlockLevel8x8, PARTITION_NONE at
 	// the 8x8 level.
-	decide := func(level tile.BlockLevel, ctx int, haveRight, haveBottom bool) (tile.Partition, error) {
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}

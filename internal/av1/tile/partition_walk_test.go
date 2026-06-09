@@ -17,7 +17,7 @@ type scriptedPartitionCall struct {
 	haveBottom bool
 }
 
-func (r *scriptedPartitionReader) read(level BlockLevel, ctx int, haveRight bool, haveBottom bool) (Partition, error) {
+func (r *scriptedPartitionReader) read(level BlockLevel, ctx int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 	r.calls = append(r.calls, scriptedPartitionCall{
 		level:      level,
 		ctx:        ctx,
@@ -230,7 +230,7 @@ func TestWalkBlocksScriptedH4V4EdgeClipping(t *testing.T) {
 func TestWalkBlocksRejectsInvalidInputs(t *testing.T) {
 	var nilState *DecodeState
 	errBoom := errors.New("boom")
-	_, err := walkBlocks(nil, BlockWalkRequest{Root: BlockLevel64x64, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, bool, bool) (Partition, error) {
+	_, err := walkBlocks(nil, BlockWalkRequest{Root: BlockLevel64x64, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, uint32, uint32, bool, bool) (Partition, error) {
 		return PartitionNone, nil
 	}, func(BlockVisit) error { return nil })
 	if !errors.Is(err, ErrInvalidDecodeState) {
@@ -240,13 +240,13 @@ func TestWalkBlocksRejectsInvalidInputs(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil state err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	_, err = walkBlocks(&PartitionContext{}, BlockWalkRequest{Root: BlockLevel64x64, MIColStart: 1, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, bool, bool) (Partition, error) {
+	_, err = walkBlocks(&PartitionContext{}, BlockWalkRequest{Root: BlockLevel64x64, MIColStart: 1, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, uint32, uint32, bool, bool) (Partition, error) {
 		return PartitionNone, nil
 	}, func(BlockVisit) error { return nil })
 	if !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("unaligned region err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	_, err = walkBlocks(&PartitionContext{}, BlockWalkRequest{Root: BlockLevel64x64, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, bool, bool) (Partition, error) {
+	_, err = walkBlocks(&PartitionContext{}, BlockWalkRequest{Root: BlockLevel64x64, MIColEnd: 16, MIRowEnd: 16}, func(BlockLevel, int, uint32, uint32, bool, bool) (Partition, error) {
 		return PartitionNone, nil
 	}, func(BlockVisit) error { return errBoom })
 	if !errors.Is(err, errBoom) {
@@ -277,7 +277,7 @@ func FuzzWalkBlocksScripted(f *testing.F) {
 		}
 
 		pos := 0
-		read := func(level BlockLevel, _ int, haveRight bool, haveBottom bool) (Partition, error) {
+		read := func(level BlockLevel, _ int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 			if !haveRight && !haveBottom {
 				if level >= BlockLevel8x8 {
 					return PartitionNone, nil

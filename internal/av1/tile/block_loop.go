@@ -402,7 +402,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 					return stats, err
 				}
 			}
-			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
+			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
 				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, block)

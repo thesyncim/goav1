@@ -4,9 +4,11 @@ import "github.com/thesyncim/goav1/internal/av1/entropy"
 
 // PartitionDecider chooses the partition for one interior tree node during an
 // encoding walk. It receives the same level/context/availability the decoder's
-// ReadPartition sees; the returned partition must be valid for that node (forced
-// PARTITION_SPLIT nodes are not consulted — the walker handles them).
-type PartitionDecider func(level BlockLevel, ctx int, haveRight bool, haveBottom bool) (Partition, error)
+// ReadPartition sees plus the node's MI position so content-adaptive deciders
+// can score the pixels under the node; the returned partition must be valid
+// for that node (forced PARTITION_SPLIT nodes are not consulted — the walker
+// handles them).
+type PartitionDecider func(level BlockLevel, ctx int, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) (Partition, error)
 
 // WalkBlocksWrite runs the encoder-side partition walk: it traverses the MI
 // region with the decoder's own walkBlocks state machine, asks decide for each
@@ -18,7 +20,7 @@ func WalkBlocksWrite(w *entropy.Writer, cdfs *PartitionCDFs, ctx *PartitionConte
 	if w == nil || cdfs == nil || decide == nil {
 		return BlockWalkStats{}, ErrInvalidDecodeState
 	}
-	return walkBlocks(ctx, req, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
+	return walkBlocks(ctx, req, func(level BlockLevel, context int, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) (Partition, error) {
 		if !haveRight && !haveBottom {
 			// Forced split: ReadPartition codes nothing, so neither do we.
 			if level >= BlockLevel8x8 {
@@ -26,7 +28,7 @@ func WalkBlocksWrite(w *entropy.Writer, cdfs *PartitionCDFs, ctx *PartitionConte
 			}
 			return PartitionSplit, nil
 		}
-		partition, err := decide(level, context, haveRight, haveBottom)
+		partition, err := decide(level, context, miCol, miRow, haveRight, haveBottom)
 		if err != nil {
 			return 0, err
 		}

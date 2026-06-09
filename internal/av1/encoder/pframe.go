@@ -169,7 +169,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 	}
 	// All blocks 8x8, matching the residual P-frame path: every leaf fits
 	// fully inside multiple-of-8 frames.
-	decide := func(level tile.BlockLevel, ctx int, haveRight, haveBottom bool) (tile.Partition, error) {
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}

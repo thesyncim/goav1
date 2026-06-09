@@ -47,7 +47,7 @@ type BlockWalkStats struct {
 // BlockVisitor is called in bitstream traversal order for every leaf block.
 type BlockVisitor func(BlockVisit) error
 
-type partitionReadFunc func(level BlockLevel, ctx int, haveRight bool, haveBottom bool) (Partition, error)
+type partitionReadFunc func(level BlockLevel, ctx int, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) (Partition, error)
 
 // WalkBlocks decodes AV1 partition syntax over req and calls visit for each
 // leaf block. cdfs and ctx are caller-owned so adapted state is retained across
@@ -56,7 +56,7 @@ func (s *DecodeState) WalkBlocks(cdfs *PartitionCDFs, ctx *PartitionContext, req
 	if s == nil {
 		return BlockWalkStats{}, ErrInvalidDecodeState
 	}
-	return walkBlocks(ctx, req, func(level BlockLevel, context int, haveRight bool, haveBottom bool) (Partition, error) {
+	return walkBlocks(ctx, req, func(level BlockLevel, context int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 		return s.ReadPartition(cdfs, level, context, haveRight, haveBottom)
 	}, visit)
 }
@@ -117,7 +117,7 @@ func (w *partitionWalker) walkNode(level BlockLevel, rootCol uint32, rootRow uin
 	if err != nil {
 		return err
 	}
-	partition, err := w.read(level, context, haveRight, haveBottom)
+	partition, err := w.read(level, context, miCol, miRow, haveRight, haveBottom)
 	w.stats.PartitionReads++
 	if err != nil {
 		return err

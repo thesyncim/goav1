@@ -35,7 +35,14 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 	miRowEnd := uint32(req.MIRowEnd)
 	neighborMIColStart := req.neighborMIColStart()
 	neighborMIRowStart := req.neighborMIRowStart()
+	// The diagonal corner carriers feed the ref-MV outer scan's (-1,-1) cell
+	// across superblock boundaries (see the decoder loop in block_loop.go);
+	// without them the encoder's stack drops the above-left corner candidate
+	// and its MV predictors desync from the decoder for blocks whose corner
+	// neighbor is 16x16 or larger.
+	ensureIntrabcDiagonalCarriers(carrier)
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
+		promotePendingDiagonalCarriers(carrier)
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
 			if err := blockLoopLoadRootContext(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB); err != nil {
@@ -59,6 +66,7 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 			if err := blockLoopStoreRootContext(scratch, carrier, rootColIndex, sbSizeMIB); err != nil {
 				return err
 			}
+			captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
 		}
 	}
 	return nil

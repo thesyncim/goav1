@@ -35,7 +35,7 @@ func TestWalkBlocksWriteRoundTrip(t *testing.T) {
 			var encCtx PartitionContext
 			w := entropy.NewWriter(make([]byte, 0, 1<<14))
 			var encVisits []BlockVisit
-			decide := func(level BlockLevel, ctx int, haveRight bool, haveBottom bool) (Partition, error) {
+			decide := func(level BlockLevel, ctx int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 				switch {
 				case haveRight && haveBottom:
 					return Partition(rng.Intn(int(partitionSymbolCount[level]))), nil

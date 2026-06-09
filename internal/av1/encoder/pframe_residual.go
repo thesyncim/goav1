@@ -158,12 +158,17 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
 		if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
 			return err
 		}
-		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize8x8)
+		st.scan16 = make([]int16, 256)
+		inverse16 := make([]int16, 256)
+		if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
+			return err
+		}
+		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize16x16)
 		if err != nil {
 			return err
 		}
 		st.levels = make([]uint8, scratchLen)
-		st.invScratch = make([]int32, 64)
+		st.invScratch = make([]int32, 256)
 	}
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
@@ -212,8 +217,48 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 		MIColEnd: miCols,
 		MIRowEnd: miRows,
 	}
-	decide := func(level tile.BlockLevel, ctx int, haveRight, haveBottom bool) (tile.Partition, error) {
+	st.grid16Cols = (int(miCols) + 3) / 4
+	grid16Rows := (int(miRows) + 3) / 4
+	if len(st.mv16Grid) < st.grid16Cols*grid16Rows {
+		st.mv16Grid = make([]motion.Vector, st.grid16Cols*grid16Rows)
+		st.sad16Grid = make([]int32, st.grid16Cols*grid16Rows)
+	}
+	st.grid8Cols = (int(miCols) + 1) / 2
+	grid8Rows := (int(miRows) + 1) / 2
+	if len(st.mv8Grid) < st.grid8Cols*grid8Rows {
+		st.mv8Grid = make([]motion.Vector, st.grid8Cols*grid8Rows)
+		st.sad8Grid = make([]int32, st.grid8Cols*grid8Rows)
+	}
+	for i := range st.sad8Grid {
+		st.sad8Grid[i] = -1
+	}
+	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
+	// over the four independent 8x8 searches and still be coded as one block:
+	// the saved mode/MV syntax of three blocks outweighs a small residual
+	// increase at realtime rates.
+	const mergeBias16 = 64
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
+			return tile.PartitionNone, nil
+		}
+		if level != tile.BlockLevel16x16 || !haveRight || !haveBottom {
+			return tile.PartitionSplit, nil
+		}
+		px, py := int(miCol)*4, int(miRow)*4
+		dx16, dy16, sad16 := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16)
+		sum8 := 0
+		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+			cx, cy := px+off[0], py+off[1]
+			dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8)
+			idx8 := (cy/8)*st.grid8Cols + cx/8
+			st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
+			st.sad8Grid[idx8] = int32(sad)
+			sum8 += sad
+		}
+		if sad16 <= sum8+mergeBias16 {
+			idx16 := (py/16)*st.grid16Cols + px/16
+			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
+			st.sad16Grid[idx16] = int32(sad16)
 			return tile.PartitionNone, nil
 		}
 		return tile.PartitionSplit, nil
@@ -229,35 +274,56 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 	return w.Finish()
 }
 
-// encodePBlock codes one 8x8 zero-motion inter block with residual: the inter
-// mode symbols in the decoder's order, then the luma TX_8X8 residual (with the
-// inter tx_type symbol after txb_skip) and two chroma TX_4X4 residuals against
+// encodePBlock codes one inter block (8x8 or 16x16) with residual: the inter
+// mode symbols in the decoder's order, then the largest-TX luma residual (with
+// the inter tx_type symbol after txb_skip) and two chroma residuals against
 // the reference reconstruction.
 func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
 	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, refs tile.InterReferencesResult,
 	walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 
-	if block.Size != tile.BlockSize8x8 {
+	var n int
+	switch block.Size {
+	case tile.BlockSize8x8:
+		n = 8
+	case tile.BlockSize16x16:
+		n = 16
+	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
+	cn := n / 2
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 
 	// Motion estimation first: the skip decision needs the motion-compensated
-	// residual. Full-pel diamond search, then subpel refinement through the
-	// decoder's own convolve when the match is imperfect.
+	// residual. The partition decider already ran the full-pel searches and
+	// cached them; fall back to a fresh search for blocks it never scored
+	// (frame-edge nodes reach the leaf without a 16x16 decision). Subpel
+	// refinement through the decoder's own convolve when the match is
+	// imperfect.
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	dx, dy, fullSAD := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
-	mv := motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-	if fullSAD > 8*8*2 {
-		mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, mv, fullSAD)
+	var mv motion.Vector
+	fullSAD := -1
+	if n == 16 {
+		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
+		mv, fullSAD = st.mv16Grid[idx], int(st.sad16Grid[idx])
+	} else if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; st.sad8Grid[idx] >= 0 {
+		mv, fullSAD = st.mv8Grid[idx], int(st.sad8Grid[idx])
+	}
+	if fullSAD < 0 {
+		dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n)
+		mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
+	}
+	if fullSAD > n*n*2 {
+		fullMV := mv
+		mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
 		// Periodic textures can alias the full-pel raster into a distant
 		// basin; a second refinement seeded at zero motion recovers the
 		// near-origin subpel optimum when it is better.
-		if fullSAD > 8*8*2 && (dx != 0 || dy != 0) {
-			zeroSAD := sad8x8Impl(src.Y[lumaPY*src.YStride+lumaPX:], ref.Y[lumaPY*src.YStride+lumaPX:], src.YStride, 1<<30)
-			if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, motion.Vector{}, zeroSAD); zsad < fullSAD {
+		if fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
+			zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
+			if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
 				mv, fullSAD = zmv, zsad
 			}
 		}
@@ -265,23 +331,23 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
-	if err := predictInto(st.predY[:], ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, mv, false, false); err != nil {
+	if err := predictInto(st.predY[:n*n], ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, false, false); err != nil {
 		return fmt.Errorf("predict luma: %w", err)
 	}
 	cw, chh := src.Width/2, src.Height/2
-	if err := predictInto(st.predU[:], ref.U, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, 4, mv, true, true); err != nil {
+	if err := predictInto(st.predU[:cn*cn], ref.U, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
 		return fmt.Errorf("predict u: %w", err)
 	}
-	if err := predictInto(st.predV[:], ref.V, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, 4, mv, true, true); err != nil {
+	if err := predictInto(st.predV[:cn*cn], ref.V, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
 		return fmt.Errorf("predict v: %w", err)
 	}
 
 	// Quantize all three transform blocks up front; a block whose residual
 	// quantizes to zero everywhere is coded as skip (no residual symbols, the
 	// reconstruction is the prediction itself).
-	lumaZero := st.prepareInterTXB(src.Y, st.predY[:], src.YStride, lumaPX, lumaPY, 8, st.yQuant, &st.lumaQ)
-	uZero := st.prepareInterTXB(src.U, st.predU[:], src.ChromaStride, lumaPX/2, lumaPY/2, 4, st.uQuant, &st.uQ)
-	vZero := st.prepareInterTXB(src.V, st.predV[:], src.ChromaStride, lumaPX/2, lumaPY/2, 4, st.vQuant, &st.vQ)
+	lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
+	uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
+	vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
 	skip := lumaZero && uZero && vZero
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
@@ -354,7 +420,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		}
 	}
 
-	hasChroma := true // 8x8 blocks at 4:2:0 carry chroma
+	hasChroma := true // 8x8 and 16x16 blocks at 4:2:0 carry chroma
 	motionResult := tile.InterMotionResult{References: refs, Mode: modeResult}
 	motionResult.MV[0] = mv
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
@@ -380,36 +446,43 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 				return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
 			}
 		}
-		copyPredScratch(recon.Y, st.predY[:], src.YStride, lumaPX, lumaPY, 8)
-		copyPredScratch(recon.U, st.predU[:], src.ChromaStride, lumaPX/2, lumaPY/2, 4)
-		copyPredScratch(recon.V, st.predV[:], src.ChromaStride, lumaPX/2, lumaPY/2, 4)
+		copyPredScratch(recon.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n)
+		copyPredScratch(recon.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn)
+		copyPredScratch(recon.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn)
 		return nil
 	}
 
-	// Residual: luma TX_8X8 with the inter tx_type symbol, then chroma TX_4X4.
-	if err := st.finishInterTXB(recon.Y, st.predY[:], src.YStride, lumaPX, lumaPY, 8, st.yQuant, &st.lumaQ, tile.CoeffContextRequest{
+	// Residual: largest-TX luma with the inter tx_type symbol, then chroma.
+	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
+	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
+	if n == 16 {
+		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
+		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
+	}
+	st.interTxTypeReq.Size = lumaTX
+	if err := st.finishInterTXB(recon.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n], tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
-		Size:       tile.TransformSize8x8,
+		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, st.afterSkipInter); err != nil {
+	}, coeffCtx, lumaScan, st.afterSkipInter); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
 	for plane := 1; plane <= 2; plane++ {
-		rdata, pred, qc := recon.U, st.predU[:], &st.uQ
+		rdata, pred, qc := recon.U, st.predU[:cn*cn], st.uQ[:cn*cn]
 		q := st.uQuant
 		if plane == 2 {
-			rdata, pred, qc = recon.V, st.predV[:], &st.vQ
+			rdata, pred, qc = recon.V, st.predV[:cn*cn], st.vQ[:cn*cn]
 			q = st.vQuant
 		}
-		if err := st.finishInterTXB(rdata, pred, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, qc, tile.CoeffContextRequest{
+		if err := st.finishInterTXB(rdata, pred, src.ChromaStride, lumaPX/2, lumaPY/2, cn, q, qc, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
-			Size:       tile.TransformSize4x4,
+			Size:       chromaTX,
 			X4:         block.X4 / 2,
 			Y4:         block.Y4 / 2,
-		}, coeffCtx, st.scan4, nil); err != nil {
+		}, coeffCtx, chromaScan, nil); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 	}
@@ -433,7 +506,7 @@ func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, n i
 // subpelRefine improves a full-pel luma motion vector with two refinement
 // rounds (half-pel then quarter-pel steps, both representable at low MV
 // precision) scored by SAD over predictions from the decoder's own convolve.
-func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	for _, step := range [2]int16{4, 2} {
 		improved := true
 		for improved {
@@ -445,14 +518,14 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 				{Row: base.Row, Col: base.Col - step},
 				{Row: base.Row, Col: base.Col + step},
 			} {
-				if err := predictInto(st.sadScratch[:], refPlane, stride, width, height, px, py, 8, cand, false, false); err != nil {
+				if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
 					continue
 				}
 				s := 0
-				for r := range 8 {
+				for r := range n {
 					row := (py+r)*stride + px
-					for c := range 8 {
-						d := int(src[row+c]) - int(st.sadScratch[r*8+c])
+					for c := range n {
+						d := int(src[row+c]) - int(st.sadScratch[r*n+c])
 						if d < 0 {
 							d = -d
 						}
@@ -468,6 +541,30 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 	return mv, bestSAD
 }
 
+// sadBlock is the generic n x n SAD with the 8x8 kernel fast path; limit is
+// an early-exit hint as in sad8x8Impl.
+func sadBlock(src, ref []byte, base, refBase, stride, n, limit int) int {
+	if n == 8 {
+		return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
+	}
+	total := 0
+	for r := range n {
+		row := base + r*stride
+		refRow := refBase + r*stride
+		for c := range n {
+			d := int(src[row+c]) - int(ref[refRow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+		if total >= limit {
+			return total
+		}
+	}
+	return total
+}
+
 // copyPredScratch copies a materialized n x n prediction into the recon plane
 // for skipped blocks.
 func copyPredScratch(reconPlane, pred []byte, stride, px, py, n int) {
@@ -479,15 +576,15 @@ func copyPredScratch(reconPlane, pred []byte, stride, px, py, n int) {
 // prepareInterTXB computes the quantized coefficients of one square n x n
 // motion-compensated residual block (pred holds the prediction at stride n)
 // and reports whether they are all zero.
-func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff *[64]int16) bool {
-	var residual [64]int16
+func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16) bool {
+	residual := &st.resScratch
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
 			residual[r*n+c] = int16(srcPlane[row+c]) - int16(pred[r*n+c])
 		}
 	}
-	var tran [64]int32
+	tran := &st.tranScratch
 	switch n {
 	case 4:
 		if err := transform.ForwardDCT4x4(tran[:16], 4, residual[:16], 4); err != nil {
@@ -497,13 +594,17 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 		if err := transform.ForwardDCT8x8(tran[:64], 8, residual[:64], 8); err != nil {
 			return false
 		}
+	case 16:
+		if err := transform.ForwardDCT16x16(tran[:256], 16, residual[:256], 16); err != nil {
+			return false
+		}
 	default:
 		return false
 	}
-	if err := quantize.QuantizeBlockScaled(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, 0); err != nil {
+	if err := quantize.QuantizeBlockScaled(qcoeff, n, tran[:n*n], n, n, n, q, 0); err != nil {
 		return false
 	}
-	for _, v := range qcoeff[:n*n] {
+	for _, v := range qcoeff {
 		if v != 0 {
 			return false
 		}
@@ -513,17 +614,17 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 
 // finishInterTXB codes the prepared coefficients and rebuilds the recon block
 // from the prediction through the decoder's dequant + inverse transform.
-func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff *[64]int16,
+func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
 
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n*n], scan, st.levels, afterSkip); err != nil {
+	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 		return err
 	}
-	var dq [64]int32
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff[:n*n], n, n, n, q, 0, 8); err != nil {
+	dq := &st.dqScratch
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff, n, n, n, q, 0, 8); err != nil {
 		return err
 	}
-	var res [64]int16
+	res := &st.invResidual
 	if err := transform.InverseDCTBlock(res[:n*n], n, dq[:n*n], n, st.invScratch[:n*n], transform.Size{Width: uint8(n), Height: uint8(n)}); err != nil {
 		return err
 	}

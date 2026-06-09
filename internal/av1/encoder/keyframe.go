@@ -204,7 +204,7 @@ func encodeLosslessKeyframeTile(src SourceFrame420) ([]byte, error) {
 	// only the visible transform blocks), SPLIT when only one direction is
 	// available. The walker forces SPLIT when neither is, without consulting
 	// the decider.
-	decide := func(level tile.BlockLevel, ctx int, haveRight, haveBottom bool) (tile.Partition, error) {
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if haveRight && haveBottom {
 			return tile.PartitionNone, nil
 		}
