@@ -179,6 +179,17 @@ func (w *Writer) WriteSymbolAdaptive(s int, cdf []uint16) {
 	updateCDFWindow(cdf, s)
 }
 
+// WriteCDF codes symbol s using caller-owned adaptive CDF state and adapts it in
+// place, the write-side inverse of Reader.ReadCDF and the ReadCDF*Unchecked
+// adaptive readers. It always adapts, matching a Reader with CDF update enabled;
+// callers coding under disable_cdf_update use WriteSymbol with a non-adapting CDF.
+func (w *Writer) WriteCDF(cdf *CDF, s int) {
+	n := int(cdf.symbols)
+	vals := cdf.values[:n+1]
+	w.WriteSymbol(s, vals, n)
+	updateCDFWindow(vals, s)
+}
+
 // WriteLiteral codes the low n bits of value MSB-first as equiprobable bits,
 // matching aom_write_literal -> aom_write_bit -> od_ec_encode_bool_q15(., 1<<14),
 // the exact inverse of Reader.ReadBits.
