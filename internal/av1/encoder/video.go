@@ -1,6 +1,9 @@
 package encoder
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // video.go is the streaming encoder surface: a VideoEncoder owns the reference
 // reconstruction state and turns a sequence of source frames into a decodable
@@ -23,6 +26,12 @@ type VideoEncoder struct {
 	pc        pframeCoder
 	reconBufs [2]SourceFrame420
 	reconIdx  int
+
+	// Tile-column parallelism: tileColsLog2 > 0 splits inter frames into
+	// uniform tile columns, each encoded by its own coder (independent CDFs
+	// and entropy stream per AV1 tile semantics) on its own goroutine.
+	tileColsLog2 uint8
+	tilePCs      []pframeCoder
 
 	temporalLayers int
 	frameIndex     int
@@ -49,7 +58,33 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	if qIndex == 0 {
 		return nil, fmt.Errorf("encoder: qindex must be non-zero")
 	}
-	return &VideoEncoder{width: width, height: height, qIndex: qIndex}, nil
+	e := &VideoEncoder{width: width, height: height, qIndex: qIndex}
+	e.tileColsLog2 = defaultTileColsLog2(width)
+	return e, nil
+}
+
+// defaultTileColsLog2 picks the inter-frame tile-column split: two columns
+// once a frame is wide enough that per-tile entropy coding pays for the
+// goroutine handoff, four columns at full HD widths.
+func defaultTileColsLog2(width int) uint8 {
+	switch {
+	case width >= 1280:
+		return 2
+	case width >= 512:
+		return 1
+	}
+	return 0
+}
+
+// SetTileColumns overrides the inter-frame tile column count (rounded down
+// to a power of two, clamped to the legal range for the frame size at encode
+// time). One column disables tile parallelism.
+func (e *VideoEncoder) SetTileColumns(cols int) {
+	log2 := uint8(0)
+	for (2 << log2) <= cols {
+		log2++
+	}
+	e.tileColsLog2 = log2
 }
 
 // NewVideoEncoderCBR creates a streaming encoder under CBR rate control. The
@@ -182,10 +217,6 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			Height:       src.Height,
 		}
 	}
-	tilePayload, err := e.pc.encodeTile(src, e.recon, out, e.qIndex)
-	if err != nil {
-		return nil, fmt.Errorf("encode tile: %w", err)
-	}
 	refresh := uint8(0x01)
 	if droppable {
 		refresh = 0 // layer-1 frames are never referenced
@@ -193,7 +224,56 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
 	header.References = &refState
-	tu, err := assembleInterTU(seq, header, tilePayload, temporalID)
+	if e.tileColsLog2 > 0 {
+		tiles, err := interTileInfo(src.Width, src.Height, e.tileColsLog2)
+		if err != nil {
+			return nil, fmt.Errorf("tile info: %w", err)
+		}
+		header.Tile = tiles
+	}
+	nTiles := int(header.Tile.Cols)
+	if len(e.tilePCs) < nTiles {
+		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	payloads := make([]TilePayload, nTiles)
+	if nTiles == 1 {
+		data, err := e.pc.encodeTile(src, e.recon, out, e.qIndex, 0, uint16(src.Width/4))
+		if err != nil {
+			return nil, fmt.Errorf("encode tile: %w", err)
+		}
+		payloads[0].Data = data
+	} else {
+		// One goroutine per tile column: tiles share the read-only source and
+		// reference planes and write disjoint column ranges of the output
+		// reconstruction.
+		miCols := uint16(src.Width / 4)
+		var wg sync.WaitGroup
+		errs := make([]error, nTiles)
+		for t := 0; t < nTiles; t++ {
+			colStart := header.Tile.ColStartSB[t] * 16
+			colEnd := header.Tile.ColStartSB[t+1] * 16
+			if colEnd > miCols {
+				colEnd = miCols
+			}
+			wg.Add(1)
+			go func(t int, c0, c1 uint16) {
+				defer wg.Done()
+				data, err := e.tilePCs[t].encodeTile(src, e.recon, out, e.qIndex, c0, c1)
+				if err != nil {
+					errs[t] = err
+					return
+				}
+				payloads[t].Data = data
+			}(t, colStart, colEnd)
+		}
+		wg.Wait()
+		for t, err := range errs {
+			if err != nil {
+				return nil, fmt.Errorf("encode tile %d: %w", t, err)
+			}
+		}
+	}
+	tu, err := assembleInterTU(seq, header, payloads, temporalID)
 	if err != nil {
 		return nil, err
 	}

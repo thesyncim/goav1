@@ -76,6 +76,47 @@ func EncodeRepeatPFrame(width, height int, qIndex uint8) ([]byte, error) {
 
 // repeatPFrameHeader builds the inter frame header plus the reference state the
 // decoder holds after the keyframe (RefreshFrameFlags 0xff seeded every slot).
+// interTileInfo builds the inter-frame tile layout with the requested number
+// of uniform tile columns (log2), clamped to the legal range for the frame
+// size. Multiple columns let the encoder run one entropy coder per tile in
+// parallel; each tile starts from the frame-initial CDFs exactly as the
+// decoder does.
+func interTileInfo(width, height int, log2Cols uint8) (TileInfo, error) {
+	seq := losslessKeyframeSequence(width, height)
+	derived, err := deriveEncoderTileInfo(seq, uint32(width), uint32(height), TileInfo{})
+	if err != nil {
+		return TileInfo{}, err
+	}
+	if log2Cols < derived.MinLog2Cols {
+		log2Cols = derived.MinLog2Cols
+	}
+	if log2Cols > derived.MaxLog2Cols {
+		log2Cols = derived.MaxLog2Cols
+	}
+	tiles := TileInfo{
+		UniformSpacing:      true,
+		SBCols:              derived.SBCols,
+		SBRows:              derived.SBRows,
+		MinLog2Cols:         derived.MinLog2Cols,
+		MaxLog2Cols:         derived.MaxLog2Cols,
+		MaxLog2Rows:         derived.MaxLog2Rows,
+		MinLog2Tiles:        derived.MinLog2Tiles,
+		Log2Cols:            log2Cols,
+		InterpolationFilter: InterpolationEightTap,
+	}
+	minRows := uint8(0)
+	if derived.MinLog2Tiles > tiles.Log2Cols {
+		minRows = derived.MinLog2Tiles - tiles.Log2Cols
+	}
+	tiles.MinLog2Rows = minRows
+	tiles.Log2Rows = minRows
+	fillUniformTileStarts(&tiles, derived)
+	if tiles.Log2Cols != 0 || tiles.Log2Rows != 0 {
+		tiles.TileSizeBytes = 4
+	}
+	return tiles, nil
+}
+
 func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (InterFrameHeaderParams, parser.ReferenceState) {
 	var refs parser.ReferenceState
 	defaultGlobal := parser.DefaultGlobalMotionParams()

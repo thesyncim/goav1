@@ -52,7 +52,7 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
 	header.References = &refState
 
-	out, err := assembleInterTU(seq, header, tilePayload, 0)
+	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0)
 	if err != nil {
 		return nil, SourceFrame420{}, err
 	}
@@ -61,13 +61,14 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 
 // assembleInterTU wraps one coded tile into a TD + inter frame header + tile
 // group temporal unit.
-func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayload []byte, temporalID uint8) ([]byte, error) {
-	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayloads []TilePayload, temporalID uint8) ([]byte, error) {
+	endTile := uint16(len(tilePayloads) - 1)
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, endTile, tilePayloads)
 	if err != nil {
 		return nil, fmt.Errorf("size tile group: %w", err)
 	}
 	group := make([]byte, 0, groupSize)
-	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, endTile, tilePayloads)
 	if err != nil {
 		return nil, fmt.Errorf("append tile group: %w", err)
 	}
@@ -190,15 +191,17 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
 
 func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	var pc pframeCoder
-	return pc.encodeTile(src, ref, recon, qIndex)
+	return pc.encodeTile(src, ref, recon, qIndex, 0, uint16(src.Width/4))
 }
 
-// encodeTile codes one P-frame tile reusing the coder's buffers.
-func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
+// encodeTile codes one P-frame tile covering MI columns [miColStart,
+// miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
+// the full-frame single-tile case passes [0, miCols).
+func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
-	rootCols := (int(miCols) + sbSizeMIB - 1) / sbSizeMIB
+	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
 	if err := pc.reset(qIndex, rootCols); err != nil {
 		return nil, err
 	}
@@ -227,9 +230,10 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
 	walkReq := tile.BlockWalkRequest{
-		Root:     tile.BlockLevel64x64,
-		MIColEnd: miCols,
-		MIRowEnd: miRows,
+		Root:       tile.BlockLevel64x64,
+		MIColStart: miColStart,
+		MIColEnd:   miColEnd,
+		MIRowEnd:   miRows,
 	}
 	st.grid16Cols = (int(miCols) + 3) / 4
 	grid16Rows := (int(miRows) + 3) / 4
@@ -426,7 +430,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	// source and take the cheaper block type. Larger leaves only exist where
 	// child vectors agreed, which presumes the motion model holds.
 	if n == 8 {
-		dc := dcPredictN(recon.Y, src.YStride, lumaPX, lumaPY, 8)
+		dc := dcPredictN(recon.Y, src.YStride, lumaPX, lumaPY, 8, block.HaveTop, block.HaveLeft)
 		intraSAD := 0
 		for r := range 8 {
 			row := (lumaPY+r)*src.YStride + lumaPX
@@ -655,13 +659,13 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	if err := st.encodeTXB(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	if err := st.encodeTXBAvail(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, st.afterSkipIntra); err != nil {
+	}, coeffCtx, st.scan8, st.afterSkipIntra, block.HaveTop, block.HaveLeft); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
@@ -675,13 +679,13 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXB(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       tile.TransformSize4x4,
 			X4:         block.X4 / 2,
 			Y4:         block.Y4 / 2,
-		}, coeffCtx, st.scan4, nil); err != nil {
+		}, coeffCtx, st.scan4, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}

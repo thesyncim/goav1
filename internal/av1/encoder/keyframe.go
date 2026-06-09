@@ -323,7 +323,7 @@ func encodeLosslessTXB(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffE
 	ctxReq tile.CoeffContextRequest, plane []byte, stride, px, py int,
 	scan []int16, levels []uint8) error {
 
-	dc := dcPredictN(plane, stride, px, py, 4)
+	dc := dcPredictN(plane, stride, px, py, 4, py > 0, px > 0)
 
 	var residual [16]int16
 	for r := range 4 {

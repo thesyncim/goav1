@@ -317,8 +317,15 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 // transform so recon matches the decoder bit-for-bit.
 func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
+	return st.encodeTXBAvail(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, py > 0, px > 0)
+}
 
-	dc := dcPredictN(reconPlane, stride, px, py, n)
+// encodeTXBAvail is encodeTXB with explicit neighbor availability: inside a
+// tile the left/top edges follow the tile boundary, not the frame's.
+func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
+
+	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
 
 	residual := &st.resScratch
 	for r := range n {
@@ -375,18 +382,19 @@ func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride
 
 // dcPredictN is the decoder's DC predictor for one n x n block at pixel
 // (px,py) of plane: the rounded mean of the n above and n left reconstructed
-// neighbors that exist, or 128 when neither edge does.
-func dcPredictN(plane []byte, stride, px, py, n int) uint8 {
+// neighbors that are available, or 128 when neither edge is. Availability is
+// the caller's tile-relative HaveTop/HaveLeft, not raw frame position.
+func dcPredictN(plane []byte, stride, px, py, n int, haveTop, haveLeft bool) uint8 {
 	sum := 0
 	count := 0
-	if py > 0 {
+	if haveTop && py > 0 {
 		row := (py-1)*stride + px
 		for i := range n {
 			sum += int(plane[row+i])
 		}
 		count += n
 	}
-	if px > 0 {
+	if haveLeft && px > 0 {
 		col := py*stride + px - 1
 		for i := range n {
 			sum += int(plane[col+i*stride])
