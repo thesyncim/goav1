@@ -11,7 +11,7 @@ import (
 // moving 384x256 scene — the realtime hot path (motion search, skip decisions,
 // transforms, entropy coding) plus any per-frame setup cost.
 func BenchmarkVideoEncoderPFrame(b *testing.B) {
-	const w, h = 384, 256
+	const w, h = 640, 360
 	cw, ch := w/2, h/2
 	rng := rand.New(rand.NewSource(3))
 	bg := make([]byte, w*h)

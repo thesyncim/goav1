@@ -471,12 +471,18 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, refPlane []byte, stride, 
 // offsets keep chroma prediction at integer positions at 4:2:0. A small
 // diamond refinement around the best raster candidate keeps the search cheap.
 func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int) {
-	// sad accumulates with a row-granular early exit against the running best.
+	// sad dispatches to the architecture SAD kernel; limit is an early-exit
+	// hint the kernel may ignore, so callers compare the return value.
 	sad := func(dx, dy, limit int) int {
+		base := py*stride + px
+		refBase := (py+dy)*stride + px + dx
+		if n == 8 {
+			return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
+		}
 		total := 0
 		for r := range n {
-			row := (py+r)*stride + px
-			refRow := (py+r+dy)*stride + px + dx
+			row := base + r*stride
+			refRow := refBase + r*stride
 			for c := range n {
 				d := int(src[row+c]) - int(ref[refRow+c])
 				if d < 0 {
