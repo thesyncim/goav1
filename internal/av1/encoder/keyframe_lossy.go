@@ -120,6 +120,13 @@ type lossyEncodeState struct {
 	lumaQ, uQ, vQ  [64]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	afterSkipInter func() error
+
+	// Motion-compensated prediction scratch, filled per block through the
+	// decoder's own convolve so subpel predictions match bit for bit.
+	predY      [64]byte
+	predU      [16]byte
+	predV      [16]byte
+	sadScratch [64]byte
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
