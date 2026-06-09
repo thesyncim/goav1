@@ -123,6 +123,8 @@ type lossyEncodeState struct {
 	uQ, vQ         [256]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	afterSkipInter func() error
+	intraTxTypeReq tile.IntraTransformTypeRequest
+	afterSkipIntra func() error
 
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
@@ -318,15 +320,15 @@ func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride
 
 	dc := dcPredictN(reconPlane, stride, px, py, n)
 
-	var residual [64]int16
+	residual := &st.resScratch
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
 			residual[r*n+c] = int16(srcPlane[row+c]) - int16(dc)
 		}
 	}
-	var tran [64]int32
-	var qcoeff [64]int16
+	tran := &st.tranScratch
+	qcoeff := &st.lumaQ
 	switch n {
 	case 4:
 		if err := transform.ForwardDCT4x4(tran[:16], 4, residual[:16], 4); err != nil {
@@ -348,11 +350,11 @@ func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride
 
 	// Reconstruct exactly as the decoder will: dequantize, inverse transform,
 	// add to the prediction, clip to 8 bits.
-	var dq [64]int32
+	dq := &st.dqScratch
 	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff[:n*n], n, n, n, q, 0, 8); err != nil {
 		return err
 	}
-	var res [64]int16
+	res := &st.invResidual
 	if err := transform.InverseDCTBlock(res[:n*n], n, dq[:n*n], n, st.invScratch[:n*n], transform.Size{Width: uint8(n), Height: uint8(n)}); err != nil {
 		return err
 	}

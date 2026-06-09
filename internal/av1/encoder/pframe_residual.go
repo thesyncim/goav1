@@ -214,6 +214,15 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 	st.afterSkipInter = func() error {
 		return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, transform.TypeDCTDCT)
 	}
+	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
+		Size:        tile.TransformSize8x8,
+		Mode:        tile.IntraModeDC,
+		QIndexKnown: true,
+		QIndex:      qIndex,
+	}
+	st.afterSkipIntra = func() error {
+		return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
+	}
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -411,6 +420,31 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		}
 	}
 
+	// Intra fallback (8x8 leaves only): on scene changes and occlusions the
+	// best motion match is worse than predicting flat from the already-coded
+	// neighbors; compare the motion SAD against a DC-prediction SAD over the
+	// source and take the cheaper block type. Larger leaves only exist where
+	// child vectors agreed, which presumes the motion model holds.
+	if n == 8 {
+		dc := dcPredictN(recon.Y, src.YStride, lumaPX, lumaPY, 8)
+		intraSAD := 0
+		for r := range 8 {
+			row := (lumaPY+r)*src.YStride + lumaPX
+			for c := range 8 {
+				d := int(src.Y[row+c]) - int(dc)
+				if d < 0 {
+					d = -d
+				}
+				intraSAD += d
+			}
+		}
+		// Bias toward inter: skip blocks and merged neighbors are cheaper to
+		// code, so intra must win clearly.
+		if fullSAD > intraSAD+32 {
+			return st.encodeIntraPBlock(src, recon, block, scratch)
+		}
+	}
+
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if err := predictInto(st.predY[:n*n], ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, false, false); err != nil {
@@ -570,6 +604,85 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 			Y4:         block.Y4 / 2,
 		}, coeffCtx, chromaScan, nil); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
+		}
+	}
+	return nil
+}
+
+// encodeIntraPBlock codes one 8x8 intra block inside an inter frame: skip,
+// the is_inter flag (intra), DC luma and chroma modes through the inter-frame
+// y_mode CDFs, the decoder's MarkIntra/MarkChromaIntra context updates, then
+// the same DC-predicted TXB pipeline the lossy keyframe path uses.
+func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+	modeCtx := &scratch.Mode
+	coeffCtx := &scratch.CoeffCtx
+
+	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
+	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+		return fmt.Errorf("intra skip: %w", err)
+	}
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+		return fmt.Errorf("intra mark prefix: %w", err)
+	}
+	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
+		FrameType: parser.FrameTypeInter,
+		X4:        block.X4, Y4: block.Y4,
+		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+	}, true); err != nil {
+		return fmt.Errorf("intra flag: %w", err)
+	}
+	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
+		FrameType: parser.FrameTypeInter,
+		Size:      block.Size, X4: block.X4, Y4: block.Y4,
+	}, tile.IntraModeDC); err != nil {
+		return fmt.Errorf("intra luma mode: %w", err)
+	}
+	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, tile.IntraModeDC); err != nil {
+		return fmt.Errorf("mark intra: %w", err)
+	}
+	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
+	if err != nil {
+		return fmt.Errorf("cfl allowed: %w", err)
+	}
+	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
+		Size: block.Size, LumaMode: tile.IntraModeDC, CFLAllowed: cflAllowed,
+	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
+		return fmt.Errorf("intra chroma mode: %w", err)
+	}
+	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
+		return fmt.Errorf("mark chroma intra: %w", err)
+	}
+
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	if err := st.encodeTXB(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+		Plane:      0,
+		PlaneBlock: block.Size,
+		Size:       tile.TransformSize8x8,
+		X4:         block.X4,
+		Y4:         block.Y4,
+	}, coeffCtx, st.scan8, st.afterSkipIntra); err != nil {
+		return fmt.Errorf("intra luma txb: %w", err)
+	}
+	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma plane block: %w", err)
+	}
+	for plane := 1; plane <= 2; plane++ {
+		data, rdata := src.U, recon.U
+		q := st.uQuant
+		if plane == 2 {
+			data, rdata = src.V, recon.V
+			q = st.vQuant
+		}
+		if err := st.encodeTXB(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+			Plane:      uint8(plane),
+			PlaneBlock: chromaBlock,
+			Size:       tile.TransformSize4x4,
+			X4:         block.X4 / 2,
+			Y4:         block.Y4 / 2,
+		}, coeffCtx, st.scan4, nil); err != nil {
+			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}
 	return nil
