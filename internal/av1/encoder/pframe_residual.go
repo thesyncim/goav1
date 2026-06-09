@@ -163,12 +163,17 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
 		if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
 			return err
 		}
-		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize16x16)
+		st.scan32 = make([]int16, 1024)
+		inverse32 := make([]int16, 1024)
+		if err := transform.FillDefaultScan(st.scan32, inverse32, transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
+			return err
+		}
+		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
 		if err != nil {
 			return err
 		}
 		st.levels = make([]uint8, scratchLen)
-		st.invScratch = make([]int32, 256)
+		st.invScratch = make([]int32, 1024)
 	}
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
@@ -229,37 +234,104 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 		st.mv8Grid = make([]motion.Vector, st.grid8Cols*grid8Rows)
 		st.sad8Grid = make([]int32, st.grid8Cols*grid8Rows)
 	}
+	st.grid32Cols = (int(miCols) + 7) / 8
+	grid32Rows := (int(miRows) + 7) / 8
+	if len(st.mv32Grid) < st.grid32Cols*grid32Rows {
+		st.mv32Grid = make([]motion.Vector, st.grid32Cols*grid32Rows)
+		st.sad32Grid = make([]int32, st.grid32Cols*grid32Rows)
+	}
 	for i := range st.sad8Grid {
 		st.sad8Grid[i] = -1
+	}
+	for i := range st.sad16Grid[:st.grid16Cols*grid16Rows] {
+		st.sad16Grid[i] = -1
 	}
 	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
 	// over the four independent 8x8 searches and still be coded as one block:
 	// the saved mode/MV syntax of three blocks outweighs a small residual
-	// increase at realtime rates.
+	// increase at realtime rates. mergeBias32 plays the same role one tier up
+	// (a 32x32 merge saves up to three 16x16 blocks' syntax).
 	const mergeBias16 = 64
+	const mergeBias32 = 192
+	// evaluate16 fills the 16x16 and child 8x8 motion grids for the 16x16
+	// region at (px, py) — searching only on first use — and returns the
+	// merged SAD and the sum of the four child SADs.
+	evaluate16 := func(px, py int) (int, int) {
+		idx16 := (py/16)*st.grid16Cols + px/16
+		if st.sad16Grid[idx16] < 0 {
+			dx16, dy16, sad16 := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16)
+			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
+			st.sad16Grid[idx16] = int32(sad16)
+			for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+				cx, cy := px+off[0], py+off[1]
+				dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8)
+				idx8 := (cy/8)*st.grid8Cols + cx/8
+				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
+				st.sad8Grid[idx8] = int32(sad)
+			}
+		}
+		sum8 := 0
+		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+			sum8 += int(st.sad8Grid[((py+off[1])/8)*st.grid8Cols+(px+off[0])/8])
+		}
+		return int(st.sad16Grid[idx16]), sum8
+	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}
-		if level != tile.BlockLevel16x16 || !haveRight || !haveBottom {
+		if !haveRight || !haveBottom {
 			return tile.PartitionSplit, nil
 		}
 		px, py := int(miCol)*4, int(miRow)*4
-		dx16, dy16, sad16 := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16)
-		sum8 := 0
-		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-			cx, cy := px+off[0], py+off[1]
-			dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8)
-			idx8 := (cy/8)*st.grid8Cols + cx/8
-			st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-			st.sad8Grid[idx8] = int32(sad)
-			sum8 += sad
-		}
-		if sad16 <= sum8+mergeBias16 {
-			idx16 := (py/16)*st.grid16Cols + px/16
-			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
-			st.sad16Grid[idx16] = int32(sad16)
-			return tile.PartitionNone, nil
+		switch level {
+		case tile.BlockLevel32x32:
+			// haveRight/haveBottom only certify the half extents; a 32x32
+			// leaf must lie fully inside the frame for the unclipped
+			// residual path (overhanging nodes split into contained 16s).
+			if px+32 > src.Width || py+32 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			// Merge signal without a 32x32 search: when all four 16x16
+			// children settled on the same full-pel vector, one SAD probe of
+			// the merged block at that vector decides; disagreeing children
+			// mean real sub-block motion and the node splits.
+			childCost := 0
+			agree := true
+			var mv32 motion.Vector
+			for i, off := range [4][2]int{{0, 0}, {16, 0}, {0, 16}, {16, 16}} {
+				sad16, sum8 := evaluate16(px+off[0], py+off[1])
+				childCost += min(sad16, sum8)
+				cmv := st.mv16Grid[((py+off[1])/16)*st.grid16Cols+(px+off[0])/16]
+				if i == 0 {
+					mv32 = cmv
+				} else if cmv != mv32 {
+					agree = false
+				}
+			}
+			if !agree {
+				return tile.PartitionSplit, nil
+			}
+			dx, dy := int(mv32.Col)/8, int(mv32.Row)/8
+			base := py*src.YStride + px
+			refBase := (py+dy)*src.YStride + px + dx
+			if py+dy < 0 || px+dx < 0 || py+dy+32 > src.Height || px+dx+32 > src.Width {
+				return tile.PartitionSplit, nil
+			}
+			sad32 := sadBlock(src.Y, ref.Y, base, refBase, src.YStride, 32, 1<<30)
+			if sad32 <= childCost+mergeBias32 {
+				idx32 := (py/32)*st.grid32Cols + px/32
+				st.mv32Grid[idx32] = mv32
+				st.sad32Grid[idx32] = int32(sad32)
+				return tile.PartitionNone, nil
+			}
+			return tile.PartitionSplit, nil
+		case tile.BlockLevel16x16:
+			sad16, sum8 := evaluate16(px, py)
+			if sad16 <= sum8+mergeBias16 {
+				return tile.PartitionNone, nil
+			}
+			return tile.PartitionSplit, nil
 		}
 		return tile.PartitionSplit, nil
 	}
@@ -288,6 +360,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		n = 8
 	case tile.BlockSize16x16:
 		n = 16
+	case tile.BlockSize32x32:
+		n = 32
 	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
@@ -305,11 +379,19 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	lumaPY := int(block.MIRow) * 4
 	var mv motion.Vector
 	fullSAD := -1
-	if n == 16 {
+	switch {
+	case n == 32:
+		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
+		mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+	case n == 16:
 		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
-		mv, fullSAD = st.mv16Grid[idx], int(st.sad16Grid[idx])
-	} else if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; st.sad8Grid[idx] >= 0 {
-		mv, fullSAD = st.mv8Grid[idx], int(st.sad8Grid[idx])
+		if st.sad16Grid[idx] >= 0 {
+			mv, fullSAD = st.mv16Grid[idx], int(st.sad16Grid[idx])
+		}
+	default:
+		if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; st.sad8Grid[idx] >= 0 {
+			mv, fullSAD = st.mv8Grid[idx], int(st.sad8Grid[idx])
+		}
 	}
 	if fullSAD < 0 {
 		dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n)
@@ -420,7 +502,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		}
 	}
 
-	hasChroma := true // 8x8 and 16x16 blocks at 4:2:0 carry chroma
+	hasChroma := true // all coded inter sizes (8x8..32x32) at 4:2:0 carry chroma
 	motionResult := tile.InterMotionResult{References: refs, Mode: modeResult}
 	motionResult.MV[0] = mv
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
@@ -455,9 +537,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	// Residual: largest-TX luma with the inter tx_type symbol, then chroma.
 	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
 	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
-	if n == 16 {
+	switch n {
+	case 16:
 		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
 		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
+	case 32:
+		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
+		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
 	}
 	st.interTxTypeReq.Size = lumaTX
 	if err := st.finishInterTXB(recon.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n], tile.CoeffContextRequest{
@@ -541,6 +627,15 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 	return mv, bestSAD
 }
 
+// txScaleForSize is get_tx_scale for the square transforms the encoder
+// emits: TX_32X32 dequantizes with one extra right shift, smaller sizes none.
+func txScaleForSize(n int) uint8 {
+	if n >= 32 {
+		return 1
+	}
+	return 0
+}
+
 // sadBlock is the generic n x n SAD with the 8x8 kernel fast path; limit is
 // an early-exit hint as in sad8x8Impl.
 func sadBlock(src, ref []byte, base, refBase, stride, n, limit int) int {
@@ -598,10 +693,14 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 		if err := transform.ForwardDCT16x16(tran[:256], 16, residual[:256], 16); err != nil {
 			return false
 		}
+	case 32:
+		if err := transform.ForwardDCT32x32(tran[:1024], 32, residual[:1024], 32); err != nil {
+			return false
+		}
 	default:
 		return false
 	}
-	if err := quantize.QuantizeBlockScaled(qcoeff, n, tran[:n*n], n, n, n, q, 0); err != nil {
+	if err := quantize.QuantizeBlockScaled(qcoeff, n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
 		return false
 	}
 	for _, v := range qcoeff {
@@ -621,7 +720,7 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, stride, px, 
 		return err
 	}
 	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff, n, n, n, q, 0, 8); err != nil {
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff, n, n, n, q, txScaleForSize(n), 8); err != nil {
 		return err
 	}
 	res := &st.invResidual

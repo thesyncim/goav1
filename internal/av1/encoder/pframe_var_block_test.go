@@ -70,4 +70,46 @@ func TestEncodePFrameVariableBlocks(t *testing.T) {
 	if psnr < 30 {
 		t.Fatalf("PSNR %.2f below floor", psnr)
 	}
+
+	// Second scenario: a clean global (-4,-4) full-pel shift of the keyframe
+	// reconstruction itself, so merged blocks predict exactly. Every 16x16
+	// child finds the same vector, the 32x32 tier merges, and the P frame
+	// collapses to a handful of merged skip blocks - far below the keyframe.
+	src3 := src1
+	src3.Y = make([]byte, w*h)
+	for y := range h {
+		for x := range w {
+			src3.Y[y*w+x] = keyRecon.Y[max(0, y-4)*w+max(0, x-4)]
+		}
+	}
+	src3.U = make([]byte, cw*ch)
+	src3.V = make([]byte, cw*ch)
+	for y := range ch {
+		for x := range cw {
+			src3.U[y*cw+x] = keyRecon.U[max(0, y-2)*cw+max(0, x-2)]
+			src3.V[y*cw+x] = keyRecon.V[max(0, y-2)*cw+max(0, x-2)]
+		}
+	}
+	gTU, gRecon, err := encoder.EncodePFrame(src3, keyRecon, qIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("global-shift P: %d bytes vs key %d", len(gTU), len(keyTU))
+	// Interior nodes merge to 32x32 skips; the residual cost is the clamped
+	// top/left edge stripes, which bounds the frame well below the keyframe.
+	if len(gTU)*6 >= len(keyTU) {
+		t.Fatalf("global-shift P %d bytes not far below key %d: 32x32 merges not engaged?", len(gTU), len(keyTU))
+	}
+	dec2, err := goav1.NewDecoder([][]byte{keyTU, gTU})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec2.Close()
+	gframes, err := dec2.DecodeAll()
+	if err != nil {
+		t.Fatalf("decode global-shift: %v", err)
+	}
+	comparePlane(t, "gY", gframes[1].Y, gRecon.Y, w, h, w)
+	comparePlane(t, "gU", gframes[1].U, gRecon.U, cw, ch, cw)
+	comparePlane(t, "gV", gframes[1].V, gRecon.V, cw, ch, cw)
 }

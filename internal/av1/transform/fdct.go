@@ -1,7 +1,7 @@
 // Ported from libaom:
-//   av1/encoder/av1_fwd_txfm1d.c (av1_fdct4, av1_fdct8, av1_fdct16)
+//   av1/encoder/av1_fwd_txfm1d.c (av1_fdct4, av1_fdct8, av1_fdct16, av1_fdct32)
 //   av1/encoder/av1_fwd_txfm2d.c (fwd_txfm2d_c, fwd_shift_4x4, fwd_shift_8x8,
-//   fwd_shift_16x16, av1_fwd_cos_bit_col/row)
+//   fwd_shift_16x16, fwd_shift_32x32, av1_fwd_cos_bit_col/row)
 //   av1/common/av1_txfm.c (av1_cospi_arr_data, cos_bit 13 and 12 rows)
 //
 // SPDX-License-Identifier: BSD-2-Clause
@@ -344,6 +344,369 @@ func ForwardDCT16x16(coeff []int32, coeffStride int, residual []int16, residualS
 		}
 		fwdDCT16(&in, &out, &fwdCospi12, 12)
 		for c := range 16 { // shift[2] = 0; output[c*rows + r]
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+	return nil
+}
+
+// fwdDCT32 is av1_fdct32; both 32x32 passes run at cos_bit 12 so the cospi
+// table and shift are fixed (fwdCospi12, fwdHalfBtf at 12).
+func fwdDCT32(input, output *[32]int32) {
+	var step [32]int32
+	bf0, bf1 := (*[32]int32)(nil), (*[32]int32)(nil)
+	_ = bf0
+	// stage 1
+	bf1 = output
+	bf1[0] = input[0] + input[31]
+	bf1[1] = input[1] + input[30]
+	bf1[2] = input[2] + input[29]
+	bf1[3] = input[3] + input[28]
+	bf1[4] = input[4] + input[27]
+	bf1[5] = input[5] + input[26]
+	bf1[6] = input[6] + input[25]
+	bf1[7] = input[7] + input[24]
+	bf1[8] = input[8] + input[23]
+	bf1[9] = input[9] + input[22]
+	bf1[10] = input[10] + input[21]
+	bf1[11] = input[11] + input[20]
+	bf1[12] = input[12] + input[19]
+	bf1[13] = input[13] + input[18]
+	bf1[14] = input[14] + input[17]
+	bf1[15] = input[15] + input[16]
+	bf1[16] = -input[16] + input[15]
+	bf1[17] = -input[17] + input[14]
+	bf1[18] = -input[18] + input[13]
+	bf1[19] = -input[19] + input[12]
+	bf1[20] = -input[20] + input[11]
+	bf1[21] = -input[21] + input[10]
+	bf1[22] = -input[22] + input[9]
+	bf1[23] = -input[23] + input[8]
+	bf1[24] = -input[24] + input[7]
+	bf1[25] = -input[25] + input[6]
+	bf1[26] = -input[26] + input[5]
+	bf1[27] = -input[27] + input[4]
+	bf1[28] = -input[28] + input[3]
+	bf1[29] = -input[29] + input[2]
+	bf1[30] = -input[30] + input[1]
+	bf1[31] = -input[31] + input[0]
+	// stage 2
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0] + bf0[15]
+	bf1[1] = bf0[1] + bf0[14]
+	bf1[2] = bf0[2] + bf0[13]
+	bf1[3] = bf0[3] + bf0[12]
+	bf1[4] = bf0[4] + bf0[11]
+	bf1[5] = bf0[5] + bf0[10]
+	bf1[6] = bf0[6] + bf0[9]
+	bf1[7] = bf0[7] + bf0[8]
+	bf1[8] = -bf0[8] + bf0[7]
+	bf1[9] = -bf0[9] + bf0[6]
+	bf1[10] = -bf0[10] + bf0[5]
+	bf1[11] = -bf0[11] + bf0[4]
+	bf1[12] = -bf0[12] + bf0[3]
+	bf1[13] = -bf0[13] + bf0[2]
+	bf1[14] = -bf0[14] + bf0[1]
+	bf1[15] = -bf0[15] + bf0[0]
+	bf1[16] = bf0[16]
+	bf1[17] = bf0[17]
+	bf1[18] = bf0[18]
+	bf1[19] = bf0[19]
+	bf1[20] = fwdHalfBtf(-fwdCospi12[32], bf0[20], fwdCospi12[32], bf0[27], 12)
+	bf1[21] = fwdHalfBtf(-fwdCospi12[32], bf0[21], fwdCospi12[32], bf0[26], 12)
+	bf1[22] = fwdHalfBtf(-fwdCospi12[32], bf0[22], fwdCospi12[32], bf0[25], 12)
+	bf1[23] = fwdHalfBtf(-fwdCospi12[32], bf0[23], fwdCospi12[32], bf0[24], 12)
+	bf1[24] = fwdHalfBtf(fwdCospi12[32], bf0[24], fwdCospi12[32], bf0[23], 12)
+	bf1[25] = fwdHalfBtf(fwdCospi12[32], bf0[25], fwdCospi12[32], bf0[22], 12)
+	bf1[26] = fwdHalfBtf(fwdCospi12[32], bf0[26], fwdCospi12[32], bf0[21], 12)
+	bf1[27] = fwdHalfBtf(fwdCospi12[32], bf0[27], fwdCospi12[32], bf0[20], 12)
+	bf1[28] = bf0[28]
+	bf1[29] = bf0[29]
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[31]
+	// stage 3
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0] + bf0[7]
+	bf1[1] = bf0[1] + bf0[6]
+	bf1[2] = bf0[2] + bf0[5]
+	bf1[3] = bf0[3] + bf0[4]
+	bf1[4] = -bf0[4] + bf0[3]
+	bf1[5] = -bf0[5] + bf0[2]
+	bf1[6] = -bf0[6] + bf0[1]
+	bf1[7] = -bf0[7] + bf0[0]
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = fwdHalfBtf(-fwdCospi12[32], bf0[10], fwdCospi12[32], bf0[13], 12)
+	bf1[11] = fwdHalfBtf(-fwdCospi12[32], bf0[11], fwdCospi12[32], bf0[12], 12)
+	bf1[12] = fwdHalfBtf(fwdCospi12[32], bf0[12], fwdCospi12[32], bf0[11], 12)
+	bf1[13] = fwdHalfBtf(fwdCospi12[32], bf0[13], fwdCospi12[32], bf0[10], 12)
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+	bf1[16] = bf0[16] + bf0[23]
+	bf1[17] = bf0[17] + bf0[22]
+	bf1[18] = bf0[18] + bf0[21]
+	bf1[19] = bf0[19] + bf0[20]
+	bf1[20] = -bf0[20] + bf0[19]
+	bf1[21] = -bf0[21] + bf0[18]
+	bf1[22] = -bf0[22] + bf0[17]
+	bf1[23] = -bf0[23] + bf0[16]
+	bf1[24] = -bf0[24] + bf0[31]
+	bf1[25] = -bf0[25] + bf0[30]
+	bf1[26] = -bf0[26] + bf0[29]
+	bf1[27] = -bf0[27] + bf0[28]
+	bf1[28] = bf0[28] + bf0[27]
+	bf1[29] = bf0[29] + bf0[26]
+	bf1[30] = bf0[30] + bf0[25]
+	bf1[31] = bf0[31] + bf0[24]
+	// stage 4
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0] + bf0[3]
+	bf1[1] = bf0[1] + bf0[2]
+	bf1[2] = -bf0[2] + bf0[1]
+	bf1[3] = -bf0[3] + bf0[0]
+	bf1[4] = bf0[4]
+	bf1[5] = fwdHalfBtf(-fwdCospi12[32], bf0[5], fwdCospi12[32], bf0[6], 12)
+	bf1[6] = fwdHalfBtf(fwdCospi12[32], bf0[6], fwdCospi12[32], bf0[5], 12)
+	bf1[7] = bf0[7]
+	bf1[8] = bf0[8] + bf0[11]
+	bf1[9] = bf0[9] + bf0[10]
+	bf1[10] = -bf0[10] + bf0[9]
+	bf1[11] = -bf0[11] + bf0[8]
+	bf1[12] = -bf0[12] + bf0[15]
+	bf1[13] = -bf0[13] + bf0[14]
+	bf1[14] = bf0[14] + bf0[13]
+	bf1[15] = bf0[15] + bf0[12]
+	bf1[16] = bf0[16]
+	bf1[17] = bf0[17]
+	bf1[18] = fwdHalfBtf(-fwdCospi12[16], bf0[18], fwdCospi12[48], bf0[29], 12)
+	bf1[19] = fwdHalfBtf(-fwdCospi12[16], bf0[19], fwdCospi12[48], bf0[28], 12)
+	bf1[20] = fwdHalfBtf(-fwdCospi12[48], bf0[20], -fwdCospi12[16], bf0[27], 12)
+	bf1[21] = fwdHalfBtf(-fwdCospi12[48], bf0[21], -fwdCospi12[16], bf0[26], 12)
+	bf1[22] = bf0[22]
+	bf1[23] = bf0[23]
+	bf1[24] = bf0[24]
+	bf1[25] = bf0[25]
+	bf1[26] = fwdHalfBtf(fwdCospi12[48], bf0[26], -fwdCospi12[16], bf0[21], 12)
+	bf1[27] = fwdHalfBtf(fwdCospi12[48], bf0[27], -fwdCospi12[16], bf0[20], 12)
+	bf1[28] = fwdHalfBtf(fwdCospi12[16], bf0[28], fwdCospi12[48], bf0[19], 12)
+	bf1[29] = fwdHalfBtf(fwdCospi12[16], bf0[29], fwdCospi12[48], bf0[18], 12)
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[31]
+	// stage 5
+	bf0 = &step
+	bf1 = output
+	bf1[0] = fwdHalfBtf(fwdCospi12[32], bf0[0], fwdCospi12[32], bf0[1], 12)
+	bf1[1] = fwdHalfBtf(-fwdCospi12[32], bf0[1], fwdCospi12[32], bf0[0], 12)
+	bf1[2] = fwdHalfBtf(fwdCospi12[48], bf0[2], fwdCospi12[16], bf0[3], 12)
+	bf1[3] = fwdHalfBtf(fwdCospi12[48], bf0[3], -fwdCospi12[16], bf0[2], 12)
+	bf1[4] = bf0[4] + bf0[5]
+	bf1[5] = -bf0[5] + bf0[4]
+	bf1[6] = -bf0[6] + bf0[7]
+	bf1[7] = bf0[7] + bf0[6]
+	bf1[8] = bf0[8]
+	bf1[9] = fwdHalfBtf(-fwdCospi12[16], bf0[9], fwdCospi12[48], bf0[14], 12)
+	bf1[10] = fwdHalfBtf(-fwdCospi12[48], bf0[10], -fwdCospi12[16], bf0[13], 12)
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = fwdHalfBtf(fwdCospi12[48], bf0[13], -fwdCospi12[16], bf0[10], 12)
+	bf1[14] = fwdHalfBtf(fwdCospi12[16], bf0[14], fwdCospi12[48], bf0[9], 12)
+	bf1[15] = bf0[15]
+	bf1[16] = bf0[16] + bf0[19]
+	bf1[17] = bf0[17] + bf0[18]
+	bf1[18] = -bf0[18] + bf0[17]
+	bf1[19] = -bf0[19] + bf0[16]
+	bf1[20] = -bf0[20] + bf0[23]
+	bf1[21] = -bf0[21] + bf0[22]
+	bf1[22] = bf0[22] + bf0[21]
+	bf1[23] = bf0[23] + bf0[20]
+	bf1[24] = bf0[24] + bf0[27]
+	bf1[25] = bf0[25] + bf0[26]
+	bf1[26] = -bf0[26] + bf0[25]
+	bf1[27] = -bf0[27] + bf0[24]
+	bf1[28] = -bf0[28] + bf0[31]
+	bf1[29] = -bf0[29] + bf0[30]
+	bf1[30] = bf0[30] + bf0[29]
+	bf1[31] = bf0[31] + bf0[28]
+	// stage 6
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = fwdHalfBtf(fwdCospi12[56], bf0[4], fwdCospi12[8], bf0[7], 12)
+	bf1[5] = fwdHalfBtf(fwdCospi12[24], bf0[5], fwdCospi12[40], bf0[6], 12)
+	bf1[6] = fwdHalfBtf(fwdCospi12[24], bf0[6], -fwdCospi12[40], bf0[5], 12)
+	bf1[7] = fwdHalfBtf(fwdCospi12[56], bf0[7], -fwdCospi12[8], bf0[4], 12)
+	bf1[8] = bf0[8] + bf0[9]
+	bf1[9] = -bf0[9] + bf0[8]
+	bf1[10] = -bf0[10] + bf0[11]
+	bf1[11] = bf0[11] + bf0[10]
+	bf1[12] = bf0[12] + bf0[13]
+	bf1[13] = -bf0[13] + bf0[12]
+	bf1[14] = -bf0[14] + bf0[15]
+	bf1[15] = bf0[15] + bf0[14]
+	bf1[16] = bf0[16]
+	bf1[17] = fwdHalfBtf(-fwdCospi12[8], bf0[17], fwdCospi12[56], bf0[30], 12)
+	bf1[18] = fwdHalfBtf(-fwdCospi12[56], bf0[18], -fwdCospi12[8], bf0[29], 12)
+	bf1[19] = bf0[19]
+	bf1[20] = bf0[20]
+	bf1[21] = fwdHalfBtf(-fwdCospi12[40], bf0[21], fwdCospi12[24], bf0[26], 12)
+	bf1[22] = fwdHalfBtf(-fwdCospi12[24], bf0[22], -fwdCospi12[40], bf0[25], 12)
+	bf1[23] = bf0[23]
+	bf1[24] = bf0[24]
+	bf1[25] = fwdHalfBtf(fwdCospi12[24], bf0[25], -fwdCospi12[40], bf0[22], 12)
+	bf1[26] = fwdHalfBtf(fwdCospi12[40], bf0[26], fwdCospi12[24], bf0[21], 12)
+	bf1[27] = bf0[27]
+	bf1[28] = bf0[28]
+	bf1[29] = fwdHalfBtf(fwdCospi12[56], bf0[29], -fwdCospi12[8], bf0[18], 12)
+	bf1[30] = fwdHalfBtf(fwdCospi12[8], bf0[30], fwdCospi12[56], bf0[17], 12)
+	bf1[31] = bf0[31]
+	// stage 7
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = fwdHalfBtf(fwdCospi12[60], bf0[8], fwdCospi12[4], bf0[15], 12)
+	bf1[9] = fwdHalfBtf(fwdCospi12[28], bf0[9], fwdCospi12[36], bf0[14], 12)
+	bf1[10] = fwdHalfBtf(fwdCospi12[44], bf0[10], fwdCospi12[20], bf0[13], 12)
+	bf1[11] = fwdHalfBtf(fwdCospi12[12], bf0[11], fwdCospi12[52], bf0[12], 12)
+	bf1[12] = fwdHalfBtf(fwdCospi12[12], bf0[12], -fwdCospi12[52], bf0[11], 12)
+	bf1[13] = fwdHalfBtf(fwdCospi12[44], bf0[13], -fwdCospi12[20], bf0[10], 12)
+	bf1[14] = fwdHalfBtf(fwdCospi12[28], bf0[14], -fwdCospi12[36], bf0[9], 12)
+	bf1[15] = fwdHalfBtf(fwdCospi12[60], bf0[15], -fwdCospi12[4], bf0[8], 12)
+	bf1[16] = bf0[16] + bf0[17]
+	bf1[17] = -bf0[17] + bf0[16]
+	bf1[18] = -bf0[18] + bf0[19]
+	bf1[19] = bf0[19] + bf0[18]
+	bf1[20] = bf0[20] + bf0[21]
+	bf1[21] = -bf0[21] + bf0[20]
+	bf1[22] = -bf0[22] + bf0[23]
+	bf1[23] = bf0[23] + bf0[22]
+	bf1[24] = bf0[24] + bf0[25]
+	bf1[25] = -bf0[25] + bf0[24]
+	bf1[26] = -bf0[26] + bf0[27]
+	bf1[27] = bf0[27] + bf0[26]
+	bf1[28] = bf0[28] + bf0[29]
+	bf1[29] = -bf0[29] + bf0[28]
+	bf1[30] = -bf0[30] + bf0[31]
+	bf1[31] = bf0[31] + bf0[30]
+	// stage 8
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = bf0[10]
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = bf0[13]
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+	bf1[16] = fwdHalfBtf(fwdCospi12[62], bf0[16], fwdCospi12[2], bf0[31], 12)
+	bf1[17] = fwdHalfBtf(fwdCospi12[30], bf0[17], fwdCospi12[34], bf0[30], 12)
+	bf1[18] = fwdHalfBtf(fwdCospi12[46], bf0[18], fwdCospi12[18], bf0[29], 12)
+	bf1[19] = fwdHalfBtf(fwdCospi12[14], bf0[19], fwdCospi12[50], bf0[28], 12)
+	bf1[20] = fwdHalfBtf(fwdCospi12[54], bf0[20], fwdCospi12[10], bf0[27], 12)
+	bf1[21] = fwdHalfBtf(fwdCospi12[22], bf0[21], fwdCospi12[42], bf0[26], 12)
+	bf1[22] = fwdHalfBtf(fwdCospi12[38], bf0[22], fwdCospi12[26], bf0[25], 12)
+	bf1[23] = fwdHalfBtf(fwdCospi12[6], bf0[23], fwdCospi12[58], bf0[24], 12)
+	bf1[24] = fwdHalfBtf(fwdCospi12[6], bf0[24], -fwdCospi12[58], bf0[23], 12)
+	bf1[25] = fwdHalfBtf(fwdCospi12[38], bf0[25], -fwdCospi12[26], bf0[22], 12)
+	bf1[26] = fwdHalfBtf(fwdCospi12[22], bf0[26], -fwdCospi12[42], bf0[21], 12)
+	bf1[27] = fwdHalfBtf(fwdCospi12[54], bf0[27], -fwdCospi12[10], bf0[20], 12)
+	bf1[28] = fwdHalfBtf(fwdCospi12[14], bf0[28], -fwdCospi12[50], bf0[19], 12)
+	bf1[29] = fwdHalfBtf(fwdCospi12[46], bf0[29], -fwdCospi12[18], bf0[18], 12)
+	bf1[30] = fwdHalfBtf(fwdCospi12[30], bf0[30], -fwdCospi12[34], bf0[17], 12)
+	bf1[31] = fwdHalfBtf(fwdCospi12[62], bf0[31], -fwdCospi12[2], bf0[16], 12)
+	// stage 9
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[16]
+	bf1[2] = bf0[8]
+	bf1[3] = bf0[24]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[20]
+	bf1[6] = bf0[12]
+	bf1[7] = bf0[28]
+	bf1[8] = bf0[2]
+	bf1[9] = bf0[18]
+	bf1[10] = bf0[10]
+	bf1[11] = bf0[26]
+	bf1[12] = bf0[6]
+	bf1[13] = bf0[22]
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[30]
+	bf1[16] = bf0[1]
+	bf1[17] = bf0[17]
+	bf1[18] = bf0[9]
+	bf1[19] = bf0[25]
+	bf1[20] = bf0[5]
+	bf1[21] = bf0[21]
+	bf1[22] = bf0[13]
+	bf1[23] = bf0[29]
+	bf1[24] = bf0[3]
+	bf1[25] = bf0[19]
+	bf1[26] = bf0[11]
+	bf1[27] = bf0[27]
+	bf1[28] = bf0[7]
+	bf1[29] = bf0[23]
+	bf1[30] = bf0[15]
+	bf1[31] = bf0[31]
+}
+
+// fwdRoundShift4 is av1_round_shift_array with bit == 4 (the 32x32 shift[1]
+// of -4): round_shift(v, 4) = (v + 8) >> 4.
+func fwdRoundShift4(arr []int32) {
+	for i, v := range arr {
+		arr[i] = (v + 8) >> 4
+	}
+}
+
+// ForwardDCT32x32 computes the AV1 forward 32x32 DCT_DCT of a residual block
+// in the decoder's coefficient layout. Mirrors fwd_txfm2d_c with
+// fwd_shift_32x32 = {2, -4, 0} and cos_bit 12 on both passes.
+func ForwardDCT32x32(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 32 || residualStride < 32 ||
+		!blockFits(len(residual), residualStride, 32, 32) ||
+		!coeffBlockFits(len(coeff), coeffStride, 32, 32) {
+		return ErrInvalidTransform
+	}
+	var buf [1024]int32 // column-pass output, row-major buf[r*32+c]
+	var in, out [32]int32
+	for c := range 32 {
+		for r := range 32 {
+			in[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT32(&in, &out)
+		fwdRoundShift4(out[:]) // shift[1] = -4
+		for r := range 32 {
+			buf[r*32+c] = out[r]
+		}
+	}
+	for r := range 32 {
+		for c := range 32 {
+			in[c] = buf[r*32+c]
+		}
+		fwdDCT32(&in, &out)
+		for c := range 32 { // shift[2] = 0; output[c*rows + r]
 			coeff[c*coeffStride+r] = out[c]
 		}
 	}
