@@ -197,11 +197,26 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 
+	// Motion estimation first: the skip decision needs the motion-compensated
+	// residual. Full-pel, even offsets (chroma stays at integer positions).
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	dx, dy := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
+
+	// Quantize all three transform blocks up front; a block whose residual
+	// quantizes to zero everywhere is coded as skip (no residual symbols, the
+	// reconstruction is the prediction itself).
+	var lumaQ, uQ, vQ [64]int16
+	lumaZero := st.prepareInterTXB(src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &lumaQ)
+	uZero := st.prepareInterTXB(src.U, ref.U, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.uQuant, &uQ)
+	vZero := st.prepareInterTXB(src.V, ref.V, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, st.vQuant, &vQ)
+	skip := lumaZero && uZero && vZero
+
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
-	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
 	}
-	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
@@ -242,11 +257,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
 
-	// Full-pel motion estimation on luma: even offsets keep chroma at integer
-	// positions too. Zero motion stays on the cheaper GLOBALMV path.
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
-	dx, dy := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
 	mode := tile.InterModeGlobalMV
 	if dx != 0 || dy != 0 {
 		mode = tile.InterModeNewMV
@@ -284,6 +294,28 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		return fmt.Errorf("mark inter filters: %w", err)
 	}
 
+	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma plane block: %w", err)
+	}
+	if skip {
+		// No residual symbols; reset the coefficient entropy contexts per
+		// plane as the decoder's residual path does for skip blocks, and the
+		// reconstruction is the motion-compensated prediction.
+		if err := coeffCtx.ResetBlock(0, block.Size, int(block.X4), int(block.Y4)); err != nil {
+			return fmt.Errorf("reset luma coeff ctx: %w", err)
+		}
+		for plane := 1; plane <= 2; plane++ {
+			if err := coeffCtx.ResetBlock(plane, chromaBlock, int(block.X4)/2, int(block.Y4)/2); err != nil {
+				return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
+			}
+		}
+		copyPredBlock(recon.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy)
+		copyPredBlock(recon.U, ref.U, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2)
+		copyPredBlock(recon.V, ref.V, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2)
+		return nil
+	}
+
 	// Residual: luma TX_8X8 with the inter tx_type symbol, then chroma TX_4X4.
 	txTypeReq := tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
@@ -293,7 +325,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	afterSkip := func() error {
 		return tile.WriteInterTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
 	}
-	if err := st.encodeInterTXB(recon.Y, src.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, tile.CoeffContextRequest{
+	if err := st.finishInterTXB(recon.Y, ref.Y, src.YStride, lumaPX, lumaPY, 8, dx, dy, st.yQuant, &lumaQ, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
@@ -302,18 +334,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	}, coeffCtx, st.scan8, afterSkip); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
-	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma plane block: %w", err)
-	}
 	for plane := 1; plane <= 2; plane++ {
-		data, rdata, refData := src.U, recon.U, ref.U
+		rdata, refData, qc := recon.U, ref.U, &uQ
 		q := st.uQuant
 		if plane == 2 {
-			data, rdata, refData = src.V, recon.V, ref.V
+			rdata, refData, qc = recon.V, ref.V, &vQ
 			q = st.vQuant
 		}
-		if err := st.encodeInterTXB(rdata, data, refData, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, q, tile.CoeffContextRequest{
+		if err := st.finishInterTXB(rdata, refData, src.ChromaStride, lumaPX/2, lumaPY/2, 4, dx/2, dy/2, q, qc, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       tile.TransformSize4x4,
@@ -326,14 +354,17 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 	return nil
 }
 
-// encodeInterTXB codes one square n x n transform block of temporal residual:
-// the motion-compensated prediction is the reference plane at the block
-// position offset by the full-pel motion (dx, dy), the residual goes through
-// the forward transform and quantizer, and recon is rebuilt through the
-// decoder's dequant + inverse transform.
-func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte, stride, px, py, n, dx, dy int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
+// copyPredBlock copies the motion-compensated prediction into the recon plane
+// for skipped blocks.
+func copyPredBlock(reconPlane, refPlane []byte, stride, px, py, n, dx, dy int) {
+	for r := range n {
+		copy(reconPlane[(py+r)*stride+px:(py+r)*stride+px+n], refPlane[(py+r+dy)*stride+px+dx:(py+r+dy)*stride+px+dx+n])
+	}
+}
 
+// prepareInterTXB computes the quantized coefficients of one square n x n
+// motion-compensated residual block and reports whether they are all zero.
+func (st *lossyEncodeState) prepareInterTXB(srcPlane, refPlane []byte, stride, px, py, n, dx, dy int, q quantize.Quantizer, qcoeff *[64]int16) bool {
 	var residual [64]int16
 	for r := range n {
 		row := (py+r)*stride + px
@@ -343,22 +374,34 @@ func (st *lossyEncodeState) encodeInterTXB(reconPlane, srcPlane, refPlane []byte
 		}
 	}
 	var tran [64]int32
-	var qcoeff [64]int16
 	switch n {
 	case 4:
 		if err := transform.ForwardDCT4x4(tran[:16], 4, residual[:16], 4); err != nil {
-			return err
+			return false
 		}
 	case 8:
 		if err := transform.ForwardDCT8x8(tran[:64], 8, residual[:64], 8); err != nil {
-			return err
+			return false
 		}
 	default:
-		return fmt.Errorf("encoder: unsupported txb size %d", n)
+		return false
 	}
 	if err := quantize.QuantizeBlockScaled(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, 0); err != nil {
-		return err
+		return false
 	}
+	for _, v := range qcoeff[:n*n] {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// finishInterTXB codes the prepared coefficients and rebuilds the recon block
+// through the decoder's dequant + inverse transform.
+func (st *lossyEncodeState) finishInterTXB(reconPlane, refPlane []byte, stride, px, py, n, dx, dy int, q quantize.Quantizer, qcoeff *[64]int16,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
+
 	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n*n], scan, st.levels, afterSkip); err != nil {
 		return err
 	}

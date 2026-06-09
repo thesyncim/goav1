@@ -1,0 +1,119 @@
+package encoder_test
+
+import (
+	"fmt"
+	"math/rand"
+	"testing"
+
+	goav1 "github.com/thesyncim/goav1"
+	"github.com/thesyncim/goav1/internal/av1/encoder"
+)
+
+// TestVideoEncoderChainDecodesBitExact is the streaming gate: a KEY + 5-P
+// chain of a moving scene must decode with EVERY frame bit-identical to the
+// encoder's per-frame reconstruction, fidelity above a sanity floor on each
+// frame, and the inter frames a fraction of the keyframe — the full encoder
+// loop (reference chaining, motion search, skip decisions) working end to end.
+func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
+	const w, h = 192, 128
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(99))
+
+	// A textured background with a moving bright square: most blocks skip,
+	// the square's blocks track motion, and occlusion edges code residuals.
+	bg := make([]byte, w*h)
+	for y := range h {
+		for x := range w {
+			bg[y*w+x] = uint8(60 + (x/4+y/4)%64 + rng.Intn(60))
+		}
+	}
+	makeFrame := func(t int) encoder.SourceFrame420 {
+		f := encoder.SourceFrame420{
+			Y:            append([]byte(nil), bg...),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
+		}
+		for i := range f.U {
+			f.U[i] = 120
+			f.V[i] = 130
+		}
+		// 24x24 bright square moving diagonally 4px right, 2px down per frame.
+		sx, sy := 16+t*4, 24+t*2
+		for y := sy; y < sy+24 && y < h; y++ {
+			for x := sx; x < sx+24 && x < w; x++ {
+				f.Y[y*w+x] = 220
+			}
+		}
+		return f
+	}
+
+	enc, err := encoder.NewVideoEncoder(w, h, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const frames = 6
+	tus := make([][]byte, 0, frames)
+	recons := make([]encoder.SourceFrame420, 0, frames)
+	keySize := 0
+	interTotal := 0
+	for i := range frames {
+		tu, isKey, err := enc.Encode(makeFrame(i), false)
+		if err != nil {
+			t.Fatalf("encode frame %d: %v", i, err)
+		}
+		if (i == 0) != isKey {
+			t.Fatalf("frame %d keyframe=%v", i, isKey)
+		}
+		if isKey {
+			keySize = len(tu)
+		} else {
+			interTotal += len(tu)
+		}
+		tus = append(tus, tu)
+		recons = append(recons, enc.Recon())
+	}
+	avgInter := interTotal / (frames - 1)
+	t.Logf("key %d bytes, avg P %d bytes", keySize, avgInter)
+	if avgInter*3 >= keySize {
+		t.Fatalf("avg P %d bytes not well below key %d bytes", avgInter, keySize)
+	}
+
+	dec, err := goav1.NewDecoder(tus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	// Decoded frames alias pooled surfaces that later decodes recycle, so
+	// compare each frame as it is produced rather than after DecodeAll.
+	i := 0
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, f := range batch {
+			if i >= frames {
+				t.Fatalf("decoded more than %d frames", frames)
+			}
+			comparePlane(t, fmt.Sprintf("frame%d Y", i), f.Y, recons[i].Y, w, h, w)
+			comparePlane(t, fmt.Sprintf("frame%d U", i), f.U, recons[i].U, cw, ch, cw)
+			comparePlane(t, fmt.Sprintf("frame%d V", i), f.V, recons[i].V, cw, ch, cw)
+			psnr := planePSNR(makeFrame(i).Y, recons[i].Y)
+			t.Logf("frame %d luma PSNR %.2f dB", i, psnr)
+			if psnr < 30 {
+				t.Fatalf("frame %d luma PSNR %.2f below floor", i, psnr)
+			}
+			i++
+		}
+	}
+	if i != frames {
+		t.Fatalf("decoded %d frames, want %d", i, frames)
+	}
+}

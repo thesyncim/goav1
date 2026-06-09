@@ -109,7 +109,7 @@ func repeatPFrameHeader(width, height int, qIndex uint8) (InterFrameHeaderParams
 			RenderWidth:         uint32(width),
 			RenderHeight:        uint32(height),
 			SuperResDenominator: 8,
-			RefreshFrameFlags:   0x80, // refresh slot 7; LAST stays the keyframe
+			RefreshFrameFlags:   0x01, // refresh slot 0: this frame becomes the next LAST
 		},
 		Tile:         tiles,
 		Quantization: QuantizationParams{BaseQIdx: qIndex},
