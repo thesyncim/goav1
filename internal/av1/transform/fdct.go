@@ -261,6 +261,12 @@ func ForwardDCT4x4(coeff []int32, coeffStride int, residual []int16, residualStr
 		!coeffBlockFits(len(coeff), coeffStride, 4, 4) {
 		return ErrInvalidTransform
 	}
+	forwardDCT4x4Impl(coeff, coeffStride, residual, residualStride)
+	return nil
+}
+
+// forwardDCT4x4PureGo is the portable two-pass reference.
+func forwardDCT4x4PureGo(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var buf [16]int32 // column-pass output, row-major buf[r*4+c]
 	var in, out [4]int32
 	for c := range 4 {
@@ -281,7 +287,6 @@ func ForwardDCT4x4(coeff []int32, coeffStride int, residual []int16, residualStr
 			coeff[c*coeffStride+r] = out[c]
 		}
 	}
-	return nil
 }
 
 // ForwardDCT8x8 computes the AV1 forward 8x8 DCT_DCT of a residual block in

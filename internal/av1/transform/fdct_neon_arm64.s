@@ -433,3 +433,92 @@ DATA ·fdct8Cospi+20(SB)/4, $4551
 DATA ·fdct8Cospi+24(SB)/4, $1598
 DATA ·fdct8Cospi+28(SB)/4, $0
 
+
+// NEON forward 4x4 DCT_DCT (fwd_txfm2d shape: shift {2,0,0}, cos_bit 13).
+// One lane group: the column pass runs av1_fdct4 over the four row vectors
+// (lanes are columns), the 4x4 int32 matrix transposes in registers, the
+// row pass reruns the network, and its output row vectors are the
+// coeff[c*stride+r] columns directly. Weights come from the shared
+// fdct8Cospi table (s[0]=cospi32, s[1]=cospi16, s[2]=cospi48); rounding
+// is SRSHR #13, exact for 8-bit residual ranges.
+
+// func fdct4x4NEONAsm(ctx *fdct8x8NEONCtx)
+TEXT ·fdct4x4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD CTXIN(R0), R1
+	MOVD CTXINSTRIDE(R0), R2  // residual stride in elements
+	MOVD CTXOUT(R0), R3
+	MOVD CTXOUTSTRIDE(R0), R4 // coeff stride in elements
+	MOVD $·fdct8Cospi(SB), R5
+	VLD1 (R5), [V30.S4]
+	LSL  $1, R2 // stride bytes (int16)
+	LSL  $2, R4 // stride bytes (int32)
+
+	// Load the four residual rows, fusing shift[0]=2 into SSHLL.
+	VLD1 (R1), [V16.H4]
+	WORD $0x0f12a600 // sshll v0.4s, v16.4h, #2
+	ADD  R2, R1
+	VLD1 (R1), [V16.H4]
+	WORD $0x0f12a601 // sshll v1.4s, v16.4h, #2
+	ADD  R2, R1
+	VLD1 (R1), [V16.H4]
+	WORD $0x0f12a602 // sshll v2.4s, v16.4h, #2
+	ADD  R2, R1
+	VLD1 (R1), [V16.H4]
+	WORD $0x0f12a603 // sshll v3.4s, v16.4h, #2
+
+	// Column pass: stage 1 sums/differences, stage 2 butterflies.
+	WORD $0x4ea38410 // add v16.4s, v0.4s, v3.4s
+	WORD $0x4ea28431 // add v17.4s, v1.4s, v2.4s
+	WORD $0x6ea28432 // sub v18.4s, v1.4s, v2.4s
+	WORD $0x6ea38413 // sub v19.4s, v0.4s, v3.4s
+	WORD $0x4f9e8218 // mul v24.4s, v16.4s, v30.s[0]
+	WORD $0x6f9e0238 // mla v24.4s, v17.4s, v30.s[0]
+	WORD $0x4f332704 // srshr v4.4s, v24.4s, #13
+	WORD $0x4f9e8219 // mul v25.4s, v16.4s, v30.s[0]
+	WORD $0x6f9e4239 // mls v25.4s, v17.4s, v30.s[0]
+	WORD $0x4f332725 // srshr v5.4s, v25.4s, #13
+	WORD $0x4f9e8a58 // mul v24.4s, v18.4s, v30.s[2]
+	WORD $0x6fbe0278 // mla v24.4s, v19.4s, v30.s[1]
+	WORD $0x4f332706 // srshr v6.4s, v24.4s, #13
+	WORD $0x4f9e8a79 // mul v25.4s, v19.4s, v30.s[2]
+	WORD $0x6fbe4259 // mls v25.4s, v18.4s, v30.s[1]
+	WORD $0x4f332727 // srshr v7.4s, v25.4s, #13
+
+	// Transpose the bit-reversed rows (v4=t0, v6=t2, v5=t1, v7=t3).
+	WORD $0x4e862890 // trn1 v16.4s, v4.4s, v6.4s
+	WORD $0x4e866891 // trn2 v17.4s, v4.4s, v6.4s
+	WORD $0x4e8728b2 // trn1 v18.4s, v5.4s, v7.4s
+	WORD $0x4e8768b3 // trn2 v19.4s, v5.4s, v7.4s
+	WORD $0x4ed23a00 // zip1 v0.2d, v16.2d, v18.2d
+	WORD $0x4ed33a21 // zip1 v1.2d, v17.2d, v19.2d
+	WORD $0x4ed27a02 // zip2 v2.2d, v16.2d, v18.2d
+	WORD $0x4ed37a23 // zip2 v3.2d, v17.2d, v19.2d
+
+	// Row pass: same network.
+	WORD $0x4ea38410 // add v16.4s, v0.4s, v3.4s
+	WORD $0x4ea28431 // add v17.4s, v1.4s, v2.4s
+	WORD $0x6ea28432 // sub v18.4s, v1.4s, v2.4s
+	WORD $0x6ea38413 // sub v19.4s, v0.4s, v3.4s
+	WORD $0x4f9e8218 // mul v24.4s, v16.4s, v30.s[0]
+	WORD $0x6f9e0238 // mla v24.4s, v17.4s, v30.s[0]
+	WORD $0x4f332704 // srshr v4.4s, v24.4s, #13
+	WORD $0x4f9e8219 // mul v25.4s, v16.4s, v30.s[0]
+	WORD $0x6f9e4239 // mls v25.4s, v17.4s, v30.s[0]
+	WORD $0x4f332725 // srshr v5.4s, v25.4s, #13
+	WORD $0x4f9e8a58 // mul v24.4s, v18.4s, v30.s[2]
+	WORD $0x6fbe0278 // mla v24.4s, v19.4s, v30.s[1]
+	WORD $0x4f332706 // srshr v6.4s, v24.4s, #13
+	WORD $0x4f9e8a79 // mul v25.4s, v19.4s, v30.s[2]
+	WORD $0x6fbe4259 // mls v25.4s, v18.4s, v30.s[1]
+	WORD $0x4f332727 // srshr v7.4s, v25.4s, #13
+
+	// Store coeff columns: t0, t2, t1, t3 are coeff rows 0..3.
+	VST1 [V4.S4], (R3)
+	ADD  R4, R3
+	VST1 [V6.S4], (R3)
+	ADD  R4, R3
+	VST1 [V5.S4], (R3)
+	ADD  R4, R3
+	VST1 [V7.S4], (R3)
+	RET
