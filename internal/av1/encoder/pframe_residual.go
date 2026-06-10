@@ -726,39 +726,81 @@ func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, n i
 	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, n, n, subX, subY, motion.InterpFilters{})
 }
 
-// subpelRefine improves a full-pel luma motion vector with two refinement
-// rounds (half-pel then quarter-pel steps, both representable at low MV
-// precision) scored by SAD over predictions from the decoder's own convolve.
+// subpelRefine improves a full-pel luma motion vector in two bounded
+// stages. Stage one probes the four half-pel neighbors with the decoder's
+// exact convolve - integer SAD surfaces cannot localize a subpel optimum on
+// detailed content, so these four predictions are the irreducible cost.
+// Stage two fits a parabola per axis through the EXACT half-pel SADs and
+// verifies only the quarter-pel positions surrounding the fitted minimum,
+// at most two more predictions. Six convolves bound the search against the
+// eight to sixteen of a greedy descent; the coded prediction always goes
+// through the exact convolve later, so search shape cannot affect parity.
 func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	for _, step := range [2]int16{4, 2} {
-		improved := true
-		for improved {
-			improved = false
-			base := mv
-			for _, cand := range [4]motion.Vector{
-				{Row: base.Row - step, Col: base.Col},
-				{Row: base.Row + step, Col: base.Col},
-				{Row: base.Row, Col: base.Col - step},
-				{Row: base.Row, Col: base.Col + step},
-			} {
-				if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
-					continue
+	exact := func(cand motion.Vector) int {
+		if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
+			return -1
+		}
+		s := 0
+		for r := range n {
+			row := (py+r)*stride + px
+			for c := range n {
+				d := int(src[row+c]) - int(st.sadScratch[r*n+c])
+				if d < 0 {
+					d = -d
 				}
-				s := 0
-				for r := range n {
-					row := (py+r)*stride + px
-					for c := range n {
-						d := int(src[row+c]) - int(st.sadScratch[r*n+c])
-						if d < 0 {
-							d = -d
-						}
-						s += d
-					}
-				}
-				if s < bestSAD {
-					bestSAD, mv, improved = s, cand, true
-				}
+				s += d
 			}
+		}
+		return s
+	}
+	start := mv
+	center := bestSAD
+	// Stage 1: exact half-pel cross.
+	var half [4]int // left, right, up, down
+	offs := [4]motion.Vector{
+		{Row: start.Row, Col: start.Col - 4},
+		{Row: start.Row, Col: start.Col + 4},
+		{Row: start.Row - 4, Col: start.Col},
+		{Row: start.Row + 4, Col: start.Col},
+	}
+	for i, cand := range offs {
+		s := exact(cand)
+		half[i] = s
+		if s >= 0 && s < bestSAD {
+			bestSAD, mv = s, cand
+		}
+	}
+	// Stage 2: per-axis parabola through the exact half-pel SADs locates the
+	// quarter-pel minimum; verify its surrounding even-1/8 positions.
+	quarterAxis := func(sl, sr int) int {
+		if sl < 0 || sr < 0 {
+			return 0
+		}
+		den := sl + sr - 2*center
+		if den <= 0 {
+			return 0
+		}
+		est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
+		if est > 4 {
+			est = 4
+		}
+		if est < -4 {
+			est = -4
+		}
+		return est
+	}
+	estX := quarterAxis(half[0], half[1])
+	estY := quarterAxis(half[2], half[3])
+	for _, e := range [2][2]int{{estX &^ 1, estY &^ 1}, {(estX + 1) &^ 1, (estY + 1) &^ 1}} {
+		if e[0] == 0 && e[1] == 0 {
+			continue
+		}
+		cand := motion.Vector{Row: start.Row + int16(e[1]), Col: start.Col + int16(e[0])}
+		if cand == mv || cand == start {
+			continue
+		}
+		if s := exact(cand); s >= 0 && s < bestSAD {
+			bestSAD, mv = s, cand
 		}
 	}
 	return mv, bestSAD
