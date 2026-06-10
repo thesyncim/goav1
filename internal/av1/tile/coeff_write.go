@@ -135,7 +135,14 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		levels[int(posTable[pos].padded)] = uint8(lv)
 	}
 
-	// 3) lower-magnitude level pass, reversed scan order.
+	// 3) lower-magnitude level pass, reversed scan order. The 2D class (the
+	// only one DCT_DCT uses) derives base and br contexts inline from the
+	// precomputed position table - the same lower2DOffset/br2DOffset entries
+	// the decoder's hot read path consumes - instead of re-deriving geometry
+	// per coefficient.
+	stride := int(geo.stride)
+	baseCDFs := &cdfs.CoeffBase[txCtx][req.Plane]
+	brCDFs := &cdfs.CoeffBR[txBR][req.Plane]
 	for c := eob - 1; c >= 0; c-- {
 		pos := int(scan[c])
 		level := absInt(int(coeffs[pos]))
@@ -145,24 +152,44 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 				return ErrInvalidDecodeState
 			}
 			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][req.Plane][ctx], minInt(level, 3)-1)
+		} else if req.Class == transform.Class2D {
+			p := &posTable[pos]
+			ctx := 0
+			if pos != 0 {
+				pad := int(p.padded)
+				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			}
+			w.WriteCDF(&baseCDFs[ctx], minInt(level, 3))
 		} else {
 			ctx, err := CoeffLowerLevelsContext(levels, req.Size, req.Class, pos)
 			if err != nil {
 				return err
 			}
-			w.WriteCDF(&cdfs.CoeffBase[txCtx][req.Plane][ctx], minInt(level, 3))
+			w.WriteCDF(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			var brCtx int
 			if c == eob-1 {
 				brCtx, err = CoeffBRContextEOB(req.Size, req.Class, pos)
+				if err != nil {
+					return err
+				}
+			} else if req.Class == transform.Class2D && pos != 0 {
+				p := &posTable[pos]
+				pad := int(p.padded)
+				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
 			} else {
 				brCtx, err = CoeffBRContext(levels, req.Size, req.Class, pos)
+				if err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				return err
-			}
-			brCDF := &cdfs.CoeffBR[txBR][req.Plane][brCtx]
+			brCDF := &brCDFs[brCtx]
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 				k := minInt(baseRange-idx, BRCDFSize-1)
