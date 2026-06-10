@@ -37,6 +37,13 @@ type VideoEncoder struct {
 	frameIndex     int
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
+
+	// Golden anchor: slot 1 holds an older high-quality reference refreshed
+	// every goldenEvery base-layer frames (0 disables block-level use). The
+	// encoder keeps its own copy for motion search.
+	golden           SourceFrame420
+	goldenEvery      int
+	sinceGoldenFresh int
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -58,9 +65,29 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	if qIndex == 0 {
 		return nil, fmt.Errorf("encoder: qindex must be non-zero")
 	}
-	e := &VideoEncoder{width: width, height: height, qIndex: qIndex}
+	e := &VideoEncoder{width: width, height: height, qIndex: qIndex, goldenEvery: 32}
 	e.tileColsLog2 = defaultTileColsLog2(width)
 	return e, nil
+}
+
+// SetGoldenInterval sets how many base-layer inter frames pass between
+// golden-anchor refreshes; zero disables golden references entirely.
+func (e *VideoEncoder) SetGoldenInterval(n int) {
+	e.goldenEvery = n
+}
+
+// copyFrameInto deep-copies src into dst, reusing dst's buffers when sized.
+func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
+	if len(dst.Y) != len(src.Y) {
+		dst.Y = make([]byte, len(src.Y))
+		dst.U = make([]byte, len(src.U))
+		dst.V = make([]byte, len(src.V))
+	}
+	copy(dst.Y, src.Y)
+	copy(dst.U, src.U)
+	copy(dst.V, src.V)
+	dst.YStride, dst.ChromaStride = src.YStride, src.ChromaStride
+	dst.Width, dst.Height = src.Width, src.Height
 }
 
 // defaultTileColsLog2 picks the inter-frame tile-column split: two columns
@@ -182,6 +209,12 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		e.lastRecon = recon
 		e.haveKey = true
 		e.frameIndex = 1
+		// A shown keyframe refreshes every reference slot, so slot 1 (the
+		// GOLDEN name) now holds the keyframe; seed the search copy.
+		if e.goldenEvery > 0 {
+			copyFrameInto(&e.golden, recon)
+			e.sinceGoldenFresh = 0
+		}
 		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
@@ -218,8 +251,15 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	refresh := uint8(0x01)
+	refreshGolden := false
 	if droppable {
 		refresh = 0 // layer-1 frames are never referenced
+	} else if e.goldenEvery > 0 {
+		e.sinceGoldenFresh++
+		if e.sinceGoldenFresh >= e.goldenEvery {
+			refresh |= 0x02 // this frame becomes the new golden anchor
+			refreshGolden = true
+		}
 	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
@@ -231,13 +271,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 		header.Tile = tiles
 	}
+	var golden *SourceFrame420
+	if e.goldenEvery > 0 && e.golden.Y != nil {
+		golden = &e.golden
+	}
 	nTiles := int(header.Tile.Cols)
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
 	}
 	payloads := make([]TilePayload, nTiles)
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, e.recon, out, e.qIndex, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTile(src, e.recon, golden, out, e.qIndex, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -258,7 +302,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			wg.Add(1)
 			go func(t int, c0, c1 uint16) {
 				defer wg.Done()
-				data, err := e.tilePCs[t].encodeTile(src, e.recon, out, e.qIndex, c0, c1)
+				data, err := e.tilePCs[t].encodeTile(src, e.recon, golden, out, e.qIndex, c0, c1)
 				if err != nil {
 					errs[t] = err
 					return
@@ -281,6 +325,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
+	}
+	if refreshGolden {
+		copyFrameInto(&e.golden, *out)
+		e.sinceGoldenFresh = 0
 	}
 	return tu, nil
 }

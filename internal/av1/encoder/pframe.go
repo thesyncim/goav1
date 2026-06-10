@@ -152,6 +152,9 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 			RenderHeight:        uint32(height),
 			SuperResDenominator: 8,
 			RefreshFrameFlags:   refreshFlags,
+			// GOLDEN names slot 1 (a periodic anchor the streaming encoder
+			// refreshes); every other name stays on slot 0 (LAST).
+			RefFrameIdx: [7]uint8{0, 0, 0, 1, 0, 0, 0},
 		},
 		Tile:         tiles,
 		Quantization: QuantizationParams{BaseQIdx: qIndex},

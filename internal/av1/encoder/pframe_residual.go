@@ -191,13 +191,13 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
 
 func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	var pc pframeCoder
-	return pc.encodeTile(src, ref, recon, qIndex, 0, uint16(src.Width/4))
+	return pc.encodeTile(src, ref, nil, recon, qIndex, 0, uint16(src.Width/4))
 }
 
 // encodeTile codes one P-frame tile covering MI columns [miColStart,
 // miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
 // the full-frame single-tile case passes [0, miCols).
-func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -349,9 +349,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 		return tile.PartitionSplit, nil
 	}
 
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodePBlock(src, ref, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, refs, walkReq, miCols, miRows)
+		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, miCols, miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -363,8 +362,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, recon 
 // mode symbols in the decoder's order, then the largest-TX luma residual (with
 // the inter tx_type symbol after txb_skip) and two chroma residuals against
 // the reference reconstruction.
-func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
-	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, refs tile.InterReferencesResult,
+func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
+	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs,
 	walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 
 	var n int
@@ -424,6 +423,27 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 		}
 	}
 
+	// Reference selection (8x8 leaves only): when LAST left a poor match,
+	// probe the GOLDEN anchor; occluded-then-revealed content predicts from
+	// the older anchor when the previous frame cannot. Merged leaves stay on
+	// LAST (their child agreement was measured against it).
+	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refPlanes := ref
+	if n == 8 && golden != nil && golden.Y != nil && fullSAD > 8*8*4 {
+		gdx, gdy, gsad := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
+		gmv := motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}
+		if gsad > 8*8*2 {
+			gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
+		}
+		// The anchor must win clearly: LAST keeps the cheaper ref symbol and
+		// denser MV predictors.
+		if gsad+32 < fullSAD {
+			refs.Ref[0] = tile.ReferenceFrameGolden
+			refPlanes = *golden
+			mv, fullSAD = gmv, gsad
+		}
+	}
+
 	// Intra fallback (8x8 leaves only): on scene changes and occlusions the
 	// best motion match is worse than predicting flat from the already-coded
 	// neighbors; compare the motion SAD against a DC-prediction SAD over the
@@ -451,14 +471,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, recon *SourceF
 
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
-	if err := predictInto(st.predY[:n*n], ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, false, false); err != nil {
+	if err := predictInto(st.predY[:n*n], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, false, false); err != nil {
 		return fmt.Errorf("predict luma: %w", err)
 	}
 	cw, chh := src.Width/2, src.Height/2
-	if err := predictInto(st.predU[:cn*cn], ref.U, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
+	if err := predictInto(st.predU[:cn*cn], refPlanes.U, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
 		return fmt.Errorf("predict u: %w", err)
 	}
-	if err := predictInto(st.predV[:cn*cn], ref.V, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
+	if err := predictInto(st.predV[:cn*cn], refPlanes.V, src.ChromaStride, cw, chh, lumaPX/2, lumaPY/2, cn, mv, true, true); err != nil {
 		return fmt.Errorf("predict v: %w", err)
 	}
 
