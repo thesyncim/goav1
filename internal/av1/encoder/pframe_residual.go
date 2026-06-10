@@ -233,6 +233,9 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
+	// av1's sad-per-bit lut formula: full-pel motion search prices one bit
+	// of side information at this many SAD units (q is the dc step over 4).
+	st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -476,6 +479,73 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
+	// The reference-MV stack and the mode choice must precede prediction:
+	// the priced decision may move the coded vector onto a stack predictor,
+	// and the materialized prediction, residuals, and reconstruction all
+	// have to follow the vector that is actually signaled. The stack reads
+	// only motion context this block has not yet marked, so building it
+	// before the prefix symbols matches the decoder's later view exactly.
+	stackReq := tile.ReferenceMVStackRequest{
+		MICol:          block.MICol,
+		MIRow:          block.MIRow,
+		TileMIColStart: walkReq.MIColStart,
+		TileMIRowStart: walkReq.MIRowStart,
+		TileMIColEnd:   walkReq.MIColEnd,
+		TileMIRowEnd:   walkReq.MIRowEnd,
+		FrameMIRows:    miRows,
+		FrameMICols:    miCols,
+		Size:           block.Size,
+		References:     refs,
+		X4:             block.X4,
+		Y4:             block.Y4,
+		HaveTop:        block.HaveTop,
+		HaveLeft:       block.HaveLeft,
+		HaveTopRight:   tile.BlockHasTopRight(16, block),
+	}
+	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
+	if err != nil {
+		return fmt.Errorf("build ref mv stack: %w", err)
+	}
+	// Mode choice by signaling cost: zero motion keeps the short GLOBALMV
+	// cascade; a vector the predictor stack already names codes as
+	// NEARESTMV/NEARMV with no motion residual at all; everything else pays
+	// for NEWMV plus the joint and component symbols.
+	mode := tile.InterModeGlobalMV
+	if mv.Row != 0 || mv.Col != 0 {
+		mode = tile.InterModeNewMV
+		if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
+			switch mv {
+			case predRefs.Nearest[0]:
+				mode = tile.InterModeNearestMV
+			case predRefs.Near[0]:
+				mode = tile.InterModeNearMV
+			default:
+				nearest := predRefs.Nearest[0]
+				if n == 8 && (nearest.Row != 0 || nearest.Col != 0) {
+					dr := int(mv.Row) - int(nearest.Row)
+					if dr < 0 {
+						dr = -dr
+					}
+					dc := int(mv.Col) - int(nearest.Col)
+					if dc < 0 {
+						dc = -dc
+					}
+					if dr <= 16 && dc <= 16 {
+						mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
+						if err := predictInto(st.sadScratch[:64], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, nearest, false, false); err == nil {
+							nearSAD := sad8x8DualImpl(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:], 8)
+							// Two extra cascade symbols pick NEARESTMV.
+							if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
+								mode = tile.InterModeNearestMV
+								mv = nearest
+								fullSAD = nearSAD
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if err := predictInto(st.predY[:n*n], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, false, false); err != nil {
@@ -537,44 +607,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("references: %w", err)
 	}
 
-	stackReq := tile.ReferenceMVStackRequest{
-		MICol:          block.MICol,
-		MIRow:          block.MIRow,
-		TileMIColStart: walkReq.MIColStart,
-		TileMIRowStart: walkReq.MIRowStart,
-		TileMIColEnd:   walkReq.MIColEnd,
-		TileMIRowEnd:   walkReq.MIRowEnd,
-		FrameMIRows:    miRows,
-		FrameMICols:    miCols,
-		Size:           block.Size,
-		References:     refs,
-		X4:             block.X4,
-		Y4:             block.Y4,
-		HaveTop:        block.HaveTop,
-		HaveLeft:       block.HaveLeft,
-		HaveTopRight:   tile.BlockHasTopRight(16, block),
-	}
-	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
-	if err != nil {
-		return fmt.Errorf("build ref mv stack: %w", err)
-	}
-
-	// Mode choice by signaling cost: zero motion keeps the short GLOBALMV
-	// cascade; a vector the predictor stack already names codes as
-	// NEARESTMV/NEARMV with no motion residual at all; everything else pays
-	// for NEWMV plus the joint and component symbols.
-	mode := tile.InterModeGlobalMV
-	if mv.Row != 0 || mv.Col != 0 {
-		mode = tile.InterModeNewMV
-		if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
-			switch mv {
-			case predRefs.Nearest[0]:
-				mode = tile.InterModeNearestMV
-			case predRefs.Near[0]:
-				mode = tile.InterModeNearMV
-			}
-		}
-	}
 	modeResult := tile.InterModeResult{Mode: mode}
 	if err := tile.WriteSingleInterMode(st.w, interModeCDFs, stack.ModeContext, mode); err != nil {
 		return fmt.Errorf("inter mode: %w", err)
