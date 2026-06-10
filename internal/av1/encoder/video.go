@@ -95,6 +95,8 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 // goroutine handoff, four columns at full HD widths.
 func defaultTileColsLog2(width int) uint8 {
 	switch {
+	case width >= 1920:
+		return 3
 	case width >= 1280:
 		return 2
 	case width >= 512:
@@ -287,18 +289,23 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 		payloads[0].Data = data
 	} else {
-		// One goroutine per tile column: tiles share the read-only source and
-		// reference planes and write disjoint column ranges of the output
-		// reconstruction.
+		// One goroutine per tile column beyond the first: tiles share the
+		// read-only source and reference planes and write disjoint column
+		// ranges of the output reconstruction. Tile zero runs on the calling
+		// goroutine so a two-tile frame pays a single handoff.
 		miCols := uint16(src.Width / 4)
+		bounds := func(t int) (uint16, uint16) {
+			c0 := header.Tile.ColStartSB[t] * 16
+			c1 := header.Tile.ColStartSB[t+1] * 16
+			if c1 > miCols {
+				c1 = miCols
+			}
+			return c0, c1
+		}
 		var wg sync.WaitGroup
 		errs := make([]error, nTiles)
-		for t := 0; t < nTiles; t++ {
-			colStart := header.Tile.ColStartSB[t] * 16
-			colEnd := header.Tile.ColStartSB[t+1] * 16
-			if colEnd > miCols {
-				colEnd = miCols
-			}
+		for t := 1; t < nTiles; t++ {
+			colStart, colEnd := bounds(t)
 			wg.Add(1)
 			go func(t int, c0, c1 uint16) {
 				defer wg.Done()
@@ -310,10 +317,16 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 				payloads[t].Data = data
 			}(t, colStart, colEnd)
 		}
+		c0, c1 := bounds(0)
+		data, err := e.tilePCs[0].encodeTile(src, e.recon, golden, out, e.qIndex, c0, c1)
 		wg.Wait()
-		for t, err := range errs {
-			if err != nil {
-				return nil, fmt.Errorf("encode tile %d: %w", t, err)
+		if err != nil {
+			return nil, fmt.Errorf("encode tile 0: %w", err)
+		}
+		payloads[0].Data = data
+		for t := 1; t < nTiles; t++ {
+			if errs[t] != nil {
+				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
 			}
 		}
 	}
