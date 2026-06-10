@@ -294,78 +294,11 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		return fmt.Errorf("mark prefix: %w", err)
 	}
 
-	// Luma mode selection by prediction SAD against the reconstructed
-	// edges: DC always, plus the exact-angle vertical and horizontal copies
-	// when the corresponding edge exists (angles 90 and 180 predict without
-	// edge filtering, so the copies match the decoder bit for bit).
+	// Luma mode selection by prediction SAD against the reconstructed edges.
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	mode := tile.IntraModeDC
 	pred := st.predY[:64]
-	{
-		stride := src.YStride
-		dc := dcPredictN(recon.Y, stride, lumaPX, lumaPY, 8, block.HaveTop, block.HaveLeft)
-		sadDC, sadV, sadH := 0, 1<<30, 1<<30
-		for r := range 8 {
-			row := (lumaPY+r)*stride + lumaPX
-			for c := range 8 {
-				d := int(src.Y[row+c]) - int(dc)
-				if d < 0 {
-					d = -d
-				}
-				sadDC += d
-			}
-		}
-		if block.HaveTop {
-			sadV = 0
-			above := (lumaPY-1)*stride + lumaPX
-			for r := range 8 {
-				row := (lumaPY+r)*stride + lumaPX
-				for c := range 8 {
-					d := int(src.Y[row+c]) - int(recon.Y[above+c])
-					if d < 0 {
-						d = -d
-					}
-					sadV += d
-				}
-			}
-		}
-		if block.HaveLeft {
-			sadH = 0
-			for r := range 8 {
-				row := (lumaPY+r)*stride + lumaPX
-				left := int(recon.Y[row-1])
-				for c := range 8 {
-					d := int(src.Y[row+c]) - left
-					if d < 0 {
-						d = -d
-					}
-					sadH += d
-				}
-			}
-		}
-		// DC keeps ties: it skips the angle-delta symbol.
-		switch {
-		case sadV+16 < sadDC && sadV <= sadH:
-			mode = tile.IntraModeVertical
-			above := (lumaPY-1)*stride + lumaPX
-			for r := range 8 {
-				copy(pred[r*8:r*8+8], recon.Y[above:above+8])
-			}
-		case sadH+16 < sadDC:
-			mode = tile.IntraModeHorizontal
-			for r := range 8 {
-				v := recon.Y[(lumaPY+r)*stride+lumaPX-1]
-				for c := range 8 {
-					pred[r*8+c] = v
-				}
-			}
-		default:
-			for i := range 64 {
-				pred[i] = dc
-			}
-		}
-	}
+	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -546,4 +479,75 @@ func dcPredictN(plane []byte, stride, px, py, n int, haveTop, haveLeft bool) uin
 		return 128
 	}
 	return uint8((sum + count/2) / count)
+}
+
+// selectIntraMode8 chooses the luma intra mode of one 8x8 block by
+// prediction SAD against the reconstructed edges and fills pred (stride 8)
+// with the chosen prediction. DC competes always; the exact-angle vertical
+// and horizontal copies need their edge (angles 90 and 180 predict without
+// edge filtering, so the copies match the decoder bit for bit). DC keeps
+// ties: it codes no angle-delta symbol. SMOOTH was built and measured a
+// wash at 8x8 - DC plus a two-coefficient DCT residual already covers
+// gradients - and removed.
+func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
+	dc := dcPredictN(reconPlane, stride, px, py, 8, haveTop, haveLeft)
+	sadDC, sadV, sadH := 0, 1<<30, 1<<30
+	for r := range 8 {
+		row := (py+r)*stride + px
+		for c := range 8 {
+			d := int(srcPlane[row+c]) - int(dc)
+			if d < 0 {
+				d = -d
+			}
+			sadDC += d
+		}
+	}
+	above := (py-1)*stride + px
+	if haveTop {
+		sadV = 0
+		for r := range 8 {
+			row := (py+r)*stride + px
+			for c := range 8 {
+				d := int(srcPlane[row+c]) - int(reconPlane[above+c])
+				if d < 0 {
+					d = -d
+				}
+				sadV += d
+			}
+		}
+	}
+	if haveLeft {
+		sadH = 0
+		for r := range 8 {
+			row := (py+r)*stride + px
+			left := int(reconPlane[row-1])
+			for c := range 8 {
+				d := int(srcPlane[row+c]) - left
+				if d < 0 {
+					d = -d
+				}
+				sadH += d
+			}
+		}
+	}
+	switch {
+	case sadV+16 < sadDC && sadV <= sadH:
+		for r := range 8 {
+			copy(pred[r*8:r*8+8], reconPlane[above:above+8])
+		}
+		return tile.IntraModeVertical
+	case sadH+16 < sadDC:
+		for r := range 8 {
+			v := reconPlane[(py+r)*stride+px-1]
+			for c := range 8 {
+				pred[r*8+c] = v
+			}
+		}
+		return tile.IntraModeHorizontal
+	default:
+		for i := range 64 {
+			pred[i] = dc
+		}
+		return tile.IntraModeDC
+	}
 }

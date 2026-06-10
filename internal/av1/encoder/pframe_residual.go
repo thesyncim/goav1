@@ -655,21 +655,30 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}, true); err != nil {
 		return fmt.Errorf("intra flag: %w", err)
 	}
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	pred := st.predY[:64]
+	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		FrameType: parser.FrameTypeInter,
 		Size:      block.Size, X4: block.X4, Y4: block.Y4,
-	}, tile.IntraModeDC); err != nil {
+	}, mode); err != nil {
 		return fmt.Errorf("intra luma mode: %w", err)
 	}
-	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, tile.IntraModeDC); err != nil {
+	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
 		return fmt.Errorf("mark intra: %w", err)
+	}
+	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
+		Size: block.Size, Mode: mode,
+	}, 0); err != nil {
+		return fmt.Errorf("intra angle delta: %w", err)
 	}
 	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
 	if err != nil {
 		return fmt.Errorf("cfl allowed: %w", err)
 	}
 	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
-		Size: block.Size, LumaMode: tile.IntraModeDC, CFLAllowed: cflAllowed,
+		Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
 	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
 		return fmt.Errorf("intra chroma mode: %w", err)
 	}
@@ -677,15 +686,14 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
 
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
-	if err := st.encodeTXBAvail(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	st.intraTxTypeReq.Mode = mode
+	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, st.afterSkipIntra, block.HaveTop, block.HaveLeft); err != nil {
+	}, coeffCtx, st.scan8, st.afterSkipIntra, pred); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
