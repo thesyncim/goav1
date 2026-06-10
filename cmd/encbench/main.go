@@ -1,0 +1,140 @@
+// Command encbench measures goav1's realtime encoder on a deterministic
+// synthetic 1080p scene (textured global pan plus two movers) and can dump
+// the same scene as raw I420 so external encoders run on identical input.
+//
+//	encbench -dump seq.yuv          write the scene as raw I420
+//	encbench -bitrate 6000000       encode with goav1 CBR and report
+package main
+
+import (
+	"flag"
+	"fmt"
+	"math"
+	"math/rand"
+	"os"
+	"time"
+
+	goav1 "github.com/thesyncim/goav1"
+)
+
+const (
+	width  = 1920
+	height = 1080
+	frames = 120
+	fps    = 60
+)
+
+func makeFrame(bg []byte, n int) goav1.I420Frame {
+	cw, ch := width/2, height/2
+	f := goav1.I420Frame{
+		Y: make([]byte, width*height), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: width, ChromaStride: cw, Width: width, Height: height,
+	}
+	dx := (n * 2) % 16
+	for y := range height {
+		copy(f.Y[y*width:y*width+width-dx], bg[y*width+dx:y*width+width])
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	for _, obj := range [2][3]int{{200 + n*12, 300, 96}, {1300 - n*9, 700, 64}} {
+		ox, oy, sz := obj[0], obj[1], obj[2]
+		for y := oy; y < oy+sz && y < height; y++ {
+			for x := ox; x < ox+sz && x < width; x++ {
+				if x >= 0 {
+					f.Y[y*width+x] = 215
+				}
+			}
+		}
+	}
+	return f
+}
+
+func psnr(a, b []byte) float64 {
+	var sse float64
+	for i := range a {
+		d := float64(int(a[i]) - int(b[i]))
+		sse += d * d
+	}
+	if sse == 0 {
+		return 99
+	}
+	mse := sse / float64(len(a))
+	return 10 * math.Log10(255*255/mse)
+}
+
+func main() {
+	dump := flag.String("dump", "", "write the scene as raw I420 to this path and exit")
+	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
+	flag.Parse()
+
+	rng := rand.New(rand.NewSource(9))
+	bg := make([]byte, width*height)
+	for i := range bg {
+		bg[i] = uint8(50 + rng.Intn(90))
+	}
+	// One box-blur pass gives the texture the spatial correlation of natural
+	// content; raw sample noise is incompressible for any codec and pins
+	// every rate controller at its quantizer ceiling.
+	blurred := make([]byte, width*height)
+	for y := 1; y < height-1; y++ {
+		for x := 1; x < width-1; x++ {
+			sum := 0
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					sum += int(bg[(y+dy)*width+x+dx])
+				}
+			}
+			blurred[y*width+x] = uint8(sum / 9)
+		}
+	}
+	copy(bg, blurred)
+
+	if *dump != "" {
+		out, err := os.Create(*dump)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer out.Close()
+		for n := range frames {
+			f := makeFrame(bg, n)
+			out.Write(f.Y)
+			out.Write(f.U)
+			out.Write(f.V)
+		}
+		fmt.Printf("wrote %d frames of %dx%d I420\n", frames, width, height)
+		return
+	}
+
+	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: width, Height: height,
+		TargetBitrate: *bitrate, Framerate: fps,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	srcs := make([]goav1.I420Frame, frames)
+	for n := range frames {
+		srcs[n] = makeFrame(bg, n)
+	}
+	totalBytes := 0
+	var sumPSNR float64
+	start := time.Now()
+	for n := range frames {
+		out, err := enc.Encode(srcs[n], false)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		totalBytes += len(out.Data)
+		r := enc.Reconstruction()
+		sumPSNR += psnr(srcs[n].Y, r.Y)
+	}
+	elapsed := time.Since(start)
+	perFrame := elapsed / frames
+	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", frames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(frames)/elapsed.Seconds())
+	fmt.Printf("goav1: %.2f Mbps actual (target %.2f), luma PSNR %.2f dB\n", float64(totalBytes*8*fps)/float64(frames)/1e6, float64(*bitrate)/1e6, sumPSNR/frames)
+}
