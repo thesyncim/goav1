@@ -185,6 +185,10 @@ type lossyEncodeState struct {
 	dqScratch   [1024]int32
 	invResidual [1024]int16
 
+	// prober hoists the subpel refinement's geometry validation per block;
+	// its convolve scratch is reused across blocks.
+	prober motion.LumaSubpelProber
+
 	// Per-frame motion partition grids filled by the 16x16 partition decider:
 	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
 	// split leaves do not repeat the search. sad < 0 marks an empty slot.

@@ -744,9 +744,18 @@ func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, n i
 // eight to sixteen of a greedy descent; the coded prediction always goes
 // through the exact convolve later, so search shape cannot affect parity.
 func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	// The probes sit within one pixel of the full-pel start, so geometry
+	// validation hoists into the prober; blocks near the frame edge fall
+	// back to the fully validated predictor per probe.
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
+	startMV := mv
 	exact := func(cand motion.Vector) int {
-		if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
-			return -1
+		if !st.prober.Predict(st.sadScratch[:n*n], motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+			if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
+				return -1
+			}
 		}
 		base := py*stride + px
 		if n == 8 {
