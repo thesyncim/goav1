@@ -740,9 +740,13 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 		if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, cand, false, false); err != nil {
 			return -1
 		}
+		base := py*stride + px
+		if n == 8 {
+			return sad8x8DualImpl(src[base:], stride, st.sadScratch[:], 8)
+		}
 		s := 0
 		for r := range n {
-			row := (py+r)*stride + px
+			row := base + r*stride
 			for c := range n {
 				d := int(src[row+c]) - int(st.sadScratch[r*n+c])
 				if d < 0 {
@@ -818,8 +822,16 @@ func txScaleForSize(n int) uint8 {
 // sadBlock is the generic n x n SAD with the 8x8 kernel fast path; limit is
 // an early-exit hint as in sad8x8Impl.
 func sadBlock(src, ref []byte, base, refBase, stride, n, limit int) int {
-	if n == 8 {
+	switch n {
+	case 8:
 		return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
+	case 16:
+		return sad16x16Impl(src[base:], ref[refBase:], stride)
+	case 32:
+		return sad16x16Impl(src[base:], ref[refBase:], stride) +
+			sad16x16Impl(src[base+16:], ref[refBase+16:], stride) +
+			sad16x16Impl(src[base+16*stride:], ref[refBase+16*stride:], stride) +
+			sad16x16Impl(src[base+16*stride+16:], ref[refBase+16*stride+16:], stride)
 	}
 	total := 0
 	for r := range n {
@@ -932,8 +944,16 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 	sad := func(dx, dy, limit int) int {
 		base := py*stride + px
 		refBase := (py+dy)*stride + px + dx
-		if n == 8 {
+		switch n {
+		case 8:
 			return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
+		case 16:
+			return sad16x16Impl(src[base:], ref[refBase:], stride)
+		case 32:
+			return sad16x16Impl(src[base:], ref[refBase:], stride) +
+				sad16x16Impl(src[base+16:], ref[refBase+16:], stride) +
+				sad16x16Impl(src[base+16*stride:], ref[refBase+16*stride:], stride) +
+				sad16x16Impl(src[base+16*stride+16:], ref[refBase+16*stride+16:], stride)
 		}
 		total := 0
 		for r := range n {
