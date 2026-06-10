@@ -185,6 +185,14 @@ type lossyEncodeState struct {
 	dqScratch   [1024]int32
 	invResidual [1024]int16
 
+	// rdMult prices coefficient rate against transform-domain distortion for
+	// the skip decision (av1_compute_rd_mult's inter shape at the working
+	// quantizer); rdTXB accumulates the current block's code-vs-skip terms.
+	rdMult  int64
+	rdDcode int64
+	rdDskip int64
+	rdRcode int64
+
 	// prober hoists the subpel refinement's geometry validation per block;
 	// its convolve scratch is reused across blocks.
 	prober motion.LumaSubpelProber

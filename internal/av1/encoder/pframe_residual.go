@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"fmt"
+	"math/bits"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -226,6 +227,12 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	st.afterSkipIntra = func() error {
 		return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
 	}
+
+	// av1_compute_rd_mult_based_on_qindex, inter shape at 8-bit: the DC step
+	// squared scaled by the rate multiplier; RDCOST pairs it with rates in
+	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
+	dcq := float64(st.yQuant.DC)
+	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -491,10 +498,20 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// way, so this cannot affect parity).
 	skip := fullSAD*4 <= n*n
 	if !skip {
+		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
 		uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
 		vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
 		skip = lumaZero && uZero && vZero
+		if !skip {
+			// Rate-priced skip (RDCOST shapes): code when distortion saved
+			// outweighs the coefficient rate at the working quantizer.
+			rdCode := ((st.rdRcode*st.rdMult + 256) >> 9) + (st.rdDcode << 7)
+			rdSkip := st.rdDskip << 7
+			if rdSkip <= rdCode {
+				skip = true
+			}
+		}
 	}
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
@@ -898,6 +915,12 @@ func copyPredScratch(reconPlane, pred []byte, stride, px, py, n int) {
 // prepareInterTXB computes the quantized coefficients of one square n x n
 // motion-compensated residual block (pred holds the prediction at stride n)
 // and reports whether they are all zero.
+// prepareInterTXB computes the quantized coefficients of one square n x n
+// motion-compensated residual block and reports whether they are all zero,
+// accumulating the block's rate-distortion terms for the skip decision:
+// transform-domain distortion when coded (sum of squared dequantization
+// errors), when skipped (sum of squared coefficients), and a coarse
+// coefficient rate estimate in 512-units-per-bit.
 func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16) bool {
 	residual := &st.resScratch
 	for r := range n {
@@ -927,15 +950,35 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 	default:
 		return false
 	}
-	if err := quantize.QuantizeBlockScaledB(qcoeff, n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
+	ts := txScaleForSize(n)
+	if err := quantize.QuantizeBlockScaledB(qcoeff, n, tran[:n*n], n, n, n, q, ts); err != nil {
 		return false
 	}
-	for _, v := range qcoeff {
-		if v != 0 {
-			return false
+	allZero := true
+	for i, v := range qcoeff {
+		c := int64(tran[i])
+		st.rdDskip += c * c
+		if v == 0 {
+			st.rdDcode += c * c
+			continue
 		}
+		allZero = false
+		step := int64(q.AC)
+		if i == 0 {
+			step = int64(q.DC)
+		}
+		dq := (int64(v) * step) >> ts
+		e := c - dq
+		st.rdDcode += e * e
+		level := v
+		if level < 0 {
+			level = -level
+		}
+		// Coarse rate: two bits of map overhead plus the level magnitude
+		// class, in 512-units-per-bit.
+		st.rdRcode += int64(2+bits.Len16(uint16(level))) << 9
 	}
-	return true
+	return allZero
 }
 
 // finishInterTXB codes the prepared coefficients and rebuilds the recon block
