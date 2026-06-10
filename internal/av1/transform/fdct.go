@@ -1,7 +1,8 @@
 // Ported from libaom:
 //   av1/encoder/av1_fwd_txfm1d.c (av1_fdct4, av1_fdct8, av1_fdct16, av1_fdct32)
 //   av1/encoder/av1_fwd_txfm2d.c (fwd_txfm2d_c, fwd_shift_4x4, fwd_shift_8x8,
-//   fwd_shift_16x16, fwd_shift_32x32, av1_fwd_cos_bit_col/row)
+//   fwd_shift_16x16, fwd_shift_32x32, fwd_shift_16x8/8x16/8x4/4x8, the
+//   rectangular NewSqrt2 row scaling, av1_fwd_cos_bit_col/row)
 //   av1/common/av1_txfm.c (av1_cospi_arr_data, cos_bit 13 and 12 rows)
 //
 // SPDX-License-Identifier: BSD-2-Clause
@@ -56,6 +57,16 @@ func fwdRoundShift1(arr []int32) {
 func fwdRoundShift2(arr []int32) {
 	for i, v := range arr {
 		arr[i] = (v + 2) >> 2
+	}
+}
+
+// fwdRoundShiftSqrt2 is the rectangular-transform row scaling of
+// fwd_txfm2d_c: round_shift((int64)v * NewSqrt2, NewSqrt2Bits) with
+// NewSqrt2 = 5793 and NewSqrt2Bits = 12 (av1_txfm.h), applied when the
+// transform's side ratio is a factor of two.
+func fwdRoundShiftSqrt2(arr []int32) {
+	for i, v := range arr {
+		arr[i] = int32((int64(v)*5793 + (1 << 11)) >> 12)
 	}
 }
 
@@ -287,6 +298,150 @@ func forwardDCT4x4PureGo(coeff []int32, coeffStride int, residual []int16, resid
 			coeff[c*coeffStride+r] = out[c]
 		}
 	}
+}
+
+// ForwardDCT16x8 computes the AV1 forward 16x8 DCT_DCT (16 wide, 8 high) in
+// the decoder's coefficient layout coeff[c*coeffStride+r] (coeffStride >= 8,
+// the transform height). Mirrors fwd_txfm2d_c with fwd_shift_16x8 = {2,-2,0},
+// cos_bit 13 both passes, and the rectangular sqrt(2) row scaling.
+func ForwardDCT16x8(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 8 || residualStride < 16 ||
+		!blockFits(len(residual), residualStride, 16, 8) ||
+		!coeffBlockFits(len(coeff), coeffStride, 16, 8) {
+		return ErrInvalidTransform
+	}
+	var buf [128]int32 // column-pass output, row-major buf[r*16+c]
+	var colIn, colOut [8]int32
+	for c := range 16 {
+		for r := range 8 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT8(&colIn, &colOut)
+		fwdRoundShift2(colOut[:]) // shift[1] = -2
+		for r := range 8 {
+			buf[r*16+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [16]int32
+	for r := range 8 {
+		for c := range 16 {
+			rowIn[c] = buf[r*16+c]
+		}
+		fwdDCT16(&rowIn, &rowOut, &fwdCospi13, 13)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 16 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
+}
+
+// ForwardDCT8x16 computes the AV1 forward 8x16 DCT_DCT (8 wide, 16 high) in
+// the decoder's coefficient layout (coeffStride >= 16). Mirrors fwd_txfm2d_c
+// with fwd_shift_8x16 = {2,-2,0}, cos_bit 13 both passes, and the
+// rectangular sqrt(2) row scaling.
+func ForwardDCT8x16(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 16 || residualStride < 8 ||
+		!blockFits(len(residual), residualStride, 8, 16) ||
+		!coeffBlockFits(len(coeff), coeffStride, 8, 16) {
+		return ErrInvalidTransform
+	}
+	var buf [128]int32 // column-pass output, row-major buf[r*8+c]
+	var colIn, colOut [16]int32
+	for c := range 8 {
+		for r := range 16 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT16(&colIn, &colOut, &fwdCospi13, 13)
+		fwdRoundShift2(colOut[:]) // shift[1] = -2
+		for r := range 16 {
+			buf[r*8+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [8]int32
+	for r := range 16 {
+		for c := range 8 {
+			rowIn[c] = buf[r*8+c]
+		}
+		fwdDCT8(&rowIn, &rowOut)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 8 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
+}
+
+// ForwardDCT8x4 computes the AV1 forward 8x4 DCT_DCT (8 wide, 4 high) in the
+// decoder's coefficient layout (coeffStride >= 4). Mirrors fwd_txfm2d_c with
+// fwd_shift_8x4 = {2,-1,0}, cos_bit 13 both passes, and the rectangular
+// sqrt(2) row scaling.
+func ForwardDCT8x4(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 4 || residualStride < 8 ||
+		!blockFits(len(residual), residualStride, 8, 4) ||
+		!coeffBlockFits(len(coeff), coeffStride, 8, 4) {
+		return ErrInvalidTransform
+	}
+	var buf [32]int32 // column-pass output, row-major buf[r*8+c]
+	var colIn, colOut [4]int32
+	for c := range 8 {
+		for r := range 4 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT4(&colIn, &colOut)
+		fwdRoundShift1(colOut[:]) // shift[1] = -1
+		for r := range 4 {
+			buf[r*8+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [8]int32
+	for r := range 4 {
+		for c := range 8 {
+			rowIn[c] = buf[r*8+c]
+		}
+		fwdDCT8(&rowIn, &rowOut)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 8 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
+}
+
+// ForwardDCT4x8 computes the AV1 forward 4x8 DCT_DCT (4 wide, 8 high) in the
+// decoder's coefficient layout (coeffStride >= 8). Mirrors fwd_txfm2d_c with
+// fwd_shift_4x8 = {2,-1,0}, cos_bit 13 both passes, and the rectangular
+// sqrt(2) row scaling.
+func ForwardDCT4x8(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 8 || residualStride < 4 ||
+		!blockFits(len(residual), residualStride, 4, 8) ||
+		!coeffBlockFits(len(coeff), coeffStride, 4, 8) {
+		return ErrInvalidTransform
+	}
+	var buf [32]int32 // column-pass output, row-major buf[r*4+c]
+	var colIn, colOut [8]int32
+	for c := range 4 {
+		for r := range 8 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT8(&colIn, &colOut)
+		fwdRoundShift1(colOut[:]) // shift[1] = -1
+		for r := range 8 {
+			buf[r*4+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [4]int32
+	for r := range 8 {
+		for c := range 4 {
+			rowIn[c] = buf[r*4+c]
+		}
+		fwdDCT4(&rowIn, &rowOut)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 4 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
 }
 
 // ForwardDCT8x8 computes the AV1 forward 8x8 DCT_DCT of a residual block in

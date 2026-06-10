@@ -120,3 +120,76 @@ func TestForwardDCTZeroAlloc(t *testing.T) {
 		t.Fatalf("forward DCT allocated %v objects/run, want 0", allocs)
 	}
 }
+
+// TestForwardDCTRectInverseRoundTrip proves the rectangular forward DCTs
+// against the decoder's byte-exact inverse within the same fixed-point
+// rounding bound the square sizes assert. The rectangular pipeline adds the
+// sqrt(2) row scaling, so this also pins the NewSqrt2 rounding.
+func TestForwardDCTRectInverseRoundTrip(t *testing.T) {
+	type rect struct {
+		name string
+		w, h int
+		fwd  func([]int32, int, []int16, int) error
+	}
+	rects := []rect{
+		{"16x8", 16, 8, ForwardDCT16x8},
+		{"8x16", 8, 16, ForwardDCT8x16},
+		{"8x4", 8, 4, ForwardDCT8x4},
+		{"4x8", 4, 8, ForwardDCT4x8},
+	}
+	for _, rc := range rects {
+		t.Run(rc.name, func(t *testing.T) {
+			rng := rand.New(rand.NewSource(3))
+			n := rc.w * rc.h
+			scratch := make([]int32, n)
+			residual := make([]int16, n)
+			coeff := make([]int32, n)
+			dst := make([]int16, n)
+			for range 1000 {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(2*255+1) - 255)
+				}
+				if err := rc.fwd(coeff, rc.h, residual, rc.w); err != nil {
+					t.Fatalf("forward: %v", err)
+				}
+				if err := InverseDCTBlock(dst, rc.w, coeff, rc.h, scratch, Size{Width: uint8(rc.w), Height: uint8(rc.h)}); err != nil {
+					t.Fatalf("inverse: %v", err)
+				}
+				for i := range dst {
+					diff := int(dst[i]) - int(residual[i])
+					if diff < -2 || diff > 2 {
+						t.Fatalf("%s round-trip error %d at %d", rc.name, diff, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestForwardDCTRectDCScale pins the rectangular DC gains (per-pass 2*cos(pi/4)
+// gains, the stage shifts, and the sqrt(2) row scaling) as regression guards.
+func TestForwardDCTRectDCScale(t *testing.T) {
+	check := func(name string, w, h int, fwd func([]int32, int, []int16, int) error, wantDC int32) {
+		n := w * h
+		residual := make([]int16, n)
+		for i := range residual {
+			residual[i] = 100
+		}
+		coeff := make([]int32, n)
+		if err := fwd(coeff, h, residual, w); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for i := 1; i < n; i++ {
+			if coeff[i] != 0 {
+				t.Fatalf("%s AC coeff[%d] = %d, want 0", name, i, coeff[i])
+			}
+		}
+		if coeff[0] != wantDC {
+			t.Fatalf("%s DC = %d, want %d", name, coeff[0], wantDC)
+		}
+	}
+	check("16x8", 16, 8, ForwardDCT16x8, 9057)
+	check("8x16", 8, 16, ForwardDCT8x16, 9057)
+	check("8x4", 8, 4, ForwardDCT8x4, 4529)
+	check("4x8", 4, 8, ForwardDCT4x8, 4529)
+}
