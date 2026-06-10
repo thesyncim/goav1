@@ -559,7 +559,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				mode = tile.InterModeNearMV
 			default:
 				nearest := predRefs.Nearest[0]
-				if n == 8 && (nearest.Row != 0 || nearest.Col != 0) {
+				if nearest.Row != 0 || nearest.Col != 0 {
 					dr := int(mv.Row) - int(nearest.Row)
 					if dr < 0 {
 						dr = -dr
@@ -570,8 +570,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 					}
 					if dr <= 16 && dc <= 16 {
 						mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-						if err := predictInto(st.sadScratch[:64], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, nearest, false, false); err == nil {
-							nearSAD := sad8x8DualImpl(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:], 8)
+						if err := predictInto(st.sadScratch[:n*n], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, nearest, false, false); err == nil {
+							nearSAD := 0
+							for r := 0; r < n; r += 8 {
+								for c := 0; c < n; c += 8 {
+									nearSAD += sad8x8DualImpl(src.Y[(lumaPY+r)*src.YStride+lumaPX+c:], src.YStride, st.sadScratch[r*n+c:], n)
+								}
+							}
 							// Two extra cascade symbols pick NEARESTMV.
 							if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
 								mode = tile.InterModeNearestMV
