@@ -83,6 +83,11 @@ func QuantizeBlockScaledFP(qcoeff []int16, qStride int, coeff []int32, coeffStri
 		!coeffBlockFits(len(coeff), coeffStride, width, height) {
 		return ErrInvalidQuantizer
 	}
+	// Contiguous square blocks take the vector kernel when available.
+	if width == height && qStride == height && coeffStride == height &&
+		quantizeFPBlockImpl != nil && quantizeFPBlockImpl(qcoeff[:width*height], coeff[:width*height], width, q, txScale) {
+		return nil
+	}
 	quantDC := int64(1<<16) / int64(q.DC)
 	quantAC := int64(1<<16) / int64(q.AC)
 	roundDC := roundPowerOfTwo((64*int32(q.DC))>>7, txScale)
@@ -125,3 +130,9 @@ func quantizeScalarFP(coeff int32, dequant int32, quant int64, round int32, txSc
 	}
 	return int16(level)
 }
+
+// quantizeFPBlockImpl, when non-nil, quantizes one contiguous square block
+// with the fp rule and reports whether it handled the input; architectures
+// without a kernel leave it nil. Implementations must be bit-exact with the
+// scalar rule.
+var quantizeFPBlockImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool
