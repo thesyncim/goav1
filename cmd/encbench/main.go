@@ -120,8 +120,9 @@ func main() {
 	for n := range frames {
 		srcs[n] = makeFrame(bg, n)
 	}
-	totalBytes := 0
-	var sumPSNR float64
+	const warmup = 20
+	totalBytes, steadyBytes := 0, 0
+	var sumPSNR, steadyPSNR float64
 	start := time.Now()
 	for n := range frames {
 		out, err := enc.Encode(srcs[n], false)
@@ -131,10 +132,18 @@ func main() {
 		}
 		totalBytes += len(out.Data)
 		r := enc.Reconstruction()
-		sumPSNR += psnr(srcs[n].Y, r.Y)
+		p := psnr(srcs[n].Y, r.Y)
+		sumPSNR += p
+		if n >= warmup {
+			steadyBytes += len(out.Data)
+			steadyPSNR += p
+		}
 	}
 	elapsed := time.Since(start)
 	perFrame := elapsed / frames
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", frames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(frames)/elapsed.Seconds())
-	fmt.Printf("goav1: %.2f Mbps actual (target %.2f), luma PSNR %.2f dB\n", float64(totalBytes*8*fps)/float64(frames)/1e6, float64(*bitrate)/1e6, sumPSNR/frames)
+	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f), final qindex %d\n",
+		float64(totalBytes*8*fps)/float64(frames)/1e6,
+		float64(steadyBytes*8*fps)/float64(frames-warmup)/1e6,
+		float64(*bitrate)/1e6, sumPSNR/frames, steadyPSNR/(frames-warmup), enc.QIndex())
 }

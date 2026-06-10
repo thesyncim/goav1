@@ -153,17 +153,18 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 	} else if e.rcBuffer > limit {
 		e.rcBuffer = limit
 	}
+	// Proportional step: a quarter qindex unit per quarter-frame of buffer
+	// excursion, clamped so a clamped buffer moves the quantizer twelve
+	// units per frame at most. Small excursions round to zero, which keeps
+	// the steady-state deadband.
 	q := int(e.qIndex)
-	switch {
-	case e.rcBuffer < -4*e.rcPerFrameBits:
-		q += 12
-	case e.rcBuffer < -e.rcPerFrameBits:
-		q += 4
-	case e.rcBuffer > 4*e.rcPerFrameBits:
-		q -= 12
-	case e.rcBuffer > e.rcPerFrameBits:
-		q -= 4
+	step := -e.rcBuffer * 4 / e.rcPerFrameBits
+	if step > 12 {
+		step = 12
+	} else if step < -12 {
+		step = -12
 	}
+	q += step
 	if q < int(e.rcMinQ) {
 		q = int(e.rcMinQ)
 	}

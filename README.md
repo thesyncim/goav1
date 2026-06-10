@@ -151,9 +151,21 @@ architecture should be checked against pinned SVT-AV1 before local invention.
 New encoder code, and decoder code touched while optimizing it, should preserve
 the upstream C integer width/signedness where it affects layout, overflow,
 shifts, or ABI-shaped state. Oracle tests and zero-allocation hot paths are
-required before the encoder is advertised as usable. The first public surface
-exposes that control plane and frame-reference validation; actual AV1 bitstream
-emission remains in progress.
+required before the encoder is advertised as usable.
+
+The realtime encoder is now functional. `goav1.VideoEncoder` turns 4:2:0
+frames into AV1 temporal units under fixed quality or CBR rate control, with
+forced keyframes, L1T2 temporal layering, parallel tile columns, golden
+reference anchors, and access to the exact reconstruction a conformant
+decoder produces; `goav1.RTCEncoder` wraps the same engine with per-frame RTP
+dependency descriptors. Every emitted stream decodes bit-exactly to the
+encoder's own reconstruction in this package's decoder and in aomdec/dav1d
+(enforced by the test gates), and steady-state encoding allocates a handful
+of objects per frame. See `ExampleVideoEncoder` and `ExampleRTCEncoder` for
+the round trip, and `cmd/encbench` for the standing 1080p60 performance
+measurement against SVT-AV1 (throughput currently exceeds SVT preset 12 on
+identical input; rate-distortion quality remains behind and is the active
+work track).
 
 ## CLI
 
