@@ -254,6 +254,10 @@ type lossyEncodeState struct {
 	// the same per-block syntax the decoder records).
 	lfMap *threading.FrameWorkLoopFilterMap
 
+	// hme, when non-nil, supplies the coarse-search seeds that recenter the
+	// full-pel refinement windows.
+	hme *hmeState
+
 	// Per-frame motion partition grids filled by the 16x16 partition decider:
 	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
 	// split leaves do not repeat the search. sad < 0 marks an empty slot.

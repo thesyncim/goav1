@@ -339,12 +339,16 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	evaluate16 := func(px, py int) (int, int) {
 		idx16 := (py/16)*st.grid16Cols + px/16
 		if st.sad16Grid[idx16] < 0 {
-			dx16, dy16, sad16 := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16)
+			seedDX, seedDY := 0, 0
+			if st.hme != nil {
+				seedDX, seedDY = st.hme.seedAt(px, py)
+			}
+			dx16, dy16, sad16 := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, seedDX, seedDY)
 			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
 			st.sad16Grid[idx16] = int32(sad16)
 			for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
 				cx, cy := px+off[0], py+off[1]
-				dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8)
+				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY)
 				idx8 := (cy/8)*st.grid8Cols + cx/8
 				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
 				st.sad8Grid[idx8] = int32(sad)
@@ -540,7 +544,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if bw != bh {
 			return fmt.Errorf("encoder: rect block %+v without scored children", block)
 		}
-		dx, dy, sad := fullPelDiamondSearch(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n)
+		seedDX, seedDY := 0, 0
+		if st.hme != nil {
+			seedDX, seedDY = st.hme.seedAt(lumaPX, lumaPY)
+		}
+		dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY)
 		mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
 	}
 	if bw == bh && fullSAD > n*n*2 {
@@ -1298,6 +1306,13 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 // offsets keep chroma prediction at integer positions at 4:2:0. A small
 // diamond refinement around the best raster candidate keeps the search cheap.
 func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int, int) {
+	return fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, n, 0, 0)
+}
+
+// fullPelDiamondSearchSeeded recenters the raster window on a coarse-search
+// seed (the hierarchical pre-pass vector), extending reach to the seed +-8px
+// while always probing zero motion first.
+func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY int) (int, int, int) {
 	// sad dispatches to the architecture SAD kernel; limit is an early-exit
 	// hint the kernel may ignore, so callers compare the return value.
 	sad := func(dx, dy, limit int) int {
@@ -1343,10 +1358,12 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 		}
 		return v
 	}
-	minDX := clampLo(-8, -px)
-	maxDX := clampHi(8, width-n-px)
-	minDY := clampLo(-8, -py)
-	maxDY := clampHi(8, height-n-py)
+	seedDX = clampHi(clampLo(seedDX, -px), width-n-px) &^ 1
+	seedDY = clampHi(clampLo(seedDY, -py), height-n-py) &^ 1
+	minDX := clampLo(seedDX-8, -px)
+	maxDX := clampHi(seedDX+8, width-n-px)
+	minDY := clampLo(seedDY-8, -py)
+	maxDY := clampHi(seedDY+8, height-n-py)
 
 	bestDX, bestDY := 0, 0
 	bestSAD := sad(0, 0, 1<<30)

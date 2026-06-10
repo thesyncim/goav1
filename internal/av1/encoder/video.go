@@ -35,6 +35,7 @@ type VideoEncoder struct {
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
 	lf           loopFilterApplier
+	hme          hmeState
 
 	temporalLayers int
 	frameIndex     int
@@ -220,6 +221,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if err != nil {
 			return nil, false, err
 		}
+		e.hme.prime(src)
 		e.recon = recon
 		e.lastRecon = recon
 		e.haveKey = true
@@ -324,6 +326,13 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	var golden *SourceFrame420
 	if e.goldenEvery > 0 && e.golden.Y != nil {
 		golden = &e.golden
+	}
+	// Hierarchical coarse search: quarter-res vectors per 32x32 region seed
+	// every tile's full-pel refinement windows (read-only during tiles).
+	e.hme.run(src)
+	e.pc.st.hme = &e.hme
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.hme = &e.hme
 	}
 	nTiles := int(header.Tile.Cols)
 	if len(e.tilePCs) < nTiles {
