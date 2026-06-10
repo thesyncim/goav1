@@ -55,37 +55,42 @@ type TXBEncodeRequest struct {
 // ReadCoefficientsTXB. levels is caller-owned scratch of at least
 // CoeffLevelsScratchLen(req.Size). cdfs is adapted in place, matching a decoder
 // with CDF update enabled. Port of av1_write_coeffs_txb.
-func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeRequest, coeffs []int16, scan []int16, levels []uint8) error {
+func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeRequest, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {
 	if w == nil || cdfs == nil || !req.Plane.Valid() || !req.Class.Valid() {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	geo, ok := coeffGeoPtr(req.Size)
 	if !ok {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	maxEOB := int(geo.maxEOB)
 	scratchLen := int(geo.scratchLen)
 	if len(coeffs) < maxEOB || len(scan) < maxEOB || len(levels) < scratchLen {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	txSize, err := req.Size.TransformSize()
 	if err != nil {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	scanSize, err := transform.ScanSize(txSize)
 	if err != nil {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 	posTable := coeffPosTable[req.Size]
 	if len(posTable) < maxEOB {
-		return ErrInvalidDecodeState
+		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 
-	// eob = scan index of the last non-zero coefficient plus one.
+	// eob = scan index of the last non-zero coefficient plus one; the max
+	// raster scan line feeds the decode-result context the caller marks.
 	eob := 0
+	maxScanLine := 0
 	for c := range maxEOB {
-		if coeffs[int(scan[c])] != 0 {
+		if pos := int(scan[c]); coeffs[pos] != 0 {
 			eob = c + 1
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
 		}
 	}
 
@@ -95,13 +100,13 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	// 1) txb_skip (all_zero).
 	w.WriteCDF(&cdfs.TXBSkip[txCtx][req.TXBSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
-		return nil
+		return TXBDecodeResult{AllZero: true}, nil
 	}
 	if req.AfterSkip != nil {
 		// Luma tx_type position (av1_write_coeffs_txb: after txb_skip, before
 		// the eob token).
 		if err := req.AfterSkip(); err != nil {
-			return err
+			return TXBDecodeResult{}, err
 		}
 	}
 
@@ -113,7 +118,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	eobCDF := eobFlagCDFKnown(cdfs, req.Size, req.Plane, eobMultiCtx)
 	token, extra, err := EOBPositionToken(eob)
 	if err != nil {
-		return err
+		return TXBDecodeResult{}, err
 	}
 	w.WriteCDF(eobCDF, token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
@@ -149,7 +154,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		if c == eob-1 {
 			ctx, err := transform.LowerLevelsCtxEOB(scanSize, c)
 			if err != nil {
-				return ErrInvalidDecodeState
+				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
 			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][req.Plane][ctx], minInt(level, 3)-1)
 		} else if req.Class == transform.Class2D {
@@ -165,7 +170,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		} else {
 			ctx, err := CoeffLowerLevelsContext(levels, req.Size, req.Class, pos)
 			if err != nil {
-				return err
+				return TXBDecodeResult{}, err
 			}
 			w.WriteCDF(&baseCDFs[ctx], minInt(level, 3))
 		}
@@ -174,7 +179,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			if c == eob-1 {
 				brCtx, err = CoeffBRContextEOB(req.Size, req.Class, pos)
 				if err != nil {
-					return err
+					return TXBDecodeResult{}, err
 				}
 			} else if req.Class == transform.Class2D && pos != 0 {
 				p := &posTable[pos]
@@ -186,7 +191,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			} else {
 				brCtx, err = CoeffBRContext(levels, req.Size, req.Class, pos)
 				if err != nil {
-					return err
+					return TXBDecodeResult{}, err
 				}
 			}
 			brCDF := &brCDFs[brCtx]
@@ -202,6 +207,10 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	}
 
 	// 4) sign + golomb pass, forward scan order, non-zero coefficients only.
+	// The cumulative-level / DC-sign context byte the decoder derives is
+	// accumulated here instead of re-scanning the block afterwards.
+	culLevel := 0
+	dcValue := 0
 	for c := range eob {
 		pos := int(scan[c])
 		v := int(coeffs[pos])
@@ -209,11 +218,13 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			continue
 		}
 		level := absInt(v)
+		culLevel += level
 		sign := 0
 		if v < 0 {
 			sign = 1
 		}
 		if c == 0 {
+			dcValue = v
 			w.WriteCDF(&cdfs.DCSign[req.Plane][req.DCSignContext], sign)
 		} else {
 			w.WriteLiteral(uint32(sign), 1)
@@ -222,7 +233,19 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
 	}
-	return nil
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if dcValue < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if dcValue > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+	return TXBDecodeResult{
+		EOB:         uint16(eob),
+		MaxScanLine: uint16(maxScanLine),
+		CulLevel:    uint8(culLevel),
+	}, nil
 }
 
 // WriteCoefficientsTXBWithContext derives the txb_skip and dc_sign contexts from
@@ -250,61 +273,21 @@ func WriteCoefficientsTXBWithContextHook(w *entropy.Writer, cdfs *CoeffCDFs, ctx
 	if err != nil {
 		return TXBDecodeResult{}, err
 	}
-	if err := WriteCoefficientsTXB(w, cdfs, TXBEncodeRequest{
+	result, err := WriteCoefficientsTXB(w, cdfs, TXBEncodeRequest{
 		Size:           ctxReq.Size,
 		Plane:          plane,
 		Class:          class,
 		TXBSkipContext: txbCtx.TXBSkipContext,
 		DCSignContext:  txbCtx.DCSignContext,
 		AfterSkip:      afterSkip,
-	}, coeffs, scan, levels); err != nil {
+	}, coeffs, scan, levels)
+	if err != nil {
 		return TXBDecodeResult{}, err
 	}
-	result := txbResultFromCoeffs(ctxReq.Size, coeffs, scan)
 	if err := ctx.MarkTXB(ctxReq, result); err != nil {
 		return TXBDecodeResult{}, err
 	}
 	return result, nil
-}
-
-// txbResultFromCoeffs computes the TXBDecodeResult the decoder derives while
-// reading a transform block: eob, max scan line, and the cumulative-level /
-// DC-sign context byte (the final culLevel computation in ReadCoefficientsTXB).
-func txbResultFromCoeffs(size TransformSize, coeffs []int16, scan []int16) TXBDecodeResult {
-	geo, ok := coeffGeoPtr(size)
-	if !ok {
-		return TXBDecodeResult{}
-	}
-	maxEOB := int(geo.maxEOB)
-	eob := 0
-	maxScanLine := 0
-	culLevel := 0
-	for c := range maxEOB {
-		pos := int(scan[c])
-		if coeffs[pos] != 0 {
-			eob = c + 1
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			culLevel += absInt(int(coeffs[pos]))
-		}
-	}
-	if eob == 0 {
-		return TXBDecodeResult{AllZero: true}
-	}
-	if culLevel > CoeffContextMask {
-		culLevel = CoeffContextMask
-	}
-	if dc := int(coeffs[int(scan[0])]); dc < 0 {
-		culLevel |= 1 << CoeffContextBits
-	} else if dc > 0 {
-		culLevel += 2 << CoeffContextBits
-	}
-	return TXBDecodeResult{
-		EOB:         uint16(eob),
-		MaxScanLine: uint16(maxScanLine),
-		CulLevel:    uint8(culLevel),
-	}
 }
 
 func boolToSym(b bool) int {

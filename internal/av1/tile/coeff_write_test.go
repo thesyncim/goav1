@@ -48,7 +48,7 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			for n := range nTXB {
 				coeffs := randomCoeffs(rng, scan, maxEOB)
 				recs[n] = coeffs
-				if err := WriteCoefficientsTXB(&w, &encCDFs, TXBEncodeRequest{
+				if _, err := WriteCoefficientsTXB(&w, &encCDFs, TXBEncodeRequest{
 					Size: size, Plane: CoeffPlaneY, Class: class,
 				}, coeffs, scan, encScratch); err != nil {
 					t.Fatalf("size=%v class=%v txb=%d write: %v", size, class, n, err)
