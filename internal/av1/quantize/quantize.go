@@ -159,6 +159,11 @@ func QuantizeBlockScaledB(qcoeff []int16, qStride int, coeff []int32, coeffStrid
 		!coeffBlockFits(len(coeff), coeffStride, width, height) {
 		return ErrInvalidQuantizer
 	}
+	// Contiguous square blocks take the vector kernel when available.
+	if width == height && qStride == height && coeffStride == height &&
+		quantizeBBlockImpl != nil && quantizeBBlockImpl(qcoeff[:width*height], coeff[:width*height], width, q, txScale) {
+		return nil
+	}
 	zbinFactor := int32(80)
 	if q.DC < 148 {
 		zbinFactor = 84
@@ -226,3 +231,9 @@ func quantizeScalarB(coeff int32, p *quantBParams, txScale uint8) int16 {
 	}
 	return int16(level)
 }
+
+// quantizeBBlockImpl, when non-nil, quantizes one contiguous square block
+// with the zbin rule and reports whether it handled the input;
+// architectures without a kernel leave it nil. Implementations must be
+// bit-exact with the scalar rule.
+var quantizeBBlockImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool
