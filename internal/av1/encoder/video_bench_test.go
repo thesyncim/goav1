@@ -122,3 +122,28 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkEncodeKeyframe1080p measures full-HD keyframe latency - the worst
+// per-frame spike a realtime stream pays - through the tiled intra path.
+func BenchmarkEncodeKeyframe1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(2))
+	f := encoder.SourceFrame420{
+		Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: w, ChromaStride: cw, Width: w, Height: h,
+	}
+	for i := range f.Y {
+		f.Y[i] = uint8(50 + rng.Intn(120))
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := encoder.EncodeKeyframe(f, 80); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

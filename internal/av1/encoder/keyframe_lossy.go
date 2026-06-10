@@ -1,6 +1,8 @@
 package encoder
 
 import (
+	"sync"
+
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -43,24 +45,66 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 		Width:        src.Width,
 		Height:       src.Height,
 	}
-	tilePayload, err := encodeKeyframeTile(src, &recon, qIndex)
-	if err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encode tile: %w", err)
-	}
-
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header := lossyKeyframeHeader(src.Width, src.Height, qIndex)
+	if log2 := defaultTileColsLog2(src.Width); log2 > 0 {
+		tiles, err := interTileInfo(src.Width, src.Height, log2)
+		if err != nil {
+			return nil, SourceFrame420{}, fmt.Errorf("tile info: %w", err)
+		}
+		tiles.InterpolationFilter = 0 // intra headers carry no filter field
+		header.Tile = tiles
+	}
+	nTiles := int(header.Tile.Cols)
+	miCols := uint16(src.Width / 4)
+	bounds := func(t int) (uint16, uint16) {
+		c0 := header.Tile.ColStartSB[t] * 16
+		c1 := header.Tile.ColStartSB[t+1] * 16
+		if c1 > miCols {
+			c1 = miCols
+		}
+		return c0, c1
+	}
+	payloads := make([]TilePayload, nTiles)
+	var wg sync.WaitGroup
+	errs := make([]error, nTiles)
+	for t := 1; t < nTiles; t++ {
+		c0, c1 := bounds(t)
+		wg.Add(1)
+		go func(t int, c0, c1 uint16) {
+			defer wg.Done()
+			data, err := encodeKeyframeTile(src, &recon, qIndex, c0, c1)
+			if err != nil {
+				errs[t] = err
+				return
+			}
+			payloads[t].Data = data
+		}(t, c0, c1)
+	}
+	c0, c1 := bounds(0)
+	tile0, tile0Err := encodeKeyframeTile(src, &recon, qIndex, c0, c1)
+	wg.Wait()
+	if tile0Err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("encode tile 0: %w", tile0Err)
+	}
+	payloads[0].Data = tile0
+	for t := 1; t < nTiles; t++ {
+		if errs[t] != nil {
+			return nil, SourceFrame420{}, fmt.Errorf("encode tile %d: %w", t, errs[t])
+		}
+	}
 
 	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("size header TU: %w", err)
 	}
-	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	endTile := uint16(nTiles - 1)
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, endTile, payloads)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("size tile group: %w", err)
 	}
 	group := make([]byte, 0, groupSize)
-	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, endTile, payloads)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append tile group: %w", err)
 	}
@@ -155,7 +199,7 @@ type lossyEncodeState struct {
 	grid32Cols int
 }
 
-func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
+func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
 	var partCDFs tile.PartitionCDFs
 	if err := partCDFs.InitDefault(); err != nil {
 		return nil, err
@@ -200,19 +244,19 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8)
 	w := entropy.NewWriter(make([]byte, 0, 1<<18))
 	st.w = &w
 
-	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
-	rootCols := (int(miCols) + sbSizeMIB - 1) / sbSizeMIB
+	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
 
 	var scratch tile.BlockLoopScratch
 	carrier := &tile.BlockLoopContextCarrier{
 		Above: make([]tile.BlockLoopRootAboveContext, rootCols),
 	}
 	walkReq := tile.BlockWalkRequest{
-		Root:     tile.BlockLevel64x64,
-		MIColEnd: miCols,
-		MIRowEnd: miRows,
+		Root:       tile.BlockLevel64x64,
+		MIColStart: miColStart,
+		MIColEnd:   miColEnd,
+		MIRowEnd:   miRows,
 	}
 	// All blocks 8x8: split every level above BlockLevel8x8, PARTITION_NONE at
 	// the 8x8 level.
@@ -276,13 +320,13 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	afterSkip := func() error {
 		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
 	}
-	if err := st.encodeTXB(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	if err := st.encodeTXBAvail(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, afterSkip); err != nil {
+	}, coeffCtx, st.scan8, afterSkip, block.HaveTop, block.HaveLeft); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
 
@@ -298,13 +342,13 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXB(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       tile.TransformSize4x4,
 			X4:         block.X4 / 2,
 			Y4:         block.Y4 / 2,
-		}, coeffCtx, st.scan4, nil); err != nil {
+		}, coeffCtx, st.scan4, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 	}
