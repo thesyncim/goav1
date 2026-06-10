@@ -27,7 +27,19 @@ type hmeState struct {
 	cols  int
 	rows  int
 	armed bool
+
+	// bandCut counts regions per search band whose best quarter-res SAD
+	// stayed high - no match anywhere in the +-32px reach. A frame where
+	// most regions fail is a scene cut.
+	bandCut [hmeBands]int
 }
+
+// hmeBands is the row-band fan-out of the pyramid build and region search.
+const hmeBands = 4
+
+// hmeCutRegionSAD marks a region as unmatched: ~25 per quarter-res sample
+// over an 8x8 block, far above textured-content match SADs.
+const hmeCutRegionSAD = 8 * 8 * 25
 
 // prime seeds the reference pyramid from a frame that has no predecessor
 // (the keyframe restarting the chain).
@@ -82,7 +94,6 @@ func (h *hmeState) run(src SourceFrame420) {
 	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
 	// Build and search fan out over row bands: both passes write disjoint
 	// rows and the search reads only completed pyramid planes.
-	const hmeBands = 4
 	var wg sync.WaitGroup
 	for b := range hmeBands {
 		q0 := b * qh / hmeBands
@@ -105,17 +116,32 @@ func (h *hmeState) run(src SourceFrame420) {
 		if r0 >= r1 {
 			continue
 		}
+		h.bandCut[b] = 0
 		wg.Add(1)
-		go func(r0, r1 int) {
+		go func(b, r0, r1 int) {
 			defer wg.Done()
-			h.searchRows(r0, r1)
-		}(r0, r1)
+			h.searchRows(b, r0, r1)
+		}(b, r0, r1)
 	}
 	wg.Wait()
 }
 
+// cutDetected reports whether the last run looks like a scene cut: at least
+// sixty percent of the regions found no quarter-res match.
+func (h *hmeState) cutDetected() bool {
+	total := h.cols * h.rows
+	if total == 0 {
+		return false
+	}
+	cut := 0
+	for _, c := range h.bandCut {
+		cut += c
+	}
+	return cut*10 >= total*6
+}
+
 // searchRows fills the seed grid for region rows [r0, r1).
-func (h *hmeState) searchRows(r0, r1 int) {
+func (h *hmeState) searchRows(band, r0, r1 int) {
 	qw, qh, cols := h.qw, h.qh, h.cols
 	for ry := r0; ry < r1; ry++ {
 		for rx := 0; rx < cols; rx++ {
@@ -152,6 +178,9 @@ func (h *hmeState) searchRows(r0, r1 int) {
 			// Quarter-pel offsets scale to multiples of four full pels,
 			// keeping the even-offset chroma alignment invariant.
 			h.seeds[ry*cols+rx] = motion.Vector{Row: int16(bestDY * 4), Col: int16(bestDX * 4)}
+			if bestSAD > hmeCutRegionSAD {
+				h.bandCut[band]++
+			}
 		}
 	}
 }

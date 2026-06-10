@@ -238,6 +238,15 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
+	// The hierarchical coarse search doubles as the scene-cut detector:
+	// when most regions find no quarter-res match within reach, predictive
+	// coding would cost near-keyframe bits at worse quality, so restart the
+	// chain with a real keyframe instead. The spacing guard keeps noisy
+	// content from forcing key storms.
+	e.hme.run(src)
+	if e.frameIndex >= 4 && e.hme.cutDetected() {
+		return e.Encode(src, true)
+	}
 	tid := e.TemporalID()
 	tu, err := e.encodePReusing(src, tid)
 	if err != nil {
@@ -327,9 +336,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if e.goldenEvery > 0 && e.golden.Y != nil {
 		golden = &e.golden
 	}
-	// Hierarchical coarse search: quarter-res vectors per 32x32 region seed
-	// every tile's full-pel refinement windows (read-only during tiles).
-	e.hme.run(src)
+	// Hierarchical coarse-search seeds (computed in Encode) recenter every
+	// tile's full-pel refinement windows (read-only during tiles).
 	e.pc.st.hme = &e.hme
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.hme = &e.hme
