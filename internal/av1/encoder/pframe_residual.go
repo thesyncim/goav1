@@ -484,11 +484,18 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 
 	// Quantize all three transform blocks up front; a block whose residual
 	// quantizes to zero everywhere is coded as skip (no residual symbols, the
-	// reconstruction is the prediction itself).
-	lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
-	uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
-	vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
-	skip := lumaZero && uZero && vZero
+	// reconstruction is the prediction itself). A near-perfect match skips
+	// the proof: with the luma SAD at a quarter sample per pixel, no
+	// realtime quantizer step keeps a coefficient, so the transforms are
+	// pure overhead (skip is an encoder choice the decoder honors either
+	// way, so this cannot affect parity).
+	skip := fullSAD*4 <= n*n
+	if !skip {
+		lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
+		uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
+		vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
+		skip = lumaZero && uZero && vZero
+	}
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
