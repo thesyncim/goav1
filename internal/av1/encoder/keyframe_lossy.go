@@ -247,12 +247,17 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 	if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
 		return nil, err
 	}
-	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize8x8)
+	st.scan16 = make([]int16, 256)
+	inverse16 := make([]int16, 256)
+	if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
+		return nil, err
+	}
+	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize16x16)
 	if err != nil {
 		return nil, err
 	}
 	st.levels = make([]uint8, scratchLen)
-	st.invScratch = make([]int32, 64)
+	st.invScratch = make([]int32, 256)
 
 	w := entropy.NewWriter(make([]byte, 0, 1<<18))
 	st.w = &w
@@ -271,11 +276,34 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 		MIColEnd:   miColEnd,
 		MIRowEnd:   miRows,
 	}
-	// All blocks 8x8: split every level above BlockLevel8x8, PARTITION_NONE at
-	// the 8x8 level.
+	// Blocks are 8x8 by default; a 16x16 node fully inside the frame merges
+	// when its best whole-block intra prediction is already tight (under two
+	// SAD units per pixel), which keeps merge quality protecting the
+	// reconstruction the way the inter tiers do.
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
+		}
+		if level == tile.BlockLevel16x16 && haveRight && haveBottom {
+			px, py := int(miCol)*4, int(miRow)*4
+			if px+16 <= src.Width && py+16 <= src.Height {
+				mode16 := selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 16, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:256])
+				_ = mode16
+				sad := 0
+				for r := range 16 {
+					row := (py+r)*src.YStride + px
+					for c := range 16 {
+						d := int(src.Y[row+c]) - int(st.predY[r*16+c])
+						if d < 0 {
+							d = -d
+						}
+						sad += d
+					}
+				}
+				if sad <= 16*16*2 {
+					return tile.PartitionNone, nil
+				}
+			}
 		}
 		return tile.PartitionSplit, nil
 	}
@@ -293,9 +321,16 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 // txb_skip) and the two chroma TX_4X4 residuals, reconstructing each transform
 // block before the next so later predictions see decoder-identical neighbors.
 func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-	if block.Size != tile.BlockSize8x8 {
+	var n int
+	switch block.Size {
+	case tile.BlockSize8x8:
+		n = 8
+	case tile.BlockSize16x16:
+		n = 16
+	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
+	cn := n / 2
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 
@@ -310,8 +345,8 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	// Luma mode selection by prediction SAD against the reconstructed edges.
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	pred := st.predY[:64]
-	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
+	pred := st.predY[:n*n]
+	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -339,9 +374,16 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
 
-	// Luma TX_8X8 with the tx_type symbol between txb_skip and eob.
+	// Largest-TX luma with the tx_type symbol between txb_skip and eob,
+	// then the half-size chroma TXBs.
+	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
+	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
+	if n == 16 {
+		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
+		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
+	}
 	txTypeReq := tile.IntraTransformTypeRequest{
-		Size:        tile.TransformSize8x8,
+		Size:        lumaTX,
 		Mode:        mode,
 		QIndexKnown: true,
 		QIndex:      st.qIndex,
@@ -349,17 +391,16 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	afterSkip := func() error {
 		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
 	}
-	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
-		Size:       tile.TransformSize8x8,
+		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, afterSkip, pred); err != nil {
+	}, coeffCtx, lumaScan, afterSkip, pred); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
 
-	// Chroma TX_4X4, one per plane (8x8 luma block at 4:2:0).
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
 	if err != nil {
 		return fmt.Errorf("chroma plane block: %w", err)
@@ -371,13 +412,13 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, cn, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
-			Size:       tile.TransformSize4x4,
+			Size:       chromaTX,
 			X4:         block.X4 / 2,
 			Y4:         block.Y4 / 2,
-		}, coeffCtx, st.scan4, nil, block.HaveTop, block.HaveLeft); err != nil {
+		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 	}
@@ -430,6 +471,10 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 		}
 	case 8:
 		if err := transform.ForwardDCT8x8(tran[:64], 8, residual[:64], 8); err != nil {
+			return err
+		}
+	case 16:
+		if err := transform.ForwardDCT16x16(tran[:256], 16, residual[:256], 16); err != nil {
 			return err
 		}
 	default:
@@ -494,20 +539,20 @@ func dcPredictN(plane []byte, stride, px, py, n int, haveTop, haveLeft bool) uin
 	return uint8((sum + count/2) / count)
 }
 
-// selectIntraMode8 chooses the luma intra mode of one 8x8 block by
-// prediction SAD against the reconstructed edges and fills pred (stride 8)
+// selectIntraModeN chooses the luma intra mode of one n x n block by
+// prediction SAD against the reconstructed edges and fills pred (stride n)
 // with the chosen prediction. DC competes always; the exact-angle vertical
 // and horizontal copies need their edge (angles 90 and 180 predict without
 // edge filtering, so the copies match the decoder bit for bit). DC keeps
 // ties: it codes no angle-delta symbol. SMOOTH was built and measured a
 // wash at 8x8 - DC plus a two-coefficient DCT residual already covers
 // gradients - and removed.
-func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
-	dc := dcPredictN(reconPlane, stride, px, py, 8, haveTop, haveLeft)
+func selectIntraModeN(srcPlane, reconPlane []byte, stride, px, py, n int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
+	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
 	sadDC, sadV, sadH := 0, 1<<30, 1<<30
-	for r := range 8 {
+	for r := range n {
 		row := (py+r)*stride + px
-		for c := range 8 {
+		for c := range n {
 			d := int(srcPlane[row+c]) - int(dc)
 			if d < 0 {
 				d = -d
@@ -518,9 +563,9 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	above := (py-1)*stride + px
 	if haveTop {
 		sadV = 0
-		for r := range 8 {
+		for r := range n {
 			row := (py+r)*stride + px
-			for c := range 8 {
+			for c := range n {
 				d := int(srcPlane[row+c]) - int(reconPlane[above+c])
 				if d < 0 {
 					d = -d
@@ -531,10 +576,10 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	}
 	if haveLeft {
 		sadH = 0
-		for r := range 8 {
+		for r := range n {
 			row := (py+r)*stride + px
 			left := int(reconPlane[row-1])
-			for c := range 8 {
+			for c := range n {
 				d := int(srcPlane[row+c]) - left
 				if d < 0 {
 					d = -d
@@ -545,22 +590,27 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	}
 	switch {
 	case sadV+16 < sadDC && sadV <= sadH:
-		for r := range 8 {
-			copy(pred[r*8:r*8+8], reconPlane[above:above+8])
+		for r := range n {
+			copy(pred[r*n:r*n+n], reconPlane[above:above+n])
 		}
 		return tile.IntraModeVertical
 	case sadH+16 < sadDC:
-		for r := range 8 {
+		for r := range n {
 			v := reconPlane[(py+r)*stride+px-1]
-			for c := range 8 {
-				pred[r*8+c] = v
+			for c := range n {
+				pred[r*n+c] = v
 			}
 		}
 		return tile.IntraModeHorizontal
 	default:
-		for i := range 64 {
+		for i := range n * n {
 			pred[i] = dc
 		}
 		return tile.IntraModeDC
 	}
+}
+
+// selectIntraMode8 is selectIntraModeN at the 8x8 fallback size.
+func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
+	return selectIntraModeN(srcPlane, reconPlane, stride, px, py, 8, haveTop, haveLeft, pred)
 }
