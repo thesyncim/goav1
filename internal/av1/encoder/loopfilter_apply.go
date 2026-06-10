@@ -11,6 +11,7 @@ package encoder
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -25,7 +26,7 @@ import (
 // pass. The edge planner walks every MI cell per frame, which costs ~12ms at
 // 720p (within a 60fps budget alongside encoding) but ~50ms at 1080p; larger
 // frames keep the filter off until the planner is fast enough.
-const loopFilterMaxArea = 1280 * 720
+const loopFilterMaxArea = 1920 * 1080
 
 // filterLevelFromQIndex is av1_pick_filter_level's LPF_PICK_FROM_Q estimate
 // at 8-bit depth: a linear fit from the AC quantizer step to the searched
@@ -91,11 +92,18 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 type loopFilterApplier struct {
 	records  []threading.FrameWorkLoopFilterBlockRecord
 	edges    []decoder.FrameWorkLoopFilterPostFilterEdge
+	bandBufs [][]decoder.FrameWorkLoopFilterPostFilterEdge
 	schedule []uint32
 	filtMap  threading.FrameWorkLoopFilterMap
 	event    decoder.Event
 	bound    bool
 }
+
+// lfPlanBands is the fan-out width of the banded edge planning pass. The
+// planner sweep is read-only over the shared map, so bands plan
+// concurrently; concatenating their edges in band order reproduces the
+// whole-frame plan exactly (pinned by the decoder's banded parity test).
+const lfPlanBands = 8
 
 // init binds the map and scratch for the stream's frame geometry.
 func (a *loopFilterApplier) init(width, height int) error {
@@ -140,6 +148,20 @@ func (a *loopFilterApplier) init(width, height int) error {
 	if err != nil {
 		return err
 	}
+	// Per-band scratch: a band plans the blocks originating in its rows,
+	// whose cells extend at most 8 MI rows (a 32px block) past the band end;
+	// 8 edge candidates per cell bounds each band's storage.
+	rows := int(a.filtMap.Rows)
+	bands := lfPlanBands
+	if rows < bands*4 {
+		bands = 1
+	}
+	rowsPerBand := (rows + bands - 1) / bands
+	bandBound := (rowsPerBand + 8) * int(a.filtMap.Stride) * 8
+	a.bandBufs = make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands)
+	for i := range a.bandBufs {
+		a.bandBufs[i] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound)
+	}
 	a.bound = true
 	return nil
 }
@@ -176,11 +198,52 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 		Output:        &output,
 		LoopFilterMap: &a.filtMap,
 	}
-	_, err := ctx.ApplyLoopFilterEdges(decoder.FrameWorkLoopFilterPostFilterRequest{
-		Map:             a.filtMap,
-		Edges:           a.edges,
-		Schedule:        a.schedule,
-		TrustedCoverage: true,
-	})
+
+	// Banded planning: partition block-origin rows across workers, then
+	// concatenate the per-band edges in band order (which reproduces the
+	// whole-frame plan) and run the sequential kernel passes once.
+	rows := int(a.filtMap.Rows)
+	bands := len(a.bandBufs)
+	rowsPerBand := (rows + bands - 1) / bands
+	var wg sync.WaitGroup
+	counts := make([]uint32, bands)
+	errs := make([]error, bands)
+	for b := range bands {
+		r0 := b * rowsPerBand
+		r1 := min(r0+rowsPerBand, rows)
+		if r0 >= r1 {
+			continue
+		}
+		wg.Add(1)
+		go func(b, r0, r1 int) {
+			defer wg.Done()
+			plan, err := ctx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
+				Map:             a.filtMap,
+				Edges:           a.bandBufs[b],
+				TrustedCoverage: true,
+				MIRowStart:      r0,
+				MIRowEnd:        r1,
+			})
+			if err != nil {
+				errs[b] = err
+				return
+			}
+			if plan.DroppedEdges != 0 {
+				errs[b] = fmt.Errorf("encoder: loop-filter band %d dropped %d edges", b, plan.DroppedEdges)
+				return
+			}
+			counts[b] = plan.StoredEdges
+		}(b, r0, r1)
+	}
+	wg.Wait()
+	total := 0
+	for b := range bands {
+		if errs[b] != nil {
+			return errs[b]
+		}
+		copy(a.edges[total:], a.bandBufs[b][:counts[b]])
+		total += int(counts[b])
+	}
+	_, err := ctx.ApplyPlannedLoopFilterEdges(a.edges[:total], a.schedule)
 	return err
 }

@@ -2676,3 +2676,84 @@ func testFrameWorkLoopFilterEnhancementLayerRecord(miCol int, miRow int, miCols 
 		Mode:          loopfilter.ModeDeltaClassZero,
 	}
 }
+
+// TestLoopFilterPostFilterPlanBandedMatchesWhole proves the banded trusted
+// sweep partitions the whole-frame plan exactly: bands over block-origin rows
+// emit the same edges in the same order once concatenated band by band.
+func TestLoopFilterPostFilterPlanBandedMatchesWhole(t *testing.T) {
+	const width, height = 128, 128
+	size := parser.FrameSize{
+		CodedWidth:          width,
+		UpscaledWidth:       width,
+		Height:              height,
+		SuperResDenominator: 8,
+	}
+	var records []threading.FrameWorkLoopFilterBlockRecord
+	// Mixed geometry: 16x16 blocks, one skipped, one var-tx split, plus a
+	// run of 8x8s, exercising tx-size variety across band boundaries.
+	for row := 0; row < 32; row += 4 {
+		for col := 0; col < 32; col += 4 {
+			rec := testFrameWorkLoopFilterPostFilterRecordAt(col, row, col+4, row+4)
+			switch (row/4 + col/4) % 3 {
+			case 1:
+				rec.SkipTransform = true
+			case 2:
+				rec.TransformTree = tile.TransformTreeResult{
+					Y:        tile.TransformSize16x16,
+					UV:       tile.TransformSize8x8,
+					HasUV:    true,
+					Variable: true,
+					Split:    [2]uint16{1, 0},
+				}
+			}
+			records = append(records, rec)
+		}
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, records...)
+	ctx := FrameWorkPostFilterContext{
+		Event: Event{
+			SequenceHeader: testSequence(),
+			FrameSize:      size,
+			LoopFilter:     parser.LoopFilterParams{LevelY: [2]uint8{8, 8}, LevelU: 8, LevelV: 8},
+		},
+	}
+	upper, err := ctx.LoopFilterPostFilterScratchUpperBound()
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole := make([]FrameWorkLoopFilterPostFilterEdge, upper.Edges)
+	wholePlan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+		Map: filterMap, Edges: whole, TrustedCoverage: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	banded := make([]FrameWorkLoopFilterPostFilterEdge, 0, upper.Edges)
+	bandScratch := make([]FrameWorkLoopFilterPostFilterEdge, upper.Edges)
+	const bandRows = 12 // deliberately unaligned to block rows
+	total := uint32(0)
+	for r0 := 0; r0 < int(wholePlan.MIRows); r0 += bandRows {
+		r1 := min(r0+bandRows, int(wholePlan.MIRows))
+		plan, err := ctx.LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{
+			Map: filterMap, Edges: bandScratch, TrustedCoverage: true,
+			MIRowStart: r0, MIRowEnd: r1,
+		})
+		if err != nil {
+			t.Fatalf("band %d-%d: %v", r0, r1, err)
+		}
+		if plan.DroppedEdges != 0 {
+			t.Fatalf("band %d-%d dropped %d", r0, r1, plan.DroppedEdges)
+		}
+		banded = append(banded, bandScratch[:plan.StoredEdges]...)
+		total += plan.StoredEdges
+	}
+	if total != wholePlan.StoredEdges {
+		t.Fatalf("banded stored %d, whole %d", total, wholePlan.StoredEdges)
+	}
+	for i := range banded {
+		if banded[i] != whole[i] {
+			t.Fatalf("edge %d differs: banded %+v whole %+v", i, banded[i], whole[i])
+		}
+	}
+}

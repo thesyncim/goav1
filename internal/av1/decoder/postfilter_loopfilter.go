@@ -28,6 +28,15 @@ type FrameWorkLoopFilterPostFilterRequest struct {
 	Edges           []FrameWorkLoopFilterPostFilterEdge
 	Schedule        []uint32
 	TrustedCoverage bool
+
+	// MIRowStart/MIRowEnd restrict planning to blocks whose origin row falls
+	// inside [MIRowStart, MIRowEnd). Both zero plans the whole frame. Banded
+	// plans over a shared map emit exactly the whole-frame edge set when the
+	// bands partition the rows and their edges concatenate in band order,
+	// because the sweep visits blocks in the same row-major origin order.
+	// Banded requests require TrustedCoverage.
+	MIRowStart int
+	MIRowEnd   int
 }
 
 // FrameWorkLoopFilterPostFilterEdge describes one deblocking edge candidate in
@@ -328,6 +337,12 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 		return plan, err
 	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+	if req.MIRowStart != 0 || req.MIRowEnd != 0 {
+		if !req.TrustedCoverage {
+			return plan, threading.ErrInvalidBatch
+		}
+		return ctx.loopFilterPostFilterPlanTrustedRows(filterMap, planning, levelCtx, plan, req.Edges, req.MIRowStart, req.MIRowEnd)
+	}
 	if req.TrustedCoverage {
 		return ctx.loopFilterPostFilterPlanTrusted(filterMap, planning, levelCtx, plan, req.Edges)
 	}
@@ -375,11 +390,26 @@ func (ctx FrameWorkPostFilterContext) LoopFilterPostFilterPlan(req FrameWorkLoop
 	return plan, nil
 }
 
+// loopFilterPostFilterPlanTrustedRows is the banded trusted sweep: it plans
+// only the blocks whose origin row lies in [rowStart, rowEnd), reading the
+// shared map for cross-band neighbor lookups exactly like the full sweep.
+func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrustedRows(filterMap FrameWorkLoopFilterMap, planning frameWorkLoopFilterPlanningContext, levelCtx frameWorkLoopFilterLevelContext, plan FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, rowStart int, rowEnd int) (FrameWorkLoopFilterPostFilterPlan, error) {
+	rows := int(plan.MIRows)
+	if rowStart < 0 || rowEnd > rows || rowStart >= rowEnd {
+		return plan, threading.ErrInvalidBatch
+	}
+	return ctx.loopFilterPostFilterPlanTrustedSweep(filterMap, planning, levelCtx, plan, edges, rowStart, rowEnd)
+}
+
 func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrusted(filterMap FrameWorkLoopFilterMap, planning frameWorkLoopFilterPlanningContext, levelCtx frameWorkLoopFilterLevelContext, plan FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge) (FrameWorkLoopFilterPostFilterPlan, error) {
+	return ctx.loopFilterPostFilterPlanTrustedSweep(filterMap, planning, levelCtx, plan, edges, 0, int(plan.MIRows))
+}
+
+func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrustedSweep(filterMap FrameWorkLoopFilterMap, planning frameWorkLoopFilterPlanningContext, levelCtx frameWorkLoopFilterLevelContext, plan FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, rowStart int, rowEnd int) (FrameWorkLoopFilterPostFilterPlan, error) {
 	cols := int(plan.MICols)
 	rows := int(plan.MIRows)
 	stride := int(filterMap.Stride)
-	for row := 0; row < rows; row++ {
+	for row := rowStart; row < rowEnd; row++ {
 		base := row * stride
 		for col := 0; col < cols; {
 			record := &filterMap.Records[base+col]
@@ -462,6 +492,23 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 	}
 	edges := req.Edges[:storedEdges]
 	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, req.Schedule, loopfilter.PlaneV); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// ApplyPlannedLoopFilterEdges applies already-planned edge candidates to
+// ctx.Output without replanning - the entry for callers that planned in
+// parallel bands and concatenated the per-band edges in band order (which
+// reproduces the whole-frame row-major edge order the sequential passes
+// expect).
+func (ctx FrameWorkPostFilterContext) ApplyPlannedLoopFilterEdges(edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	var result FrameWorkLoopFilterPostFilterApplyResult
+	result.Active = true
+	if ctx.Output == nil {
+		return result, frame.ErrInvalidSlot
+	}
+	if err := ctx.applyLoopFilterEdgesInPlanePassOrder(&result, edges, schedule, loopfilter.PlaneV); err != nil {
 		return result, err
 	}
 	return result, nil
