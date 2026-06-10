@@ -542,9 +542,21 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
 
+	// Mode choice by signaling cost: zero motion keeps the short GLOBALMV
+	// cascade; a vector the predictor stack already names codes as
+	// NEARESTMV/NEARMV with no motion residual at all; everything else pays
+	// for NEWMV plus the joint and component symbols.
 	mode := tile.InterModeGlobalMV
 	if mv.Row != 0 || mv.Col != 0 {
 		mode = tile.InterModeNewMV
+		if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
+			switch mv {
+			case predRefs.Nearest[0]:
+				mode = tile.InterModeNearestMV
+			case predRefs.Near[0]:
+				mode = tile.InterModeNearMV
+			}
+		}
 	}
 	modeResult := tile.InterModeResult{Mode: mode}
 	if err := tile.WriteSingleInterMode(st.w, interModeCDFs, stack.ModeContext, mode); err != nil {
