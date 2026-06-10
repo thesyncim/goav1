@@ -163,7 +163,7 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 			Deltas: defaultLoopFilterDeltas(),
 		},
 		TransformRef: TransformReferenceParams{
-			TransformMode: TransformModeLargest,
+			TransformMode: TransformModeSwitchable,
 			ReferenceMode: ReferenceModeSingle,
 		},
 		FrameMode:    FrameModeParams{},

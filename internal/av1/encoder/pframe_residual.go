@@ -138,6 +138,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error 
 		st.intraCDFs = prev.Intra
 		st.coeffCDFs = prev.Coeff
 		st.txCDFs = prev.TransformType
+		st.treeCDFs = prev.Transform
 		st.mvCDFs = prev.MV
 	} else {
 		if err := pc.partCDFs.InitDefault(); err != nil {
@@ -159,6 +160,9 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error 
 			return err
 		}
 		if err := st.txCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := st.treeCDFs.InitDefault(); err != nil {
 			return err
 		}
 		if err := st.mvCDFs.InitDefault(); err != nil {
@@ -229,6 +233,7 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 	dst.Intra = pc.st.intraCDFs
 	dst.Coeff = pc.st.coeffCDFs
 	dst.TransformType = pc.st.txCDFs
+	dst.Transform = pc.st.treeCDFs
 	dst.MV = pc.st.mvCDFs
 	return dst.ResetCDFCounts()
 }
@@ -610,11 +615,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// pure overhead (skip is an encoder choice the decoder honors either
 	// way, so this cannot affect parity).
 	skip := fullSAD*4 <= n*n
+	splitTX := false
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-		lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
-		uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
-		vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
+		lumaZero := st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n])
+		lumaRdD, lumaRdR := st.rdDcode, st.rdRcode
+		uZero := st.prepareInterTXB(src.U, st.predU[:cn*cn], cn, src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.uQuant, st.uQ[:cn*cn])
+		vZero := st.prepareInterTXB(src.V, st.predV[:cn*cn], cn, src.ChromaStride, lumaPX/2, lumaPY/2, cn, st.vQuant, st.vQ[:cn*cn])
 		skip = lumaZero && uZero && vZero
 		if !skip {
 			// Rate-priced skip (RDCOST shapes): code when distortion saved
@@ -623,6 +630,27 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			rdSkip := st.rdDskip << 7
 			if rdSkip <= rdCode {
 				skip = true
+			}
+		}
+		if !skip && n == 8 && !lumaZero {
+			// One-level var-tx split RD: quantize the same luma residual as
+			// four quadrant 4x4 TXBs and split when their coded rate-
+			// distortion beats the whole 8x8 transform - energy isolated in
+			// one quadrant smears across the large DCT but codes as a
+			// single small tree (the other children are one txb_skip each,
+			// and an 8x8 split to 4x4 costs no extra tree symbols).
+			// Measured at 16/32 the split never paid for its four extra
+			// child symbols, so only the 8x8 class is evaluated.
+			cN := n / 2
+			st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+			for i := range 4 {
+				dy, dx := (i>>1)*cN, (i&1)*cN
+				st.prepareInterTXB(src.Y, st.predY[dy*n+dx:], n, src.YStride, lumaPX+dx, lumaPY+dy, cN, st.yQuant, st.lumaQ2[i*cN*cN:(i+1)*cN*cN])
+			}
+			costFull := ((lumaRdR*st.rdMult + 256) >> 9) + (lumaRdD << 7)
+			costSplit := ((st.rdRcode*st.rdMult + 256) >> 9) + (st.rdDcode << 7)
+			if costSplit < costFull {
+				splitTX = true
 			}
 		}
 	}
@@ -681,6 +709,23 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("mark inter filters: %w", err)
 	}
 
+	// Residual phase starts with the var-tx tree, exactly where the decoder
+	// reads it: skip blocks mark contexts without symbols, coded blocks write
+	// one split decision per node.
+	var treeRes tile.TransformTreeResult
+	if splitTX {
+		treeRes.Split[0] = 1
+	}
+	if err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+		Size: block.Size, X4: block.X4, Y4: block.Y4,
+		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
+		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+		Color: st.color, TransformMode: parser.TransformModeSwitchable,
+		Inter: true, SkipTransform: skip,
+	}, treeRes); err != nil {
+		return fmt.Errorf("transform tree: %w", err)
+	}
+
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
 	if err != nil {
 		return fmt.Errorf("chroma plane block: %w", err)
@@ -714,15 +759,41 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
 		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
 	}
-	st.interTxTypeReq.Size = lumaTX
-	if err := st.finishInterTXB(recon.Y, st.predY[:n*n], src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n], tile.CoeffContextRequest{
-		Plane:      0,
-		PlaneBlock: block.Size,
-		Size:       lumaTX,
-		X4:         block.X4,
-		Y4:         block.Y4,
-	}, coeffCtx, lumaScan, st.afterSkipInter); err != nil {
-		return fmt.Errorf("luma txb: %w", err)
+	if splitTX {
+		// The quadrant TXBs replay in the decoder's recursive order, which
+		// is raster for a square one-level split.
+		childTX, childScan := tile.TransformSize4x4, st.scan4
+		switch n {
+		case 16:
+			childTX, childScan = tile.TransformSize8x8, st.scan8
+		case 32:
+			childTX, childScan = tile.TransformSize16x16, st.scan16
+		}
+		st.interTxTypeReq.Size = childTX
+		cN := n / 2
+		for i := range 4 {
+			dy, dx := (i>>1)*cN, (i&1)*cN
+			if err := st.finishInterTXB(recon.Y, st.predY[dy*n+dx:], n, src.YStride, lumaPX+dx, lumaPY+dy, cN, st.yQuant, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], tile.CoeffContextRequest{
+				Plane:      0,
+				PlaneBlock: block.Size,
+				Size:       childTX,
+				X4:         block.X4 + uint8(dx/4),
+				Y4:         block.Y4 + uint8(dy/4),
+			}, coeffCtx, childScan, st.afterSkipInter); err != nil {
+				return fmt.Errorf("luma child txb %d: %w", i, err)
+			}
+		}
+	} else {
+		st.interTxTypeReq.Size = lumaTX
+		if err := st.finishInterTXB(recon.Y, st.predY[:n*n], n, src.YStride, lumaPX, lumaPY, n, st.yQuant, st.lumaQ[:n*n], tile.CoeffContextRequest{
+			Plane:      0,
+			PlaneBlock: block.Size,
+			Size:       lumaTX,
+			X4:         block.X4,
+			Y4:         block.Y4,
+		}, coeffCtx, lumaScan, st.afterSkipInter); err != nil {
+			return fmt.Errorf("luma txb: %w", err)
+		}
 	}
 	for plane := 1; plane <= 2; plane++ {
 		rdata, pred, qc := recon.U, st.predU[:cn*cn], st.uQ[:cn*cn]
@@ -731,7 +802,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			rdata, pred, qc = recon.V, st.predV[:cn*cn], st.vQ[:cn*cn]
 			q = st.vQuant
 		}
-		if err := st.finishInterTXB(rdata, pred, src.ChromaStride, lumaPX/2, lumaPY/2, cn, q, qc, tile.CoeffContextRequest{
+		if err := st.finishInterTXB(rdata, pred, cn, src.ChromaStride, lumaPX/2, lumaPY/2, cn, q, qc, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
@@ -758,6 +829,17 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
+	}
+	// The intra tx-size context reads the pre-mark neighbor flags; take the
+	// decoder's per-block snapshot before MarkIntra overwrites the shared
+	// above/left slots with this block's own.
+	modeCtx.TxNeighborValid = false
+	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
+		modeCtx.TxNeighborValid = true
+		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -795,6 +877,15 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
+	}
+
+	if err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+		Size: block.Size, X4: block.X4, Y4: block.Y4,
+		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
+		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+		Color: st.color, TransformMode: parser.TransformModeSwitchable,
+	}, tile.TransformTreeResult{Y: tile.TransformSize8x8}); err != nil {
+		return fmt.Errorf("intra transform tree: %w", err)
 	}
 
 	st.intraTxTypeReq.Mode = mode
@@ -996,12 +1087,12 @@ func copyPredScratch(reconPlane, pred []byte, stride, px, py, n int) {
 // transform-domain distortion when coded (sum of squared dequantization
 // errors), when skipped (sum of squared coefficients), and a coarse
 // coefficient rate estimate in 512-units-per-bit.
-func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16) bool {
+func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16) bool {
 	residual := &st.resScratch
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
-			residual[r*n+c] = int16(srcPlane[row+c]) - int16(pred[r*n+c])
+			residual[r*n+c] = int16(srcPlane[row+c]) - int16(pred[r*predStride+c])
 		}
 	}
 	tran := &st.tranScratch
@@ -1058,7 +1149,7 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, stride, px, p
 
 // finishInterTXB codes the prepared coefficients and rebuilds the recon block
 // from the prediction through the decoder's dequant + inverse transform.
-func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16,
+func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, stride, px, py, n int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
 
 	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
@@ -1075,7 +1166,7 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, stride, px, 
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
-			v := int(pred[r*n+c]) + int(res[r*n+c])
+			v := int(pred[r*predStride+c]) + int(res[r*n+c])
 			if v < 0 {
 				v = 0
 			} else if v > 255 {

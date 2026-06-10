@@ -127,10 +127,10 @@ func TestConvolveW4ClampedNEONMatchesPureGo(t *testing.T) {
 	yk4 := subpelFilters4[5]
 
 	type wcase struct {
-		name          string
-		refX, refY    int
-		height        int
-		four          bool
+		name       string
+		refX, refY int
+		height     int
+		four       bool
 	}
 	cases := []wcase{
 		// Interior: full tap window resident, clamp is a no-op -> hits the NEON

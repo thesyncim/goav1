@@ -147,6 +147,7 @@ type lossyEncodeState struct {
 	intraCDFs tile.IntraModeCDFs
 	coeffCDFs tile.CoeffCDFs
 	txCDFs    tile.TransformTypeCDFs
+	treeCDFs  tile.TransformCDFs
 	mvCDFs    tile.MVCDFs
 
 	qIndex uint8
@@ -164,6 +165,7 @@ type lossyEncodeState struct {
 	// coded TXB, 16x16 luma / 8x8 chroma) and the prebuilt after-skip tx_type
 	// hook (a closure built once per tile, not per block).
 	lumaQ          [1024]int16
+	lumaQ2         [1024]int16
 	uQ, vQ         [256]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	afterSkipInter func() error
