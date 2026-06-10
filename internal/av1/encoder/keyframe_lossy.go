@@ -252,12 +252,17 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 	if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
 		return nil, err
 	}
-	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize16x16)
+	st.scan32 = make([]int16, 1024)
+	inverse32 := make([]int16, 1024)
+	if err := transform.FillDefaultScan(st.scan32, inverse32, transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
+		return nil, err
+	}
+	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
 	if err != nil {
 		return nil, err
 	}
 	st.levels = make([]uint8, scratchLen)
-	st.invScratch = make([]int32, 256)
+	st.invScratch = make([]int32, 1024)
 
 	w := entropy.NewWriter(make([]byte, 0, 1<<18))
 	st.w = &w
@@ -280,29 +285,37 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 	// when its best whole-block intra prediction is already tight (under two
 	// SAD units per pixel), which keeps merge quality protecting the
 	// reconstruction the way the inter tiers do.
+	mergeIntra := func(px, py, n int) bool {
+		mode := selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
+		_ = mode
+		sad := 0
+		for r := range n {
+			row := (py+r)*src.YStride + px
+			for c := range n {
+				d := int(src.Y[row+c]) - int(st.predY[r*n+c])
+				if d < 0 {
+					d = -d
+				}
+				sad += d
+			}
+		}
+		return sad <= n*n*2
+	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}
+		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
+			px, py := int(miCol)*4, int(miRow)*4
+			if px+32 <= src.Width && py+32 <= src.Height && mergeIntra(px, py, 32) {
+				return tile.PartitionNone, nil
+			}
+			return tile.PartitionSplit, nil
+		}
 		if level == tile.BlockLevel16x16 && haveRight && haveBottom {
 			px, py := int(miCol)*4, int(miRow)*4
-			if px+16 <= src.Width && py+16 <= src.Height {
-				mode16 := selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 16, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:256])
-				_ = mode16
-				sad := 0
-				for r := range 16 {
-					row := (py+r)*src.YStride + px
-					for c := range 16 {
-						d := int(src.Y[row+c]) - int(st.predY[r*16+c])
-						if d < 0 {
-							d = -d
-						}
-						sad += d
-					}
-				}
-				if sad <= 16*16*2 {
-					return tile.PartitionNone, nil
-				}
+			if px+16 <= src.Width && py+16 <= src.Height && mergeIntra(px, py, 16) {
+				return tile.PartitionNone, nil
 			}
 		}
 		return tile.PartitionSplit, nil
@@ -327,6 +340,8 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		n = 8
 	case tile.BlockSize16x16:
 		n = 16
+	case tile.BlockSize32x32:
+		n = 32
 	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
@@ -378,9 +393,13 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	// then the half-size chroma TXBs.
 	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
 	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
-	if n == 16 {
+	switch n {
+	case 16:
 		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
 		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
+	case 32:
+		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
+		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
 	}
 	txTypeReq := tile.IntraTransformTypeRequest{
 		Size:        lumaTX,
@@ -477,10 +496,14 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 		if err := transform.ForwardDCT16x16(tran[:256], 16, residual[:256], 16); err != nil {
 			return err
 		}
+	case 32:
+		if err := transform.ForwardDCT32x32(tran[:1024], 32, residual[:1024], 32); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("encoder: unsupported txb size %d", n)
 	}
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, 0); err != nil {
+	if err := quantize.QuantizeBlockScaledB(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
 		return err
 	}
 	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n*n], scan, st.levels, afterSkip); err != nil {
@@ -490,7 +513,7 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 	// Reconstruct exactly as the decoder will: dequantize, inverse transform,
 	// add to the prediction, clip to 8 bits.
 	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff[:n*n], n, n, n, q, 0, 8); err != nil {
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff[:n*n], n, n, n, q, txScaleForSize(n), 8); err != nil {
 		return err
 	}
 	res := &st.invResidual
