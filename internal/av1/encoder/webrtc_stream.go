@@ -23,6 +23,7 @@ type WebRTCEncodedFrame struct {
 // WebRTCStream encodes an L1T1 or L1T2 stream with per-frame dependency
 // descriptors.
 type WebRTCStream struct {
+	groupPos       int
 	enc            *VideoEncoder
 	structure      WebRTCFrameDependencyStructure
 	idState        FrameIDBufferState
@@ -48,6 +49,11 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 	case 2:
 		mode = ScalabilityModeL1T2
 		if err := enc.SetTemporalLayers(2); err != nil {
+			return nil, err
+		}
+	case 3:
+		mode = ScalabilityModeL1T3
+		if err := enc.SetTemporalLayers(3); err != nil {
 			return nil, err
 		}
 	default:
@@ -83,12 +89,25 @@ func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedF
 		settings.Type = FrameTypeDelta
 		settings.ReferenceBuffers[0] = 0
 		settings.ReferenceCount = 1
-		if tid == 0 {
-			// Layer-0 frames refresh the reference buffer; layer-1 frames are
-			// droppable and update nothing.
+		switch {
+		case tid == 0:
+			// Layer-0 frames refresh the base reference buffer.
 			settings.UpdateBuffer = 0
 			settings.UpdateBufferSet = true
+		case s.temporalLayers == 3 && tid == 1:
+			// The middle layer is referenced by the trailing T2: it lives in
+			// buffer 1.
+			settings.UpdateBuffer = 1
+			settings.UpdateBufferSet = true
+		case s.temporalLayers == 3 && tid == 2 && s.groupPos%4 == 3:
+			// The trailing T2 references the middle layer.
+			settings.ReferenceBuffers[0] = 1
 		}
+	}
+	if key {
+		s.groupPos = 0
+	} else {
+		s.groupPos++
 	}
 	layers := s.temporalLayers
 	if layers == 0 {

@@ -40,7 +40,9 @@ type VideoEncoderConfig struct {
 	MaxQIndex     uint8
 
 	// TemporalLayers selects the layering mode: 0 or 1 for a flat stream,
-	// 2 for L1T2 with droppable odd frames.
+	// 2 for L1T2 with droppable odd frames, 3 for L1T3 (T0/T2/T1/T2 groups
+	// with a droppable top layer and a middle layer the trailing T2
+	// references).
 	TemporalLayers int
 
 	// TileColumns overrides the tile-column count used for parallel inter

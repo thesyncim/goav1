@@ -43,6 +43,9 @@ type VideoEncoder struct {
 	hme          hmeState
 
 	temporalLayers int
+	t2Recon        SourceFrame420
+	frameCtxT1     frameCDFs
+	haveCtxT1      bool
 	frameIndex     int
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
@@ -240,7 +243,7 @@ func (e *VideoEncoder) QIndex() uint8 {
 // the WebRTC L1T2 pattern, where odd frames are droppable (they refresh no
 // reference slot and always predict from the latest layer-0 frame).
 func (e *VideoEncoder) SetTemporalLayers(n int) error {
-	if n != 1 && n != 2 {
+	if n < 1 || n > 3 {
 		return fmt.Errorf("encoder: unsupported temporal layer count %d", n)
 	}
 	e.temporalLayers = n
@@ -249,8 +252,22 @@ func (e *VideoEncoder) SetTemporalLayers(n int) error {
 
 // TemporalID reports the temporal layer the next frame will be coded in.
 func (e *VideoEncoder) TemporalID() uint8 {
-	if e.temporalLayers == 2 && e.haveKey && e.frameIndex%2 == 1 {
-		return 1
+	if !e.haveKey {
+		return 0
+	}
+	switch e.temporalLayers {
+	case 2:
+		if e.frameIndex%2 == 1 {
+			return 1
+		}
+	case 3:
+		// The L1T3 group: T0, T2, T1, T2.
+		switch e.frameIndex % 4 {
+		case 1, 3:
+			return 2
+		case 2:
+			return 1
+		}
 	}
 	return 0
 }
@@ -278,6 +295,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// The first inter frame after a keyframe starts from default
 		// contexts (primary_ref NONE); chaining arms from its own state.
 		e.haveCtx = false
+		e.haveCtxT1 = false
 		// A shown keyframe refreshes every reference slot, so slot 1 (the
 		// GOLDEN name) now holds the keyframe; seed the search copy.
 		if e.goldenEvery > 0 {
@@ -311,11 +329,20 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 // allocates only the emitted temporal unit.
 func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
 	droppable := temporalID > 0
+	// L1T3: the middle layer (T1) is referenced by the following T2, so it
+	// saves its reconstruction to slot 2 and exports a context for that T2
+	// to chain from; T2 leaves update nothing. L1T2 keeps its single
+	// droppable layer in t1Recon.
+	isT1 := e.temporalLayers == 3 && temporalID == 1
+	afterT1 := e.temporalLayers == 3 && temporalID == 2 && e.frameIndex%4 == 3
 	var out *SourceFrame420
-	if droppable {
-		out = &e.t1Recon
-	} else {
+	switch {
+	case !droppable:
 		out = &e.reconBufs[e.reconIdx]
+	case e.temporalLayers == 3 && temporalID == 2:
+		out = &e.t2Recon
+	default:
+		out = &e.t1Recon
 	}
 	if out.Y == nil {
 		*out = SourceFrame420{
@@ -330,8 +357,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	}
 	refresh := uint8(0x01)
 	refreshGolden := false
-	if droppable {
-		refresh = 0 // layer-1 frames are never referenced
+	if isT1 {
+		refresh = 0x04 // slot 2 carries the middle layer for its T2 leaves
+	} else if droppable {
+		refresh = 0 // leaf-layer frames are never referenced
 	} else if e.goldenEvery > 0 {
 		e.sinceGoldenFresh++
 		if e.sinceGoldenFresh >= e.goldenEvery {
@@ -368,8 +397,19 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.LoopFilter.LevelU = lfLevel
 		header.LoopFilter.LevelV = lfLevel
 	}
+	if afterT1 {
+		// The trailing T2 predicts from the middle layer: LAST names slot 2.
+		header.Size.RefFrameIdx[0] = 2
+	}
 	var prevCtx *frameCDFs
-	if e.haveCtx {
+	if afterT1 && e.haveCtxT1 {
+		// Chain from the middle layer's saved state (slot 2 via LAST).
+		header.Prefix.ErrorResilientMode = false
+		header.Prefix.PrimaryRefFrame = 0
+		prev := defaultLoopFilterDeltas()
+		header.PreviousLFDeltas = &prev
+		prevCtx = &e.frameCtxT1
+	} else if !afterT1 && e.haveCtx {
 		// Chain the symbol contexts from slot 0's saved frame state. The
 		// header then codes loop-filter deltas relative to that frame's,
 		// which this encoder keeps at the defaults.
@@ -412,8 +452,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.tilePCs[t].st.lfMap = nil
 		}
 	}
+	refRecon := e.recon
+	if afterT1 {
+		refRecon = e.t1Recon
+	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -439,7 +483,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			wg.Add(1)
 			go func(t int, c0, c1 uint16) {
 				defer wg.Done()
-				data, err := e.tilePCs[t].encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, c0, c1)
+				data, err := e.tilePCs[t].encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, c0, c1)
 				if err != nil {
 					errs[t] = err
 					return
@@ -448,7 +492,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			}(t, colStart, colEnd)
 		}
 		c0, c1 := bounds(0)
-		data, err := e.tilePCs[0].encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, c0, c1)
+		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, c0, c1)
 		wg.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
@@ -474,6 +518,25 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		return nil, err
 	}
 	e.lastRecon = *out
+	if isT1 {
+		// The middle layer's frame-end state is what the decoder saves into
+		// slot 2; untouched families carry the values T1 itself loaded.
+		if prevCtx != nil {
+			e.frameCtxT1 = *prevCtx
+		} else if !e.haveCtxT1 {
+			if err := e.frameCtxT1.InitDefault(e.qIndex); err != nil {
+				return nil, err
+			}
+		}
+		exp := &e.pc
+		if nTiles > 1 {
+			exp = &e.tilePCs[0]
+		}
+		if err := exp.exportCDFs(&e.frameCtxT1); err != nil {
+			return nil, err
+		}
+		e.haveCtxT1 = true
+	}
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
