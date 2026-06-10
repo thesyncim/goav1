@@ -21,7 +21,10 @@ type I420Frame = encoder.SourceFrame420
 // VideoEncoderConfig configures a realtime encoder.
 type VideoEncoderConfig struct {
 	// Width and Height are the frame dimensions in pixels; both must be
-	// positive multiples of 8.
+	// even and at least 16. Dimensions that are not multiples of 8 encode
+	// at the next padded coded size with render_size carrying the true
+	// dimensions; decoded surfaces are the coded size and display crops to
+	// the render size.
 	Width, Height int
 
 	// QIndex selects fixed-quality encoding (1..255) when TargetBitrate is

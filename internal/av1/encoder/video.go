@@ -15,10 +15,15 @@ import (
 // VideoEncoder encodes a stream of same-sized frames, either at a fixed base
 // qindex or under closed-loop CBR rate control.
 type VideoEncoder struct {
-	width, height int
-	qIndex        uint8
-	recon         SourceFrame420
-	haveKey       bool
+	width, height int // coded dimensions (multiples of 8)
+	// renderWidth/renderHeight are the caller-facing frame dimensions; when
+	// they differ from the coded size the source pads by edge replication
+	// and the headers signal them through render_size.
+	renderWidth, renderHeight int
+	padded                    SourceFrame420
+	qIndex                    uint8
+	recon                     SourceFrame420
+	haveKey                   bool
 
 	rcEnabled      bool
 	rcPerFrameBits int
@@ -70,15 +75,56 @@ type RateControlConfig struct {
 // NewVideoEncoder creates a streaming encoder. Dimensions must be positive
 // multiples of 64 (the current P-frame constraint) and qIndex non-zero.
 func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
-	if width <= 0 || height <= 0 || width%8 != 0 || height%8 != 0 {
-		return nil, fmt.Errorf("encoder: dimensions must be positive multiples of 8, got %dx%d", width, height)
+	if width < 16 || height < 16 || width%2 != 0 || height%2 != 0 {
+		return nil, fmt.Errorf("encoder: dimensions must be even and at least 16x16, got %dx%d", width, height)
 	}
 	if qIndex == 0 {
 		return nil, fmt.Errorf("encoder: qindex must be non-zero")
 	}
-	e := &VideoEncoder{width: width, height: height, qIndex: qIndex, goldenEvery: 32}
-	e.tileColsLog2 = defaultTileColsLog2(width)
+	// The block coders work on whole 8x8 cells; frames whose dimensions are
+	// not multiples of eight encode at the padded coded size (right/bottom
+	// edge replication) and signal the true size through render_size, the
+	// standard coded-vs-display split.
+	codedW := (width + 7) &^ 7
+	codedH := (height + 7) &^ 7
+	e := &VideoEncoder{
+		width: codedW, height: codedH,
+		renderWidth: width, renderHeight: height,
+		qIndex: qIndex, goldenEvery: 32,
+	}
+	e.tileColsLog2 = defaultTileColsLog2(codedW)
 	return e, nil
+}
+
+// padSource copies src into the encoder's coded-size scratch frame,
+// replicating the last source column and row across the padding.
+func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
+	cw, ch := e.width/2, e.height/2
+	if e.padded.Y == nil {
+		e.padded = SourceFrame420{
+			Y:            make([]byte, e.width*e.height),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      e.width,
+			ChromaStride: cw,
+			Width:        e.width,
+			Height:       e.height,
+		}
+	}
+	padPlane := func(dst []byte, dstStride int, src []byte, srcStride, sw, sh, dw, dh int) {
+		for y := 0; y < dh; y++ {
+			sy := min(y, sh-1)
+			drow := dst[y*dstStride : y*dstStride+dw]
+			copy(drow, src[sy*srcStride:sy*srcStride+sw])
+			for x := sw; x < dw; x++ {
+				drow[x] = drow[sw-1]
+			}
+		}
+	}
+	padPlane(e.padded.Y, e.width, src.Y, src.YStride, src.Width, src.Height, e.width, e.height)
+	padPlane(e.padded.U, cw, src.U, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2, cw, ch)
+	padPlane(e.padded.V, cw, src.V, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2, cw, ch)
+	return e.padded
 }
 
 // SetGoldenInterval sets how many base-layer inter frames pass between
@@ -213,11 +259,14 @@ func (e *VideoEncoder) TemporalID() uint8 {
 // coded as a keyframe. The first frame (and any frame with forceKey set) is a
 // keyframe; every other frame predicts from the latest layer-0 reconstruction.
 func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, error) {
-	if src.Width != e.width || src.Height != e.height {
-		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.width, e.height)
+	if src.Width != e.renderWidth || src.Height != e.renderHeight {
+		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
+	}
+	if e.renderWidth != e.width || e.renderHeight != e.height {
+		src = e.padSource(src)
 	}
 	if !e.haveKey || forceKey {
-		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf)
+		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf, e.renderWidth, e.renderHeight)
 		if err != nil {
 			return nil, false, err
 		}
@@ -292,6 +341,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
+	if e.renderWidth != e.width || e.renderHeight != e.height {
+		header.Size.RenderWidth = uint32(e.renderWidth)
+		header.Size.RenderHeight = uint32(e.renderHeight)
+		header.Size.HaveRenderSize = true
+	}
 	header.References = &refState
 	// In-loop deblocking: signal the q-derived filter levels and collect the
 	// per-MI records the frame-level pass needs; after the tiles finish the
@@ -453,8 +507,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 // that are reused two frames later; callers needing longer-lived snapshots
 // must copy.
 func (e *VideoEncoder) Recon() SourceFrame420 {
-	if e.lastRecon.Y != nil {
-		return e.lastRecon
+	r := e.lastRecon
+	if r.Y == nil {
+		r = e.recon
 	}
-	return e.recon
+	r.Width, r.Height = e.renderWidth, e.renderHeight
+	return r
 }

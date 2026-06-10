@@ -32,13 +32,13 @@ import (
 // temporal unit together with the encoder-side reconstruction the decoder must
 // reproduce exactly.
 func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFiltered(src, qIndex, nil)
+	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0)
 }
 
 // encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
 // active for this size, runs the deblocking pass over the reconstruction
 // through lf (allocating a frame-local applier when the caller has none).
-func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier) ([]byte, SourceFrame420, error) {
+func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -75,6 +75,11 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header := lossyKeyframeHeader(src.Width, src.Height, qIndex)
+	if renderW > 0 && (renderW != src.Width || renderH != src.Height) {
+		header.Size.RenderWidth = uint32(renderW)
+		header.Size.RenderHeight = uint32(renderH)
+		header.Size.HaveRenderSize = true
+	}
 	if lfLevel > 0 {
 		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
 		header.LoopFilter.LevelU = lfLevel
