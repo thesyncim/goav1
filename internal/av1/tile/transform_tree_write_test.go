@@ -80,7 +80,7 @@ func TestWriteTransformTreeRoundTrip(t *testing.T) {
 				tree.Y = sd.Sub
 			}
 		}
-		if err := WriteTransformTree(&w, &encCDFs, &encCtx, req, tree); err != nil {
+		if _, err := WriteTransformTree(&w, &encCDFs, &encCtx, req, tree); err != nil {
 			t.Fatalf("WriteTransformTree req=%+v tree=%+v: %v", req, tree, err)
 		}
 		ops = append(ops, op{req: req, tree: tree})

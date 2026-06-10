@@ -6,6 +6,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -796,14 +797,26 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if splitTX {
 		treeRes.Split[0] = 1
 	}
-	if err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: parser.TransformModeSwitchable,
 		Inter: true, SkipTransform: skip,
-	}, treeRes); err != nil {
+	}, treeRes)
+	if err != nil {
 		return fmt.Errorf("transform tree: %w", err)
+	}
+	if st.lfMap != nil {
+		// libaom's mode_lf_lut: every inter mode is the motion delta class
+		// except GLOBALMV.
+		lfMode := loopfilter.ModeDeltaClassZero
+		if mode != tile.InterModeGlobalMV {
+			lfMode = loopfilter.ModeDeltaClassMotion
+		}
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+			return fmt.Errorf("mark loop filter: %w", err)
+		}
 	}
 
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
@@ -965,13 +978,19 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
 
-	if err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: parser.TransformModeSwitchable,
-	}, tile.TransformTreeResult{Y: tile.TransformSize8x8}); err != nil {
+	}, tile.TransformTreeResult{Y: tile.TransformSize8x8})
+	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
+	}
+	if st.lfMap != nil {
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
+			return fmt.Errorf("mark intra loop filter: %w", err)
+		}
 	}
 
 	st.intraTxTypeReq.Mode = mode

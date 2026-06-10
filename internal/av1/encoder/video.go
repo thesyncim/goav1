@@ -3,6 +3,8 @@ package encoder
 import (
 	"fmt"
 	"sync"
+
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // video.go is the streaming encoder surface: a VideoEncoder owns the reference
@@ -32,6 +34,7 @@ type VideoEncoder struct {
 	// and entropy stream per AV1 tile semantics) on its own goroutine.
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
+	lf           loopFilterApplier
 
 	temporalLayers int
 	frameIndex     int
@@ -279,6 +282,27 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
 	header.References = &refState
+	// In-loop deblocking: signal the q-derived filter levels and collect the
+	// per-MI records the frame-level pass needs; after the tiles finish the
+	// encoder runs the decoder's own loop filter over the reconstruction so
+	// recon stays bit-exact with decoder output.
+	lfLevel := uint8(0)
+	if src.Width*src.Height <= loopFilterMaxArea {
+		lfLevel = filterLevelFromQIndex(e.qIndex, false)
+	}
+	if lfLevel > 0 {
+		if !e.lf.bound {
+			if err := e.lf.init(src.Width, src.Height); err != nil {
+				return nil, fmt.Errorf("loop filter init: %w", err)
+			}
+		}
+		if err := e.lf.reset(); err != nil {
+			return nil, fmt.Errorf("loop filter reset: %w", err)
+		}
+		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
+		header.LoopFilter.LevelU = lfLevel
+		header.LoopFilter.LevelV = lfLevel
+	}
 	var prevCtx *frameCDFs
 	if e.haveCtx {
 		// Chain the symbol contexts from slot 0's saved frame state. The
@@ -306,6 +330,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.tilePCs = make([]pframeCoder, nTiles)
 	}
 	payloads := make([]TilePayload, nTiles)
+	if lfLevel > 0 {
+		e.pc.st.lfMap = &e.lf.filtMap
+		for t := range e.tilePCs {
+			e.tilePCs[t].st.lfMap = &e.lf.filtMap
+		}
+	} else {
+		e.pc.st.lfMap = nil
+		for t := range e.tilePCs {
+			e.tilePCs[t].st.lfMap = nil
+		}
+	}
 	if nTiles == 1 {
 		data, err := e.pc.encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, 0, uint16(src.Width/4))
 		if err != nil {
@@ -352,6 +387,15 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			if errs[t] != nil {
 				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
 			}
+		}
+	}
+	if lfLevel > 0 {
+		if err := e.lf.apply(out, parser.LoopFilterParams{
+			LevelY: [2]uint8{lfLevel, lfLevel},
+			LevelU: lfLevel,
+			LevelV: lfLevel,
+		}); err != nil {
+			return nil, fmt.Errorf("loop filter apply: %w", err)
 		}
 	}
 	tu, err := assembleInterTU(seq, header, payloads, temporalID)

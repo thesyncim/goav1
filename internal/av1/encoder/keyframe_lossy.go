@@ -10,6 +10,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -201,6 +202,11 @@ type lossyEncodeState struct {
 	// prober hoists the subpel refinement's geometry validation per block;
 	// its convolve scratch is reused across blocks.
 	prober motion.LumaSubpelProber
+
+	// lfMap, when non-nil, collects per-MI loop-filter records for the
+	// frame-level deblocking pass (the decoder's own map type, filled with
+	// the same per-block syntax the decoder records).
+	lfMap *threading.FrameWorkLoopFilterMap
 
 	// Per-frame motion partition grids filled by the 16x16 partition decider:
 	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so

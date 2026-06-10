@@ -11,21 +11,37 @@ import (
 // symbol per visited node; for switchable intra blocks it writes the selected
 // transform-size depth symbol for tree.Y; all other cases are symbol-free.
 // Every path applies the same MarkTransformArea context updates as the
-// decoder so later tx-size contexts stay in sync.
-func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeContext, req TransformTreeRequest, tree TransformTreeResult) error {
+// decoder so later tx-size contexts stay in sync. The returned result is
+// what DecodeTransformTree reproduces from the written symbols - the
+// caller-facing tree (Y/UV sizes, split masks, variability) the decoder
+// will hand to its residual and loop-filter stages.
+func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeContext, req TransformTreeRequest, tree TransformTreeResult) (TransformTreeResult, error) {
 	if w == nil || cdfs == nil || ctx == nil {
-		return ErrInvalidDecodeState
+		return TransformTreeResult{}, ErrInvalidDecodeState
 	}
 	blockDims, err := validateTransformTreeRequest(req)
 	if err != nil {
-		return err
+		return TransformTreeResult{}, err
 	}
 	maxY, err := MaxTransformSize(req.Size, parser.ColorConfig{}, 0)
 	if err != nil {
-		return err
+		return TransformTreeResult{}, err
+	}
+	result := TransformTreeResult{Y: maxY, Split: tree.Split}
+	if !req.Color.MonoChrome {
+		uv := TransformSize4x4
+		if !req.Lossless {
+			uv, err = MaxTransformSize(req.Size, req.Color, 1)
+			if err != nil {
+				return TransformTreeResult{}, err
+			}
+		}
+		result.UV = uv
+		result.HasUV = true
 	}
 
 	if req.Inter && shouldReadVariableTransformTree(req, maxY) {
+		result.Variable = true
 		walker := transformTreeWriter{
 			w:    w,
 			cdfs: cdfs,
@@ -44,23 +60,27 @@ func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeCo
 				haveTop := req.HaveTop || y > 0
 				haveLeft := req.HaveLeft || x > 0
 				if err := walker.write(maxY, 0, reqX4+x, reqY4+y, x/int(maxDims.W4), y/int(maxDims.H4), haveTop, haveLeft); err != nil {
-					return err
+					return TransformTreeResult{}, err
 				}
 			}
 		}
-		return nil
+		return result, nil
 	}
 
 	tx, err := writeFixedTransformSize(w, cdfs, ctx, req, maxY, tree)
 	if err != nil {
-		return err
+		return TransformTreeResult{}, err
 	}
+	result.Y = tx
 	markLog2W, markLog2H, err := fixedTransformMarkContext(req, blockDims, tx)
 	if err != nil {
-		return err
+		return TransformTreeResult{}, err
 	}
-	return ctx.MarkTransformArea(int(req.X4), int(req.Y4), int(blockDims.W4), int(blockDims.H4),
-		markLog2W, markLog2H, !req.Inter)
+	if err := ctx.MarkTransformArea(int(req.X4), int(req.Y4), int(blockDims.W4), int(blockDims.H4),
+		markLog2W, markLog2H, !req.Inter); err != nil {
+		return TransformTreeResult{}, err
+	}
+	return result, nil
 }
 
 type transformTreeWriter struct {
