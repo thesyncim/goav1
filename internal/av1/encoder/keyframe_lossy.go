@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -31,6 +32,13 @@ import (
 // temporal unit together with the encoder-side reconstruction the decoder must
 // reproduce exactly.
 func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
+	return encodeKeyframeFiltered(src, qIndex, nil)
+}
+
+// encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
+// active for this size, runs the deblocking pass over the reconstruction
+// through lf (allocating a frame-local applier when the caller has none).
+func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -46,8 +54,32 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 		Width:        src.Width,
 		Height:       src.Height,
 	}
+	lfLevel := uint8(0)
+	if src.Width*src.Height <= loopFilterMaxArea {
+		lfLevel = filterLevelFromQIndex(qIndex, true)
+	}
+	var lfMap *threading.FrameWorkLoopFilterMap
+	if lfLevel > 0 {
+		if lf == nil {
+			lf = &loopFilterApplier{}
+		}
+		if !lf.bound {
+			if err := lf.init(src.Width, src.Height); err != nil {
+				return nil, SourceFrame420{}, fmt.Errorf("loop filter init: %w", err)
+			}
+		}
+		if err := lf.reset(); err != nil {
+			return nil, SourceFrame420{}, fmt.Errorf("loop filter reset: %w", err)
+		}
+		lfMap = &lf.filtMap
+	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header := lossyKeyframeHeader(src.Width, src.Height, qIndex)
+	if lfLevel > 0 {
+		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
+		header.LoopFilter.LevelU = lfLevel
+		header.LoopFilter.LevelV = lfLevel
+	}
 	if log2 := defaultTileColsLog2(src.Width); log2 > 0 {
 		tiles, err := interTileInfo(src.Width, src.Height, log2)
 		if err != nil {
@@ -74,7 +106,7 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 		wg.Add(1)
 		go func(t int, c0, c1 uint16) {
 			defer wg.Done()
-			data, err := encodeKeyframeTile(src, &recon, qIndex, c0, c1)
+			data, err := encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
 			if err != nil {
 				errs[t] = err
 				return
@@ -83,7 +115,7 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 		}(t, c0, c1)
 	}
 	c0, c1 := bounds(0)
-	tile0, tile0Err := encodeKeyframeTile(src, &recon, qIndex, c0, c1)
+	tile0, tile0Err := encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
 	wg.Wait()
 	if tile0Err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("encode tile 0: %w", tile0Err)
@@ -95,6 +127,15 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 		}
 	}
 
+	if lfLevel > 0 {
+		if err := lf.apply(&recon, parser.LoopFilterParams{
+			LevelY: [2]uint8{lfLevel, lfLevel},
+			LevelU: lfLevel,
+			LevelV: lfLevel,
+		}); err != nil {
+			return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
+		}
+	}
 	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("size header TU: %w", err)
@@ -132,6 +173,11 @@ func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams
 	header.AllLossless = false
 	header.LoopFilter = LoopFilterParams{
 		Deltas: defaultLoopFilterDeltas(),
+	}
+	if lvl := filterLevelFromQIndex(qIndex, true); lvl > 0 {
+		header.LoopFilter.LevelY = [2]uint8{lvl, lvl}
+		header.LoopFilter.LevelU = lvl
+		header.LoopFilter.LevelV = lvl
 	}
 	header.TransformRef = TransformReferenceParams{
 		TransformMode: TransformModeLargest,
@@ -222,12 +268,12 @@ type lossyEncodeState struct {
 	grid32Cols int
 }
 
-func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
 	var partCDFs tile.PartitionCDFs
 	if err := partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
-	st := &lossyEncodeState{qIndex: qIndex, color: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}}
+	st := &lossyEncodeState{qIndex: qIndex, color: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, lfMap: lfMap}
 	if err := st.modeCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
@@ -360,6 +406,20 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	coeffCtx := &scratch.CoeffCtx
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
+	if st.lfMap != nil {
+		yTX, err := tile.MaxTransformSize(block.Size, parser.ColorConfig{}, 0)
+		if err != nil {
+			return err
+		}
+		uvTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
+		if err != nil {
+			return err
+		}
+		if err := markLoopFilterBlock(st.lfMap, block, tile.TransformTreeResult{Y: yTX, UV: uvTX, HasUV: true},
+			false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
+			return fmt.Errorf("mark loop filter: %w", err)
+		}
+	}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
 		return fmt.Errorf("skip: %w", err)
 	}

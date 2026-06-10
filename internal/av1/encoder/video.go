@@ -216,7 +216,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.width, e.height)
 	}
 	if !e.haveKey || forceKey {
-		tu, recon, err := EncodeKeyframe(src, e.qIndex)
+		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf)
 		if err != nil {
 			return nil, false, err
 		}
