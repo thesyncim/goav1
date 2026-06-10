@@ -10,6 +10,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -99,6 +100,14 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 	return out, nil
 }
 
+// frameCDFs is one frame's complete saved symbol-context state - what the
+// decoder keeps from the context-update tile and reloads when the next
+// frame names it through primary_ref_frame. It reuses the decoder's own
+// storage type so the save semantics (notably the symbol-counter reset of
+// av1_reset_cdf_symbol_counters) are shared, and families this encoder
+// never codes persist across the chain exactly as the decoder's do.
+type frameCDFs = threading.FrameWorkTileResidualCDFStorage
+
 // pframeCoder is the reusable per-stream P-frame coding state: CDFs, scratch,
 // the superblock context carrier, and the entropy output buffer, so steady-
 // state frame encoding allocates nothing beyond the temporal-unit assembly.
@@ -113,34 +122,48 @@ type pframeCoder struct {
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
-// allocated on first use and reused afterwards.
-func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
-	if err := pc.partCDFs.InitDefault(); err != nil {
-		return err
-	}
-	if err := pc.refCDFs.InitDefault(); err != nil {
-		return err
-	}
-	if err := pc.modeCDFs.InitDefault(); err != nil {
-		return err
-	}
+// allocated on first use and reused afterwards. When prev is non-nil the
+// symbol contexts chain from it - the saved state of the frame named by
+// primary_ref_frame - instead of the defaults, exactly as the decoder loads
+// them.
+func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error {
 	st := &pc.st
 	st.qIndex = qIndex
 	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
-	if err := st.modeCDFs.InitDefault(); err != nil {
-		return err
-	}
-	if err := st.intraCDFs.InitDefault(); err != nil {
-		return err
-	}
-	if err := st.coeffCDFs.InitDefault(qIndex); err != nil {
-		return err
-	}
-	if err := st.txCDFs.InitDefault(); err != nil {
-		return err
-	}
-	if err := st.mvCDFs.InitDefault(); err != nil {
-		return err
+	if prev != nil {
+		pc.partCDFs = prev.Partition
+		pc.refCDFs = prev.InterRef
+		pc.modeCDFs = prev.InterMode
+		st.modeCDFs = prev.Mode
+		st.intraCDFs = prev.Intra
+		st.coeffCDFs = prev.Coeff
+		st.txCDFs = prev.TransformType
+		st.mvCDFs = prev.MV
+	} else {
+		if err := pc.partCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := pc.refCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := pc.modeCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := st.modeCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := st.intraCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := st.coeffCDFs.InitDefault(qIndex); err != nil {
+			return err
+		}
+		if err := st.txCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := st.mvCDFs.InitDefault(); err != nil {
+			return err
+		}
 	}
 	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
 		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
@@ -192,18 +215,33 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int) error {
 
 func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	var pc pframeCoder
-	return pc.encodeTile(src, ref, nil, recon, qIndex, 0, uint16(src.Width/4))
+	return pc.encodeTile(src, ref, nil, recon, qIndex, nil, 0, uint16(src.Width/4))
+}
+
+// exportCDFs snapshots the coder's adapted symbol contexts - the frame-end
+// state the decoder saves from the context-update tile - and resets the
+// symbol counters the way the decoder's save path does.
+func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
+	dst.Partition = pc.partCDFs
+	dst.InterRef = pc.refCDFs
+	dst.InterMode = pc.modeCDFs
+	dst.Mode = pc.st.modeCDFs
+	dst.Intra = pc.st.intraCDFs
+	dst.Coeff = pc.st.coeffCDFs
+	dst.TransformType = pc.st.txCDFs
+	dst.MV = pc.st.mvCDFs
+	return dst.ResetCDFCounts()
 }
 
 // encodeTile codes one P-frame tile covering MI columns [miColStart,
 // miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
 // the full-frame single-tile case passes [0, miCols).
-func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
 	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
-	if err := pc.reset(qIndex, rootCols); err != nil {
+	if err := pc.reset(qIndex, rootCols, prev); err != nil {
 		return nil, err
 	}
 	st := &pc.st

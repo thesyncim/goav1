@@ -38,6 +38,13 @@ type VideoEncoder struct {
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
 
+	// frameCtx chains the adapted symbol contexts across the base layer:
+	// each non-droppable frame names its predecessor through
+	// primary_ref_frame and starts from the saved state instead of the
+	// defaults. haveCtx arms after the first keyframe.
+	frameCtx frameCDFs
+	haveCtx  bool
+
 	// Golden anchor: slot 1 holds an older high-quality reference refreshed
 	// every goldenEvery base-layer frames (0 disables block-level use). The
 	// encoder keeps its own copy for motion search.
@@ -214,6 +221,9 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		e.lastRecon = recon
 		e.haveKey = true
 		e.frameIndex = 1
+		// The first inter frame after a keyframe starts from default
+		// contexts (primary_ref NONE); chaining arms from its own state.
+		e.haveCtx = false
 		// A shown keyframe refreshes every reference slot, so slot 1 (the
 		// GOLDEN name) now holds the keyframe; seed the search copy.
 		if e.goldenEvery > 0 {
@@ -269,6 +279,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
 	header.References = &refState
+	var prevCtx *frameCDFs
+	if e.haveCtx {
+		// Chain the symbol contexts from slot 0's saved frame state. The
+		// header then codes loop-filter deltas relative to that frame's,
+		// which this encoder keeps at the defaults.
+		header.Prefix.ErrorResilientMode = false
+		header.Prefix.PrimaryRefFrame = 0
+		prev := defaultLoopFilterDeltas()
+		header.PreviousLFDeltas = &prev
+		prevCtx = &e.frameCtx
+	}
 	if e.tileColsLog2 > 0 {
 		tiles, err := interTileInfo(src.Width, src.Height, e.tileColsLog2)
 		if err != nil {
@@ -286,7 +307,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	}
 	payloads := make([]TilePayload, nTiles)
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, e.recon, golden, out, e.qIndex, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -312,7 +333,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			wg.Add(1)
 			go func(t int, c0, c1 uint16) {
 				defer wg.Done()
-				data, err := e.tilePCs[t].encodeTile(src, e.recon, golden, out, e.qIndex, c0, c1)
+				data, err := e.tilePCs[t].encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, c0, c1)
 				if err != nil {
 					errs[t] = err
 					return
@@ -321,7 +342,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			}(t, colStart, colEnd)
 		}
 		c0, c1 := bounds(0)
-		data, err := e.tilePCs[0].encodeTile(src, e.recon, golden, out, e.qIndex, c0, c1)
+		data, err := e.tilePCs[0].encodeTile(src, e.recon, golden, out, e.qIndex, prevCtx, c0, c1)
 		wg.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
@@ -341,6 +362,23 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
+		// The decoder saves the context-update tile's frame-end state into
+		// every refreshed slot; tile zero is that tile. The first export
+		// seeds the families this encoder never codes at the same defaults
+		// the decoder initialized for this frame.
+		if !e.haveCtx {
+			if err := e.frameCtx.InitDefault(e.qIndex); err != nil {
+				return nil, err
+			}
+		}
+		exp := &e.pc
+		if nTiles > 1 {
+			exp = &e.tilePCs[0]
+		}
+		if err := exp.exportCDFs(&e.frameCtx); err != nil {
+			return nil, err
+		}
+		e.haveCtx = true
 	}
 	if refreshGolden {
 		copyFrameInto(&e.golden, *out)

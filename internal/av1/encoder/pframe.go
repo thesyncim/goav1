@@ -94,6 +94,7 @@ func interTileInfo(width, height int, log2Cols uint8) (TileInfo, error) {
 		log2Cols = derived.MaxLog2Cols
 	}
 	tiles := TileInfo{
+		RefreshContext:      true,
 		UniformSpacing:      true,
 		SBCols:              derived.SBCols,
 		SBRows:              derived.SBRows,
