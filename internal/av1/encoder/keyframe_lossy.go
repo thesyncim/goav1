@@ -293,40 +293,123 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
+
+	// Luma mode selection by prediction SAD against the reconstructed
+	// edges: DC always, plus the exact-angle vertical and horizontal copies
+	// when the corresponding edge exists (angles 90 and 180 predict without
+	// edge filtering, so the copies match the decoder bit for bit).
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	mode := tile.IntraModeDC
+	pred := st.predY[:64]
+	{
+		stride := src.YStride
+		dc := dcPredictN(recon.Y, stride, lumaPX, lumaPY, 8, block.HaveTop, block.HaveLeft)
+		sadDC, sadV, sadH := 0, 1<<30, 1<<30
+		for r := range 8 {
+			row := (lumaPY+r)*stride + lumaPX
+			for c := range 8 {
+				d := int(src.Y[row+c]) - int(dc)
+				if d < 0 {
+					d = -d
+				}
+				sadDC += d
+			}
+		}
+		if block.HaveTop {
+			sadV = 0
+			above := (lumaPY-1)*stride + lumaPX
+			for r := range 8 {
+				row := (lumaPY+r)*stride + lumaPX
+				for c := range 8 {
+					d := int(src.Y[row+c]) - int(recon.Y[above+c])
+					if d < 0 {
+						d = -d
+					}
+					sadV += d
+				}
+			}
+		}
+		if block.HaveLeft {
+			sadH = 0
+			for r := range 8 {
+				row := (lumaPY+r)*stride + lumaPX
+				left := int(recon.Y[row-1])
+				for c := range 8 {
+					d := int(src.Y[row+c]) - left
+					if d < 0 {
+						d = -d
+					}
+					sadH += d
+				}
+			}
+		}
+		// DC keeps ties: it skips the angle-delta symbol.
+		switch {
+		case sadV+16 < sadDC && sadV <= sadH:
+			mode = tile.IntraModeVertical
+			above := (lumaPY-1)*stride + lumaPX
+			for r := range 8 {
+				copy(pred[r*8:r*8+8], recon.Y[above:above+8])
+			}
+		case sadH+16 < sadDC:
+			mode = tile.IntraModeHorizontal
+			for r := range 8 {
+				v := recon.Y[(lumaPY+r)*stride+lumaPX-1]
+				for c := range 8 {
+					pred[r*8+c] = v
+				}
+			}
+		default:
+			for i := range 64 {
+				pred[i] = dc
+			}
+		}
+	}
+
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
-	}, tile.IntraModeDC); err != nil {
+	}, mode); err != nil {
 		return fmt.Errorf("luma mode: %w", err)
+	}
+	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
+		return fmt.Errorf("mark intra: %w", err)
+	}
+	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
+		Size: block.Size, Mode: mode,
+	}, 0); err != nil {
+		return fmt.Errorf("angle delta: %w", err)
 	}
 	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
 	if err != nil {
 		return fmt.Errorf("cfl allowed: %w", err)
 	}
 	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
-		Size: block.Size, LumaMode: tile.IntraModeDC, CFLAllowed: cflAllowed,
+		Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
 	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
 		return fmt.Errorf("chroma mode: %w", err)
 	}
+	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
+		return fmt.Errorf("mark chroma intra: %w", err)
+	}
 
 	// Luma TX_8X8 with the tx_type symbol between txb_skip and eob.
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
 	txTypeReq := tile.IntraTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
-		Mode:        tile.IntraModeDC,
+		Mode:        mode,
 		QIndexKnown: true,
 		QIndex:      st.qIndex,
 	}
 	afterSkip := func() error {
 		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
 	}
-	if err := st.encodeTXBAvail(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       tile.TransformSize8x8,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, afterSkip, block.HaveTop, block.HaveLeft); err != nil {
+	}, coeffCtx, st.scan8, afterSkip, pred); err != nil {
 		return fmt.Errorf("luma txb: %w", err)
 	}
 
@@ -365,17 +448,31 @@ func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride
 }
 
 // encodeTXBAvail is encodeTXB with explicit neighbor availability: inside a
-// tile the left/top edges follow the tile boundary, not the frame's.
+// tile the left/top edges follow the tile boundary, not the frame's. The
+// prediction is flat DC from the available reconstructed edges.
 func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
 
 	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
+	pred := st.predU[:n*n] // free during intra TXB coding at n <= 8
+	for i := range pred {
+		pred[i] = dc
+	}
+	return st.encodeTXBPred(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
+}
+
+// encodeTXBPred codes one square n x n transform block against an arbitrary
+// already-materialized prediction (stride n): forward transform the source
+// residual, quantize, write the coefficients, then reconstruct through the
+// decoder's own dequant + inverse transform.
+func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
 
 	residual := &st.resScratch
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
-			residual[r*n+c] = int16(srcPlane[row+c]) - int16(dc)
+			residual[r*n+c] = int16(srcPlane[row+c]) - int16(pred[r*n+c])
 		}
 	}
 	tran := &st.tranScratch
@@ -412,7 +509,7 @@ func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, s
 	for r := range n {
 		row := (py+r)*stride + px
 		for c := range n {
-			v := int(dc) + int(res[r*n+c])
+			v := int(pred[r*n+c]) + int(res[r*n+c])
 			if v < 0 {
 				v = 0
 			} else if v > 255 {
