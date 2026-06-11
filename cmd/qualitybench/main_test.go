@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	goav1 "github.com/thesyncim/goav1"
 )
@@ -456,6 +457,89 @@ func TestWriteStatsRow(t *testing.T) {
 		records[1][header["tx_adst_adst"]] != "1" ||
 		records[1][header["non_dct_txbs"]] != "1" {
 		t.Fatalf("stats row=%v", records[1])
+	}
+}
+
+func TestWriteFrameStatsRow(t *testing.T) {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writeFrameStatsHeader(writer); err != nil {
+		t.Fatal(err)
+	}
+	stats := goav1.EncoderDecisionStats{
+		Frames:             1,
+		InterFrames:        1,
+		Tiles:              2,
+		PartitionDecisions: 8,
+		Blocks:             4,
+		InterBlocks:        4,
+		CodedBlocks:        3,
+		SkipBlocks:         1,
+		CompoundBlocks:     2,
+		NonDCTTXBs:         1,
+	}
+	stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast] = 2
+	stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceGolden] = 2
+	row := benchRow{
+		clip:      "clip",
+		width:     64,
+		height:    64,
+		fps:       30,
+		encoder:   "goav1",
+		targetBPS: 100000,
+		status:    "ok",
+	}
+	frame := goAV1FrameStats{
+		FrameIndex:      3,
+		TemporalID:      2,
+		QIndexBefore:    90,
+		QIndexAfter:     96,
+		Bytes:           123,
+		CumulativeBytes: 456,
+		Duration:        1500 * time.Microsecond,
+		Stats:           stats,
+	}
+	if err := writeFrameStatsRow(writer, row, frame); err != nil {
+		t.Fatal(err)
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(buf.Bytes())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records=%d", len(records))
+	}
+	header := map[string]int{}
+	for i, name := range records[0] {
+		header[name] = i
+	}
+	if records[1][header["frame_index"]] != "3" ||
+		records[1][header["temporal_id"]] != "2" ||
+		records[1][header["qindex_after"]] != "96" ||
+		records[1][header["frame_bits"]] != "984" ||
+		records[1][header["encode_ms"]] != "1.500" ||
+		records[1][header["primary_golden"]] != "2" ||
+		records[1][header["tx_non_dct"]] != "1" {
+		t.Fatalf("frame stats row=%v", records[1])
+	}
+}
+
+func TestDiffDecisionStats(t *testing.T) {
+	before := goav1.EncoderDecisionStats{Frames: 4, Blocks: 10}
+	before.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast] = 3
+	after := goav1.EncoderDecisionStats{Frames: 5, Blocks: 16, NonDCTTXBs: 2}
+	after.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast] = 5
+	got := diffDecisionStats(after, before)
+	if got.Frames != 1 || got.Blocks != 6 || got.NonDCTTXBs != 2 ||
+		got.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast] != 2 {
+		t.Fatalf("diff=%+v", got)
+	}
+	if subU64(1, 2) != 0 {
+		t.Fatal("subU64 underflowed")
 	}
 }
 

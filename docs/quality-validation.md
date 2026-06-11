@@ -69,6 +69,12 @@ modes, transform types, and tile/frame counts. These counters are diagnostic
 evidence for choosing the next parity slice; they are not substitutes for
 decoded-output metrics or BD-rate.
 
+Use `-frame-stats-csv` when investigating rate-control or mode-selection
+regressions. It records goav1 per-frame bytes, temporal layer, keyframe flag,
+qindex before and after encode, encode time, and per-frame decision-counter
+deltas. Treat it as diagnostic evidence for explaining RD results, not as a
+visual-quality metric.
+
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,

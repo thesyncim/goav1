@@ -36,30 +36,31 @@ const (
 )
 
 type benchConfig struct {
-	width            int
-	height           int
-	frames           int
-	fps              int
-	input            string
-	manifestPath     string
-	workdir          string
-	csvPath          string
-	summaryCSVPath   string
-	statsCSVPath     string
-	metadataPath     string
-	anchorEncoder    string
-	encoders         []string
-	bitrates         []int
-	requiredMetrics  []string
-	requiredEncoders []string
-	requireSummary   bool
-	requireCorpus    bool
-	minClips         int
-	layers           int
-	tiles            int
-	goldenInterval   int
-	keyInterval      int
-	keep             bool
+	width             int
+	height            int
+	frames            int
+	fps               int
+	input             string
+	manifestPath      string
+	workdir           string
+	csvPath           string
+	summaryCSVPath    string
+	statsCSVPath      string
+	frameStatsCSVPath string
+	metadataPath      string
+	anchorEncoder     string
+	encoders          []string
+	bitrates          []int
+	requiredMetrics   []string
+	requiredEncoders  []string
+	requireSummary    bool
+	requireCorpus     bool
+	minClips          int
+	layers            int
+	tiles             int
+	goldenInterval    int
+	keyInterval       int
+	keep              bool
 }
 
 type encodeResult struct {
@@ -77,6 +78,7 @@ type encodeResult struct {
 	status           string
 	errText          string
 	stats            goav1.EncoderDecisionStats
+	frameStats       []goAV1FrameStats
 	command          []string
 	settings         map[string]string
 }
@@ -136,6 +138,18 @@ type summaryRow struct {
 	BDRatePct     float64
 	Status        string
 	ErrText       string
+}
+
+type goAV1FrameStats struct {
+	FrameIndex      int
+	Keyframe        bool
+	TemporalID      uint8
+	QIndexBefore    uint8
+	QIndexAfter     uint8
+	Bytes           int64
+	Duration        time.Duration
+	CumulativeBytes int64
+	Stats           goav1.EncoderDecisionStats
 }
 
 type qualitybenchMetadata struct {
@@ -288,6 +302,20 @@ func run() error {
 			return err
 		}
 	}
+	var frameStatsWriter *csv.Writer
+	var frameStatsFile *os.File
+	if cfg.frameStatsCSVPath != "" {
+		frameStatsFile, err = os.Create(cfg.frameStatsCSVPath)
+		if err != nil {
+			return err
+		}
+		defer frameStatsFile.Close()
+		frameStatsWriter = csv.NewWriter(frameStatsFile)
+		defer frameStatsWriter.Flush()
+		if err := writeFrameStatsHeader(frameStatsWriter); err != nil {
+			return err
+		}
+	}
 
 	var rows []benchRow
 	var invocations []encoderInvocationMetadata
@@ -299,7 +327,7 @@ func run() error {
 		return err
 	}
 	for _, clip := range clips {
-		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter)
+		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter, frameStatsWriter)
 		if err != nil {
 			return err
 		}
@@ -333,6 +361,9 @@ func run() error {
 	if cfg.statsCSVPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.statsCSVPath)
 	}
+	if cfg.frameStatsCSVPath != "" {
+		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.frameStatsCSVPath)
+	}
 	if cfg.metadataPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.metadataPath)
 	}
@@ -344,6 +375,11 @@ func run() error {
 	}
 	if statsWriter != nil {
 		if err := statsWriter.Error(); err != nil {
+			return err
+		}
+	}
+	if frameStatsWriter != nil {
+		if err := frameStatsWriter.Error(); err != nil {
 			return err
 		}
 	}
@@ -371,6 +407,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
 	flag.StringVar(&cfg.statsCSVPath, "stats-csv", "", "write goav1 encoder decision diagnostics CSV to this path")
+	flag.StringVar(&cfg.frameStatsCSVPath, "frame-stats-csv", "", "write per-frame goav1 rate-control and decision diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
@@ -748,7 +785,7 @@ func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
 	return nil
 }
 
-func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
+func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer, frameStatsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
 	clipCfg := cfg
 	clipCfg.input = clip.Input
 	clipCfg.width = clip.Width
@@ -848,6 +885,14 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 					return nil, nil, err
 				}
 				statsWriter.Flush()
+			}
+			if frameStatsWriter != nil && result.encoder == "goav1" {
+				for _, frameStats := range result.frameStats {
+					if err := writeFrameStatsRow(frameStatsWriter, row, frameStats); err != nil {
+						return nil, nil, err
+					}
+				}
+				frameStatsWriter.Flush()
 			}
 			writer.Flush()
 			if err := requiredEncoderError(requiredEncoders, clip.Name, result, bitrate); err != nil {
@@ -965,6 +1010,110 @@ func writeStatsRow(writer *csv.Writer, row benchRow, stats goav1.EncoderDecision
 		row.status,
 		row.errText,
 	})
+}
+
+func writeFrameStatsHeader(writer *csv.Writer) error {
+	return writer.Write([]string{
+		"clip", "width", "height", "fps", "encoder", "target_bps",
+		"frame_index", "keyframe", "temporal_id", "qindex_before", "qindex_after",
+		"frame_bytes", "frame_bits", "cumulative_bytes", "encode_ms",
+		"encoded_frames", "keyframes", "inter_frames", "tiles",
+		"partition_decisions", "blocks", "inter_blocks", "intra_blocks",
+		"skip_blocks", "coded_blocks", "compound_blocks", "primary_last",
+		"primary_golden", "tx_non_dct", "status", "error",
+	})
+}
+
+func writeFrameStatsRow(writer *csv.Writer, row benchRow, frame goAV1FrameStats) error {
+	stats := frame.Stats
+	return writer.Write([]string{
+		row.clip,
+		strconv.Itoa(row.width),
+		strconv.Itoa(row.height),
+		strconv.Itoa(row.fps),
+		row.encoder,
+		strconv.Itoa(row.targetBPS),
+		strconv.Itoa(frame.FrameIndex),
+		strconv.FormatBool(frame.Keyframe),
+		strconv.Itoa(int(frame.TemporalID)),
+		strconv.Itoa(int(frame.QIndexBefore)),
+		strconv.Itoa(int(frame.QIndexAfter)),
+		strconv.FormatInt(frame.Bytes, 10),
+		strconv.FormatInt(frame.Bytes*8, 10),
+		strconv.FormatInt(frame.CumulativeBytes, 10),
+		strconv.FormatFloat(float64(frame.Duration)/float64(time.Millisecond), 'f', 3, 64),
+		formatU64(stats.Frames),
+		formatU64(stats.Keyframes),
+		formatU64(stats.InterFrames),
+		formatU64(stats.Tiles),
+		formatU64(stats.PartitionDecisions),
+		formatU64(stats.Blocks),
+		formatU64(stats.InterBlocks),
+		formatU64(stats.IntraBlocks),
+		formatU64(stats.SkipBlocks),
+		formatU64(stats.CodedBlocks),
+		formatU64(stats.CompoundBlocks),
+		formatU64(stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast]),
+		formatU64(stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceGolden]),
+		formatU64(stats.NonDCTTXBs),
+		row.status,
+		row.errText,
+	})
+}
+
+func goAV1DiagnosticsEnabled(cfg benchConfig) bool {
+	return cfg.statsCSVPath != "" || cfg.frameStatsCSVPath != ""
+}
+
+func diffDecisionStats(after, before goav1.EncoderDecisionStats) goav1.EncoderDecisionStats {
+	var out goav1.EncoderDecisionStats
+	out.Frames = subU64(after.Frames, before.Frames)
+	out.Keyframes = subU64(after.Keyframes, before.Keyframes)
+	out.InterFrames = subU64(after.InterFrames, before.InterFrames)
+	out.Tiles = subU64(after.Tiles, before.Tiles)
+	out.PartitionDecisions = subU64(after.PartitionDecisions, before.PartitionDecisions)
+	for i := range out.Partitions {
+		out.Partitions[i] = subU64(after.Partitions[i], before.Partitions[i])
+	}
+	for i := range out.PartitionsByLevel {
+		for j := range out.PartitionsByLevel[i] {
+			out.PartitionsByLevel[i][j] = subU64(after.PartitionsByLevel[i][j], before.PartitionsByLevel[i][j])
+		}
+	}
+	out.Blocks = subU64(after.Blocks, before.Blocks)
+	out.InterBlocks = subU64(after.InterBlocks, before.InterBlocks)
+	out.IntraBlocks = subU64(after.IntraBlocks, before.IntraBlocks)
+	out.SkipBlocks = subU64(after.SkipBlocks, before.SkipBlocks)
+	out.CodedBlocks = subU64(after.CodedBlocks, before.CodedBlocks)
+	out.CompoundBlocks = subU64(after.CompoundBlocks, before.CompoundBlocks)
+	for i := range out.BlockSizes {
+		out.BlockSizes[i] = subU64(after.BlockSizes[i], before.BlockSizes[i])
+	}
+	for i := range out.PrimaryReferenceBlocks {
+		out.PrimaryReferenceBlocks[i] = subU64(after.PrimaryReferenceBlocks[i], before.PrimaryReferenceBlocks[i])
+		out.ReferenceUses[i] = subU64(after.ReferenceUses[i], before.ReferenceUses[i])
+	}
+	for i := range out.InterModes {
+		out.InterModes[i] = subU64(after.InterModes[i], before.InterModes[i])
+	}
+	for i := range out.CompoundInterModes {
+		out.CompoundInterModes[i] = subU64(after.CompoundInterModes[i], before.CompoundInterModes[i])
+	}
+	out.SplitTXBlocks = subU64(after.SplitTXBlocks, before.SplitTXBlocks)
+	out.SingleTXBlocks = subU64(after.SingleTXBlocks, before.SingleTXBlocks)
+	out.LumaTXBs = subU64(after.LumaTXBs, before.LumaTXBs)
+	for i := range out.TXTypes {
+		out.TXTypes[i] = subU64(after.TXTypes[i], before.TXTypes[i])
+	}
+	out.NonDCTTXBs = subU64(after.NonDCTTXBs, before.NonDCTTXBs)
+	return out
+}
+
+func subU64(after, before uint64) uint64 {
+	if after < before {
+		return 0
+	}
+	return after - before
 }
 
 func formatU64(n uint64) string {
@@ -1532,26 +1681,47 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
-	if cfg.statsCSVPath != "" {
+	statsEnabled := goAV1DiagnosticsEnabled(cfg)
+	if statsEnabled {
 		enc.ResetDecisionStats()
 		enc.SetDecisionStatsEnabled(true)
 	}
 	var encodeDuration time.Duration
 	encodedHash := sha256.New()
 	for i, frame := range frames {
+		qBefore := enc.QIndex()
+		statsBefore := goav1.EncoderDecisionStats{}
+		if statsEnabled {
+			statsBefore = enc.DecisionStats()
+		}
 		forceKey := cfg.keyInterval > 0 && i > 0 && i%cfg.keyInterval == 0
 		frameStart := time.Now()
 		encoded, err := enc.Encode(frame, forceKey)
-		encodeDuration += time.Since(frameStart)
+		frameDuration := time.Since(frameStart)
+		encodeDuration += frameDuration
 		if err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
 		}
-		result.bytes += int64(len(encoded.Data))
+		frameBytes := int64(len(encoded.Data))
+		result.bytes += frameBytes
 		_, _ = encodedHash.Write(encoded.Data)
 		if err := writeFrame(out, enc.Reconstruction(), cfg.width, cfg.height); err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
+		}
+		if cfg.frameStatsCSVPath != "" {
+			result.frameStats = append(result.frameStats, goAV1FrameStats{
+				FrameIndex:      i,
+				Keyframe:        encoded.Keyframe,
+				TemporalID:      encoded.TemporalID,
+				QIndexBefore:    qBefore,
+				QIndexAfter:     enc.QIndex(),
+				Bytes:           frameBytes,
+				Duration:        frameDuration,
+				CumulativeBytes: result.bytes,
+				Stats:           diffDecisionStats(enc.DecisionStats(), statsBefore),
+			})
 		}
 	}
 	if err := out.Close(); err != nil {
@@ -1569,7 +1739,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	result.decodedBytes = decodedBytes
 	result.decodedSHA256 = decodedHash
-	if cfg.statsCSVPath != "" {
+	if statsEnabled {
 		result.stats = enc.DecisionStats()
 	}
 	result.duration = encodeDuration
