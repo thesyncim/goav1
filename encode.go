@@ -122,6 +122,12 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	} else if cfg.GoldenInterval > 0 {
 		enc.SetGoldenInterval(cfg.GoldenInterval)
 	}
+	// Every buffer, pool and per-coder scratch is sized now, so the first
+	// real frame pays no initialization latency and steady-state encoding
+	// allocates nothing.
+	if err := enc.Prewarm(); err != nil {
+		return nil, err
+	}
 	return enc, nil
 }
 

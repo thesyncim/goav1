@@ -48,6 +48,9 @@ func BenchmarkVideoEncoderPFrame(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
 	if _, _, err := enc.Encode(frames[0], false); err != nil {
 		b.Fatal(err)
 	}
@@ -109,6 +112,9 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 	}
 	enc, err := encoder.NewVideoEncoder(w, h, 80)
 	if err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}
 	if _, _, err := enc.Encode(frames[0], false); err != nil {
@@ -199,6 +205,9 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 	frames := make([]encoder.SourceFrame420, 32)
 	for i := range frames {
 		frames[i] = makeFrame(i)
+	}
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
 	}
 	if _, _, err := enc.Encode(frames[0], true); err != nil {
 		b.Fatal(err)

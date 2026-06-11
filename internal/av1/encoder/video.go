@@ -417,6 +417,52 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 // encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
 // coder state and double-buffered reconstruction planes so per-frame work
 // allocates only the emitted temporal unit.
+// Prewarm runs the whole encode machinery once on a throwaway frame and
+// resets the stream state, so every lazily sized buffer, worker pool and
+// per-coder scratch exists before the first real frame: steady-state encoding
+// allocates nothing and the first frame pays no initialization latency.
+func (e *VideoEncoder) Prewarm() error {
+	src := SourceFrame420{
+		Y:            make([]byte, e.width*e.height),
+		U:            make([]byte, e.width*e.height/4),
+		V:            make([]byte, e.width*e.height/4),
+		YStride:      e.width,
+		ChromaStride: e.width / 2,
+		Width:        e.renderWidth,
+		Height:       e.renderHeight,
+	}
+	savedQ := e.qIndex
+	if _, _, err := e.Encode(src, true); err != nil {
+		return err
+	}
+	// One frame per temporal layer exercises every reconstruction buffer.
+	frames := e.temporalLayers
+	if frames < 2 {
+		frames = 2
+	} else {
+		frames *= 2
+	}
+	for i := 0; i < frames; i++ {
+		if _, _, err := e.Encode(src, false); err != nil {
+			return err
+		}
+	}
+	if err := e.joinFilter(); err != nil {
+		return err
+	}
+	e.haveKey = false
+	e.haveCtx = false
+	e.haveCtxT1 = false
+	e.frameIndex = 0
+	e.qIndex = savedQ
+	e.rcBuffer = 0
+	e.rcRecentBits = [2]int{}
+	e.sinceGoldenFresh = 0
+	e.hme.armed = false
+	e.lastRecon = SourceFrame420{}
+	return nil
+}
+
 // tileColBounds is the MI column range of one tile column.
 func tileColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
 	c0 := tile.ColStartSB[t] * 16
