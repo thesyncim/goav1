@@ -173,7 +173,7 @@ type RTCFrame struct {
 	DependencyDescriptor []byte
 }
 
-// RTCEncoder encodes an L1T1 or L1T2 WebRTC stream with per-frame dependency
+// RTCEncoder encodes an L1T1, L1T2, or L1T3 WebRTC stream with per-frame dependency
 // descriptors. It requires CBR configuration (TargetBitrate and Framerate).
 type RTCEncoder struct {
 	stream *encoder.WebRTCStream

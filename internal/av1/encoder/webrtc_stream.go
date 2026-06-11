@@ -20,7 +20,7 @@ type WebRTCEncodedFrame struct {
 	Descriptor []byte
 }
 
-// WebRTCStream encodes an L1T1 or L1T2 stream with per-frame dependency
+// WebRTCStream encodes an L1T1, L1T2, or L1T3 stream with per-frame dependency
 // descriptors.
 type WebRTCStream struct {
 	groupPos       int
@@ -37,7 +37,7 @@ func NewWebRTCStream(width, height int, rc RateControlConfig) (*WebRTCStream, er
 }
 
 // NewWebRTCStreamLayers creates a WebRTC stream with the given temporal layer
-// count (1 = L1T1, 2 = L1T2 with droppable odd frames).
+// count (1 = L1T1, 2 = L1T2, 3 = L1T3).
 func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLayers int) (*WebRTCStream, error) {
 	enc, err := NewVideoEncoderCBR(width, height, rc)
 	if err != nil {
@@ -117,7 +117,7 @@ func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedF
 			// buffer 1.
 			settings.UpdateBuffer = 1
 			settings.UpdateBufferSet = true
-		case s.temporalLayers == 3 && tid == 2 && s.groupPos%4 == 3:
+		case s.temporalLayers == 3 && tid == 2 && s.groupPos%4 == 2:
 			// The trailing T2 references the middle layer.
 			settings.ReferenceBuffers[0] = 1
 		}
