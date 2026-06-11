@@ -101,6 +101,7 @@ func main() {
 	statsCSV := flag.String("csv", "", "write per-frame CSV stats to this path")
 	nframes := flag.Int("frames", frames, "frames to encode or dump")
 	warmupFrames := flag.Int("warmup", 20, "frames to exclude from steady-state summary")
+	keyInterval := flag.Int("keyint", 0, "force a keyframe every N frames after frame 0 (0 = only first frame and scene cuts)")
 	infps := flag.Int("fps", fps, "frame rate for rate control and bitrate reporting")
 	flag.Parse()
 	nFrames := *nframes
@@ -110,6 +111,10 @@ func main() {
 	}
 	if *warmupFrames < 0 {
 		fmt.Fprintf(os.Stderr, "invalid warmup frame count %d\n", *warmupFrames)
+		os.Exit(1)
+	}
+	if *keyInterval < 0 {
+		fmt.Fprintf(os.Stderr, "invalid keyframe interval %d\n", *keyInterval)
 		os.Exit(1)
 	}
 	if *width < 16 || *height < 16 || *width%2 != 0 || *height%2 != 0 {
@@ -224,7 +229,8 @@ func main() {
 	var encodeTime time.Duration
 	for n := range nFrames {
 		frameStart := time.Now()
-		out, err := enc.Encode(srcs[n], false)
+		forceKey := *keyInterval > 0 && n > 0 && n%*keyInterval == 0
+		out, err := enc.Encode(srcs[n], forceKey)
 		frameElapsed := time.Since(frameStart)
 		encodeTime += frameElapsed
 		if err != nil {
