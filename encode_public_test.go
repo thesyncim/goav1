@@ -61,7 +61,7 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 		if i >= 1 && i < 6 && i%2 == 1 && out.TemporalID != 1 {
 			t.Fatalf("frame %d temporal id %d, want 1", i, out.TemporalID)
 		}
-		tus = append(tus, out.Data)
+		tus = append(tus, append([]byte(nil), out.Data...))
 		r := enc.Reconstruction()
 		recons = append(recons, snap{
 			y: append([]byte(nil), r.Y...),
@@ -149,7 +149,7 @@ func TestPublicRTCEncoder(t *testing.T) {
 		if i == 0 && !out.Keyframe {
 			t.Fatal("first frame not a keyframe")
 		}
-		tus = append(tus, out.Data)
+		tus = append(tus, append([]byte(nil), out.Data...))
 	}
 	dec, err := goav1.NewDecoder(tus)
 	if err != nil {

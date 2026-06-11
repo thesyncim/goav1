@@ -35,7 +35,7 @@ func ExampleVideoEncoder() {
 		if err != nil {
 			panic(err)
 		}
-		stream = append(stream, out.Data)
+		stream = append(stream, append([]byte(nil), out.Data...))
 		fmt.Printf("frame %d: keyframe=%v\n", i, out.Keyframe)
 	}
 	dec, err := goav1.NewDecoder(stream)

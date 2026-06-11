@@ -78,7 +78,7 @@ func TestVideoEncoderL1T2DroppableLayer(t *testing.T) {
 		if tid != wantTID {
 			t.Fatalf("frame %d tid=%d want %d", i, tid, wantTID)
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		recons = append(recons, cloneFrame(enc.Recon()))
 		tids = append(tids, tid)
 	}

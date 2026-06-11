@@ -78,7 +78,7 @@ func TestVideoEncoderCBRConvergesAndDecodes(t *testing.T) {
 		if i >= warmup {
 			steadyBits += len(tu) * 8
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		recons = append(recons, cloneFrame(enc.Recon()))
 	}
 	if len(qSeen) < 3 {

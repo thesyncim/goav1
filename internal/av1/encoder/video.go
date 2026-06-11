@@ -2,7 +2,6 @@ package encoder
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -55,14 +54,43 @@ type VideoEncoder struct {
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
 
+	// Steady-state scratch: per-frame slices and the temporal-unit buffers
+	// persist across frames so the encode path stays allocation-free. The
+	// returned temporal unit aliases tuScratch and stays valid until the
+	// next encode call.
+	payloads      []TilePayload
+	tileErrs      []error
+	tuGroup       []byte
+	tuScratch     []byte
+	tuScratch2    []byte
+	tileWork      chan int
+	tileDone      chan struct{}
+	tileStarted   bool
+	tileJobParams struct {
+		src, refRecon SourceFrame420
+		golden        *SourceFrame420
+		out           *SourceFrame420
+		effQ          uint8
+		prevCtx       *frameCDFs
+		tile          TileInfo
+		miCols        uint16
+	}
+
 	// The in-loop filters of a finished frame run concurrently with the
 	// next frame's source-only stages (padding and the coarse search);
 	// filterDone carries the pass result and joinFilter is the barrier
 	// every reader of the filtered reconstruction or the applier state
 	// crosses first.
 	filterDone    chan error
+	filterWork    chan struct{}
+	filterStarted bool
 	filterPending bool
 	filterErr     error
+	filterParams  struct {
+		out     *SourceFrame420
+		lfLevel uint8
+		cdef    parser.CDEFParams
+	}
 
 	// frameCtx chains the adapted symbol contexts across the base layer:
 	// each non-droppable frame names its predecessor through
@@ -294,6 +322,9 @@ func (e *VideoEncoder) TemporalID() uint8 {
 // Encode encodes one frame and returns its temporal unit plus whether it was
 // coded as a keyframe. The first frame (and any frame with forceKey set) is a
 // keyframe; every other frame predicts from the latest layer-0 reconstruction.
+// Encode codes one source frame into a temporal unit. The returned slice
+// aliases an encoder-owned buffer reused by the next call; callers that
+// retain it must copy.
 func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, error) {
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
@@ -386,6 +417,72 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 // encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
 // coder state and double-buffered reconstruction planes so per-frame work
 // allocates only the emitted temporal unit.
+// tileColBounds is the MI column range of one tile column.
+func tileColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
+	c0 := tile.ColStartSB[t] * 16
+	c1 := tile.ColStartSB[t+1] * 16
+	if c1 > miCols {
+		c1 = miCols
+	}
+	return c0, c1
+}
+
+// startTileWorkers launches the persistent tile-column workers once; they
+// park on the job channel between frames so the steady-state encode path
+// spawns no goroutines.
+func (e *VideoEncoder) startTileWorkers() {
+	if e.tileStarted {
+		return
+	}
+	e.tileWork = make(chan int, 16)
+	e.tileDone = make(chan struct{}, 16)
+	for range 15 {
+		go func() {
+			for t := range e.tileWork {
+				tj := &e.tileJobParams
+				c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
+				data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, c0, c1)
+				if err != nil {
+					e.tileErrs[t] = err
+				} else {
+					e.payloads[t].Data = data
+				}
+				e.tileDone <- struct{}{}
+			}
+		}()
+	}
+	e.tileStarted = true
+}
+
+// startFilterWorker launches the persistent in-loop filter worker once; it
+// parks between frames and reads its inputs from filterParams.
+func (e *VideoEncoder) startFilterWorker() {
+	if e.filterStarted {
+		return
+	}
+	e.filterDone = make(chan error, 1)
+	e.filterWork = make(chan struct{}, 1)
+	go func() {
+		for range e.filterWork {
+			p := &e.filterParams
+			if err := e.lf.apply(p.out, parser.LoopFilterParams{
+				LevelY: [2]uint8{p.lfLevel, p.lfLevel},
+				LevelU: p.lfLevel,
+				LevelV: p.lfLevel,
+			}); err != nil {
+				e.filterDone <- fmt.Errorf("loop filter apply: %w", err)
+				continue
+			}
+			if err := e.cdefApp.apply(p.out, p.cdef, &e.lf.filtMap); err != nil {
+				e.filterDone <- fmt.Errorf("cdef apply: %w", err)
+				continue
+			}
+			e.filterDone <- nil
+		}
+	}()
+	e.filterStarted = true
+}
+
 // joinFilter blocks until a backgrounded in-loop filter pass finishes. It
 // must precede any read of the filtered reconstruction and any reuse of the
 // loop-filter or CDEF applier state.
@@ -560,7 +657,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
 	}
-	payloads := make([]TilePayload, nTiles)
+	if cap(e.payloads) < nTiles {
+		e.payloads = make([]TilePayload, nTiles)
+		e.tileErrs = make([]error, nTiles)
+	}
+	payloads := e.payloads[:nTiles]
+	for i := range payloads {
+		payloads[i] = TilePayload{}
+	}
 	if lfLevel > 0 {
 		e.pc.st.lfMap = &e.lf.filtMap
 		for t := range e.tilePCs {
@@ -583,37 +687,31 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 		payloads[0].Data = data
 	} else {
-		// One goroutine per tile column beyond the first: tiles share the
-		// read-only source and reference planes and write disjoint column
-		// ranges of the output reconstruction. Tile zero runs on the calling
-		// goroutine so a two-tile frame pays a single handoff.
+		// One persistent worker per tile column beyond the first: tiles
+		// share the read-only source and reference planes and write
+		// disjoint column ranges of the output reconstruction. Tile zero
+		// runs on the calling goroutine (as tilePCs[0], the context-update
+		// tile the CDF export reads) so a two-tile frame pays a single
+		// handoff; the workers park on a channel between frames so the
+		// steady state spawns no goroutines and allocates no closures.
 		miCols := uint16(src.Width / 4)
-		bounds := func(t int) (uint16, uint16) {
-			c0 := header.Tile.ColStartSB[t] * 16
-			c1 := header.Tile.ColStartSB[t+1] * 16
-			if c1 > miCols {
-				c1 = miCols
-			}
-			return c0, c1
+		errs := e.tileErrs[:nTiles]
+		for i := range errs {
+			errs[i] = nil
 		}
-		var wg sync.WaitGroup
-		errs := make([]error, nTiles)
+		tj := &e.tileJobParams
+		tj.src, tj.refRecon, tj.golden, tj.out = src, refRecon, golden, out
+		tj.effQ, tj.prevCtx = effQ, prevCtx
+		tj.tile, tj.miCols = header.Tile, miCols
+		e.startTileWorkers()
 		for t := 1; t < nTiles; t++ {
-			colStart, colEnd := bounds(t)
-			wg.Add(1)
-			go func(t int, c0, c1 uint16) {
-				defer wg.Done()
-				data, err := e.tilePCs[t].encodeTile(src, refRecon, golden, out, effQ, prevCtx, c0, c1)
-				if err != nil {
-					errs[t] = err
-					return
-				}
-				payloads[t].Data = data
-			}(t, colStart, colEnd)
+			e.tileWork <- t
 		}
-		c0, c1 := bounds(0)
-		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, c0, c1)
-		wg.Wait()
+		c0, c1 := tileColBounds(header.Tile, 0, miCols)
+		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, c0, c1)
+		for t := 1; t < nTiles; t++ {
+			<-e.tileDone
+		}
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
 		}
@@ -628,28 +726,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		// The filters run behind the temporal-unit assembly and the next
 		// frame's source-only stages; everything reading the filtered
 		// planes or the applier state joins first.
-		if e.filterDone == nil {
-			e.filterDone = make(chan error, 1)
-		}
+		e.startFilterWorker()
+		e.filterParams.out = out
+		e.filterParams.lfLevel = lfLevel
+		e.filterParams.cdef = cdefParserParams(header.CDEF)
 		e.filterPending = true
-		cdefParams := cdefParserParams(header.CDEF)
-		go func() {
-			if err := e.lf.apply(out, parser.LoopFilterParams{
-				LevelY: [2]uint8{lfLevel, lfLevel},
-				LevelU: lfLevel,
-				LevelV: lfLevel,
-			}); err != nil {
-				e.filterDone <- fmt.Errorf("loop filter apply: %w", err)
-				return
-			}
-			if err := e.cdefApp.apply(out, cdefParams, &e.lf.filtMap); err != nil {
-				e.filterDone <- fmt.Errorf("cdef apply: %w", err)
-				return
-			}
-			e.filterDone <- nil
-		}()
+		e.filterWork <- struct{}{}
 	}
-	tu, err := assembleInterTU(seq, header, payloads, temporalID)
+	tu, err := assembleInterTU(seq, header, payloads, temporalID, &e.tuGroup, &e.tuScratch)
 	if err != nil {
 		return nil, err
 	}

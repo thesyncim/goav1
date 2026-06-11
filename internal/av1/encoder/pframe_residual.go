@@ -55,7 +55,8 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
 	header.References = &refState
 
-	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0)
+	var groupScratch, outScratch []byte
+	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
 	if err != nil {
 		return nil, SourceFrame420{}, err
 	}
@@ -64,17 +65,21 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 
 // assembleInterTU wraps one coded tile into a TD + inter frame header + tile
 // group temporal unit.
-func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayloads []TilePayload, temporalID uint8) ([]byte, error) {
+func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayloads []TilePayload, temporalID uint8, groupScratch, outScratch *[]byte) ([]byte, error) {
 	endTile := uint16(len(tilePayloads) - 1)
 	groupSize, err := TileGroupPayloadSize(header.Tile, 0, endTile, tilePayloads)
 	if err != nil {
 		return nil, fmt.Errorf("size tile group: %w", err)
 	}
-	group := make([]byte, 0, groupSize)
+	if cap(*groupScratch) < groupSize {
+		*groupScratch = make([]byte, 0, groupSize+groupSize/2)
+	}
+	group := (*groupScratch)[:0]
 	group, err = AppendTileGroupPayload(group, header.Tile, 0, endTile, tilePayloads)
 	if err != nil {
 		return nil, fmt.Errorf("append tile group: %w", err)
 	}
+	*groupScratch = group
 	groupOBU := OBU{Type: obu.TypeTileGroup, TemporalID: temporalID, Payload: group}
 	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
 	if err != nil {
@@ -85,7 +90,12 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 		return nil, fmt.Errorf("size inter header: %w", err)
 	}
 	tdSize := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
-	out := make([]byte, 0, tdSize+frameSize+groupOBUSize)
+	total := tdSize + frameSize + groupOBUSize
+	if cap(*outScratch) < total {
+		*outScratch = make([]byte, 0, total+total/2)
+	}
+	out := (*outScratch)[:0]
+	*outScratch = out
 	out, err = AppendLowOverheadOBU(out, OBU{Type: obu.TypeTemporalDelimiter})
 	if err != nil {
 		return nil, err
@@ -120,6 +130,7 @@ type pframeCoder struct {
 	scratch   tile.BlockLoopScratch
 	carrier   tile.BlockLoopContextCarrier
 	writerBuf []byte
+	writer    entropy.Writer
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
@@ -268,15 +279,12 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	}
 	st := &pc.st
 
-	w := entropy.NewWriter(pc.writerBuf[:0])
-	st.w = &w
+	pc.writer.Reset(pc.writerBuf[:0])
+	st.w = &pc.writer
 	st.interTxTypeReq = tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
 		QIndexKnown: true,
 		QIndex:      qIndex,
-	}
-	st.afterSkipInter = func() error {
-		return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, transform.TypeDCTDCT)
 	}
 	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
@@ -284,8 +292,15 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		QIndexKnown: true,
 		QIndex:      qIndex,
 	}
-	st.afterSkipIntra = func() error {
-		return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
+	// The after-skip hooks close over the stable state pointer only, so
+	// they persist across frames instead of allocating per tile.
+	if st.afterSkipInter == nil {
+		st.afterSkipInter = func() error {
+			return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, transform.TypeDCTDCT)
+		}
+		st.afterSkipIntra = func() error {
+			return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
+		}
 	}
 
 	// av1_compute_rd_mult_based_on_qindex, inter shape at 8-bit: the DC step
@@ -539,10 +554,10 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, miCols, miRows)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
-	return w.Finish()
+	return pc.writer.Finish()
 }
 
 // encodePBlock codes one inter block (8x8 or 16x16) with residual: the inter

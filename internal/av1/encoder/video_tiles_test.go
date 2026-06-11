@@ -54,7 +54,7 @@ func TestVideoEncoderTileColumns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("encode frame %d: %v", i, err)
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		recons = append(recons, cloneFrame(enc.Recon()))
 	}
 	dec, err := goav1.NewDecoder(tus)

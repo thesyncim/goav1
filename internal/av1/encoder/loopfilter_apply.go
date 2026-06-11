@@ -11,7 +11,6 @@ package encoder
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -98,6 +97,62 @@ type loopFilterApplier struct {
 	filtMap    threading.FrameWorkLoopFilterMap
 	event      decoder.Event
 	bound      bool
+
+	// Persistent band workers: per-frame goroutine spawns allocate their
+	// closures, so the workers park on a job channel for the applier's
+	// lifetime and read their per-frame inputs from these fields.
+	work     chan lfJob
+	done     chan struct{}
+	started  bool
+	jobCtx   decoder.FrameWorkPostFilterContext
+	output   frame.Frame
+	counts   [lfPlanBands]uint32
+	errs     [lfPlanBands]error
+	planeErr [3]error
+}
+
+// lfJob is one parked-worker task: an edge-planning band or a plane apply.
+type lfJob struct {
+	plan   bool
+	band   int
+	r0, r1 int
+	plane  int
+}
+
+// startWorkers launches the persistent workers once.
+func (a *loopFilterApplier) startWorkers() {
+	if a.started {
+		return
+	}
+	a.work = make(chan lfJob, lfPlanBands)
+	a.done = make(chan struct{}, lfPlanBands)
+	for range lfPlanBands {
+		go func() {
+			for j := range a.work {
+				if j.plan {
+					plan, err := a.jobCtx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
+						Map:             a.filtMap,
+						Edges:           a.bandBufs[j.band],
+						TrustedCoverage: true,
+						MIRowStart:      j.r0,
+						MIRowEnd:        j.r1,
+					})
+					switch {
+					case err != nil:
+						a.errs[j.band] = err
+					case plan.DroppedEdges != 0:
+						a.errs[j.band] = fmt.Errorf("encoder: loop-filter band %d dropped %d edges", j.band, plan.DroppedEdges)
+					default:
+						a.counts[j.band] = plan.StoredEdges
+					}
+				} else {
+					_, a.planeErr[j.plane] = a.jobCtx.ApplyPlannedLoopFilterPlaneEdges(a.planeEdges[j.plane], nil, loopfilter.Plane(j.plane))
+				}
+				a.done <- struct{}{}
+			}
+		}()
+	}
+	a.started = true
 }
 
 // lfPlanBands is the fan-out width of the banded edge planning pass. The
@@ -184,7 +239,7 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 	}
 	event := a.event
 	event.LoopFilter = lf
-	output := frame.Frame{
+	a.output = frame.Frame{
 		Format: frame.Format{
 			Width: recon.Width, Height: recon.Height,
 			BitDepth: 8, SubsamplingX: true, SubsamplingY: true,
@@ -194,11 +249,12 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 		U:      frame.Plane{Pix: recon.U, Stride: recon.ChromaStride, Width: recon.Width / 2, Height: recon.Height / 2},
 		V:      frame.Plane{Pix: recon.V, Stride: recon.ChromaStride, Width: recon.Width / 2, Height: recon.Height / 2},
 	}
-	ctx := decoder.FrameWorkPostFilterContext{
+	a.jobCtx = decoder.FrameWorkPostFilterContext{
 		Event:         event,
-		Output:        &output,
+		Output:        &a.output,
 		LoopFilterMap: &a.filtMap,
 	}
+	a.startWorkers()
 
 	// Banded planning: partition block-origin rows across workers, then
 	// concatenate the per-band edges in band order (which reproduces the
@@ -206,41 +262,26 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 	rows := int(a.filtMap.Rows)
 	bands := len(a.bandBufs)
 	rowsPerBand := (rows + bands - 1) / bands
-	var wg sync.WaitGroup
-	counts := make([]uint32, bands)
-	errs := make([]error, bands)
+	counts := a.counts[:bands]
+	errs := a.errs[:bands]
+	jobs := 0
 	for b := range bands {
 		r0 := b * rowsPerBand
 		r1 := min(r0+rowsPerBand, rows)
+		counts[b], errs[b] = 0, nil
 		if r0 >= r1 {
 			continue
 		}
-		wg.Add(1)
-		go func(b, r0, r1 int) {
-			defer wg.Done()
-			plan, err := ctx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
-				Map:             a.filtMap,
-				Edges:           a.bandBufs[b],
-				TrustedCoverage: true,
-				MIRowStart:      r0,
-				MIRowEnd:        r1,
-			})
-			if err != nil {
-				errs[b] = err
-				return
-			}
-			if plan.DroppedEdges != 0 {
-				errs[b] = fmt.Errorf("encoder: loop-filter band %d dropped %d edges", b, plan.DroppedEdges)
-				return
-			}
-			counts[b] = plan.StoredEdges
-		}(b, r0, r1)
+		a.work <- lfJob{plan: true, band: b, r0: r0, r1: r1}
+		jobs++
 	}
-	wg.Wait()
+	for range jobs {
+		<-a.done
+	}
 	// Partition the per-band edges by plane, preserving band (row-major)
 	// order within each plane; the three planes touch disjoint surfaces, so
 	// their sequential kernel passes run concurrently.
-	if a.planeEdges[0] == nil {
+	if cap(a.planeEdges[0]) < len(a.edges) {
 		for p := range a.planeEdges {
 			a.planeEdges[p] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges))
 		}
@@ -256,21 +297,21 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 			a.planeEdges[e.Plane] = append(a.planeEdges[e.Plane], e)
 		}
 	}
-	var applyErrs [3]error
+	jobs = 0
 	for p := range a.planeEdges {
+		a.planeErr[p] = nil
 		if len(a.planeEdges[p]) == 0 {
 			continue
 		}
-		wg.Add(1)
-		go func(p int) {
-			defer wg.Done()
-			_, applyErrs[p] = ctx.ApplyPlannedLoopFilterPlaneEdges(a.planeEdges[p], nil, loopfilter.Plane(p))
-		}(p)
+		a.work <- lfJob{plane: p}
+		jobs++
 	}
-	wg.Wait()
-	for p := range applyErrs {
-		if applyErrs[p] != nil {
-			return applyErrs[p]
+	for range jobs {
+		<-a.done
+	}
+	for p := range a.planeErr {
+		if a.planeErr[p] != nil {
+			return a.planeErr[p]
 		}
 	}
 	return nil

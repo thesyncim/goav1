@@ -12,7 +12,6 @@ package encoder
 import (
 	"fmt"
 	"math"
-	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
@@ -104,6 +103,37 @@ type cdefApplier struct {
 	seqHeader parser.SequenceHeader
 	frameSize parser.FrameSize
 	bound     bool
+
+	// Persistent band workers reading their per-frame inputs from these
+	// fields, so the apply path spawns no goroutines and allocates nothing.
+	work    chan [2]int
+	done    chan struct{}
+	started bool
+	jobCtx  decoder.FrameWorkPostFilterContext
+	jobReq  decoder.FrameWorkCDEFPostFilterRequest
+	output  frame.Frame
+	errs    [cdefApplyBands]error
+}
+
+// startWorkers launches the persistent unit-row band workers once.
+func (a *cdefApplier) startWorkers() {
+	if a.started {
+		return
+	}
+	a.work = make(chan [2]int, cdefApplyBands)
+	a.done = make(chan struct{}, cdefApplyBands)
+	for b := range cdefApplyBands {
+		go func(b int) {
+			for j := range a.work {
+				band := a.jobReq
+				band.InputScratch = a.bandIn[b]
+				band.UnitDstScratch = a.bandUnit[b]
+				_, a.errs[b] = a.jobCtx.ApplyCDEFPostFilterUnitRows(band, j[0], j[1])
+				a.done <- struct{}{}
+			}
+		}(b)
+	}
+	a.started = true
 }
 
 type cdefDirectionGrid = cdef.DirectionGrid
@@ -231,7 +261,7 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		return nil
 	}
 	a.markFromLoopFilterMap(lfMap)
-	output := frame.Frame{
+	a.output = frame.Frame{
 		Format: frame.Format{
 			Width: recon.Width, Height: recon.Height,
 			BitDepth: 8, SubsamplingX: true, SubsamplingY: true,
@@ -241,50 +271,49 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		U:      frame.Plane{Pix: recon.U, Stride: recon.ChromaStride, Width: recon.Width / 2, Height: recon.Height / 2},
 		V:      frame.Plane{Pix: recon.V, Stride: recon.ChromaStride, Width: recon.Width / 2, Height: recon.Height / 2},
 	}
-	ctx := decoder.FrameWorkPostFilterContext{
+	a.jobCtx = decoder.FrameWorkPostFilterContext{
 		Event: decoder.Event{
 			SequenceHeader: a.seqHeader,
 			FrameSize:      a.frameSize,
 			CDEF:           cdefParams,
 		},
-		Output:        &output,
+		Output:        &a.output,
 		LoopFilterMap: lfMap,
 	}
-	ctx = ctx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter)
-	req := decoder.FrameWorkCDEFPostFilterRequest{
+	a.jobCtx = a.jobCtx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter)
+	a.jobReq = decoder.FrameWorkCDEFPostFilterRequest{
 		IndexMap:      a.idxMap,
 		SampleScratch: a.samples,
 		DirectionGrid: a.dirGrid,
 		VarianceGrid:  a.varGrid,
 	}
-	if err := ctx.LoadCDEFPostFilterSamples(req); err != nil {
+	if err := a.jobCtx.LoadCDEFPostFilterSamples(a.jobReq); err != nil {
 		return err
 	}
 	bands := cdefApplyBands
 	if a.unitRows < bands {
 		bands = 1
 	}
-	var wg sync.WaitGroup
-	errs := make([]error, bands)
+	a.startWorkers()
+	for b := range a.errs {
+		a.errs[b] = nil
+	}
+	jobs := 0
 	for b := 0; b < bands; b++ {
 		r0 := b * a.unitRows / bands
 		r1 := (b + 1) * a.unitRows / bands
 		if r0 >= r1 {
 			continue
 		}
-		wg.Add(1)
-		go func(b, r0, r1 int) {
-			defer wg.Done()
-			band := req
-			band.InputScratch = a.bandIn[b]
-			band.UnitDstScratch = a.bandUnit[b]
-			_, errs[b] = ctx.ApplyCDEFPostFilterUnitRows(band, r0, r1)
-		}(b, r0, r1)
+		a.work <- [2]int{r0, r1}
+		jobs++
 	}
-	wg.Wait()
-	for b := range errs {
-		if errs[b] != nil {
-			return errs[b]
+	for range jobs {
+		<-a.done
+	}
+	for b := range a.errs {
+		if a.errs[b] != nil {
+			return a.errs[b]
 		}
 	}
 	return nil

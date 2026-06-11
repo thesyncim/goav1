@@ -46,7 +46,7 @@ func TestVideoEncoderOddDimensions(t *testing.T) {
 				if err != nil {
 					t.Fatalf("frame %d: %v", i, err)
 				}
-				tus = append(tus, tu)
+				tus = append(tus, append([]byte(nil), tu...))
 				rc := enc.Recon()
 				if rc.Width != w || rc.Height != h {
 					t.Fatalf("recon view %dx%d, want %dx%d", rc.Width, rc.Height, w, h)

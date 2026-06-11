@@ -1,8 +1,6 @@
 package encoder
 
 import (
-	"sync"
-
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
@@ -33,6 +31,13 @@ type hmeState struct {
 	// stayed high - no match anywhere in the +-32px reach. A frame where
 	// most regions fail is a scene cut.
 	bandCut [hmeBands]int
+
+	// Persistent band workers: spawning goroutines per frame allocates a
+	// closure and often a fresh stack each time, so the four workers park
+	// on a job channel for the encoder's lifetime instead.
+	work    chan hmeJob
+	done    chan struct{}
+	started bool
 	// bandStatic counts regions whose zero-motion match was already below
 	// the search bar - the static-content signal for the layer offset.
 	bandStatic [hmeBands]int
@@ -40,6 +45,38 @@ type hmeState struct {
 
 // hmeBands is the row-band fan-out of the pyramid build and region search.
 const hmeBands = 4
+
+// hmeJob is one band's worth of work for the persistent workers: a build
+// slice of the quarter pyramid or a search slice of the region grid.
+type hmeJob struct {
+	build     bool
+	band      int
+	r0, r1    int
+	src       []byte
+	srcStride int
+}
+
+// startWorkers launches the persistent band workers once.
+func (h *hmeState) startWorkers() {
+	if h.started {
+		return
+	}
+	h.work = make(chan hmeJob, hmeBands)
+	h.done = make(chan struct{}, hmeBands)
+	for range hmeBands {
+		go func() {
+			for j := range h.work {
+				if j.build {
+					buildQuarterPlane(h.srcQ[j.r0*h.qw:], j.src[j.r0*4*j.srcStride:], j.srcStride, h.qw, j.r1-j.r0)
+				} else {
+					h.searchRows(j.band, j.r0, j.r1)
+				}
+				h.done <- struct{}{}
+			}
+		}()
+	}
+	h.started = true
+}
 
 // hmeCutRegionSAD marks a region as unmatched: ~25 per quarter-res sample
 // over an 8x8 block, far above textured-content match SADs.
@@ -103,24 +140,25 @@ func (h *hmeState) run(src SourceFrame420) {
 		h.seedSADs = make([]int32, cols*rows)
 	}
 	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
+	h.startWorkers()
 	// Build and search fan out over row bands: both passes write disjoint
 	// rows and the search reads only completed pyramid planes.
-	var wg sync.WaitGroup
+	jobs := 0
 	for b := range hmeBands {
 		q0 := b * qh / hmeBands
 		q1 := (b + 1) * qh / hmeBands
 		if q0 >= q1 {
 			continue
 		}
-		wg.Add(1)
-		go func(q0, q1 int) {
-			defer wg.Done()
-			buildQuarterPlane(h.srcQ[q0*qw:], src.Y[q0*4*src.YStride:], src.YStride, qw, q1-q0)
-		}(q0, q1)
+		h.work <- hmeJob{build: true, r0: q0, r1: q1, src: src.Y, srcStride: src.YStride}
+		jobs++
 	}
-	wg.Wait()
+	for range jobs {
+		<-h.done
+	}
 	defer func() { h.srcQ, h.refQ = h.refQ, h.srcQ }()
 
+	jobs = 0
 	for b := range hmeBands {
 		r0 := b * rows / hmeBands
 		r1 := (b + 1) * rows / hmeBands
@@ -129,13 +167,12 @@ func (h *hmeState) run(src SourceFrame420) {
 		}
 		h.bandCut[b] = 0
 		h.bandStatic[b] = 0
-		wg.Add(1)
-		go func(b, r0, r1 int) {
-			defer wg.Done()
-			h.searchRows(b, r0, r1)
-		}(b, r0, r1)
+		h.work <- hmeJob{band: b, r0: r0, r1: r1}
+		jobs++
 	}
-	wg.Wait()
+	for range jobs {
+		<-h.done
+	}
 }
 
 // cutDetected reports whether the last run looks like a scene cut: at least

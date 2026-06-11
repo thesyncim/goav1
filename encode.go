@@ -126,6 +126,9 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 }
 
 // Encode encodes one frame. forceKey restarts the stream with a keyframe.
+// The returned Data aliases an encoder-owned buffer that is reused by the
+// next Encode call - send or copy it before encoding the next frame, the
+// same lifetime the Reconstruction planes have.
 func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, error) {
 	tid := e.enc.TemporalID()
 	tu, key, err := e.enc.Encode(frame, forceKey)

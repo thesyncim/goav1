@@ -68,6 +68,17 @@ func NewWriter(dst []byte) Writer {
 	}
 }
 
+// Reset rearms the writer over dst, the in-place form of NewWriter for
+// callers that keep one Writer alive across streams.
+func (w *Writer) Reset(dst []byte) {
+	w.buf = dst[:cap(dst)]
+	w.offs = 0
+	w.low = 0
+	w.rng = 0x8000
+	w.cnt = -9
+	w.err = nil
+}
+
 // ensure guarantees len(w.buf) >= n, growing (amortized) like the C realloc.
 func (w *Writer) ensure(n int) {
 	if n <= len(w.buf) {

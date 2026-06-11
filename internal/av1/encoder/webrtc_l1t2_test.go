@@ -83,7 +83,7 @@ func TestWebRTCStreamL1T2Metadata(t *testing.T) {
 		if wantTID == 0 {
 			lastT0 = ef.Info.FrameID
 		}
-		tus = append(tus, ef.TU)
+		tus = append(tus, append([]byte(nil), ef.TU...))
 	}
 
 	dec, err := goav1.NewDecoder(tus)

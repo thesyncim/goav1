@@ -58,7 +58,7 @@ func TestVideoEncoderFastPan(t *testing.T) {
 		} else {
 			interBytes += len(tu)
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		rc := enc.Recon()
 		cp := encoder.SourceFrame420{
 			Y: append([]byte(nil), rc.Y...), U: append([]byte(nil), rc.U...), V: append([]byte(nil), rc.V...),

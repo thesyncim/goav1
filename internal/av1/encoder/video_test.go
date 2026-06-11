@@ -73,7 +73,7 @@ func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
 		} else {
 			interTotal += len(tu)
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		recons = append(recons, cloneFrame(enc.Recon()))
 	}
 	avgInter := interTotal / (frames - 1)

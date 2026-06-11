@@ -83,7 +83,7 @@ func TestWebRTCStreamPackagesDecodableFrames(t *testing.T) {
 				t.Fatalf("frame %d missing descriptor", i)
 			}
 		}
-		tus = append(tus, ef.TU)
+		tus = append(tus, append([]byte(nil), ef.TU...))
 	}
 
 	dec, err := goav1.NewDecoder(tus)

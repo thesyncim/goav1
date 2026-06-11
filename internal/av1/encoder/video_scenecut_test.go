@@ -58,7 +58,7 @@ func TestVideoEncoderSceneCutAutoKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("frame %d: %v", i, err)
 		}
-		tus = append(tus, tu)
+		tus = append(tus, append([]byte(nil), tu...))
 		keys = append(keys, key)
 		rc := enc.Recon()
 		recons = append(recons, encoder.SourceFrame420{
