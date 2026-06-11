@@ -95,6 +95,42 @@ func TestAppendWebRTCDependencyDescriptorSingleChainStructure(t *testing.T) {
 	}
 }
 
+func TestAppendWebRTCDependencyDescriptorL1T3TemplateDTIs(t *testing.T) {
+	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL1T3,
+	})
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	for temporalID, wantTemplate := range [...]uint8{0, 1, 2} {
+		info := WebRTCGenericFrameInfo{
+			FrameID:       uint64(100 + temporalID),
+			TemporalID:    uint8(temporalID),
+			DependencyNum: 1,
+			DTINum:        1,
+		}
+		if temporalID == 0 {
+			info.DTIs[0] = DecodeTargetSwitch
+		} else {
+			info.DTIs[0] = DecodeTargetDiscardable
+		}
+		info.Dependencies[0] = info.FrameID - 1
+
+		match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
+		if err != nil {
+			t.Fatalf("match temporal %d: %v", temporalID, err)
+		}
+		if match.templateIndex != wantTemplate || match.needCustomDTIs {
+			t.Fatalf("match temporal %d = %+v", temporalID, match)
+		}
+		var buf [16]byte
+		if _, err := AppendWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, false); err != nil {
+			t.Fatalf("AppendWebRTCDependencyDescriptor temporal %d: %v", temporalID, err)
+		}
+	}
+}
+
 func TestAppendWebRTCDependencyDescriptorRejectsInvalid(t *testing.T) {
 	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
 		Resolution:  Resolution{Width: 640, Height: 360},

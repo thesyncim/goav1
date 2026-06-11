@@ -135,6 +135,35 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	}
 }
 
+func TestWebRTCFrameDependencyStructureForConfigL1T3(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL1T3,
+	}
+	got, err := WebRTCFrameDependencyStructureForConfig(cfg)
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	if got.NumDecodeTargets != 1 || got.NumChains != 1 || got.TemplateNum != 3 || got.ResolutionNum != 1 {
+		t.Fatalf("shape = %+v", got)
+	}
+	if got.Resolutions[0] != (Resolution{Width: 640, Height: 360}) {
+		t.Fatalf("resolutions = %+v", got.Resolutions)
+	}
+	want := [...]DecodeTargetIndication{
+		DecodeTargetSwitch,
+		DecodeTargetDiscardable,
+		DecodeTargetDiscardable,
+	}
+	for i, wantDTI := range want {
+		template := got.Templates[i]
+		if template.SpatialID != 0 || template.TemporalID != uint8(i) ||
+			template.DTINum != 1 || template.DTIs[0] != wantDTI {
+			t.Fatalf("template[%d] = %+v", i, template)
+		}
+	}
+}
+
 func TestWebRTCTemplateIDForFrame(t *testing.T) {
 	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
 		Resolution:  Resolution{Width: 640, Height: 360},
