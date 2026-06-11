@@ -218,10 +218,13 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 		return
 	}
 	e.rcBuffer += e.rcPerFrameBits - frameBits
-	// Clamp the buffer so one huge keyframe cannot dominate forever.
-	if limit := 8 * e.rcPerFrameBits; e.rcBuffer < -limit {
+	// Asymmetric clamp: debt (a boosted keyframe) stays on the books for
+	// a second so the controller actually repays it, while surplus stays
+	// short so a static stretch cannot bank bits for a burst.
+	if limit := 24 * e.rcPerFrameBits; e.rcBuffer < -limit {
 		e.rcBuffer = -limit
-	} else if e.rcBuffer > limit {
+	}
+	if limit := 8 * e.rcPerFrameBits; e.rcBuffer > limit {
 		e.rcBuffer = limit
 	}
 	// Proportional step: a quarter qindex unit per quarter-frame of buffer
@@ -308,7 +311,20 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if err := e.joinFilter(); err != nil {
 			return nil, false, err
 		}
-		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
+		// Keyframe quality boost: every later frame predicts (directly or
+		// transitively) from the key, so it earns a finer quantizer than
+		// the working point; rate control pays the debt back over the next
+		// frames through the buffer.
+		keyQ := e.qIndex
+		if e.rcEnabled {
+			const keyQBoost = 30
+			if int(keyQ)-keyQBoost > int(e.rcMinQ) {
+				keyQ -= keyQBoost
+			} else {
+				keyQ = e.rcMinQ
+			}
+		}
+		tu, recon, err := encodeKeyframeFiltered(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
 			if t == 0 {
 				return &e.pc
 			}

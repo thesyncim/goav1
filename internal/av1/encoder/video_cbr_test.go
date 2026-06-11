@@ -61,12 +61,14 @@ func TestVideoEncoderCBRConvergesAndDecodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const frames = 30
+	// The boosted keyframe repays its debt over the controller's 24-frame
+	// memory; steady state is measured after that horizon.
+	const frames = 80
 	tus := make([][]byte, 0, frames)
 	recons := make([]encoder.SourceFrame420, 0, frames)
 	qSeen := map[uint8]bool{}
 	steadyBits := 0
-	const warmup = 10
+	const warmup = 40
 	for i := range frames {
 		qSeen[enc.QIndex()] = true
 		tu, _, err := enc.Encode(makeFrame(i), false)

@@ -153,7 +153,13 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 	// Scratch sizing requires parameters that still owe a CDEF pass; the
 	// per-frame apply carries the real strengths.
 	sizingParams := cdefParams
-	sizingParams.YStrength[0] = 1
+	// The nominal strength needs a nonzero PRIMARY component (strength
+	// packs primary*4 + secondary): secondary-only filtering skips the
+	// direction search, so a secondary-only nominal sizes the direction
+	// and variance grids to zero and the first frame with a primary
+	// strength overruns them.
+	sizingParams.YStrength[0] = 4
+	sizingParams.UVStrength[0] = 4
 	sizingParams.StrengthCount = 1
 	ctx := decoder.FrameWorkPostFilterContext{
 		Event:  decoder.Event{SequenceHeader: a.seqHeader, FrameSize: a.frameSize, CDEF: sizingParams},
