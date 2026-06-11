@@ -248,7 +248,7 @@ func (st *lossyEncodeState) initScans() error {
 
 func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	var pc pframeCoder
-	return pc.encodeTile(src, ref, nil, recon, qIndex, nil, 0, uint16(src.Width/4))
+	return pc.encodeTile(src, ref, nil, recon, qIndex, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
 }
 
 // exportCDFs snapshots the coder's adapted symbol contexts - the frame-end
@@ -270,7 +270,7 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 // encodeTile codes one P-frame tile covering MI columns [miColStart,
 // miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
 // the full-frame single-tile case passes [0, miCols).
-func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -628,7 +628,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	}
 
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, miCols, miRows)
+		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, referenceMode, walkReq, miCols, miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -642,7 +642,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 // the reference reconstruction.
 func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
 	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs,
-	walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
+	referenceMode parser.ReferenceMode, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 
 	var bw, bh int
 	switch block.Size {
@@ -763,18 +763,39 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// LAST (their child agreement was measured against it).
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
 	refPlanes := ref
+	compound := false
+	var compoundMV [2]motion.Vector
 	if bw == 8 && bh == 8 && golden != nil && golden.Y != nil && fullSAD > 8*8*4 {
+		lastMV, lastSAD := mv, fullSAD
 		gdx, gdy, gsad := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
 		gmv := motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}
 		if gsad > 8*8*2 {
 			gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
 		}
+		if referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
+			if err := predictCompoundInto(st.sadScratch[:64], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, 8, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
+				compoundSAD := sad8x8DualImpl(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:64], 8)
+				compoundBias := 64 + 12*st.sadPerBit
+				if compoundSAD+compoundBias < fullSAD {
+					compound = true
+					compoundMV = [2]motion.Vector{lastMV, gmv}
+					fullSAD = compoundSAD
+				}
+			}
+		}
 		// The anchor must win clearly: LAST keeps the cheaper ref symbol and
 		// denser MV predictors.
-		if gsad+32 < fullSAD {
+		if !compound && gsad+32 < fullSAD {
 			refs.Ref[0] = tile.ReferenceFrameGolden
 			refPlanes = *golden
 			mv, fullSAD = gmv, gsad
+		}
+		if compound {
+			refs = tile.InterReferencesResult{
+				Ref:      [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameGolden},
+				Compound: true,
+				Unidir:   true,
+			}
 		}
 	}
 
@@ -833,61 +854,84 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// Mode choice by signaling cost: zero motion keeps the short GLOBALMV
 	// cascade; a vector the predictor stack already names codes as
 	// NEARESTMV/NEARMV with no motion residual at all; everything else pays
-	// for NEWMV plus the joint and component symbols.
-	mode := tile.InterModeGlobalMV
-	if mv.Row != 0 || mv.Col != 0 {
-		mode = tile.InterModeNewMV
-		if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
-			switch mv {
-			case predRefs.Nearest[0]:
-				mode = tile.InterModeNearestMV
-			case predRefs.Near[0]:
-				mode = tile.InterModeNearMV
-			default:
-				nearest := predRefs.Nearest[0]
-				// Pricing the predictor swap needs a prediction and a SAD;
-				// blocks already in skip territory keep NEWMV without it.
-				if (nearest.Row != 0 || nearest.Col != 0) && fullSAD > bw*bh {
-					dr := int(mv.Row) - int(nearest.Row)
-					if dr < 0 {
-						dr = -dr
-					}
-					dc := int(mv.Col) - int(nearest.Col)
-					if dc < 0 {
-						dc = -dc
-					}
-					if dr <= 16 && dc <= 16 {
-						mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-						if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
-							nearSAD := 0
-							for r := 0; r < bh; r += 8 {
-								for c := 0; c < bw; c += 8 {
-									nearSAD += sad8x8DualImpl(src.Y[(lumaPY+r)*src.YStride+lumaPX+c:], src.YStride, st.sadScratch[r*bw+c:], bw)
+	// for NEWMV plus the joint and component symbols. Compound is deliberately
+	// conservative in this first encoder path: only a strong LAST+GOLDEN
+	// predictor win reaches here, so code the actual pair directly.
+	modeResult := tile.InterModeResult{Mode: tile.InterModeGlobalMV}
+	if refs.Compound {
+		modeResult = tile.InterModeResult{Compound: true, CompoundMode: tile.CompoundInterModeNewNew}
+		if compoundMV[0] == (motion.Vector{}) && compoundMV[1] == (motion.Vector{}) {
+			modeResult.CompoundMode = tile.CompoundInterModeGlobalGlobal
+		}
+	} else {
+		mode := tile.InterModeGlobalMV
+		if mv.Row != 0 || mv.Col != 0 {
+			mode = tile.InterModeNewMV
+			if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
+				switch mv {
+				case predRefs.Nearest[0]:
+					mode = tile.InterModeNearestMV
+				case predRefs.Near[0]:
+					mode = tile.InterModeNearMV
+				default:
+					nearest := predRefs.Nearest[0]
+					// Pricing the predictor swap needs a prediction and a SAD;
+					// blocks already in skip territory keep NEWMV without it.
+					if (nearest.Row != 0 || nearest.Col != 0) && fullSAD > bw*bh {
+						dr := int(mv.Row) - int(nearest.Row)
+						if dr < 0 {
+							dr = -dr
+						}
+						dc := int(mv.Col) - int(nearest.Col)
+						if dc < 0 {
+							dc = -dc
+						}
+						if dr <= 16 && dc <= 16 {
+							mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
+							if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
+								nearSAD := 0
+								for r := 0; r < bh; r += 8 {
+									for c := 0; c < bw; c += 8 {
+										nearSAD += sad8x8DualImpl(src.Y[(lumaPY+r)*src.YStride+lumaPX+c:], src.YStride, st.sadScratch[r*bw+c:], bw)
+									}
 								}
-							}
-							// Two extra cascade symbols pick NEARESTMV.
-							if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
-								mode = tile.InterModeNearestMV
-								mv = nearest
-								fullSAD = nearSAD
+								// Two extra cascade symbols pick NEARESTMV.
+								if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
+									mode = tile.InterModeNearestMV
+									mv = nearest
+									fullSAD = nearSAD
+								}
 							}
 						}
 					}
 				}
 			}
 		}
+		modeResult.Mode = mode
 	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
-	if err := predictInto(st.predY[:bw*bh], refPlanes.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
-		return fmt.Errorf("predict luma: %w", err)
-	}
 	halfW, halfH := src.Width/2, src.Height/2
-	if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, src.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-		return fmt.Errorf("predict u: %w", err)
-	}
-	if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, src.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-		return fmt.Errorf("predict v: %w", err)
+	if refs.Compound {
+		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			return fmt.Errorf("predict compound luma: %w", err)
+		}
+		if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			return fmt.Errorf("predict compound u: %w", err)
+		}
+		if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			return fmt.Errorf("predict compound v: %w", err)
+		}
+	} else {
+		if err := predictInto(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
+			return fmt.Errorf("predict luma: %w", err)
+		}
+		if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+			return fmt.Errorf("predict u: %w", err)
+		}
+		if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+			return fmt.Errorf("predict v: %w", err)
+		}
 	}
 
 	// Quantize all three transform blocks up front; a block whose residual
@@ -1005,15 +1049,17 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	if err := tile.WriteInterReferences(st.w, refCDFs, modeCtx, tile.InterReferenceRequest{
 		Size:          block.Size,
-		ReferenceMode: parser.ReferenceModeSingle,
+		ReferenceMode: referenceMode,
 		X4:            block.X4, Y4: block.Y4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 	}, refs); err != nil {
 		return fmt.Errorf("references: %w", err)
 	}
 
-	modeResult := tile.InterModeResult{Mode: mode}
-	if err := tile.WriteSingleInterMode(st.w, interModeCDFs, stack.ModeContext, mode); err != nil {
+	if err := tile.WriteBlockInterMode(st.w, interModeCDFs, tile.InterModeRequest{
+		Compound:    refs.Compound,
+		ModeContext: stack.ModeContext,
+	}, modeResult); err != nil {
 		return fmt.Errorf("inter mode: %w", err)
 	}
 	drlReq, err := stack.Stack.DRLRequestForMode(modeResult)
@@ -1023,24 +1069,42 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if err := tile.WriteDRLIndex(st.w, interModeCDFs, drlReq, 0); err != nil {
 		return fmt.Errorf("drl: %w", err)
 	}
-	if mode == tile.InterModeNewMV {
-		mvRefs, err := stack.Stack.ResolveInterMVReferences(modeResult, 0, false, false)
+	var mvRefs tile.InterMVReferenceSet
+	if !interModeResultUsesGlobalOnly(modeResult) {
+		mvRefs, err = stack.Stack.ResolveInterMVReferences(modeResult, 0, false, false)
 		if err != nil {
 			return fmt.Errorf("resolve mv references: %w", err)
 		}
-		if err := tile.WriteMotionVector(st.w, &st.mvCDFs, mv, mvRefs.Residual[0], tile.MVSubpelLow); err != nil {
-			return fmt.Errorf("motion vector: %w", err)
-		}
+	}
+	motionResult := tile.InterMotionResult{References: refs, Mode: modeResult}
+	if refs.Compound {
+		motionResult.MV = compoundMV
+	} else {
+		motionResult.MV[0] = mv
+	}
+	if err := tile.WriteInterMotion(st.w, &st.mvCDFs, tile.InterMotionRequest{
+		References:   refs,
+		Mode:         modeResult,
+		ReferenceMVs: mvRefs,
+		Precision:    tile.MVSubpelLow,
+	}, motionResult); err != nil {
+		return fmt.Errorf("motion vector: %w", err)
 	}
 
 	hasChroma := true // all coded inter sizes (8x8..32x32) at 4:2:0 carry chroma
-	motionResult := tile.InterMotionResult{References: refs, Mode: modeResult}
-	motionResult.MV[0] = mv
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
 		return fmt.Errorf("mark inter motion: %w", err)
 	}
 	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, motion.InterpFilters{}); err != nil {
 		return fmt.Errorf("mark inter filters: %w", err)
+	}
+	if refs.Compound {
+		if err := modeCtx.MarkCompoundBlend(block.Size, int(block.X4), int(block.Y4), tile.CompoundBlendResult{
+			Type:          tile.CompoundTypeAverage,
+			CompoundIndex: 1,
+		}); err != nil {
+			return fmt.Errorf("mark compound blend: %w", err)
+		}
 	}
 
 	// Residual phase starts with the var-tx tree, exactly where the decoder
@@ -1062,9 +1126,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	if st.lfMap != nil {
 		// libaom's mode_lf_lut: every inter mode is the motion delta class
-		// except GLOBALMV.
+		// except the pure global-motion modes.
 		lfMode := loopfilter.ModeDeltaClassZero
-		if mode != tile.InterModeGlobalMV {
+		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
 		if err := markLoopFilterBlock(st.lfMap, block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
@@ -1314,6 +1378,35 @@ func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, bw,
 	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
 	ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
 	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, subX, subY, motion.InterpFilters{})
+}
+
+func predictCompoundInto(dst []byte, ref0Plane []byte, stride0 int, ref1Plane []byte, stride1 int, width, height, px, py, bw, bh int,
+	mv0, mv1 motion.Vector, ssX, ssY bool, buf0, buf1 *motion.CompoundConvBuf, scratch *motion.CompoundConvolveScratch) error {
+	ref0X, ref0Y, sub0X, sub0Y, err := motion.ReferenceOriginSubsampled(px, py, mv0, ssX, ssY)
+	if err != nil {
+		return err
+	}
+	ref1X, ref1Y, sub1X, sub1Y, err := motion.ReferenceOriginSubsampled(px, py, mv1, ssX, ssY)
+	if err != nil {
+		return err
+	}
+	ref0 := frame.Plane{Pix: ref0Plane, Stride: stride0, Width: width, Height: height}
+	ref1 := frame.Plane{Pix: ref1Plane, Stride: stride1, Width: width, Height: height}
+	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf0, ref0, 1, 8, ref0X, ref0Y, bw, bh, sub0X, sub0Y, motion.InterpFilters{}, scratch); err != nil {
+		return err
+	}
+	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf1, ref1, 1, 8, ref1X, ref1Y, bw, bh, sub1X, sub1Y, motion.InterpFilters{}, scratch); err != nil {
+		return err
+	}
+	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
+	return motion.BlendCompoundAvg(dstPlane, buf0, buf1, 1, 8, 0, 0, bw, bh, 8, 8)
+}
+
+func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
+	if mode.Compound {
+		return mode.CompoundMode == tile.CompoundInterModeGlobalGlobal
+	}
+	return mode.Mode == tile.InterModeGlobalMV
 }
 
 // subpelRefine improves a full-pel luma motion vector in two bounded

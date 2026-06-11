@@ -72,6 +72,7 @@ type VideoEncoder struct {
 		out           *SourceFrame420
 		effQ          uint8
 		prevCtx       *frameCDFs
+		referenceMode parser.ReferenceMode
 		tile          TileInfo
 		miCols        uint16
 	}
@@ -493,7 +494,7 @@ func (e *VideoEncoder) startTileWorkers() {
 			for t := range e.tileWork {
 				tj := &e.tileJobParams
 				c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
-				data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, c0, c1)
+				data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
 				if err != nil {
 					e.tileErrs[t] = err
 				} else {
@@ -699,6 +700,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if e.goldenEvery > 0 && e.golden.Y != nil {
 		golden = &e.golden
 	}
+	referenceMode := parser.ReferenceModeSingle
+	if golden != nil {
+		header.TransformRef.ReferenceMode = ReferenceModeSelect
+		referenceMode = parser.ReferenceModeSelect
+	}
 	// Hierarchical coarse-search seeds (computed in Encode) recenter every
 	// tile's full-pel refinement windows (read-only during tiles).
 	e.pc.st.hme = &e.hme
@@ -733,7 +739,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		refRecon = e.t1Recon
 	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, refRecon, golden, out, effQ, prevCtx, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -754,13 +760,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj := &e.tileJobParams
 		tj.src, tj.refRecon, tj.golden, tj.out = src, refRecon, golden, out
 		tj.effQ, tj.prevCtx = effQ, prevCtx
+		tj.referenceMode = referenceMode
 		tj.tile, tj.miCols = header.Tile, miCols
 		e.startTileWorkers()
 		for t := 1; t < nTiles; t++ {
 			e.tileWork <- t
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
-		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, c0, c1)
+		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, c0, c1)
 		for t := 1; t < nTiles; t++ {
 			<-e.tileDone
 		}
