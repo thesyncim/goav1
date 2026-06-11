@@ -172,6 +172,64 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderL1T3(t *testing.T) {
+	const w, h = 192, 128
+	cw, ch := w/2, h/2
+	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h,
+		TargetBitrate: 300_000, Framerate: 30,
+		TemporalLayers: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTIDs := []uint8{0, 2, 1, 2, 0, 2, 1, 2, 0}
+	var tus [][]byte
+	for i, wantTID := range wantTIDs {
+		f := goav1.I420Frame{
+			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+			YStride: w, ChromaStride: cw, Width: w, Height: h,
+		}
+		for j := range f.Y {
+			f.Y[j] = uint8(50 + (j/7+i*11)%140)
+		}
+		for j := range f.U {
+			f.U[j] = 120
+			f.V[j] = 130
+		}
+		out, err := enc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("encode %d: %v", i, err)
+		}
+		if out.TemporalID != wantTID {
+			t.Fatalf("frame %d temporal id %d want %d", i, out.TemporalID, wantTID)
+		}
+		if len(out.DependencyDescriptor) == 0 {
+			t.Fatalf("frame %d missing dependency descriptor", i)
+		}
+		tus = append(tus, append([]byte(nil), out.Data...))
+	}
+	dec, err := goav1.NewDecoder(tus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	n := 0
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !ok {
+			break
+		}
+		n += len(batch)
+	}
+	if n != len(wantTIDs) {
+		t.Fatalf("decoded %d frames, want %d", n, len(wantTIDs))
+	}
+}
+
 func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
