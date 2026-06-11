@@ -323,6 +323,15 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		st.mv32Grid = make([]motion.Vector, st.grid32Cols*grid32Rows)
 		st.sad32Grid = make([]int32, st.grid32Cols*grid32Rows)
 	}
+	st.grid64Cols = (int(miCols) + 15) / 16
+	grid64Rows := (int(miRows) + 15) / 16
+	if len(st.mv64Grid) < st.grid64Cols*grid64Rows {
+		st.mv64Grid = make([]motion.Vector, st.grid64Cols*grid64Rows)
+		st.sad64Grid = make([]int32, st.grid64Cols*grid64Rows)
+	}
+	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
+		st.sad64Grid[i] = -1
+	}
 	for i := range st.sad8Grid {
 		st.sad8Grid[i] = -1
 	}
@@ -336,6 +345,9 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// (a 32x32 merge saves up to three 16x16 blocks' syntax).
 	const mergeBias16 = 64
 	const mergeBias32 = 192
+	// A 64x64 merge saves up to three 32-tier block headers and the extra
+	// partition symbols beneath them.
+	const mergeBias64 = 576
 	// evaluate16 fills the 16x16 and child 8x8 motion grids for the 16x16
 	// region at (px, py) — searching only on first use — and returns the
 	// merged SAD and the sum of the four child SADs.
@@ -385,6 +397,48 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		}
 		px, py := int(miCol)*4, int(miRow)*4
 		switch level {
+		case tile.BlockLevel64x64:
+			// One tier above the 32 merge with the same shape: all sixteen
+			// 16x16 descendants must settle on one full-pel vector, then a
+			// single merged probe prices the whole superblock as one block.
+			if px+64 > src.Width || py+64 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			childCost := 0
+			var mv64 motion.Vector
+			for i, off := range [16][2]int{
+				{0, 0}, {16, 0}, {32, 0}, {48, 0},
+				{0, 16}, {16, 16}, {32, 16}, {48, 16},
+				{0, 32}, {16, 32}, {32, 32}, {48, 32},
+				{0, 48}, {16, 48}, {32, 48}, {48, 48},
+			} {
+				sad16, sum8 := evaluate16(px+off[0], py+off[1])
+				childCost += min(sad16, sum8)
+				cmv := st.mv16Grid[((py+off[1])/16)*st.grid16Cols+(px+off[0])/16]
+				if i == 0 {
+					mv64 = cmv
+				} else if cmv != mv64 {
+					return tile.PartitionSplit, nil
+				}
+			}
+			dx, dy := int(mv64.Col)/8, int(mv64.Row)/8
+			if py+dy < 0 || px+dx < 0 || py+dy+64 > src.Height || px+dx+64 > src.Width {
+				return tile.PartitionSplit, nil
+			}
+			base := py*src.YStride + px
+			refBase := (py+dy)*src.YStride + px + dx
+			sad64 := 0
+			for _, q := range [4][2]int{{0, 0}, {32, 0}, {0, 32}, {32, 32}} {
+				qoff := q[1]*src.YStride + q[0]
+				sad64 += sadBlock(src.Y, ref.Y, base+qoff, refBase+qoff, src.YStride, 32, 1<<30)
+			}
+			if sad64 <= childCost+mergeBias64 {
+				idx64 := (py/64)*st.grid64Cols + px/64
+				st.mv64Grid[idx64] = mv64
+				st.sad64Grid[idx64] = int32(sad64)
+				return tile.PartitionNone, nil
+			}
+			return tile.PartitionSplit, nil
 		case tile.BlockLevel32x32:
 			// haveRight/haveBottom only certify the half extents; a 32x32
 			// leaf must lie fully inside the frame for the unclipped
@@ -507,6 +561,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		bw, bh = 16, 16
 	case tile.BlockSize32x32:
 		bw, bh = 32, 32
+	case tile.BlockSize64x64:
+		bw, bh = 64, 64
 	case tile.BlockSize16x8:
 		bw, bh = 16, 8
 	case tile.BlockSize8x16:
@@ -542,6 +598,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if st.sad8Grid[i0] >= 0 && st.sad8Grid[i1] >= 0 {
 			mv = st.mv8Grid[i0]
 			fullSAD = int(st.sad8Grid[i0]) + int(st.sad8Grid[i1])
+		}
+	case n == 64:
+		idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
+		if st.sad64Grid[idx] >= 0 {
+			mv, fullSAD = st.mv64Grid[idx], int(st.sad64Grid[idx])
 		}
 	case n == 32:
 		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
@@ -727,7 +788,20 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	splitTX := false
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-		lumaZero := st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+		var lumaZero bool
+		if bw == 64 {
+			// No 64-point transform in the coder: the luma residual always
+			// codes as a one-level split into four 32x32 quadrant TXBs.
+			lumaZero = true
+			for i := range 4 {
+				dy, dx := (i>>1)*32, (i&1)*32
+				if !st.prepareInterTXB(src.Y, st.predY[dy*64+dx:], 64, src.YStride, lumaPX+dx, lumaPY+dy, 32, 32, st.yQuant, st.lumaQ2[i*1024:(i+1)*1024]) {
+					lumaZero = false
+				}
+			}
+		} else {
+			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+		}
 		lumaRdD, lumaRdR := st.rdDcode, st.rdRcode
 		uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 		vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
@@ -740,6 +814,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			if rdSkip <= rdCode {
 				skip = true
 			}
+		}
+		if !skip && bw == 64 {
+			splitTX = true
 		}
 		if !skip && bw == 8 && bh == 8 && !lumaZero {
 			// One-level var-tx split RD: quantize the same luma residual as
@@ -879,6 +956,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	case bw == 32 && bh == 32:
 		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
 		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
+	case bw == 64 && bh == 64:
+		chromaTX, chromaScan = tile.TransformSize32x32, st.scan32
 	case bw == 16 && bh == 8:
 		lumaTX, lumaScan = tile.TransformSize16x8, st.scan16x8
 		chromaTX, chromaScan = tile.TransformSize8x4, st.scan8x4
@@ -895,6 +974,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			childTX, childScan = tile.TransformSize8x8, st.scan8
 		case 32:
 			childTX, childScan = tile.TransformSize16x16, st.scan16
+		case 64:
+			childTX, childScan = tile.TransformSize32x32, st.scan32
 		}
 		st.interTxTypeReq.Size = childTX
 		cN := n / 2

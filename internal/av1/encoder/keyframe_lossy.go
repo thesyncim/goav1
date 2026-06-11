@@ -248,9 +248,9 @@ type lossyEncodeState struct {
 	// allocation-free: quantized coefficients per plane (sized for the largest
 	// coded TXB, 16x16 luma / 8x8 chroma) and the prebuilt after-skip tx_type
 	// hook (a closure built once per tile, not per block).
-	lumaQ          [1024]int16
-	lumaQ2         [1024]int16
-	uQ, vQ         [256]int16
+	lumaQ          [4096]int16
+	lumaQ2         [4096]int16
+	uQ, vQ         [1024]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	afterSkipInter func() error
 	intraTxTypeReq tile.IntraTransformTypeRequest
@@ -258,10 +258,10 @@ type lossyEncodeState struct {
 
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
-	predY      [1024]byte
-	predU      [256]byte
-	predV      [256]byte
-	sadScratch [1024]byte
+	predY      [4096]byte
+	predU      [1024]byte
+	predV      [1024]byte
+	sadScratch [4096]byte
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
@@ -305,6 +305,9 @@ type lossyEncodeState struct {
 	mv32Grid   []motion.Vector
 	sad32Grid  []int32
 	grid32Cols int
+	mv64Grid   []motion.Vector
+	sad64Grid  []int32
+	grid64Cols int
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
