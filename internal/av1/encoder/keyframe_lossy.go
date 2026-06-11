@@ -267,6 +267,7 @@ type lossyEncodeState struct {
 	lumaQ2         [4096]int16
 	uQ, vQ         [1024]int16
 	interTxTypeReq tile.InterTransformTypeRequest
+	interTxType    transform.Type
 	afterSkipInter func() error
 	intraTxTypeReq tile.IntraTransformTypeRequest
 	afterSkipIntra func() error
@@ -974,6 +975,31 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 	base := tw.Tell()
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
 		Size: size, Plane: plane, Class: transform.Class2D,
+	}, qcoeff[:n*n], scan, st.levels); err != nil {
+		return 1 << 59
+	}
+	bits := int64(tw.Tell() - base)
+	return ((bits<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
+	scan := st.scan4
+	if n == 8 {
+		scan = st.scan8
+	}
+	tw := entropy.NewWriter(st.trialBuf[:0])
+	txCDFs := st.txCDFs
+	txReq := tile.InterTransformTypeRequest{
+		Size:        size,
+		QIndexKnown: true,
+		QIndex:      st.qIndex,
+	}
+	afterSkip := func() error {
+		return tile.WriteInterTransformType(&tw, &txCDFs, txReq, typ)
+	}
+	base := tw.Tell()
+	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
+		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
 	}, qcoeff[:n*n], scan, st.levels); err != nil {
 		return 1 << 59
 	}

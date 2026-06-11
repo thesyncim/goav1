@@ -287,6 +287,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		QIndexKnown: true,
 		QIndex:      qIndex,
 	}
+	st.interTxType = transform.TypeDCTDCT
 	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
 		Mode:        tile.IntraModeDC,
@@ -297,7 +298,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// they persist across frames instead of allocating per tile.
 	if st.afterSkipInter == nil {
 		st.afterSkipInter = func() error {
-			return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, transform.TypeDCTDCT)
+			return tile.WriteInterTransformType(st.w, &st.txCDFs, st.interTxTypeReq, st.interTxType)
 		}
 		st.afterSkipIntra = func() error {
 			return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
@@ -1043,6 +1044,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
+	txType := transform.TypeDCTDCT
+	if !skip && !splitTX && bw == 8 && bh == 8 {
+		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY)
+	}
+
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
@@ -1206,6 +1212,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			childTX, childScan = tile.TransformSize32x32, st.scan32
 		}
 		st.interTxTypeReq.Size = childTX
+		st.interTxType = transform.TypeDCTDCT
 		cN := n / 2
 		for i := range 4 {
 			dy, dx := (i>>1)*cN, (i&1)*cN
@@ -1221,15 +1228,20 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	} else {
 		st.interTxTypeReq.Size = lumaTX
-		if err := st.finishInterTXB(recon.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], tile.CoeffContextRequest{
+		st.interTxType = txType
+		if err := st.finishInterTXBTyped(recon.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], tile.CoeffContextRequest{
 			Plane:      0,
 			PlaneBlock: block.Size,
 			Size:       lumaTX,
 			X4:         block.X4,
 			Y4:         block.Y4,
-		}, coeffCtx, lumaScan, st.afterSkipInter); err != nil {
+		}, coeffCtx, lumaScan, st.afterSkipInter, txType); err != nil {
 			return fmt.Errorf("luma txb: %w", err)
 		}
+	}
+	chromaTxType := transform.TypeDCTDCT
+	if !splitTX && bw == 8 && bh == 8 {
+		chromaTxType = txType
 	}
 	for plane := 1; plane <= 2; plane++ {
 		rdata, pred, qc := recon.U, st.predU[:cbw*cbh], st.uQ[:cbw*cbh]
@@ -1238,13 +1250,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			rdata, pred, qc = recon.V, st.predV[:cbw*cbh], st.vQ[:cbw*cbh]
 			q = st.vQuant
 		}
-		if err := st.finishInterTXB(rdata, pred, cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, q, qc, tile.CoeffContextRequest{
+		if err := st.finishInterTXBTyped(rdata, pred, cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, q, qc, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
 			X4:         block.X4 / 2,
 			Y4:         block.Y4 / 2,
-		}, coeffCtx, chromaScan, nil); err != nil {
+		}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 	}
@@ -1652,11 +1664,15 @@ func copyPredScratch(reconPlane, pred []byte, stride, px, py, w, h int) {
 // errors), when skipped (sum of squared coefficients), and a coarse
 // coefficient rate estimate in 512-units-per-bit.
 func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
+	return st.prepareInterTXBTyped(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, transform.TypeDCTDCT)
+}
+
+func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16, txType transform.Type) bool {
 	residual := &st.resScratch
 	residualBlockImpl(residual[:w*h], srcPlane, py*stride+px, stride, pred, predStride, w, h)
 	n := w * h
 	tran := &st.tranScratch
-	if err := forwardDCTBlock(tran[:n], residual[:n], w, h); err != nil {
+	if err := forwardTransformBlock(tran[:n], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
 		return false
 	}
 	ts := txScaleForSize(max(w, h))
@@ -1676,6 +1692,49 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, s
 	st.rdDcode += dcode
 	st.rdRcode += rate
 	return allZero
+}
+
+func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int) transform.Type {
+	if !st.armTrial() {
+		return transform.TypeDCTDCT
+	}
+	bestType := transform.TypeDCTDCT
+	bestCost := int64(1 << 62)
+	saveDcode, saveDskip, saveRcode := st.rdDcode, st.rdDskip, st.rdRcode
+	baseTrialCDFs := st.trialCDFs
+	tmpY := st.lumaQ2[:64]
+	tmpU := st.lumaQ2[64:80]
+	tmpV := st.lumaQ2[80:96]
+	for _, typ := range [...]transform.Type{
+		transform.TypeDCTDCT,
+		transform.TypeADSTDCT,
+		transform.TypeDCTADST,
+		transform.TypeADSTADST,
+		transform.TypeIDTX,
+	} {
+		st.trialCDFs = baseTrialCDFs
+		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		lumaZero := st.prepareInterTXBTyped(src.Y, st.predY[:64], 8, src.YStride, lumaPX, lumaPY, 8, 8, st.yQuant, tmpY, typ)
+		if typ != transform.TypeDCTDCT && lumaZero {
+			continue
+		}
+		st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
+		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
+		cost := st.rdDcode << 7
+		cost += st.trialTXBBitsInter(tmpY, 8, tile.TransformSize8x8, typ)
+		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpU, 4)
+		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpV, 4)
+		if cost < bestCost {
+			bestCost = cost
+			bestType = typ
+			copy(st.lumaQ[:64], tmpY)
+			copy(st.uQ[:16], tmpU)
+			copy(st.vQ[:16], tmpV)
+		}
+	}
+	st.rdDcode, st.rdDskip, st.rdRcode = saveDcode, saveDskip, saveRcode
+	st.trialCDFs = baseTrialCDFs
+	return bestType
 }
 
 // residualBlockPureGo is the portable residual extraction.
@@ -1719,7 +1778,11 @@ func rdStatsBlockPureGo(tran []int32, qcoeff []int16, count int, step int32, ts 
 // from the prediction through the decoder's dequant + inverse transform.
 func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
+	return st.finishInterTXBTyped(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, ctxReq, coeffCtx, scan, afterSkip, transform.TypeDCTDCT)
+}
 
+func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
 	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 		return err
 	}
@@ -1729,7 +1792,7 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 		return err
 	}
 	res := &st.invResidual
-	if err := transform.InverseDCTBlock(res[:n], w, dq[:n], h, st.invScratch[:n], transform.Size{Width: uint8(w), Height: uint8(h)}); err != nil {
+	if err := transform.InverseBlock(res[:n], w, dq[:n], h, st.invScratch[:n], transform.Size{Width: uint8(w), Height: uint8(h)}, txType); err != nil {
 		return err
 	}
 	for r := range h {
@@ -1745,6 +1808,16 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 		}
 	}
 	return nil
+}
+
+// forwardTransformBlock dispatches the forward transform for every coded
+// DCT_DCT shape and the small square hybrid transforms enabled in the realtime
+// inter tx_type selector.
+func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
+	if typ == transform.TypeDCTDCT {
+		return forwardDCTBlock(tran, residual, w, h)
+	}
+	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
 
 // forwardDCTBlock dispatches the forward DCT_DCT for every coded transform
