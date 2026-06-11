@@ -58,8 +58,8 @@ type VideoEncoderConfig struct {
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
 type EncodedFrame struct {
-	// Data is the temporal unit. It is freshly allocated per frame and owned
-	// by the caller.
+	// Data is the temporal unit. It aliases an encoder-owned buffer reused by
+	// the next Encode call; copy it before retaining or sending asynchronously.
 	Data []byte
 	// Keyframe reports whether this frame restarts the decode chain.
 	Keyframe bool
@@ -162,14 +162,16 @@ func (e *VideoEncoder) QIndex() uint8 {
 
 // RTCFrame is one encoded frame with WebRTC packaging metadata.
 type RTCFrame struct {
-	// Data is the temporal unit (the RTP payload content).
+	// Data is the temporal unit (the RTP payload content). It aliases an
+	// encoder-owned buffer reused by the next Encode call.
 	Data []byte
 	// Keyframe reports whether this frame restarts the decode chain.
 	Keyframe bool
 	// TemporalID is the frame's temporal layer.
 	TemporalID uint8
 	// DependencyDescriptor is the serialized RTP dependency descriptor for a
-	// single-packet frame; keyframes attach the dependency structure.
+	// single-packet frame; keyframes attach the dependency structure. It is
+	// freshly allocated and owned by the caller.
 	DependencyDescriptor []byte
 }
 
@@ -218,7 +220,9 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	return &RTCEncoder{stream: stream}, nil
 }
 
-// Encode encodes one frame with its dependency descriptor.
+// Encode encodes one frame with its dependency descriptor. The returned Data
+// has the same lifetime as VideoEncoder.Encode; copy it before retaining or
+// sending asynchronously.
 func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 	out, err := e.stream.Encode(frame, forceKey)
 	if err != nil {
