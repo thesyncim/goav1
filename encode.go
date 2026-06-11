@@ -51,7 +51,7 @@ type VideoEncoderConfig struct {
 	TileColumns int
 
 	// GoldenInterval is the number of base-layer frames between golden
-	// anchor refreshes; zero keeps the default (32) and a negative value
+	// anchor refreshes; zero keeps the default (16) and a negative value
 	// disables golden references.
 	GoldenInterval int
 }

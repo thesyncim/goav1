@@ -136,7 +136,7 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	e := &VideoEncoder{
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
-		qIndex: qIndex, goldenEvery: 32,
+		qIndex: qIndex, goldenEvery: 16,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
 	return e, nil
