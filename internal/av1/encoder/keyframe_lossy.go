@@ -32,27 +32,38 @@ import (
 // temporal unit together with the encoder-side reconstruction the decoder must
 // reproduce exactly.
 func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0)
+	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil)
 }
 
 // encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
 // active for this size, runs the deblocking pass over the reconstruction
 // through lf (allocating a frame-local applier when the caller has none).
-func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int) ([]byte, SourceFrame420, error) {
+// Streaming callers pass their reusable reconstruction buffer and tile-coder
+// pool so periodic keyframes allocate nothing; one-shot callers pass nil for
+// both.
+func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
 	if qIndex == 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 is the lossless path; use EncodeLosslessKeyframe")
 	}
-	recon := SourceFrame420{
-		Y:            make([]byte, len(src.Y)),
-		U:            make([]byte, len(src.U)),
-		V:            make([]byte, len(src.V)),
-		YStride:      src.YStride,
-		ChromaStride: src.ChromaStride,
-		Width:        src.Width,
-		Height:       src.Height,
+	var recon SourceFrame420
+	if reconBuf != nil && reconBuf.Y != nil {
+		recon = *reconBuf
+	} else {
+		recon = SourceFrame420{
+			Y:            make([]byte, len(src.Y)),
+			U:            make([]byte, len(src.U)),
+			V:            make([]byte, len(src.V)),
+			YStride:      src.YStride,
+			ChromaStride: src.ChromaStride,
+			Width:        src.Width,
+			Height:       src.Height,
+		}
+		if reconBuf != nil {
+			*reconBuf = recon
+		}
 	}
 	lfLevel := uint8(0)
 	if src.Width*src.Height <= loopFilterMaxArea {
@@ -106,12 +117,18 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 	payloads := make([]TilePayload, nTiles)
 	var wg sync.WaitGroup
 	errs := make([]error, nTiles)
+	coder := func(t int) *pframeCoder {
+		if tilePC != nil {
+			return tilePC(t)
+		}
+		return &pframeCoder{}
+	}
 	for t := 1; t < nTiles; t++ {
 		c0, c1 := bounds(t)
 		wg.Add(1)
 		go func(t int, c0, c1 uint16) {
 			defer wg.Done()
-			data, err := encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
+			data, err := coder(t).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
 			if err != nil {
 				errs[t] = err
 				return
@@ -120,7 +137,7 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 		}(t, c0, c1)
 	}
 	c0, c1 := bounds(0)
-	tile0, tile0Err := encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
+	tile0, tile0Err := coder(0).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
 	wg.Wait()
 	if tile0Err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("encode tile 0: %w", tile0Err)
@@ -278,11 +295,23 @@ type lossyEncodeState struct {
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
-	var partCDFs tile.PartitionCDFs
-	if err := partCDFs.InitDefault(); err != nil {
+	var pc pframeCoder
+	return pc.encodeKeyframeTile(src, recon, qIndex, miColStart, miColEnd, lfMap)
+}
+
+// encodeKeyframeTile codes one keyframe tile reusing the coder's buffers:
+// the symbol contexts reinitialize to the keyframe defaults in place, and
+// the scans, scratch planes, context carrier, and writer buffer carry over
+// from inter coding, so a streaming keyframe allocates nothing per tile.
+func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
+	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
-	st := &lossyEncodeState{qIndex: qIndex, color: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, lfMap: lfMap}
+	st := &pc.st
+	st.qIndex = qIndex
+	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	st.lfMap = lfMap
+	st.hme = nil
 	if err := st.modeCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
@@ -302,44 +331,29 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 		}
 		*dst = q
 	}
-	st.scan8 = make([]int16, 64)
-	inverse8 := make([]int16, 64)
-	if err := transform.FillDefaultScan(st.scan8, inverse8, transform.Size{Width: 8, Height: 8}, transform.Class2D); err != nil {
+	if err := st.initScans(); err != nil {
 		return nil, err
 	}
-	st.scan4 = make([]int16, 16)
-	inverse4 := make([]int16, 16)
-	if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
-		return nil, err
-	}
-	st.scan16 = make([]int16, 256)
-	inverse16 := make([]int16, 256)
-	if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
-		return nil, err
-	}
-	st.scan32 = make([]int16, 1024)
-	inverse32 := make([]int16, 1024)
-	if err := transform.FillDefaultScan(st.scan32, inverse32, transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
-		return nil, err
-	}
-	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
-	if err != nil {
-		return nil, err
-	}
-	st.levels = make([]uint8, scratchLen)
-	st.invScratch = make([]int32, 1024)
 
-	w := entropy.NewWriter(make([]byte, 0, 1<<18))
+	if cap(pc.writerBuf) == 0 {
+		pc.writerBuf = make([]byte, 1<<18)
+	}
+	w := entropy.NewWriter(pc.writerBuf[:0])
 	st.w = &w
 
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
 	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
 
-	var scratch tile.BlockLoopScratch
-	carrier := &tile.BlockLoopContextCarrier{
-		Above: make([]tile.BlockLoopRootAboveContext, rootCols),
+	scratch := &pc.scratch
+	if len(pc.carrier.Above) < rootCols {
+		pc.carrier.Above = make([]tile.BlockLoopRootAboveContext, rootCols)
 	}
+	pc.carrier.Left = tile.BlockLoopRootLeftContext{}
+	for i := range pc.carrier.Above[:rootCols] {
+		pc.carrier.Above[i] = tile.BlockLoopRootAboveContext{}
+	}
+	carrier := &pc.carrier
 	walkReq := tile.BlockWalkRequest{
 		Root:       tile.BlockLevel64x64,
 		MIColStart: miColStart,
@@ -388,7 +402,7 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeBlock(src, recon, block, scratch)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &partCDFs, &scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
 	return w.Finish()

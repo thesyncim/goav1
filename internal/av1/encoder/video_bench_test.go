@@ -211,3 +211,27 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkStreamingKeyframe1080p measures a forced keyframe inside a live
+// stream - the scene-cut path - where the coder pool and reconstruction
+// buffer reuse keep the per-key allocation near zero.
+func BenchmarkStreamingKeyframe1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(15))
+	src := encoder.SourceFrame420{Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch), YStride: w, ChromaStride: cw, Width: w, Height: h}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			src.Y[y*w+x] = uint8(60 + (x/7+y/9)%70 + rng.Intn(25))
+		}
+	}
+	enc, _ := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200})
+	enc.Encode(src, true)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, _, err := enc.Encode(src, true); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

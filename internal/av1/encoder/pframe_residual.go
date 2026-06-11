@@ -177,46 +177,8 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error 
 		}
 		*dst = q
 	}
-	if st.scan8 == nil {
-		st.scan8 = make([]int16, 64)
-		inverse8 := make([]int16, 64)
-		if err := transform.FillDefaultScan(st.scan8, inverse8, transform.Size{Width: 8, Height: 8}, transform.Class2D); err != nil {
-			return err
-		}
-		st.scan4 = make([]int16, 16)
-		inverse4 := make([]int16, 16)
-		if err := transform.FillDefaultScan(st.scan4, inverse4, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
-			return err
-		}
-		st.scan16 = make([]int16, 256)
-		inverse16 := make([]int16, 256)
-		if err := transform.FillDefaultScan(st.scan16, inverse16, transform.Size{Width: 16, Height: 16}, transform.Class2D); err != nil {
-			return err
-		}
-		st.scan32 = make([]int16, 1024)
-		inverse32 := make([]int16, 1024)
-		if err := transform.FillDefaultScan(st.scan32, inverse32, transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
-			return err
-		}
-		for _, rs := range []struct {
-			dst  *[]int16
-			w, h uint8
-		}{
-			{&st.scan16x8, 16, 8}, {&st.scan8x16, 8, 16},
-			{&st.scan8x4, 8, 4}, {&st.scan4x8, 4, 8},
-		} {
-			*rs.dst = make([]int16, int(rs.w)*int(rs.h))
-			inv := make([]int16, int(rs.w)*int(rs.h))
-			if err := transform.FillDefaultScan(*rs.dst, inv, transform.Size{Width: rs.w, Height: rs.h}, transform.Class2D); err != nil {
-				return err
-			}
-		}
-		scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
-		if err != nil {
-			return err
-		}
-		st.levels = make([]uint8, scratchLen)
-		st.invScratch = make([]int32, 1024)
+	if err := st.initScans(); err != nil {
+		return err
 	}
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
@@ -228,6 +190,47 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error 
 	for i := range pc.carrier.Above[:rootCols] {
 		pc.carrier.Above[i] = tile.BlockLoopRootAboveContext{}
 	}
+	return nil
+}
+
+// initScans allocates the coder's scan tables and coefficient scratch on
+// first use; later calls are free, so both the inter and keyframe tile
+// paths share one set per coder.
+func (st *lossyEncodeState) initScans() error {
+	if st.scan8 != nil {
+		return nil
+	}
+	for _, sq := range []struct {
+		dst *[]int16
+		n   uint8
+	}{
+		{&st.scan4, 4}, {&st.scan8, 8}, {&st.scan16, 16}, {&st.scan32, 32},
+	} {
+		*sq.dst = make([]int16, int(sq.n)*int(sq.n))
+		inv := make([]int16, int(sq.n)*int(sq.n))
+		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
+			return err
+		}
+	}
+	for _, rs := range []struct {
+		dst  *[]int16
+		w, h uint8
+	}{
+		{&st.scan16x8, 16, 8}, {&st.scan8x16, 8, 16},
+		{&st.scan8x4, 8, 4}, {&st.scan4x8, 4, 8},
+	} {
+		*rs.dst = make([]int16, int(rs.w)*int(rs.h))
+		inv := make([]int16, int(rs.w)*int(rs.h))
+		if err := transform.FillDefaultScan(*rs.dst, inv, transform.Size{Width: rs.w, Height: rs.h}, transform.Class2D); err != nil {
+			return err
+		}
+	}
+	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
+	if err != nil {
+		return err
+	}
+	st.levels = make([]uint8, scratchLen)
+	st.invScratch = make([]int32, 1024)
 	return nil
 }
 

@@ -21,6 +21,7 @@ type VideoEncoder struct {
 	// and the headers signal them through render_size.
 	renderWidth, renderHeight int
 	padded                    SourceFrame420
+	keyRecon                  SourceFrame420
 	qIndex                    uint8
 	recon                     SourceFrame420
 	haveKey                   bool
@@ -283,7 +284,21 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		src = e.padSource(src)
 	}
 	if !e.haveKey || forceKey {
-		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf, e.renderWidth, e.renderHeight)
+		// Periodic keyframes reuse the stream's recon buffer and tile-coder
+		// pool, so a scene cut allocates only its temporal unit.
+		nTiles := 1
+		if e.tileColsLog2 > 0 {
+			nTiles = 1 << e.tileColsLog2
+		}
+		if len(e.tilePCs) < nTiles {
+			e.tilePCs = make([]pframeCoder, nTiles)
+		}
+		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
+			if t == 0 {
+				return &e.pc
+			}
+			return &e.tilePCs[t]
+		})
 		if err != nil {
 			return nil, false, err
 		}
