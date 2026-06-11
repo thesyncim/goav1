@@ -282,6 +282,36 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 	e.qIndex = uint8(q)
 }
 
+func (e *VideoEncoder) keyframeQIndex() uint8 {
+	keyQ := e.qIndex
+	if !e.rcEnabled {
+		return keyQ
+	}
+	// The boost scales with the per-frame budget: rich streams can
+	// repay a much finer key inside the controller's debt horizon,
+	// while starved ones would queue behind an oversized key.
+	boost := e.rcPerFrameBits / 1600
+	if boost > 50 {
+		boost = 50
+	} else if boost < 12 {
+		boost = 12
+	}
+	if int(keyQ)-boost > int(e.rcMinQ) {
+		keyQ -= uint8(boost)
+	} else {
+		keyQ = e.rcMinQ
+	}
+	// Forced keyframes can arrive while inter frames are pinned at
+	// max Q; cap key quality in the top third of the configured
+	// range so the recovery picture stays useful without spending
+	// a full high-quality keyframe during debt.
+	maxKeyQ := int(e.rcMinQ) + (int(e.rcMaxQ)-int(e.rcMinQ))*2/3
+	if int(keyQ) > maxKeyQ {
+		keyQ = uint8(maxKeyQ)
+	}
+	return keyQ
+}
+
 // QIndex reports the working qindex the next frame will use.
 func (e *VideoEncoder) QIndex() uint8 {
 	return e.qIndex
@@ -352,23 +382,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// transitively) from the key, so it earns a finer quantizer than
 		// the working point; rate control pays the debt back over the next
 		// frames through the buffer.
-		keyQ := e.qIndex
-		if e.rcEnabled {
-			// The boost scales with the per-frame budget: rich streams can
-			// repay a much finer key inside the controller's debt horizon,
-			// while starved ones would queue behind an oversized key.
-			boost := e.rcPerFrameBits / 1600
-			if boost > 50 {
-				boost = 50
-			} else if boost < 12 {
-				boost = 12
-			}
-			if int(keyQ)-boost > int(e.rcMinQ) {
-				keyQ -= uint8(boost)
-			} else {
-				keyQ = e.rcMinQ
-			}
-		}
+		keyQ := e.keyframeQIndex()
 		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
 			if t == 0 {
 				return &e.pc
