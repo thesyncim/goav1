@@ -19,14 +19,15 @@ import (
 // source-vs-reconstruction difference is irrelevant and each frame builds
 // one quarter plane instead of two.
 type hmeState struct {
-	srcQ  []byte
-	refQ  []byte
-	qw    int
-	qh    int
-	seeds []motion.Vector // full-pel even offsets per 32x32 region
-	cols  int
-	rows  int
-	armed bool
+	srcQ     []byte
+	refQ     []byte
+	qw       int
+	qh       int
+	seeds    []motion.Vector // full-pel even offsets per 32x32 region
+	seedSADs []int32         // best quarter-res SAD per region
+	cols     int
+	rows     int
+	armed    bool
 
 	// bandCut counts regions per search band whose best quarter-res SAD
 	// stayed high - no match anywhere in the +-32px reach. A frame where
@@ -40,6 +41,12 @@ const hmeBands = 4
 // hmeCutRegionSAD marks a region as unmatched: ~25 per quarter-res sample
 // over an 8x8 block, far above textured-content match SADs.
 const hmeCutRegionSAD = 8 * 8 * 25
+
+// hmeTrustRegionSAD marks a region's seed as trusted: at or below ~4 per
+// quarter-res sample the coarse match is clean, so the true full-pel vector
+// sits within the seed's four-pel quantization and a narrowed refinement
+// window cannot lose it.
+const hmeTrustRegionSAD = 8 * 8 * 4
 
 // prime seeds the reference pyramid from a frame that has no predecessor
 // (the keyframe restarting the chain).
@@ -90,6 +97,7 @@ func (h *hmeState) run(src SourceFrame420) {
 	rows := (ht + 31) / 32
 	if len(h.seeds) < cols*rows {
 		h.seeds = make([]motion.Vector, cols*rows)
+		h.seedSADs = make([]int32, cols*rows)
 	}
 	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
 	// Build and search fan out over row bands: both passes write disjoint
@@ -178,6 +186,7 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			// Quarter-pel offsets scale to multiples of four full pels,
 			// keeping the even-offset chroma alignment invariant.
 			h.seeds[ry*cols+rx] = motion.Vector{Row: int16(bestDY * 4), Col: int16(bestDX * 4)}
+			h.seedSADs[ry*cols+rx] = int32(bestSAD)
 			if bestSAD > hmeCutRegionSAD {
 				h.bandCut[band]++
 			}
@@ -185,13 +194,15 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 	}
 }
 
-// seedAt returns the full-pel seed for the 32x32 region containing (px, py).
-func (h *hmeState) seedAt(px, py int) (int, int) {
+// seedAt returns the full-pel seed for the 32x32 region containing (px, py)
+// and whether the quarter-res match was clean enough to trust the seed with
+// a narrowed refinement window.
+func (h *hmeState) seedAt(px, py int) (int, int, bool) {
 	if h.cols == 0 {
-		return 0, 0
+		return 0, 0, false
 	}
 	rx := min(px/32, h.cols-1)
 	ry := min(py/32, h.rows-1)
 	s := h.seeds[ry*h.cols+rx]
-	return int(s.Col), int(s.Row)
+	return int(s.Col), int(s.Row), h.seedSADs[ry*h.cols+rx] <= hmeTrustRegionSAD
 }

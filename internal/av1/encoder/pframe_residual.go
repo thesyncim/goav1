@@ -342,17 +342,21 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	evaluate16 := func(px, py int) (int, int) {
 		idx16 := (py/16)*st.grid16Cols + px/16
 		if st.sad16Grid[idx16] < 0 {
-			seedDX, seedDY := 0, 0
+			seedDX, seedDY, reach := 0, 0, fullPelReach
 			if st.hme != nil {
-				seedDX, seedDY = st.hme.seedAt(px, py)
+				var trusted bool
+				seedDX, seedDY, trusted = st.hme.seedAt(px, py)
+				if trusted {
+					reach = fullPelReachTrusted
+				}
 			}
-			dx16, dy16, sad16 := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, seedDX, seedDY)
-			if (seedDX > 8 || seedDX < -8 || seedDY > 8 || seedDY < -8) && sad16 > 16*16*2 {
+			dx16, dy16, sad16 := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, seedDX, seedDY, reach)
+			if (seedDX > reach || seedDX < -reach || seedDY > reach || seedDY < -reach) && sad16 > 16*16*2 {
 				// The seeded window excludes the fine zero neighborhood
 				// when the regional vector is large; blocks that disagree
 				// with their region (mover boundaries) refall back to the
 				// zero-centered window when the seeded match stays poor.
-				if zx, zy, zsad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 0, 0); zsad < sad16 {
+				if zx, zy, zsad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 0, 0, fullPelReach); zsad < sad16 {
 					dx16, dy16, sad16 = zx, zy, zsad
 				}
 			}
@@ -360,7 +364,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			st.sad16Grid[idx16] = int32(sad16)
 			for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
 				cx, cy := px+off[0], py+off[1]
-				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY)
+				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY, reach)
 				idx8 := (cy/8)*st.grid8Cols + cx/8
 				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
 				st.sad8Grid[idx8] = int32(sad)
@@ -556,11 +560,15 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if bw != bh {
 			return fmt.Errorf("encoder: rect block %+v without scored children", block)
 		}
-		seedDX, seedDY := 0, 0
+		seedDX, seedDY, reach := 0, 0, fullPelReach
 		if st.hme != nil {
-			seedDX, seedDY = st.hme.seedAt(lumaPX, lumaPY)
+			var trusted bool
+			seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
+			if trusted {
+				reach = fullPelReachTrusted
+			}
 		}
-		dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY)
+		dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
 		mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
 	}
 	if bw == bh && fullSAD > n*n*2 {
@@ -1330,13 +1338,21 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 // offsets keep chroma prediction at integer positions at 4:2:0. A small
 // diamond refinement around the best raster candidate keeps the search cheap.
 func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int, int) {
-	return fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, n, 0, 0)
+	return fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, n, 0, 0, fullPelReach)
 }
 
+// fullPelReach is the raster half-window around the seed; trusted seeds
+// (clean coarse matches, see hmeTrustRegionSAD) narrow it to the seed's own
+// four-pel quantization step.
+const (
+	fullPelReach        = 8
+	fullPelReachTrusted = 4
+)
+
 // fullPelDiamondSearchSeeded recenters the raster window on a coarse-search
-// seed (the hierarchical pre-pass vector), extending reach to the seed +-8px
-// while always probing zero motion first.
-func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY int) (int, int, int) {
+// seed (the hierarchical pre-pass vector), extending reach to the seed
+// +-reach px while always probing zero motion first.
+func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY, reach int) (int, int, int) {
 	// sad dispatches to the architecture SAD kernel; limit is an early-exit
 	// hint the kernel may ignore, so callers compare the return value.
 	sad := func(dx, dy, limit int) int {
@@ -1384,10 +1400,10 @@ func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, 
 	}
 	seedDX = clampHi(clampLo(seedDX, -px), width-n-px) &^ 1
 	seedDY = clampHi(clampLo(seedDY, -py), height-n-py) &^ 1
-	minDX := clampLo(seedDX-8, -px)
-	maxDX := clampHi(seedDX+8, width-n-px)
-	minDY := clampLo(seedDY-8, -py)
-	maxDY := clampHi(seedDY+8, height-n-py)
+	minDX := clampLo(seedDX-reach, -px)
+	maxDX := clampHi(seedDX+reach, width-n-px)
+	minDY := clampLo(seedDY-reach, -py)
+	maxDY := clampHi(seedDY+reach, height-n-py)
 
 	bestDX, bestDY := 0, 0
 	bestSAD := sad(0, 0, 1<<30)
