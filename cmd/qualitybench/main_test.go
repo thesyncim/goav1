@@ -57,3 +57,84 @@ func TestParseVMAFMean(t *testing.T) {
 		t.Fatal("missing vmaf accepted")
 	}
 }
+
+func TestBDRatePercent(t *testing.T) {
+	anchor := []rdPoint{
+		{Metric: 30, Rate: 100_000},
+		{Metric: 35, Rate: 200_000},
+		{Metric: 40, Rate: 400_000},
+		{Metric: 45, Rate: 800_000},
+	}
+	same, _, _, err := bdRatePercent(anchor, anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(same) > 1e-9 {
+		t.Fatalf("same curve bd-rate=%f want 0", same)
+	}
+
+	doubleRate := []rdPoint{
+		{Metric: 30, Rate: 200_000},
+		{Metric: 35, Rate: 400_000},
+		{Metric: 40, Rate: 800_000},
+		{Metric: 45, Rate: 1_600_000},
+	}
+	got, lo, hi, err := bdRatePercent(anchor, doubleRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(got-100) > 1e-6 || lo != 30 || hi != 45 {
+		t.Fatalf("double-rate bd-rate=%f overlap=[%f,%f]", got, lo, hi)
+	}
+
+	halfRate := []rdPoint{
+		{Metric: 30, Rate: 50_000},
+		{Metric: 35, Rate: 100_000},
+		{Metric: 40, Rate: 200_000},
+		{Metric: 45, Rate: 400_000},
+	}
+	got, _, _, err = bdRatePercent(anchor, halfRate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(got+50) > 1e-6 {
+		t.Fatalf("half-rate bd-rate=%f want -50", got)
+	}
+}
+
+func TestBDRatePercentRejectsInsufficientPoints(t *testing.T) {
+	_, _, _, err := bdRatePercent(
+		[]rdPoint{{Metric: 30, Rate: 100}, {Metric: 31, Rate: 120}, {Metric: 32, Rate: 140}},
+		[]rdPoint{{Metric: 30, Rate: 100}, {Metric: 31, Rate: 120}, {Metric: 32, Rate: 140}},
+	)
+	if err == nil {
+		t.Fatal("insufficient points accepted")
+	}
+}
+
+func TestSummarizeBDRateUsesActualBitrate(t *testing.T) {
+	rows := []benchRow{
+		{clip: "clip", encoder: "anchor", actualBPS: 100_000, metrics: metrics{psnr: "30"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 200_000, metrics: metrics{psnr: "35"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 400_000, metrics: metrics{psnr: "40"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 800_000, metrics: metrics{psnr: "45"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 200_000, metrics: metrics{psnr: "30"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 400_000, metrics: metrics{psnr: "35"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 800_000, metrics: metrics{psnr: "40"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 1_600_000, metrics: metrics{psnr: "45"}, status: "ok"},
+	}
+	summaries := summarizeBDRate("anchor", rows)
+	var psnr summaryRow
+	for _, summary := range summaries {
+		if summary.Encoder == "candidate" && summary.Metric == "psnr_avg" {
+			psnr = summary
+			break
+		}
+	}
+	if psnr.Status != "ok" {
+		t.Fatalf("psnr summary=%+v", psnr)
+	}
+	if math.Abs(psnr.BDRatePct-100) > 1e-6 {
+		t.Fatalf("bd-rate=%f want 100", psnr.BDRatePct)
+	}
+}

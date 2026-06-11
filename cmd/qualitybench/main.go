@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,8 @@ type benchConfig struct {
 	input          string
 	workdir        string
 	csvPath        string
+	summaryCSVPath string
+	anchorEncoder  string
 	encoders       []string
 	bitrates       []int
 	layers         int
@@ -63,6 +66,47 @@ type metrics struct {
 	ssim  string
 	xpsnr string
 	vmaf  string
+}
+
+type benchRow struct {
+	clip      string
+	width     int
+	height    int
+	frames    int
+	fps       int
+	encoder   string
+	targetBPS int
+	actualBPS int64
+	encodeFPS string
+	bytes     int64
+	metrics   metrics
+	status    string
+	errText   string
+}
+
+type rdPoint struct {
+	Metric float64
+	Rate   float64
+}
+
+type cubicFit struct {
+	Coeff  [4]float64
+	Center float64
+	Scale  float64
+}
+
+type summaryRow struct {
+	Clip          string
+	Anchor        string
+	Encoder       string
+	Metric        string
+	AnchorPoints  int
+	EncoderPoints int
+	OverlapMin    float64
+	OverlapMax    float64
+	BDRatePct     float64
+	Status        string
+	ErrText       string
 }
 
 func main() {
@@ -121,6 +165,7 @@ func run() error {
 		return err
 	}
 
+	var rows []benchRow
 	for _, bitrate := range cfg.bitrates {
 		for _, encoderName := range cfg.encoders {
 			result := runEncoder(cfg, frames, refPath, encoderName, bitrate)
@@ -136,31 +181,38 @@ func run() error {
 			if result.duration > 0 {
 				encodeFPS = strconv.FormatFloat(float64(cfg.frames)/result.duration.Seconds(), 'f', 2, 64)
 			}
-			if err := writer.Write([]string{
-				clipName,
-				strconv.Itoa(cfg.width),
-				strconv.Itoa(cfg.height),
-				strconv.Itoa(cfg.frames),
-				strconv.Itoa(cfg.fps),
-				result.encoder,
-				strconv.Itoa(result.targetBPS),
-				strconv.FormatInt(actualBPS, 10),
-				encodeFPS,
-				strconv.FormatInt(result.bytes, 10),
-				m.psnr,
-				m.ssim,
-				m.xpsnr,
-				m.vmaf,
-				result.status,
-				result.errText,
-			}); err != nil {
+			row := benchRow{
+				clip:      clipName,
+				width:     cfg.width,
+				height:    cfg.height,
+				frames:    cfg.frames,
+				fps:       cfg.fps,
+				encoder:   result.encoder,
+				targetBPS: result.targetBPS,
+				actualBPS: actualBPS,
+				encodeFPS: encodeFPS,
+				bytes:     result.bytes,
+				metrics:   m,
+				status:    result.status,
+				errText:   result.errText,
+			}
+			rows = append(rows, row)
+			if err := writeBenchRow(writer, row); err != nil {
 				return err
 			}
 			writer.Flush()
 		}
 	}
+	if cfg.summaryCSVPath != "" {
+		if err := writeSummaryCSV(cfg, rows); err != nil {
+			return err
+		}
+	}
 	if cfg.csvPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.csvPath)
+	}
+	if cfg.summaryCSVPath != "" {
+		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.summaryCSVPath)
 	}
 	if cfg.keep || cfg.workdir != "" && !cleanup {
 		fmt.Fprintf(os.Stderr, "qualitybench workdir: %s\n", cfg.workdir)
@@ -170,7 +222,7 @@ func run() error {
 
 func parseFlags() (benchConfig, error) {
 	var cfg benchConfig
-	bitrates := flag.String("bitrates", "3000000,6000000,9000000", "comma-separated target bitrates in bits per second")
+	bitrates := flag.String("bitrates", "3000000,6000000,9000000,12000000", "comma-separated target bitrates in bits per second")
 	encoders := flag.String("encoders", "goav1,aomenc,svt-av1", "comma-separated encoders: goav1,aomenc,svt-av1")
 	flag.StringVar(&cfg.input, "input", "", "raw I420 input file; omit to use the deterministic synthetic scene")
 	flag.IntVar(&cfg.width, "width", defaultWidth, "frame width in pixels")
@@ -183,6 +235,8 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
+	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
+	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
 
@@ -194,6 +248,11 @@ func parseFlags() (benchConfig, error) {
 	cfg.encoders = parseNameList(*encoders)
 	if len(cfg.encoders) == 0 {
 		return benchConfig{}, errors.New("no encoders selected")
+	}
+	if cfg.anchorEncoder == "" {
+		cfg.anchorEncoder = cfg.encoders[0]
+	} else {
+		cfg.anchorEncoder = strings.TrimSpace(strings.ToLower(cfg.anchorEncoder))
 	}
 	if cfg.width < 16 || cfg.height < 16 || cfg.width%2 != 0 || cfg.height%2 != 0 {
 		return benchConfig{}, fmt.Errorf("invalid frame size %dx%d: need even dimensions >= 16", cfg.width, cfg.height)
@@ -243,6 +302,146 @@ func parseNameList(s string) []string {
 		}
 	}
 	return out
+}
+
+func writeBenchRow(writer *csv.Writer, row benchRow) error {
+	return writer.Write([]string{
+		row.clip,
+		strconv.Itoa(row.width),
+		strconv.Itoa(row.height),
+		strconv.Itoa(row.frames),
+		strconv.Itoa(row.fps),
+		row.encoder,
+		strconv.Itoa(row.targetBPS),
+		strconv.FormatInt(row.actualBPS, 10),
+		row.encodeFPS,
+		strconv.FormatInt(row.bytes, 10),
+		row.metrics.psnr,
+		row.metrics.ssim,
+		row.metrics.xpsnr,
+		row.metrics.vmaf,
+		row.status,
+		row.errText,
+	})
+}
+
+func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
+	file, err := os.Create(cfg.summaryCSVPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	if err := writer.Write([]string{
+		"clip", "anchor", "encoder", "metric", "anchor_points", "encoder_points",
+		"overlap_min", "overlap_max", "bd_rate_pct", "status", "error",
+	}); err != nil {
+		return err
+	}
+	for _, summary := range summarizeBDRate(cfg.anchorEncoder, rows) {
+		overlapMin, overlapMax, bdRate := "", "", ""
+		if summary.Status == "ok" {
+			overlapMin = formatMetric(summary.OverlapMin)
+			overlapMax = formatMetric(summary.OverlapMax)
+			bdRate = formatMetric(summary.BDRatePct)
+		}
+		if err := writer.Write([]string{
+			summary.Clip,
+			summary.Anchor,
+			summary.Encoder,
+			summary.Metric,
+			strconv.Itoa(summary.AnchorPoints),
+			strconv.Itoa(summary.EncoderPoints),
+			overlapMin,
+			overlapMax,
+			bdRate,
+			summary.Status,
+			summary.ErrText,
+		}); err != nil {
+			return err
+		}
+	}
+	return writer.Error()
+}
+
+func summarizeBDRate(anchor string, rows []benchRow) []summaryRow {
+	anchor = strings.ToLower(anchor)
+	metricsByName := [...]struct {
+		name string
+		get  func(metrics) string
+	}{
+		{name: "psnr_avg", get: func(m metrics) string { return m.psnr }},
+		{name: "ssim_all", get: func(m metrics) string { return m.ssim }},
+		{name: "xpsnr_y", get: func(m metrics) string { return m.xpsnr }},
+		{name: "vmaf", get: func(m metrics) string { return m.vmaf }},
+	}
+
+	seenClips := map[string]bool{}
+	var clips []string
+	seenEncoders := map[string]bool{}
+	var encoders []string
+	for _, row := range rows {
+		if !seenClips[row.clip] {
+			seenClips[row.clip] = true
+			clips = append(clips, row.clip)
+		}
+		if row.status == "ok" && row.encoder != "" && !seenEncoders[row.encoder] {
+			seenEncoders[row.encoder] = true
+			encoders = append(encoders, row.encoder)
+		}
+	}
+
+	var summaries []summaryRow
+	for _, clip := range clips {
+		for _, encoder := range encoders {
+			if strings.ToLower(encoder) == anchor {
+				continue
+			}
+			for _, metric := range metricsByName {
+				anchorPoints := rdPointsFor(rows, clip, anchor, metric.get)
+				encoderPoints := rdPointsFor(rows, clip, strings.ToLower(encoder), metric.get)
+				summary := summaryRow{
+					Clip:          clip,
+					Anchor:        anchor,
+					Encoder:       encoder,
+					Metric:        metric.name,
+					AnchorPoints:  len(anchorPoints),
+					EncoderPoints: len(encoderPoints),
+					Status:        "ok",
+				}
+				bdRate, lo, hi, err := bdRatePercent(anchorPoints, encoderPoints)
+				if err != nil {
+					summary.Status = "error"
+					summary.ErrText = err.Error()
+				} else {
+					summary.BDRatePct = bdRate
+					summary.OverlapMin = lo
+					summary.OverlapMax = hi
+				}
+				summaries = append(summaries, summary)
+			}
+		}
+	}
+	return summaries
+}
+
+func rdPointsFor(rows []benchRow, clip string, encoder string, getMetric func(metrics) string) []rdPoint {
+	var points []rdPoint
+	for _, row := range rows {
+		if row.status != "ok" || row.clip != clip || strings.ToLower(row.encoder) != encoder || row.actualBPS <= 0 {
+			continue
+		}
+		metric, err := strconv.ParseFloat(getMetric(row.metrics), 64)
+		if err != nil || math.IsNaN(metric) || math.IsInf(metric, 0) {
+			continue
+		}
+		points = append(points, rdPoint{
+			Metric: metric,
+			Rate:   float64(row.actualBPS),
+		})
+	}
+	return points
 }
 
 func loadFrames(cfg benchConfig) ([]goav1.I420Frame, string, error) {
@@ -769,6 +968,137 @@ func parseVMAFMean(raw []byte) (float64, error) {
 		return 0, errors.New("vmaf mean not found")
 	}
 	return mean, nil
+}
+
+func bdRatePercent(anchor []rdPoint, candidate []rdPoint) (pct float64, overlapMin float64, overlapMax float64, err error) {
+	anchor, err = normalizedRDPoints(anchor)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("anchor: %w", err)
+	}
+	candidate, err = normalizedRDPoints(candidate)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("candidate: %w", err)
+	}
+	overlapMin = math.Max(anchor[0].Metric, candidate[0].Metric)
+	overlapMax = math.Min(anchor[len(anchor)-1].Metric, candidate[len(candidate)-1].Metric)
+	if !(overlapMax > overlapMin) {
+		return 0, overlapMin, overlapMax, errors.New("no overlapping metric range")
+	}
+	anchorPoly, err := fitCubicLogRate(anchor)
+	if err != nil {
+		return 0, overlapMin, overlapMax, fmt.Errorf("anchor fit: %w", err)
+	}
+	candidatePoly, err := fitCubicLogRate(candidate)
+	if err != nil {
+		return 0, overlapMin, overlapMax, fmt.Errorf("candidate fit: %w", err)
+	}
+	span := overlapMax - overlapMin
+	anchorAvg := integrateCubicFit(anchorPoly, overlapMin, overlapMax) / span
+	candidateAvg := integrateCubicFit(candidatePoly, overlapMin, overlapMax) / span
+	return (math.Exp(candidateAvg-anchorAvg) - 1) * 100, overlapMin, overlapMax, nil
+}
+
+func normalizedRDPoints(points []rdPoint) ([]rdPoint, error) {
+	if len(points) < 4 {
+		return nil, fmt.Errorf("need at least 4 RD points, got %d", len(points))
+	}
+	out := append([]rdPoint(nil), points...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Metric < out[j].Metric
+	})
+	write := 0
+	for _, point := range out {
+		if point.Rate <= 0 || math.IsNaN(point.Rate) || math.IsInf(point.Rate, 0) ||
+			math.IsNaN(point.Metric) || math.IsInf(point.Metric, 0) {
+			return nil, errors.New("invalid RD point")
+		}
+		if write > 0 && math.Abs(point.Metric-out[write-1].Metric) < 1e-9 {
+			out[write-1].Rate = point.Rate
+			continue
+		}
+		out[write] = point
+		write++
+	}
+	out = out[:write]
+	if len(out) < 4 {
+		return nil, fmt.Errorf("need at least 4 unique metric points, got %d", len(out))
+	}
+	return out, nil
+}
+
+func fitCubicLogRate(points []rdPoint) (cubicFit, error) {
+	center := (points[0].Metric + points[len(points)-1].Metric) / 2
+	scale := (points[len(points)-1].Metric - points[0].Metric) / 2
+	if !(scale > 0) {
+		return cubicFit{}, errors.New("zero metric span")
+	}
+	var normal [4][5]float64
+	for _, point := range points {
+		x := (point.Metric - center) / scale
+		y := math.Log(point.Rate)
+		powers := [7]float64{1}
+		for i := 1; i < len(powers); i++ {
+			powers[i] = powers[i-1] * x
+		}
+		for row := 0; row < 4; row++ {
+			for col := 0; col < 4; col++ {
+				normal[row][col] += powers[row+col]
+			}
+			normal[row][4] += y * powers[row]
+		}
+	}
+	coeff, err := solve4x4(normal)
+	if err != nil {
+		return cubicFit{}, err
+	}
+	return cubicFit{Coeff: coeff, Center: center, Scale: scale}, nil
+}
+
+func solve4x4(a [4][5]float64) ([4]float64, error) {
+	for col := 0; col < 4; col++ {
+		pivot := col
+		for row := col + 1; row < 4; row++ {
+			if math.Abs(a[row][col]) > math.Abs(a[pivot][col]) {
+				pivot = row
+			}
+		}
+		if math.Abs(a[pivot][col]) < 1e-12 {
+			return [4]float64{}, errors.New("singular cubic fit")
+		}
+		if pivot != col {
+			a[col], a[pivot] = a[pivot], a[col]
+		}
+		scale := a[col][col]
+		for j := col; j < 5; j++ {
+			a[col][j] /= scale
+		}
+		for row := 0; row < 4; row++ {
+			if row == col {
+				continue
+			}
+			factor := a[row][col]
+			for j := col; j < 5; j++ {
+				a[row][j] -= factor * a[col][j]
+			}
+		}
+	}
+	return [4]float64{a[0][4], a[1][4], a[2][4], a[3][4]}, nil
+}
+
+func integrateCubic(c [4]float64, lo float64, hi float64) float64 {
+	primitive := func(x float64) float64 {
+		x2 := x * x
+		x3 := x2 * x
+		x4 := x3 * x
+		return c[0]*x + c[1]*x2/2 + c[2]*x3/3 + c[3]*x4/4
+	}
+	return primitive(hi) - primitive(lo)
+}
+
+func integrateCubicFit(fit cubicFit, lo float64, hi float64) float64 {
+	tLo := (lo - fit.Center) / fit.Scale
+	tHi := (hi - fit.Center) / fit.Scale
+	return integrateCubic(fit.Coeff, tLo, tHi) * fit.Scale
 }
 
 func escapeFilterPath(path string) string {

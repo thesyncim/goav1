@@ -36,13 +36,21 @@ go run ./cmd/qualitybench \
   -width 1920 -height 1080 -frames 120 -fps 60 \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
-  -layers 3 -keyint 60 \
-  -csv quality.csv -workdir /tmp/goav1-quality
+  -anchor aomenc -layers 3 -keyint 60 \
+  -csv quality.csv -summary-csv quality-summary.csv \
+  -workdir /tmp/goav1-quality
 ```
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
+
+When `-summary-csv` is set, `qualitybench` writes BD-rate rows for each
+candidate encoder against `-anchor` (default: the first encoder in `-encoders`).
+Positive `bd_rate_pct` means the candidate needed more bitrate than the anchor
+over the common metric range; negative means it needed less. Rows with fewer
+than four valid points, missing metrics, or no overlapping quality range are
+reported as explicit errors instead of synthesized numbers.
 
 References:
 
