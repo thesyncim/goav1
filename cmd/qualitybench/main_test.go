@@ -520,6 +520,20 @@ func TestClipMetadataForHashesInputs(t *testing.T) {
 	}
 }
 
+func TestFileBytesAndSHA256(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.bin")
+	if err := os.WriteFile(path, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bytes, hash, err := fileBytesAndSHA256(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes != 3 || hash != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Fatalf("bytes=%d hash=%s", bytes, hash)
+	}
+}
+
 func TestWriteMetadataJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "metadata.json")
@@ -544,16 +558,23 @@ func TestWriteMetadataJSON(t *testing.T) {
 		layers:           1,
 	}
 	invocations := []encoderInvocationMetadata{{
-		Clip:      "clip",
-		Width:     64,
-		Height:    64,
-		Frames:    2,
-		FPS:       30,
-		Encoder:   "goav1",
-		TargetBPS: 100000,
-		ActualBPS: 96000,
-		Status:    "ok",
-		Settings:  map[string]string{"target_bitrate": "100000"},
+		Clip:             "clip",
+		Width:            64,
+		Height:           64,
+		Frames:           2,
+		FPS:              30,
+		Encoder:          "goav1",
+		TargetBPS:        100000,
+		ActualBPS:        96000,
+		CompressedBytes:  800,
+		EncodedContainer: "goav1-payload-stream",
+		EncodedBytes:     800,
+		EncodedSHA256:    "encoded",
+		DecodedPath:      filepath.Join(dir, "decoded.yuv"),
+		DecodedBytes:     12288,
+		DecodedSHA256:    "decoded",
+		Status:           "ok",
+		Settings:         map[string]string{"target_bitrate": "100000"},
 	}}
 	clips := []clipSpec{{
 		Name:   "clip",
@@ -594,7 +615,11 @@ func TestWriteMetadataJSON(t *testing.T) {
 		t.Fatalf("metric filters=%+v", doc.MetricFilters)
 	}
 	if len(doc.Encodes) != 1 || doc.Encodes[0].Encoder != "goav1" ||
-		doc.Encodes[0].Settings["target_bitrate"] != "100000" {
+		doc.Encodes[0].Settings["target_bitrate"] != "100000" ||
+		doc.Encodes[0].CompressedBytes != 800 ||
+		doc.Encodes[0].EncodedContainer != "goav1-payload-stream" ||
+		doc.Encodes[0].EncodedSHA256 != "encoded" ||
+		doc.Encodes[0].DecodedSHA256 != "decoded" {
 		t.Fatalf("encodes=%+v", doc.Encodes)
 	}
 	if _, ok := doc.Tools["ffmpeg"]; !ok {

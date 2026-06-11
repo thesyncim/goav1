@@ -74,7 +74,8 @@ goav1 git revision and dirty state, Go runtime, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,
 metric-filter availability, tool paths/version probes, per-clip source
 geometry, expected raw byte counts, actual input byte counts, SHA-256 hashes,
-and per-encoder invocations or goav1 settings.
+per-encoder invocations or goav1 settings, compressed payload byte counts,
+encoded output SHA-256 hashes, and decoded YUV SHA-256 hashes.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:

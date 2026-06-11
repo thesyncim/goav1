@@ -63,16 +63,22 @@ type benchConfig struct {
 }
 
 type encodeResult struct {
-	encoder    string
-	targetBPS  int
-	bytes      int64
-	duration   time.Duration
-	decodedYUV string
-	status     string
-	errText    string
-	stats      goav1.EncoderDecisionStats
-	command    []string
-	settings   map[string]string
+	encoder          string
+	targetBPS        int
+	bytes            int64
+	duration         time.Duration
+	encodedPath      string
+	encodedContainer string
+	encodedBytes     int64
+	encodedSHA256    string
+	decodedYUV       string
+	decodedBytes     int64
+	decodedSHA256    string
+	status           string
+	errText          string
+	stats            goav1.EncoderDecisionStats
+	command          []string
+	settings         map[string]string
 }
 
 type metrics struct {
@@ -197,18 +203,26 @@ type clipMetadata struct {
 }
 
 type encoderInvocationMetadata struct {
-	Clip      string            `json:"clip"`
-	Width     int               `json:"width"`
-	Height    int               `json:"height"`
-	Frames    int               `json:"frames"`
-	FPS       int               `json:"fps"`
-	Encoder   string            `json:"encoder"`
-	TargetBPS int               `json:"target_bps"`
-	ActualBPS int64             `json:"actual_bps"`
-	Status    string            `json:"status"`
-	Error     string            `json:"error,omitempty"`
-	Command   []string          `json:"command,omitempty"`
-	Settings  map[string]string `json:"settings,omitempty"`
+	Clip             string            `json:"clip"`
+	Width            int               `json:"width"`
+	Height           int               `json:"height"`
+	Frames           int               `json:"frames"`
+	FPS              int               `json:"fps"`
+	Encoder          string            `json:"encoder"`
+	TargetBPS        int               `json:"target_bps"`
+	ActualBPS        int64             `json:"actual_bps"`
+	CompressedBytes  int64             `json:"compressed_bytes,omitempty"`
+	EncodedPath      string            `json:"encoded_path,omitempty"`
+	EncodedContainer string            `json:"encoded_container,omitempty"`
+	EncodedBytes     int64             `json:"encoded_bytes,omitempty"`
+	EncodedSHA256    string            `json:"encoded_sha256,omitempty"`
+	DecodedPath      string            `json:"decoded_path,omitempty"`
+	DecodedBytes     int64             `json:"decoded_bytes,omitempty"`
+	DecodedSHA256    string            `json:"decoded_sha256,omitempty"`
+	Status           string            `json:"status"`
+	Error            string            `json:"error,omitempty"`
+	Command          []string          `json:"command,omitempty"`
+	Settings         map[string]string `json:"settings,omitempty"`
 }
 
 func main() {
@@ -796,19 +810,35 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				errText:   result.errText,
 			}
 			rows = append(rows, row)
+			encodedPath, encodedContainer := result.encodedPath, result.encodedContainer
+			if result.encodedSHA256 == "" {
+				encodedPath, encodedContainer = "", ""
+			}
+			decodedPath := result.decodedYUV
+			if result.decodedSHA256 == "" {
+				decodedPath = ""
+			}
 			invocations = append(invocations, encoderInvocationMetadata{
-				Clip:      clip.Name,
-				Width:     clip.Width,
-				Height:    clip.Height,
-				Frames:    clip.Frames,
-				FPS:       clip.FPS,
-				Encoder:   result.encoder,
-				TargetBPS: result.targetBPS,
-				ActualBPS: actualBPS,
-				Status:    result.status,
-				Error:     result.errText,
-				Command:   result.command,
-				Settings:  result.settings,
+				Clip:             clip.Name,
+				Width:            clip.Width,
+				Height:           clip.Height,
+				Frames:           clip.Frames,
+				FPS:              clip.FPS,
+				Encoder:          result.encoder,
+				TargetBPS:        result.targetBPS,
+				ActualBPS:        actualBPS,
+				CompressedBytes:  result.bytes,
+				EncodedPath:      encodedPath,
+				EncodedContainer: encodedContainer,
+				EncodedBytes:     result.encodedBytes,
+				EncodedSHA256:    result.encodedSHA256,
+				DecodedPath:      decodedPath,
+				DecodedBytes:     result.decodedBytes,
+				DecodedSHA256:    result.decodedSHA256,
+				Status:           result.status,
+				Error:            result.errText,
+				Command:          result.command,
+				Settings:         result.settings,
 			})
 			if err := writeBenchRow(writer, row); err != nil {
 				return nil, nil, err
@@ -1013,6 +1043,21 @@ func sha256File(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func fileBytesAndSHA256(path string) (int64, string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, "", err
+	}
+	if info.IsDir() {
+		return 0, "", fmt.Errorf("%s is a directory", path)
+	}
+	hash, err := sha256File(path)
+	if err != nil {
+		return 0, "", err
+	}
+	return info.Size(), hash, nil
 }
 
 func metadataConfigFor(cfg benchConfig) metadataConfig {
@@ -1447,9 +1492,10 @@ func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encod
 
 func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeResult {
 	result := encodeResult{
-		encoder:    "goav1",
-		targetBPS:  bitrate,
-		decodedYUV: filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
+		encoder:          "goav1",
+		targetBPS:        bitrate,
+		encodedContainer: "goav1-payload-stream",
+		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
 		settings: map[string]string{
 			"width":           strconv.Itoa(cfg.width),
 			"height":          strconv.Itoa(cfg.height),
@@ -1466,7 +1512,12 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
-	defer out.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width:          cfg.width,
@@ -1486,6 +1537,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		enc.SetDecisionStatsEnabled(true)
 	}
 	var encodeDuration time.Duration
+	encodedHash := sha256.New()
 	for i, frame := range frames {
 		forceKey := cfg.keyInterval > 0 && i > 0 && i%cfg.keyInterval == 0
 		frameStart := time.Now()
@@ -1496,11 +1548,27 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			return result
 		}
 		result.bytes += int64(len(encoded.Data))
+		_, _ = encodedHash.Write(encoded.Data)
 		if err := writeFrame(out, enc.Reconstruction(), cfg.width, cfg.height); err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
 		}
 	}
+	if err := out.Close(); err != nil {
+		closed = true
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	closed = true
+	result.encodedBytes = result.bytes
+	result.encodedSHA256 = hex.EncodeToString(encodedHash.Sum(nil))
+	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.decodedBytes = decodedBytes
+	result.decodedSHA256 = decodedHash
 	if cfg.statsCSVPath != "" {
 		result.stats = enc.DecisionStats()
 	}
@@ -1511,15 +1579,17 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 
 func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	result := encodeResult{
-		encoder:    "aomenc",
-		targetBPS:  bitrate,
-		decodedYUV: filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.yuv", bitrate)),
+		encoder:          "aomenc",
+		targetBPS:        bitrate,
+		encodedContainer: "ivf",
+		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.yuv", bitrate)),
 	}
 	if _, err := exec.LookPath("aomenc"); err != nil {
 		result.status, result.errText = "skipped", "aomenc not found"
 		return result
 	}
 	ivfPath := filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.ivf", bitrate))
+	result.encodedPath = ivfPath
 	args := []string{
 		"--ivf",
 		"--codec=av1",
@@ -1564,25 +1634,41 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		return result
 	}
 	result.bytes = payloadBytes
+	encodedBytes, encodedHash, err := fileBytesAndSHA256(ivfPath)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.encodedBytes = encodedBytes
+	result.encodedSHA256 = encodedHash
 	if err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.frames); err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
+	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.decodedBytes = decodedBytes
+	result.decodedSHA256 = decodedHash
 	result.status = "ok"
 	return result
 }
 
 func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	result := encodeResult{
-		encoder:    "svt-av1",
-		targetBPS:  bitrate,
-		decodedYUV: filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
+		encoder:          "svt-av1",
+		targetBPS:        bitrate,
+		encodedContainer: "ivf",
+		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
 	}
 	if _, err := exec.LookPath("SvtAv1EncApp"); err != nil {
 		result.status, result.errText = "skipped", "SvtAv1EncApp not found"
 		return result
 	}
 	ivfPath := filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.ivf", bitrate))
+	result.encodedPath = ivfPath
 	keyint := "-1"
 	if cfg.keyInterval > 0 {
 		keyint = strconv.Itoa(cfg.keyInterval)
@@ -1624,10 +1710,24 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		return result
 	}
 	result.bytes = payloadBytes
+	encodedBytes, encodedHash, err := fileBytesAndSHA256(ivfPath)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.encodedBytes = encodedBytes
+	result.encodedSHA256 = encodedHash
 	if err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.frames); err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
+	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.decodedBytes = decodedBytes
+	result.decodedSHA256 = decodedHash
 	result.status = "ok"
 	return result
 }
