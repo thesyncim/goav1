@@ -247,6 +247,8 @@ type lossyEncodeState struct {
 	scan16x8, scan8x16           []int16
 	scan8x4, scan4x8             []int16
 	levels                       []uint8
+	trialCDFs                    tile.CoeffCDFs
+	trialBuf                     []byte
 	invScratch                   []int32
 	color                        parser.ColorConfig
 
@@ -353,6 +355,18 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 		}
 		*dst = q
 	}
+	// The merge decisions price candidates with the real coefficient coder:
+	// trial TXBs run through WriteCoefficientsTXB against this throwaway
+	// context set, and distortion pairs with rate under the inter coder's
+	// multiplier shape.
+	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
+		return nil, err
+	}
+	if cap(st.trialBuf) == 0 {
+		st.trialBuf = make([]byte, 1<<14)
+	}
+	dcq := float64(st.yQuant.DC)
+	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
 	if err := st.initScans(); err != nil {
 		return nil, err
 	}
@@ -382,13 +396,11 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 		MIColEnd:   miColEnd,
 		MIRowEnd:   miRows,
 	}
-	// Blocks are 8x8 by default; a 16x16 node fully inside the frame merges
-	// when its best whole-block intra prediction is already tight (under two
-	// SAD units per pixel), which keeps merge quality protecting the
-	// reconstruction the way the inter tiers do.
+	// mergeIntra keeps the 32-tier's conservative gate: merge only when the
+	// whole-block prediction is already tight (under two SAD units per
+	// pixel).
 	mergeIntra := func(px, py, n int) bool {
-		mode := selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
-		_ = mode
+		selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
 		sad := 0
 		for r := range n {
 			row := (py+r)*src.YStride + px
@@ -402,20 +414,60 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 		}
 		return sad <= n*n*2
 	}
+	// intraRDCost prices one candidate exactly: best intra prediction, the
+	// true transform-quantize pass for distortion, and the real coefficient
+	// coder for rate (trial-coded against throwaway contexts, identical for
+	// every candidate). Whole-block candidates predict from the coded
+	// reconstruction; child estimates predict from the source - their
+	// neighbors are not reconstructed yet, and lossy reconstructions track
+	// the source closely enough for a split decision. Keys are rare, so the
+	// trial coding prices in microseconds per node.
+	intraRDCost := func(plane []byte, px, py, n int) (int64, int64) {
+		selectIntraModeN(src.Y, plane, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
+		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
+		size, scan := tile.TransformSize8x8, st.scan8
+		switch n {
+		case 16:
+			size, scan = tile.TransformSize16x16, st.scan16
+		case 32:
+			size, scan = tile.TransformSize32x32, st.scan32
+		}
+		tw := entropy.NewWriter(st.trialBuf[:0])
+		base := tw.Tell()
+		if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
+			Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D,
+		}, st.lumaQ2[:n*n], scan, st.levels); err != nil {
+			return 1 << 60, st.rdDcode
+		}
+		bits := int64(tw.Tell() - base)
+		return ((bits<<9)*st.rdMult+256)>>9 + (st.rdDcode << 7), st.rdDcode
+	}
+	// intraHeaderCost is the priced overhead of one extra block's prefix
+	// symbols (partition, mode, angle, chroma).
+	intraHeaderCost := (int64(20) << 9) * st.rdMult >> 9
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}
+		px, py := int(miCol)*4, int(miRow)*4
 		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
-			px, py := int(miCol)*4, int(miRow)*4
 			if px+32 <= src.Width && py+32 <= src.Height && mergeIntra(px, py, 32) {
 				return tile.PartitionNone, nil
 			}
 			return tile.PartitionSplit, nil
 		}
 		if level == tile.BlockLevel16x16 && haveRight && haveBottom {
-			px, py := int(miCol)*4, int(miRow)*4
-			if px+16 <= src.Width && py+16 <= src.Height && mergeIntra(px, py, 16) {
+			if px+16 > src.Width || py+16 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			child := int64(0)
+			for _, o8 := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+				cc, _ := intraRDCost(src.Y, px+o8[0], py+o8[1], 8)
+				child += cc + intraHeaderCost
+			}
+			mc, _ := intraRDCost(recon.Y, px, py, 16)
+			if mc+intraHeaderCost <= child {
 				return tile.PartitionNone, nil
 			}
 		}

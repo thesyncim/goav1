@@ -40,6 +40,14 @@ var ErrCarryUnderflow = errors.New("entropy: range coder carry underflow")
 // Writer is the AV1 range/entropy encoder. Callers own the output buffer
 // (EncodeInto style): NewWriter takes a destination slice that grows only if it
 // is too small, and Finish returns the sub-slice holding the finalized bytes.
+// Tell reports the number of bits "used" by the symbols coded so far
+// (od_ec_enc_tell): the ten counteracts the offset of negative nine baked
+// into cnt plus one reserved terminator bit. Differences of Tell values
+// price symbol runs exactly, which is what coding decisions need.
+func (w *Writer) Tell() int {
+	return int(w.cnt+10) + w.offs*8
+}
+
 type Writer struct {
 	buf  []byte // od_ec_enc.buf: output byte buffer (caller-owned)
 	offs int    // od_ec_enc.offs: index of the next entropy byte to write
