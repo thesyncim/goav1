@@ -432,6 +432,12 @@ func (e *VideoEncoder) Prewarm() error {
 		Height:       e.renderHeight,
 	}
 	savedQ := e.qIndex
+	// Size the assembly buffers for real content up front; the throwaway
+	// frame below is black and would leave them near-empty.
+	if bound := e.width * e.height / 2; cap(e.tuScratch) < bound {
+		e.tuScratch = make([]byte, 0, bound)
+		e.tuGroup = make([]byte, 0, bound)
+	}
 	if _, _, err := e.Encode(src, true); err != nil {
 		return err
 	}
