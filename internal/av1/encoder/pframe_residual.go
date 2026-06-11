@@ -757,22 +757,28 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	// Reference selection (8x8 leaves only): when LAST left a poor match,
-	// probe the GOLDEN anchor; occluded-then-revealed content predicts from
-	// the older anchor when the previous frame cannot. Merged leaves stay on
-	// LAST (their child agreement was measured against it).
+	// Reference selection: when LAST left a poor match, probe the GOLDEN
+	// anchor; occluded-then-revealed content predicts from the older anchor
+	// when the previous frame cannot. Compound stays limited to 8x8 leaves.
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
 	refPlanes := ref
 	compound := false
 	var compoundMV [2]motion.Vector
-	if bw == 8 && bh == 8 && golden != nil && golden.Y != nil && fullSAD > 8*8*4 {
+	if golden != nil && golden.Y != nil && bw == bh && (bw == 8 || bw == 16) && fullSAD > bw*bh*4 {
 		lastMV, lastSAD := mv, fullSAD
-		gdx, gdy, gsad := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
-		gmv := motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}
-		if gsad > 8*8*2 {
-			gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
+		var gmv motion.Vector
+		gsad := 1 << 30
+		if bw == 8 {
+			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
+			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
+			if gsad > 8*8*2 {
+				gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
+			}
+		} else {
+			base := lumaPY*src.YStride + lumaPX
+			gsad = sadBlock(src.Y, golden.Y, base, base, src.YStride, 16, lastSAD)
 		}
-		if referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
+		if bw == 8 && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
 			if err := predictCompoundInto(st.sadScratch[:64], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, 8, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
 				compoundSAD := sad8x8DualImpl(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:64], 8)
 				compoundBias := 64 + 12*st.sadPerBit
