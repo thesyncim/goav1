@@ -72,8 +72,9 @@ decoded-output metrics or BD-rate.
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,
-metric-filter availability, tool paths/version probes, and per-encoder
-invocations or goav1 settings.
+metric-filter availability, tool paths/version probes, per-clip source
+geometry, expected raw byte counts, actual input byte counts, SHA-256 hashes,
+and per-encoder invocations or goav1 settings.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:

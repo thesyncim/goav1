@@ -486,8 +486,47 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	}
 }
 
+func TestClipMetadataForHashesInputs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clip.yuv")
+	if err := os.WriteFile(path, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := clipMetadataFor([]clipSpec{{
+		Name:   "clip",
+		Input:  path,
+		Width:  2,
+		Height: 2,
+		Frames: 1,
+		FPS:    30,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("metadata rows=%d", len(got))
+	}
+	if got[0].Synthetic || got[0].InputBytes != 3 ||
+		got[0].ExpectedBytes != 6 ||
+		got[0].SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Fatalf("clip metadata=%+v", got[0])
+	}
+
+	got, err = clipMetadataFor([]clipSpec{{Name: "synthetic", Width: 16, Height: 16, Frames: 2, FPS: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].Synthetic || got[0].SHA256 != "" || got[0].ExpectedBytes != 768 {
+		t.Fatalf("synthetic metadata=%+v", got)
+	}
+}
+
 func TestWriteMetadataJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metadata.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metadata.json")
+	input := filepath.Join(dir, "clip.yuv")
+	if err := os.WriteFile(input, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := benchConfig{
 		width:            64,
 		height:           64,
@@ -516,7 +555,15 @@ func TestWriteMetadataJSON(t *testing.T) {
 		Status:    "ok",
 		Settings:  map[string]string{"target_bitrate": "100000"},
 	}}
-	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, invocations); err != nil {
+	clips := []clipSpec{{
+		Name:   "clip",
+		Input:  input,
+		Width:  64,
+		Height: 64,
+		Frames: 2,
+		FPS:    30,
+	}}
+	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, clips, invocations); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -538,6 +585,10 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if !doc.Config.RequireCorpus || doc.Config.MinClips != 6 {
 		t.Fatalf("corpus config require=%v min=%d", doc.Config.RequireCorpus, doc.Config.MinClips)
+	}
+	if len(doc.Clips) != 1 || doc.Clips[0].Name != "clip" || doc.Clips[0].SHA256 == "" ||
+		doc.Clips[0].ExpectedBytes != 12288 || doc.Clips[0].InputBytes != 3 {
+		t.Fatalf("clips=%+v", doc.Clips)
 	}
 	if !doc.MetricFilters["psnr"] || doc.MetricFilters["libvmaf"] {
 		t.Fatalf("metric filters=%+v", doc.MetricFilters)

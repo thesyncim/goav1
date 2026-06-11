@@ -4,8 +4,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -137,6 +139,7 @@ type qualitybenchMetadata struct {
 	Config         metadataConfig              `json:"config"`
 	MetricFilters  map[string]bool             `json:"metric_filters"`
 	Tools          map[string]toolMetadata     `json:"tools"`
+	Clips          []clipMetadata              `json:"clips"`
 	Encodes        []encoderInvocationMetadata `json:"encodes"`
 }
 
@@ -178,6 +181,19 @@ type toolMetadata struct {
 	Found        bool   `json:"found"`
 	Version      string `json:"version,omitempty"`
 	VersionError string `json:"version_error,omitempty"`
+}
+
+type clipMetadata struct {
+	Name          string `json:"name"`
+	Input         string `json:"input,omitempty"`
+	Synthetic     bool   `json:"synthetic,omitempty"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	Frames        int    `json:"frames"`
+	FPS           int    `json:"fps"`
+	ExpectedBytes int64  `json:"expected_bytes"`
+	InputBytes    int64  `json:"input_bytes,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
 }
 
 type encoderInvocationMetadata struct {
@@ -290,7 +306,7 @@ func run() error {
 		summaryErr = validateRequiredSummaries(cfg, rows, summaries)
 	}
 	if cfg.metadataPath != "" {
-		if err := writeMetadataJSON(cfg, filters, invocations); err != nil {
+		if err := writeMetadataJSON(cfg, filters, clips, invocations); err != nil {
 			return err
 		}
 	}
@@ -925,7 +941,11 @@ func formatU64(n uint64) string {
 	return strconv.FormatUint(n, 10)
 }
 
-func writeMetadataJSON(cfg benchConfig, filters map[string]bool, invocations []encoderInvocationMetadata) error {
+func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpec, invocations []encoderInvocationMetadata) error {
+	clipMetadata, err := clipMetadataFor(clips)
+	if err != nil {
+		return err
+	}
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
@@ -937,6 +957,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, invocations []e
 		Config:        metadataConfigFor(cfg),
 		MetricFilters: metricFilterAvailability(filters),
 		Tools:         toolMetadataForRun(),
+		Clips:         clipMetadata,
 		Encodes:       invocations,
 	}
 	raw, err := json.MarshalIndent(doc, "", "  ")
@@ -945,6 +966,53 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, invocations []e
 	}
 	raw = append(raw, '\n')
 	return os.WriteFile(cfg.metadataPath, raw, 0o644)
+}
+
+func clipMetadataFor(clips []clipSpec) ([]clipMetadata, error) {
+	out := make([]clipMetadata, 0, len(clips))
+	for _, clip := range clips {
+		meta := clipMetadata{
+			Name:          clip.Name,
+			Input:         clip.Input,
+			Synthetic:     clip.Input == "",
+			Width:         clip.Width,
+			Height:        clip.Height,
+			Frames:        clip.Frames,
+			FPS:           clip.FPS,
+			ExpectedBytes: expectedRawI420Bytes(clip.Width, clip.Height, clip.Frames),
+		}
+		if clip.Input != "" {
+			info, err := os.Stat(clip.Input)
+			if err != nil {
+				return nil, fmt.Errorf("%s input metadata: %w", clip.Name, err)
+			}
+			meta.InputBytes = info.Size()
+			hash, err := sha256File(clip.Input)
+			if err != nil {
+				return nil, fmt.Errorf("%s input metadata: %w", clip.Name, err)
+			}
+			meta.SHA256 = hash
+		}
+		out = append(out, meta)
+	}
+	return out, nil
+}
+
+func expectedRawI420Bytes(width, height, frames int) int64 {
+	return int64(frames) * int64(width*height+2*(width/2)*(height/2))
+}
+
+func sha256File(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func metadataConfigFor(cfg benchConfig) metadataConfig {
