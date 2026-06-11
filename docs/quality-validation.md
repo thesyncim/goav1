@@ -11,6 +11,8 @@ protocol:
 - Test real clips, not only the deterministic synthetic scene. The corpus must
   include camera motion, talking heads, sports or fast motion, screen content,
   animation, noise or low light, and at least one hard texture/pan sequence.
+  For claim-supporting runs, use `-require-corpus -min-clips N` so synthetic
+  rows, missing input files, and undersized manifests fail before encoding.
 - Compare against named encoder builds and settings. For realtime WebRTC work,
   baselines must use low-delay CBR settings with no random-access lookahead or
   hidden alt-ref advantage unless goav1 is given the same latency budget.
@@ -40,11 +42,11 @@ Example:
 
 ```sh
 go run ./cmd/qualitybench \
-  -input corpus/clip_1920x1080_i420.yuv \
-  -width 1920 -height 1080 -frames 120 -fps 60 \
+  -manifest corpus/clips.csv -fps 60 \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
   -anchor aomenc -layers 3 -keyint 60 \
+  -require-corpus -min-clips 6 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
@@ -69,9 +71,9 @@ decoded-output metrics or BD-rate.
 
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
-required metrics, encoders, and summary enforcement, metric-filter
-availability, tool paths/version probes, and per-encoder invocations or goav1
-settings.
+required corpus settings, metrics, encoders, and summary enforcement,
+metric-filter availability, tool paths/version probes, and per-encoder
+invocations or goav1 settings.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:
@@ -85,6 +87,12 @@ screen,clips/screen_1280x720_i420.yuv,1280,720,120,60
 Relative `input` paths resolve from the manifest's directory. `fps` is optional
 and falls back to `-fps`. Each clip gets its own work subdirectory and its own
 raw/summary CSV rows.
+
+When `-require-corpus` is set, `qualitybench` requires `-manifest`, requires
+`-min-clips` to be at least 2, rejects manifest rows with an empty `input`, and
+checks that each input path exists before encoding. This gate verifies only the
+machine-checkable corpus contract; clip category coverage still has to be
+curated and documented by the experiment owner.
 
 When `-summary-csv` is set, `qualitybench` writes BD-rate rows for each
 candidate encoder against `-anchor` (default: the first encoder in `-encoders`).

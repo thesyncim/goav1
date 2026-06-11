@@ -174,6 +174,52 @@ func TestReadClipManifestRejectsBadGeometry(t *testing.T) {
 	}
 }
 
+func TestValidateRequiredCorpus(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.yuv")
+	second := filepath.Join(dir, "second.yuv")
+	if err := os.WriteFile(first, []byte{0}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte{0}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := benchConfig{
+		manifestPath:  filepath.Join(dir, "clips.csv"),
+		requireCorpus: true,
+		minClips:      2,
+	}
+	clips := []clipSpec{
+		{Name: "first", Input: first},
+		{Name: "second", Input: second},
+	}
+	if err := validateRequiredCorpus(cfg, clips); err != nil {
+		t.Fatalf("valid corpus failed: %v", err)
+	}
+
+	cfg.minClips = 3
+	if err := validateRequiredCorpus(cfg, clips); err == nil {
+		t.Fatal("undersized corpus accepted")
+	}
+
+	cfg.minClips = 2
+	cfg.manifestPath = ""
+	if err := validateRequiredCorpus(cfg, clips); err == nil {
+		t.Fatal("non-manifest corpus accepted")
+	}
+
+	cfg.manifestPath = filepath.Join(dir, "clips.csv")
+	clips[1].Input = ""
+	if err := validateRequiredCorpus(cfg, clips); err == nil {
+		t.Fatal("synthetic corpus row accepted")
+	}
+
+	clips[1].Input = filepath.Join(dir, "missing.yuv")
+	if err := validateRequiredCorpus(cfg, clips); err == nil {
+		t.Fatal("missing corpus input accepted")
+	}
+}
+
 func TestSafeClipDir(t *testing.T) {
 	if got, want := safeClipDir("Talking Head/Low Light"), "Talking_Head_Low_Light"; got != want {
 		t.Fatalf("safeClipDir=%q want %q", got, want)
@@ -424,6 +470,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		requiredMetrics:  []string{"psnr"},
 		requiredEncoders: []string{"goav1"},
 		requireSummary:   true,
+		requireCorpus:    true,
+		minClips:         6,
 		anchorEncoder:    "goav1",
 	}
 	got := metadataConfigFor(cfg)
@@ -433,7 +481,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg.requiredEncoders[0] = "aomenc"
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
-		!got.RequireSummary {
+		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -451,6 +499,8 @@ func TestWriteMetadataJSON(t *testing.T) {
 		requiredMetrics:  []string{"psnr"},
 		requiredEncoders: []string{"goav1"},
 		requireSummary:   true,
+		requireCorpus:    true,
+		minClips:         6,
 		anchorEncoder:    "goav1",
 		layers:           1,
 	}
@@ -485,6 +535,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if !doc.Config.RequireSummary {
 		t.Fatalf("require summary=%v", doc.Config.RequireSummary)
+	}
+	if !doc.Config.RequireCorpus || doc.Config.MinClips != 6 {
+		t.Fatalf("corpus config require=%v min=%d", doc.Config.RequireCorpus, doc.Config.MinClips)
 	}
 	if !doc.MetricFilters["psnr"] || doc.MetricFilters["libvmaf"] {
 		t.Fatalf("metric filters=%+v", doc.MetricFilters)

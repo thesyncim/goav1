@@ -51,6 +51,8 @@ type benchConfig struct {
 	requiredMetrics  []string
 	requiredEncoders []string
 	requireSummary   bool
+	requireCorpus    bool
+	minClips         int
 	layers           int
 	tiles            int
 	goldenInterval   int
@@ -162,6 +164,8 @@ type metadataConfig struct {
 	RequiredMetrics  []string `json:"required_metrics,omitempty"`
 	RequiredEncoders []string `json:"required_encoders,omitempty"`
 	RequireSummary   bool     `json:"require_summary,omitempty"`
+	RequireCorpus    bool     `json:"require_corpus,omitempty"`
+	MinClips         int      `json:"min_clips,omitempty"`
 	Anchor           string   `json:"anchor"`
 	Layers           int      `json:"layers"`
 	Tiles            int      `json:"tiles"`
@@ -261,6 +265,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if err := validateRequiredCorpus(cfg, clips); err != nil {
+		return err
+	}
 	for _, clip := range clips {
 		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter)
 		if err != nil {
@@ -325,6 +332,7 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.height, "height", defaultHeight, "frame height in pixels")
 	flag.IntVar(&cfg.frames, "frames", defaultFrames, "frames to encode")
 	flag.IntVar(&cfg.fps, "fps", defaultFPS, "input frame rate and bitrate timebase")
+	flag.IntVar(&cfg.minClips, "min-clips", 0, "minimum number of clips required before encoding")
 	flag.IntVar(&cfg.layers, "layers", 1, "goav1 temporal layers (1, 2, or 3)")
 	flag.IntVar(&cfg.tiles, "tiles", 0, "tile-column log2 override for encoders that expose one")
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
@@ -336,6 +344,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
+	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
 
@@ -363,6 +372,12 @@ func parseFlags() (benchConfig, error) {
 		if len(cfg.requiredMetrics) == 0 {
 			return benchConfig{}, errors.New("require-summary requires -require-metrics")
 		}
+	}
+	if cfg.minClips < 0 {
+		return benchConfig{}, fmt.Errorf("invalid minimum clip count %d", cfg.minClips)
+	}
+	if cfg.requireCorpus && cfg.minClips < 2 {
+		return benchConfig{}, errors.New("require-corpus requires -min-clips >= 2")
 	}
 	if cfg.anchorEncoder == "" {
 		cfg.anchorEncoder = cfg.encoders[0]
@@ -675,6 +690,34 @@ func parseManifestPositiveInt(record []string, col int, name string, row int) (i
 	return n, nil
 }
 
+func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
+	if cfg.requireCorpus && cfg.manifestPath == "" {
+		return errors.New("require-corpus requires -manifest")
+	}
+	if cfg.minClips > 0 && len(clips) < cfg.minClips {
+		return fmt.Errorf("clip corpus requires at least %d clips, got %d", cfg.minClips, len(clips))
+	}
+	if !cfg.requireCorpus {
+		return nil
+	}
+	if len(clips) == 0 {
+		return errors.New("required corpus has no clips")
+	}
+	for _, clip := range clips {
+		if strings.TrimSpace(clip.Input) == "" {
+			return fmt.Errorf("%s: required corpus clip has no input path; synthetic clips are not allowed", clip.Name)
+		}
+		info, err := os.Stat(clip.Input)
+		if err != nil {
+			return fmt.Errorf("%s: required corpus input %s: %w", clip.Name, clip.Input, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("%s: required corpus input %s is a directory", clip.Name, clip.Input)
+		}
+	}
+	return nil
+}
+
 func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
 	clipCfg := cfg
 	clipCfg.input = clip.Input
@@ -921,6 +964,8 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		RequiredMetrics:  required,
 		RequiredEncoders: requiredEncoders,
 		RequireSummary:   cfg.requireSummary,
+		RequireCorpus:    cfg.requireCorpus,
+		MinClips:         cfg.minClips,
 		Anchor:           cfg.anchorEncoder,
 		Layers:           cfg.layers,
 		Tiles:            cfg.tiles,
