@@ -6,10 +6,12 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -249,6 +251,9 @@ type lossyEncodeState struct {
 	levels                       []uint8
 	trialCDFs                    tile.CoeffCDFs
 	trialBuf                     []byte
+	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
+	keyMIColEnd, keyMIRowEnd     uint32
+	keyVisW, keyVisH             int
 	invScratch                   []int32
 	color                        parser.ColorConfig
 
@@ -367,6 +372,9 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	}
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
+	st.keyMIColEnd = uint32(miColEnd)
+	st.keyMIRowEnd = uint32(src.Height / 4)
+	st.keyVisW, st.keyVisH = src.Width, src.Height
 	if err := st.initScans(); err != nil {
 		return nil, err
 	}
@@ -529,6 +537,7 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	lumaPY := int(block.MIRow) * 4
 	pred := st.predY[:n*n]
 	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
+	mode = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, n)
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -798,6 +807,135 @@ func selectIntraModeN(srcPlane, reconPlane []byte, stride, px, py, n int, haveTo
 		}
 		return tile.IntraModeDC
 	}
+}
+
+// keyDirectionalModes are the diagonal candidates and their base angles;
+// vertical and horizontal already compete in the flat selector.
+var keyDirectionalModes = [6]struct {
+	mode  tile.IntraMode
+	angle int
+}{
+	{tile.IntraModeD45, 45},
+	{tile.IntraModeD67, 67},
+	{tile.IntraModeD113, 113},
+	{tile.IntraModeD135, 135},
+	{tile.IntraModeD157, 157},
+	{tile.IntraModeD203, 203},
+}
+
+// improveIntraModeDirectional tries the diagonal intra modes against the flat
+// selector's winner. Candidate predictions come from the decoder's own edge
+// construction and directional predictors, so a chosen mode reconstructs
+// bit-exactly; a SAD pre-filter keeps the exact-rate trials to the two most
+// promising angles. The streams code no intra edge filter, so the edges are
+// the raw reconstructed neighbors throughout.
+func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, mode tile.IntraMode, pred []byte, px, py, n int) tile.IntraMode {
+	if !block.HaveTop || !block.HaveLeft || n != 8 {
+		// Larger blocks exist only where the merge gates proved the flat
+		// prediction tight; the diagonal search pays on detail blocks.
+		return mode
+	}
+	// Diagonals only pay where the flat winner predicts poorly; a tight
+	// flat match skips the search and keeps keyframe latency in budget.
+	flatSAD := 0
+	for r := 0; r < n; r++ {
+		row := (py+r)*src.YStride + px
+		for c := 0; c < n; c++ {
+			d := int(src.Y[row+c]) - int(pred[r*n+c])
+			if d < 0 {
+				d = -d
+			}
+			flatSAD += d
+		}
+	}
+	if flatSAD <= n*n*4 {
+		return mode
+	}
+	reconPlane := frame.Plane{Pix: recon.Y, Stride: src.YStride, Width: recon.Width, Height: recon.Height}
+	cand := st.sadScratch[:n*n]
+	candPlane := frame.Plane{Pix: cand, Stride: n, Width: n, Height: n}
+	type scored struct {
+		idx int
+		sad int
+	}
+	best1, best2 := scored{-1, 1 << 30}, scored{-1, 1 << 30}
+	predict := func(i int) bool {
+		edges, err := threading.BuildLumaDirectionalEdges(reconPlane, 8, px, py, n, n, keyDirectionalModes[i].angle, block, &st.intraEdgeScratch, 16, st.keyMIColEnd, st.keyMIRowEnd, false, false, st.keyVisW, st.keyVisH)
+		if err != nil {
+			return false
+		}
+		return prediction.PredictDirectionalIntraPlaneBlock(candPlane, 1, 8, 0, 0, n, n, keyDirectionalModes[i].angle, edges) == nil
+	}
+	for i := range keyDirectionalModes {
+		if !predict(i) {
+			continue
+		}
+		sad := 0
+		for r := 0; r < n; r++ {
+			row := (py+r)*src.YStride + px
+			for c := 0; c < n; c++ {
+				d := int(src.Y[row+c]) - int(cand[r*n+c])
+				if d < 0 {
+					d = -d
+				}
+				sad += d
+			}
+		}
+		if sad < best1.sad {
+			best2 = best1
+			best1 = scored{i, sad}
+		} else if sad < best2.sad {
+			best2 = scored{i, sad}
+		}
+	}
+	if best1.idx < 0 || best1.sad >= flatSAD {
+		// No diagonal even matches the flat winner's prediction; skip the
+		// exact-rate trials entirely.
+		return mode
+	}
+	baseCost := st.trialLumaCost(src.Y, pred, src.YStride, px, py, n)
+	// A directional mode also codes an angle-delta symbol the flat modes
+	// skip; two bits priced under the frame multiplier covers it.
+	angleCost := (int64(2) << 9) * st.rdMult >> 9
+	bestMode, bestCost := mode, baseCost
+	for _, cnd := range [2]scored{best1, best2} {
+		if cnd.idx < 0 {
+			continue
+		}
+		if !predict(cnd.idx) {
+			continue
+		}
+		cost := st.trialLumaCost(src.Y, cand, src.YStride, px, py, n) + angleCost
+		if cost < bestCost {
+			bestMode, bestCost = keyDirectionalModes[cnd.idx].mode, cost
+			copy(pred, cand)
+		}
+	}
+	return bestMode
+}
+
+// trialLumaCost prices coding pred against the source block exactly: the
+// true transform-quantize pass for distortion and the real coefficient coder
+// for bits, trial-coded against the throwaway context set.
+func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py, n int) int64 {
+	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+	st.prepareInterTXB(srcPlane, pred, n, stride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
+	size, scan := tile.TransformSize8x8, st.scan8
+	switch n {
+	case 16:
+		size, scan = tile.TransformSize16x16, st.scan16
+	case 32:
+		size, scan = tile.TransformSize32x32, st.scan32
+	}
+	tw := entropy.NewWriter(st.trialBuf[:0])
+	base := tw.Tell()
+	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
+		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D,
+	}, st.lumaQ2[:n*n], scan, st.levels); err != nil {
+		return 1 << 60
+	}
+	bits := int64(tw.Tell() - base)
+	return ((bits<<9)*st.rdMult+256)>>9 + st.rdDcode<<7
 }
 
 // selectIntraMode8 is selectIntraModeN at the 8x8 fallback size.
