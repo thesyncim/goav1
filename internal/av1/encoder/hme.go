@@ -33,6 +33,9 @@ type hmeState struct {
 	// stayed high - no match anywhere in the +-32px reach. A frame where
 	// most regions fail is a scene cut.
 	bandCut [hmeBands]int
+	// bandStatic counts regions whose zero-motion match was already below
+	// the search bar - the static-content signal for the layer offset.
+	bandStatic [hmeBands]int
 }
 
 // hmeBands is the row-band fan-out of the pyramid build and region search.
@@ -125,6 +128,7 @@ func (h *hmeState) run(src SourceFrame420) {
 			continue
 		}
 		h.bandCut[b] = 0
+		h.bandStatic[b] = 0
 		wg.Add(1)
 		go func(b, r0, r1 int) {
 			defer wg.Done()
@@ -160,6 +164,9 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			zero := sad8x8DualImpl(srcBlock, qw, h.refQ[qy*qw+qx:], qw)
 			bestDX, bestDY, bestSAD := 0, 0, zero
 			// Static fast path mirrors the full-res search's bar.
+			if zero <= 8*8*2 {
+				h.bandStatic[band]++
+			}
 			if zero > 8*8*2 {
 				minDX, maxDX := max(-8, -qx), min(8, qw-8-qx)
 				minDY, maxDY := max(-8, -qy), min(8, qh-8-qy)
@@ -192,6 +199,20 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			}
 		}
 	}
+}
+
+// staticFraction reports the share of regions whose zero-motion match was
+// already clean in the last run, in 256ths.
+func (h *hmeState) staticFraction() int {
+	total := h.cols * h.rows
+	if total == 0 {
+		return 0
+	}
+	static := 0
+	for _, c := range h.bandStatic {
+		static += c
+	}
+	return static * 256 / total
 }
 
 // seedAt returns the full-pel seed for the 32x32 region containing (px, py)

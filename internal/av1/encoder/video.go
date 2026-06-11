@@ -29,6 +29,9 @@ type VideoEncoder struct {
 	rcEnabled      bool
 	rcPerFrameBits int
 	rcBuffer       int
+	// rcRecentBits holds the last two frames' coded sizes (one full
+	// layer pair), the static-content signal for the layer offset.
+	rcRecentBits   [2]int
 	rcMinQ, rcMaxQ uint8
 
 	pc        pframeCoder
@@ -217,6 +220,8 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 	if !e.rcEnabled {
 		return
 	}
+	e.rcRecentBits[0], e.rcRecentBits[1] = e.rcRecentBits[1], frameBits
+
 	e.rcBuffer += e.rcPerFrameBits - frameBits
 	// Asymmetric clamp: debt (a boosted keyframe) stays on the books for
 	// a second so the controller actually repays it, while surplus stays
@@ -404,9 +409,24 @@ func (e *VideoEncoder) joinFilter() error {
 const layerQIndexOffset = 40
 
 // layerQIndex is the effective base quantizer index for a frame at the given
-// temporal layer.
+// temporal layer. The offset shrinks as the coarse search reports the scene
+// static: the boost pays off by freeing leaf bits for the reference frames,
+// and static regions have none to free - their leaves are already nearly
+// empty, so the extra quantization is pure damage.
 func (e *VideoEncoder) layerQIndex(temporalID uint8) uint8 {
-	q := int(e.qIndex) + int(temporalID)*layerQIndexOffset
+	offset := int(temporalID) * layerQIndexOffset
+	if e.rcEnabled && offset > 0 && e.hme.staticFraction() > 192 {
+		// Both signals must agree the scene is static: the coarse search
+		// seeing mostly clean zero-motion matches separates static from
+		// merely cheap-to-code motion, and the recent coded sizes scale
+		// how far the offset shrinks.
+		recent := (e.rcRecentBits[0] + e.rcRecentBits[1]) / 2
+		full := e.rcPerFrameBits / 2
+		if recent < full {
+			offset = offset * recent / full
+		}
+	}
+	q := int(e.qIndex) + offset
 	if q > 255 {
 		q = 255
 	}
