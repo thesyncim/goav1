@@ -42,6 +42,7 @@ go run ./cmd/qualitybench \
   -require-metrics xpsnr,vmaf \
   -csv quality.csv -summary-csv quality-summary.csv \
   -stats-csv quality-encoder-stats.csv \
+  -metadata-json quality-metadata.json \
   -workdir /tmp/goav1-quality
 ```
 
@@ -58,6 +59,11 @@ partition choices, block sizes, skip/coded block counts, references, inter
 modes, transform types, and tile/frame counts. These counters are diagnostic
 evidence for choosing the next parity slice; they are not substitutes for
 decoded-output metrics or BD-rate.
+
+Use `-metadata-json` for claim-supporting runs. The sidecar records the
+goav1 git revision and dirty state, Go runtime, selected configuration,
+metric-filter availability, tool paths/version probes, and per-encoder
+invocations or goav1 settings.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:

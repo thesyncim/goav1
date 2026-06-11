@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/csv"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -277,5 +278,77 @@ func TestWriteStatsRow(t *testing.T) {
 		records[1][header["tx_adst_adst"]] != "1" ||
 		records[1][header["non_dct_txbs"]] != "1" {
 		t.Fatalf("stats row=%v", records[1])
+	}
+}
+
+func TestMetadataConfigCopiesSlices(t *testing.T) {
+	cfg := benchConfig{
+		width:           64,
+		height:          64,
+		frames:          4,
+		fps:             30,
+		encoders:        []string{"goav1"},
+		bitrates:        []int{100000},
+		requiredMetrics: []string{"psnr"},
+		anchorEncoder:   "goav1",
+	}
+	got := metadataConfigFor(cfg)
+	cfg.encoders[0] = "mutated"
+	cfg.bitrates[0] = 1
+	cfg.requiredMetrics[0] = "vmaf"
+	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 || got.RequiredMetrics[0] != "psnr" {
+		t.Fatalf("metadata config aliases inputs: %+v", got)
+	}
+}
+
+func TestWriteMetadataJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	cfg := benchConfig{
+		width:           64,
+		height:          64,
+		frames:          2,
+		fps:             30,
+		metadataPath:    path,
+		encoders:        []string{"goav1"},
+		bitrates:        []int{100000},
+		requiredMetrics: []string{"psnr"},
+		anchorEncoder:   "goav1",
+		layers:          1,
+	}
+	invocations := []encoderInvocationMetadata{{
+		Clip:      "clip",
+		Width:     64,
+		Height:    64,
+		Frames:    2,
+		FPS:       30,
+		Encoder:   "goav1",
+		TargetBPS: 100000,
+		ActualBPS: 96000,
+		Status:    "ok",
+		Settings:  map[string]string{"target_bitrate": "100000"},
+	}}
+	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, invocations); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc qualitybenchMetadata
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.GeneratedAtUTC == "" || doc.Go.Version == "" || doc.Config.Width != 64 {
+		t.Fatalf("metadata header=%+v", doc)
+	}
+	if !doc.MetricFilters["psnr"] || doc.MetricFilters["libvmaf"] {
+		t.Fatalf("metric filters=%+v", doc.MetricFilters)
+	}
+	if len(doc.Encodes) != 1 || doc.Encodes[0].Encoder != "goav1" ||
+		doc.Encodes[0].Settings["target_bitrate"] != "100000" {
+		t.Fatalf("encodes=%+v", doc.Encodes)
+	}
+	if _, ok := doc.Tools["ffmpeg"]; !ok {
+		t.Fatalf("tools=%+v", doc.Tools)
 	}
 }

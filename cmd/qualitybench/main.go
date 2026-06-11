@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ type benchConfig struct {
 	csvPath         string
 	summaryCSVPath  string
 	statsCSVPath    string
+	metadataPath    string
 	anchorEncoder   string
 	encoders        []string
 	bitrates        []int
@@ -63,6 +65,8 @@ type encodeResult struct {
 	status     string
 	errText    string
 	stats      goav1.EncoderDecisionStats
+	command    []string
+	settings   map[string]string
 }
 
 type metrics struct {
@@ -120,6 +124,67 @@ type summaryRow struct {
 	BDRatePct     float64
 	Status        string
 	ErrText       string
+}
+
+type qualitybenchMetadata struct {
+	GeneratedAtUTC string                      `json:"generated_at_utc"`
+	Go             runtimeMetadata             `json:"go"`
+	Git            gitMetadata                 `json:"git"`
+	Config         metadataConfig              `json:"config"`
+	MetricFilters  map[string]bool             `json:"metric_filters"`
+	Tools          map[string]toolMetadata     `json:"tools"`
+	Encodes        []encoderInvocationMetadata `json:"encodes"`
+}
+
+type runtimeMetadata struct {
+	Version string `json:"version"`
+	GOOS    string `json:"goos"`
+	GOARCH  string `json:"goarch"`
+}
+
+type gitMetadata struct {
+	Commit string `json:"commit"`
+	Dirty  bool   `json:"dirty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type metadataConfig struct {
+	Width           int      `json:"width"`
+	Height          int      `json:"height"`
+	Frames          int      `json:"frames"`
+	FPS             int      `json:"fps"`
+	Input           string   `json:"input,omitempty"`
+	Manifest        string   `json:"manifest,omitempty"`
+	Encoders        []string `json:"encoders"`
+	Bitrates        []int    `json:"bitrates"`
+	RequiredMetrics []string `json:"required_metrics,omitempty"`
+	Anchor          string   `json:"anchor"`
+	Layers          int      `json:"layers"`
+	Tiles           int      `json:"tiles"`
+	GoldenInterval  int      `json:"golden_interval"`
+	KeyInterval     int      `json:"key_interval"`
+}
+
+type toolMetadata struct {
+	Path         string `json:"path,omitempty"`
+	Found        bool   `json:"found"`
+	Version      string `json:"version,omitempty"`
+	VersionError string `json:"version_error,omitempty"`
+}
+
+type encoderInvocationMetadata struct {
+	Clip      string            `json:"clip"`
+	Width     int               `json:"width"`
+	Height    int               `json:"height"`
+	Frames    int               `json:"frames"`
+	FPS       int               `json:"fps"`
+	Encoder   string            `json:"encoder"`
+	TargetBPS int               `json:"target_bps"`
+	ActualBPS int64             `json:"actual_bps"`
+	Status    string            `json:"status"`
+	Error     string            `json:"error,omitempty"`
+	Command   []string          `json:"command,omitempty"`
+	Settings  map[string]string `json:"settings,omitempty"`
 }
 
 func main() {
@@ -187,19 +252,26 @@ func run() error {
 	}
 
 	var rows []benchRow
+	var invocations []encoderInvocationMetadata
 	clips, err := clipSpecsForConfig(cfg)
 	if err != nil {
 		return err
 	}
 	for _, clip := range clips {
-		clipRows, err := runClip(cfg, clip, filters, writer, statsWriter)
+		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter)
 		if err != nil {
 			return err
 		}
 		rows = append(rows, clipRows...)
+		invocations = append(invocations, clipInvocations...)
 	}
 	if cfg.summaryCSVPath != "" {
 		if err := writeSummaryCSV(cfg, rows); err != nil {
+			return err
+		}
+	}
+	if cfg.metadataPath != "" {
+		if err := writeMetadataJSON(cfg, filters, invocations); err != nil {
 			return err
 		}
 	}
@@ -211,6 +283,9 @@ func run() error {
 	}
 	if cfg.statsCSVPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.statsCSVPath)
+	}
+	if cfg.metadataPath != "" {
+		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.metadataPath)
 	}
 	if cfg.keep || cfg.workdir != "" && !cleanup {
 		fmt.Fprintf(os.Stderr, "qualitybench workdir: %s\n", cfg.workdir)
@@ -243,6 +318,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
 	flag.StringVar(&cfg.statsCSVPath, "stats-csv", "", "write goav1 encoder decision diagnostics CSV to this path")
+	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
@@ -488,7 +564,7 @@ func parseManifestPositiveInt(record []string, col int, name string, row int) (i
 	return n, nil
 }
 
-func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer) ([]benchRow, error) {
+func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
 	clipCfg := cfg
 	clipCfg.input = clip.Input
 	clipCfg.width = clip.Width
@@ -498,20 +574,21 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	if cfg.manifestPath != "" {
 		clipCfg.workdir = filepath.Join(cfg.workdir, safeClipDir(clip.Name))
 		if err := os.MkdirAll(clipCfg.workdir, 0o755); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	frames, _, err := loadFrames(clipCfg)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", clip.Name, err)
+		return nil, nil, fmt.Errorf("%s: %w", clip.Name, err)
 	}
 	refPath := filepath.Join(clipCfg.workdir, "source.yuv")
 	if err := writeFrames(refPath, frames, clip.Width, clip.Height); err != nil {
-		return nil, fmt.Errorf("%s source: %w", clip.Name, err)
+		return nil, nil, fmt.Errorf("%s source: %w", clip.Name, err)
 	}
 
 	var rows []benchRow
+	var invocations []encoderInvocationMetadata
 	required := requiredMetricSet(cfg.requiredMetrics)
 	for _, bitrate := range cfg.bitrates {
 		for _, encoderName := range cfg.encoders {
@@ -548,22 +625,36 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				errText:   result.errText,
 			}
 			rows = append(rows, row)
+			invocations = append(invocations, encoderInvocationMetadata{
+				Clip:      clip.Name,
+				Width:     clip.Width,
+				Height:    clip.Height,
+				Frames:    clip.Frames,
+				FPS:       clip.FPS,
+				Encoder:   result.encoder,
+				TargetBPS: result.targetBPS,
+				ActualBPS: actualBPS,
+				Status:    result.status,
+				Error:     result.errText,
+				Command:   result.command,
+				Settings:  result.settings,
+			})
 			if err := writeBenchRow(writer, row); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if statsWriter != nil && result.encoder == "goav1" {
 				if err := writeStatsRow(statsWriter, row, result.stats); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				statsWriter.Flush()
 			}
 			writer.Flush()
 			if metricErr != nil {
-				return rows, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
+				return rows, invocations, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
 			}
 		}
 	}
-	return rows, nil
+	return rows, invocations, nil
 }
 
 func safeClipDir(name string) string {
@@ -664,6 +755,112 @@ func writeStatsRow(writer *csv.Writer, row benchRow, stats goav1.EncoderDecision
 
 func formatU64(n uint64) string {
 	return strconv.FormatUint(n, 10)
+}
+
+func writeMetadataJSON(cfg benchConfig, filters map[string]bool, invocations []encoderInvocationMetadata) error {
+	doc := qualitybenchMetadata{
+		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
+		Go: runtimeMetadata{
+			Version: runtime.Version(),
+			GOOS:    runtime.GOOS,
+			GOARCH:  runtime.GOARCH,
+		},
+		Git:           currentGitMetadata(),
+		Config:        metadataConfigFor(cfg),
+		MetricFilters: metricFilterAvailability(filters),
+		Tools:         toolMetadataForRun(),
+		Encodes:       invocations,
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(cfg.metadataPath, raw, 0o644)
+}
+
+func metadataConfigFor(cfg benchConfig) metadataConfig {
+	encoders := append([]string(nil), cfg.encoders...)
+	bitrates := append([]int(nil), cfg.bitrates...)
+	required := append([]string(nil), cfg.requiredMetrics...)
+	return metadataConfig{
+		Width:           cfg.width,
+		Height:          cfg.height,
+		Frames:          cfg.frames,
+		FPS:             cfg.fps,
+		Input:           cfg.input,
+		Manifest:        cfg.manifestPath,
+		Encoders:        encoders,
+		Bitrates:        bitrates,
+		RequiredMetrics: required,
+		Anchor:          cfg.anchorEncoder,
+		Layers:          cfg.layers,
+		Tiles:           cfg.tiles,
+		GoldenInterval:  cfg.goldenInterval,
+		KeyInterval:     cfg.keyInterval,
+	}
+}
+
+func metricFilterAvailability(filters map[string]bool) map[string]bool {
+	return map[string]bool{
+		"psnr":    filters["psnr"],
+		"ssim":    filters["ssim"],
+		"xpsnr":   filters["xpsnr"],
+		"libvmaf": filters["libvmaf"],
+	}
+}
+
+func toolMetadataForRun() map[string]toolMetadata {
+	return map[string]toolMetadata{
+		"ffmpeg":       commandMetadata("ffmpeg", "-hide_banner", "-version"),
+		"aomenc":       commandMetadata("aomenc", "--version"),
+		"SvtAv1EncApp": commandMetadata("SvtAv1EncApp", "--version"),
+	}
+}
+
+func commandMetadata(name string, versionArgs ...string) toolMetadata {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return toolMetadata{Found: false, VersionError: err.Error()}
+	}
+	meta := toolMetadata{Found: true, Path: path}
+	out, err := exec.Command(path, versionArgs...).CombinedOutput()
+	line := firstNonEmptyLine(string(out))
+	if err != nil {
+		meta.VersionError = trimCommandOutput(err, out)
+		return meta
+	}
+	if line != "" {
+		meta.Version = line
+	}
+	return meta
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func currentGitMetadata() gitMetadata {
+	var meta gitMetadata
+	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		meta.Error = err.Error()
+		return meta
+	}
+	meta.Commit = strings.TrimSpace(string(out))
+	status, err := exec.Command("git", "status", "--short", "--untracked-files=no").Output()
+	if err != nil {
+		meta.Error = err.Error()
+		return meta
+	}
+	meta.Dirty = strings.TrimSpace(string(status)) != ""
+	return meta
 }
 
 func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
@@ -942,6 +1139,16 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		encoder:    "goav1",
 		targetBPS:  bitrate,
 		decodedYUV: filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
+		settings: map[string]string{
+			"width":           strconv.Itoa(cfg.width),
+			"height":          strconv.Itoa(cfg.height),
+			"target_bitrate":  strconv.Itoa(bitrate),
+			"framerate":       strconv.Itoa(cfg.fps),
+			"temporal_layers": strconv.Itoa(cfg.layers),
+			"tile_columns":    strconv.Itoa(cfg.tiles),
+			"golden_interval": strconv.Itoa(cfg.goldenInterval),
+			"key_interval":    strconv.Itoa(cfg.keyInterval),
+		},
 	}
 	out, err := os.Create(result.decodedYUV)
 	if err != nil {
@@ -1035,6 +1242,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		args = append(args, "--kf-min-dist=9999", "--kf-max-dist=9999")
 	}
 	args = append(args, "-o", ivfPath, refPath)
+	result.command = commandLine("aomenc", args)
 	result.duration = timeCommand("aomenc", args, &result)
 	if result.status != "" {
 		return result
@@ -1094,6 +1302,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if cfg.tiles > 0 {
 		args = append(args, "--tile-columns", strconv.Itoa(cfg.tiles))
 	}
+	result.command = commandLine("SvtAv1EncApp", args)
 	result.duration = timeCommand("SvtAv1EncApp", args, &result)
 	if result.status != "" {
 		return result
@@ -1129,6 +1338,13 @@ func timeCommand(name string, args []string, result *encodeResult) time.Duration
 		result.errText = trimCommandOutput(err, out)
 	}
 	return elapsed
+}
+
+func commandLine(name string, args []string) []string {
+	out := make([]string, 0, len(args)+1)
+	out = append(out, name)
+	out = append(out, args...)
+	return out
 }
 
 func trimCommandOutput(err error, out []byte) string {
