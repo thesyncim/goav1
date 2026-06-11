@@ -174,15 +174,7 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
 
-	if shift > 0 {
-		for i := range scratch {
-			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), colMin, colMax)
-		}
-	} else {
-		for i := range scratch {
-			scratch[i] = clipRange(int64(scratch[i]), colMin, colMax)
-		}
-	}
+	clampRoundImpl(scratch, shift, colMin, colMax)
 
 	// Column pass: transform two adjacent columns per iteration when a batched
 	// kernel exists (inverse1DCol2 guarantees the result equals two independent
@@ -196,6 +188,26 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
+	narrowStoreImpl(dst, dstStride, scratch, width, height)
+	return nil
+}
+
+// clampRoundPureGo is the portable mid-pass round and clamp.
+func clampRoundPureGo(scratch []int32, shift int, min, max int32) {
+	if shift > 0 {
+		for i := range scratch {
+			scratch[i] = clipRange(roundShift(int64(scratch[i]), shift), min, max)
+		}
+	} else {
+		for i := range scratch {
+			scratch[i] = clipRange(int64(scratch[i]), min, max)
+		}
+	}
+}
+
+// narrowStorePureGo is the portable final store: every value is
+// rounding-shifted right by four and saturated to int16.
+func narrowStorePureGo(dst []int16, dstStride int, scratch []int32, width, height int) {
 	for row := range height {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
@@ -206,7 +218,6 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 			dstLine[col] = clipInt16(int32(roundShift(int64(v), 4)))
 		}
 	}
-	return nil
 }
 
 func inverse1D(c []int32, stride int, length int, typ tx1DType, min int32, max int32) {
