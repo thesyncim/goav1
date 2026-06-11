@@ -60,6 +60,19 @@ type Decoder struct {
 	useExternal bool
 	visible     []*Frame
 	visibleOne  [1]*Frame
+
+	// shownHeld tracks the pool surfaces behind the last returned batch.
+	// Frames that refresh no reference slot are owned by nothing once
+	// shown - the slot bookkeeping never sees them - so the next decode
+	// call returns them to their pool when no reference still holds them.
+	shownHeld    []shownSurface
+	shownHeldBuf [2 * (RefFrames + 1)]shownSurface
+}
+
+// shownSurface names one tracked output surface and the pool that owns it.
+type shownSurface struct {
+	pool  *FramePool
+	index int
 }
 
 // decoderConfig holds resolved construction options.
@@ -304,6 +317,7 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	if d.closed {
 		return nil, false, errors.New("goav1: decoder closed")
 	}
+	d.releaseShownSurfaces()
 	if d.next >= d.payloadSource.len() {
 		return nil, false, nil
 	}
@@ -330,7 +344,59 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 		}
 	}
 	d.visible = out
+	d.trackShownSurfaces(out)
 	return out, true, nil
+}
+
+// trackShownSurfaces records the pool slots behind one returned batch so the
+// next call can release the ones no reference slot holds.
+func (d *Decoder) trackShownSurfaces(out []*Frame) {
+	d.shownHeld = d.shownHeldBuf[:0]
+	// Only the coded pool needs this: the external/upscaled output pool has
+	// its own release path through the surface provider.
+	pool := &d.pool
+	for _, f := range out {
+		for i := 0; i < pool.Cap(); i++ {
+			pf, err := pool.Frame(i)
+			if err != nil || pf != f {
+				continue
+			}
+			dup := false
+			for _, h := range d.shownHeld {
+				if h.index == i {
+					dup = true
+					break
+				}
+			}
+			if !dup && len(d.shownHeld) < cap(d.shownHeldBuf) {
+				d.shownHeld = append(d.shownHeld, shownSurface{pool: pool, index: i})
+			}
+		}
+	}
+}
+
+// releaseShownSurfaces returns the previous batch's surfaces to their pools
+// unless a reference slot still holds them - those are released by the slot
+// bookkeeping when they leave the reference set.
+func (d *Decoder) releaseShownSurfaces() {
+	for _, h := range d.shownHeld {
+		held := false
+		if h.pool == &d.pool {
+			for r := 0; r < RefFrames; r++ {
+				if surface, ok := d.refs.ReferenceSlot(r); ok && surface == h.index {
+					held = true
+					break
+				}
+			}
+		}
+		if !held {
+			// Tolerate already-released slots: a surface freed by the
+			// reference bookkeeping between calls is exactly the benign
+			// case.
+			_ = h.pool.Release(h.index)
+		}
+	}
+	d.shownHeld = d.shownHeld[:0]
 }
 
 // DecodeAll decodes every remaining payload and returns all visible frames in
@@ -374,6 +440,7 @@ func (d *Decoder) Reset() error {
 	if d.useExternal {
 		d.outputPool.Reset()
 	}
+	d.shownHeld = d.shownHeld[:0]
 	d.refs.Reset()
 	d.state.Reset()
 	d.stats = DecoderFrameWorkTileResidualStats{}
