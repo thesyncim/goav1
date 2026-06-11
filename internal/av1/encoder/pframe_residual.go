@@ -304,8 +304,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		}
 	}
 
-	// The intra-fallback mode search trial-codes against throwaway contexts;
-	// they re-arm lazily on the first intra block of the frame.
+	// The mode and partition searches trial-code against throwaway
+	// contexts; they re-arm lazily on first use each frame.
 	st.trialReady = false
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
@@ -543,7 +543,15 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			return tile.PartitionSplit, nil
 		case tile.BlockLevel16x16:
 			sad16, sum8 := evaluate16(px, py)
-			if sad16 <= sum8+mergeBias16 {
+			// Clear margins keep the cheap SAD rule; the ambiguous band
+			// around it prices both shapes with real bits. Near-perfect
+			// merges skip even that.
+			margin := sad16 - (sum8 + mergeBias16)
+			// Inside the quantizer's dead zone both shapes code almost
+			// nothing and headers favor the merge outright; the trial only
+			// pays where real residual separates the shapes.
+			skipBar := 16 * 16 * int(st.yQuant.AC) / 24
+			if sad16 <= skipBar || margin <= 0 {
 				return tile.PartitionNone, nil
 			}
 			// Rect halves: a 16x8 (8x16) half coded with one vector saves a
@@ -1486,6 +1494,79 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 
 // forwardDCTBlock dispatches the forward DCT_DCT for every coded transform
 // shape (squares and the factor-two rectangles).
+// armTrial readies the throwaway trial contexts for this frame's quantizer.
+func (st *lossyEncodeState) armTrial() bool {
+	if st.trialReady {
+		return true
+	}
+	if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
+		return false
+	}
+	if cap(st.trialBuf) == 0 {
+		st.trialBuf = make([]byte, 1<<14)
+	}
+	st.trialReady = true
+	return true
+}
+
+// interHeaderCost prices one extra inter block's prefix symbols (mode,
+// reference, vector residual) under the frame multiplier.
+func (st *lossyEncodeState) interHeaderCost() int64 {
+	return (int64(24) << 9) * st.rdMult >> 9
+}
+
+// trialInterCost prices coding one motion-compensated block exactly: the
+// true transform-quantize pass for distortion and the real coefficient coder
+// for bits. The prediction lands in sadScratch.
+func (st *lossyEncodeState) trialInterCost(src SourceFrame420, ref SourceFrame420, px, py, n int, mv motion.Vector) int64 {
+	pred := st.sadScratch[:n*n]
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, n, n, mv, false, false); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+	st.prepareInterTXB(src.Y, pred, n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
+	cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + st.rdDcode<<7
+	// The chroma transform structure differs between the shapes too: one
+	// large block against four small ones per plane.
+	cn := n / 2
+	halfW, halfH := src.Width/2, src.Height/2
+	for plane := 1; plane <= 2; plane++ {
+		data, rdata, q := src.U, ref.U, st.uQuant
+		qc := st.uQ[:cn*cn]
+		if plane == 2 {
+			data, rdata, q = src.V, ref.V, st.vQuant
+			qc = st.vQ[:cn*cn]
+		}
+		cpred := st.sadScratch[n*n : n*n+cn*cn]
+		if err := predictInto(cpred, rdata, src.ChromaStride, halfW, halfH, px/2, py/2, cn, cn, mv, true, true); err != nil {
+			return 1 << 59
+		}
+		st.rdDcode = 0
+		st.prepareInterTXB(data, cpred, cn, src.ChromaStride, px/2, py/2, cn, cn, q, qc)
+		cost += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn) + st.rdDcode<<7
+	}
+	return cost
+}
+
+// trialInterMergeWins prices the merged 16x16 against its four 8x8 children
+// with real bits; the merge keeps three blocks' header savings.
+func (st *lossyEncodeState) trialInterMergeWins(src SourceFrame420, ref SourceFrame420, px, py int) bool {
+	if !st.armTrial() {
+		return false
+	}
+	children := int64(0)
+	for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+		cx, cy := px+off[0], py+off[1]
+		idx8 := (cy/8)*st.grid8Cols + cx/8
+		children += st.trialInterCost(src, ref, cx, cy, 8, st.mv8Grid[idx8]) + st.interHeaderCost()
+	}
+	idx16 := (py/16)*st.grid16Cols + px/16
+	merged := st.trialInterCost(src, ref, px, py, 16, st.mv16Grid[idx16]) + st.interHeaderCost()
+	// The trial models full-pel prediction without chroma, so it only
+	// overrides the calibrated SAD rule on a decisive margin.
+	return merged*16 <= children*15
+}
+
 func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 	switch {
 	case w == 4 && h == 4:
