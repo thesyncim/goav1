@@ -36,31 +36,32 @@ const (
 )
 
 type benchConfig struct {
-	width             int
-	height            int
-	frames            int
-	fps               int
-	input             string
-	manifestPath      string
-	workdir           string
-	csvPath           string
-	summaryCSVPath    string
-	statsCSVPath      string
-	frameStatsCSVPath string
-	metadataPath      string
-	anchorEncoder     string
-	encoders          []string
-	bitrates          []int
-	requiredMetrics   []string
-	requiredEncoders  []string
-	requireSummary    bool
-	requireCorpus     bool
-	minClips          int
-	layers            int
-	tiles             int
-	goldenInterval    int
-	keyInterval       int
-	keep              bool
+	width               int
+	height              int
+	frames              int
+	fps                 int
+	input               string
+	manifestPath        string
+	workdir             string
+	csvPath             string
+	summaryCSVPath      string
+	statsCSVPath        string
+	frameStatsCSVPath   string
+	frameMetricsCSVPath string
+	metadataPath        string
+	anchorEncoder       string
+	encoders            []string
+	bitrates            []int
+	requiredMetrics     []string
+	requiredEncoders    []string
+	requireSummary      bool
+	requireCorpus       bool
+	minClips            int
+	layers              int
+	tiles               int
+	goldenInterval      int
+	keyInterval         int
+	keep                bool
 }
 
 type encodeResult struct {
@@ -150,6 +151,11 @@ type goAV1FrameStats struct {
 	Duration        time.Duration
 	CumulativeBytes int64
 	Stats           goav1.EncoderDecisionStats
+}
+
+type frameMetricValue struct {
+	FrameIndex int
+	Value      string
 }
 
 type qualitybenchMetadata struct {
@@ -316,6 +322,20 @@ func run() error {
 			return err
 		}
 	}
+	var frameMetricsWriter *csv.Writer
+	var frameMetricsFile *os.File
+	if cfg.frameMetricsCSVPath != "" {
+		frameMetricsFile, err = os.Create(cfg.frameMetricsCSVPath)
+		if err != nil {
+			return err
+		}
+		defer frameMetricsFile.Close()
+		frameMetricsWriter = csv.NewWriter(frameMetricsFile)
+		defer frameMetricsWriter.Flush()
+		if err := writeFrameMetricsHeader(frameMetricsWriter); err != nil {
+			return err
+		}
+	}
 
 	var rows []benchRow
 	var invocations []encoderInvocationMetadata
@@ -327,7 +347,7 @@ func run() error {
 		return err
 	}
 	for _, clip := range clips {
-		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter, frameStatsWriter)
+		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter, frameStatsWriter, frameMetricsWriter)
 		if err != nil {
 			return err
 		}
@@ -364,6 +384,9 @@ func run() error {
 	if cfg.frameStatsCSVPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.frameStatsCSVPath)
 	}
+	if cfg.frameMetricsCSVPath != "" {
+		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.frameMetricsCSVPath)
+	}
 	if cfg.metadataPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.metadataPath)
 	}
@@ -380,6 +403,11 @@ func run() error {
 	}
 	if frameStatsWriter != nil {
 		if err := frameStatsWriter.Error(); err != nil {
+			return err
+		}
+	}
+	if frameMetricsWriter != nil {
+		if err := frameMetricsWriter.Error(); err != nil {
 			return err
 		}
 	}
@@ -408,6 +436,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
 	flag.StringVar(&cfg.statsCSVPath, "stats-csv", "", "write goav1 encoder decision diagnostics CSV to this path")
 	flag.StringVar(&cfg.frameStatsCSVPath, "frame-stats-csv", "", "write per-frame goav1 rate-control and decision diagnostics CSV to this path")
+	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
@@ -785,7 +814,7 @@ func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
 	return nil
 }
 
-func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer, frameStatsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
+func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer, frameStatsWriter *csv.Writer, frameMetricsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
 	clipCfg := cfg
 	clipCfg.input = clip.Input
 	clipCfg.width = clip.Width
@@ -821,6 +850,12 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				m, metricErr = measureDecoded(clipCfg, filters, required, refPath, result.decodedYUV, encoderName, bitrate)
 				if metricErr != nil {
 					result.status, result.errText = "error", metricErr.Error()
+				}
+				if metricErr == nil && frameMetricsWriter != nil {
+					if err := writeFrameMetricRows(clipCfg, filters, frameMetricsWriter, clip.Name, result.encoder, bitrate, refPath, result.decodedYUV); err != nil {
+						return rows, invocations, err
+					}
+					frameMetricsWriter.Flush()
 				}
 			}
 			actualBPS := int64(0)
@@ -1058,6 +1093,49 @@ func writeFrameStatsRow(writer *csv.Writer, row benchRow, frame goAV1FrameStats)
 		formatU64(stats.NonDCTTXBs),
 		row.status,
 		row.errText,
+	})
+}
+
+func writeFrameMetricsHeader(writer *csv.Writer) error {
+	return writer.Write([]string{
+		"clip", "encoder", "target_bps", "frame_index", "metric", "value",
+	})
+}
+
+func writeFrameMetricRows(cfg benchConfig, filters map[string]bool, writer *csv.Writer, clipName, encoderName string, bitrate int, refPath, decodedPath string) error {
+	if filters["psnr"] {
+		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "psnr", `psnr_avg:([0-9.]+|inf|Inf|INF)`)
+		if err != nil {
+			return err
+		}
+		for _, value := range values {
+			if err := writeFrameMetricRow(writer, clipName, encoderName, bitrate, value.FrameIndex, "psnr_avg", value.Value); err != nil {
+				return err
+			}
+		}
+	}
+	if filters["ssim"] {
+		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "ssim", `All:([0-9.]+|inf|Inf|INF)`)
+		if err != nil {
+			return err
+		}
+		for _, value := range values {
+			if err := writeFrameMetricRow(writer, clipName, encoderName, bitrate, value.FrameIndex, "ssim_all", value.Value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writeFrameMetricRow(writer *csv.Writer, clipName, encoderName string, bitrate int, frameIndex int, metricName, value string) error {
+	return writer.Write([]string{
+		clipName,
+		encoderName,
+		strconv.Itoa(bitrate),
+		strconv.Itoa(frameIndex),
+		metricName,
+		value,
 	})
 }
 
@@ -2060,6 +2138,70 @@ func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern 
 		return 0, fmt.Errorf("%s metric not found in ffmpeg output", filterName)
 	}
 	return strconv.ParseFloat(m[1], 64)
+}
+
+func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int, filterName, valuePattern string) ([]frameMetricValue, error) {
+	logPath := filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_%s_frames.log", safeClipDir(encoderName), bitrate, filterName))
+	_ = os.Remove(logPath)
+	filterSpec := fmt.Sprintf("%s=stats_file=%s", filterName, escapeFilterPath(logPath))
+	args := rawMetricArgs(cfg, refPath, decodedPath, filterSpec)
+	cmd := exec.Command("ffmpeg", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s frame metrics: %s", filterName, trimCommandOutput(err, out))
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("%s frame metrics: %w", filterName, err)
+	}
+	values, err := parseFrameMetricValues(raw, valuePattern)
+	if err != nil {
+		return nil, fmt.Errorf("%s frame metrics: %w", filterName, err)
+	}
+	return values, nil
+}
+
+func parseFrameMetricValues(raw []byte, valuePattern string) ([]frameMetricValue, error) {
+	lineRe := regexp.MustCompile(`\bn:\s*([0-9]+)`)
+	valueRe := regexp.MustCompile(valuePattern)
+	var values []frameMetricValue
+	for _, line := range strings.Split(string(raw), "\n") {
+		nMatch := lineRe.FindStringSubmatch(line)
+		if len(nMatch) < 2 {
+			continue
+		}
+		valueMatch := valueRe.FindStringSubmatch(line)
+		if len(valueMatch) < 2 {
+			continue
+		}
+		frameIndex, err := strconv.Atoi(nMatch[1])
+		if err != nil {
+			return nil, err
+		}
+		if frameIndex > 0 {
+			frameIndex--
+		}
+		value, err := normalizeFrameMetricValue(valueMatch[1])
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, frameMetricValue{FrameIndex: frameIndex, Value: value})
+	}
+	if len(values) == 0 {
+		return nil, errors.New("no per-frame values found")
+	}
+	return values, nil
+}
+
+func normalizeFrameMetricValue(raw string) (string, error) {
+	if strings.EqualFold(raw, "inf") {
+		return "inf", nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return "", err
+	}
+	return formatMetric(v), nil
 }
 
 func rawMetricArgs(cfg benchConfig, refPath, decodedPath, filterName string) []string {

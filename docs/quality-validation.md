@@ -75,6 +75,13 @@ qindex before and after encode, encode time, and per-frame decision-counter
 deltas. Treat it as diagnostic evidence for explaining RD results, not as a
 visual-quality metric.
 
+Use `-frame-metrics-csv` to align decoded-output PSNR/SSIM traces with
+`-frame-stats-csv`. This is useful for locating the frames where a rate-control
+or mode-decision event becomes visible in decoded quality; it is still
+diagnostic context, while clip-level BD-rate and required perceptual metrics
+remain the claim-supporting result. Frame indexes in both diagnostic CSVs are
+zero-based.
+
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,

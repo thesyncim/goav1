@@ -264,6 +264,34 @@ func TestParseVMAFMean(t *testing.T) {
 	}
 }
 
+func TestParseFrameMetricValues(t *testing.T) {
+	raw := []byte(`[Parsed_psnr_0 @ 0x1] n:1 mse_avg:10.0 psnr_avg:38.123456
+[Parsed_psnr_0 @ 0x1] n:2 mse_avg:0.0 psnr_avg:inf
+`)
+	got, err := parseFrameMetricValues(raw, `psnr_avg:([0-9.]+|inf|Inf|INF)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].FrameIndex != 0 || got[0].Value != "38.1235" ||
+		got[1].FrameIndex != 1 || got[1].Value != "inf" {
+		t.Fatalf("values=%+v", got)
+	}
+
+	raw = []byte(`[Parsed_ssim_0 @ 0x1] n:7 Y:0.900000 U:0.950000 V:0.960000 All:0.912345 (10.1)
+`)
+	got, err = parseFrameMetricValues(raw, `All:([0-9.]+|inf|Inf|INF)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].FrameIndex != 6 || got[0].Value != "0.9123" {
+		t.Fatalf("values=%+v", got)
+	}
+
+	if _, err := parseFrameMetricValues([]byte("summary only"), `All:([0-9.]+)`); err == nil {
+		t.Fatal("missing frame values accepted")
+	}
+}
+
 func TestBDRatePercent(t *testing.T) {
 	anchor := []rdPoint{
 		{Metric: 30, Rate: 100_000},
@@ -525,6 +553,29 @@ func TestWriteFrameStatsRow(t *testing.T) {
 		records[1][header["primary_golden"]] != "2" ||
 		records[1][header["tx_non_dct"]] != "1" {
 		t.Fatalf("frame stats row=%v", records[1])
+	}
+}
+
+func TestWriteFrameMetricRow(t *testing.T) {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writeFrameMetricsHeader(writer); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrameMetricRow(writer, "clip", "goav1", 100000, 2, "psnr_avg", "41.2500"); err != nil {
+		t.Fatal(err)
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(buf.Bytes())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[1][0] != "clip" || records[1][3] != "2" ||
+		records[1][4] != "psnr_avg" || records[1][5] != "41.2500" {
+		t.Fatalf("records=%v", records)
 	}
 }
 
