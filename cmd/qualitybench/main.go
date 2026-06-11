@@ -423,10 +423,12 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
-	start := time.Now()
+	var encodeDuration time.Duration
 	for i, frame := range frames {
 		forceKey := cfg.keyInterval > 0 && i > 0 && i%cfg.keyInterval == 0
+		frameStart := time.Now()
 		encoded, err := enc.Encode(frame, forceKey)
+		encodeDuration += time.Since(frameStart)
 		if err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
@@ -437,7 +439,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			return result
 		}
 	}
-	result.duration = time.Since(start)
+	result.duration = encodeDuration
 	result.status = "ok"
 	return result
 }
