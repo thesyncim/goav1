@@ -91,6 +91,7 @@ func losslessKeyframeSequence(width, height int) SequenceHeader {
 		MaxFrameWidth:        uint32(width),
 		MaxFrameHeight:       uint32(height),
 		Use128x128Superblock: false,
+		EnableCDEF:           true,
 		ColorConfig: SequenceColorConfig{
 			BitDepth:     8,
 			SubsamplingX: true,

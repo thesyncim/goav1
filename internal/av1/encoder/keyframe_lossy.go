@@ -32,7 +32,7 @@ import (
 // temporal unit together with the encoder-side reconstruction the decoder must
 // reproduce exactly.
 func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil)
+	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
 }
 
 // encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
@@ -41,7 +41,7 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 // Streaming callers pass their reusable reconstruction buffer and tile-coder
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
-func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder) ([]byte, SourceFrame420, error) {
+func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -95,6 +95,15 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
 		header.LoopFilter.LevelU = lfLevel
 		header.LoopFilter.LevelV = lfLevel
+		header.CDEF = cdefHeaderParams(qIndex, true)
+		if cdefApp == nil {
+			cdefApp = &cdefApplier{}
+		}
+		if !cdefApp.bound {
+			if err := cdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
+				return nil, SourceFrame420{}, fmt.Errorf("cdef init: %w", err)
+			}
+		}
 	}
 	if log2 := defaultTileColsLog2(src.Width); log2 > 0 {
 		tiles, err := interTileInfo(src.Width, src.Height, log2)
@@ -157,6 +166,9 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 		}); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
 		}
+		if err := cdefApp.apply(&recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
+			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
+		}
 	}
 	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
 	if err != nil {
@@ -205,6 +217,7 @@ func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams
 		TransformMode: TransformModeLargest,
 		ReferenceMode: ReferenceModeSingle,
 	}
+	header.CDEF = CDEFParams{Damping: 3}
 	return header
 }
 

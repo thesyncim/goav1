@@ -41,6 +41,7 @@ type VideoEncoder struct {
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
 	lf           loopFilterApplier
+	cdefApp      cdefApplier
 	hme          hmeState
 
 	temporalLayers int
@@ -298,7 +299,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 				return &e.pc
 			}
 			return &e.tilePCs[t]
-		})
+		}, &e.cdefApp)
 		if err != nil {
 			return nil, false, err
 		}
@@ -411,6 +412,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
 		header.LoopFilter.LevelU = lfLevel
 		header.LoopFilter.LevelV = lfLevel
+		// The q-derived CDEF strengths ride the same gate: the loop-filter
+		// records double as the index map and per-block skip source.
+		header.CDEF = cdefHeaderParams(e.qIndex, false)
+		if !e.cdefApp.bound {
+			if err := e.cdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
+				return nil, fmt.Errorf("cdef init: %w", err)
+			}
+		}
 	}
 	if afterT1 {
 		// The trailing T2 predicts from the middle layer: LAST names slot 2.
@@ -526,6 +535,9 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			LevelV: lfLevel,
 		}); err != nil {
 			return nil, fmt.Errorf("loop filter apply: %w", err)
+		}
+		if err := e.cdefApp.apply(out, cdefParserParams(header.CDEF), &e.lf.filtMap); err != nil {
+			return nil, fmt.Errorf("cdef apply: %w", err)
 		}
 	}
 	tu, err := assembleInterTU(seq, header, payloads, temporalID)

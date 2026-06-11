@@ -168,6 +168,7 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 		},
 		FrameMode:    FrameModeParams{},
 		GlobalMotion: DefaultGlobalMotionParams(),
+		CDEF:         CDEFParams{Damping: 3},
 	}
 	return header, refs
 }
