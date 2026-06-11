@@ -910,12 +910,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if !skip && bw == 8 && bh == 8 && !lumaZero {
 			// One-level var-tx split RD: quantize the same luma residual as
 			// four quadrant 4x4 TXBs and split when their coded rate-
-			// distortion beats the whole 8x8 transform - energy isolated in
-			// one quadrant smears across the large DCT but codes as a
-			// single small tree (the other children are one txb_skip each,
-			// and an 8x8 split to 4x4 costs no extra tree symbols).
-			// Measured at 16/32 the split never paid for its four extra
-			// child symbols, so only the 8x8 class is evaluated.
+			// distortion beats the whole 8x8 transform.
 			cN := n / 2
 			st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 			for i := range 4 {
@@ -926,6 +921,46 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			costSplit := ((st.rdRcode*st.rdMult + 256) >> 9) + (st.rdDcode << 7)
 			if costSplit < costFull {
 				splitTX = true
+			}
+		}
+		if !skip && bw == 16 && bh == 16 && !lumaZero && st.qIndex <= 160 &&
+			(st.hme == nil || st.hme.staticFraction() <= 192) {
+			// Static scenes skip the sixteen split: their adapted symbol
+			// contexts sit furthest from the throwaway trial state, and
+			// split mispricing there costs more than the occasional win.
+			// One-level var-tx split RD: the prediction is final here, so
+			// the coarse model prices both shapes first and the real
+			// coefficient coder arbitrates only the ambiguous band -
+			// energy isolated in one quadrant smears across the large DCT
+			// but codes as a single small tree.
+			cN := n / 2
+			coarseFull := ((lumaRdR*st.rdMult + 256) >> 9) + lumaRdD<<7
+			st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+			for i := range 4 {
+				dy, dx := (i>>1)*cN, (i&1)*cN
+				st.prepareInterTXB(src.Y, st.predY[dy*n+dx:], n, src.YStride, lumaPX+dx, lumaPY+dy, cN, cN, st.yQuant, st.lumaQ2[i*cN*cN:(i+1)*cN*cN])
+			}
+			coarseSplit := ((st.rdRcode*st.rdMult + 256) >> 9) + st.rdDcode<<7
+			splitD := st.rdDcode
+			diff := coarseSplit - coarseFull
+			if diff < 0 {
+				diff = -diff
+			}
+			switch {
+			case coarseSplit >= coarseFull && diff*4 > coarseFull:
+				// Clear keep: the whole transform wins outright. Splits
+				// never pass on the coarse model alone - it overprices
+				// dense whole-block coefficients, and a wrong split costs
+				// more than a missed one.
+			case st.armTrial():
+				costFull := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ[:n*n], n) + lumaRdD<<7
+				costSplit := splitD << 7
+				for i := range 4 {
+					costSplit += st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], cN)
+				}
+				if costSplit < costFull {
+					splitTX = true
+				}
 			}
 		}
 	}
