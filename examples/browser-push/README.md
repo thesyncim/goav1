@@ -1,0 +1,26 @@
+# browser-push — realtime AV1 to a browser over WebRTC
+
+Streams an animated 1080p30 scene from the goav1 encoder to a browser
+`<video>` element as AV1 RTP. The browser sends a receive-only offer, the
+server answers, and picture-loss feedback (PLI/FIR) forces keyframes so the
+stream recovers from packet loss like a production sender.
+
+The example carries its own `go.mod` (with a `replace` to the repository
+root), so its WebRTC dependencies stay out of the main module.
+
+## Run
+
+```
+cd examples/browser-push
+go run . -listen :8080 -bitrate 4000000
+```
+
+Open http://localhost:8080 in a browser with AV1 decode support (Chrome,
+Edge, Firefox, Safari 17+).
+
+## Shape
+
+- `goav1.VideoEncoder` at 1080p30 CBR with two temporal layers
+- Pion WebRTC v4 `TrackLocalStaticSample` with the AV1 payloader
+- One goroutine per viewer; the encoder's zero-allocation steady state
+  means each stream costs only its compute
