@@ -77,11 +77,23 @@ func psnr(a, b []byte) float64 {
 	return 10 * math.Log10(255*255/mse)
 }
 
+func goldenLabel(interval int) string {
+	switch {
+	case interval < 0:
+		return "disabled"
+	case interval == 0:
+		return "default"
+	default:
+		return fmt.Sprintf("every %d base frames", interval)
+	}
+}
+
 func main() {
 	dump := flag.String("dump", "", "write the scene as raw I420 to this path and exit")
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
 	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
 	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
+	golden := flag.Int("golden", 0, "golden refresh interval in base-layer frames (0 = encoder default, negative = disable)")
 	width := flag.Int("width", defaultWidth, "frame width in pixels")
 	height := flag.Int("height", defaultHeight, "frame height in pixels")
 	input := flag.String("input", "", "encode this raw I420 file instead of the synthetic scene")
@@ -146,6 +158,7 @@ func main() {
 		TargetBitrate: *bitrate, Framerate: *infps,
 		TemporalLayers: *layers,
 		TileColumns:    *tiles,
+		GoldenInterval: *golden,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -265,10 +278,10 @@ func main() {
 	perFrame := elapsed / time.Duration(nFrames)
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", nFrames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(nFrames)/elapsed.Seconds())
 	steadyFrames := nFrames - steadyStart
-	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d\n",
+	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d, golden %s\n",
 		float64(totalBytes*8**infps)/float64(nFrames)/1e6,
 		float64(steadyBytes*8**infps)/float64(steadyFrames)/1e6,
-		float64(*bitrate)/1e6, sumPSNR/float64(nFrames), steadyPSNR/float64(steadyFrames), minPSNR, enc.QIndex())
+		float64(*bitrate)/1e6, sumPSNR/float64(nFrames), steadyPSNR/float64(steadyFrames), minPSNR, enc.QIndex(), goldenLabel(*golden))
 	if *layers > 1 {
 		for tid, count := range layerFrames {
 			if count == 0 {
