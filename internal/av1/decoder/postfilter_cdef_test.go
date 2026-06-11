@@ -1017,3 +1017,99 @@ func TestFrameWorkCopyCDEFInputFinalUnitKeepsVeryLarge(t *testing.T) {
 		}
 	}
 }
+
+// TestCDEFPostFilterBandedMatchesWhole proves the unit-row banded apply
+// reproduces the whole-frame application exactly: bands over disjoint row
+// ranges against one shared sample snapshot (each with its own input and
+// unit scratch) write the same output the single-call path does.
+func TestCDEFPostFilterBandedMatchesWhole(t *testing.T) {
+	const width, height = 256, 192
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 2,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{9, 31},
+			UVStrength:    [parser.MaxCDEFStrengths]uint8{5, 17},
+		},
+	}
+	build := func() (*frame.Frame, FrameWorkPostFilterContext, FrameWorkCDEFPostFilterRequest) {
+		output := testFrameWorkCDEFFrame(t, frame.Format{
+			Width: width, Height: height, BitDepth: 8,
+			SubsamplingX: true, SubsamplingY: true, Align: 64,
+		})
+		testFillFrameWorkCDEFPlane(output.Y)
+		testFillFrameWorkCDEFPlane(output.U)
+		testFillFrameWorkCDEFPlane(output.V)
+		ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		batch := threading.FrameWorkBatch{
+			FrameWorkFrameContext: threading.FrameWorkFrameContext{
+				Sequence:  threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader),
+				FrameSize: event.FrameSize,
+				CDEF:      event.CDEF,
+			},
+		}
+		_, _, length, err := batch.CDEFIndexMapShape()
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx := make([]uint8, length)
+		for i := range idx {
+			idx[i] = uint8(i % 2)
+		}
+		cdefMap, err := batch.BindCDEFIndexMap(idx, make([]bool, length))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range cdefMap.Read {
+			cdefMap.Read[i] = true
+		}
+		scratch, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(scratch)
+		req, err := scratch.BindRequest(cdefMap, samples, dst, directionGrid, varianceGrid, input, unitDst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return output, ctx, req
+	}
+
+	wholeOut, wholeCtx, wholeReq := build()
+	if _, err := wholeCtx.ApplyCDEFPostFilter(wholeReq); err != nil {
+		t.Fatal(err)
+	}
+
+	bandOut, bandCtx, bandReq := build()
+	if err := bandCtx.LoadCDEFPostFilterSamples(bandReq); err != nil {
+		t.Fatal(err)
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(event.FrameSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r0 := 0; r0 < rows; r0 += 1 { // one band per unit row, separate scratch
+		band := bandReq
+		band.InputScratch = make([]uint16, len(bandReq.InputScratch))
+		band.UnitDstScratch = make([]uint16, len(bandReq.UnitDstScratch))
+		if _, err := bandCtx.ApplyCDEFPostFilterUnitRows(band, r0, r0+1); err != nil {
+			t.Fatalf("band %d: %v", r0, err)
+		}
+	}
+	for _, planes := range [][2]frame.Plane{{wholeOut.Y, bandOut.Y}, {wholeOut.U, bandOut.U}, {wholeOut.V, bandOut.V}} {
+		w, b := planes[0], planes[1]
+		for y := 0; y < w.Height; y++ {
+			for x := 0; x < w.Width; x++ {
+				if w.Pix[y*w.Stride+x] != b.Pix[y*b.Stride+x] {
+					t.Fatalf("banded differs at (%d,%d)", x, y)
+				}
+			}
+		}
+	}
+}

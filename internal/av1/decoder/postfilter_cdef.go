@@ -120,6 +120,43 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 // ApplyCDEFPostFilter applies CDEF to ctx.Output. Loop filter must already be
 // inactive or marked complete with WithCompletedPostFilters.
 func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
+	return ctx.applyCDEFPostFilterRows(req, 0, -1, true)
+}
+
+// LoadCDEFPostFilterSamples snapshots the pre-CDEF output planes into the
+// request's sample scratch. Callers that band the application across unit
+// rows load once and then run ApplyCDEFPostFilterUnitRows per band against
+// the shared read-only snapshot.
+func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterSamples(req FrameWorkCDEFPostFilterRequest) error {
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		if !ok {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if _, _, err := frame.LoadSamplePlaneFull(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ApplyCDEFPostFilterUnitRows applies CDEF to the 64x64 unit rows in
+// [rowStart, rowEnd) against the snapshot a prior LoadCDEFPostFilterSamples
+// call placed in the request's sample scratch. Units read only the snapshot
+// and write disjoint output regions, so bands over disjoint row ranges run
+// concurrently when each band binds its own input and unit scratch (the
+// sample scratch, direction grid, and variance grid are shared; the chroma
+// passes of a band reuse the luma directions of the same band's rows).
+func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
+	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false)
+}
+
+func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool) (FrameWorkCDEFPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
@@ -139,6 +176,15 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	if rowEnd < 0 || rowEnd > rows {
+		rowEnd = rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return FrameWorkCDEFPostFilterResult{}, nil
+		}
+		return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
 	}
 	indexMap := req.IndexMap
 	if frameWorkCDEFIndexMapEmpty(indexMap) && ctx.CDEFIndexMap != nil {
@@ -173,12 +219,22 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 		// VeryLarge sentinel.
 		xDec0, yDec0 := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
 		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec0, yDec0, ctx.Output.Layout.BytesPerSample)
-		src, _, err := frame.LoadSamplePlaneFull(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
-		if err != nil {
-			return FrameWorkCDEFPostFilterResult{}, err
+		var src frame.SamplePlane
+		if loadSamples {
+			var err error
+			src, _, err = frame.LoadSamplePlaneFull(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
+			if err != nil {
+				return FrameWorkCDEFPostFilterResult{}, err
+			}
+		} else {
+			var err error
+			src, err = frame.BindSamplePlane(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
+			if err != nil {
+				return FrameWorkCDEFPostFilterResult{}, err
+			}
 		}
 		xDec, yDec := xDec0, yDec0
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlane(ctx.Event.CDEF, indexMap, skipMap, cols, rows, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -250,6 +306,10 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 }
 
 func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections)
+}
+
+func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	unitSizeX := cdef.BlockSize >> xDec
@@ -257,7 +317,7 @@ func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFInd
 	blockWidth := 8 >> xDec
 	blockHeight := 8 >> yDec
 	indexStride := int(indexMap.Stride)
-	for unitRow := range rows {
+	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
 		for unitCol := range cols {
 			mapOffset := unitRow*indexStride + unitCol
 			if !indexMap.Read[mapOffset] {
