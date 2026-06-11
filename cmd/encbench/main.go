@@ -188,7 +188,7 @@ func main() {
 		}
 		defer csvFile.Close()
 		csvWriter = csv.NewWriter(csvFile)
-		if err := csvWriter.Write([]string{"frame", "bytes", "psnr_y", "qindex", "encode_ms"}); err != nil {
+		if err := csvWriter.Write([]string{"frame", "keyframe", "temporal_id", "bytes", "psnr_y", "qindex", "encode_ms"}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -201,6 +201,9 @@ func main() {
 	totalBytes, steadyBytes := 0, 0
 	var sumPSNR, steadyPSNR float64
 	minPSNR := 1e9
+	var layerFrames, layerBytes [8]int
+	var layerPSNR [8]float64
+	layerMinPSNR := [8]float64{1e9, 1e9, 1e9, 1e9, 1e9, 1e9, 1e9, 1e9}
 	var encodeTime time.Duration
 	for n := range nFrames {
 		frameStart := time.Now()
@@ -215,11 +218,13 @@ func main() {
 		r := enc.Reconstruction()
 		p := psnr(srcs[n].Y, r.Y)
 		if *frameStats {
-			fmt.Printf("frame %3d: %7d bytes  %6.2f dB  q=%d\n", n, len(out.Data), p, enc.QIndex())
+			fmt.Printf("frame %3d: T%d key=%t  %7d bytes  %6.2f dB  q=%d\n", n, out.TemporalID, out.Keyframe, len(out.Data), p, enc.QIndex())
 		}
 		if csvWriter != nil {
 			if err := csvWriter.Write([]string{
 				strconv.Itoa(n),
+				strconv.FormatBool(out.Keyframe),
+				strconv.Itoa(int(out.TemporalID)),
 				strconv.Itoa(len(out.Data)),
 				strconv.FormatFloat(p, 'f', 4, 64),
 				strconv.Itoa(int(enc.QIndex())),
@@ -236,6 +241,15 @@ func main() {
 		if n >= steadyStart {
 			steadyBytes += len(out.Data)
 			steadyPSNR += p
+			tid := int(out.TemporalID)
+			if tid >= 0 && tid < len(layerFrames) {
+				layerFrames[tid]++
+				layerBytes[tid] += len(out.Data)
+				layerPSNR[tid] += p
+				if p < layerMinPSNR[tid] {
+					layerMinPSNR[tid] = p
+				}
+			}
 		}
 	}
 	if csvWriter != nil {
@@ -255,4 +269,16 @@ func main() {
 		float64(totalBytes*8**infps)/float64(nFrames)/1e6,
 		float64(steadyBytes*8**infps)/float64(steadyFrames)/1e6,
 		float64(*bitrate)/1e6, sumPSNR/float64(nFrames), steadyPSNR/float64(steadyFrames), minPSNR, enc.QIndex())
+	if *layers > 1 {
+		for tid, count := range layerFrames {
+			if count == 0 {
+				continue
+			}
+			fmt.Printf("goav1: steady T%d: %d frames, %.2f Mbps, %.2f dB avg, %.2f dB min\n",
+				tid, count,
+				float64(layerBytes[tid]*8**infps)/float64(count)/1e6,
+				layerPSNR[tid]/float64(count),
+				layerMinPSNR[tid])
+		}
+	}
 }
