@@ -1085,18 +1085,10 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 			}
 		}
 		base := py*stride + px
-		if n == 8 {
-			return sad8x8DualImpl(src[base:], stride, st.sadScratch[:], 8)
-		}
 		s := 0
-		for r := range n {
-			row := base + r*stride
-			for c := range n {
-				d := int(src[row+c]) - int(st.sadScratch[r*n+c])
-				if d < 0 {
-					d = -d
-				}
-				s += d
+		for r := 0; r < n; r += 8 {
+			for c := 0; c < n; c += 8 {
+				s += sad8x8DualImpl(src[base+r*stride+c:], stride, st.sadScratch[r*n+c:], n)
 			}
 		}
 		return s
@@ -1214,12 +1206,7 @@ func copyPredScratch(reconPlane, pred []byte, stride, px, py, w, h int) {
 // coefficient rate estimate in 512-units-per-bit.
 func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
 	residual := &st.resScratch
-	for r := range h {
-		row := (py+r)*stride + px
-		for c := range w {
-			residual[r*w+c] = int16(srcPlane[row+c]) - int16(pred[r*predStride+c])
-		}
-	}
+	residualBlockImpl(residual[:w*h], srcPlane, py*stride+px, stride, pred, predStride, w, h)
 	n := w * h
 	tran := &st.tranScratch
 	if err := forwardDCTBlock(tran[:n], residual[:n], w, h); err != nil {
@@ -1229,31 +1216,56 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, s
 	if err := quantize.QuantizeBlockScaledB(qcoeff, h, tran[:n], h, h, w, q, ts); err != nil {
 		return false
 	}
-	allZero := true
-	for i, v := range qcoeff {
+	// The vector statistics apply the AC step to every lane; the DC
+	// coefficient's coded distortion is then corrected with the DC step.
+	dskip, dcode, rate, allZero := rdStatsBlockImpl(tran[:n], qcoeff[:n], n, q.AC, ts)
+	if v := qcoeff[0]; v != 0 {
+		c := int64(tran[0])
+		eAC := c - ((int64(v) * int64(q.AC)) >> ts)
+		eDC := c - ((int64(v) * int64(q.DC)) >> ts)
+		dcode += eDC*eDC - eAC*eAC
+	}
+	st.rdDskip += dskip
+	st.rdDcode += dcode
+	st.rdRcode += rate
+	return allZero
+}
+
+// residualBlockPureGo is the portable residual extraction.
+func residualBlockPureGo(dst []int16, srcPlane []byte, srcOff, stride int, pred []byte, predStride, w, h int) {
+	for r := range h {
+		row := srcOff + r*stride
+		for c := range w {
+			dst[r*w+c] = int16(srcPlane[row+c]) - int16(pred[r*predStride+c])
+		}
+	}
+}
+
+// rdStatsBlockPureGo is the portable skip-decision statistics accumulator,
+// with the AC step applied to every coefficient (callers correct DC).
+func rdStatsBlockPureGo(tran []int32, qcoeff []int16, count int, step int32, ts uint8) (dskip, dcode int64, rate int64, allZero bool) {
+	allZero = true
+	for i := 0; i < count; i++ {
 		c := int64(tran[i])
-		st.rdDskip += c * c
+		dskip += c * c
+		v := qcoeff[i]
 		if v == 0 {
-			st.rdDcode += c * c
+			dcode += c * c
 			continue
 		}
 		allZero = false
-		step := int64(q.AC)
-		if i == 0 {
-			step = int64(q.DC)
-		}
-		dq := (int64(v) * step) >> ts
+		dq := (int64(v) * int64(step)) >> ts
 		e := c - dq
-		st.rdDcode += e * e
+		dcode += e * e
 		level := v
 		if level < 0 {
 			level = -level
 		}
 		// Coarse rate: two bits of map overhead plus the level magnitude
 		// class, in 512-units-per-bit.
-		st.rdRcode += int64(2+bits.Len16(uint16(level))) << 9
+		rate += int64(2+bits.Len16(uint16(level))) << 9
 	}
-	return allZero
+	return dskip, dcode, rate, allZero
 }
 
 // finishInterTXB codes the prepared coefficients and rebuilds the recon block
