@@ -303,6 +303,13 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		}
 	}
 
+	// The intra-fallback mode search trial-codes against throwaway contexts;
+	// they re-arm lazily on the first intra block of the frame.
+	st.trialReady = false
+	st.keyMIColEnd = uint32(miColEnd)
+	st.keyMIRowEnd = uint32(miRows)
+	st.keyVisW, st.keyVisH = src.Width, src.Height
+
 	// av1_compute_rd_mult_based_on_qindex, inter shape at 8-bit: the DC step
 	// squared scaled by the rate multiplier; RDCOST pairs it with rates in
 	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
@@ -1075,6 +1082,18 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	lumaPY := int(block.MIRow) * 4
 	pred := st.predY[:64]
 	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
+	if !st.trialReady {
+		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
+			return err
+		}
+		if cap(st.trialBuf) == 0 {
+			st.trialBuf = make([]byte, 1<<14)
+		}
+		st.trialReady = true
+	}
+	mode, angleDelta := func() (tile.IntraMode, int) {
+		return st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+	}()
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		FrameType: parser.FrameTypeInter,
 		Size:      block.Size, X4: block.X4, Y4: block.Y4,
@@ -1086,7 +1105,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
 		Size: block.Size, Mode: mode,
-	}, 0); err != nil {
+	}, int8(angleDelta)); err != nil {
 		return fmt.Errorf("intra angle delta: %w", err)
 	}
 	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)

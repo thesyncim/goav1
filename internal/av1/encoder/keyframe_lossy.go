@@ -251,6 +251,7 @@ type lossyEncodeState struct {
 	levels                       []uint8
 	trialCDFs                    tile.CoeffCDFs
 	trialBuf                     []byte
+	trialReady                   bool
 	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd     uint32
 	keyVisW, keyVisH             int
@@ -537,7 +538,7 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	lumaPY := int(block.MIRow) * 4
 	pred := st.predY[:n*n]
 	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
-	mode = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, n)
+	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, n)
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -549,7 +550,7 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	}
 	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
 		Size: block.Size, Mode: mode,
-	}, 0); err != nil {
+	}, int8(angleDelta)); err != nil {
 		return fmt.Errorf("angle delta: %w", err)
 	}
 	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
@@ -829,11 +830,11 @@ var keyDirectionalModes = [6]struct {
 // bit-exactly; a SAD pre-filter keeps the exact-rate trials to the two most
 // promising angles. The streams code no intra edge filter, so the edges are
 // the raw reconstructed neighbors throughout.
-func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, mode tile.IntraMode, pred []byte, px, py, n int) tile.IntraMode {
+func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, mode tile.IntraMode, pred []byte, px, py, n int) (tile.IntraMode, int) {
 	if !block.HaveTop || !block.HaveLeft || n != 8 {
 		// Larger blocks exist only where the merge gates proved the flat
 		// prediction tight; the diagonal search pays on detail blocks.
-		return mode
+		return mode, 0
 	}
 	// Diagonals only pay where the flat winner predicts poorly; a tight
 	// flat match skips the search and keeps keyframe latency in budget.
@@ -849,7 +850,7 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 		}
 	}
 	if flatSAD <= n*n*4 {
-		return mode
+		return mode, 0
 	}
 	reconPlane := frame.Plane{Pix: recon.Y, Stride: src.YStride, Width: recon.Width, Height: recon.Height}
 	cand := st.sadScratch[:n*n]
@@ -859,17 +860,14 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 		sad int
 	}
 	best1, best2 := scored{-1, 1 << 30}, scored{-1, 1 << 30}
-	predict := func(i int) bool {
-		edges, err := threading.BuildLumaDirectionalEdges(reconPlane, 8, px, py, n, n, keyDirectionalModes[i].angle, block, &st.intraEdgeScratch, 16, st.keyMIColEnd, st.keyMIRowEnd, false, false, st.keyVisW, st.keyVisH)
+	predictAngle := func(angle int) bool {
+		edges, err := threading.BuildLumaDirectionalEdges(reconPlane, 8, px, py, n, n, angle, block, &st.intraEdgeScratch, 16, st.keyMIColEnd, st.keyMIRowEnd, false, false, st.keyVisW, st.keyVisH)
 		if err != nil {
 			return false
 		}
-		return prediction.PredictDirectionalIntraPlaneBlock(candPlane, 1, 8, 0, 0, n, n, keyDirectionalModes[i].angle, edges) == nil
+		return prediction.PredictDirectionalIntraPlaneBlock(candPlane, 1, 8, 0, 0, n, n, angle, edges) == nil
 	}
-	for i := range keyDirectionalModes {
-		if !predict(i) {
-			continue
-		}
+	candSAD := func() int {
 		sad := 0
 		for r := 0; r < n; r++ {
 			row := (py+r)*src.YStride + px
@@ -881,6 +879,14 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 				sad += d
 			}
 		}
+		return sad
+	}
+	predict := func(i int) bool { return predictAngle(keyDirectionalModes[i].angle) }
+	for i := range keyDirectionalModes {
+		if !predict(i) {
+			continue
+		}
+		sad := candSAD()
 		if sad < best1.sad {
 			best2 = best1
 			best1 = scored{i, sad}
@@ -891,13 +897,14 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 	if best1.idx < 0 || best1.sad >= flatSAD {
 		// No diagonal even matches the flat winner's prediction; skip the
 		// exact-rate trials entirely.
-		return mode
+		return mode, 0
 	}
 	baseCost := st.trialLumaCost(src.Y, pred, src.YStride, px, py, n)
 	// A directional mode also codes an angle-delta symbol the flat modes
 	// skip; two bits priced under the frame multiplier covers it.
 	angleCost := (int64(2) << 9) * st.rdMult >> 9
 	bestMode, bestCost := mode, baseCost
+	bestIdx := -1
 	for _, cnd := range [2]scored{best1, best2} {
 		if cnd.idx < 0 {
 			continue
@@ -907,11 +914,42 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 		}
 		cost := st.trialLumaCost(src.Y, cand, src.YStride, px, py, n) + angleCost
 		if cost < bestCost {
-			bestMode, bestCost = keyDirectionalModes[cnd.idx].mode, cost
+			bestMode, bestCost, bestIdx = keyDirectionalModes[cnd.idx].mode, cost, cnd.idx
 			copy(pred, cand)
 		}
 	}
-	return bestMode
+	if bestIdx < 0 {
+		return bestMode, 0
+	}
+	// Angle refinement around the winning diagonal: three-degree steps,
+	// SAD-picked, one exact-rate trial; a finer angle prices one extra
+	// bit per step away from the base.
+	base := keyDirectionalModes[bestIdx].angle
+	bestDelta := 0
+	dSAD, dPick := 1<<30, 0
+	for delta := -3; delta <= 3; delta++ {
+		if delta == 0 || !predictAngle(base+3*delta) {
+			continue
+		}
+		if sad := candSAD(); sad < dSAD {
+			dSAD, dPick = sad, delta
+		}
+	}
+	if dPick != 0 && predictAngle(base+3*dPick) {
+		extra := (int64(2+abs(dPick)) << 9) * st.rdMult >> 9
+		if cost := st.trialLumaCost(src.Y, cand, src.YStride, px, py, n) + angleCost + extra; cost < bestCost {
+			bestDelta = dPick
+			copy(pred, cand)
+		}
+	}
+	return bestMode, bestDelta
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // trialLumaCost prices coding pred against the source block exactly: the
