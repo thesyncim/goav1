@@ -405,24 +405,6 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 		MIColEnd:   miColEnd,
 		MIRowEnd:   miRows,
 	}
-	// mergeIntra keeps the 32-tier's conservative gate: merge only when the
-	// whole-block prediction is already tight (under two SAD units per
-	// pixel).
-	mergeIntra := func(px, py, n int) bool {
-		selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
-		sad := 0
-		for r := range n {
-			row := (py+r)*src.YStride + px
-			for c := range n {
-				d := int(src.Y[row+c]) - int(st.predY[r*n+c])
-				if d < 0 {
-					d = -d
-				}
-				sad += d
-			}
-		}
-		return sad <= n*n*2
-	}
 	// intraRDCost prices one candidate exactly: best intra prediction, the
 	// true transform-quantize pass for distortion, and the real coefficient
 	// coder for rate (trial-coded against throwaway contexts, identical for
@@ -432,25 +414,17 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	// the source closely enough for a split decision. Keys are rare, so the
 	// trial coding prices in microseconds per node.
 	intraRDCost := func(plane []byte, px, py, n int) (int64, int64) {
-		selectIntraModeN(src.Y, plane, src.YStride, px, py, n, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:n*n])
+		haveTop := py > int(walkReq.MIRowStart)*4
+		haveLeft := px > int(walkReq.MIColStart)*4
+		selectIntraModeN(src.Y, plane, src.YStride, px, py, n, haveTop, haveLeft, st.predY[:n*n])
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-		size, scan := tile.TransformSize8x8, st.scan8
-		switch n {
-		case 16:
-			size, scan = tile.TransformSize16x16, st.scan16
-		case 32:
-			size, scan = tile.TransformSize32x32, st.scan32
-		}
-		tw := entropy.NewWriter(st.trialBuf[:0])
-		base := tw.Tell()
-		if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
-			Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D,
-		}, st.lumaQ2[:n*n], scan, st.levels); err != nil {
-			return 1 << 60, st.rdDcode
-		}
-		bits := int64(tw.Tell() - base)
-		return ((bits<<9)*st.rdMult+256)>>9 + (st.rdDcode << 7), st.rdDcode
+		lumaD := st.rdDcode
+		cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + lumaD<<7
+		// Merge candidates differ in chroma transform structure too: one
+		// large block against four small ones.
+		cost += st.trialChromaCost(src, recon, &plane[0] == &recon.Y[0], px, py, n, haveTop, haveLeft)
+		return cost, lumaD
 	}
 	// intraHeaderCost is the priced overhead of one extra block's prefix
 	// symbols (partition, mode, angle, chroma).
@@ -461,7 +435,26 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 		}
 		px, py := int(miCol)*4, int(miRow)*4
 		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
-			if px+32 <= src.Width && py+32 <= src.Height && mergeIntra(px, py, 32) {
+			// The 32-tier keeps the near-perfect gate: trial pricing
+			// misjudges the largest transform even with chroma included
+			// (the throwaway contexts diverge most from the real tile
+			// state at that size).
+			if px+32 > src.Width || py+32 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 32, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:32*32])
+			sad := 0
+			for r := range 32 {
+				row := (py+r)*src.YStride + px
+				for c := range 32 {
+					d := int(src.Y[row+c]) - int(st.predY[r*32+c])
+					if d < 0 {
+						d = -d
+					}
+					sad += d
+				}
+			}
+			if sad <= 32*32*2 {
 				return tile.PartitionNone, nil
 			}
 			return tile.PartitionSplit, nil
@@ -958,8 +951,16 @@ func abs(v int) int {
 func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py, n int) int64 {
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 	st.prepareInterTXB(srcPlane, pred, n, stride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-	size, scan := tile.TransformSize8x8, st.scan8
+	return st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + st.rdDcode<<7
+}
+
+// trialTXBBits trial-codes one quantized transform block and returns the
+// priced rate term.
+func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int16, n int) int64 {
+	size, scan := tile.TransformSize4x4, st.scan4
 	switch n {
+	case 8:
+		size, scan = tile.TransformSize8x8, st.scan8
 	case 16:
 		size, scan = tile.TransformSize16x16, st.scan16
 	case 32:
@@ -968,12 +969,43 @@ func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py,
 	tw := entropy.NewWriter(st.trialBuf[:0])
 	base := tw.Tell()
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
-		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D,
-	}, st.lumaQ2[:n*n], scan, st.levels); err != nil {
-		return 1 << 60
+		Size: size, Plane: plane, Class: transform.Class2D,
+	}, qcoeff[:n*n], scan, st.levels); err != nil {
+		return 1 << 59
 	}
 	bits := int64(tw.Tell() - base)
-	return ((bits<<9)*st.rdMult+256)>>9 + st.rdDcode<<7
+	return ((bits<<9)*st.rdMult + 256) >> 9
+}
+
+// trialChromaCost prices the two DC-predicted chroma transform blocks of an
+// intra block whose luma corner sits at (px, py) with luma size n. Merge
+// candidates differ in chroma transform structure - one large block against
+// four small ones - so the split decision must see that rate too. Children
+// estimates predict from the source plane like their luma halves.
+func (st *lossyEncodeState) trialChromaCost(src SourceFrame420, recon *SourceFrame420, useRecon bool, px, py, n int, haveTop, haveLeft bool) int64 {
+	cn := n / 2
+	cx, cy := px/2, py/2
+	total := int64(0)
+	for plane := 1; plane <= 2; plane++ {
+		data, rdata, q := src.U, recon.U, st.uQuant
+		predBuf, qc := st.predU[:cn*cn], st.uQ[:cn*cn]
+		if plane == 2 {
+			data, rdata, q = src.V, recon.V, st.vQuant
+			predBuf, qc = st.predV[:cn*cn], st.vQ[:cn*cn]
+		}
+		edgePlane := rdata
+		if !useRecon {
+			edgePlane = data
+		}
+		dc := dcPredictN(edgePlane, src.ChromaStride, cx, cy, cn, haveTop, haveLeft)
+		for i := range predBuf {
+			predBuf[i] = dc
+		}
+		st.rdDcode = 0
+		st.prepareInterTXB(data, predBuf, cn, src.ChromaStride, cx, cy, cn, cn, q, qc)
+		total += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn) + st.rdDcode<<7
+	}
+	return total
 }
 
 // selectIntraMode8 is selectIntraModeN at the 8x8 fallback size.
