@@ -90,13 +90,14 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 // decoder's loop-filter map over caller-owned records and the edge scratch
 // for its planner. One applier serves a stream of same-sized frames.
 type loopFilterApplier struct {
-	records  []threading.FrameWorkLoopFilterBlockRecord
-	edges    []decoder.FrameWorkLoopFilterPostFilterEdge
-	bandBufs [][]decoder.FrameWorkLoopFilterPostFilterEdge
-	schedule []uint32
-	filtMap  threading.FrameWorkLoopFilterMap
-	event    decoder.Event
-	bound    bool
+	records    []threading.FrameWorkLoopFilterBlockRecord
+	edges      []decoder.FrameWorkLoopFilterPostFilterEdge
+	bandBufs   [][]decoder.FrameWorkLoopFilterPostFilterEdge
+	planeEdges [3][]decoder.FrameWorkLoopFilterPostFilterEdge
+	schedule   []uint32
+	filtMap    threading.FrameWorkLoopFilterMap
+	event      decoder.Event
+	bound      bool
 }
 
 // lfPlanBands is the fan-out width of the banded edge planning pass. The
@@ -236,14 +237,41 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 		}(b, r0, r1)
 	}
 	wg.Wait()
-	total := 0
+	// Partition the per-band edges by plane, preserving band (row-major)
+	// order within each plane; the three planes touch disjoint surfaces, so
+	// their sequential kernel passes run concurrently.
+	if a.planeEdges[0] == nil {
+		for p := range a.planeEdges {
+			a.planeEdges[p] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges))
+		}
+	}
+	for p := range a.planeEdges {
+		a.planeEdges[p] = a.planeEdges[p][:0]
+	}
 	for b := range bands {
 		if errs[b] != nil {
 			return errs[b]
 		}
-		copy(a.edges[total:], a.bandBufs[b][:counts[b]])
-		total += int(counts[b])
+		for _, e := range a.bandBufs[b][:counts[b]] {
+			a.planeEdges[e.Plane] = append(a.planeEdges[e.Plane], e)
+		}
 	}
-	_, err := ctx.ApplyPlannedLoopFilterEdges(a.edges[:total], a.schedule)
-	return err
+	var applyErrs [3]error
+	for p := range a.planeEdges {
+		if len(a.planeEdges[p]) == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			_, applyErrs[p] = ctx.ApplyPlannedLoopFilterPlaneEdges(a.planeEdges[p], nil, loopfilter.Plane(p))
+		}(p)
+	}
+	wg.Wait()
+	for p := range applyErrs {
+		if applyErrs[p] != nil {
+			return applyErrs[p]
+		}
+	}
+	return nil
 }

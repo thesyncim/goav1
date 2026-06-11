@@ -549,6 +549,10 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterLumaEdges(req FrameWorkLoop
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, scheduleScratch []uint32, maxPlane loopfilter.Plane) error {
+	return ctx.applyLoopFilterEdgesInPlaneRange(result, edges, scheduleScratch, loopfilter.PlaneY, maxPlane)
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlaneRange(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, scheduleScratch []uint32, minPlane, maxPlane loopfilter.Plane) error {
 	before := result.Edges
 	expected, ok := frameWorkLoopFilterCounter(len(edges))
 	if !ok {
@@ -556,24 +560,40 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrder(resul
 	}
 	if len(edges) <= frameWorkLoopFilterApplySmallScheduleCap {
 		var schedule [frameWorkLoopFilterApplySmallScheduleCap]uint32
-		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], maxPlane, before, expected)
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], minPlane, maxPlane, before, expected)
 	}
 	if len(edges) <= frameWorkLoopFilterApplyScheduleCap {
 		var schedule [frameWorkLoopFilterApplyScheduleCap]uint32
-		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], maxPlane, before, expected)
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], minPlane, maxPlane, before, expected)
 	}
 	if len(scheduleScratch) >= len(edges) {
-		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, scheduleScratch[:len(edges)], maxPlane, before, expected)
+		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, scheduleScratch[:len(edges)], minPlane, maxPlane, before, expected)
 	}
-	return ctx.applyLoopFilterEdgesInPlanePassOrderScan(result, edges, maxPlane, before, expected)
+	return ctx.applyLoopFilterEdgesInPlanePassOrderScan(result, edges, minPlane, maxPlane, before, expected)
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedule(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
+// ApplyPlannedLoopFilterPlaneEdges applies already-planned edges of a single
+// plane to ctx.Output. Planes touch disjoint surfaces, so callers may run
+// the three plane applications concurrently after partitioning the edge set
+// by plane.
+func (ctx FrameWorkPostFilterContext) ApplyPlannedLoopFilterPlaneEdges(edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, plane loopfilter.Plane) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	var result FrameWorkLoopFilterPostFilterApplyResult
+	result.Active = true
+	if ctx.Output == nil {
+		return result, frame.ErrInvalidSlot
+	}
+	if err := ctx.applyLoopFilterEdgesInPlaneRange(&result, edges, schedule, plane, plane); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedule(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, minPlane, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
 	var counts [3][2]uint32
 	var levelMask uint64
 	for i := range edges {
 		edge := &edges[i]
-		if edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
+		if edge.Plane < minPlane || edge.Plane > maxPlane || edge.Edge > loopfilter.EdgeHorizontal ||
 			edge.Length4 == 0 || edge.Level == 0 || edge.Level > loopfilter.MaxLevel {
 			return loopfilter.ErrInvalidFilter
 		}
@@ -604,7 +624,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedu
 		schedule[pos] = uint32(i)
 		positions[edge.Plane][edge.Edge] = pos + 1
 	}
-	if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule, starts, counts, maxPlane, &thresholds); err != nil {
+	if err := ctx.applyLoopFilterScheduledEdges(result, edges, schedule, starts, counts, minPlane, maxPlane, &thresholds); err != nil {
 		return err
 	}
 	if result.Edges-before != expected {
@@ -613,14 +633,14 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderSchedu
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, minPlane, maxPlane loopfilter.Plane, before uint32, expected uint32) error {
 	var planes [3]frame.Plane
 	var planeReady [3]bool
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
 	var thresholdReady [loopfilter.MaxLevel + 1]bool
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
-	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+	for plane := minPlane; plane <= maxPlane; plane++ {
 		for edgeKind := loopfilter.EdgeVertical; edgeKind <= loopfilter.EdgeHorizontal; edgeKind++ {
 			for i := range edges {
 				edge := &edges[i]
@@ -686,10 +706,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlanePassOrderScan(r
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, starts [3][2]uint32, counts [3][2]uint32, maxPlane loopfilter.Plane, thresholds *[loopfilter.MaxLevel + 1]loopfilter.Thresholds) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterScheduledEdges(result *FrameWorkLoopFilterPostFilterApplyResult, edges []FrameWorkLoopFilterPostFilterEdge, schedule []uint32, starts [3][2]uint32, counts [3][2]uint32, minPlane, maxPlane loopfilter.Plane, thresholds *[loopfilter.MaxLevel + 1]loopfilter.Thresholds) error {
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
-	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+	for plane := minPlane; plane <= maxPlane; plane++ {
 		if counts[plane][loopfilter.EdgeVertical]+counts[plane][loopfilter.EdgeHorizontal] == 0 {
 			continue
 		}

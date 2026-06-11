@@ -147,3 +147,67 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkVideoEncoderPFramePan1080p measures the steady P-frame cost on
+// camera-like content (box-blurred texture under a continuous pan with
+// movers, the cmd/encbench scene shape) - the realtime budget meter. The
+// noise benchmark above stays as the worst-case bound.
+func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(15))
+	wide := make([]byte, (w+512)*h)
+	for y := range h {
+		for x := 0; x < w+512; x++ {
+			wide[y*(w+512)+x] = uint8(60 + (x/7+y/9)%70 + rng.Intn(25))
+		}
+	}
+	// Cheap separable box blur to take the per-pixel noise down to camera
+	// texture levels.
+	for y := range h {
+		row := wide[y*(w+512) : (y+1)*(w+512)]
+		for x := 1; x < len(row)-1; x++ {
+			row[x] = uint8((int(row[x-1]) + 2*int(row[x]) + int(row[x+1])) >> 2)
+		}
+	}
+	makeFrame := func(t int) encoder.SourceFrame420 {
+		f := encoder.SourceFrame420{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
+		}
+		off := (t * 4) % 512
+		for y := range h {
+			copy(f.Y[y*w:(y+1)*w], wide[y*(w+512)+off:])
+		}
+		for i := range f.U {
+			f.U[i] = 120
+			f.V[i] = 130
+		}
+		return f
+	}
+	enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	frames := make([]encoder.SourceFrame420, 32)
+	for i := range frames {
+		frames[i] = makeFrame(i)
+	}
+	if _, _, err := enc.Encode(frames[0], true); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; b.Loop(); i++ {
+		if _, _, err := enc.Encode(frames[1+i%31], false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
