@@ -1,30 +1,32 @@
 // Command encbench measures goav1's realtime encoder on a deterministic
-// synthetic 1080p scene (textured global pan plus two movers) and can dump
-// the same scene as raw I420 so external encoders run on identical input.
+// synthetic scene (textured global pan plus two movers) and can dump the same
+// scene as raw I420 so external encoders run on identical input.
 //
 //	encbench -dump seq.yuv          write the scene as raw I420
 //	encbench -bitrate 6000000       encode with goav1 CBR and report
 package main
 
 import (
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
+	"strconv"
 	"time"
 
 	goav1 "github.com/thesyncim/goav1"
 )
 
 const (
-	width  = 1920
-	height = 1080
-	frames = 120
-	fps    = 60
+	defaultWidth  = 1920
+	defaultHeight = 1080
+	frames        = 120
+	fps           = 60
 )
 
-func makeFrame(bg []byte, n int) goav1.I420Frame {
+func makeFrame(bg []byte, n, width, height int) goav1.I420Frame {
 	cw, ch := width/2, height/2
 	f := goav1.I420Frame{
 		Y: make([]byte, width*height), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
@@ -38,7 +40,18 @@ func makeFrame(bg []byte, n int) goav1.I420Frame {
 		f.U[i] = 120
 		f.V[i] = 130
 	}
-	for _, obj := range [2][3]int{{200 + n*12, 300, 96}, {1300 - n*9, 700, 64}} {
+	scaleX := func(v int) int { return v * width / defaultWidth }
+	scaleY := func(v int) int { return v * height / defaultHeight }
+	max1 := func(v int) int {
+		if v < 1 {
+			return 1
+		}
+		return v
+	}
+	for _, obj := range [2][3]int{
+		{scaleX(200) + n*max1(width/160), scaleY(300), max1(scaleX(96))},
+		{scaleX(1300) - n*max1(width/213), scaleY(700), max1(scaleX(64))},
+	} {
 		ox, oy, sz := obj[0], obj[1], obj[2]
 		for y := oy; y < oy+sz && y < height; y++ {
 			for x := ox; x < ox+sz && x < width; x++ {
@@ -69,35 +82,44 @@ func main() {
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
 	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
 	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
-	input := flag.String("input", "", "encode this raw 1080p I420 file instead of the synthetic scene")
+	width := flag.Int("width", defaultWidth, "frame width in pixels")
+	height := flag.Int("height", defaultHeight, "frame height in pixels")
+	input := flag.String("input", "", "encode this raw I420 file instead of the synthetic scene")
 	frameStats := flag.Bool("framestats", false, "print per-frame size and PSNR")
+	statsCSV := flag.String("csv", "", "write per-frame CSV stats to this path")
 	nframes := flag.Int("frames", frames, "frames to encode or dump")
-	infps := flag.Int("fps", fps, "frame rate for rate control with -input")
+	infps := flag.Int("fps", fps, "frame rate for rate control and bitrate reporting")
 	flag.Parse()
 	nFrames := *nframes
 	if nFrames <= 0 {
 		fmt.Fprintf(os.Stderr, "invalid frame count %d\n", nFrames)
 		os.Exit(1)
 	}
+	if *width < 16 || *height < 16 || *width%2 != 0 || *height%2 != 0 {
+		fmt.Fprintf(os.Stderr, "invalid frame size %dx%d: encbench requires even dimensions >= 16\n", *width, *height)
+		os.Exit(1)
+	}
+	w, h := *width, *height
+	lumaPixels := w * h
 
 	rng := rand.New(rand.NewSource(9))
-	bg := make([]byte, width*height)
+	bg := make([]byte, lumaPixels)
 	for i := range bg {
 		bg[i] = uint8(50 + rng.Intn(90))
 	}
 	// One box-blur pass gives the texture the spatial correlation of natural
 	// content; raw sample noise is incompressible for any codec and pins
 	// every rate controller at its quantizer ceiling.
-	blurred := make([]byte, width*height)
-	for y := 1; y < height-1; y++ {
-		for x := 1; x < width-1; x++ {
+	blurred := make([]byte, lumaPixels)
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
 			sum := 0
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
-					sum += int(bg[(y+dy)*width+x+dx])
+					sum += int(bg[(y+dy)*w+x+dx])
 				}
 			}
-			blurred[y*width+x] = uint8(sum / 9)
+			blurred[y*w+x] = uint8(sum / 9)
 		}
 	}
 	copy(bg, blurred)
@@ -110,17 +132,17 @@ func main() {
 		}
 		defer out.Close()
 		for n := range nFrames {
-			f := makeFrame(bg, n)
+			f := makeFrame(bg, n, w, h)
 			out.Write(f.Y)
 			out.Write(f.U)
 			out.Write(f.V)
 		}
-		fmt.Printf("wrote %d frames of %dx%d I420\n", nFrames, width, height)
+		fmt.Printf("wrote %d frames of %dx%d I420\n", nFrames, w, h)
 		return
 	}
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
-		Width: width, Height: height,
+		Width: w, Height: h,
 		TargetBitrate: *bitrate, Framerate: *infps,
 		TemporalLayers: *layers,
 		TileColumns:    *tiles,
@@ -136,8 +158,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		cw, ch := width/2, height/2
-		frameLen := width*height + 2*cw*ch
+		cw, ch := w/2, h/2
+		frameLen := lumaPixels + 2*cw*ch
 		if len(raw) < nFrames*frameLen {
 			fmt.Fprintf(os.Stderr, "input holds %d frames, need %d\n", len(raw)/frameLen, nFrames)
 			os.Exit(1)
@@ -145,15 +167,30 @@ func main() {
 		for n := range nFrames {
 			base := n * frameLen
 			srcs[n] = goav1.I420Frame{
-				Y:       raw[base : base+width*height],
-				U:       raw[base+width*height : base+width*height+cw*ch],
-				V:       raw[base+width*height+cw*ch : base+frameLen],
-				YStride: width, ChromaStride: cw, Width: width, Height: height,
+				Y:       raw[base : base+lumaPixels],
+				U:       raw[base+lumaPixels : base+lumaPixels+cw*ch],
+				V:       raw[base+lumaPixels+cw*ch : base+frameLen],
+				YStride: w, ChromaStride: cw, Width: w, Height: h,
 			}
 		}
 	} else {
 		for n := range nFrames {
-			srcs[n] = makeFrame(bg, n)
+			srcs[n] = makeFrame(bg, n, w, h)
+		}
+	}
+	var csvFile *os.File
+	var csvWriter *csv.Writer
+	if *statsCSV != "" {
+		csvFile, err = os.Create(*statsCSV)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer csvFile.Close()
+		csvWriter = csv.NewWriter(csvFile)
+		if err := csvWriter.Write([]string{"frame", "bytes", "psnr_y", "qindex", "encode_ms"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 	}
 	const warmup = 20
@@ -168,7 +205,8 @@ func main() {
 	for n := range nFrames {
 		frameStart := time.Now()
 		out, err := enc.Encode(srcs[n], false)
-		encodeTime += time.Since(frameStart)
+		frameElapsed := time.Since(frameStart)
+		encodeTime += frameElapsed
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -179,6 +217,18 @@ func main() {
 		if *frameStats {
 			fmt.Printf("frame %3d: %7d bytes  %6.2f dB  q=%d\n", n, len(out.Data), p, enc.QIndex())
 		}
+		if csvWriter != nil {
+			if err := csvWriter.Write([]string{
+				strconv.Itoa(n),
+				strconv.Itoa(len(out.Data)),
+				strconv.FormatFloat(p, 'f', 4, 64),
+				strconv.Itoa(int(enc.QIndex())),
+				strconv.FormatFloat(float64(frameElapsed.Microseconds())/1000, 'f', 3, 64),
+			}); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		sumPSNR += p
 		if n >= steadyStart && p < minPSNR {
 			minPSNR = p
@@ -186,6 +236,13 @@ func main() {
 		if n >= steadyStart {
 			steadyBytes += len(out.Data)
 			steadyPSNR += p
+		}
+	}
+	if csvWriter != nil {
+		csvWriter.Flush()
+		if err := csvWriter.Error(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 	}
 	// Only the encode calls count: the harness's own PSNR pass costs
