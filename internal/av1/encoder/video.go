@@ -700,11 +700,6 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if e.goldenEvery > 0 && e.golden.Y != nil {
 		golden = &e.golden
 	}
-	referenceMode := parser.ReferenceModeSingle
-	if golden != nil {
-		header.TransformRef.ReferenceMode = ReferenceModeSelect
-		referenceMode = parser.ReferenceModeSelect
-	}
 	// Hierarchical coarse-search seeds (computed in Encode) recenter every
 	// tile's full-pel refinement windows (read-only during tiles).
 	e.pc.st.hme = &e.hme
@@ -737,6 +732,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	refRecon := e.recon
 	if afterT1 {
 		refRecon = e.t1Recon
+	}
+	referenceMode := parser.ReferenceModeSingle
+	if golden != nil && compoundGoldenLikely(&e.pc.st, src, refRecon, golden) {
+		header.TransformRef.ReferenceMode = ReferenceModeSelect
+		referenceMode = parser.ReferenceModeSelect
 	}
 	if nTiles == 1 {
 		data, err := e.pc.encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, 0, uint16(src.Width/4))

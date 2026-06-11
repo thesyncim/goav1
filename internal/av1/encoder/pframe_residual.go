@@ -1402,6 +1402,73 @@ func predictCompoundInto(dst []byte, ref0Plane []byte, stride0 int, ref1Plane []
 	return motion.BlendCompoundAvg(dstPlane, buf0, buf1, 1, 8, 0, 0, bw, bh, 8, 8)
 }
 
+// compoundGoldenLikely samples a bounded set of luma 8x8 blocks before the
+// tile pass decides frame-level reference syntax. Single LAST/GOLDEN remains
+// available in ReferenceModeSingle; Select is only worth its frame-wide inter
+// reference cost when LAST and GOLDEN are locally competitive and their average
+// prediction beats LAST by the same kind of margin the leaf selector requires.
+func compoundGoldenLikely(st *lossyEncodeState, src, ref SourceFrame420, golden *SourceFrame420) bool {
+	if st == nil || golden == nil || golden.Y == nil || ref.Y == nil || src.Width < 8 || src.Height < 8 {
+		return false
+	}
+	if ref.Width != src.Width || ref.Height != src.Height || golden.Width != src.Width || golden.Height != src.Height {
+		return false
+	}
+
+	const (
+		blockSize    = 8
+		maxSamples   = 8
+		compoundBias = 96
+	)
+	step := 16
+	for ((src.Width+step-1)/step)*((src.Height+step-1)/step) > maxSamples {
+		step *= 2
+	}
+	for py := 0; py+blockSize <= src.Height; py += step {
+		for px := 0; px+blockSize <= src.Width; px += step {
+			seedDX, seedDY, reach := 0, 0, fullPelReach
+			if st.hme != nil {
+				var trusted bool
+				seedDX, seedDY, trusted = st.hme.seedAt(px, py)
+				if trusted {
+					reach = fullPelReachTrusted
+				}
+			}
+			ldx, ldy, lastSAD := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, blockSize, seedDX, seedDY, reach)
+			if lastSAD <= blockSize*blockSize*4 {
+				continue
+			}
+			gdx, gdy, gsad := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, px, py, blockSize)
+			if gsad+32 < lastSAD || gsad > lastSAD+blockSize*blockSize*4 {
+				continue
+			}
+			compoundSAD := sad8x8CompoundAvg(src.Y, ref.Y, golden.Y, src.YStride, ref.YStride, golden.YStride, px, py, ldx, ldy, gdx, gdy)
+			if compoundSAD+compoundBias < lastSAD {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sad8x8CompoundAvg(src, ref0, ref1 []byte, srcStride, stride0, stride1, px, py, dx0, dy0, dx1, dy1 int) int {
+	total := 0
+	for r := range 8 {
+		srcOff := (py+r)*srcStride + px
+		ref0Off := (py+dy0+r)*stride0 + px + dx0
+		ref1Off := (py+dy1+r)*stride1 + px + dx1
+		for c := range 8 {
+			pred := (int(ref0[ref0Off+c]) + int(ref1[ref1Off+c]) + 1) >> 1
+			d := int(src[srcOff+c]) - pred
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
 func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
 	if mode.Compound {
 		return mode.CompoundMode == tile.CompoundInterModeGlobalGlobal

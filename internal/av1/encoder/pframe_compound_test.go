@@ -91,3 +91,37 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 		}
 	}
 }
+
+func TestCompoundGoldenLikely(t *testing.T) {
+	const w, h = 16, 16
+	solid := func(y byte) SourceFrame420 {
+		f := SourceFrame420{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, w*h/4),
+			V:            make([]byte, w*h/4),
+			YStride:      w,
+			ChromaStride: w / 2,
+			Width:        w,
+			Height:       h,
+		}
+		for i := range f.Y {
+			f.Y[i] = y
+		}
+		for i := range f.U {
+			f.U[i] = 128
+			f.V[i] = 128
+		}
+		return f
+	}
+
+	ref := solid(200)
+	golden := solid(56)
+	average := solid(128)
+	var st lossyEncodeState
+	if !compoundGoldenLikely(&st, average, ref, &golden) {
+		t.Fatal("compoundGoldenLikely returned false for a LAST/GOLDEN average")
+	}
+	if compoundGoldenLikely(&st, ref, ref, &golden) {
+		t.Fatal("compoundGoldenLikely returned true when LAST already predicts the frame")
+	}
+}
