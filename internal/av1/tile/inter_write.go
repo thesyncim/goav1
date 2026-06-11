@@ -5,12 +5,48 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
-// inter_write.go holds the forwards of the single-reference inter mode-symbol
-// readers needed for a P-frame: the new/global/ref-mv mode cascade, the DRL
-// index, and the motion-vector joint/component residual. Each writer mirrors
-// its reader's CDF selection and conditional no-symbol cases exactly. Ported
-// against libaom av1/encoder/encodemv.c (encode_mv_component) and
-// bitstream.c (write_inter_mode / write_drl_idx).
+// inter_write.go holds the forwards of the inter mode-symbol readers needed
+// for a P-frame: the single-reference new/global/ref-mv mode cascade, compound
+// inter modes, the DRL index, and the motion-vector joint/component residual.
+// Each writer mirrors its reader's CDF selection and conditional no-symbol
+// cases exactly. Ported against libaom av1/encoder/encodemv.c
+// (encode_mv_component) and bitstream.c (write_inter_mode / write_drl_idx).
+
+// WriteBlockInterMode codes one block inter mode, the forward of
+// ReadBlockInterMode: skip-mode and segment-forced GLOBALMV paths code no
+// symbol, compound blocks use the compound mode CDF, and single-reference
+// blocks use the new/global/ref cascade.
+func WriteBlockInterMode(w *entropy.Writer, cdfs *InterModeCDFs, req InterModeRequest, mode InterModeResult) error {
+	if w == nil {
+		return ErrInvalidDecodeState
+	}
+	if req.SkipMode {
+		if !req.Compound || !mode.Compound || mode.CompoundMode != CompoundInterModeNearestNearest {
+			return ErrInvalidDecodeState
+		}
+		return nil
+	}
+	if req.SegmentationEnabled && (req.Segment.Skip || req.Segment.GlobalMV) {
+		if mode.Compound || mode.Mode != InterModeGlobalMV {
+			return ErrInvalidDecodeState
+		}
+		return nil
+	}
+	context, err := AnalyzeInterModeContext(req.ModeContext, req.Compound)
+	if err != nil {
+		return err
+	}
+	if req.Compound {
+		if !mode.Compound || !mode.CompoundMode.Valid() {
+			return ErrInvalidDecodeState
+		}
+		return WriteCompoundInterMode(w, cdfs, context, mode.CompoundMode)
+	}
+	if mode.Compound || !mode.Mode.Valid() {
+		return ErrInvalidDecodeState
+	}
+	return WriteSingleInterMode(w, cdfs, uint16(context), mode.Mode)
+}
 
 // WriteSingleInterMode codes one single-reference inter mode, the forward of
 // ReadSingleInterMode's new->global->ref cascade.
@@ -44,6 +80,21 @@ func WriteSingleInterMode(w *entropy.Writer, cdfs *InterModeCDFs, modeContext ui
 		return err
 	}
 	w.WriteCDF(cdf, boolToSym(mode != InterModeNearestMV))
+	return nil
+}
+
+// WriteCompoundInterMode codes one compound inter mode, the forward of
+// ReadCompoundInterMode. The enum order is libaom's NEAREST_NEARESTMV through
+// NEW_NEWMV order, already represented by CompoundInterMode.
+func WriteCompoundInterMode(w *entropy.Writer, cdfs *InterModeCDFs, context int, mode CompoundInterMode) error {
+	if w == nil || !mode.Valid() {
+		return ErrInvalidDecodeState
+	}
+	cdf, err := cdfs.CompoundModeCDF(context)
+	if err != nil {
+		return err
+	}
+	w.WriteCDF(cdf, int(mode))
 	return nil
 }
 
@@ -111,6 +162,77 @@ func writeDRLBit(w *entropy.Writer, cdfs *InterModeCDFs, context uint8, bit bool
 		return err
 	}
 	w.WriteCDF(cdf, boolToSym(bit))
+	return nil
+}
+
+// WriteInterMotion writes the MV residual symbols for one inter block, the
+// forward of ReadInterMotion. NEAREST/NEAR/GLOBAL components code nothing and
+// must match their implied predictors; NEW components code one motion vector
+// against ReferenceMVs.Residual[index]. Compound NEW_NEWMV writes both vectors
+// in libaom order.
+func WriteInterMotion(w *entropy.Writer, cdfs *MVCDFs, req InterMotionRequest, result InterMotionResult) error {
+	if w == nil || !req.Precision.Valid() || req.Mode.Compound != req.References.Compound {
+		return ErrInvalidDecodeState
+	}
+	if result.References != req.References || result.Mode != req.Mode || result.InterIntra {
+		return ErrInvalidDecodeState
+	}
+	if !req.References.Ref[0].Valid() {
+		return ErrInvalidDecodeState
+	}
+	if !motionVectorValid(result.MV[0]) {
+		return ErrInvalidDecodeState
+	}
+	if req.References.Compound {
+		if !req.References.Ref[1].Valid() || !req.Mode.CompoundMode.Valid() {
+			return ErrInvalidDecodeState
+		}
+		if !motionVectorValid(result.MV[1]) {
+			return ErrInvalidDecodeState
+		}
+		components, err := req.Mode.CompoundMode.Components()
+		if err != nil {
+			return err
+		}
+		if err := writeInterMVComponent(w, cdfs, req, result.MV[0], components.First, 0); err != nil {
+			return err
+		}
+		if err := writeInterMVComponent(w, cdfs, req, result.MV[1], components.Second, 1); err != nil {
+			return err
+		}
+	} else {
+		if req.References.Ref[1] != ReferenceFrameNone || !req.Mode.Mode.Valid() {
+			return ErrInvalidDecodeState
+		}
+		if err := writeInterMVComponent(w, cdfs, req, result.MV[0], req.Mode.Mode, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeInterMVComponent(w *entropy.Writer, cdfs *MVCDFs, req InterMotionRequest, mv motion.Vector, mode InterMode, index int) error {
+	if index < 0 || index >= 2 || !mode.Valid() {
+		return ErrInvalidDecodeState
+	}
+	switch mode {
+	case InterModeNearestMV:
+		if mv != req.ReferenceMVs.Nearest[index] {
+			return ErrInvalidDecodeState
+		}
+	case InterModeNearMV:
+		if mv != req.ReferenceMVs.Near[index] {
+			return ErrInvalidDecodeState
+		}
+	case InterModeGlobalMV:
+		if mv != req.GlobalMVs[index] {
+			return ErrInvalidDecodeState
+		}
+	case InterModeNewMV:
+		return WriteMotionVector(w, cdfs, mv, req.ReferenceMVs.Residual[index], req.Precision)
+	default:
+		return ErrInvalidDecodeState
+	}
 	return nil
 }
 

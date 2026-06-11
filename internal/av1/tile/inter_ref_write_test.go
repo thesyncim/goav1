@@ -9,11 +9,11 @@ import (
 )
 
 // TestWriteInterRefSymbolsRoundTrip is the oracle gate for the is-inter flag
-// and single-reference writers: random decisions against a randomized shared
-// neighbor context decode back exactly through ReadIntraFlagResult and
-// ReadInterReferences, decoder CDFs adapting in lockstep. Both SINGLE (no
-// reference-mode symbol) and SELECT (explicit single symbol) frame modes are
-// covered across all seven single references.
+// and reference writers: random decisions against a randomized shared neighbor
+// context decode back exactly through ReadIntraFlagResult and
+// ReadInterReferences, decoder CDFs adapting in lockstep. Fixed SINGLE/
+// COMPOUND modes and SELECT are covered across all single refs and the
+// unidirectional/bidirectional compound reference trees.
 func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 	rng := rand.New(rand.NewSource(29))
 
@@ -33,7 +33,28 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 		ReferenceFrameLast, ReferenceFrameLast2, ReferenceFrameLast3,
 		ReferenceFrameGolden, ReferenceFrameBWD, ReferenceFrameAltref2, ReferenceFrameAltref,
 	}
-	refModes := []parser.ReferenceMode{parser.ReferenceModeSingle, parser.ReferenceModeSelect}
+	compounds := []InterReferencesResult{
+		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2}, Compound: true, Unidir: true},
+		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast3}, Compound: true, Unidir: true},
+		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}, Compound: true, Unidir: true},
+		{Ref: [2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}, Compound: true, Unidir: true},
+	}
+	for _, fwd := range []ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2, ReferenceFrameLast3, ReferenceFrameGolden} {
+		for _, bwd := range []ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref2, ReferenceFrameAltref} {
+			compounds = append(compounds, InterReferencesResult{
+				Ref:      [2]ReferenceFrame{fwd, bwd},
+				Compound: true,
+			})
+		}
+	}
+	singleRefModes := []parser.ReferenceMode{parser.ReferenceModeSingle, parser.ReferenceModeSelect}
+	compoundRefModes := []parser.ReferenceMode{parser.ReferenceModeCompound, parser.ReferenceModeSelect}
+	compoundSizes := make([]BlockSize, 0, int(blockSizeCount))
+	for size := BlockSize(0); size < blockSizeCount; size++ {
+		if compoundReferenceAllowed(size) {
+			compoundSizes = append(compoundSizes, size)
+		}
+	}
 
 	type op struct {
 		kind  int // 0 intra flag, 1 references
@@ -54,7 +75,7 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 	if err := encRefs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
-	w := entropy.NewWriter(make([]byte, 0, 1<<15))
+	w := entropy.NewWriter(make([]byte, 0, 1<<16))
 
 	for range n {
 		x4 := uint8(rng.Intn(MaxBlockModeSlots))
@@ -71,12 +92,24 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 				t.Fatalf("WriteIntraFlag: %v", err)
 			}
 		} else {
-			req := InterReferenceRequest{
-				Size:          BlockSize(rng.Intn(int(blockSizeCount))),
-				ReferenceMode: refModes[rng.Intn(len(refModes))],
-				X4:            x4, Y4: y4, HaveTop: haveTop, HaveLeft: haveLeft,
+			compound := rng.Intn(3) == 0
+			var req InterReferenceRequest
+			var refs InterReferencesResult
+			if compound {
+				req = InterReferenceRequest{
+					Size:          compoundSizes[rng.Intn(len(compoundSizes))],
+					ReferenceMode: compoundRefModes[rng.Intn(len(compoundRefModes))],
+					X4:            x4, Y4: y4, HaveTop: haveTop, HaveLeft: haveLeft,
+				}
+				refs = compounds[rng.Intn(len(compounds))]
+			} else {
+				req = InterReferenceRequest{
+					Size:          BlockSize(rng.Intn(int(blockSizeCount))),
+					ReferenceMode: singleRefModes[rng.Intn(len(singleRefModes))],
+					X4:            x4, Y4: y4, HaveTop: haveTop, HaveLeft: haveLeft,
+				}
+				refs = InterReferencesResult{Ref: [2]ReferenceFrame{singles[rng.Intn(len(singles))], ReferenceFrameNone}}
 			}
-			refs := InterReferencesResult{Ref: [2]ReferenceFrame{singles[rng.Intn(len(singles))], ReferenceFrameNone}}
 			o = op{kind: 1, refReq: req, refs: refs}
 			if err := WriteInterReferences(&w, &encRefs, &ctx, req, refs); err != nil {
 				t.Fatalf("WriteInterReferences size=%v mode=%v ref=%v: %v", req.Size, req.ReferenceMode, refs.Ref[0], err)
