@@ -100,11 +100,16 @@ func main() {
 	frameStats := flag.Bool("framestats", false, "print per-frame size and PSNR")
 	statsCSV := flag.String("csv", "", "write per-frame CSV stats to this path")
 	nframes := flag.Int("frames", frames, "frames to encode or dump")
+	warmupFrames := flag.Int("warmup", 20, "frames to exclude from steady-state summary")
 	infps := flag.Int("fps", fps, "frame rate for rate control and bitrate reporting")
 	flag.Parse()
 	nFrames := *nframes
 	if nFrames <= 0 {
 		fmt.Fprintf(os.Stderr, "invalid frame count %d\n", nFrames)
+		os.Exit(1)
+	}
+	if *warmupFrames < 0 {
+		fmt.Fprintf(os.Stderr, "invalid warmup frame count %d\n", *warmupFrames)
 		os.Exit(1)
 	}
 	if *width < 16 || *height < 16 || *width%2 != 0 || *height%2 != 0 {
@@ -206,8 +211,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	const warmup = 20
-	steadyStart := warmup
+	steadyStart := *warmupFrames
 	if steadyStart >= nFrames {
 		steadyStart = 0
 	}
