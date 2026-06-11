@@ -378,7 +378,10 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// evaluate16 fills the 16x16 and child 8x8 motion grids for the 16x16
 	// region at (px, py) — searching only on first use — and returns the
 	// merged SAD and the sum of the four child SADs.
-	evaluate16 := func(px, py int) (int, int) {
+	// evaluate16Merged searches only the merged 16x16; the children search
+	// on demand so blocks the dead-zone bar merges outright never pay for
+	// four child searches they cannot use.
+	evaluate16Merged := func(px, py int) int {
 		idx16 := (py/16)*st.grid16Cols + px/16
 		if st.sad16Grid[idx16] < 0 {
 			seedDX, seedDY, reach := 0, 0, fullPelReach
@@ -401,19 +404,33 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			}
 			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
 			st.sad16Grid[idx16] = int32(sad16)
-			for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-				cx, cy := px+off[0], py+off[1]
-				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY, reach)
-				idx8 := (cy/8)*st.grid8Cols + cx/8
-				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-				st.sad8Grid[idx8] = int32(sad)
+		}
+		return int(st.sad16Grid[idx16])
+	}
+	children8 := func(px, py int) int {
+		seedDX, seedDY, reach := 0, 0, fullPelReach
+		if st.hme != nil {
+			var trusted bool
+			seedDX, seedDY, trusted = st.hme.seedAt(px, py)
+			if trusted {
+				reach = fullPelReachTrusted
 			}
 		}
 		sum8 := 0
 		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-			sum8 += int(st.sad8Grid[((py+off[1])/8)*st.grid8Cols+(px+off[0])/8])
+			cx, cy := px+off[0], py+off[1]
+			idx8 := (cy/8)*st.grid8Cols + cx/8
+			if st.sad8Grid[idx8] < 0 {
+				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY, reach)
+				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
+				st.sad8Grid[idx8] = int32(sad)
+			}
+			sum8 += int(st.sad8Grid[idx8])
 		}
-		return int(st.sad16Grid[idx16]), sum8
+		return sum8
+	}
+	evaluate16 := func(px, py int) (int, int) {
+		return evaluate16Merged(px, py), children8(px, py)
 	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
@@ -546,16 +563,17 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			}
 			return tile.PartitionSplit, nil
 		case tile.BlockLevel16x16:
-			sad16, sum8 := evaluate16(px, py)
-			// Clear margins keep the cheap SAD rule; the ambiguous band
-			// around it prices both shapes with real bits. Near-perfect
-			// merges skip even that.
-			margin := sad16 - (sum8 + mergeBias16)
+			sad16 := evaluate16Merged(px, py)
 			// Inside the quantizer's dead zone both shapes code almost
-			// nothing and headers favor the merge outright; the trial only
-			// pays where real residual separates the shapes.
+			// nothing and headers favor the merge outright - and the four
+			// child searches never need to run.
 			skipBar := 16 * 16 * int(st.yQuant.AC) / 24
-			if sad16 <= skipBar || margin <= 0 {
+			if sad16 <= skipBar {
+				return tile.PartitionNone, nil
+			}
+			sum8 := children8(px, py)
+			margin := sad16 - (sum8 + mergeBias16)
+			if margin <= 0 {
 				return tile.PartitionNone, nil
 			}
 			// Rect halves: a 16x8 (8x16) half coded with one vector saves a
@@ -727,10 +745,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// Periodic textures can alias the full-pel raster into a distant
 		// basin; a second refinement seeded at zero motion recovers the
 		// near-origin subpel optimum when it is better.
+		// The zero probe is cheap; the second subpel refinement only pays
+		// when zero is already competitive with the searched vector.
 		if fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
 			zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
-			if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
-				mv, fullSAD = zmv, zsad
+			if zeroSAD < fullSAD*2 {
+				if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
+					mv, fullSAD = zmv, zsad
+				}
 			}
 		}
 	}
@@ -823,7 +845,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				mode = tile.InterModeNearMV
 			default:
 				nearest := predRefs.Nearest[0]
-				if nearest.Row != 0 || nearest.Col != 0 {
+				// Pricing the predictor swap needs a prediction and a SAD;
+				// blocks already in skip territory keep NEWMV without it.
+				if (nearest.Row != 0 || nearest.Col != 0) && fullSAD > bw*bh {
 					dr := int(mv.Row) - int(nearest.Row)
 					if dr < 0 {
 						dr = -dr
