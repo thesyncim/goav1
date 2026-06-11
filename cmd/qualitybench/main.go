@@ -33,23 +33,24 @@ const (
 )
 
 type benchConfig struct {
-	width          int
-	height         int
-	frames         int
-	fps            int
-	input          string
-	manifestPath   string
-	workdir        string
-	csvPath        string
-	summaryCSVPath string
-	anchorEncoder  string
-	encoders       []string
-	bitrates       []int
-	layers         int
-	tiles          int
-	goldenInterval int
-	keyInterval    int
-	keep           bool
+	width           int
+	height          int
+	frames          int
+	fps             int
+	input           string
+	manifestPath    string
+	workdir         string
+	csvPath         string
+	summaryCSVPath  string
+	anchorEncoder   string
+	encoders        []string
+	bitrates        []int
+	requiredMetrics []string
+	layers          int
+	tiles           int
+	goldenInterval  int
+	keyInterval     int
+	keep            bool
 }
 
 type encodeResult struct {
@@ -146,6 +147,9 @@ func run() error {
 	}
 
 	filters := ffmpegFilters()
+	if err := validateRequiredMetrics(filters, cfg.requiredMetrics); err != nil {
+		return err
+	}
 	var out io.Writer = os.Stdout
 	var csvFile *os.File
 	if cfg.csvPath != "" {
@@ -199,6 +203,7 @@ func parseFlags() (benchConfig, error) {
 	var cfg benchConfig
 	bitrates := flag.String("bitrates", "3000000,6000000,9000000,12000000", "comma-separated target bitrates in bits per second")
 	encoders := flag.String("encoders", "goav1,aomenc,svt-av1", "comma-separated encoders: goav1,aomenc,svt-av1")
+	requiredMetrics := flag.String("require-metrics", "", "comma-separated metrics that must be available and computed for each successful encode: psnr,ssim,xpsnr,vmaf")
 	flag.StringVar(&cfg.input, "input", "", "raw I420 input file; omit to use the deterministic synthetic scene")
 	flag.StringVar(&cfg.manifestPath, "manifest", "", "CSV corpus manifest with clip,input,width,height,frames,fps columns")
 	flag.IntVar(&cfg.width, "width", defaultWidth, "frame width in pixels")
@@ -224,6 +229,10 @@ func parseFlags() (benchConfig, error) {
 	cfg.encoders = parseNameList(*encoders)
 	if len(cfg.encoders) == 0 {
 		return benchConfig{}, errors.New("no encoders selected")
+	}
+	cfg.requiredMetrics, err = parseMetricList(*requiredMetrics)
+	if err != nil {
+		return benchConfig{}, fmt.Errorf("require-metrics: %w", err)
 	}
 	if cfg.anchorEncoder == "" {
 		cfg.anchorEncoder = cfg.encoders[0]
@@ -278,6 +287,55 @@ func parseNameList(s string) []string {
 		}
 	}
 	return out
+}
+
+func parseMetricList(s string) ([]string, error) {
+	names := parseNameList(s)
+	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		switch name {
+		case "psnr", "psnr_avg":
+			name = "psnr"
+		case "ssim", "ssim_all":
+			name = "ssim"
+		case "xpsnr", "xpsnr_y":
+			name = "xpsnr"
+		case "vmaf":
+		default:
+			return nil, fmt.Errorf("unknown metric %q", name)
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+func requiredMetricSet(metrics []string) map[string]bool {
+	out := make(map[string]bool, len(metrics))
+	for _, metric := range metrics {
+		out[metric] = true
+	}
+	return out
+}
+
+func validateRequiredMetrics(filters map[string]bool, metrics []string) error {
+	for _, metric := range metrics {
+		filter := ffmpegFilterForMetric(metric)
+		if !filters[filter] {
+			return fmt.Errorf("required metric %s unavailable: ffmpeg filter %s not found", metric, filter)
+		}
+	}
+	return nil
+}
+
+func ffmpegFilterForMetric(metric string) string {
+	if metric == "vmaf" {
+		return "libvmaf"
+	}
+	return metric
 }
 
 func clipSpecsForConfig(cfg benchConfig) ([]clipSpec, error) {
@@ -428,12 +486,17 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	}
 
 	var rows []benchRow
+	required := requiredMetricSet(cfg.requiredMetrics)
 	for _, bitrate := range cfg.bitrates {
 		for _, encoderName := range cfg.encoders {
 			result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
 			m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+			var metricErr error
 			if result.status == "ok" {
-				m = measureDecoded(clipCfg, filters, refPath, result.decodedYUV, encoderName, bitrate)
+				m, metricErr = measureDecoded(clipCfg, filters, required, refPath, result.decodedYUV, encoderName, bitrate)
+				if metricErr != nil {
+					result.status, result.errText = "error", metricErr.Error()
+				}
 			}
 			actualBPS := int64(0)
 			if result.bytes > 0 && clip.Frames > 0 {
@@ -463,6 +526,9 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				return nil, err
 			}
 			writer.Flush()
+			if metricErr != nil {
+				return rows, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
+			}
 		}
 	}
 	return rows, nil
@@ -1041,29 +1107,45 @@ func ffmpegFilters() map[string]bool {
 	return out
 }
 
-func measureDecoded(cfg benchConfig, filters map[string]bool, refPath, decodedPath, encoderName string, bitrate int) metrics {
+func measureDecoded(cfg benchConfig, filters map[string]bool, required map[string]bool, refPath, decodedPath, encoderName string, bitrate int) (metrics, error) {
 	m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
 	if filters["psnr"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "psnr", `average:([0-9.]+)`); err == nil {
 			m.psnr = formatMetric(v)
+		} else if required["psnr"] {
+			return m, fmt.Errorf("required metric psnr: %w", err)
 		}
+	} else if required["psnr"] {
+		return m, errors.New("required metric psnr unavailable: ffmpeg filter psnr not found")
 	}
 	if filters["ssim"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "ssim", `All:([0-9.]+)`); err == nil {
 			m.ssim = formatMetric(v)
+		} else if required["ssim"] {
+			return m, fmt.Errorf("required metric ssim: %w", err)
 		}
+	} else if required["ssim"] {
+		return m, errors.New("required metric ssim unavailable: ffmpeg filter ssim not found")
 	}
 	if filters["xpsnr"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "xpsnr", `XPSNR\s+y:\s*([0-9]+(?:\.[0-9]+)?)`); err == nil {
 			m.xpsnr = formatMetric(v)
+		} else if required["xpsnr"] {
+			return m, fmt.Errorf("required metric xpsnr: %w", err)
 		}
+	} else if required["xpsnr"] {
+		return m, errors.New("required metric xpsnr unavailable: ffmpeg filter xpsnr not found")
 	}
 	if filters["libvmaf"] {
 		if v, err := runVMAF(cfg, refPath, decodedPath, encoderName, bitrate); err == nil {
 			m.vmaf = formatMetric(v)
+		} else if required["vmaf"] {
+			return m, fmt.Errorf("required metric vmaf: %w", err)
 		}
+	} else if required["vmaf"] {
+		return m, errors.New("required metric vmaf unavailable: ffmpeg filter libvmaf not found")
 	}
-	return m
+	return m, nil
 }
 
 func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern string) (float64, error) {

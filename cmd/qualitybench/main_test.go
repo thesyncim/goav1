@@ -21,6 +21,41 @@ func TestParsePositiveList(t *testing.T) {
 	}
 }
 
+func TestParseMetricList(t *testing.T) {
+	got, err := parseMetricList("psnr_avg, ssim_all, xpsnr_y, vmaf,psnr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"psnr", "ssim", "xpsnr", "vmaf"}
+	if len(got) != len(want) {
+		t.Fatalf("metrics=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("metrics=%v want %v", got, want)
+		}
+	}
+	if _, err := parseMetricList("butteraugli"); err == nil {
+		t.Fatal("unknown metric accepted")
+	}
+}
+
+func TestValidateRequiredMetrics(t *testing.T) {
+	filters := map[string]bool{
+		"psnr":    true,
+		"ssim":    true,
+		"xpsnr":   true,
+		"libvmaf": true,
+	}
+	if err := validateRequiredMetrics(filters, []string{"psnr", "vmaf"}); err != nil {
+		t.Fatal(err)
+	}
+	delete(filters, "libvmaf")
+	if err := validateRequiredMetrics(filters, []string{"vmaf"}); err == nil {
+		t.Fatal("missing libvmaf accepted")
+	}
+}
+
 func TestReadClipManifest(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "clips.csv")

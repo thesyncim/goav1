@@ -20,7 +20,9 @@ protocol:
   from compressed payload bytes, not just requested bitrate.
 - Prefer perceptual metrics when available. VMAF should be reported when the
   local FFmpeg build has libvmaf; PSNR, SSIM, and XPSNR remain useful secondary
-  metrics and regression guards.
+  metrics and regression guards. For claim-supporting runs, use
+  `-require-metrics` so a missing metric fails explicitly instead of becoming
+  an `NA` column.
 - Report speed and latency with the quality result. A slower baseline is not a
   realtime peer unless its latency constraints match.
 
@@ -37,9 +39,14 @@ go run ./cmd/qualitybench \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
   -anchor aomenc -layers 3 -keyint 60 \
+  -require-metrics xpsnr,vmaf \
   -csv quality.csv -summary-csv quality-summary.csv \
   -workdir /tmp/goav1-quality
 ```
+
+If the local FFmpeg build lacks `libvmaf`, a command that requires VMAF exits
+before encoding. Use that failure as a toolchain setup signal; do not treat a
+non-VMAF run as state-of-the-art visual validation.
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
