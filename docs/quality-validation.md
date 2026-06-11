@@ -15,7 +15,9 @@ protocol:
   baselines must use low-delay CBR settings with no random-access lookahead or
   hidden alt-ref advantage unless goav1 is given the same latency budget.
 - Run at multiple bitrates per clip. Four points is the minimum for BD-rate;
-  one bitrate is useful only as a local regression check.
+  one bitrate is useful only as a local regression check. For
+  claim-supporting runs, use `-summary-csv` with `-require-summary` so missing
+  or invalid required BD-rate rows fail the run.
 - Measure decoded output against the same source frames. Report actual bitrate
   from compressed payload bytes, not just requested bitrate.
 - Prefer perceptual metrics when available. VMAF should be reported when the
@@ -45,7 +47,7 @@ go run ./cmd/qualitybench \
   -anchor aomenc -layers 3 -keyint 60 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
-  -csv quality.csv -summary-csv quality-summary.csv \
+  -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
   -workdir /tmp/goav1-quality
@@ -67,8 +69,9 @@ decoded-output metrics or BD-rate.
 
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
-required metrics and encoders, metric-filter availability, tool paths/version
-probes, and per-encoder invocations or goav1 settings.
+required metrics, encoders, and summary enforcement, metric-filter
+availability, tool paths/version probes, and per-encoder invocations or goav1
+settings.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:
@@ -88,7 +91,10 @@ candidate encoder against `-anchor` (default: the first encoder in `-encoders`).
 Positive `bd_rate_pct` means the candidate needed more bitrate than the anchor
 over the common metric range; negative means it needed less. Rows with fewer
 than four valid points, missing metrics, or no overlapping quality range are
-reported as explicit errors instead of synthesized numbers.
+reported as explicit errors instead of synthesized numbers. When
+`-require-summary` is set, any missing or non-`ok` summary row for a
+`-require-metrics` metric and selected non-anchor encoder makes the command
+exit nonzero after writing the summary CSV.
 
 References:
 

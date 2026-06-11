@@ -50,6 +50,7 @@ type benchConfig struct {
 	bitrates         []int
 	requiredMetrics  []string
 	requiredEncoders []string
+	requireSummary   bool
 	layers           int
 	tiles            int
 	goldenInterval   int
@@ -160,6 +161,7 @@ type metadataConfig struct {
 	Bitrates         []int    `json:"bitrates"`
 	RequiredMetrics  []string `json:"required_metrics,omitempty"`
 	RequiredEncoders []string `json:"required_encoders,omitempty"`
+	RequireSummary   bool     `json:"require_summary,omitempty"`
 	Anchor           string   `json:"anchor"`
 	Layers           int      `json:"layers"`
 	Tiles            int      `json:"tiles"`
@@ -267,10 +269,18 @@ func run() error {
 		rows = append(rows, clipRows...)
 		invocations = append(invocations, clipInvocations...)
 	}
+	var summaries []summaryRow
+	if cfg.summaryCSVPath != "" || cfg.requireSummary {
+		summaries = summarizeBDRate(cfg.anchorEncoder, rows)
+	}
 	if cfg.summaryCSVPath != "" {
-		if err := writeSummaryCSV(cfg, rows); err != nil {
+		if err := writeSummaryCSV(cfg.summaryCSVPath, summaries); err != nil {
 			return err
 		}
+	}
+	var summaryErr error
+	if cfg.requireSummary {
+		summaryErr = validateRequiredSummaries(cfg, rows, summaries)
 	}
 	if cfg.metadataPath != "" {
 		if err := writeMetadataJSON(cfg, filters, invocations); err != nil {
@@ -296,9 +306,11 @@ func run() error {
 		return err
 	}
 	if statsWriter != nil {
-		return statsWriter.Error()
+		if err := statsWriter.Error(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return summaryErr
 }
 
 func parseFlags() (benchConfig, error) {
@@ -323,6 +335,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.statsCSVPath, "stats-csv", "", "write goav1 encoder decision diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
+	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
 
@@ -342,6 +355,14 @@ func parseFlags() (benchConfig, error) {
 	cfg.requiredEncoders, err = parseRequiredEncoderList(*requiredEncoders, cfg.encoders)
 	if err != nil {
 		return benchConfig{}, fmt.Errorf("require-encoders: %w", err)
+	}
+	if cfg.requireSummary {
+		if cfg.summaryCSVPath == "" {
+			return benchConfig{}, errors.New("require-summary requires -summary-csv")
+		}
+		if len(cfg.requiredMetrics) == 0 {
+			return benchConfig{}, errors.New("require-summary requires -require-metrics")
+		}
 	}
 	if cfg.anchorEncoder == "" {
 		cfg.anchorEncoder = cfg.encoders[0]
@@ -899,6 +920,7 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		Bitrates:         bitrates,
 		RequiredMetrics:  required,
 		RequiredEncoders: requiredEncoders,
+		RequireSummary:   cfg.requireSummary,
 		Anchor:           cfg.anchorEncoder,
 		Layers:           cfg.layers,
 		Tiles:            cfg.tiles,
@@ -969,8 +991,8 @@ func currentGitMetadata() gitMetadata {
 	return meta
 }
 
-func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
-	file, err := os.Create(cfg.summaryCSVPath)
+func writeSummaryCSV(path string, summaries []summaryRow) error {
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
@@ -983,7 +1005,7 @@ func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
 	}); err != nil {
 		return err
 	}
-	for _, summary := range summarizeBDRate(cfg.anchorEncoder, rows) {
+	for _, summary := range summaries {
 		overlapMin, overlapMax, bdRate := "", "", ""
 		if summary.Status == "ok" {
 			overlapMin = formatMetric(summary.OverlapMin)
@@ -1009,8 +1031,77 @@ func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
 	return writer.Error()
 }
 
+func validateRequiredSummaries(cfg benchConfig, rows []benchRow, summaries []summaryRow) error {
+	clips := clipNamesFromRows(rows)
+	if len(clips) == 0 {
+		return errors.New("required BD-rate summary unavailable: no benchmark rows")
+	}
+	anchor := canonicalEncoderName(cfg.anchorEncoder)
+	byKey := make(map[string]summaryRow, len(summaries))
+	for _, summary := range summaries {
+		byKey[summaryKey(summary.Clip, summary.Encoder, summary.Metric)] = summary
+	}
+	for _, clip := range clips {
+		expected := 0
+		for _, encoder := range cfg.encoders {
+			encoder = canonicalEncoderName(encoder)
+			if encoder == anchor {
+				continue
+			}
+			for _, metric := range cfg.requiredMetrics {
+				expected++
+				metricName := summaryMetricName(metric)
+				summary, ok := byKey[summaryKey(clip, encoder, metricName)]
+				if !ok {
+					return fmt.Errorf("%s %s %s: required BD-rate summary missing", clip, encoder, metricName)
+				}
+				if summary.Status != "ok" {
+					if summary.ErrText != "" {
+						return fmt.Errorf("%s %s %s: required BD-rate summary status %s: %s", clip, encoder, metricName, summary.Status, summary.ErrText)
+					}
+					return fmt.Errorf("%s %s %s: required BD-rate summary status %s", clip, encoder, metricName, summary.Status)
+				}
+			}
+		}
+		if expected == 0 {
+			return fmt.Errorf("%s: required BD-rate summary unavailable: no candidate encoders", clip)
+		}
+	}
+	return nil
+}
+
+func clipNamesFromRows(rows []benchRow) []string {
+	seen := map[string]bool{}
+	var clips []string
+	for _, row := range rows {
+		if row.clip == "" || seen[row.clip] {
+			continue
+		}
+		seen[row.clip] = true
+		clips = append(clips, row.clip)
+	}
+	return clips
+}
+
+func summaryMetricName(metric string) string {
+	switch metric {
+	case "psnr":
+		return "psnr_avg"
+	case "ssim":
+		return "ssim_all"
+	case "xpsnr":
+		return "xpsnr_y"
+	default:
+		return metric
+	}
+}
+
+func summaryKey(clip, encoder, metric string) string {
+	return clip + "\x00" + canonicalEncoderName(encoder) + "\x00" + metric
+}
+
 func summarizeBDRate(anchor string, rows []benchRow) []summaryRow {
-	anchor = strings.ToLower(anchor)
+	anchor = canonicalEncoderName(anchor)
 	metricsByName := [...]struct {
 		name string
 		get  func(metrics) string

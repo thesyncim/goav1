@@ -298,6 +298,59 @@ func TestSummarizeBDRateUsesActualBitrate(t *testing.T) {
 	}
 }
 
+func TestValidateRequiredSummaries(t *testing.T) {
+	rows := []benchRow{
+		{clip: "clip", encoder: "anchor", actualBPS: 100_000, metrics: metrics{psnr: "30"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 200_000, metrics: metrics{psnr: "35"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 400_000, metrics: metrics{psnr: "40"}, status: "ok"},
+		{clip: "clip", encoder: "anchor", actualBPS: 800_000, metrics: metrics{psnr: "45"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 200_000, metrics: metrics{psnr: "30"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 400_000, metrics: metrics{psnr: "35"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 800_000, metrics: metrics{psnr: "40"}, status: "ok"},
+		{clip: "clip", encoder: "candidate", actualBPS: 1_600_000, metrics: metrics{psnr: "45"}, status: "ok"},
+	}
+	cfg := benchConfig{
+		anchorEncoder:   "anchor",
+		encoders:        []string{"anchor", "candidate"},
+		requiredMetrics: []string{"psnr"},
+	}
+	summaries := summarizeBDRate("anchor", rows)
+	if err := validateRequiredSummaries(cfg, rows, summaries); err != nil {
+		t.Fatalf("valid required summary failed: %v", err)
+	}
+
+	cfg.requiredMetrics = []string{"vmaf"}
+	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+		t.Fatal("missing required metric summary accepted")
+	}
+
+	cfg.requiredMetrics = []string{"psnr"}
+	cfg.encoders = []string{"anchor"}
+	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+		t.Fatal("summary without candidate accepted")
+	}
+}
+
+func TestValidateRequiredSummariesRejectsErrorRows(t *testing.T) {
+	rows := []benchRow{{clip: "clip", encoder: "anchor", status: "ok"}}
+	cfg := benchConfig{
+		anchorEncoder:   "anchor",
+		encoders:        []string{"anchor", "candidate"},
+		requiredMetrics: []string{"psnr"},
+	}
+	summaries := []summaryRow{{
+		Clip:    "clip",
+		Anchor:  "anchor",
+		Encoder: "candidate",
+		Metric:  "psnr_avg",
+		Status:  "error",
+		ErrText: "need at least 4 points",
+	}}
+	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+		t.Fatal("error summary row accepted")
+	}
+}
+
 func TestWriteStatsRow(t *testing.T) {
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
@@ -370,6 +423,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		bitrates:         []int{100000},
 		requiredMetrics:  []string{"psnr"},
 		requiredEncoders: []string{"goav1"},
+		requireSummary:   true,
 		anchorEncoder:    "goav1",
 	}
 	got := metadataConfigFor(cfg)
@@ -378,7 +432,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg.requiredMetrics[0] = "vmaf"
 	cfg.requiredEncoders[0] = "aomenc"
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
-		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" {
+		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
+		!got.RequireSummary {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -395,6 +450,7 @@ func TestWriteMetadataJSON(t *testing.T) {
 		bitrates:         []int{100000},
 		requiredMetrics:  []string{"psnr"},
 		requiredEncoders: []string{"goav1"},
+		requireSummary:   true,
 		anchorEncoder:    "goav1",
 		layers:           1,
 	}
@@ -426,6 +482,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)
+	}
+	if !doc.Config.RequireSummary {
+		t.Fatalf("require summary=%v", doc.Config.RequireSummary)
 	}
 	if !doc.MetricFilters["psnr"] || doc.MetricFilters["libvmaf"] {
 		t.Fatalf("metric filters=%+v", doc.MetricFilters)
