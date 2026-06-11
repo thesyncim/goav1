@@ -344,6 +344,15 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 				seedDX, seedDY = st.hme.seedAt(px, py)
 			}
 			dx16, dy16, sad16 := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, seedDX, seedDY)
+			if (seedDX > 8 || seedDX < -8 || seedDY > 8 || seedDY < -8) && sad16 > 16*16*2 {
+				// The seeded window excludes the fine zero neighborhood
+				// when the regional vector is large; blocks that disagree
+				// with their region (mover boundaries) refall back to the
+				// zero-centered window when the seeded match stays poor.
+				if zx, zy, zsad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 0, 0); zsad < sad16 {
+					dx16, dy16, sad16 = zx, zy, zsad
+				}
+			}
 			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
 			st.sad16Grid[idx16] = int32(sad16)
 			for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
