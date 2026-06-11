@@ -95,15 +95,19 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		n    int
+		w, h int
 		size tile.BlockSize
 		tx   tile.TransformSize
 	}{
-		{name: "16x16", n: 16, size: tile.BlockSize16x16, tx: tile.TransformSize16x16},
-		{name: "32x32", n: 32, size: tile.BlockSize32x32, tx: tile.TransformSize32x32},
+		{name: "16x16", w: 16, h: 16, size: tile.BlockSize16x16, tx: tile.TransformSize16x16},
+		{name: "32x32", w: 32, h: 32, size: tile.BlockSize32x32, tx: tile.TransformSize32x32},
+		{name: "16x8", w: 16, h: 8, size: tile.BlockSize16x8, tx: tile.TransformSize16x8},
+		{name: "8x16", w: 8, h: 16, size: tile.BlockSize8x16, tx: tile.TransformSize8x16},
+		{name: "32x16", w: 32, h: 16, size: tile.BlockSize32x16, tx: tile.TransformSize32x16},
+		{name: "16x32", w: 16, h: 32, size: tile.BlockSize16x32, tx: tile.TransformSize16x32},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w, h := tc.n, tc.n
+			w, h := tc.w, tc.h
 			solid := func(y, u, v byte) SourceFrame420 {
 				f := SourceFrame420{
 					Y:            make([]byte, w*h),
@@ -146,27 +150,35 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 			dcq := float64(st.yQuant.DC)
 			st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
 			st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
-			switch tc.n {
-			case 16:
+			switch {
+			case w == 16 && h == 16:
 				st.grid16Cols = 1
 				st.mv16Grid = make([]motion.Vector, 1)
 				st.sad16Grid = []int32{-1}
-			case 32:
+			case w == 32 && h == 32:
 				st.grid32Cols = 1
 				st.mv32Grid = make([]motion.Vector, 1)
 				st.sad32Grid = []int32{-1}
+			case w >= 32 || h >= 32:
+				st.grid16Cols = max(1, w/16)
+				st.mv16Grid = make([]motion.Vector, 2)
+				st.sad16Grid = []int32{1 << 15, 1 << 15}
+			default:
+				st.grid8Cols = max(1, w/8)
+				st.mv8Grid = make([]motion.Vector, 2)
+				st.sad8Grid = []int32{1 << 14, 1 << 14}
 			}
 
-			mi := uint16(tc.n / 4)
+			miW, miH := uint16(w/4), uint16(h/4)
 			block := tile.BlockVisit{
-				MIColEnd:  mi,
-				MIRowEnd:  mi,
+				MIColEnd:  miW,
+				MIRowEnd:  miH,
 				Size:      tc.size,
-				VisibleW4: uint8(mi),
-				VisibleH4: uint8(mi),
+				VisibleW4: uint8(miW),
+				VisibleH4: uint8(miH),
 			}
-			walkReq := tile.BlockWalkRequest{MIColEnd: mi, MIRowEnd: mi}
-			if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, parser.ReferenceModeSingle, walkReq, mi, mi); err != nil {
+			walkReq := tile.BlockWalkRequest{MIColEnd: miW, MIRowEnd: miH}
+			if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, parser.ReferenceModeSingle, walkReq, miW, miH); err != nil {
 				t.Fatal(err)
 			}
 
@@ -177,8 +189,8 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 				got.Mode.Mode != tile.InterModeGlobalMV {
 				t.Fatalf("motion = %+v, want GLOBALMV single GOLDEN", got)
 			}
-			for y := 0; y < tc.n; y++ {
-				for x := 0; x < tc.n; x++ {
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
 					if recon.Y[y*w+x] != src.Y[y*w+x] {
 						t.Fatalf("recon Y(%d,%d)=%d want %d", x, y, recon.Y[y*w+x], src.Y[y*w+x])
 					}
