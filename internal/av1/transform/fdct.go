@@ -859,6 +859,12 @@ func ForwardDCT32x32(coeff []int32, coeffStride int, residual []int16, residualS
 		!coeffBlockFits(len(coeff), coeffStride, 32, 32) {
 		return ErrInvalidTransform
 	}
+	forwardDCT32x32Impl(coeff, coeffStride, residual, residualStride)
+	return nil
+}
+
+// forwardDCT32x32PureGo is the portable two-pass reference.
+func forwardDCT32x32PureGo(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var buf [1024]int32 // column-pass output, row-major buf[r*32+c]
 	var in, out [32]int32
 	for c := range 32 {
@@ -880,5 +886,4 @@ func ForwardDCT32x32(coeff []int32, coeffStride int, residual []int16, residualS
 			coeff[c*coeffStride+r] = out[c]
 		}
 	}
-	return nil
 }

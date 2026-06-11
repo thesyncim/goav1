@@ -11,3 +11,6 @@ var forwardDCT4x4Impl = forwardDCT4x4PureGo
 
 // forwardDCT16x16Impl is the 16x16 forward DCT kernel dispatch.
 var forwardDCT16x16Impl = forwardDCT16x16PureGo
+
+// forwardDCT32x32Impl is the 32x32 forward DCT kernel dispatch.
+var forwardDCT32x32Impl = forwardDCT32x32PureGo
