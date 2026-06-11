@@ -71,9 +71,14 @@ func main() {
 	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
 	input := flag.String("input", "", "encode this raw 1080p I420 file instead of the synthetic scene")
 	frameStats := flag.Bool("framestats", false, "print per-frame size and PSNR")
-	nframes := flag.Int("frames", frames, "frames to encode with -input")
+	nframes := flag.Int("frames", frames, "frames to encode or dump")
 	infps := flag.Int("fps", fps, "frame rate for rate control with -input")
 	flag.Parse()
+	nFrames := *nframes
+	if nFrames <= 0 {
+		fmt.Fprintf(os.Stderr, "invalid frame count %d\n", nFrames)
+		os.Exit(1)
+	}
 
 	rng := rand.New(rand.NewSource(9))
 	bg := make([]byte, width*height)
@@ -104,13 +109,13 @@ func main() {
 			os.Exit(1)
 		}
 		defer out.Close()
-		for n := range frames {
+		for n := range nFrames {
 			f := makeFrame(bg, n)
 			out.Write(f.Y)
 			out.Write(f.U)
 			out.Write(f.V)
 		}
-		fmt.Printf("wrote %d frames of %dx%d I420\n", frames, width, height)
+		fmt.Printf("wrote %d frames of %dx%d I420\n", nFrames, width, height)
 		return
 	}
 
@@ -123,10 +128,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	nFrames := frames
-	if *input != "" {
-		nFrames = *nframes
 	}
 	srcs := make([]goav1.I420Frame, nFrames)
 	if *input != "" {
@@ -156,6 +157,10 @@ func main() {
 		}
 	}
 	const warmup = 20
+	steadyStart := warmup
+	if steadyStart >= nFrames {
+		steadyStart = 0
+	}
 	totalBytes, steadyBytes := 0, 0
 	var sumPSNR, steadyPSNR float64
 	minPSNR := 1e9
@@ -175,10 +180,10 @@ func main() {
 			fmt.Printf("frame %3d: %7d bytes  %6.2f dB  q=%d\n", n, len(out.Data), p, enc.QIndex())
 		}
 		sumPSNR += p
-		if n >= warmup && p < minPSNR {
+		if n >= steadyStart && p < minPSNR {
 			minPSNR = p
 		}
-		if n >= warmup {
+		if n >= steadyStart {
 			steadyBytes += len(out.Data)
 			steadyPSNR += p
 		}
@@ -188,8 +193,9 @@ func main() {
 	elapsed := encodeTime
 	perFrame := elapsed / time.Duration(nFrames)
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", nFrames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(nFrames)/elapsed.Seconds())
+	steadyFrames := nFrames - steadyStart
 	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d\n",
 		float64(totalBytes*8**infps)/float64(nFrames)/1e6,
-		float64(steadyBytes*8**infps)/float64(nFrames-warmup)/1e6,
-		float64(*bitrate)/1e6, sumPSNR/float64(nFrames), steadyPSNR/float64(nFrames-warmup), minPSNR, enc.QIndex())
+		float64(steadyBytes*8**infps)/float64(steadyFrames)/1e6,
+		float64(*bitrate)/1e6, sumPSNR/float64(nFrames), steadyPSNR/float64(steadyFrames), minPSNR, enc.QIndex())
 }
