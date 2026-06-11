@@ -764,7 +764,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	refPlanes := ref
 	compound := false
 	var compoundMV [2]motion.Vector
-	if golden != nil && golden.Y != nil && bw == bh && (bw == 8 || bw == 16) && fullSAD > bw*bh*4 {
+	if golden != nil && golden.Y != nil && bw == bh && (bw == 8 || bw == 16 || bw == 32) && fullSAD > bw*bh*4 {
 		lastMV, lastSAD := mv, fullSAD
 		var gmv motion.Vector
 		gsad := 1 << 30
@@ -776,7 +776,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
-			gsad = sadBlock(src.Y, golden.Y, base, base, src.YStride, 16, lastSAD)
+			gsad = sadBlock(src.Y, golden.Y, base, base, src.YStride, bw, lastSAD)
 		}
 		if bw == 8 && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
 			if err := predictCompoundInto(st.sadScratch[:64], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, 8, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
