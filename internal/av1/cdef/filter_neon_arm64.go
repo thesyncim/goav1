@@ -6,34 +6,32 @@
 
 package cdef
 
-// NEON-accelerated CDEF block filter. The .s file implements the per-row inner
-// loop for 8-wide arithmetic. Width-4 chroma blocks use the same arithmetic
-// and store only the low four lanes, avoiding a temporary copy while preserving
-// the byte-exactness contract.
+// NEON-accelerated CDEF block filter. The .s file implements the per-row
+// inner loop for 8-wide blocks (every luma block and the 4:4:4 chroma
+// block); narrower shapes route to the pure-Go reference, keeping the asm a
+// single auditable code path. One CDEF row is eight 16-bit samples in one
+// vector, and all bit depths share the path because the CDEF buffer is
+// 16-bit regardless of source depth.
 //
 // Bit-exactness with filterBlockPureGo:
 //   - diff = sample - x is computed in int16 lanes (pixels and the 0x4000
 //     VeryLarge sentinel both fit, and the difference stays within int16).
-//   - constrain() is reproduced lane-wise: abs, variable right shift by the
-//     precomputed shift, threshold - shifted clamped to [0, abs], then the sign
-//     of diff is reapplied. Identical to constrainShifted.
-//   - taps are applied with signed widening multiply-accumulate into int32
-//     lanes, matching the int accumulator sum.
-//   - the final term x + ((8 + sum - (sum<0)) >> 4) is reproduced exactly,
-//     including the -1 bias when sum is negative (an arithmetic shift of
-//     (sum*2 + 16 - sign) folded as in the reference is avoided: the asm
-//     computes sum, then the bias and shift in scalar-equivalent vector ops).
-//   - when both strengths are non-zero the result is clamped to [min, max] over
-//     the tap neighbourhood, with the VeryLarge sentinel skipped for max
-//     exactly as maxClip does.
-
-// filterBlockNEONCtx is the asm calling context. Field order and sizes are part
-// of the ABI shared with filter_neon_arm64.s; do not reorder.
+//   - constrain() is reproduced lane-wise: ABS, variable logical right shift
+//     (USHL by a negative count), strength minus shifted clamped to
+//     [0, abs] with SMAX/SMIN, then the sign of diff reapplied branchlessly
+//     as (limit ^ sign) - sign with sign = diff >> 15.
+//   - tap weights accumulate through SMLAL/SMLAL2 into int32 lanes.
+//   - the final x + ((8 + sum - (sum<0)) >> 4) folds the negative-sum bias
+//     in as sum + (sum >> 31), then +8, then an arithmetic >>4.
+//   - when both strengths are active the result clamps to [min, max] over
+//     the tap neighbourhood; sentinel lanes are replaced by the running min
+//     before the max fold, which skips them exactly like maxClip (the
+//     sentinel exceeds every sample so the plain min fold is unaffected).
 type filterBlockNEONCtx struct {
 	dst    *uint16
 	input  *uint16 // pointer to input[inputOrigin]
-	dstStr uintptr // dst stride in elements
-	height uintptr
+	dstStr int64   // dst stride in elements
+	height int64
 
 	pri0 int64 // direction offsets in elements (signed)
 	pri1 int64
@@ -55,43 +53,33 @@ type filterBlockNEONCtx struct {
 	enablePrimary   int64
 	enableSecondary int64
 	clipping        int64
-	width4          int64
 }
 
 //go:noescape
-func filterBlockNEONAsm(ctx *filterBlockNEONCtx)
+func cdefFilterBlock8NEON(ctx *filterBlockNEONCtx)
 
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	if params.Width != 4 && params.Width != 8 {
+	if int(params.Width) != 8 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
-	filterBlockNEONWide(dst, dstStride, dstOrigin, input, inputOrigin, params)
-}
-
-func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	primaryStrength := int(params.PrimaryStrength)
 	secondaryStrength := int(params.SecondaryStrength)
 	direction := int(params.Direction)
-	primaryDamping := int(params.PrimaryDamping)
-	secondaryDamping := int(params.SecondaryDamping)
 	coeffShift := int(params.CoeffShift)
-	enablePrimary := primaryStrength != 0
-	enableSecondary := secondaryStrength != 0
-	clippingRequired := enablePrimary && enableSecondary
 	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
 
 	ctx := filterBlockNEONCtx{
 		dst:    &dst[dstOrigin],
 		input:  &input[inputOrigin],
-		dstStr: uintptr(dstStride),
-		height: uintptr(params.Height),
+		dstStr: int64(dstStride),
+		height: int64(params.Height),
 
 		pri0: int64(cdefDirections[direction+2][0]),
 		pri1: int64(cdefDirections[direction+2][1]),
 		sec0: int64(cdefDirections[direction+4][0]),
-		sec1: int64(cdefDirections[direction+4][1]),
-		sec2: int64(cdefDirections[direction][0]),
+		sec1: int64(cdefDirections[direction][0]),
+		sec2: int64(cdefDirections[direction+4][1]),
 		sec3: int64(cdefDirections[direction][1]),
 
 		priTap0: int64(priTaps[0]),
@@ -101,20 +89,17 @@ func filterBlockNEONWide(dst []uint16, dstStride int, dstOrigin int, input []uin
 
 		priStrength: int64(primaryStrength),
 		secStrength: int64(secondaryStrength),
-		priShift:    int64(constrainShift(primaryStrength, primaryDamping)),
-		secShift:    int64(constrainShift(secondaryStrength, secondaryDamping)),
-
-		enablePrimary:   boolToInt64(enablePrimary),
-		enableSecondary: boolToInt64(enableSecondary),
-		clipping:        boolToInt64(clippingRequired),
-		width4:          boolToInt64(params.Width == 4),
+		priShift:    int64(constrainShift(primaryStrength, int(params.PrimaryDamping))),
+		secShift:    int64(constrainShift(secondaryStrength, int(params.SecondaryDamping))),
 	}
-	filterBlockNEONAsm(&ctx)
-}
-
-func boolToInt64(v bool) int64 {
-	if v {
-		return 1
+	if primaryStrength != 0 {
+		ctx.enablePrimary = 1
 	}
-	return 0
+	if secondaryStrength != 0 {
+		ctx.enableSecondary = 1
+	}
+	if primaryStrength != 0 && secondaryStrength != 0 {
+		ctx.clipping = 1
+	}
+	cdefFilterBlock8NEON(&ctx)
 }
