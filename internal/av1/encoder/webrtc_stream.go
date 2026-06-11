@@ -69,6 +69,24 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 	return &WebRTCStream{enc: enc, structure: structure, temporalLayers: uint8(temporalLayers)}, nil
 }
 
+// SetGoldenInterval forwards the golden-reference refresh policy to the
+// underlying stream encoder. Zero disables golden references.
+func (s *WebRTCStream) SetGoldenInterval(n int) {
+	s.enc.SetGoldenInterval(n)
+}
+
+// SetTileColumns forwards the tile-column override to the underlying stream
+// encoder.
+func (s *WebRTCStream) SetTileColumns(cols int) {
+	s.enc.SetTileColumns(cols)
+}
+
+// Prewarm sizes the underlying encoder's reusable buffers without advancing
+// the WebRTC frame metadata.
+func (s *WebRTCStream) Prewarm() error {
+	return s.enc.Prewarm()
+}
+
 // Encode encodes one frame and returns it with WebRTC packaging metadata.
 func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedFrame, error) {
 	tid := s.enc.TemporalID()

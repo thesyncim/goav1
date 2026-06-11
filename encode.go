@@ -204,6 +204,17 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.TileColumns > 0 {
+		stream.SetTileColumns(cfg.TileColumns)
+	}
+	if cfg.GoldenInterval < 0 {
+		stream.SetGoldenInterval(0)
+	} else if cfg.GoldenInterval > 0 {
+		stream.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if err := stream.Prewarm(); err != nil {
+		return nil, err
+	}
 	return &RTCEncoder{stream: stream}, nil
 }
 

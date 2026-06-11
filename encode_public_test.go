@@ -171,3 +171,64 @@ func TestPublicRTCEncoder(t *testing.T) {
 		t.Fatalf("decoded %d frames, want 6", n)
 	}
 }
+
+func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
+	const w, h = 192, 128
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(17))
+	base := make([]byte, w*h)
+	for i := range base {
+		base[i] = uint8(50 + rng.Intn(170))
+	}
+	mk := func(boxX int) goav1.I420Frame {
+		f := goav1.I420Frame{
+			Y: append([]byte(nil), base...), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+			YStride: w, ChromaStride: cw, Width: w, Height: h,
+		}
+		for i := range f.U {
+			f.U[i] = 120
+			f.V[i] = 130
+		}
+		if boxX >= 0 {
+			for y := 32; y < 96; y++ {
+				for x := boxX; x < boxX+64 && x < w; x++ {
+					f.Y[y*w+x] = 235
+				}
+			}
+		}
+		return f
+	}
+	frames := []goav1.I420Frame{
+		mk(-1),
+		mk(64),
+		mk(-1),
+	}
+	encode := func(goldenInterval int) [][]byte {
+		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 2_000_000, Framerate: 30,
+			MinQIndex:      40,
+			MaxQIndex:      160,
+			TemporalLayers: 1,
+			GoldenInterval: goldenInterval,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tus [][]byte
+		for i, f := range frames {
+			out, err := enc.Encode(f, false)
+			if err != nil {
+				t.Fatalf("encode %d: %v", i, err)
+			}
+			tus = append(tus, append([]byte(nil), out.Data...))
+		}
+		return tus
+	}
+	lastOnly := encode(-1)
+	withGolden := encode(16)
+	t.Logf("rtc reveal frame: last-only %dB, with golden %dB", len(lastOnly[2]), len(withGolden[2]))
+	if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
+		t.Fatalf("golden interval did not materially reduce reveal frame: last-only %dB, golden %dB", len(lastOnly[2]), len(withGolden[2]))
+	}
+}
