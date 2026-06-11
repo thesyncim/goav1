@@ -23,6 +23,10 @@ protocol:
   metrics and regression guards. For claim-supporting runs, use
   `-require-metrics` so a missing metric fails explicitly instead of becoming
   an `NA` column.
+- Make baselines mandatory. For claim-supporting runs, use
+  `-require-encoders all` or list the required baselines explicitly so missing
+  tools, failed encodes, and skipped encoder rows fail the run instead of
+  quietly weakening the comparison.
 - Report speed and latency with the quality result. A slower baseline is not a
   realtime peer unless its latency constraints match.
 
@@ -39,6 +43,7 @@ go run ./cmd/qualitybench \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
   -anchor aomenc -layers 3 -keyint 60 \
+  -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -csv quality.csv -summary-csv quality-summary.csv \
   -stats-csv quality-encoder-stats.csv \
@@ -62,8 +67,8 @@ decoded-output metrics or BD-rate.
 
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
-metric-filter availability, tool paths/version probes, and per-encoder
-invocations or goav1 settings.
+required metrics and encoders, metric-filter availability, tool paths/version
+probes, and per-encoder invocations or goav1 settings.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:

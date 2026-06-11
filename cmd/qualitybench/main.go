@@ -34,26 +34,27 @@ const (
 )
 
 type benchConfig struct {
-	width           int
-	height          int
-	frames          int
-	fps             int
-	input           string
-	manifestPath    string
-	workdir         string
-	csvPath         string
-	summaryCSVPath  string
-	statsCSVPath    string
-	metadataPath    string
-	anchorEncoder   string
-	encoders        []string
-	bitrates        []int
-	requiredMetrics []string
-	layers          int
-	tiles           int
-	goldenInterval  int
-	keyInterval     int
-	keep            bool
+	width            int
+	height           int
+	frames           int
+	fps              int
+	input            string
+	manifestPath     string
+	workdir          string
+	csvPath          string
+	summaryCSVPath   string
+	statsCSVPath     string
+	metadataPath     string
+	anchorEncoder    string
+	encoders         []string
+	bitrates         []int
+	requiredMetrics  []string
+	requiredEncoders []string
+	layers           int
+	tiles            int
+	goldenInterval   int
+	keyInterval      int
+	keep             bool
 }
 
 type encodeResult struct {
@@ -149,20 +150,21 @@ type gitMetadata struct {
 }
 
 type metadataConfig struct {
-	Width           int      `json:"width"`
-	Height          int      `json:"height"`
-	Frames          int      `json:"frames"`
-	FPS             int      `json:"fps"`
-	Input           string   `json:"input,omitempty"`
-	Manifest        string   `json:"manifest,omitempty"`
-	Encoders        []string `json:"encoders"`
-	Bitrates        []int    `json:"bitrates"`
-	RequiredMetrics []string `json:"required_metrics,omitempty"`
-	Anchor          string   `json:"anchor"`
-	Layers          int      `json:"layers"`
-	Tiles           int      `json:"tiles"`
-	GoldenInterval  int      `json:"golden_interval"`
-	KeyInterval     int      `json:"key_interval"`
+	Width            int      `json:"width"`
+	Height           int      `json:"height"`
+	Frames           int      `json:"frames"`
+	FPS              int      `json:"fps"`
+	Input            string   `json:"input,omitempty"`
+	Manifest         string   `json:"manifest,omitempty"`
+	Encoders         []string `json:"encoders"`
+	Bitrates         []int    `json:"bitrates"`
+	RequiredMetrics  []string `json:"required_metrics,omitempty"`
+	RequiredEncoders []string `json:"required_encoders,omitempty"`
+	Anchor           string   `json:"anchor"`
+	Layers           int      `json:"layers"`
+	Tiles            int      `json:"tiles"`
+	GoldenInterval   int      `json:"golden_interval"`
+	KeyInterval      int      `json:"key_interval"`
 }
 
 type toolMetadata struct {
@@ -304,6 +306,7 @@ func parseFlags() (benchConfig, error) {
 	bitrates := flag.String("bitrates", "3000000,6000000,9000000,12000000", "comma-separated target bitrates in bits per second")
 	encoders := flag.String("encoders", "goav1,aomenc,svt-av1", "comma-separated encoders: goav1,aomenc,svt-av1")
 	requiredMetrics := flag.String("require-metrics", "", "comma-separated metrics that must be available and computed for each successful encode: psnr,ssim,xpsnr,vmaf")
+	requiredEncoders := flag.String("require-encoders", "", "comma-separated encoders that must produce ok rows, or all")
 	flag.StringVar(&cfg.input, "input", "", "raw I420 input file; omit to use the deterministic synthetic scene")
 	flag.StringVar(&cfg.manifestPath, "manifest", "", "CSV corpus manifest with clip,input,width,height,frames,fps columns")
 	flag.IntVar(&cfg.width, "width", defaultWidth, "frame width in pixels")
@@ -328,7 +331,7 @@ func parseFlags() (benchConfig, error) {
 	if err != nil {
 		return benchConfig{}, fmt.Errorf("bitrates: %w", err)
 	}
-	cfg.encoders = parseNameList(*encoders)
+	cfg.encoders = parseEncoderList(*encoders)
 	if len(cfg.encoders) == 0 {
 		return benchConfig{}, errors.New("no encoders selected")
 	}
@@ -336,10 +339,14 @@ func parseFlags() (benchConfig, error) {
 	if err != nil {
 		return benchConfig{}, fmt.Errorf("require-metrics: %w", err)
 	}
+	cfg.requiredEncoders, err = parseRequiredEncoderList(*requiredEncoders, cfg.encoders)
+	if err != nil {
+		return benchConfig{}, fmt.Errorf("require-encoders: %w", err)
+	}
 	if cfg.anchorEncoder == "" {
 		cfg.anchorEncoder = cfg.encoders[0]
 	} else {
-		cfg.anchorEncoder = strings.TrimSpace(strings.ToLower(cfg.anchorEncoder))
+		cfg.anchorEncoder = canonicalEncoderName(cfg.anchorEncoder)
 	}
 	if cfg.width < 16 || cfg.height < 16 || cfg.width%2 != 0 || cfg.height%2 != 0 {
 		return benchConfig{}, fmt.Errorf("invalid frame size %dx%d: need even dimensions >= 16", cfg.width, cfg.height)
@@ -391,6 +398,14 @@ func parseNameList(s string) []string {
 	return out
 }
 
+func parseEncoderList(s string) []string {
+	names := parseNameList(s)
+	for i, name := range names {
+		names[i] = canonicalEncoderName(name)
+	}
+	return names
+}
+
 func parseMetricList(s string) ([]string, error) {
 	names := parseNameList(s)
 	out := make([]string, 0, len(names))
@@ -415,10 +430,85 @@ func parseMetricList(s string) ([]string, error) {
 	return out, nil
 }
 
+func parseRequiredEncoderList(s string, selected []string) ([]string, error) {
+	names := parseNameList(s)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if len(names) == 1 && names[0] == "all" {
+		return requireAllSelectedEncoders(selected)
+	}
+	selectedSet := requiredEncoderSet(selected)
+	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		if name == "all" {
+			return nil, errors.New("all cannot be mixed with explicit encoder names")
+		}
+		canonical, ok := canonicalKnownEncoderName(name)
+		if !ok {
+			return nil, fmt.Errorf("unknown encoder %q", name)
+		}
+		if !selectedSet[canonical] {
+			return nil, fmt.Errorf("required encoder %s is not selected by -encoders", canonical)
+		}
+		if !seen[canonical] {
+			seen[canonical] = true
+			out = append(out, canonical)
+		}
+	}
+	return out, nil
+}
+
+func requireAllSelectedEncoders(selected []string) ([]string, error) {
+	out := make([]string, 0, len(selected))
+	seen := map[string]bool{}
+	for _, name := range selected {
+		canonical, ok := canonicalKnownEncoderName(name)
+		if !ok {
+			return nil, fmt.Errorf("unknown selected encoder %q", name)
+		}
+		if !seen[canonical] {
+			seen[canonical] = true
+			out = append(out, canonical)
+		}
+	}
+	return out, nil
+}
+
+func canonicalEncoderName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if canonical, ok := canonicalKnownEncoderName(name); ok {
+		return canonical
+	}
+	return name
+}
+
+func canonicalKnownEncoderName(name string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(name)) {
+	case "goav1":
+		return "goav1", true
+	case "aomenc", "libaom", "libaom-av1":
+		return "aomenc", true
+	case "svt-av1", "svtav1", "svt", "svtav1encapp", "svt-av1encapp":
+		return "svt-av1", true
+	default:
+		return "", false
+	}
+}
+
 func requiredMetricSet(metrics []string) map[string]bool {
 	out := make(map[string]bool, len(metrics))
 	for _, metric := range metrics {
 		out[metric] = true
+	}
+	return out
+}
+
+func requiredEncoderSet(encoders []string) map[string]bool {
+	out := make(map[string]bool, len(encoders))
+	for _, encoder := range encoders {
+		out[canonicalEncoderName(encoder)] = true
 	}
 	return out
 }
@@ -590,6 +680,7 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	var rows []benchRow
 	var invocations []encoderInvocationMetadata
 	required := requiredMetricSet(cfg.requiredMetrics)
+	requiredEncoders := requiredEncoderSet(cfg.requiredEncoders)
 	for _, bitrate := range cfg.bitrates {
 		for _, encoderName := range cfg.encoders {
 			result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
@@ -649,12 +740,25 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				statsWriter.Flush()
 			}
 			writer.Flush()
+			if err := requiredEncoderError(requiredEncoders, clip.Name, result, bitrate); err != nil {
+				return rows, invocations, err
+			}
 			if metricErr != nil {
 				return rows, invocations, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
 			}
 		}
 	}
 	return rows, invocations, nil
+}
+
+func requiredEncoderError(required map[string]bool, clipName string, result encodeResult, bitrate int) error {
+	if !required[result.encoder] || result.status == "ok" {
+		return nil
+	}
+	if result.errText != "" {
+		return fmt.Errorf("%s %s %d bps: required encoder status %s: %s", clipName, result.encoder, bitrate, result.status, result.errText)
+	}
+	return fmt.Errorf("%s %s %d bps: required encoder status %s", clipName, result.encoder, bitrate, result.status)
 }
 
 func safeClipDir(name string) string {
@@ -783,21 +887,23 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 	encoders := append([]string(nil), cfg.encoders...)
 	bitrates := append([]int(nil), cfg.bitrates...)
 	required := append([]string(nil), cfg.requiredMetrics...)
+	requiredEncoders := append([]string(nil), cfg.requiredEncoders...)
 	return metadataConfig{
-		Width:           cfg.width,
-		Height:          cfg.height,
-		Frames:          cfg.frames,
-		FPS:             cfg.fps,
-		Input:           cfg.input,
-		Manifest:        cfg.manifestPath,
-		Encoders:        encoders,
-		Bitrates:        bitrates,
-		RequiredMetrics: required,
-		Anchor:          cfg.anchorEncoder,
-		Layers:          cfg.layers,
-		Tiles:           cfg.tiles,
-		GoldenInterval:  cfg.goldenInterval,
-		KeyInterval:     cfg.keyInterval,
+		Width:            cfg.width,
+		Height:           cfg.height,
+		Frames:           cfg.frames,
+		FPS:              cfg.fps,
+		Input:            cfg.input,
+		Manifest:         cfg.manifestPath,
+		Encoders:         encoders,
+		Bitrates:         bitrates,
+		RequiredMetrics:  required,
+		RequiredEncoders: requiredEncoders,
+		Anchor:           cfg.anchorEncoder,
+		Layers:           cfg.layers,
+		Tiles:            cfg.tiles,
+		GoldenInterval:   cfg.goldenInterval,
+		KeyInterval:      cfg.keyInterval,
 	}
 }
 
@@ -1122,12 +1228,13 @@ func writeFrame(w io.Writer, frame goav1.I420Frame, width, height int) error {
 }
 
 func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
+	encoderName = canonicalEncoderName(encoderName)
 	switch encoderName {
 	case "goav1":
 		return encodeGoAV1(cfg, frames, bitrate)
-	case "aomenc", "libaom":
+	case "aomenc":
 		return encodeAOM(cfg, refPath, bitrate)
-	case "svt-av1", "svtav1", "svt":
+	case "svt-av1":
 		return encodeSVT(cfg, refPath, bitrate)
 	default:
 		return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "skipped", errText: "unknown encoder"}

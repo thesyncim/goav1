@@ -45,6 +45,61 @@ func TestParseMetricList(t *testing.T) {
 	}
 }
 
+func TestParseEncoderListCanonicalizesAliases(t *testing.T) {
+	got := parseEncoderList("goav1, libaom, svt, custom")
+	want := []string{"goav1", "aomenc", "svt-av1", "custom"}
+	if len(got) != len(want) {
+		t.Fatalf("encoders=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("encoders=%v want %v", got, want)
+		}
+	}
+}
+
+func TestParseRequiredEncoderList(t *testing.T) {
+	selected := []string{"goav1", "aomenc", "svt-av1"}
+	got, err := parseRequiredEncoderList("libaom, svt", selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"aomenc", "svt-av1"}
+	if len(got) != len(want) {
+		t.Fatalf("required=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("required=%v want %v", got, want)
+		}
+	}
+	if _, err := parseRequiredEncoderList("rav1e", selected); err == nil {
+		t.Fatal("unknown required encoder accepted")
+	}
+	if _, err := parseRequiredEncoderList("aomenc", []string{"goav1"}); err == nil {
+		t.Fatal("unselected required encoder accepted")
+	}
+}
+
+func TestParseRequiredEncoderListAll(t *testing.T) {
+	got, err := parseRequiredEncoderList("all", []string{"goav1", "libaom", "svt", "svt-av1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"goav1", "aomenc", "svt-av1"}
+	if len(got) != len(want) {
+		t.Fatalf("required=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("required=%v want %v", got, want)
+		}
+	}
+	if _, err := parseRequiredEncoderList("all", []string{"goav1", "custom"}); err == nil {
+		t.Fatal("all accepted an unknown selected encoder")
+	}
+}
+
 func TestValidateRequiredMetrics(t *testing.T) {
 	filters := map[string]bool{
 		"psnr":    true,
@@ -58,6 +113,30 @@ func TestValidateRequiredMetrics(t *testing.T) {
 	delete(filters, "libvmaf")
 	if err := validateRequiredMetrics(filters, []string{"vmaf"}); err == nil {
 		t.Fatal("missing libvmaf accepted")
+	}
+}
+
+func TestRequiredEncoderError(t *testing.T) {
+	required := requiredEncoderSet([]string{"aomenc"})
+	if err := requiredEncoderError(required, "clip", encodeResult{
+		encoder:   "aomenc",
+		targetBPS: 100000,
+		status:    "skipped",
+		errText:   "aomenc not found",
+	}, 100000); err == nil {
+		t.Fatal("required skipped encoder accepted")
+	}
+	if err := requiredEncoderError(required, "clip", encodeResult{
+		encoder: "svt-av1",
+		status:  "skipped",
+	}, 100000); err != nil {
+		t.Fatalf("non-required skipped encoder failed: %v", err)
+	}
+	if err := requiredEncoderError(required, "clip", encodeResult{
+		encoder: "aomenc",
+		status:  "ok",
+	}, 100000); err != nil {
+		t.Fatalf("required ok encoder failed: %v", err)
 	}
 }
 
@@ -283,20 +362,23 @@ func TestWriteStatsRow(t *testing.T) {
 
 func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg := benchConfig{
-		width:           64,
-		height:          64,
-		frames:          4,
-		fps:             30,
-		encoders:        []string{"goav1"},
-		bitrates:        []int{100000},
-		requiredMetrics: []string{"psnr"},
-		anchorEncoder:   "goav1",
+		width:            64,
+		height:           64,
+		frames:           4,
+		fps:              30,
+		encoders:         []string{"goav1"},
+		bitrates:         []int{100000},
+		requiredMetrics:  []string{"psnr"},
+		requiredEncoders: []string{"goav1"},
+		anchorEncoder:    "goav1",
 	}
 	got := metadataConfigFor(cfg)
 	cfg.encoders[0] = "mutated"
 	cfg.bitrates[0] = 1
 	cfg.requiredMetrics[0] = "vmaf"
-	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 || got.RequiredMetrics[0] != "psnr" {
+	cfg.requiredEncoders[0] = "aomenc"
+	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
+		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -304,16 +386,17 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 func TestWriteMetadataJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	cfg := benchConfig{
-		width:           64,
-		height:          64,
-		frames:          2,
-		fps:             30,
-		metadataPath:    path,
-		encoders:        []string{"goav1"},
-		bitrates:        []int{100000},
-		requiredMetrics: []string{"psnr"},
-		anchorEncoder:   "goav1",
-		layers:          1,
+		width:            64,
+		height:           64,
+		frames:           2,
+		fps:              30,
+		metadataPath:     path,
+		encoders:         []string{"goav1"},
+		bitrates:         []int{100000},
+		requiredMetrics:  []string{"psnr"},
+		requiredEncoders: []string{"goav1"},
+		anchorEncoder:    "goav1",
+		layers:           1,
 	}
 	invocations := []encoderInvocationMetadata{{
 		Clip:      "clip",
@@ -340,6 +423,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.GeneratedAtUTC == "" || doc.Go.Version == "" || doc.Config.Width != 64 {
 		t.Fatalf("metadata header=%+v", doc)
+	}
+	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
+		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)
 	}
 	if !doc.MetricFilters["psnr"] || doc.MetricFilters["libvmaf"] {
 		t.Fatalf("metric filters=%+v", doc.MetricFilters)
