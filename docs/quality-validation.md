@@ -45,6 +45,19 @@ If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
 
+For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
+header and these columns:
+
+```csv
+clip,input,width,height,frames,fps
+talking_head,clips/talking_head_1920x1080_i420.yuv,1920,1080,120,60
+screen,clips/screen_1280x720_i420.yuv,1280,720,120,60
+```
+
+Relative `input` paths resolve from the manifest's directory. `fps` is optional
+and falls back to `-fps`. Each clip gets its own work subdirectory and its own
+raw/summary CSV rows.
+
 When `-summary-csv` is set, `qualitybench` writes BD-rate rows for each
 candidate encoder against `-anchor` (default: the first encoder in `-encoders`).
 Positive `bd_rate_pct` means the candidate needed more bitrate than the anchor

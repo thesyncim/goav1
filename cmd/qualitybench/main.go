@@ -38,6 +38,7 @@ type benchConfig struct {
 	frames         int
 	fps            int
 	input          string
+	manifestPath   string
 	workdir        string
 	csvPath        string
 	summaryCSVPath string
@@ -66,6 +67,15 @@ type metrics struct {
 	ssim  string
 	xpsnr string
 	vmaf  string
+}
+
+type clipSpec struct {
+	Name   string
+	Input  string
+	Width  int
+	Height int
+	Frames int
+	FPS    int
 }
 
 type benchRow struct {
@@ -135,15 +145,6 @@ func run() error {
 		defer os.RemoveAll(cfg.workdir)
 	}
 
-	frames, clipName, err := loadFrames(cfg)
-	if err != nil {
-		return err
-	}
-	refPath := filepath.Join(cfg.workdir, "source.yuv")
-	if err := writeFrames(refPath, frames, cfg.width, cfg.height); err != nil {
-		return err
-	}
-
 	filters := ffmpegFilters()
 	var out io.Writer = os.Stdout
 	var csvFile *os.File
@@ -166,42 +167,16 @@ func run() error {
 	}
 
 	var rows []benchRow
-	for _, bitrate := range cfg.bitrates {
-		for _, encoderName := range cfg.encoders {
-			result := runEncoder(cfg, frames, refPath, encoderName, bitrate)
-			m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
-			if result.status == "ok" {
-				m = measureDecoded(cfg, filters, refPath, result.decodedYUV, encoderName, bitrate)
-			}
-			actualBPS := int64(0)
-			if result.bytes > 0 && cfg.frames > 0 {
-				actualBPS = result.bytes * 8 * int64(cfg.fps) / int64(cfg.frames)
-			}
-			encodeFPS := ""
-			if result.duration > 0 {
-				encodeFPS = strconv.FormatFloat(float64(cfg.frames)/result.duration.Seconds(), 'f', 2, 64)
-			}
-			row := benchRow{
-				clip:      clipName,
-				width:     cfg.width,
-				height:    cfg.height,
-				frames:    cfg.frames,
-				fps:       cfg.fps,
-				encoder:   result.encoder,
-				targetBPS: result.targetBPS,
-				actualBPS: actualBPS,
-				encodeFPS: encodeFPS,
-				bytes:     result.bytes,
-				metrics:   m,
-				status:    result.status,
-				errText:   result.errText,
-			}
-			rows = append(rows, row)
-			if err := writeBenchRow(writer, row); err != nil {
-				return err
-			}
-			writer.Flush()
+	clips, err := clipSpecsForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	for _, clip := range clips {
+		clipRows, err := runClip(cfg, clip, filters, writer)
+		if err != nil {
+			return err
 		}
+		rows = append(rows, clipRows...)
 	}
 	if cfg.summaryCSVPath != "" {
 		if err := writeSummaryCSV(cfg, rows); err != nil {
@@ -225,6 +200,7 @@ func parseFlags() (benchConfig, error) {
 	bitrates := flag.String("bitrates", "3000000,6000000,9000000,12000000", "comma-separated target bitrates in bits per second")
 	encoders := flag.String("encoders", "goav1,aomenc,svt-av1", "comma-separated encoders: goav1,aomenc,svt-av1")
 	flag.StringVar(&cfg.input, "input", "", "raw I420 input file; omit to use the deterministic synthetic scene")
+	flag.StringVar(&cfg.manifestPath, "manifest", "", "CSV corpus manifest with clip,input,width,height,frames,fps columns")
 	flag.IntVar(&cfg.width, "width", defaultWidth, "frame width in pixels")
 	flag.IntVar(&cfg.height, "height", defaultHeight, "frame height in pixels")
 	flag.IntVar(&cfg.frames, "frames", defaultFrames, "frames to encode")
@@ -302,6 +278,210 @@ func parseNameList(s string) []string {
 		}
 	}
 	return out
+}
+
+func clipSpecsForConfig(cfg benchConfig) ([]clipSpec, error) {
+	if cfg.manifestPath != "" {
+		return readClipManifest(cfg.manifestPath, cfg)
+	}
+	name := "synthetic"
+	if cfg.input != "" {
+		name = filepath.Base(cfg.input)
+	}
+	return []clipSpec{{
+		Name:   name,
+		Input:  cfg.input,
+		Width:  cfg.width,
+		Height: cfg.height,
+		Frames: cfg.frames,
+		FPS:    cfg.fps,
+	}}, nil
+}
+
+func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	reader.TrimLeadingSpace = true
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(records) < 2 {
+		return nil, errors.New("manifest needs a header and at least one clip")
+	}
+	header := map[string]int{}
+	for i, field := range records[0] {
+		header[strings.ToLower(strings.TrimSpace(field))] = i
+	}
+	inputCol, ok := header["input"]
+	if !ok {
+		return nil, errors.New("manifest missing input column")
+	}
+	widthCol, ok := header["width"]
+	if !ok {
+		return nil, errors.New("manifest missing width column")
+	}
+	heightCol, ok := header["height"]
+	if !ok {
+		return nil, errors.New("manifest missing height column")
+	}
+	framesCol, ok := header["frames"]
+	if !ok {
+		return nil, errors.New("manifest missing frames column")
+	}
+	clipCol, haveClip := header["clip"]
+	fpsCol, haveFPS := header["fps"]
+
+	clips := make([]clipSpec, 0, len(records)-1)
+	for rowIndex, record := range records[1:] {
+		rowNum := rowIndex + 2
+		input := manifestField(record, inputCol)
+		if input != "" && !filepath.IsAbs(input) {
+			input = filepath.Join(filepath.Dir(path), input)
+		}
+		width, err := parseManifestPositiveInt(record, widthCol, "width", rowNum)
+		if err != nil {
+			return nil, err
+		}
+		height, err := parseManifestPositiveInt(record, heightCol, "height", rowNum)
+		if err != nil {
+			return nil, err
+		}
+		frames, err := parseManifestPositiveInt(record, framesCol, "frames", rowNum)
+		if err != nil {
+			return nil, err
+		}
+		fps := defaults.fps
+		if haveFPS && strings.TrimSpace(manifestField(record, fpsCol)) != "" {
+			fps, err = parseManifestPositiveInt(record, fpsCol, "fps", rowNum)
+			if err != nil {
+				return nil, err
+			}
+		}
+		name := ""
+		if haveClip {
+			name = strings.TrimSpace(manifestField(record, clipCol))
+		}
+		if name == "" {
+			if input != "" {
+				name = filepath.Base(input)
+			} else {
+				name = fmt.Sprintf("clip%d", len(clips)+1)
+			}
+		}
+		if width < 16 || height < 16 || width%2 != 0 || height%2 != 0 {
+			return nil, fmt.Errorf("manifest row %d invalid frame size %dx%d: need even dimensions >= 16", rowNum, width, height)
+		}
+		clips = append(clips, clipSpec{
+			Name:   name,
+			Input:  input,
+			Width:  width,
+			Height: height,
+			Frames: frames,
+			FPS:    fps,
+		})
+	}
+	return clips, nil
+}
+
+func manifestField(record []string, col int) string {
+	if col < 0 || col >= len(record) {
+		return ""
+	}
+	return strings.TrimSpace(record[col])
+}
+
+func parseManifestPositiveInt(record []string, col int, name string, row int) (int, error) {
+	raw := manifestField(record, col)
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("manifest row %d invalid %s %q", row, name, raw)
+	}
+	return n, nil
+}
+
+func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer) ([]benchRow, error) {
+	clipCfg := cfg
+	clipCfg.input = clip.Input
+	clipCfg.width = clip.Width
+	clipCfg.height = clip.Height
+	clipCfg.frames = clip.Frames
+	clipCfg.fps = clip.FPS
+	if cfg.manifestPath != "" {
+		clipCfg.workdir = filepath.Join(cfg.workdir, safeClipDir(clip.Name))
+		if err := os.MkdirAll(clipCfg.workdir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+
+	frames, _, err := loadFrames(clipCfg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", clip.Name, err)
+	}
+	refPath := filepath.Join(clipCfg.workdir, "source.yuv")
+	if err := writeFrames(refPath, frames, clip.Width, clip.Height); err != nil {
+		return nil, fmt.Errorf("%s source: %w", clip.Name, err)
+	}
+
+	var rows []benchRow
+	for _, bitrate := range cfg.bitrates {
+		for _, encoderName := range cfg.encoders {
+			result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
+			m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+			if result.status == "ok" {
+				m = measureDecoded(clipCfg, filters, refPath, result.decodedYUV, encoderName, bitrate)
+			}
+			actualBPS := int64(0)
+			if result.bytes > 0 && clip.Frames > 0 {
+				actualBPS = result.bytes * 8 * int64(clip.FPS) / int64(clip.Frames)
+			}
+			encodeFPS := ""
+			if result.duration > 0 {
+				encodeFPS = strconv.FormatFloat(float64(clip.Frames)/result.duration.Seconds(), 'f', 2, 64)
+			}
+			row := benchRow{
+				clip:      clip.Name,
+				width:     clip.Width,
+				height:    clip.Height,
+				frames:    clip.Frames,
+				fps:       clip.FPS,
+				encoder:   result.encoder,
+				targetBPS: result.targetBPS,
+				actualBPS: actualBPS,
+				encodeFPS: encodeFPS,
+				bytes:     result.bytes,
+				metrics:   m,
+				status:    result.status,
+				errText:   result.errText,
+			}
+			rows = append(rows, row)
+			if err := writeBenchRow(writer, row); err != nil {
+				return nil, err
+			}
+			writer.Flush()
+		}
+	}
+	return rows, nil
+}
+
+func safeClipDir(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "clip"
+	}
+	return b.String()
 }
 
 func writeBenchRow(writer *csv.Writer, row benchRow) error {

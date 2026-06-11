@@ -21,6 +21,46 @@ func TestParsePositiveList(t *testing.T) {
 	}
 }
 
+func TestReadClipManifest(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "clips.csv")
+	if err := os.WriteFile(manifest, []byte("clip,input,width,height,frames,fps\nTalking Head,clips/head.yuv,1920,1080,120,60\nSynthetic,,320,180,30,\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clips, err := readClipManifest(manifest, benchConfig{fps: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clips) != 2 {
+		t.Fatalf("clips=%d", len(clips))
+	}
+	if clips[0].Name != "Talking Head" ||
+		clips[0].Input != filepath.Join(dir, "clips/head.yuv") ||
+		clips[0].Width != 1920 || clips[0].Height != 1080 ||
+		clips[0].Frames != 120 || clips[0].FPS != 60 {
+		t.Fatalf("clip[0]=%+v", clips[0])
+	}
+	if clips[1].Name != "Synthetic" || clips[1].Input != "" || clips[1].FPS != 30 {
+		t.Fatalf("clip[1]=%+v", clips[1])
+	}
+}
+
+func TestReadClipManifestRejectsBadGeometry(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "clips.csv")
+	if err := os.WriteFile(manifest, []byte("input,width,height,frames\nclip.yuv,15,64,10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readClipManifest(manifest, benchConfig{fps: 30}); err == nil {
+		t.Fatal("bad geometry accepted")
+	}
+}
+
+func TestSafeClipDir(t *testing.T) {
+	if got, want := safeClipDir("Talking Head/Low Light"), "Talking_Head_Low_Light"; got != want {
+		t.Fatalf("safeClipDir=%q want %q", got, want)
+	}
+}
+
 func TestIVFPayloadBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tiny.ivf")
 	var data []byte
