@@ -13,6 +13,11 @@ func TestKeyframeQIndexCBR(t *testing.T) {
 	if got, want := enc.keyframeQIndex(), uint8(140); got != want {
 		t.Fatalf("max-debt key q=%d want %d", got, want)
 	}
+	enc.rcBuffer = -24 * enc.rcPerFrameBits
+	if got, want := enc.keyframeQIndex(), uint8(163); got != want {
+		t.Fatalf("buffer-debt key q=%d want %d", got, want)
+	}
+	enc.rcBuffer = 0
 	enc.qIndex = 110
 	if got, want := enc.keyframeQIndex(), uint8(60); got != want {
 		t.Fatalf("midrange key q=%d want %d", got, want)

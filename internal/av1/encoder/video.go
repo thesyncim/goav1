@@ -296,6 +296,17 @@ func (e *VideoEncoder) keyframeQIndex() uint8 {
 	} else if boost < 12 {
 		boost = 12
 	}
+	if e.rcBuffer < 0 {
+		horizon := 24 * e.rcPerFrameBits
+		credit := horizon + e.rcBuffer
+		if credit < 0 {
+			credit = 0
+		}
+		// Keep most of the reference-quality boost, but trim it as the
+		// leaky bucket fills with debt so repeated keyframe requests do not
+		// repeatedly spend the same recovery budget.
+		boost = boost * (3*horizon + credit) / (4 * horizon)
+	}
 	if int(keyQ)-boost > int(e.rcMinQ) {
 		keyQ -= uint8(boost)
 	} else {
@@ -305,9 +316,11 @@ func (e *VideoEncoder) keyframeQIndex() uint8 {
 	// max Q; cap key quality in the top third of the configured
 	// range so the recovery picture stays useful without spending
 	// a full high-quality keyframe during debt.
-	maxKeyQ := int(e.rcMinQ) + (int(e.rcMaxQ)-int(e.rcMinQ))*2/3
-	if int(keyQ) > maxKeyQ {
-		keyQ = uint8(maxKeyQ)
+	if e.rcBuffer >= 0 {
+		maxKeyQ := int(e.rcMinQ) + (int(e.rcMaxQ)-int(e.rcMinQ))*2/3
+		if int(keyQ) > maxKeyQ {
+			keyQ = uint8(maxKeyQ)
+		}
 	}
 	return keyQ
 }
