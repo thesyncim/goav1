@@ -69,6 +69,8 @@ func main() {
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
 	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
 	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
+	input := flag.String("input", "", "encode this raw 1080p I420 file instead of the synthetic scene")
+	infps := flag.Int("fps", fps, "frame rate for rate control with -input")
 	flag.Parse()
 
 	rng := rand.New(rand.NewSource(9))
@@ -112,7 +114,7 @@ func main() {
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width: width, Height: height,
-		TargetBitrate: *bitrate, Framerate: fps,
+		TargetBitrate: *bitrate, Framerate: *infps,
 		TemporalLayers: *layers,
 		TileColumns:    *tiles,
 	})
@@ -121,8 +123,31 @@ func main() {
 		os.Exit(1)
 	}
 	srcs := make([]goav1.I420Frame, frames)
-	for n := range frames {
-		srcs[n] = makeFrame(bg, n)
+	if *input != "" {
+		raw, err := os.ReadFile(*input)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		cw, ch := width/2, height/2
+		frameLen := width*height + 2*cw*ch
+		if len(raw) < frames*frameLen {
+			fmt.Fprintf(os.Stderr, "input holds %d frames, need %d\n", len(raw)/frameLen, frames)
+			os.Exit(1)
+		}
+		for n := range frames {
+			base := n * frameLen
+			srcs[n] = goav1.I420Frame{
+				Y:       raw[base : base+width*height],
+				U:       raw[base+width*height : base+width*height+cw*ch],
+				V:       raw[base+width*height+cw*ch : base+frameLen],
+				YStride: width, ChromaStride: cw, Width: width, Height: height,
+			}
+		}
+	} else {
+		for n := range frames {
+			srcs[n] = makeFrame(bg, n)
+		}
 	}
 	const warmup = 20
 	totalBytes, steadyBytes := 0, 0
@@ -151,7 +176,7 @@ func main() {
 	perFrame := elapsed / frames
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", frames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(frames)/elapsed.Seconds())
 	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d\n",
-		float64(totalBytes*8*fps)/float64(frames)/1e6,
-		float64(steadyBytes*8*fps)/float64(frames-warmup)/1e6,
+		float64(totalBytes*8**infps)/float64(frames)/1e6,
+		float64(steadyBytes*8**infps)/float64(frames-warmup)/1e6,
 		float64(*bitrate)/1e6, sumPSNR/frames, steadyPSNR/(frames-warmup), minPSNR, enc.QIndex())
 }
