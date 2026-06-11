@@ -169,7 +169,7 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 func defaultTileColsLog2(width int) uint8 {
 	switch {
 	case width >= 1920:
-		return 4
+		return 3
 	case width >= 1280:
 		return 2
 	case width >= 512:
@@ -317,19 +317,27 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// frames through the buffer.
 		keyQ := e.qIndex
 		if e.rcEnabled {
-			const keyQBoost = 30
-			if int(keyQ)-keyQBoost > int(e.rcMinQ) {
-				keyQ -= keyQBoost
+			// The boost scales with the per-frame budget: rich streams can
+			// repay a much finer key inside the controller's debt horizon,
+			// while starved ones would queue behind an oversized key.
+			boost := e.rcPerFrameBits / 1600
+			if boost > 50 {
+				boost = 50
+			} else if boost < 12 {
+				boost = 12
+			}
+			if int(keyQ)-boost > int(e.rcMinQ) {
+				keyQ -= uint8(boost)
 			} else {
 				keyQ = e.rcMinQ
 			}
 		}
-		tu, recon, err := encodeKeyframeFiltered(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
+		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
 			if t == 0 {
 				return &e.pc
 			}
 			return &e.tilePCs[t]
-		}, &e.cdefApp)
+		}, &e.cdefApp, e.tileColsLog2)
 		if err != nil {
 			return nil, false, err
 		}

@@ -68,6 +68,7 @@ func main() {
 	dump := flag.String("dump", "", "write the scene as raw I420 to this path and exit")
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
 	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
+	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
 	flag.Parse()
 
 	rng := rand.New(rand.NewSource(9))
@@ -113,6 +114,7 @@ func main() {
 		Width: width, Height: height,
 		TargetBitrate: *bitrate, Framerate: fps,
 		TemporalLayers: *layers,
+		TileColumns:    *tiles,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

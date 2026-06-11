@@ -42,6 +42,12 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
 func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
+	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width))
+}
+
+// encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
+// tile-column split, which must match the coder pool the caller sized.
+func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -105,7 +111,7 @@ func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterAppl
 			}
 		}
 	}
-	if log2 := defaultTileColsLog2(src.Width); log2 > 0 {
+	if log2 := tileColsLog2; log2 > 0 {
 		tiles, err := interTileInfo(src.Width, src.Height, log2)
 		if err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("tile info: %w", err)
