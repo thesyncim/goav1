@@ -159,9 +159,11 @@ func main() {
 	totalBytes, steadyBytes := 0, 0
 	var sumPSNR, steadyPSNR float64
 	minPSNR := 1e9
-	start := time.Now()
+	var encodeTime time.Duration
 	for n := range nFrames {
+		frameStart := time.Now()
 		out, err := enc.Encode(srcs[n], false)
+		encodeTime += time.Since(frameStart)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -181,7 +183,9 @@ func main() {
 			steadyPSNR += p
 		}
 	}
-	elapsed := time.Since(start)
+	// Only the encode calls count: the harness's own PSNR pass costs
+	// milliseconds per frame and external encoders do not pay it.
+	elapsed := encodeTime
 	perFrame := elapsed / time.Duration(nFrames)
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", nFrames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(nFrames)/elapsed.Seconds())
 	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d\n",
