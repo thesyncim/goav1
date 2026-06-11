@@ -27,3 +27,18 @@ func TestKeyframeQIndexCBR(t *testing.T) {
 		t.Fatalf("min-clamped key q=%d want %d", got, want)
 	}
 }
+
+func TestRateControlSurplusFrameLimit(t *testing.T) {
+	enc := &VideoEncoder{}
+	if got, want := enc.rcSurplusFrameLimit(), 8; got != want {
+		t.Fatalf("flat surplus limit=%d want %d", got, want)
+	}
+	enc.temporalLayers = 3
+	if got, want := enc.rcSurplusFrameLimit(), 8; got != want {
+		t.Fatalf("L1T3 surplus limit=%d want %d", got, want)
+	}
+	enc.temporalLayers = 2
+	if got, want := enc.rcSurplusFrameLimit(), 2; got != want {
+		t.Fatalf("L1T2 surplus limit=%d want %d", got, want)
+	}
+}

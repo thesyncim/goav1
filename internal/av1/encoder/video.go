@@ -258,7 +258,7 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 	if limit := 24 * e.rcPerFrameBits; e.rcBuffer < -limit {
 		e.rcBuffer = -limit
 	}
-	if limit := 8 * e.rcPerFrameBits; e.rcBuffer > limit {
+	if limit := e.rcSurplusFrameLimit() * e.rcPerFrameBits; e.rcBuffer > limit {
 		e.rcBuffer = limit
 	}
 	// Proportional step: a quarter qindex unit per quarter-frame of buffer
@@ -280,6 +280,13 @@ func (e *VideoEncoder) rcUpdate(frameBits int) {
 		q = int(e.rcMaxQ)
 	}
 	e.qIndex = uint8(q)
+}
+
+func (e *VideoEncoder) rcSurplusFrameLimit() int {
+	if e.temporalLayers == 2 {
+		return 2
+	}
+	return 8
 }
 
 func (e *VideoEncoder) keyframeQIndex() uint8 {
