@@ -58,8 +58,11 @@ type filterBlockNEONCtx struct {
 //go:noescape
 func cdefFilterBlock8NEON(ctx *filterBlockNEONCtx)
 
+//go:noescape
+func cdefFilterBlock4NEON(ctx *filterBlockNEONCtx)
+
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	if int(params.Width) != 8 {
+	if w := int(params.Width); w != 8 && w != 4 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
@@ -101,5 +104,9 @@ func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 	if primaryStrength != 0 && secondaryStrength != 0 {
 		ctx.clipping = 1
 	}
-	cdefFilterBlock8NEON(&ctx)
+	if int(params.Width) == 8 {
+		cdefFilterBlock8NEON(&ctx)
+	} else {
+		cdefFilterBlock4NEON(&ctx)
+	}
 }
