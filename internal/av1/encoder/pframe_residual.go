@@ -229,6 +229,7 @@ func (st *lossyEncodeState) initScans() error {
 	}{
 		{&st.scan16x8, 16, 8}, {&st.scan8x16, 8, 16},
 		{&st.scan8x4, 8, 4}, {&st.scan4x8, 4, 8},
+		{&st.scan32x16, 32, 16}, {&st.scan16x32, 16, 32},
 	} {
 		*rs.dst = make([]int16, int(rs.w)*int(rs.h))
 		inv := make([]int16, int(rs.w)*int(rs.h))
@@ -501,6 +502,44 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 				st.sad32Grid[idx32] = int32(sad32)
 				return tile.PartitionNone, nil
 			}
+			// Rect halves one tier up from the 16-tier shape: a 32x16
+			// (16x32) half coded with one vector saves two blocks' syntax
+			// and gains the whole-half transform.
+			i0 := (py/16)*st.grid16Cols + px/16
+			idx := [4]int{i0, i0 + 1, i0 + st.grid16Cols, i0 + st.grid16Cols + 1}
+			const halfBias32 = 128
+			const halfSADGate32 = 32 * 16 * 2
+			halfSAD := func(cx, cy int, mv motion.Vector) int {
+				dx, dy := int(mv.Col)/8, int(mv.Row)/8
+				if cy+dy < 0 || cx+dx < 0 || cy+dy+16 > src.Height || cx+dx+16 > src.Width {
+					return 1 << 30
+				}
+				return sadBlock(src.Y, ref.Y, cy*src.YStride+cx, (cy+dy)*src.YStride+cx+dx, src.YStride, 16, 1<<30)
+			}
+			tryHalf := func(ia, ib int, ax, ay, bx, by int) bool {
+				mva := st.mv16Grid[idx[ia]]
+				mvb := st.mv16Grid[idx[ib]]
+				sa, sb := int(st.sad16Grid[idx[ia]]), int(st.sad16Grid[idx[ib]])
+				best, bestA, bestB := mva, sa, halfSAD(bx, by, mva)
+				if mvb != mva {
+					ca, cb := halfSAD(ax, ay, mvb), sb
+					if ca+cb < bestA+bestB {
+						best, bestA, bestB = mvb, ca, cb
+					}
+				}
+				if bestA+bestB > sa+sb+halfBias32 || bestA+bestB > halfSADGate32 {
+					return false
+				}
+				st.mv16Grid[idx[ia]], st.mv16Grid[idx[ib]] = best, best
+				st.sad16Grid[idx[ia]], st.sad16Grid[idx[ib]] = int32(bestA), int32(bestB)
+				return true
+			}
+			if tryHalf(0, 1, px, py, px+16, py) && tryHalf(2, 3, px, py+16, px+16, py+16) {
+				return tile.PartitionH, nil
+			}
+			if tryHalf(0, 2, px, py, px, py+16) && tryHalf(1, 3, px+16, py, px+16, py+16) {
+				return tile.PartitionV, nil
+			}
 			return tile.PartitionSplit, nil
 		case tile.BlockLevel16x16:
 			sad16, sum8 := evaluate16(px, py)
@@ -589,6 +628,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		bw, bh = 16, 8
 	case tile.BlockSize8x16:
 		bw, bh = 8, 16
+	case tile.BlockSize32x16:
+		bw, bh = 32, 16
+	case tile.BlockSize16x32:
+		bw, bh = 16, 32
 	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
@@ -612,6 +655,18 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// Rect halves exist only where the partition decider proved the two
 		// child vectors equal; the shared vector and the summed child SADs
 		// describe the half exactly.
+		if bw >= 32 || bh >= 32 {
+			i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
+			i1 := i0 + 1
+			if bh > bw {
+				i1 = i0 + st.grid16Cols
+			}
+			if st.sad16Grid[i0] >= 0 && st.sad16Grid[i1] >= 0 {
+				mv = st.mv16Grid[i0]
+				fullSAD = int(st.sad16Grid[i0]) + int(st.sad16Grid[i1])
+			}
+			break
+		}
 		i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
 		i1 := i0 + 1
 		if bh > bw {
@@ -986,6 +1041,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	case bw == 8 && bh == 16:
 		lumaTX, lumaScan = tile.TransformSize8x16, st.scan8x16
 		chromaTX, chromaScan = tile.TransformSize4x8, st.scan4x8
+	case bw == 32 && bh == 16:
+		lumaTX, lumaScan = tile.TransformSize32x16, st.scan32x16
+		chromaTX, chromaScan = tile.TransformSize16x8, st.scan16x8
+	case bw == 16 && bh == 32:
+		lumaTX, lumaScan = tile.TransformSize16x32, st.scan16x32
+		chromaTX, chromaScan = tile.TransformSize8x16, st.scan8x16
 	}
 	if splitTX {
 		// The quadrant TXBs replay in the decoder's recursive order, which
@@ -1443,6 +1504,10 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 		return transform.ForwardDCT8x4(tran, 4, residual, 8)
 	case w == 4 && h == 8:
 		return transform.ForwardDCT4x8(tran, 8, residual, 4)
+	case w == 32 && h == 16:
+		return transform.ForwardDCT32x16(tran, 16, residual, 32)
+	case w == 16 && h == 32:
+		return transform.ForwardDCT16x32(tran, 32, residual, 16)
 	}
 	return transform.ErrInvalidTransform
 }

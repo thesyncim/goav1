@@ -372,6 +372,78 @@ func ForwardDCT8x16(coeff []int32, coeffStride int, residual []int16, residualSt
 	return nil
 }
 
+// ForwardDCT32x16 computes the AV1 forward 32x16 DCT_DCT (32 wide, 16 high)
+// in the decoder's coefficient layout (coeffStride >= 16). Mirrors
+// fwd_txfm2d_c with fwd_shift_32x16 = {2,-4,0}, cos_bit 13 both passes, and
+// the rectangular sqrt(2) row scaling.
+func ForwardDCT32x16(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 16 || residualStride < 32 ||
+		!blockFits(len(residual), residualStride, 32, 16) ||
+		!coeffBlockFits(len(coeff), coeffStride, 32, 16) {
+		return ErrInvalidTransform
+	}
+	var buf [512]int32 // column-pass output, row-major buf[r*32+c]
+	var colIn, colOut [16]int32
+	for c := range 32 {
+		for r := range 16 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT16(&colIn, &colOut, &fwdCospi13, 13)
+		fwdRoundShift4(colOut[:]) // shift[1] = -4
+		for r := range 16 {
+			buf[r*32+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [32]int32
+	for r := range 16 {
+		for c := range 32 {
+			rowIn[c] = buf[r*32+c]
+		}
+		fwdDCT32(&rowIn, &rowOut, &fwdCospi13, 13)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 32 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
+}
+
+// ForwardDCT16x32 computes the AV1 forward 16x32 DCT_DCT (16 wide, 32 high)
+// in the decoder's coefficient layout (coeffStride >= 32). Mirrors
+// fwd_txfm2d_c with fwd_shift_16x32 = {2,-4,0}, cos_bit 12 columns and 13
+// rows, and the rectangular sqrt(2) row scaling.
+func ForwardDCT16x32(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	if coeffStride < 32 || residualStride < 16 ||
+		!blockFits(len(residual), residualStride, 16, 32) ||
+		!coeffBlockFits(len(coeff), coeffStride, 16, 32) {
+		return ErrInvalidTransform
+	}
+	var buf [512]int32 // column-pass output, row-major buf[r*16+c]
+	var colIn, colOut [32]int32
+	for c := range 16 {
+		for r := range 32 {
+			colIn[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
+		}
+		fwdDCT32(&colIn, &colOut, &fwdCospi12, 12)
+		fwdRoundShift4(colOut[:]) // shift[1] = -4
+		for r := range 32 {
+			buf[r*16+c] = colOut[r]
+		}
+	}
+	var rowIn, rowOut [16]int32
+	for r := range 32 {
+		for c := range 16 {
+			rowIn[c] = buf[r*16+c]
+		}
+		fwdDCT16(&rowIn, &rowOut, &fwdCospi13, 13)
+		fwdRoundShiftSqrt2(rowOut[:]) // shift[2] = 0, then rect sqrt2
+		for c := range 16 {
+			coeff[c*coeffStride+r] = rowOut[c]
+		}
+	}
+	return nil
+}
+
 // ForwardDCT8x4 computes the AV1 forward 8x4 DCT_DCT (8 wide, 4 high) in the
 // decoder's coefficient layout (coeffStride >= 4). Mirrors fwd_txfm2d_c with
 // fwd_shift_8x4 = {2,-1,0}, cos_bit 13 both passes, and the rectangular
@@ -520,9 +592,9 @@ func forwardDCT16x16PureGo(coeff []int32, coeffStride int, residual []int16, res
 	}
 }
 
-// fwdDCT32 is av1_fdct32; both 32x32 passes run at cos_bit 12 so the cospi
-// table and shift are fixed (fwdCospi12, fwdHalfBtf at 12).
-func fwdDCT32(input, output *[32]int32) {
+// fwdDCT32 is av1_fdct32 with the cospi table and cos_bit of the active
+// pass (32x32 runs both passes at 12; the rectangular sizes mix 12 and 13).
+func fwdDCT32(input, output *[32]int32, cospi *[64]int32, cosBit uint) {
 	var step [32]int32
 	bf0, bf1 := (*[32]int32)(nil), (*[32]int32)(nil)
 	_ = bf0
@@ -583,14 +655,14 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[17] = bf0[17]
 	bf1[18] = bf0[18]
 	bf1[19] = bf0[19]
-	bf1[20] = fwdHalfBtf(-fwdCospi12[32], bf0[20], fwdCospi12[32], bf0[27], 12)
-	bf1[21] = fwdHalfBtf(-fwdCospi12[32], bf0[21], fwdCospi12[32], bf0[26], 12)
-	bf1[22] = fwdHalfBtf(-fwdCospi12[32], bf0[22], fwdCospi12[32], bf0[25], 12)
-	bf1[23] = fwdHalfBtf(-fwdCospi12[32], bf0[23], fwdCospi12[32], bf0[24], 12)
-	bf1[24] = fwdHalfBtf(fwdCospi12[32], bf0[24], fwdCospi12[32], bf0[23], 12)
-	bf1[25] = fwdHalfBtf(fwdCospi12[32], bf0[25], fwdCospi12[32], bf0[22], 12)
-	bf1[26] = fwdHalfBtf(fwdCospi12[32], bf0[26], fwdCospi12[32], bf0[21], 12)
-	bf1[27] = fwdHalfBtf(fwdCospi12[32], bf0[27], fwdCospi12[32], bf0[20], 12)
+	bf1[20] = fwdHalfBtf(-cospi[32], bf0[20], cospi[32], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(-cospi[32], bf0[21], cospi[32], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(-cospi[32], bf0[22], cospi[32], bf0[25], cosBit)
+	bf1[23] = fwdHalfBtf(-cospi[32], bf0[23], cospi[32], bf0[24], cosBit)
+	bf1[24] = fwdHalfBtf(cospi[32], bf0[24], cospi[32], bf0[23], cosBit)
+	bf1[25] = fwdHalfBtf(cospi[32], bf0[25], cospi[32], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[32], bf0[26], cospi[32], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[32], bf0[27], cospi[32], bf0[20], cosBit)
 	bf1[28] = bf0[28]
 	bf1[29] = bf0[29]
 	bf1[30] = bf0[30]
@@ -608,10 +680,10 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[7] = -bf0[7] + bf0[0]
 	bf1[8] = bf0[8]
 	bf1[9] = bf0[9]
-	bf1[10] = fwdHalfBtf(-fwdCospi12[32], bf0[10], fwdCospi12[32], bf0[13], 12)
-	bf1[11] = fwdHalfBtf(-fwdCospi12[32], bf0[11], fwdCospi12[32], bf0[12], 12)
-	bf1[12] = fwdHalfBtf(fwdCospi12[32], bf0[12], fwdCospi12[32], bf0[11], 12)
-	bf1[13] = fwdHalfBtf(fwdCospi12[32], bf0[13], fwdCospi12[32], bf0[10], 12)
+	bf1[10] = fwdHalfBtf(-cospi[32], bf0[10], cospi[32], bf0[13], cosBit)
+	bf1[11] = fwdHalfBtf(-cospi[32], bf0[11], cospi[32], bf0[12], cosBit)
+	bf1[12] = fwdHalfBtf(cospi[32], bf0[12], cospi[32], bf0[11], cosBit)
+	bf1[13] = fwdHalfBtf(cospi[32], bf0[13], cospi[32], bf0[10], cosBit)
 	bf1[14] = bf0[14]
 	bf1[15] = bf0[15]
 	bf1[16] = bf0[16] + bf0[23]
@@ -638,8 +710,8 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[2] = -bf0[2] + bf0[1]
 	bf1[3] = -bf0[3] + bf0[0]
 	bf1[4] = bf0[4]
-	bf1[5] = fwdHalfBtf(-fwdCospi12[32], bf0[5], fwdCospi12[32], bf0[6], 12)
-	bf1[6] = fwdHalfBtf(fwdCospi12[32], bf0[6], fwdCospi12[32], bf0[5], 12)
+	bf1[5] = fwdHalfBtf(-cospi[32], bf0[5], cospi[32], bf0[6], cosBit)
+	bf1[6] = fwdHalfBtf(cospi[32], bf0[6], cospi[32], bf0[5], cosBit)
 	bf1[7] = bf0[7]
 	bf1[8] = bf0[8] + bf0[11]
 	bf1[9] = bf0[9] + bf0[10]
@@ -651,38 +723,38 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[15] = bf0[15] + bf0[12]
 	bf1[16] = bf0[16]
 	bf1[17] = bf0[17]
-	bf1[18] = fwdHalfBtf(-fwdCospi12[16], bf0[18], fwdCospi12[48], bf0[29], 12)
-	bf1[19] = fwdHalfBtf(-fwdCospi12[16], bf0[19], fwdCospi12[48], bf0[28], 12)
-	bf1[20] = fwdHalfBtf(-fwdCospi12[48], bf0[20], -fwdCospi12[16], bf0[27], 12)
-	bf1[21] = fwdHalfBtf(-fwdCospi12[48], bf0[21], -fwdCospi12[16], bf0[26], 12)
+	bf1[18] = fwdHalfBtf(-cospi[16], bf0[18], cospi[48], bf0[29], cosBit)
+	bf1[19] = fwdHalfBtf(-cospi[16], bf0[19], cospi[48], bf0[28], cosBit)
+	bf1[20] = fwdHalfBtf(-cospi[48], bf0[20], -cospi[16], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(-cospi[48], bf0[21], -cospi[16], bf0[26], cosBit)
 	bf1[22] = bf0[22]
 	bf1[23] = bf0[23]
 	bf1[24] = bf0[24]
 	bf1[25] = bf0[25]
-	bf1[26] = fwdHalfBtf(fwdCospi12[48], bf0[26], -fwdCospi12[16], bf0[21], 12)
-	bf1[27] = fwdHalfBtf(fwdCospi12[48], bf0[27], -fwdCospi12[16], bf0[20], 12)
-	bf1[28] = fwdHalfBtf(fwdCospi12[16], bf0[28], fwdCospi12[48], bf0[19], 12)
-	bf1[29] = fwdHalfBtf(fwdCospi12[16], bf0[29], fwdCospi12[48], bf0[18], 12)
+	bf1[26] = fwdHalfBtf(cospi[48], bf0[26], -cospi[16], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[48], bf0[27], -cospi[16], bf0[20], cosBit)
+	bf1[28] = fwdHalfBtf(cospi[16], bf0[28], cospi[48], bf0[19], cosBit)
+	bf1[29] = fwdHalfBtf(cospi[16], bf0[29], cospi[48], bf0[18], cosBit)
 	bf1[30] = bf0[30]
 	bf1[31] = bf0[31]
 	// stage 5
 	bf0 = &step
 	bf1 = output
-	bf1[0] = fwdHalfBtf(fwdCospi12[32], bf0[0], fwdCospi12[32], bf0[1], 12)
-	bf1[1] = fwdHalfBtf(-fwdCospi12[32], bf0[1], fwdCospi12[32], bf0[0], 12)
-	bf1[2] = fwdHalfBtf(fwdCospi12[48], bf0[2], fwdCospi12[16], bf0[3], 12)
-	bf1[3] = fwdHalfBtf(fwdCospi12[48], bf0[3], -fwdCospi12[16], bf0[2], 12)
+	bf1[0] = fwdHalfBtf(cospi[32], bf0[0], cospi[32], bf0[1], cosBit)
+	bf1[1] = fwdHalfBtf(-cospi[32], bf0[1], cospi[32], bf0[0], cosBit)
+	bf1[2] = fwdHalfBtf(cospi[48], bf0[2], cospi[16], bf0[3], cosBit)
+	bf1[3] = fwdHalfBtf(cospi[48], bf0[3], -cospi[16], bf0[2], cosBit)
 	bf1[4] = bf0[4] + bf0[5]
 	bf1[5] = -bf0[5] + bf0[4]
 	bf1[6] = -bf0[6] + bf0[7]
 	bf1[7] = bf0[7] + bf0[6]
 	bf1[8] = bf0[8]
-	bf1[9] = fwdHalfBtf(-fwdCospi12[16], bf0[9], fwdCospi12[48], bf0[14], 12)
-	bf1[10] = fwdHalfBtf(-fwdCospi12[48], bf0[10], -fwdCospi12[16], bf0[13], 12)
+	bf1[9] = fwdHalfBtf(-cospi[16], bf0[9], cospi[48], bf0[14], cosBit)
+	bf1[10] = fwdHalfBtf(-cospi[48], bf0[10], -cospi[16], bf0[13], cosBit)
 	bf1[11] = bf0[11]
 	bf1[12] = bf0[12]
-	bf1[13] = fwdHalfBtf(fwdCospi12[48], bf0[13], -fwdCospi12[16], bf0[10], 12)
-	bf1[14] = fwdHalfBtf(fwdCospi12[16], bf0[14], fwdCospi12[48], bf0[9], 12)
+	bf1[13] = fwdHalfBtf(cospi[48], bf0[13], -cospi[16], bf0[10], cosBit)
+	bf1[14] = fwdHalfBtf(cospi[16], bf0[14], cospi[48], bf0[9], cosBit)
 	bf1[15] = bf0[15]
 	bf1[16] = bf0[16] + bf0[19]
 	bf1[17] = bf0[17] + bf0[18]
@@ -707,10 +779,10 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[1] = bf0[1]
 	bf1[2] = bf0[2]
 	bf1[3] = bf0[3]
-	bf1[4] = fwdHalfBtf(fwdCospi12[56], bf0[4], fwdCospi12[8], bf0[7], 12)
-	bf1[5] = fwdHalfBtf(fwdCospi12[24], bf0[5], fwdCospi12[40], bf0[6], 12)
-	bf1[6] = fwdHalfBtf(fwdCospi12[24], bf0[6], -fwdCospi12[40], bf0[5], 12)
-	bf1[7] = fwdHalfBtf(fwdCospi12[56], bf0[7], -fwdCospi12[8], bf0[4], 12)
+	bf1[4] = fwdHalfBtf(cospi[56], bf0[4], cospi[8], bf0[7], cosBit)
+	bf1[5] = fwdHalfBtf(cospi[24], bf0[5], cospi[40], bf0[6], cosBit)
+	bf1[6] = fwdHalfBtf(cospi[24], bf0[6], -cospi[40], bf0[5], cosBit)
+	bf1[7] = fwdHalfBtf(cospi[56], bf0[7], -cospi[8], bf0[4], cosBit)
 	bf1[8] = bf0[8] + bf0[9]
 	bf1[9] = -bf0[9] + bf0[8]
 	bf1[10] = -bf0[10] + bf0[11]
@@ -720,20 +792,20 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[14] = -bf0[14] + bf0[15]
 	bf1[15] = bf0[15] + bf0[14]
 	bf1[16] = bf0[16]
-	bf1[17] = fwdHalfBtf(-fwdCospi12[8], bf0[17], fwdCospi12[56], bf0[30], 12)
-	bf1[18] = fwdHalfBtf(-fwdCospi12[56], bf0[18], -fwdCospi12[8], bf0[29], 12)
+	bf1[17] = fwdHalfBtf(-cospi[8], bf0[17], cospi[56], bf0[30], cosBit)
+	bf1[18] = fwdHalfBtf(-cospi[56], bf0[18], -cospi[8], bf0[29], cosBit)
 	bf1[19] = bf0[19]
 	bf1[20] = bf0[20]
-	bf1[21] = fwdHalfBtf(-fwdCospi12[40], bf0[21], fwdCospi12[24], bf0[26], 12)
-	bf1[22] = fwdHalfBtf(-fwdCospi12[24], bf0[22], -fwdCospi12[40], bf0[25], 12)
+	bf1[21] = fwdHalfBtf(-cospi[40], bf0[21], cospi[24], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(-cospi[24], bf0[22], -cospi[40], bf0[25], cosBit)
 	bf1[23] = bf0[23]
 	bf1[24] = bf0[24]
-	bf1[25] = fwdHalfBtf(fwdCospi12[24], bf0[25], -fwdCospi12[40], bf0[22], 12)
-	bf1[26] = fwdHalfBtf(fwdCospi12[40], bf0[26], fwdCospi12[24], bf0[21], 12)
+	bf1[25] = fwdHalfBtf(cospi[24], bf0[25], -cospi[40], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[40], bf0[26], cospi[24], bf0[21], cosBit)
 	bf1[27] = bf0[27]
 	bf1[28] = bf0[28]
-	bf1[29] = fwdHalfBtf(fwdCospi12[56], bf0[29], -fwdCospi12[8], bf0[18], 12)
-	bf1[30] = fwdHalfBtf(fwdCospi12[8], bf0[30], fwdCospi12[56], bf0[17], 12)
+	bf1[29] = fwdHalfBtf(cospi[56], bf0[29], -cospi[8], bf0[18], cosBit)
+	bf1[30] = fwdHalfBtf(cospi[8], bf0[30], cospi[56], bf0[17], cosBit)
 	bf1[31] = bf0[31]
 	// stage 7
 	bf0 = &step
@@ -746,14 +818,14 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[5] = bf0[5]
 	bf1[6] = bf0[6]
 	bf1[7] = bf0[7]
-	bf1[8] = fwdHalfBtf(fwdCospi12[60], bf0[8], fwdCospi12[4], bf0[15], 12)
-	bf1[9] = fwdHalfBtf(fwdCospi12[28], bf0[9], fwdCospi12[36], bf0[14], 12)
-	bf1[10] = fwdHalfBtf(fwdCospi12[44], bf0[10], fwdCospi12[20], bf0[13], 12)
-	bf1[11] = fwdHalfBtf(fwdCospi12[12], bf0[11], fwdCospi12[52], bf0[12], 12)
-	bf1[12] = fwdHalfBtf(fwdCospi12[12], bf0[12], -fwdCospi12[52], bf0[11], 12)
-	bf1[13] = fwdHalfBtf(fwdCospi12[44], bf0[13], -fwdCospi12[20], bf0[10], 12)
-	bf1[14] = fwdHalfBtf(fwdCospi12[28], bf0[14], -fwdCospi12[36], bf0[9], 12)
-	bf1[15] = fwdHalfBtf(fwdCospi12[60], bf0[15], -fwdCospi12[4], bf0[8], 12)
+	bf1[8] = fwdHalfBtf(cospi[60], bf0[8], cospi[4], bf0[15], cosBit)
+	bf1[9] = fwdHalfBtf(cospi[28], bf0[9], cospi[36], bf0[14], cosBit)
+	bf1[10] = fwdHalfBtf(cospi[44], bf0[10], cospi[20], bf0[13], cosBit)
+	bf1[11] = fwdHalfBtf(cospi[12], bf0[11], cospi[52], bf0[12], cosBit)
+	bf1[12] = fwdHalfBtf(cospi[12], bf0[12], -cospi[52], bf0[11], cosBit)
+	bf1[13] = fwdHalfBtf(cospi[44], bf0[13], -cospi[20], bf0[10], cosBit)
+	bf1[14] = fwdHalfBtf(cospi[28], bf0[14], -cospi[36], bf0[9], cosBit)
+	bf1[15] = fwdHalfBtf(cospi[60], bf0[15], -cospi[4], bf0[8], cosBit)
 	bf1[16] = bf0[16] + bf0[17]
 	bf1[17] = -bf0[17] + bf0[16]
 	bf1[18] = -bf0[18] + bf0[19]
@@ -789,22 +861,22 @@ func fwdDCT32(input, output *[32]int32) {
 	bf1[13] = bf0[13]
 	bf1[14] = bf0[14]
 	bf1[15] = bf0[15]
-	bf1[16] = fwdHalfBtf(fwdCospi12[62], bf0[16], fwdCospi12[2], bf0[31], 12)
-	bf1[17] = fwdHalfBtf(fwdCospi12[30], bf0[17], fwdCospi12[34], bf0[30], 12)
-	bf1[18] = fwdHalfBtf(fwdCospi12[46], bf0[18], fwdCospi12[18], bf0[29], 12)
-	bf1[19] = fwdHalfBtf(fwdCospi12[14], bf0[19], fwdCospi12[50], bf0[28], 12)
-	bf1[20] = fwdHalfBtf(fwdCospi12[54], bf0[20], fwdCospi12[10], bf0[27], 12)
-	bf1[21] = fwdHalfBtf(fwdCospi12[22], bf0[21], fwdCospi12[42], bf0[26], 12)
-	bf1[22] = fwdHalfBtf(fwdCospi12[38], bf0[22], fwdCospi12[26], bf0[25], 12)
-	bf1[23] = fwdHalfBtf(fwdCospi12[6], bf0[23], fwdCospi12[58], bf0[24], 12)
-	bf1[24] = fwdHalfBtf(fwdCospi12[6], bf0[24], -fwdCospi12[58], bf0[23], 12)
-	bf1[25] = fwdHalfBtf(fwdCospi12[38], bf0[25], -fwdCospi12[26], bf0[22], 12)
-	bf1[26] = fwdHalfBtf(fwdCospi12[22], bf0[26], -fwdCospi12[42], bf0[21], 12)
-	bf1[27] = fwdHalfBtf(fwdCospi12[54], bf0[27], -fwdCospi12[10], bf0[20], 12)
-	bf1[28] = fwdHalfBtf(fwdCospi12[14], bf0[28], -fwdCospi12[50], bf0[19], 12)
-	bf1[29] = fwdHalfBtf(fwdCospi12[46], bf0[29], -fwdCospi12[18], bf0[18], 12)
-	bf1[30] = fwdHalfBtf(fwdCospi12[30], bf0[30], -fwdCospi12[34], bf0[17], 12)
-	bf1[31] = fwdHalfBtf(fwdCospi12[62], bf0[31], -fwdCospi12[2], bf0[16], 12)
+	bf1[16] = fwdHalfBtf(cospi[62], bf0[16], cospi[2], bf0[31], cosBit)
+	bf1[17] = fwdHalfBtf(cospi[30], bf0[17], cospi[34], bf0[30], cosBit)
+	bf1[18] = fwdHalfBtf(cospi[46], bf0[18], cospi[18], bf0[29], cosBit)
+	bf1[19] = fwdHalfBtf(cospi[14], bf0[19], cospi[50], bf0[28], cosBit)
+	bf1[20] = fwdHalfBtf(cospi[54], bf0[20], cospi[10], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(cospi[22], bf0[21], cospi[42], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(cospi[38], bf0[22], cospi[26], bf0[25], cosBit)
+	bf1[23] = fwdHalfBtf(cospi[6], bf0[23], cospi[58], bf0[24], cosBit)
+	bf1[24] = fwdHalfBtf(cospi[6], bf0[24], -cospi[58], bf0[23], cosBit)
+	bf1[25] = fwdHalfBtf(cospi[38], bf0[25], -cospi[26], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[22], bf0[26], -cospi[42], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[54], bf0[27], -cospi[10], bf0[20], cosBit)
+	bf1[28] = fwdHalfBtf(cospi[14], bf0[28], -cospi[50], bf0[19], cosBit)
+	bf1[29] = fwdHalfBtf(cospi[46], bf0[29], -cospi[18], bf0[18], cosBit)
+	bf1[30] = fwdHalfBtf(cospi[30], bf0[30], -cospi[34], bf0[17], cosBit)
+	bf1[31] = fwdHalfBtf(cospi[62], bf0[31], -cospi[2], bf0[16], cosBit)
 	// stage 9
 	bf0 = &step
 	bf1 = output
@@ -871,7 +943,7 @@ func forwardDCT32x32PureGo(coeff []int32, coeffStride int, residual []int16, res
 		for r := range 32 {
 			in[r] = int32(residual[r*residualStride+c]) << 2 // shift[0] = 2
 		}
-		fwdDCT32(&in, &out)
+		fwdDCT32(&in, &out, &fwdCospi12, 12)
 		fwdRoundShift4(out[:]) // shift[1] = -4
 		for r := range 32 {
 			buf[r*32+c] = out[r]
@@ -881,7 +953,7 @@ func forwardDCT32x32PureGo(coeff []int32, coeffStride int, residual []int16, res
 		for c := range 32 {
 			in[c] = buf[r*32+c]
 		}
-		fwdDCT32(&in, &out)
+		fwdDCT32(&in, &out, &fwdCospi12, 12)
 		for c := range 32 { // shift[2] = 0; output[c*rows + r]
 			coeff[c*coeffStride+r] = out[c]
 		}

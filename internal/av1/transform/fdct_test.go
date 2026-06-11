@@ -130,12 +130,18 @@ func TestForwardDCTRectInverseRoundTrip(t *testing.T) {
 		name string
 		w, h int
 		fwd  func([]int32, int, []int16, int) error
+		tol  int
 	}
+	// The 32-point rectangles run the deeper {2,-4,0} shift pipeline, which
+	// discards two more fixed-point bits mid-pass than the small rectangles;
+	// one extra unit of round-trip noise is the corresponding bound.
 	rects := []rect{
-		{"16x8", 16, 8, ForwardDCT16x8},
-		{"8x16", 8, 16, ForwardDCT8x16},
-		{"8x4", 8, 4, ForwardDCT8x4},
-		{"4x8", 4, 8, ForwardDCT4x8},
+		{"16x8", 16, 8, ForwardDCT16x8, 2},
+		{"8x16", 8, 16, ForwardDCT8x16, 2},
+		{"8x4", 8, 4, ForwardDCT8x4, 2},
+		{"4x8", 4, 8, ForwardDCT4x8, 2},
+		{"32x16", 32, 16, ForwardDCT32x16, 3},
+		{"16x32", 16, 32, ForwardDCT16x32, 3},
 	}
 	for _, rc := range rects {
 		t.Run(rc.name, func(t *testing.T) {
@@ -157,7 +163,7 @@ func TestForwardDCTRectInverseRoundTrip(t *testing.T) {
 				}
 				for i := range dst {
 					diff := int(dst[i]) - int(residual[i])
-					if diff < -2 || diff > 2 {
+					if diff < -rc.tol || diff > rc.tol {
 						t.Fatalf("%s round-trip error %d at %d", rc.name, diff, i)
 					}
 				}
@@ -189,6 +195,8 @@ func TestForwardDCTRectDCScale(t *testing.T) {
 		}
 	}
 	check("16x8", 16, 8, ForwardDCT16x8, 9057)
+	check("32x16", 32, 16, ForwardDCT32x16, 9057)
+	check("16x32", 16, 32, ForwardDCT16x32, 9057)
 	check("8x16", 8, 16, ForwardDCT8x16, 9057)
 	check("8x4", 8, 4, ForwardDCT8x4, 4529)
 	check("4x8", 4, 8, ForwardDCT4x8, 4529)
