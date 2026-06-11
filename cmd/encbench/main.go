@@ -67,6 +67,7 @@ func psnr(a, b []byte) float64 {
 func main() {
 	dump := flag.String("dump", "", "write the scene as raw I420 to this path and exit")
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
+	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
 	flag.Parse()
 
 	rng := rand.New(rand.NewSource(9))
@@ -111,6 +112,7 @@ func main() {
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width: width, Height: height,
 		TargetBitrate: *bitrate, Framerate: fps,
+		TemporalLayers: *layers,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -123,6 +125,7 @@ func main() {
 	const warmup = 20
 	totalBytes, steadyBytes := 0, 0
 	var sumPSNR, steadyPSNR float64
+	minPSNR := 1e9
 	start := time.Now()
 	for n := range frames {
 		out, err := enc.Encode(srcs[n], false)
@@ -134,6 +137,9 @@ func main() {
 		r := enc.Reconstruction()
 		p := psnr(srcs[n].Y, r.Y)
 		sumPSNR += p
+		if n >= warmup && p < minPSNR {
+			minPSNR = p
+		}
 		if n >= warmup {
 			steadyBytes += len(out.Data)
 			steadyPSNR += p
@@ -142,8 +148,8 @@ func main() {
 	elapsed := time.Since(start)
 	perFrame := elapsed / frames
 	fmt.Printf("goav1: %d frames in %v (%.2f ms/frame, %.1f fps)\n", frames, elapsed.Round(time.Millisecond), float64(perFrame.Microseconds())/1000, float64(frames)/elapsed.Seconds())
-	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f), final qindex %d\n",
+	fmt.Printf("goav1: %.2f Mbps overall / %.2f Mbps steady-state (target %.2f), luma PSNR %.2f dB (steady %.2f, min %.2f), final qindex %d\n",
 		float64(totalBytes*8*fps)/float64(frames)/1e6,
 		float64(steadyBytes*8*fps)/float64(frames-warmup)/1e6,
-		float64(*bitrate)/1e6, sumPSNR/frames, steadyPSNR/(frames-warmup), enc.QIndex())
+		float64(*bitrate)/1e6, sumPSNR/frames, steadyPSNR/(frames-warmup), minPSNR, enc.QIndex())
 }

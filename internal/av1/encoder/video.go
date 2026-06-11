@@ -372,6 +372,23 @@ func (e *VideoEncoder) joinFilter() error {
 	return err
 }
 
+// layerQIndexOffset is the quantizer-index boost applied per temporal layer:
+// droppable frames are never referenced, so their extra distortion does not
+// propagate, while the bits they give back flow (through rate control) to the
+// frames every later frame predicts from. The shape mirrors the layered QP
+// offsets realtime encoders assign inside a low-delay mini-GOP.
+const layerQIndexOffset = 40
+
+// layerQIndex is the effective base quantizer index for a frame at the given
+// temporal layer.
+func (e *VideoEncoder) layerQIndex(temporalID uint8) uint8 {
+	q := int(e.qIndex) + int(temporalID)*layerQIndexOffset
+	if q > 255 {
+		q = 255
+	}
+	return uint8(q)
+}
+
 func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
 	// The previous frame's filters may still be running; they own the
 	// applier state and the reference planes the tiles are about to read.
@@ -419,7 +436,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, e.qIndex, refresh)
+	effQ := e.layerQIndex(temporalID)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
@@ -432,7 +450,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// recon stays bit-exact with decoder output.
 	lfLevel := uint8(0)
 	if src.Width*src.Height <= loopFilterMaxArea {
-		lfLevel = filterLevelFromQIndex(e.qIndex, false)
+		lfLevel = filterLevelFromQIndex(effQ, false)
 	}
 	if lfLevel > 0 {
 		if !e.lf.bound {
@@ -448,7 +466,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.LoopFilter.LevelV = lfLevel
 		// The q-derived CDEF strengths ride the same gate: the loop-filter
 		// records double as the index map and per-block skip source.
-		header.CDEF = cdefHeaderParams(e.qIndex, false)
+		header.CDEF = cdefHeaderParams(effQ, false)
 		if !e.cdefApp.bound {
 			if err := e.cdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
 				return nil, fmt.Errorf("cdef init: %w", err)
@@ -515,7 +533,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		refRecon = e.t1Recon
 	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTile(src, refRecon, golden, out, effQ, prevCtx, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -541,7 +559,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			wg.Add(1)
 			go func(t int, c0, c1 uint16) {
 				defer wg.Done()
-				data, err := e.tilePCs[t].encodeTile(src, refRecon, golden, out, e.qIndex, prevCtx, c0, c1)
+				data, err := e.tilePCs[t].encodeTile(src, refRecon, golden, out, effQ, prevCtx, c0, c1)
 				if err != nil {
 					errs[t] = err
 					return
@@ -598,7 +616,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		if prevCtx != nil {
 			e.frameCtxT1 = *prevCtx
 		} else if !e.haveCtxT1 {
-			if err := e.frameCtxT1.InitDefault(e.qIndex); err != nil {
+			if err := e.frameCtxT1.InitDefault(effQ); err != nil {
 				return nil, err
 			}
 		}
