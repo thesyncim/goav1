@@ -52,6 +52,15 @@ type VideoEncoder struct {
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
 
+	// The in-loop filters of a finished frame run concurrently with the
+	// next frame's source-only stages (padding and the coarse search);
+	// filterDone carries the pass result and joinFilter is the barrier
+	// every reader of the filtered reconstruction or the applier state
+	// crosses first.
+	filterDone    chan error
+	filterPending bool
+	filterErr     error
+
 	// frameCtx chains the adapted symbol contexts across the base layer:
 	// each non-droppable frame names its predecessor through
 	// primary_ref_frame and starts from the saved state instead of the
@@ -294,6 +303,11 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if len(e.tilePCs) < nTiles {
 			e.tilePCs = make([]pframeCoder, nTiles)
 		}
+		// The keyframe path reuses the filter appliers a backgrounded pass
+		// may still hold.
+		if err := e.joinFilter(); err != nil {
+			return nil, false, err
+		}
 		tu, recon, err := encodeKeyframeFiltered(src, e.qIndex, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
 			if t == 0 {
 				return &e.pc
@@ -343,7 +357,27 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 // encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
 // coder state and double-buffered reconstruction planes so per-frame work
 // allocates only the emitted temporal unit.
+// joinFilter blocks until a backgrounded in-loop filter pass finishes. It
+// must precede any read of the filtered reconstruction and any reuse of the
+// loop-filter or CDEF applier state.
+func (e *VideoEncoder) joinFilter() error {
+	if e.filterPending {
+		e.filterPending = false
+		if err := <-e.filterDone; err != nil {
+			e.filterErr = err
+		}
+	}
+	err := e.filterErr
+	e.filterErr = nil
+	return err
+}
+
 func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
+	// The previous frame's filters may still be running; they own the
+	// applier state and the reference planes the tiles are about to read.
+	if err := e.joinFilter(); err != nil {
+		return nil, err
+	}
 	droppable := temporalID > 0
 	// L1T3: the middle layer (T1) is referenced by the following T2, so it
 	// saves its reconstruction to slot 2 and exports a context for that T2
@@ -529,16 +563,29 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	if lfLevel > 0 {
-		if err := e.lf.apply(out, parser.LoopFilterParams{
-			LevelY: [2]uint8{lfLevel, lfLevel},
-			LevelU: lfLevel,
-			LevelV: lfLevel,
-		}); err != nil {
-			return nil, fmt.Errorf("loop filter apply: %w", err)
+		// The filters run behind the temporal-unit assembly and the next
+		// frame's source-only stages; everything reading the filtered
+		// planes or the applier state joins first.
+		if e.filterDone == nil {
+			e.filterDone = make(chan error, 1)
 		}
-		if err := e.cdefApp.apply(out, cdefParserParams(header.CDEF), &e.lf.filtMap); err != nil {
-			return nil, fmt.Errorf("cdef apply: %w", err)
-		}
+		e.filterPending = true
+		cdefParams := cdefParserParams(header.CDEF)
+		go func() {
+			if err := e.lf.apply(out, parser.LoopFilterParams{
+				LevelY: [2]uint8{lfLevel, lfLevel},
+				LevelU: lfLevel,
+				LevelV: lfLevel,
+			}); err != nil {
+				e.filterDone <- fmt.Errorf("loop filter apply: %w", err)
+				return
+			}
+			if err := e.cdefApp.apply(out, cdefParams, &e.lf.filtMap); err != nil {
+				e.filterDone <- fmt.Errorf("cdef apply: %w", err)
+				return
+			}
+			e.filterDone <- nil
+		}()
 	}
 	tu, err := assembleInterTU(seq, header, payloads, temporalID)
 	if err != nil {
@@ -586,6 +633,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.haveCtx = true
 	}
 	if refreshGolden {
+		// The golden snapshot copies the filtered planes.
+		if err := e.joinFilter(); err != nil {
+			return nil, err
+		}
 		copyFrameInto(&e.golden, *out)
 		e.sinceGoldenFresh = 0
 	}
@@ -597,6 +648,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 // that are reused two frames later; callers needing longer-lived snapshots
 // must copy.
 func (e *VideoEncoder) Recon() SourceFrame420 {
+	// A backgrounded filter pass may still be writing these planes; a
+	// failure here resurfaces on the next encode call.
+	if err := e.joinFilter(); err != nil {
+		e.filterErr = err
+		return SourceFrame420{}
+	}
 	r := e.lastRecon
 	if r.Y == nil {
 		r = e.recon
