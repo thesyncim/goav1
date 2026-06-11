@@ -42,6 +42,7 @@ type benchConfig struct {
 	workdir         string
 	csvPath         string
 	summaryCSVPath  string
+	statsCSVPath    string
 	anchorEncoder   string
 	encoders        []string
 	bitrates        []int
@@ -61,6 +62,7 @@ type encodeResult struct {
 	decodedYUV string
 	status     string
 	errText    string
+	stats      goav1.EncoderDecisionStats
 }
 
 type metrics struct {
@@ -169,6 +171,20 @@ func run() error {
 	}); err != nil {
 		return err
 	}
+	var statsWriter *csv.Writer
+	var statsFile *os.File
+	if cfg.statsCSVPath != "" {
+		statsFile, err = os.Create(cfg.statsCSVPath)
+		if err != nil {
+			return err
+		}
+		defer statsFile.Close()
+		statsWriter = csv.NewWriter(statsFile)
+		defer statsWriter.Flush()
+		if err := writeStatsHeader(statsWriter); err != nil {
+			return err
+		}
+	}
 
 	var rows []benchRow
 	clips, err := clipSpecsForConfig(cfg)
@@ -176,7 +192,7 @@ func run() error {
 		return err
 	}
 	for _, clip := range clips {
-		clipRows, err := runClip(cfg, clip, filters, writer)
+		clipRows, err := runClip(cfg, clip, filters, writer, statsWriter)
 		if err != nil {
 			return err
 		}
@@ -193,10 +209,19 @@ func run() error {
 	if cfg.summaryCSVPath != "" {
 		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.summaryCSVPath)
 	}
+	if cfg.statsCSVPath != "" {
+		fmt.Fprintf(os.Stderr, "qualitybench wrote %s\n", cfg.statsCSVPath)
+	}
 	if cfg.keep || cfg.workdir != "" && !cleanup {
 		fmt.Fprintf(os.Stderr, "qualitybench workdir: %s\n", cfg.workdir)
 	}
-	return writer.Error()
+	if err := writer.Error(); err != nil {
+		return err
+	}
+	if statsWriter != nil {
+		return statsWriter.Error()
+	}
+	return nil
 }
 
 func parseFlags() (benchConfig, error) {
@@ -217,6 +242,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
+	flag.StringVar(&cfg.statsCSVPath, "stats-csv", "", "write goav1 encoder decision diagnostics CSV to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
@@ -462,7 +488,7 @@ func parseManifestPositiveInt(record []string, col int, name string, row int) (i
 	return n, nil
 }
 
-func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer) ([]benchRow, error) {
+func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer) ([]benchRow, error) {
 	clipCfg := cfg
 	clipCfg.input = clip.Input
 	clipCfg.width = clip.Width
@@ -525,6 +551,12 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 			if err := writeBenchRow(writer, row); err != nil {
 				return nil, err
 			}
+			if statsWriter != nil && result.encoder == "goav1" {
+				if err := writeStatsRow(statsWriter, row, result.stats); err != nil {
+					return nil, err
+				}
+				statsWriter.Flush()
+			}
 			writer.Flush()
 			if metricErr != nil {
 				return rows, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
@@ -569,6 +601,69 @@ func writeBenchRow(writer *csv.Writer, row benchRow) error {
 		row.status,
 		row.errText,
 	})
+}
+
+func writeStatsHeader(writer *csv.Writer) error {
+	return writer.Write([]string{
+		"clip", "width", "height", "frames", "fps", "encoder", "target_bps",
+		"actual_bps", "encoded_frames", "keyframes", "inter_frames", "tiles",
+		"partition_decisions", "blocks", "inter_blocks", "intra_blocks",
+		"skip_blocks", "coded_blocks", "compound_blocks", "split_tx_blocks",
+		"single_tx_blocks", "luma_txbs", "primary_last", "primary_golden",
+		"block_8x8", "block_16x16", "block_32x32", "block_64x64",
+		"block_16x8", "block_8x16", "block_32x16", "block_16x32",
+		"tx_dct_dct", "tx_adst_dct", "tx_dct_adst", "tx_adst_adst",
+		"tx_idtx", "non_dct_txbs", "status", "error",
+	})
+}
+
+func writeStatsRow(writer *csv.Writer, row benchRow, stats goav1.EncoderDecisionStats) error {
+	return writer.Write([]string{
+		row.clip,
+		strconv.Itoa(row.width),
+		strconv.Itoa(row.height),
+		strconv.Itoa(row.frames),
+		strconv.Itoa(row.fps),
+		row.encoder,
+		strconv.Itoa(row.targetBPS),
+		strconv.FormatInt(row.actualBPS, 10),
+		formatU64(stats.Frames),
+		formatU64(stats.Keyframes),
+		formatU64(stats.InterFrames),
+		formatU64(stats.Tiles),
+		formatU64(stats.PartitionDecisions),
+		formatU64(stats.Blocks),
+		formatU64(stats.InterBlocks),
+		formatU64(stats.IntraBlocks),
+		formatU64(stats.SkipBlocks),
+		formatU64(stats.CodedBlocks),
+		formatU64(stats.CompoundBlocks),
+		formatU64(stats.SplitTXBlocks),
+		formatU64(stats.SingleTXBlocks),
+		formatU64(stats.LumaTXBs),
+		formatU64(stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast]),
+		formatU64(stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceGolden]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize8x8]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize16x16]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize32x32]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize64x64]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize16x8]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize8x16]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize32x16]),
+		formatU64(stats.BlockSizes[goav1.EncoderDecisionBlockSize16x32]),
+		formatU64(stats.TXTypes[goav1.EncoderDecisionTransformDCTDCT]),
+		formatU64(stats.TXTypes[goav1.EncoderDecisionTransformADSTDCT]),
+		formatU64(stats.TXTypes[goav1.EncoderDecisionTransformDCTADST]),
+		formatU64(stats.TXTypes[goav1.EncoderDecisionTransformADSTADST]),
+		formatU64(stats.TXTypes[goav1.EncoderDecisionTransformIDTX]),
+		formatU64(stats.NonDCTTXBs),
+		row.status,
+		row.errText,
+	})
+}
+
+func formatU64(n uint64) string {
+	return strconv.FormatUint(n, 10)
 }
 
 func writeSummaryCSV(cfg benchConfig, rows []benchRow) error {
@@ -868,6 +963,10 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
+	if cfg.statsCSVPath != "" {
+		enc.ResetDecisionStats()
+		enc.SetDecisionStatsEnabled(true)
+	}
 	var encodeDuration time.Duration
 	for i, frame := range frames {
 		forceKey := cfg.keyInterval > 0 && i > 0 && i%cfg.keyInterval == 0
@@ -883,6 +982,9 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			result.status, result.errText = "error", err.Error()
 			return result
 		}
+	}
+	if cfg.statsCSVPath != "" {
+		result.stats = enc.DecisionStats()
 	}
 	result.duration = encodeDuration
 	result.status = "ok"

@@ -106,6 +106,9 @@ type VideoEncoder struct {
 	golden           SourceFrame420
 	goldenEvery      int
 	sinceGoldenFresh int
+
+	decisionStatsEnabled bool
+	decisionStats        EncoderDecisionStats
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -177,6 +180,59 @@ func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
 // golden-anchor refreshes; zero disables golden references entirely.
 func (e *VideoEncoder) SetGoldenInterval(n int) {
 	e.goldenEvery = n
+}
+
+// SetDecisionStatsEnabled toggles encoder decision diagnostics. The default
+// is disabled; when disabled, hot block paths only see a nil stats pointer.
+func (e *VideoEncoder) SetDecisionStatsEnabled(enabled bool) {
+	e.decisionStatsEnabled = enabled
+	e.configureDecisionStats(0)
+}
+
+// ResetDecisionStats clears the accumulated encoder decision diagnostics.
+func (e *VideoEncoder) ResetDecisionStats() {
+	e.decisionStats.Reset()
+}
+
+// DecisionStats returns a copy of the accumulated encoder decision diagnostics.
+func (e *VideoEncoder) DecisionStats() EncoderDecisionStats {
+	return e.decisionStats
+}
+
+func (e *VideoEncoder) configureDecisionStats(nTiles int) {
+	e.pc.decisionStatsEnabled = e.decisionStatsEnabled
+	for i := range e.tilePCs {
+		if nTiles > 0 && i >= nTiles {
+			break
+		}
+		e.tilePCs[i].decisionStatsEnabled = e.decisionStatsEnabled
+	}
+}
+
+func (e *VideoEncoder) collectDecisionStats(keyframe bool, nTiles int, keyTileZeroUsesPrimary bool) {
+	if !e.decisionStatsEnabled {
+		return
+	}
+	e.decisionStats.Frames++
+	if keyframe {
+		e.decisionStats.Keyframes++
+	} else {
+		e.decisionStats.InterFrames++
+	}
+	if nTiles <= 1 {
+		e.decisionStats.add(e.pc.decisionStats)
+		return
+	}
+	if keyTileZeroUsesPrimary {
+		e.decisionStats.add(e.pc.decisionStats)
+		for t := 1; t < nTiles; t++ {
+			e.decisionStats.add(e.tilePCs[t].decisionStats)
+		}
+		return
+	}
+	for t := 0; t < nTiles; t++ {
+		e.decisionStats.add(e.tilePCs[t].decisionStats)
+	}
 }
 
 // copyFrameInto deep-copies src into dst, reusing dst's buffers when sized.
@@ -393,6 +449,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if len(e.tilePCs) < nTiles {
 			e.tilePCs = make([]pframeCoder, nTiles)
 		}
+		e.configureDecisionStats(nTiles)
 		// The keyframe path reuses the filter appliers a backgrounded pass
 		// may still hold.
 		if err := e.joinFilter(); err != nil {
@@ -412,6 +469,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if err != nil {
 			return nil, false, err
 		}
+		e.collectDecisionStats(true, nTiles, true)
 		e.hme.prime(src)
 		e.recon = recon
 		e.lastRecon = recon
@@ -744,6 +802,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
 	}
+	e.configureDecisionStats(nTiles)
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)
 		e.tileErrs = make([]error, nTiles)
@@ -830,6 +889,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if err != nil {
 		return nil, err
 	}
+	e.collectDecisionStats(false, nTiles, false)
 	e.lastRecon = *out
 	if isT1 {
 		// The middle layer's frame-end state is what the decoder saves into

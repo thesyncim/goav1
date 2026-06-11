@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/csv"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
+
+	goav1 "github.com/thesyncim/goav1"
 )
 
 func TestParsePositiveList(t *testing.T) {
@@ -211,5 +215,67 @@ func TestSummarizeBDRateUsesActualBitrate(t *testing.T) {
 	}
 	if math.Abs(psnr.BDRatePct-100) > 1e-6 {
 		t.Fatalf("bd-rate=%f want 100", psnr.BDRatePct)
+	}
+}
+
+func TestWriteStatsRow(t *testing.T) {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writeStatsHeader(writer); err != nil {
+		t.Fatal(err)
+	}
+	stats := goav1.EncoderDecisionStats{
+		Frames:             2,
+		Keyframes:          1,
+		InterFrames:        1,
+		Tiles:              2,
+		PartitionDecisions: 12,
+		Blocks:             8,
+		InterBlocks:        4,
+		IntraBlocks:        4,
+		SkipBlocks:         1,
+		CodedBlocks:        7,
+		LumaTXBs:           7,
+	}
+	stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceLast] = 3
+	stats.PrimaryReferenceBlocks[goav1.EncoderDecisionReferenceGolden] = 1
+	stats.BlockSizes[goav1.EncoderDecisionBlockSize8x8] = 6
+	stats.TXTypes[goav1.EncoderDecisionTransformDCTDCT] = 6
+	stats.TXTypes[goav1.EncoderDecisionTransformADSTADST] = 1
+	stats.NonDCTTXBs = 1
+	row := benchRow{
+		clip:      "clip",
+		width:     64,
+		height:    64,
+		frames:    2,
+		fps:       30,
+		encoder:   "goav1",
+		targetBPS: 100000,
+		actualBPS: 96000,
+		status:    "ok",
+	}
+	if err := writeStatsRow(writer, row, stats); err != nil {
+		t.Fatal(err)
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(buf.Bytes())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records=%d", len(records))
+	}
+	header := map[string]int{}
+	for i, name := range records[0] {
+		header[name] = i
+	}
+	if records[1][header["encoded_frames"]] != "2" ||
+		records[1][header["primary_golden"]] != "1" ||
+		records[1][header["tx_adst_adst"]] != "1" ||
+		records[1][header["non_dct_txbs"]] != "1" {
+		t.Fatalf("stats row=%v", records[1])
 	}
 }

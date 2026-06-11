@@ -123,14 +123,16 @@ type frameCDFs = threading.FrameWorkTileResidualCDFStorage
 // the superblock context carrier, and the entropy output buffer, so steady-
 // state frame encoding allocates nothing beyond the temporal-unit assembly.
 type pframeCoder struct {
-	st        lossyEncodeState
-	partCDFs  tile.PartitionCDFs
-	refCDFs   tile.InterRefCDFs
-	modeCDFs  tile.InterModeCDFs
-	scratch   tile.BlockLoopScratch
-	carrier   tile.BlockLoopContextCarrier
-	writerBuf []byte
-	writer    entropy.Writer
+	st                   lossyEncodeState
+	partCDFs             tile.PartitionCDFs
+	refCDFs              tile.InterRefCDFs
+	modeCDFs             tile.InterModeCDFs
+	scratch              tile.BlockLoopScratch
+	carrier              tile.BlockLoopContextCarrier
+	writerBuf            []byte
+	writer               entropy.Writer
+	decisionStats        EncoderDecisionStats
+	decisionStatsEnabled bool
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
@@ -279,6 +281,12 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		return nil, err
 	}
 	st := &pc.st
+	st.decisionStats = nil
+	if pc.decisionStatsEnabled {
+		pc.decisionStats.Reset()
+		pc.decisionStats.Tiles = 1
+		st.decisionStats = &pc.decisionStats
+	}
 
 	pc.writer.Reset(pc.writerBuf[:0])
 	st.w = &pc.writer
@@ -433,7 +441,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	evaluate16 := func(px, py int) (int, int) {
 		return evaluate16Merged(px, py), children8(px, py)
 	}
-	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}
@@ -626,6 +634,13 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			return tile.PartitionSplit, nil
 		}
 		return tile.PartitionSplit, nil
+	}
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		partition, err := decideCore(level, ctx, miCol, miRow, haveRight, haveBottom)
+		if err == nil && st.decisionStats != nil {
+			st.decisionStats.notePartition(level, partition)
+		}
+		return partition, err
 	}
 
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
@@ -1171,6 +1186,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		copyPredScratch(recon.Y, st.predY[:bw*bh], src.YStride, lumaPX, lumaPY, bw, bh)
 		copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
 		copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
+		if st.decisionStats != nil {
+			st.decisionStats.noteInterBlock(block.Size, true, false, refs, modeResult, transform.TypeDCTDCT)
+		}
 		return nil
 	}
 
@@ -1259,6 +1277,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
+	}
+	if st.decisionStats != nil {
+		st.decisionStats.noteInterBlock(block.Size, false, splitTX, refs, modeResult, txType)
 	}
 	return nil
 }
@@ -1384,6 +1405,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		}, coeffCtx, st.scan4, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
+	}
+	if st.decisionStats != nil {
+		st.decisionStats.noteIntraBlock(block.Size)
 	}
 	return nil
 }

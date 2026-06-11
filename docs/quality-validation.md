@@ -41,6 +41,7 @@ go run ./cmd/qualitybench \
   -anchor aomenc -layers 3 -keyint 60 \
   -require-metrics xpsnr,vmaf \
   -csv quality.csv -summary-csv quality-summary.csv \
+  -stats-csv quality-encoder-stats.csv \
   -workdir /tmp/goav1-quality
 ```
 
@@ -51,6 +52,12 @@ non-VMAF run as state-of-the-art visual validation.
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
+
+When `-stats-csv` is set, goav1 rows also include encoder decision counters:
+partition choices, block sizes, skip/coded block counts, references, inter
+modes, transform types, and tile/frame counts. These counters are diagnostic
+evidence for choosing the next parity slice; they are not substitutes for
+decoded-output metrics or BD-rate.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header and these columns:

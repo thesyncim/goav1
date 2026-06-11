@@ -312,6 +312,11 @@ type lossyEncodeState struct {
 	// full-pel refinement windows.
 	hme *hmeState
 
+	// decisionStats is nil on the production hot path. When diagnostics are
+	// explicitly enabled, it points at the owning tile coder's frame-local
+	// counter buffer.
+	decisionStats *EncoderDecisionStats
+
 	// Per-frame motion partition grids filled by the 16x16 partition decider:
 	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
 	// split leaves do not repeat the search. sad < 0 marks an empty slot.
@@ -347,6 +352,12 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = lfMap
 	st.hme = nil
+	st.decisionStats = nil
+	if pc.decisionStatsEnabled {
+		pc.decisionStats.Reset()
+		pc.decisionStats.Tiles = 1
+		st.decisionStats = &pc.decisionStats
+	}
 	if err := st.modeCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
@@ -434,7 +445,7 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	// intraHeaderCost is the priced overhead of one extra block's prefix
 	// symbols (partition, mode, angle, chroma).
 	intraHeaderCost := (int64(20) << 9) * st.rdMult >> 9
-	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
 		}
@@ -479,6 +490,13 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 			}
 		}
 		return tile.PartitionSplit, nil
+	}
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		partition, err := decideCore(level, ctx, miCol, miRow, haveRight, haveBottom)
+		if err == nil && st.decisionStats != nil {
+			st.decisionStats.notePartition(level, partition)
+		}
+		return partition, err
 	}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeBlock(src, recon, block, scratch)
@@ -615,6 +633,9 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
+	}
+	if st.decisionStats != nil {
+		st.decisionStats.noteIntraBlock(block.Size)
 	}
 	return nil
 }

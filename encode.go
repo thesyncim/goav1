@@ -17,6 +17,35 @@ import (
 // I420Frame is one 8-bit 4:2:0 picture. Y holds Width x Height luma samples
 // at YStride; U and V hold the half-resolution chroma planes at ChromaStride.
 type I420Frame = encoder.SourceFrame420
+type EncoderDecisionStats = encoder.EncoderDecisionStats
+
+const (
+	EncoderDecisionBlockLevelCount        = encoder.EncoderDecisionBlockLevelCount
+	EncoderDecisionPartitionCount         = encoder.EncoderDecisionPartitionCount
+	EncoderDecisionBlockSizeCount         = encoder.EncoderDecisionBlockSizeCount
+	EncoderDecisionInterModeCount         = encoder.EncoderDecisionInterModeCount
+	EncoderDecisionCompoundInterModeCount = encoder.EncoderDecisionCompoundInterModeCount
+	EncoderDecisionReferenceFrameCount    = encoder.EncoderDecisionReferenceFrameCount
+	EncoderDecisionTransformTypeCount     = encoder.EncoderDecisionTransformTypeCount
+
+	EncoderDecisionBlockSize8x8   = encoder.EncoderDecisionBlockSize8x8
+	EncoderDecisionBlockSize16x16 = encoder.EncoderDecisionBlockSize16x16
+	EncoderDecisionBlockSize32x32 = encoder.EncoderDecisionBlockSize32x32
+	EncoderDecisionBlockSize64x64 = encoder.EncoderDecisionBlockSize64x64
+	EncoderDecisionBlockSize16x8  = encoder.EncoderDecisionBlockSize16x8
+	EncoderDecisionBlockSize8x16  = encoder.EncoderDecisionBlockSize8x16
+	EncoderDecisionBlockSize32x16 = encoder.EncoderDecisionBlockSize32x16
+	EncoderDecisionBlockSize16x32 = encoder.EncoderDecisionBlockSize16x32
+
+	EncoderDecisionReferenceLast   = encoder.EncoderDecisionReferenceLast
+	EncoderDecisionReferenceGolden = encoder.EncoderDecisionReferenceGolden
+
+	EncoderDecisionTransformDCTDCT   = encoder.EncoderDecisionTransformDCTDCT
+	EncoderDecisionTransformADSTDCT  = encoder.EncoderDecisionTransformADSTDCT
+	EncoderDecisionTransformDCTADST  = encoder.EncoderDecisionTransformDCTADST
+	EncoderDecisionTransformADSTADST = encoder.EncoderDecisionTransformADSTADST
+	EncoderDecisionTransformIDTX     = encoder.EncoderDecisionTransformIDTX
+)
 
 // VideoEncoderConfig configures a realtime encoder.
 type VideoEncoderConfig struct {
@@ -152,6 +181,22 @@ func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, err
 // buffers that are recycled two frames later; copy for longer-lived use.
 func (e *VideoEncoder) Reconstruction() I420Frame {
 	return e.enc.Recon()
+}
+
+// SetDecisionStatsEnabled toggles encoder-decision diagnostics. It is disabled
+// by default; enable it only around measurement runs.
+func (e *VideoEncoder) SetDecisionStatsEnabled(enabled bool) {
+	e.enc.SetDecisionStatsEnabled(enabled)
+}
+
+// ResetDecisionStats clears the accumulated encoder-decision diagnostics.
+func (e *VideoEncoder) ResetDecisionStats() {
+	e.enc.ResetDecisionStats()
+}
+
+// DecisionStats returns a copy of the accumulated encoder-decision diagnostics.
+func (e *VideoEncoder) DecisionStats() EncoderDecisionStats {
+	return e.enc.DecisionStats()
 }
 
 // QIndex reports the current working quantizer index (the CBR controller
