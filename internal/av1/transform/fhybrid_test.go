@@ -92,6 +92,43 @@ func TestForwardBlockRejectsUnsupportedHybrid(t *testing.T) {
 	}
 }
 
+func TestForwardBlock8x8HybridTrustedMatchesChecked(t *testing.T) {
+	rng := rand.New(rand.NewSource(13))
+	for _, typ := range []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX} {
+		for trial := range 500 {
+			var residual [64]int16
+			var got, want [64]int32
+			var gotScratch, wantScratch [64]int32
+			for i := range residual {
+				residual[i] = int16(rng.Intn(511) - 255)
+			}
+			if err := ForwardBlock8x8HybridTrusted(got[:], 8, residual[:], 8, gotScratch[:], typ); err != nil {
+				t.Fatalf("trial %d %s trusted: %v", trial, typeName(typ), err)
+			}
+			if err := ForwardBlock(want[:], 8, residual[:], 8, wantScratch[:], Size{Width: 8, Height: 8}, typ); err != nil {
+				t.Fatalf("trial %d %s checked: %v", trial, typeName(typ), err)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("trial %d %s coeff[%d]=%d want %d", trial, typeName(typ), i, got[i], want[i])
+				}
+			}
+		}
+	}
+}
+
+func TestForwardBlock8x8HybridTrustedRejectsUnsupported(t *testing.T) {
+	var residual [64]int16
+	var coeff [64]int32
+	var scratch [64]int32
+	if err := ForwardBlock8x8HybridTrusted(coeff[:], 8, residual[:], 8, scratch[:], TypeDCTDCT); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("DCT_DCT err=%v want %v", err, ErrInvalidTransform)
+	}
+	if err := ForwardBlock8x8HybridTrusted(coeff[:], 8, residual[:], 8, scratch[:], TypeFlipADSTDCT); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("FlipADST err=%v want %v", err, ErrInvalidTransform)
+	}
+}
+
 func TestForwardBlockHybridZeroAlloc(t *testing.T) {
 	residual := make([]int16, 64)
 	for i := range residual {

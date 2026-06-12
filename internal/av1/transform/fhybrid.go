@@ -23,6 +23,18 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 	if typ == TypeDCTDCT {
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
+	if size.Width == 8 && size.Height == 8 {
+		vertical, horizontal, ok := forward8x8HybridTypes(typ)
+		if !ok ||
+			coeffStride < 8 || residualStride < 8 ||
+			!blockFits(len(residual), residualStride, 8, 8) ||
+			!coeffBlockFits(len(coeff), coeffStride, 8, 8) ||
+			len(scratch) < 64 {
+			return ErrInvalidTransform
+		}
+		forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
+		return nil
+	}
 	if !forwardHybridSupported(size, typ) {
 		return ErrInvalidTransform
 	}
@@ -34,10 +46,6 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		return ErrInvalidTransform
 	}
 	vertical, horizontal, _ := typ.tx1DTypes()
-	if n == 8 {
-		forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
-		return nil
-	}
 	var in, out [8]int32
 	for c := range n {
 		for r := range n {
@@ -61,6 +69,34 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		}
 	}
 	return nil
+}
+
+// ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
+// for callers that already proved the block shape and scratch sizes. The
+// coefficient and residual strides must be at least 8, and coeff/residual/scratch
+// must contain the addressed 8x8 region.
+func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) error {
+	vertical, horizontal, ok := forward8x8HybridTypes(typ)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
+	return nil
+}
+
+func forward8x8HybridTypes(typ Type) (tx1DType, tx1DType, bool) {
+	switch typ {
+	case TypeADSTDCT:
+		return tx1DADST, tx1DDCT, true
+	case TypeDCTADST:
+		return tx1DDCT, tx1DADST, true
+	case TypeADSTADST:
+		return tx1DADST, tx1DADST, true
+	case TypeIDTX:
+		return tx1DIdentity, tx1DIdentity, true
+	default:
+		return 0, 0, false
+	}
 }
 
 func forwardBlock8x8Hybrid(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, vertical, horizontal tx1DType) {

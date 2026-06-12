@@ -10,7 +10,9 @@ advantage, is the goal.
 
 - Local SVT CLI: `/opt/homebrew/bin/SvtAv1EncApp`
 - Version: `SVT-AV1 v4.0.1 (release)`
-- Pinned source audit: `third_party/upstream/svt-av1`, tag `v4.1.0`, commit
+- Installed-binary source audit: SVT-AV1 tag `v4.0.1`, commit
+  `4ae9272b588a05ee6e77a43e8dfdac05f54c4ff0`
+- Repo architecture pin: `third_party/upstream/svt-av1`, tag `v4.1.0`, commit
   `c04f951541ad600e0d9c10836f2ab7b9bc69816d`
 - Upstream repository: <https://gitlab.com/AOMediaCodec/SVT-AV1>
 - Local platform for this audit: `darwin/arm64`, Apple M4 Max
@@ -134,6 +136,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   with ADST_ADST clean rows around `404-410 ns/op`; all rows remain zero
   allocations. This is scalar dispatch cleanup, not a replacement for forward
   ADST8 SIMD.
+- The encoder's 8x8 inter tx-type trial now calls a trusted 8x8 hybrid forward
+  transform entry point after DCT_DCT has already taken the specialized DCT
+  path. This skips the checked `ForwardBlock` shape/type dispatch on every
+  ADST/IDTX trial while preserving the checked API and parity tests. Compiler
+  reports still show the ADST body itself is too large to inline, so SVT's
+  forward-transform SIMD gap remains open.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero

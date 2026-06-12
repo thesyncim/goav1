@@ -2014,6 +2014,9 @@ func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h
 	if typ == transform.TypeDCTDCT {
 		return forwardDCTBlock(tran, residual, w, h)
 	}
+	if w == 8 && h == 8 {
+		return transform.ForwardBlock8x8HybridTrusted(tran, h, residual, w, scratch, typ)
+	}
 	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
 
