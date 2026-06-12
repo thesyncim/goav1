@@ -10,8 +10,8 @@ advantage, is the goal.
 
 - Local SVT CLI: `/opt/homebrew/bin/SvtAv1EncApp`
 - Version: `SVT-AV1 v4.0.1 (release)`
-- Local source audit: `/tmp/SVT-AV1-v4.0.1`, tag `v4.0.1`, commit
-  `4ae9272b588a05ee6e77a43e8dfdac05f54c4ff0`
+- Pinned source audit: `third_party/upstream/svt-av1`, tag `v4.1.0`, commit
+  `c04f951541ad600e0d9c10836f2ab7b9bc69816d`
 - Upstream repository: <https://gitlab.com/AOMediaCodec/SVT-AV1>
 - Local platform for this audit: `darwin/arm64`, Apple M4 Max
 - macOS-reported Arm features: `hw.optional.neon=1`,
@@ -23,22 +23,30 @@ SVT v4.0.1 exposes `--asm` values
 baseline-NEON-equivalent row on this machine. Use `qualitybench -svt-asm neon`
 for baseline-NEON rows.
 
+SVT's `--lp` is not a processor/thread count. The installed CLI describes it as
+an "Amount of parallelism" level with range `[0, 6]`, where `0` lets SVT choose
+from the machine. Therefore `GOMAXPROCS=4` and `--lp 4` are not equivalent
+knobs; fair reporting must include wall time, CPU time, observed parallelism,
+`--lp`, and `--asm`.
+
 ## Current Speed Snapshot
 
-Fresh synthetic 1080p/120-frame single-rate fair row on 2026-06-12 with
-`-gomaxprocs 4 -svt-lp 4 -svt-asm max`:
+Fresh synthetic 1080p/120-frame single-rate row on 2026-06-12 with
+`GOMAXPROCS=4` for goav1 and SVT default `--asm max`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 105.37 | 1.139 | 4.015 | 3.53x | 29.9 |
-| SVT-AV1 `--asm max` | 156.15 | 0.768 | 1.623 | 2.11x | 73.9 |
+| goav1 | 106.48 | 1.127 | 3.998 | 3.55x | 30.0 |
+| SVT-AV1 `--lp 0 --asm max` | 196.81 | 0.610 | 1.520 | 2.49x | 78.9 |
+| SVT-AV1 `--lp 4 --asm max` | 198.57 | 0.604 | 1.527 | 2.53x | 78.6 |
 
-CPU-normalized gap: SVT is about 2.47x more CPU-efficient on this smoke row.
+CPU-normalized gap: SVT is about 2.62x more CPU-efficient on this smoke row.
 That gap should be reported by CPU seconds or frames/CPU-s, not only by wall
 FPS. Wall FPS is noisier because the two encoders do not consume the same
-parallelism even with `GOMAXPROCS=4` and `--lp 4`.
+parallelism, and `--lp 4` is not semantically equivalent to `GOMAXPROCS=4`.
 
-Same run shape with SVT pinned to baseline NEON via `-svt-asm neon`:
+Earlier same-shape control with SVT pinned to baseline NEON via
+`-svt-asm neon`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -50,7 +58,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 
 ## Coverage Ledger
 
-| Area | SVT v4.0.1 SIMD coverage | goav1 status | Decision |
+| Area | SVT SIMD coverage | goav1 status | Decision |
 | --- | --- | --- | --- |
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 currently treats NEON as the available tier; no dotprod/i8mm dispatch tier | Add feature detection before claiming max-tier parity. Pin SVT with `-svt-asm neon` until then. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has a trusted 8x8 path, stack level buffer, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
@@ -126,8 +134,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `6.36-6.41 ns/op` versus `51.70-52.58 ns/op` for the scalar reference, with
   zero allocations; randomized tests compare the dispatch kernel against the
   pure-Go reference across independent strides and offsets.
-- Fresh P-frame benchmark: `BenchmarkVideoEncoderPFrame1080p-4` is
-  `77.2-79.1 ms/op`, zero allocs/op in the cleanest local repeat. Allocation is
+- Current P-frame diagnostics: the profiled
+  `BenchmarkVideoEncoderPFrame1080p-4` sample is `92.3 ms/op`, with repeat
+  rows around `88.4-92.1 ms/op` and zero or one tiny allocation. Allocation is
   not the dominant CPU gap; the CPU profile is.
 
 ## Next Implementation Order
