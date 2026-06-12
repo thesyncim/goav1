@@ -73,6 +73,9 @@ type sad8x8x4Step4NEONCtx struct {
 //go:noescape
 func sad8x8x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
 
+//go:noescape
+func sad16x16x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
+
 func sad8x8x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 	ctx := sad8x8x4Step4NEONCtx{
 		Src:    unsafe.Pointer(&src[0]),
@@ -80,6 +83,16 @@ func sad8x8x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 		Stride: int64(stride),
 	}
 	sad8x8x4Step4NEONAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
+func sad16x16x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4Step4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad16x16x4Step4NEONAsm(&ctx)
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
@@ -173,6 +186,7 @@ func init() {
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON
 	sad8x8x4Step4Impl = sad8x8x4Step4NEON
+	sad16x16x4Step4Impl = sad16x16x4Step4NEON
 	sad8x8DualImpl = sad8x8DualNEON
 	sad16x16DualImpl = sad16x16DualNEON
 	sad32x32DualImpl = sad32x32DualNEON

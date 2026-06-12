@@ -65,7 +65,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has a trusted 8x8 path, stack level buffer, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
-| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, and the 8x8 full-pel raster x4 candidate group have arm64 NEON coverage through direct or composed kernels; 16x16/32x32 batched-candidate SAD remains open | High priority. Extend measured batched-candidate kernels to 16x16/32x32 before more scheduler tuning; add DOTPROD only after runtime feature detection and profile proof. |
+| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, and the 8x8/16x16 full-pel raster x4 candidate groups have arm64 NEON coverage through direct or composed kernels; 32x32 batched-candidate SAD remains open | High priority. Extend measured batched-candidate kernels to 32x32 before more scheduler tuning; add DOTPROD only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
@@ -158,13 +158,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `6.36-6.41 ns/op` versus `51.70-52.58 ns/op` for the scalar reference, with
   zero allocations; randomized tests compare the dispatch kernel against the
   pure-Go reference across independent strides and offsets.
-- The 8x8 full-pel raster search now groups four horizontal step-4 candidates
-  into one `sad8x8x4Step4` call. The arm64 NEON kernel follows SVT's
-  multi-candidate SAD shape with one source load, widened reference windows, and
-  four independent accumulators; the compiler inlines the dispatch wrapper at
-  the raster call site and reports the stack-local NEON context as non-escaping.
-  Runtime benchmark rows are still pending because newly built local binaries
-  currently hang before Go code starts.
+- The 8x8 and 16x16 full-pel raster searches now group four horizontal step-4
+  candidates into one `sad8x8x4Step4` or `sad16x16x4Step4` call. The arm64
+  NEON kernels follow SVT's multi-candidate SAD shape with shared source loads,
+  widened reference windows, and four independent accumulators; compiler
+  reports inline both dispatch wrappers at the raster call sites and report the
+  stack-local NEON contexts as non-escaping. Runtime benchmark rows are still
+  pending because newly built local binaries currently hang before Go code
+  starts.
 - Current P-frame diagnostics: the profiled
   `BenchmarkVideoEncoderPFrame1080p-4` sample is `92.3 ms/op`, with repeat
   rows around `88.4-92.1 ms/op` and zero or one tiny allocation. Allocation is
