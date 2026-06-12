@@ -281,19 +281,19 @@ func WriteCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 // writer would observe.
 func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
 	const (
-		maxEOB     = 64
-		scratchLen = 144
-		stride     = 12
-		txCtx      = 1
-		txBR       = 1
+		maxEOB = 64
+		stride = uint8(12)
+		txCtx  = 1
+		txBR   = 1
 	)
 	scanHot := coeffScanHotTable[TransformSize8x8][transform.Class2D][:maxEOB]
+	coeff64 := (*[maxEOB]int16)(coeffs)
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
 	eob := 0
 	for c := maxEOB - 1; c >= 0; c-- {
-		if coeffs[int(scanHot[c].pos)] != 0 {
+		if coeff64[int(scanHot[c].pos)] != 0 {
 			eob = c + 1
 			break
 		}
@@ -319,16 +319,15 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 		}
 	}
 
-	var levelBuf [scratchLen]uint8
-	levels := levelBuf[:]
+	var levels [256]uint8
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeffs[pos]
-		levels[int(p.padded)] = coeffAbsClamp127(cv)
+		cv := coeff64[pos]
+		levels[uint8(p.padded)] = coeffAbsClamp127(cv)
 		if cv != 0 {
 			if pos > maxScanLine {
 				maxScanLine = pos
@@ -347,14 +346,14 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeffs[pos]))
+		level := absInt(int(coeff64[pos]))
 		if c == eob-1 {
 			ctx := coeffLowerLevelsCtxEOBFast(maxEOB, c)
 			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY][ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
@@ -366,13 +365,13 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 			if c == eob-1 {
 				brCtx = int(coeffBRContextEOBFast(posTable[pos], transform.Class2D, pos))
 			} else if pos != 0 {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
 				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
 			} else {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -391,7 +390,7 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeffs[pos]
+		cv := coeff64[pos]
 		if cv == 0 {
 			continue
 		}
@@ -401,7 +400,7 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[int(p.padded)] >= MaxBaseBRRange {
+		if levels[uint8(p.padded)] >= MaxBaseBRRange {
 			level := absInt(int(cv))
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
@@ -430,17 +429,17 @@ func WriteCoefficientsTXB8x8Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs
 
 func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, restoreTXCDF bool) TXBDecodeResult {
 	const (
-		maxEOB     = 64
-		scratchLen = 144
-		stride     = 12
-		txCtx      = 1
-		txBR       = 1
+		maxEOB = 64
+		stride = uint8(12)
+		txCtx  = 1
+		txBR   = 1
 	)
 	scanHot := coeffScanHotTable[TransformSize8x8][transform.Class2D][:maxEOB]
+	coeff64 := (*[maxEOB]int16)(coeffs)
 
 	eob := 0
 	for c := maxEOB - 1; c >= 0; c-- {
-		if coeffs[int(scanHot[c].pos)] != 0 {
+		if coeff64[int(scanHot[c].pos)] != 0 {
 			eob = c + 1
 			break
 		}
@@ -471,16 +470,15 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 		}
 	}
 
-	var levelBuf [scratchLen]uint8
-	levels := levelBuf[:]
+	var levels [256]uint8
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeffs[pos]
-		levels[int(p.padded)] = coeffAbsClamp127(cv)
+		cv := coeff64[pos]
+		levels[uint8(p.padded)] = coeffAbsClamp127(cv)
 		if cv != 0 {
 			if pos > maxScanLine {
 				maxScanLine = pos
@@ -499,14 +497,14 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeffs[pos]))
+		level := absInt(int(coeff64[pos]))
 		if c == eob-1 {
 			ctx := coeffLowerLevelsCtxEOBFast(maxEOB, c)
 			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY][ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
@@ -518,13 +516,13 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 			if c == eob-1 {
 				brCtx = int(coeffBRContextEOBFast(posTable[pos], transform.Class2D, pos))
 			} else if pos != 0 {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
 				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
 			} else {
-				pad := int(p.padded)
+				pad := uint8(p.padded)
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -543,7 +541,7 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeffs[pos]
+		cv := coeff64[pos]
 		if cv == 0 {
 			continue
 		}
@@ -553,7 +551,7 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[int(p.padded)] >= MaxBaseBRRange {
+		if levels[uint8(p.padded)] >= MaxBaseBRRange {
 			level := absInt(int(cv))
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
