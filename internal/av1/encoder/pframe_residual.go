@@ -2263,7 +2263,23 @@ func fullPelDiamondSearch32(srcBlock []byte, ref []byte, base, stride, minDX, ma
 	}
 	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
 		refRow := base + dy*stride
-		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad32x32x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
 			if dx == 0 && dy == 0 {
 				continue
 			}

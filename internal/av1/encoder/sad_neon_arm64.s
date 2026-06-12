@@ -185,6 +185,105 @@ x4loop16:
 	MOVD R5, X4SUM3(R0)
 	RET
 
+// NEON 32x32 SAD for four horizontal candidates separated by four pixels. Each
+// row consumes two 16-byte source chunks; the second chunk accumulates into the
+// same low/high candidate sums as the first.
+
+// func sad32x32x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
+TEXT ·sad32x32x4Step4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	ADD  $32, R2, R12
+	VLD1 (R12), [V14.B16]
+	WORD $0x6e05202a // ext    v10.16b, v1.16b,  v5.16b,  #4
+	WORD $0x6e05402b // ext    v11.16b, v1.16b,  v5.16b,  #8
+	WORD $0x6e05602c // ext    v12.16b, v1.16b,  v5.16b,  #12
+	WORD $0x6e0e20b2 // ext    v18.16b, v5.16b,  v14.16b, #4
+	WORD $0x6e0e40b3 // ext    v19.16b, v5.16b,  v14.16b, #8
+	WORD $0x6e0e60b4 // ext    v20.16b, v5.16b,  v14.16b, #12
+	WORD $0x2e217002 // uabdl  v2.8h,  v0.8b,   v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h,  v0.16b,  v1.16b
+	WORD $0x2e2a7004 // uabdl  v4.8h,  v0.8b,   v10.8b
+	WORD $0x6e2a7006 // uabdl2 v6.8h,  v0.16b,  v10.16b
+	WORD $0x2e2b7007 // uabdl  v7.8h,  v0.8b,   v11.8b
+	WORD $0x6e2b7008 // uabdl2 v8.8h,  v0.16b,  v11.16b
+	WORD $0x2e2c7009 // uabdl  v9.8h,  v0.8b,   v12.8b
+	WORD $0x6e2c700d // uabdl2 v13.8h, v0.16b,  v12.16b
+	WORD $0x2e2551e2 // uabal  v2.8h,  v15.8b,  v5.8b
+	WORD $0x6e2551e3 // uabal2 v3.8h,  v15.16b, v5.16b
+	WORD $0x2e3251e4 // uabal  v4.8h,  v15.8b,  v18.8b
+	WORD $0x6e3251e6 // uabal2 v6.8h,  v15.16b, v18.16b
+	WORD $0x2e3351e7 // uabal  v7.8h,  v15.8b,  v19.8b
+	WORD $0x6e3351e8 // uabal2 v8.8h,  v15.16b, v19.16b
+	WORD $0x2e3451e9 // uabal  v9.8h,  v15.8b,  v20.8b
+	WORD $0x6e3451ed // uabal2 v13.8h, v15.16b, v20.16b
+	ADD  R3, R1
+	ADD  R3, R2
+
+	MOVD $31, R4
+x4loop32:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	ADD  $32, R2, R12
+	VLD1 (R12), [V14.B16]
+	WORD $0x6e05202a // ext    v10.16b, v1.16b,  v5.16b,  #4
+	WORD $0x6e05402b // ext    v11.16b, v1.16b,  v5.16b,  #8
+	WORD $0x6e05602c // ext    v12.16b, v1.16b,  v5.16b,  #12
+	WORD $0x6e0e20b2 // ext    v18.16b, v5.16b,  v14.16b, #4
+	WORD $0x6e0e40b3 // ext    v19.16b, v5.16b,  v14.16b, #8
+	WORD $0x6e0e60b4 // ext    v20.16b, v5.16b,  v14.16b, #12
+	WORD $0x2e215002 // uabal  v2.8h,  v0.8b,   v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h,  v0.16b,  v1.16b
+	WORD $0x2e2a5004 // uabal  v4.8h,  v0.8b,   v10.8b
+	WORD $0x6e2a5006 // uabal2 v6.8h,  v0.16b,  v10.16b
+	WORD $0x2e2b5007 // uabal  v7.8h,  v0.8b,   v11.8b
+	WORD $0x6e2b5008 // uabal2 v8.8h,  v0.16b,  v11.16b
+	WORD $0x2e2c5009 // uabal  v9.8h,  v0.8b,   v12.8b
+	WORD $0x6e2c500d // uabal2 v13.8h, v0.16b,  v12.16b
+	WORD $0x2e2551e2 // uabal  v2.8h,  v15.8b,  v5.8b
+	WORD $0x6e2551e3 // uabal2 v3.8h,  v15.16b, v5.16b
+	WORD $0x2e3251e4 // uabal  v4.8h,  v15.8b,  v18.8b
+	WORD $0x6e3251e6 // uabal2 v6.8h,  v15.16b, v18.16b
+	WORD $0x2e3351e7 // uabal  v7.8h,  v15.8b,  v19.8b
+	WORD $0x6e3351e8 // uabal2 v8.8h,  v15.16b, v19.16b
+	WORD $0x2e3451e9 // uabal  v9.8h,  v15.8b,  v20.8b
+	WORD $0x6e3451ed // uabal2 v13.8h, v15.16b, v20.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, x4loop32
+
+	VADD V3.H8, V2.H8, V2.H8
+	VADD V6.H8, V4.H8, V4.H8
+	VADD V8.H8, V7.H8, V7.H8
+	VADD V13.H8, V9.H8, V9.H8
+	WORD $0x6e70384e // uaddlv s14, v2.8h
+	WORD $0x6e70388f // uaddlv s15, v4.8h
+	WORD $0x6e7038f0 // uaddlv s16, v7.8h
+	WORD $0x6e703931 // uaddlv s17, v9.8h
+	VMOV V14.S[0], R5
+	MOVD R5, X4SUM0(R0)
+	VMOV V15.S[0], R5
+	MOVD R5, X4SUM1(R0)
+	VMOV V16.S[0], R5
+	MOVD R5, X4SUM2(R0)
+	VMOV V17.S[0], R5
+	MOVD R5, X4SUM3(R0)
+	RET
+
 // NEON 16x16 sum of absolute differences: 16-byte rows accumulated with the
 // paired widening instructions (UABDL/UABDL2 for row 0, UABAL/UABAL2 for the
 // rest), the two uint16 accumulators added and reduced with UADDLV.

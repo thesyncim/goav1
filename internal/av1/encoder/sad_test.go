@@ -112,6 +112,26 @@ func TestSAD32x32ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD32x32x4Step4ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(46))
+	const stride = 117
+	src := make([]byte, stride*128)
+	ref := make([]byte, stride*128)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		off := rng.Intn(stride*80) + rng.Intn(stride-51)
+		w0, w1, w2, w3 := sad32x32x4Step4PureGo(src[off:], ref[off:], stride)
+		g0, g1, g2, g3 := sad32x32x4Step4Impl(src[off:], ref[off:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("off %d: impl (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+	}
+}
+
 // TestSAD8x8DualImplMatchesPureGo proves the two-stride kernel bit-exact
 // with the portable reference.
 func TestSAD8x8DualImplMatchesPureGo(t *testing.T) {
@@ -557,6 +577,35 @@ func BenchmarkSAD32x32(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad32x32Impl(src, ref, 64)
+	}
+}
+
+func BenchmarkSAD32x32x4Step4(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _ = sad32x32x4Step4Impl(src, ref, 64)
+	}
+}
+
+func BenchmarkSAD32x32x4Step4Composed(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sad32x32Impl(src, ref, 64) +
+			sad32x32Impl(src, ref[4:], 64) +
+			sad32x32Impl(src, ref[8:], 64) +
+			sad32x32Impl(src, ref[12:], 64)
 	}
 }
 

@@ -22,6 +22,10 @@ func sad16x16x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return sad16x16x4Step4Impl(src, ref, stride)
 }
 
+func sad32x32x4Step4(src, ref []byte, stride int) (int, int, int, int) {
+	return sad32x32x4Step4Impl(src, ref, stride)
+}
+
 func sad8x8Dual(src []byte, srcStride int, ref []byte, refStride int) int {
 	return sad8x8DualImpl(src, srcStride, ref, refStride)
 }

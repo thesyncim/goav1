@@ -24,6 +24,10 @@ var sad8x8x4Step4Impl = sad8x8x4Step4PureGo
 // x origins are ref+0, ref+4, ref+8, and ref+12.
 var sad16x16x4Step4Impl = sad16x16x4Step4PureGo
 
+// sad32x32x4Step4Impl computes four 32x32 SADs against reference blocks whose
+// x origins are ref+0, ref+4, ref+8, and ref+12.
+var sad32x32x4Step4Impl = sad32x32x4Step4PureGo
+
 // sad8x8DualImpl computes the 8x8 SAD between planes with different strides
 // (the subpel verifier compares the source plane against the n-stride
 // prediction scratch).
@@ -135,6 +139,41 @@ func sad16x16x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {
 	for r := range 16 {
 		row := r * stride
 		for c := range 16 {
+			s := int(src[row+c])
+
+			d0 := s - int(ref[row+c])
+			if d0 < 0 {
+				d0 = -d0
+			}
+			sum0 += d0
+
+			d1 := s - int(ref[row+c+4])
+			if d1 < 0 {
+				d1 = -d1
+			}
+			sum1 += d1
+
+			d2 := s - int(ref[row+c+8])
+			if d2 < 0 {
+				d2 = -d2
+			}
+			sum2 += d2
+
+			d3 := s - int(ref[row+c+12])
+			if d3 < 0 {
+				d3 = -d3
+			}
+			sum3 += d3
+		}
+	}
+	return sum0, sum1, sum2, sum3
+}
+
+func sad32x32x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {
+	sum0, sum1, sum2, sum3 := 0, 0, 0, 0
+	for r := range 32 {
+		row := r * stride
+		for c := range 32 {
 			s := int(src[row+c])
 
 			d0 := s - int(ref[row+c])
