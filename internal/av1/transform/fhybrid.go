@@ -34,6 +34,10 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		return ErrInvalidTransform
 	}
 	vertical, horizontal, _ := typ.tx1DTypes()
+	if n == 8 {
+		forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
+		return nil
+	}
 	var in, out [8]int32
 	for c := range n {
 		for r := range n {
@@ -57,6 +61,33 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		}
 	}
 	return nil
+}
+
+func forwardBlock8x8Hybrid(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, vertical, horizontal tx1DType) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwd1D8(&in, &out, vertical)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwd1D8(&in, &out, horizontal)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
 }
 
 func forwardHybridSupported(size Size, typ Type) bool {
@@ -128,6 +159,26 @@ func fwd1D(input []int32, output []int32, typ tx1DType) {
 		}
 	case tx1DIdentity:
 		fwdIdentity1D(input, output)
+	}
+}
+
+func fwd1D8(input, output *[8]int32, typ tx1DType) {
+	switch typ {
+	case tx1DDCT:
+		fwdDCT8(input, output)
+	case tx1DADST:
+		fwdADST8(input, output)
+	case tx1DIdentity:
+		for i := range 8 {
+			output[i] = input[i] * 2
+		}
+	}
+}
+
+func fwdRoundShift1x8(arr *[8]int32) {
+	for i := range 8 {
+		v := arr[i]
+		arr[i] = (v + 1 + (v >> 31)) >> 1
 	}
 }
 

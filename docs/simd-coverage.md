@@ -103,6 +103,13 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   in same-session A/B from roughly `64-77 ns/op` to `44-56 ns/op` for 8x8 and
   from roughly `161-189 ns/op` to `116-118 ns/op` for 16x16, with zero
   allocations.
+- The 8x8 hybrid forward-transform path now dispatches directly to the
+  array-backed DCT/ADST/IDTX kernels instead of copying through the generic
+  slice helper for each row/column. `BenchmarkForwardBlockHybrid8x8` moved
+  clean local ADST_DCT rows from roughly `630-738 ns/op` to `374-382 ns/op`,
+  with ADST_ADST clean rows around `404-410 ns/op`; all rows remain zero
+  allocations. This is scalar dispatch cleanup, not a replacement for forward
+  ADST8 SIMD.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
