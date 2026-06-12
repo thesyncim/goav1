@@ -307,3 +307,53 @@ func TestWriterZeroAlloc(t *testing.T) {
 		t.Fatalf("encode path allocated %v objects/run, want 0", allocs)
 	}
 }
+
+func BenchmarkWriterCDF4Stream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(71))
+	for i := range syms {
+		switch r := rng.Intn(16); {
+		case r < 9:
+			syms[i] = 0
+		case r < 13:
+			syms[i] = 1
+		case r < 15:
+			syms[i] = 2
+		default:
+			syms[i] = 3
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{4096, 15000, 28000}); err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, 0, 1<<16)
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("specialized", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF4(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}

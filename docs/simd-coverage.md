@@ -81,6 +81,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.
+- `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
+  path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
+  stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero
+  allocations.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero

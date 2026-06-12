@@ -305,41 +305,38 @@ func (w *Writer) WriteCDF4(cdf *CDF, s int) {
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 4)
 	}
-	fl := uint32(CDFProbTop)
-	if s > 0 {
-		fl = uint32(values[s-1])
-	}
-	fh := uint32(values[s])
+	v0, v1, v2 := values[0], values[1], values[2]
 	l := w.low
 	r := w.rng
-	if fl < CDFProbTop {
-		u := ((r >> 8) * (fl >> ecProbShift)) >> (7 - ecProbShift)
-		u += ecMinProb * (3 - uint32(s-1))
-		v := ((r >> 8) * (fh >> ecProbShift)) >> (7 - ecProbShift)
-		v += ecMinProb * (3 - uint32(s))
-		l += uint64(r - u)
-		r = u - v
-	} else {
-		r -= ((r>>8)*(fh>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(3-uint32(s))
-	}
-	w.normalize(l, r)
 	count := values[4]
 	rate := uint(5 + (count >> 4))
-	v0, v1, v2 := values[0], values[1], values[2]
+	q := r >> 8
 	switch s {
 	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
 		values[0] = v0 - (v0 >> rate)
 		values[1] = v1 - (v1 >> rate)
 		values[2] = v2 - (v2 >> rate)
 	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		l += uint64(r - u)
+		r = u - v
 		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
 		values[1] = v1 - (v1 >> rate)
 		values[2] = v2 - (v2 >> rate)
 	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
 		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
 		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
 		values[2] = v2 - (v2 >> rate)
 	default:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
 		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
 		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
 		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
@@ -347,6 +344,7 @@ func (w *Writer) WriteCDF4(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
+	w.normalize(l, r)
 }
 
 // WriteLiteral codes the low n bits of value MSB-first as equiprobable bits,
