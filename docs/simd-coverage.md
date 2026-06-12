@@ -95,6 +95,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.
+- P-frame full-pel motion grids now clear only the active frame rectangle for
+  8x8/16x16/32x32/64x64 SAD caches, and 32x32 block coding uses the same
+  sentinel guard as the other square sizes. This avoids clearing stale
+  oversized backing capacity after resolution changes and prevents stale
+  32x32 SAD reuse if a block reaches coding without a fresh partition score.
 - `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
   path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
   stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero

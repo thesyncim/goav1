@@ -361,14 +361,17 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		st.mv64Grid = make([]motion.Vector, st.grid64Cols*grid64Rows)
 		st.sad64Grid = make([]int32, st.grid64Cols*grid64Rows)
 	}
-	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
-		st.sad64Grid[i] = -1
-	}
-	for i := range st.sad8Grid {
+	for i := range st.sad8Grid[:st.grid8Cols*grid8Rows] {
 		st.sad8Grid[i] = -1
 	}
 	for i := range st.sad16Grid[:st.grid16Cols*grid16Rows] {
 		st.sad16Grid[i] = -1
+	}
+	for i := range st.sad32Grid[:st.grid32Cols*grid32Rows] {
+		st.sad32Grid[i] = -1
+	}
+	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
+		st.sad64Grid[i] = -1
 	}
 	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
 	// over the four independent 8x8 searches and still be coded as one block:
@@ -725,7 +728,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	case n == 32:
 		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-		mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+		if st.sad32Grid[idx] >= 0 {
+			mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+		}
 	case n == 16:
 		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
 		if st.sad16Grid[idx] >= 0 {
