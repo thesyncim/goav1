@@ -11,6 +11,10 @@ var sad8x8Impl = sad8x8PureGo
 // merge-tier searches where 16x16 and 32x32 SADs dominate the decider.
 var sad16x16Impl = sad16x16PureGo
 
+// sad32x32Impl computes the full 32x32 SAD; the full-pel search probes this
+// shape often enough that avoiding four separate 16x16 dispatches matters.
+var sad32x32Impl = sad32x32PureGo
+
 // sad8x8DualImpl computes the 8x8 SAD between planes with different strides
 // (the subpel verifier compares the source plane against the n-stride
 // prediction scratch).
@@ -41,6 +45,22 @@ func sad16x16PureGo(src, ref []byte, stride int) int {
 	for r := range 16 {
 		row := r * stride
 		for c := range 16 {
+			d := int(src[row+c]) - int(ref[row+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+// sad32x32PureGo is the portable 32x32 reference.
+func sad32x32PureGo(src, ref []byte, stride int) int {
+	total := 0
+	for r := range 32 {
+		row := r * stride
+		for c := range 32 {
 			d := int(src[row+c]) - int(ref[row+c])
 			if d < 0 {
 				d = -d

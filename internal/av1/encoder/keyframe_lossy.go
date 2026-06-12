@@ -253,6 +253,7 @@ type lossyEncodeState struct {
 	trialCDFs                    tile.CoeffCDFs
 	trialBuf                     []byte
 	trialReady                   bool
+	trial8x8CDFs                 coeffTrial8x8Snapshot
 	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd     uint32
 	keyVisW, keyVisH             int
@@ -1004,21 +1005,67 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 }
 
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
-	scan := st.scan4
-	if n == 8 {
-		scan = st.scan8
-	}
 	tw := entropy.NewWriter(st.trialBuf[:0])
-	txCDFs := st.txCDFs
-	txReq := tile.InterTransformTypeRequest{
-		Size:        size,
-		QIndexKnown: true,
-		QIndex:      st.qIndex,
+	if n == 8 && size == tile.TransformSize8x8 {
+		txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
+		if !ok {
+			return 1 << 59
+		}
+		base := tw.Tell()
+		tile.WriteCoefficientsTXB8x8Y2DTrusted(&tw, &st.trialCDFs, qcoeff[:64], st.levels, txCDF, txSymbol)
+		bits := int64(tw.Tell() - base)
+		return ((bits<<9)*st.rdMult + 256) >> 9
 	}
-	afterSkip := func() error {
-		return tile.WriteInterTransformType(&tw, &txCDFs, txReq, typ)
+
+	scan := st.scan4
+	var txCDF *entropy.CDF
+	txSymbol := 0
+	if st.qIndex == 0 {
+		if typ != transform.TypeDCTDCT {
+			return 1 << 59
+		}
+	} else {
+		set, err := tile.ExtTXSetTypeFor(size, true, false)
+		if err != nil {
+			return 1 << 59
+		}
+		symbols, err := tile.ExtTXTypeCount(set)
+		if err != nil {
+			return 1 << 59
+		}
+		if symbols <= 1 {
+			if typ != transform.TypeDCTDCT {
+				return 1 << 59
+			}
+		} else {
+			index, err := tile.ExtTXSetIndex(size, true, false)
+			if err != nil {
+				return 1 << 59
+			}
+			square, err := tile.TransformSizeSquare(size)
+			if err != nil {
+				return 1 << 59
+			}
+			txCDF, err = st.txCDFs.InterCDF(index, square, symbols)
+			if err != nil {
+				return 1 << 59
+			}
+			txSymbol, err = tile.ExtTXSymbolForType(set, typ)
+			if err != nil {
+				return 1 << 59
+			}
+		}
 	}
 	base := tw.Tell()
+	afterSkip := func() error {
+		if txCDF == nil {
+			return nil
+		}
+		saved := *txCDF
+		tw.WriteCDF(txCDF, txSymbol)
+		*txCDF = saved
+		return nil
+	}
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
 		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
 	}, qcoeff[:n*n], scan, st.levels); err != nil {

@@ -181,6 +181,23 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 	w.normalize(l, r)
 }
 
+// WriteBit codes one equiprobable bit, matching WriteBoolQ15(val, 1<<14).
+func (w *Writer) WriteBit(val int) {
+	if traceEntropyReads {
+		traceWriteBool(1 << 14)
+	}
+	l := w.low
+	r := w.rng
+	v := (r>>8)<<7 + ecMinProb
+	if val != 0 {
+		l += uint64(r - v)
+		r = v
+	} else {
+		r -= v
+	}
+	w.normalize(l, r)
+}
+
 // WriteSymbol codes symbol index s using the inverse CDF icdf (icdf[i] ==
 // CDF_PROB_TOP - cdf[i], monotone decreasing, icdf[nsyms-1] == 0) without
 // adapting it. Port of od_ec_encode_cdf_q15.
@@ -210,9 +227,126 @@ func (w *Writer) WriteSymbolAdaptive(s int, cdf []uint16) {
 // callers coding under disable_cdf_update use WriteSymbol with a non-adapting CDF.
 func (w *Writer) WriteCDF(cdf *CDF, s int) {
 	n := int(cdf.symbols)
-	vals := cdf.values[:n+1]
-	w.WriteSymbol(s, vals, n)
-	updateCDFWindow(vals, s)
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], n)
+	}
+	fl := uint32(CDFProbTop)
+	if s > 0 {
+		fl = uint32(values[s-1])
+	}
+	w.encodeQ15(fl, uint32(values[s]), s, n)
+	switch n {
+	case 2:
+		count := values[2]
+		rate := uint(4 + (count >> 4))
+		v := values[0]
+		if s == 0 {
+			values[0] = v - (v >> rate)
+		} else {
+			values[0] = v + ((uint16(CDFProbTop) - v) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[2] = count + 1
+		}
+	case 3:
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		v0, v1 := values[0], values[1]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[3] = count + 1
+		}
+	case 4:
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		v0, v1, v2 := values[0], values[1], values[2]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 2:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 - (v2 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
+	default:
+		updateCDFValues(values, n, s)
+	}
+}
+
+// WriteCDF4 codes symbol s using a known 4-symbol adaptive CDF. It is the
+// quaternary specialization of WriteCDF for coefficient-base hot paths whose
+// table shape is fixed by AV1 syntax.
+func (w *Writer) WriteCDF4(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 4)
+	}
+	fl := uint32(CDFProbTop)
+	if s > 0 {
+		fl = uint32(values[s-1])
+	}
+	fh := uint32(values[s])
+	l := w.low
+	r := w.rng
+	if fl < CDFProbTop {
+		u := ((r >> 8) * (fl >> ecProbShift)) >> (7 - ecProbShift)
+		u += ecMinProb * (3 - uint32(s-1))
+		v := ((r >> 8) * (fh >> ecProbShift)) >> (7 - ecProbShift)
+		v += ecMinProb * (3 - uint32(s))
+		l += uint64(r - u)
+		r = u - v
+	} else {
+		r -= ((r>>8)*(fh>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(3-uint32(s))
+	}
+	w.normalize(l, r)
+	count := values[4]
+	rate := uint(5 + (count >> 4))
+	v0, v1, v2 := values[0], values[1], values[2]
+	switch s {
+	case 0:
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 1:
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 2:
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+	default:
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[4] = count + 1
+	}
 }
 
 // WriteLiteral codes the low n bits of value MSB-first as equiprobable bits,
@@ -220,7 +354,7 @@ func (w *Writer) WriteCDF(cdf *CDF, s int) {
 // the exact inverse of Reader.ReadBits.
 func (w *Writer) WriteLiteral(value uint32, n int) {
 	for i := n - 1; i >= 0; i-- {
-		w.WriteBoolQ15(int((value>>uint(i))&1), 1<<14)
+		w.WriteBit(int((value >> uint(i)) & 1))
 	}
 }
 

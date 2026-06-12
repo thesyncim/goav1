@@ -93,6 +93,64 @@ loop16:
 	MOVD R5, SUM(R0)
 	RET
 
+// NEON 32x32 sum of absolute differences: two 16-byte chunks per row, four
+// uint16 accumulators over 32 rows. Each accumulator lane tops out at
+// 32*255=8160 before the final vector adds, so uint16 lanes cannot overflow.
+//
+//   uabdl  v2.8h, v0.8b,  v1.8b    -> 0x2e217002
+//   uabdl2 v3.8h, v0.16b, v1.16b   -> 0x6e217003
+//   uabdl  v6.8h, v4.8b,  v5.8b    -> 0x2e257086
+//   uabdl2 v7.8h, v4.16b, v5.16b   -> 0x6e257087
+//   uabal  v2.8h, v0.8b,  v1.8b    -> 0x2e215002
+//   uabal2 v3.8h, v0.16b, v1.16b   -> 0x6e215003
+//   uabal  v6.8h, v4.8b,  v5.8b    -> 0x2e255086
+//   uabal2 v7.8h, v4.16b, v5.16b   -> 0x6e255087
+
+// func sad32x32NEONAsm(ctx *sad8x8NEONCtx)
+TEXT ·sad32x32NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R6
+	VLD1 (R6), [V4.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R7
+	VLD1 (R7), [V5.B16]
+	WORD $0x2e217002 // uabdl  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e257086 // uabdl  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e257087 // uabdl2 v7.8h, v4.16b, v5.16b
+	ADD  R3, R1
+	ADD  R3, R2
+
+	MOVD $31, R4
+loop32:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R6
+	VLD1 (R6), [V4.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R7
+	VLD1 (R7), [V5.B16]
+	WORD $0x2e215002 // uabal  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e255086 // uabal  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e255087 // uabal2 v7.8h, v4.16b, v5.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, loop32
+
+	VADD V3.H8, V2.H8, V2.H8
+	VADD V7.H8, V6.H8, V6.H8
+	VADD V6.H8, V2.H8, V2.H8
+	WORD $0x6e703844 // uaddlv s4, v2.8h
+	VMOV V4.S[0], R5
+	MOVD R5, SUM(R0)
+	RET
+
 #define DSRC       0
 #define DREF       8
 #define DSRCSTRIDE 16

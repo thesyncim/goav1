@@ -26,10 +26,10 @@ func writeGolomb(w *entropy.Writer, level int) {
 		length++
 	}
 	for range length - 1 {
-		w.WriteLiteral(0, 1)
+		w.WriteBit(0)
 	}
 	for i := length - 1; i >= 0; i-- {
-		w.WriteLiteral(uint32((x>>uint(i))&1), 1)
+		w.WriteBit((x >> uint(i)) & 1)
 	}
 }
 
@@ -81,16 +81,12 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
 
-	// eob = scan index of the last non-zero coefficient plus one; the max
-	// raster scan line feeds the decode-result context the caller marks.
+	// eob = scan index of the last non-zero coefficient plus one.
 	eob := 0
-	maxScanLine := 0
-	for c := range maxEOB {
+	for c := maxEOB - 1; c >= 0; c-- {
 		if pos := int(scan[c]); coeffs[pos] != 0 {
 			eob = c + 1
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
+			break
 		}
 	}
 
@@ -134,10 +130,23 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	// template only reads already-coded (higher-raster) neighbours, so deriving
 	// every context from the full buffer matches the decoder's incremental one.
 	clear(levels[:scratchLen])
+	culLevel := 0
+	dcValue := 0
+	maxScanLine := 0
 	for c := range eob {
 		pos := int(scan[c])
-		lv := min(absInt(int(coeffs[pos])), 127)
-		levels[int(posTable[pos].padded)] = uint8(lv)
+		cv := coeffs[pos]
+		levels[int(posTable[pos].padded)] = coeffAbsClamp127(cv)
+		if cv != 0 {
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			level := absInt(int(cv))
+			culLevel += level
+			if c == 0 {
+				dcValue = int(cv)
+			}
+		}
 	}
 
 	// 3) lower-magnitude level pass, reversed scan order. The 2D class (the
@@ -166,13 +175,13 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			w.WriteCDF(&baseCDFs[ctx], minInt(level, 3))
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		} else {
 			ctx, err := CoeffLowerLevelsContext(levels, req.Size, req.Class, pos)
 			if err != nil {
 				return TXBDecodeResult{}, err
 			}
-			w.WriteCDF(&baseCDFs[ctx], minInt(level, 3))
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			var brCtx int
@@ -198,7 +207,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 				k := minInt(baseRange-idx, BRCDFSize-1)
-				w.WriteCDF(brCDF, k)
+				w.WriteCDF4(brCDF, k)
 				if k < BRCDFSize-1 {
 					break
 				}
@@ -207,27 +216,19 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	}
 
 	// 4) sign + golomb pass, forward scan order, non-zero coefficients only.
-	// The cumulative-level / DC-sign context byte the decoder derives is
-	// accumulated here instead of re-scanning the block afterwards.
-	culLevel := 0
-	dcValue := 0
 	for c := range eob {
 		pos := int(scan[c])
-		v := int(coeffs[pos])
-		if v == 0 {
+		cv := coeffs[pos]
+		if cv == 0 {
 			continue
 		}
+		v := int(cv)
 		level := absInt(v)
-		culLevel += level
-		sign := 0
-		if v < 0 {
-			sign = 1
-		}
+		sign := int(uint16(cv) >> 15)
 		if c == 0 {
-			dcValue = v
 			w.WriteCDF(&cdfs.DCSign[req.Plane][req.DCSignContext], sign)
 		} else {
-			w.WriteLiteral(uint32(sign), 1)
+			w.WriteBit(sign)
 		}
 		if level >= MaxBaseBRRange {
 			writeGolomb(w, level-MaxBaseBRRange)
@@ -246,6 +247,170 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}, nil
+}
+
+// WriteCoefficientsTXB8x8Y2DTrusted is the validation-free 8x8 luma/Class2D
+// specialization of WriteCoefficientsTXB. It assumes coeffs has 64 entries,
+// the default 2D scan is used, txb_skip/dc_sign contexts are zero, and CDF
+// updates are enabled. The levels argument is retained for source compatibility
+// with the generic writer shape; this hot specialization uses stack scratch.
+// If txCDF is non-nil, txSymbol is written after txb_skip and txCDF is restored
+// to its input state, matching transform-type trials that price but do not
+// adapt the real transform CDFs.
+func WriteCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	return writeCoefficientsTXB8x8Y2DTrusted(w, cdfs, coeffs, 0, 0, txCDF, txSymbol, true)
+}
+
+// WriteCoefficientsTXB8x8Y2DContextTrusted is the validation-free 8x8
+// luma/Class2D specialization for real coding with already-derived coefficient
+// contexts. Unlike WriteCoefficientsTXB8x8Y2DTrusted, txCDF is adapted in place.
+func WriteCoefficientsTXB8x8Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	return writeCoefficientsTXB8x8Y2DTrusted(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol, false)
+}
+
+func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, restoreTXCDF bool) TXBDecodeResult {
+	const (
+		maxEOB     = 64
+		scratchLen = 144
+		stride     = 12
+		txCtx      = 1
+		txBR       = 1
+	)
+	scanHot := coeffScanHotTable[TransformSize8x8][transform.Class2D][:maxEOB]
+
+	eob := 0
+	for c := maxEOB - 1; c >= 0; c-- {
+		if coeffs[int(scanHot[c].pos)] != 0 {
+			eob = c + 1
+			break
+		}
+	}
+
+	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	if eob == 0 {
+		return TXBDecodeResult{AllZero: true}
+	}
+	if txCDF != nil {
+		var saved entropy.CDF
+		if restoreTXCDF {
+			saved = *txCDF
+		}
+		w.WriteCDF(txCDF, txSymbol)
+		if restoreTXCDF {
+			*txCDF = saved
+		}
+	}
+
+	token, extra, _ := EOBPositionToken(eob)
+	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
+	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
+		firstBit := (extra >> (offsetBits - 1)) & 1
+		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
+		if offsetBits > 1 {
+			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
+		}
+	}
+
+	var levelBuf [scratchLen]uint8
+	levels := levelBuf[:]
+	culLevel := 0
+	dcValue := 0
+	maxScanLine := 0
+	for c := range eob {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		cv := coeffs[pos]
+		levels[int(p.padded)] = coeffAbsClamp127(cv)
+		if cv != 0 {
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			level := absInt(int(cv))
+			culLevel += level
+			if pos == 0 {
+				dcValue = int(cv)
+			}
+		}
+	}
+
+	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneY]
+	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
+	posTable := coeffPosTable[TransformSize8x8]
+	for c := eob - 1; c >= 0; c-- {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		level := absInt(int(coeffs[pos]))
+		if c == eob-1 {
+			ctx := coeffLowerLevelsCtxEOBFast(maxEOB, c)
+			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY][ctx], minInt(level, 3)-1)
+		} else {
+			ctx := 0
+			if pos != 0 {
+				pad := int(p.padded)
+				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			}
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+		}
+		if level > NumBaseLevels {
+			brCtx := 0
+			if c == eob-1 {
+				brCtx = int(coeffBRContextEOBFast(posTable[pos], transform.Class2D, pos))
+			} else if pos != 0 {
+				pad := int(p.padded)
+				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			} else {
+				pad := int(p.padded)
+				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
+				brCtx = minInt((mag+1)>>1, 6)
+			}
+			brCDF := &brCDFs[brCtx]
+			baseRange := level - 1 - NumBaseLevels
+			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+				k := minInt(baseRange-idx, BRCDFSize-1)
+				w.WriteCDF4(brCDF, k)
+				if k < BRCDFSize-1 {
+					break
+				}
+			}
+		}
+	}
+
+	for c := range eob {
+		pos := int(scanHot[c].pos)
+		cv := coeffs[pos]
+		if cv == 0 {
+			continue
+		}
+		v := int(cv)
+		level := absInt(v)
+		sign := int(uint16(cv) >> 15)
+		if pos == 0 {
+			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][dcSignContext], sign)
+		} else {
+			w.WriteBit(sign)
+		}
+		if level >= MaxBaseBRRange {
+			writeGolomb(w, level-MaxBaseBRRange)
+		}
+	}
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if dcValue < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if dcValue > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+	return TXBDecodeResult{
+		EOB:         uint16(eob),
+		MaxScanLine: uint16(maxScanLine),
+		CulLevel:    uint8(culLevel),
+	}
 }
 
 // WriteCoefficientsTXBWithContext derives the txb_skip and dc_sign contexts from

@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -63,8 +64,8 @@ type VideoEncoder struct {
 	tuGroup       []byte
 	tuScratch     []byte
 	tuScratch2    []byte
-	tileWork      chan int
-	tileDone      chan struct{}
+	tileWork      chan tileWorkRange
+	tileWait      sync.WaitGroup
 	tileStarted   bool
 	tileJobParams struct {
 		src, refRecon SourceFrame420
@@ -109,6 +110,12 @@ type VideoEncoder struct {
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
+}
+
+type tileWorkRange struct {
+	first  int
+	stride int
+	limit  int
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -251,13 +258,13 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 
 // defaultTileColsLog2 picks the inter-frame tile-column split: two columns
 // once a frame is wide enough that per-tile entropy coding pays for the
-// goroutine handoff, four at HD, sixteen at full HD - narrow tiles balance
-// the per-frame join across a modern core count for a fifth of a percent of
-// rate.
+// goroutine handoff, four at HD, and thirty-ish legal columns at full HD.
+// The full-HD split intentionally saturates the persistent worker pool; the
+// tile syntax clamps the requested power-of-two layout to the legal SB grid.
 func defaultTileColsLog2(width int) uint8 {
 	switch {
 	case width >= 1920:
-		return 3
+		return 5
 	case width >= 1280:
 		return 2
 	case width >= 512:
@@ -579,20 +586,21 @@ func (e *VideoEncoder) startTileWorkers() {
 	if e.tileStarted {
 		return
 	}
-	e.tileWork = make(chan int, 16)
-	e.tileDone = make(chan struct{}, 16)
+	e.tileWork = make(chan tileWorkRange, 16)
 	for range 15 {
 		go func() {
-			for t := range e.tileWork {
+			for work := range e.tileWork {
 				tj := &e.tileJobParams
-				c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
-				data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
-				if err != nil {
-					e.tileErrs[t] = err
-				} else {
-					e.payloads[t].Data = data
+				for t := work.first; t < work.limit; t += work.stride {
+					c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
+					data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
+					if err != nil {
+						e.tileErrs[t] = err
+					} else {
+						e.payloads[t].Data = data
+					}
 				}
-				e.tileDone <- struct{}{}
+				e.tileWait.Done()
 			}
 		}()
 	}
@@ -856,14 +864,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.referenceMode = referenceMode
 		tj.tile, tj.miCols = header.Tile, miCols
 		e.startTileWorkers()
-		for t := 1; t < nTiles; t++ {
-			e.tileWork <- t
+		jobs := nTiles - 1
+		if jobs > 15 {
+			jobs = 15
+		}
+		e.tileWait.Add(jobs)
+		for j := 0; j < jobs; j++ {
+			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
 		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, c0, c1)
-		for t := 1; t < nTiles; t++ {
-			<-e.tileDone
-		}
+		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
 		}

@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,28 @@ func TestParseMetricList(t *testing.T) {
 	}
 	if _, err := parseMetricList("butteraugli"); err == nil {
 		t.Fatal("unknown metric accepted")
+	}
+}
+
+func TestCanonicalSVTASMName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "neon", want: "neon"},
+		{in: "dotprod", want: "neon_dotprod"},
+		{in: "i8mm", want: "neon_i8mm"},
+		{in: "SVE2", want: "sve2"},
+		{in: "max", want: "max"},
+	}
+	for _, tc := range tests {
+		got, ok := canonicalSVTASMName(tc.in)
+		if !ok || got != tc.want {
+			t.Fatalf("canonicalSVTASMName(%q)=%q,%v want %q,true", tc.in, got, ok, tc.want)
+		}
+	}
+	if got, ok := canonicalSVTASMName("avx2"); ok {
+		t.Fatalf("canonicalSVTASMName(avx2)=%q,true want invalid", got)
 	}
 }
 
@@ -594,6 +617,42 @@ func TestDiffDecisionStats(t *testing.T) {
 	}
 }
 
+func TestWriteBenchRowIncludesCPUBudgetColumns(t *testing.T) {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	row := benchRow{
+		clip:      "clip",
+		width:     64,
+		height:    64,
+		frames:    30,
+		fps:       30,
+		encoder:   "svt-av1",
+		targetBPS: 100000,
+		actualBPS: 96000,
+		encodeFPS: "120.00",
+		duration:  250 * time.Millisecond,
+		cpuUser:   400 * time.Millisecond,
+		cpuSystem: 100 * time.Millisecond,
+		cpuOK:     true,
+		bytes:     400,
+		metrics:   metrics{psnr: "40.0", ssim: "0.99", xpsnr: "NA", vmaf: "NA"},
+		status:    "ok",
+	}
+	if err := writeBenchRow(writer, row); err != nil {
+		t.Fatal(err)
+	}
+	writer.Flush()
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := records[0]
+	if got[9] != "0.250" || got[10] != "0.400" || got[11] != "0.100" ||
+		got[12] != "0.500" || got[13] != "2.00" || got[14] != "400" {
+		t.Fatalf("cpu columns=%v", got)
+	}
+}
+
 func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg := benchConfig{
 		width:            64,
@@ -608,6 +667,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		requireCorpus:    true,
 		minClips:         6,
 		anchorEncoder:    "goav1",
+		goMaxProcs:       4,
+		svtLP:            5,
 	}
 	got := metadataConfigFor(cfg)
 	cfg.encoders[0] = "mutated"
@@ -616,8 +677,20 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg.requiredEncoders[0] = "aomenc"
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
-		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 {
+		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
+		got.GoMaxProcs != 4 || got.SVTLP != 5 {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
+	}
+}
+
+func TestFairnessNotesDocumentSVTLP(t *testing.T) {
+	notes := fairnessNotes(benchConfig{svtLP: 0})
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "not a target processor or thread count") ||
+		!strings.Contains(joined, "observed_parallelism") ||
+		!strings.Contains(joined, "sweep --lp 0..6") ||
+		!strings.Contains(joined, "--lp 0") {
+		t.Fatalf("fairness notes=%q", joined)
 	}
 }
 

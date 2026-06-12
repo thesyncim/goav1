@@ -97,6 +97,31 @@ func TestWriterRoundTripLiterals(t *testing.T) {
 	}
 }
 
+func TestWriteBitMatchesBoolQ15(t *testing.T) {
+	rng := rand.New(rand.NewSource(43))
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 5000 {
+		bit := rng.Intn(2)
+		generic.WriteBoolQ15(bit, 1<<14)
+		specialized.WriteBit(bit)
+		if generic.Tell() != specialized.Tell() {
+			t.Fatalf("tell diverged at %d: generic=%d specialized=%d", i, generic.Tell(), specialized.Tell())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
+	}
+}
+
 func TestWriterRoundTripSymbols(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
 	icdfs := make(map[int][]uint16)
@@ -230,6 +255,37 @@ func TestWriterAdaptiveRoundTrip(t *testing.T) {
 		if got != recs[i].sym {
 			t.Fatalf("adaptive symbol[%d] = %d, want %d (nsyms %d)", i, got, recs[i].sym, recs[i].nsyms)
 		}
+	}
+}
+
+func TestWriteCDF4MatchesWriteCDF(t *testing.T) {
+	rng := rand.New(rand.NewSource(41))
+	var genericCDF, specializedCDF CDF
+	if err := genericCDF.Init([]uint16{4096, 15000, 28000}); err != nil {
+		t.Fatal(err)
+	}
+	specializedCDF = genericCDF
+
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 4000 {
+		sym := rng.Intn(4)
+		generic.WriteCDF(&genericCDF, sym)
+		specialized.WriteCDF4(&specializedCDF, sym)
+		if genericCDF != specializedCDF {
+			t.Fatalf("cdf diverged after symbol %d: generic=%v specialized=%v", i, genericCDF.Values(), specializedCDF.Values())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
 	}
 }
 
