@@ -94,7 +94,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - The 8x8 inter TX-type trial path uses `entropy.BitCounter` through
   `tile.CountCoefficientsTXB8x8Y2DTrusted`, avoiding the generic writer carrier
   while preserving exact `Tell()` and CDF evolution. The tile microbench's
-  count-only lane is `531-550 ns/op`, zero allocations on the local M4 Max.
+  count-only lane is now roughly `507-536 ns/op`, zero allocations on the local
+  M4 Max; the sign/golomb pass avoids exact abs-level work unless the clamped
+  level proves a Golomb tail is possible.
 - `motion.LumaSubpelProber` now indexes the regular 8-tap subpel tables
   directly for its 8-bit luma probes instead of re-entering the generic
   multi-filter selector per probe. `BenchmarkLumaSubpelProberPredict` improved

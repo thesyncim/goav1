@@ -389,20 +389,20 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 	}
 
 	for c := range eob {
-		pos := int(scanHot[c].pos)
+		p := &scanHot[c]
+		pos := int(p.pos)
 		cv := coeffs[pos]
 		if cv == 0 {
 			continue
 		}
-		v := int(cv)
-		level := absInt(v)
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
 			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if level >= MaxBaseBRRange {
+		if levels[int(p.padded)] >= MaxBaseBRRange {
+			level := absInt(int(cv))
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
 	}
@@ -541,20 +541,20 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 	}
 
 	for c := range eob {
-		pos := int(scanHot[c].pos)
+		p := &scanHot[c]
+		pos := int(p.pos)
 		cv := coeffs[pos]
 		if cv == 0 {
 			continue
 		}
-		v := int(cv)
-		level := absInt(v)
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
 			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if level >= MaxBaseBRRange {
+		if levels[int(p.padded)] >= MaxBaseBRRange {
+			level := absInt(int(cv))
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
 	}
