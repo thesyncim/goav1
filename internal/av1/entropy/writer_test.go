@@ -1,8 +1,10 @@
 package entropy
 
 import (
+	"errors"
 	"math/rand"
 	"testing"
+	"unsafe"
 )
 
 // These tests are the oracle round-trip gate for the range Writer: every stream
@@ -41,6 +43,26 @@ func buildICDF(t *testing.T, weights []int) []uint16 {
 		t.Fatalf("ValidateCDF: %v", err)
 	}
 	return icdf
+}
+
+func TestWriterHotStructSize(t *testing.T) {
+	if size := unsafe.Sizeof(Writer{}); size > 64 {
+		t.Fatalf("Writer size=%d max=64", size)
+	}
+}
+
+func TestWriterNilDestinationFinishes(t *testing.T) {
+	w := NewWriter(nil)
+	for i := range 32 {
+		w.WriteBit(i & 1)
+	}
+	buf, err := w.Finish()
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if len(buf) == 0 {
+		t.Fatal("nil destination produced no bytes")
+	}
 }
 
 func TestWriterRoundTripBools(t *testing.T) {
@@ -286,6 +308,52 @@ func TestWriteCDF4MatchesWriteCDF(t *testing.T) {
 	}
 	if string(genericBytes) != string(specializedBytes) {
 		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
+	}
+}
+
+func TestCountingWriterTellMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(83))
+	icdf := buildICDF(t, []int{3, 1, 4, 1})
+	var normalCDF, countCDF CDF
+	if err := normalCDF.Init([]uint16{4096, 15000, 28000}); err != nil {
+		t.Fatal(err)
+	}
+	countCDF = normalCDF
+
+	normal := NewWriter(make([]byte, 0, 1<<16))
+	count := NewCountingWriter()
+	for i := range 5000 {
+		switch rng.Intn(4) {
+		case 0:
+			bit := rng.Intn(2)
+			p := uint32(1 + rng.Intn(CDFProbTop-1))
+			normal.WriteBoolQ15(bit, p)
+			count.WriteBoolQ15(bit, p)
+		case 1:
+			bit := rng.Intn(2)
+			normal.WriteBit(bit)
+			count.WriteBit(bit)
+		case 2:
+			sym := rng.Intn(4)
+			normal.WriteCDF4(&normalCDF, sym)
+			count.WriteCDF4(&countCDF, sym)
+			if normalCDF != countCDF {
+				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v", i, normalCDF.Values(), countCDF.Values())
+			}
+		default:
+			sym := rng.Intn(4)
+			normal.WriteSymbol(sym, icdf, 4)
+			count.WriteSymbol(sym, icdf, 4)
+		}
+		if normal.Tell() != count.Tell() {
+			t.Fatalf("tell diverged after op %d: normal=%d count=%d", i, normal.Tell(), count.Tell())
+		}
+	}
+	if _, err := count.Finish(); !errors.Is(err, ErrCountOnlyFinish) {
+		t.Fatalf("count-only finish err = %v, want %v", err, ErrCountOnlyFinish)
+	}
+	if _, err := normal.Finish(); err != nil {
+		t.Fatalf("normal finish: %v", err)
 	}
 }
 

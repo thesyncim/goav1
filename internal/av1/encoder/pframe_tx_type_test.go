@@ -184,7 +184,8 @@ func trialTXBBitsInterReference(st *lossyEncodeState, qcoeff []int16, n int, siz
 	if n == 8 {
 		scan = st.scan8
 	}
-	tw := entropy.NewWriter(st.trialBuf[:0])
+	buf := make([]byte, 0, 1<<14)
+	tw := entropy.NewWriter(buf)
 	txCDFs := st.txCDFs
 	txReq := tile.InterTransformTypeRequest{
 		Size:        size,
@@ -225,7 +226,6 @@ func newTXTypeTestState(t *testing.T, qIndex uint8) *lossyEncodeState {
 	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
 		t.Fatal(err)
 	}
-	st.trialBuf = make([]byte, 1<<14)
 	st.trialReady = true
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))

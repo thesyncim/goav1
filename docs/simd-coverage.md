@@ -42,10 +42,10 @@ Same run shape with SVT pinned to baseline NEON via `-svt-asm neon`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 105.50 | 1.137 | 3.989 | 3.51x | 30.1 |
-| SVT-AV1 `--asm neon` | 174.96 | 0.686 | 1.640 | 2.39x | 73.2 |
+| goav1 | 103.69 | 1.157 | 4.041 | 3.49x | 29.7 |
+| SVT-AV1 `--asm neon` | 170.55 | 0.704 | 1.654 | 2.35x | 72.6 |
 
-Pinning SVT to baseline NEON still leaves SVT about 2.43x more CPU-efficient.
+Pinning SVT to baseline NEON still leaves SVT about 2.44x more CPU-efficient.
 The remaining gap is therefore not only DOTPROD/I8MM.
 
 ## Coverage Ledger
@@ -69,8 +69,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 
 - CDF state is fixed `uint16` storage, not oversized heap maps or slices in the
   hot writer path.
-- Hot struct sizes are guarded by `TestHotStructSizes`, which catches accidental
-  widening of tile/request/context carriers.
+- Hot struct sizes are guarded by `TestHotStructSizes` and
+  `TestWriterHotStructSize`, which catch accidental widening of
+  tile/request/context carriers and the entropy writer.
 - arm64 SAD hot call sites use build-tagged direct wrappers instead of calling
   through package-level function variables. The wrappers inline and compiler
   escape analysis reports their source/reference slices as non-escaping; the
@@ -85,13 +86,18 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
   stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero
   allocations.
+- Trial TXB pricing uses `entropy.NewCountingWriter`, preserving exact
+  `Tell()` against the byte writer while skipping unused entropy byte
+  materialization and removing the 16 KiB `trialBuf` scratch from lossy encoder
+  state. `TestCountingWriterTellMatchesWriter` covers mixed bool/bit/CDF/symbol
+  streams.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
   allocations.
 - Fresh P-frame benchmark: `BenchmarkVideoEncoderPFrame1080p-4` is
-  `81.18 ms/op`, about `5 KB/op`, `1 alloc/op`. Allocation is not the dominant
-  CPU gap; the CPU profile is.
+  `76.5-76.7 ms/op`, zero allocs/op in the cleanest local repeat. Allocation is
+  not the dominant CPU gap; the CPU profile is.
 
 ## Next Implementation Order
 

@@ -251,7 +251,6 @@ type lossyEncodeState struct {
 	scan8x4, scan4x8             []int16
 	levels                       []uint8
 	trialCDFs                    tile.CoeffCDFs
-	trialBuf                     []byte
 	trialReady                   bool
 	trial8x8CDFs                 coeffTrial8x8Snapshot
 	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
@@ -384,9 +383,6 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	// multiplier shape.
 	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
 		return nil, err
-	}
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
 	}
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
@@ -993,7 +989,7 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 	case 32:
 		size, scan = tile.TransformSize32x32, st.scan32
 	}
-	tw := entropy.NewWriter(st.trialBuf[:0])
+	tw := entropy.NewCountingWriter()
 	base := tw.Tell()
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
 		Size: size, Plane: plane, Class: transform.Class2D,
@@ -1005,7 +1001,7 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 }
 
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
-	tw := entropy.NewWriter(st.trialBuf[:0])
+	tw := entropy.NewCountingWriter()
 	if n == 8 && size == tile.TransformSize8x8 {
 		txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
 		if !ok {

@@ -314,12 +314,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	}
 
 	// The mode and partition searches trial-code against throwaway
-	// contexts; they re-arm lazily on first use each frame. The buffer
-	// exists from the first tile so no frame mid-stream pays it.
+	// contexts; they re-arm CDFs lazily on first use each frame.
 	st.trialReady = false
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
-	}
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
 	st.keyVisW, st.keyVisH = src.Width, src.Height
@@ -1327,9 +1323,6 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
 			return err
 		}
-		if cap(st.trialBuf) == 0 {
-			st.trialBuf = make([]byte, 1<<14)
-		}
 		st.trialReady = true
 	}
 	mode, angleDelta := func() (tile.IntraMode, int) {
@@ -2007,9 +2000,6 @@ func (st *lossyEncodeState) armTrial() bool {
 	}
 	if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
 		return false
-	}
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
 	}
 	st.trialReady = true
 	return true

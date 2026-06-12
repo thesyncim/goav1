@@ -37,6 +37,11 @@ import (
 // offs > 0 in propagate_carry_bwd).
 var ErrCarryUnderflow = errors.New("entropy: range coder carry underflow")
 
+// ErrCountOnlyFinish signals Finish on a count-only writer. Count-only writers
+// maintain exact range-coder state for Tell-based pricing, but intentionally do
+// not retain entropy bytes.
+var ErrCountOnlyFinish = errors.New("entropy: count-only writer cannot finish")
+
 // Writer is the AV1 range/entropy encoder. Callers own the output buffer
 // (EncodeInto style): NewWriter takes a destination slice that grows only if it
 // is too small, and Finish returns the sub-slice holding the finalized bytes.
@@ -57,12 +62,31 @@ type Writer struct {
 	err  error  // od_ec_enc.error (sticky)
 }
 
+var emptyWriterBuf = make([]byte, 0)
+
+func writerBacking(dst []byte) []byte {
+	if cap(dst) == 0 {
+		return emptyWriterBuf
+	}
+	return dst[:cap(dst)]
+}
+
 // NewWriter initializes the encoder writing into dst[:0] (its full capacity is
 // used as the backing buffer; it grows in place if exhausted). This is
 // od_ec_enc_reset: low=0, rng=0x8000, cnt=-9.
 func NewWriter(dst []byte) Writer {
 	return Writer{
-		buf: dst[:cap(dst)],
+		buf: writerBacking(dst),
+		rng: 0x8000,
+		cnt: -9,
+	}
+}
+
+// NewCountingWriter initializes a range encoder that preserves low/rng/cnt/offs
+// exactly enough for Tell-based rate pricing, but discards output bytes. It is
+// only for encoder trials that never call Finish.
+func NewCountingWriter() Writer {
+	return Writer{
 		rng: 0x8000,
 		cnt: -9,
 	}
@@ -71,7 +95,7 @@ func NewWriter(dst []byte) Writer {
 // Reset rearms the writer over dst, the in-place form of NewWriter for
 // callers that keep one Writer alive across streams.
 func (w *Writer) Reset(dst []byte) {
-	w.buf = dst[:cap(dst)]
+	w.buf = writerBacking(dst)
 	w.offs = 0
 	w.low = 0
 	w.rng = 0x8000
@@ -100,16 +124,22 @@ func (w *Writer) normalize(low uint64, rng uint32) {
 	d := int32(16 - bits.Len32(rng)) // 16 - OD_ILOG_NZ(rng)
 	s := c + d
 	if s >= 40 { // 56 - 16 (see entenc.c rationale)
-		w.ensure(w.offs + 8)
 		numBytesReady := uint32((s >> 3) + 1)
 		c += 24 - int32(numBytesReady<<3)
-		output := low >> uint32(c)
-		low &= (uint64(1) << uint32(c)) - 1
-		mask := uint64(1) << (numBytesReady << 3)
-		carry := output & mask
-		mask--
-		output &= mask
-		w.writeOut(output, carry, numBytesReady)
+		keepMask := (uint64(1) << uint32(c)) - 1
+		if w.buf == nil {
+			low &= keepMask
+			w.offs += int(numBytesReady)
+		} else {
+			w.ensure(w.offs + 8)
+			output := low >> uint32(c)
+			low &= keepMask
+			mask := uint64(1) << (numBytesReady << 3)
+			carry := output & mask
+			mask--
+			output &= mask
+			w.writeOut(output, carry, numBytesReady)
+		}
 		s = c + d - 24
 	}
 	w.low = low << uint32(d)
@@ -360,6 +390,9 @@ func (w *Writer) WriteLiteral(value uint32, n int) {
 // correctly regardless of trailing bytes and returns the finalized bytes. Port of
 // od_ec_enc_done. The writer must not be used after Finish.
 func (w *Writer) Finish() ([]byte, error) {
+	if w.buf == nil {
+		return nil, ErrCountOnlyFinish
+	}
 	if w.err != nil {
 		return nil, w.err
 	}
