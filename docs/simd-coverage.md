@@ -55,7 +55,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 currently treats NEON as the available tier; no dotprod/i8mm dispatch tier | Add feature detection before claiming max-tier parity. Pin SVT with `-svt-asm neon` until then. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has a trusted 8x8 path, stack level buffer, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
-| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, and emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32` have arm64 NEON coverage through direct or composed kernels; compound-average and batched-candidate SAD remain scalar | High priority. Add measured compound-average and batched-candidate kernels before more scheduler tuning; add DOTPROD only after runtime feature detection and profile proof. |
+| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, and the 8x8 compound-average precheck SAD have arm64 NEON coverage through direct or composed kernels; batched-candidate SAD remains scalar | High priority. Add measured batched-candidate kernels before more scheduler tuning; add DOTPROD only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
@@ -120,6 +120,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
   allocations.
+- The compound LAST/GOLDEN precheck now uses an arm64 NEON 8x8
+  rounded-average SAD kernel (`urhadd` + widening absolute difference) instead
+  of the scalar per-pixel average loop. `BenchmarkSAD8x8CompoundAvgBlock` is
+  `6.36-6.41 ns/op` versus `51.70-52.58 ns/op` for the scalar reference, with
+  zero allocations; randomized tests compare the dispatch kernel against the
+  pure-Go reference across independent strides and offsets.
 - Fresh P-frame benchmark: `BenchmarkVideoEncoderPFrame1080p-4` is
   `77.2-79.1 ms/op`, zero allocs/op in the cleanest local repeat. Allocation is
   not the dominant CPU gap; the CPU profile is.
@@ -132,7 +138,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
    eob/level-buffer/stat extraction for the 8x8 luma path. Keep it only if both
    coefficient microbenchmarks and the fair row improve.
 3. Add encoder search metric kernels with direct profile mapping:
-   compound-average SAD and batched candidates.
+   batched candidates.
 4. Add forward ADST8/tx-type trial SIMD before broad transform-surface work.
 5. Add arm64 feature detection for DOTPROD/I8MM, then decide whether convolve,
    SAD, or CDEF variants make sense relative to SVT `max` rows.

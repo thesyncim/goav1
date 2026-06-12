@@ -1493,21 +1493,10 @@ func compoundGoldenLikely(st *lossyEncodeState, src, ref SourceFrame420, golden 
 }
 
 func sad8x8CompoundAvg(src, ref0, ref1 []byte, srcStride, stride0, stride1, px, py, dx0, dy0, dx1, dy1 int) int {
-	total := 0
-	for r := range 8 {
-		srcOff := (py+r)*srcStride + px
-		ref0Off := (py+dy0+r)*stride0 + px + dx0
-		ref1Off := (py+dy1+r)*stride1 + px + dx1
-		for c := range 8 {
-			pred := (int(ref0[ref0Off+c]) + int(ref1[ref1Off+c]) + 1) >> 1
-			d := int(src[srcOff+c]) - pred
-			if d < 0 {
-				d = -d
-			}
-			total += d
-		}
-	}
-	return total
+	srcOff := py*srcStride + px
+	ref0Off := (py+dy0)*stride0 + px + dx0
+	ref1Off := (py+dy1)*stride1 + px + dx1
+	return sad8x8CompoundAvgBlock(src[srcOff:], srcStride, ref0[ref0Off:], stride0, ref1[ref1Off:], stride1)
 }
 
 func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {

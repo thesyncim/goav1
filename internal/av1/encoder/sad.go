@@ -20,6 +20,10 @@ var sad32x32Impl = sad32x32PureGo
 // prediction scratch).
 var sad8x8DualImpl = sad8x8DualPureGo
 
+// sad8x8CompoundAvgBlockImpl computes SAD(src, round((ref0+ref1)/2)) for an
+// 8x8 block. It is the compound-reference precheck counterpart to sad8x8Dual.
+var sad8x8CompoundAvgBlockImpl = sad8x8CompoundAvgBlockPureGo
+
 // sad8x8PureGo is the portable reference with a row-granular early exit.
 func sad8x8PureGo(src, ref []byte, stride int, limit int) int {
 	total := 0
@@ -79,6 +83,24 @@ func sad8x8DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int 
 		rrow := r * refStride
 		for c := range 8 {
 			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sad8x8CompoundAvgBlockPureGo(src []byte, srcStride int, ref0 []byte, ref0Stride int, ref1 []byte, ref1Stride int) int {
+	total := 0
+	for r := range 8 {
+		srow := r * srcStride
+		r0row := r * ref0Stride
+		r1row := r * ref1Stride
+		for c := range 8 {
+			pred := (int(ref0[r0row+c]) + int(ref1[r1row+c]) + 1) >> 1
+			d := int(src[srow+c]) - pred
 			if d < 0 {
 				d = -d
 			}

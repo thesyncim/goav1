@@ -96,6 +96,35 @@ func TestSAD8x8DualImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestSAD8x8CompoundAvgBlockImplMatchesPureGo proves the compound average SAD
+// kernel is bit-exact with the portable rounded-average reference.
+func TestSAD8x8CompoundAvgBlockImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(48))
+	const srcStride, ref0Stride, ref1Stride = 83, 31, 47
+	src := make([]byte, srcStride*64)
+	ref0 := make([]byte, ref0Stride*64)
+	ref1 := make([]byte, ref1Stride*64)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref0 {
+		ref0[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref1 {
+		ref1[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		so := rng.Intn(srcStride*48) + rng.Intn(srcStride-8)
+		r0o := rng.Intn(ref0Stride*48) + rng.Intn(ref0Stride-8)
+		r1o := rng.Intn(ref1Stride*48) + rng.Intn(ref1Stride-8)
+		want := sad8x8CompoundAvgBlockPureGo(src[so:], srcStride, ref0[r0o:], ref0Stride, ref1[r1o:], ref1Stride)
+		got := sad8x8CompoundAvgBlockImpl(src[so:], srcStride, ref0[r0o:], ref0Stride, ref1[r1o:], ref1Stride)
+		if got != want {
+			t.Fatalf("so %d r0o %d r1o %d: impl %d want %d", so, r0o, r1o, got, want)
+		}
+	}
+}
+
 func TestSADRectBlockMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(49))
 	const stride = 97
@@ -428,5 +457,35 @@ func BenchmarkSADRect32x16ScalarReference(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sadRectBlockReference(src, ref, 0, 0, 64, 32, 16)
+	}
+}
+
+func BenchmarkSAD8x8CompoundAvgBlock(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref0 := make([]byte, 64*64)
+	ref1 := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref0[i] = uint8(i * 13)
+		ref1[i] = uint8(i*17 + 3)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad8x8CompoundAvgBlock(src, 64, ref0, 64, ref1, 64)
+	}
+}
+
+func BenchmarkSAD8x8CompoundAvgBlockScalarReference(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref0 := make([]byte, 64*64)
+	ref1 := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref0[i] = uint8(i * 13)
+		ref1[i] = uint8(i*17 + 3)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad8x8CompoundAvgBlockPureGo(src, 64, ref0, 64, ref1, 64)
 	}
 }

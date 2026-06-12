@@ -185,3 +185,56 @@ dloop:
 	VMOV V3.S[0], R5
 	MOVD R5, DSUM(R0)
 	RET
+
+#define CSRC        0
+#define CREF0       8
+#define CREF1       16
+#define CSRCSTRIDE  24
+#define CREF0STRIDE 32
+#define CREF1STRIDE 40
+#define CSUM        48
+
+// NEON 8x8 SAD against the rounded average of two reference blocks:
+// pred = urhadd(ref0, ref1), sum(abs(src - pred)).
+//
+//   urhadd v3.8b, v1.8b, v2.8b  -> 0x2e221423
+//   uabdl  v4.8h, v0.8b, v3.8b  -> 0x2e237004
+//   uabal  v4.8h, v0.8b, v3.8b  -> 0x2e235004
+//   uaddlv s5,    v4.8h         -> 0x6e703885
+
+// func sad8x8CompoundAvgNEONAsm(ctx *sad8x8CompoundAvgNEONCtx)
+TEXT ·sad8x8CompoundAvgNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD CSRC(R0), R1
+	MOVD CREF0(R0), R2
+	MOVD CREF1(R0), R7
+	MOVD CSRCSTRIDE(R0), R3
+	MOVD CREF0STRIDE(R0), R6
+	MOVD CREF1STRIDE(R0), R8
+
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B8]
+	VLD1 (R7), [V2.B8]
+	WORD $0x2e221423 // urhadd v3.8b, v1.8b, v2.8b
+	WORD $0x2e237004 // uabdl  v4.8h, v0.8b, v3.8b
+	ADD  R3, R1
+	ADD  R6, R2
+	ADD  R8, R7
+
+	MOVD $7, R4
+cloop:
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B8]
+	VLD1 (R7), [V2.B8]
+	WORD $0x2e221423 // urhadd v3.8b, v1.8b, v2.8b
+	WORD $0x2e235004 // uabal  v4.8h, v0.8b, v3.8b
+	ADD  R3, R1
+	ADD  R6, R2
+	ADD  R8, R7
+	SUB  $1, R4
+	CBNZ R4, cloop
+
+	WORD $0x6e703885 // uaddlv s5, v4.8h
+	VMOV V5.S[0], R5
+	MOVD R5, CSUM(R0)
+	RET

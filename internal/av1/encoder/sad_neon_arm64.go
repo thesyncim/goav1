@@ -83,9 +83,38 @@ func sad8x8DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
 	return int(ctx.Sum)
 }
 
+type sad8x8CompoundAvgNEONCtx struct {
+	Src        unsafe.Pointer
+	Ref0       unsafe.Pointer
+	Ref1       unsafe.Pointer
+	SrcStride  int64
+	Ref0Stride int64
+	Ref1Stride int64
+	Sum        int64
+}
+
+//go:noescape
+func sad8x8CompoundAvgNEONAsm(ctx *sad8x8CompoundAvgNEONCtx)
+
+// sad8x8CompoundAvgBlockNEON computes SAD(src, urhadd(ref0, ref1)) over one
+// 8x8 block with independent source/reference strides.
+func sad8x8CompoundAvgBlockNEON(src []byte, srcStride int, ref0 []byte, ref0Stride int, ref1 []byte, ref1Stride int) int {
+	ctx := sad8x8CompoundAvgNEONCtx{
+		Src:        unsafe.Pointer(&src[0]),
+		Ref0:       unsafe.Pointer(&ref0[0]),
+		Ref1:       unsafe.Pointer(&ref1[0]),
+		SrcStride:  int64(srcStride),
+		Ref0Stride: int64(ref0Stride),
+		Ref1Stride: int64(ref1Stride),
+	}
+	sad8x8CompoundAvgNEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
 func init() {
 	sad8x8Impl = sad8x8NEON
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON
 	sad8x8DualImpl = sad8x8DualNEON
+	sad8x8CompoundAvgBlockImpl = sad8x8CompoundAvgBlockNEON
 }
