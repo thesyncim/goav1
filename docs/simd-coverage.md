@@ -87,6 +87,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - The trusted 8x8 coefficient writer stack-allocates its 144-byte level buffer.
   Larger scratch remains caller-owned or state-owned; forced reuse changes have
   already regressed and should not be repeated without benchmark proof.
+- The 8x8 trusted coefficient count/write paths now use fixed stack arrays for
+  trusted 64-coefficient input access and a 256-byte level buffer indexed by
+  `uint8` padded offsets. Escape analysis still reports the hot inputs and
+  scratch as non-escaping, and the compiler now elides the level-buffer bounds
+  checks in the fill, lower-level context, BR context, and sign/golomb passes.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.
@@ -149,8 +154,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 3. Add encoder search metric kernels with direct profile mapping:
    batched candidates.
 4. Add forward ADST8/tx-type trial SIMD before broad transform-surface work.
-5. Add arm64 feature detection for DOTPROD/I8MM, then decide whether convolve,
-   SAD, or CDEF variants make sense relative to SVT `max` rows.
+5. Use the arm64 DOTPROD/I8MM feature metadata already detected by goav1 to
+   decide whether convolve, SAD, or CDEF variants make sense relative to SVT
+   `max` rows.
 
 The rule for adding assembly is the same everywhere: pure-Go/reference parity
 test first, zero allocations, focused benchmark, then fair `qualitybench` row.
