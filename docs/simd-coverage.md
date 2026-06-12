@@ -95,6 +95,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `tile.CountCoefficientsTXB8x8Y2DTrusted`, avoiding the generic writer carrier
   while preserving exact `Tell()` and CDF evolution. The tile microbench's
   count-only lane is `531-550 ns/op`, zero allocations on the local M4 Max.
+- `motion.LumaSubpelProber` now indexes the regular 8-tap subpel tables
+  directly for its 8-bit luma probes instead of re-entering the generic
+  multi-filter selector per probe. `BenchmarkLumaSubpelProberPredict` improved
+  in same-session A/B from roughly `64-77 ns/op` to `44-56 ns/op` for 8x8 and
+  from roughly `161-189 ns/op` to `116-118 ns/op` for 16x16, with zero
+  allocations.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero

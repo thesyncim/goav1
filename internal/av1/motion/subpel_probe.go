@@ -49,26 +49,14 @@ func (p *LumaSubpelProber) Predict(dst []byte, delta Vector) bool {
 	dstPlane := frame.Plane{Pix: dst, Stride: p.n, Width: p.n, Height: p.n}
 	switch {
 	case subX != 0 && subY != 0:
-		xKernel, err := interpKernel(InterpEightTapRegular, p.n, subX)
-		if err != nil {
-			return false
-		}
-		yKernel, err := interpKernel(InterpEightTapRegular, p.n, subY)
-		if err != nil {
-			return false
-		}
+		xKernel := regularSubpelKernel(p.n, subX)
+		yKernel := regularSubpelKernel(p.n, subY)
 		convolve2D8WithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, xKernel, yKernel, &p.scratch)
 	case subX != 0:
-		xKernel, err := interpKernel(InterpEightTapRegular, p.n, subX)
-		if err != nil {
-			return false
-		}
+		xKernel := regularSubpelKernel(p.n, subX)
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, xKernel)
 	case subY != 0:
-		yKernel, err := interpKernel(InterpEightTapRegular, p.n, subY)
-		if err != nil {
-			return false
-		}
+		yKernel := regularSubpelKernel(p.n, subY)
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, yKernel)
 	default:
 		for r := range p.n {
@@ -77,4 +65,11 @@ func (p *LumaSubpelProber) Predict(dst []byte, delta Vector) bool {
 		}
 	}
 	return true
+}
+
+func regularSubpelKernel(blockSize int, subpelQ4 int) [filterTaps]int16 {
+	if blockSize <= 4 {
+		return subpelFilters4[subpelQ4]
+	}
+	return subpelFilters8[subpelQ4]
 }
