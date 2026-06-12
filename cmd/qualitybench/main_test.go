@@ -13,6 +13,7 @@ import (
 	"time"
 
 	goav1 "github.com/thesyncim/goav1"
+	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 func TestParsePositiveList(t *testing.T) {
@@ -689,8 +690,23 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
+		!strings.Contains(joined, "simd_tier") ||
+		!strings.Contains(joined, "svt_asm") ||
 		!strings.Contains(joined, "--lp 0") {
 		t.Fatalf("fairness notes=%q", joined)
+	}
+}
+
+func TestSIMDMetadataFor(t *testing.T) {
+	got := simdFeaturesFor(cpufeatures.Features{SSE2: true, SSE41: true, AVX2: true})
+	if strings.Join(got, ",") != "sse2,sse4_1,avx2" {
+		t.Fatalf("x86 simd features=%v", got)
+	}
+	if tier := simdTierFor(cpufeatures.Features{NEON: true, DOTPROD: true, I8MM: true}); tier != "neon_i8mm" {
+		t.Fatalf("arm simd tier=%q", tier)
+	}
+	if tier := simdTierFor(cpufeatures.Features{}); tier != "purego" {
+		t.Fatalf("purego tier=%q", tier)
 	}
 }
 
@@ -805,6 +821,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.GeneratedAtUTC == "" || doc.Go.Version == "" || doc.Config.Width != 64 {
 		t.Fatalf("metadata header=%+v", doc)
+	}
+	if doc.Go.SIMDTier == "" {
+		t.Fatalf("missing simd metadata: %+v", doc.Go)
 	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)

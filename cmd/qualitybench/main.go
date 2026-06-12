@@ -26,6 +26,7 @@ import (
 	"time"
 
 	goav1 "github.com/thesyncim/goav1"
+	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 const (
@@ -181,9 +182,11 @@ type qualitybenchMetadata struct {
 }
 
 type runtimeMetadata struct {
-	Version string `json:"version"`
-	GOOS    string `json:"goos"`
-	GOARCH  string `json:"goarch"`
+	Version      string   `json:"version"`
+	GOOS         string   `json:"goos"`
+	GOARCH       string   `json:"goarch"`
+	SIMDTier     string   `json:"simd_tier"`
+	SIMDFeatures []string `json:"simd_features,omitempty"`
 }
 
 type gitMetadata struct {
@@ -1329,9 +1332,11 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpe
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
-			Version: runtime.Version(),
-			GOOS:    runtime.GOOS,
-			GOARCH:  runtime.GOARCH,
+			Version:      runtime.Version(),
+			GOOS:         runtime.GOOS,
+			GOARCH:       runtime.GOARCH,
+			SIMDTier:     detectedSIMDTier(),
+			SIMDFeatures: detectedSIMDFeatures(),
 		},
 		Git:           currentGitMetadata(),
 		Config:        metadataConfigFor(cfg),
@@ -1441,12 +1446,83 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 	}
 }
 
+func detectedSIMDTier() string {
+	return simdTierFor(cpufeatures.Detected)
+}
+
+func detectedSIMDFeatures() []string {
+	return simdFeaturesFor(cpufeatures.Detected)
+}
+
+func simdTierFor(f cpufeatures.Features) string {
+	switch {
+	case f.SVE2:
+		return "sve2"
+	case f.SVE:
+		return "sve"
+	case f.I8MM:
+		return "neon_i8mm"
+	case f.DOTPROD:
+		return "neon_dotprod"
+	case f.NEON:
+		return "neon"
+	case f.AVX512:
+		return "avx512"
+	case f.AVX2:
+		return "avx2"
+	case f.SSE42:
+		return "sse4_2"
+	case f.SSE41:
+		return "sse4_1"
+	case f.SSE2:
+		return "sse2"
+	default:
+		return "purego"
+	}
+}
+
+func simdFeaturesFor(f cpufeatures.Features) []string {
+	var out []string
+	if f.SSE2 {
+		out = append(out, "sse2")
+	}
+	if f.SSE41 {
+		out = append(out, "sse4_1")
+	}
+	if f.SSE42 {
+		out = append(out, "sse4_2")
+	}
+	if f.AVX2 {
+		out = append(out, "avx2")
+	}
+	if f.AVX512 {
+		out = append(out, "avx512")
+	}
+	if f.NEON {
+		out = append(out, "neon")
+	}
+	if f.DOTPROD {
+		out = append(out, "neon_dotprod")
+	}
+	if f.I8MM {
+		out = append(out, "neon_i8mm")
+	}
+	if f.SVE {
+		out = append(out, "sve")
+	}
+	if f.SVE2 {
+		out = append(out, "sve2")
+	}
+	return out
+}
+
 func fairnessNotes(cfg benchConfig) []string {
 	notes := []string{
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
+		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
 	if cfg.svtLP == 0 {
 		notes = append(notes, "SVT-AV1 is run with --lp 0 by default, letting SVT choose its parallelism level from the machine rather than forcing a misleading numeric match.")
@@ -1879,6 +1955,8 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			"key_interval":    strconv.Itoa(cfg.keyInterval),
 			"gomaxprocs":      strconv.Itoa(runtime.GOMAXPROCS(0)),
 			"num_cpu":         strconv.Itoa(runtime.NumCPU()),
+			"simd_tier":       detectedSIMDTier(),
+			"simd_features":   strings.Join(detectedSIMDFeatures(), ","),
 		},
 	}
 	out, err := os.Create(result.decodedYUV)
