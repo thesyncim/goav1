@@ -14,6 +14,10 @@ func sad32x32(src, ref []byte, stride int) int {
 	return sad32x32NEON(src, ref, stride)
 }
 
+func sad8x8x4Step4(src, ref []byte, stride int) (int, int, int, int) {
+	return sad8x8x4Step4NEON(src, ref, stride)
+}
+
 func sad8x8Dual(src []byte, srcStride int, ref []byte, refStride int) int {
 	return sad8x8DualNEON(src, srcStride, ref, refStride)
 }

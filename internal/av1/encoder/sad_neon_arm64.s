@@ -50,6 +50,72 @@ loop:
 	MOVD R5, SUM(R0)
 	RET
 
+#define X4SUM0 24
+#define X4SUM1 32
+#define X4SUM2 40
+#define X4SUM3 48
+
+// NEON 8x8 SAD for four horizontal candidates separated by four pixels. Each
+// row loads one source vector plus enough reference bytes for windows at
+// ref+0, ref+4, ref+8, and ref+12.
+//
+//   ext   v10.16b, v1.16b, v5.16b, #4   -> 0x6e05202a
+//   ext   v11.16b, v1.16b, v5.16b, #8   -> 0x6e05402b
+//   ext   v12.16b, v1.16b, v5.16b, #12  -> 0x6e05602c
+
+// func sad8x8x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
+TEXT ·sad8x8x4Step4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R7
+	VLD1 (R7), [V5.B16]
+	WORD $0x6e05202a // ext   v10.16b, v1.16b, v5.16b, #4
+	WORD $0x6e05402b // ext   v11.16b, v1.16b, v5.16b, #8
+	WORD $0x6e05602c // ext   v12.16b, v1.16b, v5.16b, #12
+	WORD $0x2e217002 // uabdl v2.8h, v0.8b, v1.8b
+	WORD $0x2e2a7003 // uabdl v3.8h, v0.8b, v10.8b
+	WORD $0x2e2b7004 // uabdl v4.8h, v0.8b, v11.8b
+	WORD $0x2e2c7006 // uabdl v6.8h, v0.8b, v12.8b
+	ADD  R3, R1
+	ADD  R3, R2
+
+	MOVD $7, R4
+x4loop:
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R7
+	VLD1 (R7), [V5.B16]
+	WORD $0x6e05202a // ext   v10.16b, v1.16b, v5.16b, #4
+	WORD $0x6e05402b // ext   v11.16b, v1.16b, v5.16b, #8
+	WORD $0x6e05602c // ext   v12.16b, v1.16b, v5.16b, #12
+	WORD $0x2e215002 // uabal v2.8h, v0.8b, v1.8b
+	WORD $0x2e2a5003 // uabal v3.8h, v0.8b, v10.8b
+	WORD $0x2e2b5004 // uabal v4.8h, v0.8b, v11.8b
+	WORD $0x2e2c5006 // uabal v6.8h, v0.8b, v12.8b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, x4loop
+
+	WORD $0x6e70384d // uaddlv s13, v2.8h
+	WORD $0x6e70386e // uaddlv s14, v3.8h
+	WORD $0x6e70388f // uaddlv s15, v4.8h
+	WORD $0x6e7038d0 // uaddlv s16, v6.8h
+	VMOV V13.S[0], R5
+	MOVD R5, X4SUM0(R0)
+	VMOV V14.S[0], R5
+	MOVD R5, X4SUM1(R0)
+	VMOV V15.S[0], R5
+	MOVD R5, X4SUM2(R0)
+	VMOV V16.S[0], R5
+	MOVD R5, X4SUM3(R0)
+	RET
+
 // NEON 16x16 sum of absolute differences: 16-byte rows accumulated with the
 // paired widening instructions (UABDL/UABDL2 for row 0, UABAL/UABAL2 for the
 // rest), the two uint16 accumulators added and reduced with UADDLV.

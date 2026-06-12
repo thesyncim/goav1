@@ -30,6 +30,26 @@ func TestSAD8x8ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD8x8x4Step4ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	const stride = 77
+	src := make([]byte, stride*64)
+	ref := make([]byte, stride*64)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		off := rng.Intn(stride*48) + rng.Intn(stride-27)
+		w0, w1, w2, w3 := sad8x8x4Step4PureGo(src[off:], ref[off:], stride)
+		g0, g1, g2, g3 := sad8x8x4Step4Impl(src[off:], ref[off:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("off %d: impl (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+	}
+}
+
 // TestSAD16x16ImplMatchesPureGo proves the 16x16 kernel bit-exact with the
 // portable reference.
 func TestSAD16x16ImplMatchesPureGo(t *testing.T) {
@@ -433,6 +453,35 @@ func BenchmarkSAD8x8(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad8x8Impl(src, ref, 64, 1<<30)
+	}
+}
+
+func BenchmarkSAD8x8x4Step4(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _ = sad8x8x4Step4Impl(src, ref, 64)
+	}
+}
+
+func BenchmarkSAD8x8x4Step4Composed(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 64*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sad8x8Impl(src, ref, 64, 1<<30) +
+			sad8x8Impl(src, ref[4:], 64, 1<<30) +
+			sad8x8Impl(src, ref[8:], 64, 1<<30) +
+			sad8x8Impl(src, ref[12:], 64, 1<<30)
 	}
 }
 

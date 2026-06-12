@@ -58,6 +58,31 @@ func sad32x32NEON(src, ref []byte, stride int) int {
 	return int(ctx.Sum)
 }
 
+// sad8x8x4Step4NEONCtx carries four horizontal 8x8 SAD outputs for reference
+// origins separated by four bytes. Field offsets are mirrored in assembly.
+type sad8x8x4Step4NEONCtx struct {
+	Src    unsafe.Pointer
+	Ref    unsafe.Pointer
+	Stride int64
+	Sum0   int64
+	Sum1   int64
+	Sum2   int64
+	Sum3   int64
+}
+
+//go:noescape
+func sad8x8x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
+
+func sad8x8x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4Step4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad8x8x4Step4NEONAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
 // sad8x8DualNEONCtx carries the two-stride kernel arguments.
 type sad8x8DualNEONCtx struct {
 	Src       unsafe.Pointer
@@ -147,6 +172,7 @@ func init() {
 	sad8x8Impl = sad8x8NEON
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON
+	sad8x8x4Step4Impl = sad8x8x4Step4NEON
 	sad8x8DualImpl = sad8x8DualNEON
 	sad16x16DualImpl = sad16x16DualNEON
 	sad32x32DualImpl = sad32x32DualNEON
