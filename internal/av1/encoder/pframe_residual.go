@@ -1530,13 +1530,7 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 			}
 		}
 		base := py*stride + px
-		s := 0
-		for r := 0; r < n; r += 8 {
-			for c := 0; c < n; c += 8 {
-				s += sad8x8Dual(src[base+r*stride+c:], stride, st.sadScratch[r*n+c:], n)
-			}
-		}
-		return s
+		return sadDualBlock(src[base:], stride, st.sadScratch[:n*n], n, n)
 	}
 	start := mv
 	center := bestSAD
@@ -1660,6 +1654,35 @@ func sadRectBlock(src, ref []byte, base, refBase, stride, bw, bh, limit int) int
 		}
 		if total >= limit {
 			return total
+		}
+	}
+	return total
+}
+
+func sadDualBlock(src []byte, srcStride int, ref []byte, refStride int, n int) int {
+	switch n {
+	case 8:
+		return sad8x8Dual(src, srcStride, ref, refStride)
+	case 16:
+		return sad16x16Dual(src, srcStride, ref, refStride)
+	case 32:
+		return sad32x32Dual(src, srcStride, ref, refStride)
+	case 64:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32:], srcStride, ref[32:], refStride) +
+			sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
+			sad32x32Dual(src[32*srcStride+32:], srcStride, ref[32*refStride+32:], refStride)
+	}
+	total := 0
+	for r := range n {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range n {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
 		}
 	}
 	return total

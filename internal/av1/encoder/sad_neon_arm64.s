@@ -186,6 +186,84 @@ dloop:
 	MOVD R5, DSUM(R0)
 	RET
 
+// func sad16x16DualNEONAsm(ctx *sad8x8DualNEONCtx)
+TEXT ·sad16x16DualNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD DSRC(R0), R1
+	MOVD DREF(R0), R2
+	MOVD DSRCSTRIDE(R0), R3
+	MOVD DREFSTRIDE(R0), R6
+
+	VLD1 (R1), [V0.B16]
+	VLD1 (R2), [V1.B16]
+	WORD $0x2e217002 // uabdl  v2.8h, v0.8b, v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h, v0.16b, v1.16b
+	ADD  R3, R1
+	ADD  R6, R2
+
+	MOVD $15, R4
+dloop16:
+	VLD1 (R1), [V0.B16]
+	VLD1 (R2), [V1.B16]
+	WORD $0x2e215002 // uabal  v2.8h, v0.8b, v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h, v0.16b, v1.16b
+	ADD  R3, R1
+	ADD  R6, R2
+	SUB  $1, R4
+	CBNZ R4, dloop16
+
+	VADD V3.H8, V2.H8, V2.H8
+	WORD $0x6e703844 // uaddlv s4, v2.8h
+	VMOV V4.S[0], R5
+	MOVD R5, DSUM(R0)
+	RET
+
+// func sad32x32DualNEONAsm(ctx *sad8x8DualNEONCtx)
+TEXT ·sad32x32DualNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD DSRC(R0), R1
+	MOVD DREF(R0), R2
+	MOVD DSRCSTRIDE(R0), R3
+	MOVD DREFSTRIDE(R0), R6
+
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R7
+	VLD1 (R7), [V4.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R8
+	VLD1 (R8), [V5.B16]
+	WORD $0x2e217002 // uabdl  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e257086 // uabdl  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e257087 // uabdl2 v7.8h, v4.16b, v5.16b
+	ADD  R3, R1
+	ADD  R6, R2
+
+	MOVD $31, R4
+dloop32:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R7
+	VLD1 (R7), [V4.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R8
+	VLD1 (R8), [V5.B16]
+	WORD $0x2e215002 // uabal  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e255086 // uabal  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e255087 // uabal2 v7.8h, v4.16b, v5.16b
+	ADD  R3, R1
+	ADD  R6, R2
+	SUB  $1, R4
+	CBNZ R4, dloop32
+
+	VADD V3.H8, V2.H8, V2.H8
+	VADD V7.H8, V6.H8, V6.H8
+	VADD V6.H8, V2.H8, V2.H8
+	WORD $0x6e703844 // uaddlv s4, v2.8h
+	VMOV V4.S[0], R5
+	MOVD R5, DSUM(R0)
+	RET
+
 #define CSRC        0
 #define CREF0       8
 #define CREF1       16

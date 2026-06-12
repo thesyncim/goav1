@@ -20,6 +20,15 @@ var sad32x32Impl = sad32x32PureGo
 // prediction scratch).
 var sad8x8DualImpl = sad8x8DualPureGo
 
+// sad16x16DualImpl computes the 16x16 SAD between planes with different
+// strides. The subpel refinement hot path scores materialized prediction
+// scratch this way.
+var sad16x16DualImpl = sad16x16DualPureGo
+
+// sad32x32DualImpl computes the 32x32 SAD between planes with different
+// strides.
+var sad32x32DualImpl = sad32x32DualPureGo
+
 // sad8x8CompoundAvgBlockImpl computes SAD(src, round((ref0+ref1)/2)) for an
 // 8x8 block. It is the compound-reference precheck counterpart to sad8x8Dual.
 var sad8x8CompoundAvgBlockImpl = sad8x8CompoundAvgBlockPureGo
@@ -82,6 +91,38 @@ func sad8x8DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int 
 		srow := r * srcStride
 		rrow := r * refStride
 		for c := range 8 {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sad16x16DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
+	total := 0
+	for r := range 16 {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range 16 {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sad32x32DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
+	total := 0
+	for r := range 32 {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range 32 {
 			d := int(src[srow+c]) - int(ref[rrow+c])
 			if d < 0 {
 				d = -d

@@ -96,6 +96,50 @@ func TestSAD8x8DualImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD16x16DualImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(4716))
+	const srcStride, refStride = 83, 29
+	src := make([]byte, srcStride*96)
+	ref := make([]byte, refStride*96)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref {
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		so := rng.Intn(srcStride*64) + rng.Intn(srcStride-16)
+		ro := rng.Intn(refStride*64) + rng.Intn(refStride-16)
+		want := sad16x16DualPureGo(src[so:], srcStride, ref[ro:], refStride)
+		got := sad16x16DualImpl(src[so:], srcStride, ref[ro:], refStride)
+		if got != want {
+			t.Fatalf("so %d ro %d: impl %d want %d", so, ro, got, want)
+		}
+	}
+}
+
+func TestSAD32x32DualImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(4732))
+	const srcStride, refStride = 117, 41
+	src := make([]byte, srcStride*128)
+	ref := make([]byte, refStride*128)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref {
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		so := rng.Intn(srcStride*80) + rng.Intn(srcStride-32)
+		ro := rng.Intn(refStride*80) + rng.Intn(refStride-32)
+		want := sad32x32DualPureGo(src[so:], srcStride, ref[ro:], refStride)
+		got := sad32x32DualImpl(src[so:], srcStride, ref[ro:], refStride)
+		if got != want {
+			t.Fatalf("so %d ro %d: impl %d want %d", so, ro, got, want)
+		}
+	}
+}
+
 // TestSAD8x8CompoundAvgBlockImplMatchesPureGo proves the compound average SAD
 // kernel is bit-exact with the portable rounded-average reference.
 func TestSAD8x8CompoundAvgBlockImplMatchesPureGo(t *testing.T) {
@@ -431,6 +475,75 @@ func BenchmarkSAD32x32Composed16x16(b *testing.B) {
 			sad16x16Impl(src[16:], ref[16:], 64) +
 			sad16x16Impl(src[16*64:], ref[16*64:], 64) +
 			sad16x16Impl(src[16*64+16:], ref[16*64+16:], 64)
+	}
+}
+
+func BenchmarkSAD16x16Dual(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 16*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad16x16Dual(src, 64, ref, 16)
+	}
+}
+
+func BenchmarkSAD16x16DualComposed8x8(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 16*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sad8x8Dual(src, 64, ref, 16) +
+			sad8x8Dual(src[8:], 64, ref[8:], 16) +
+			sad8x8Dual(src[8*64:], 64, ref[8*16:], 16) +
+			sad8x8Dual(src[8*64+8:], 64, ref[8*16+8:], 16)
+	}
+}
+
+func BenchmarkSAD32x32Dual(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 32*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad32x32Dual(src, 64, ref, 32)
+	}
+}
+
+func BenchmarkSAD32x32DualComposed8x8(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 32*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sum := 0
+		for r := 0; r < 32; r += 8 {
+			for c := 0; c < 32; c += 8 {
+				sum += sad8x8Dual(src[r*64+c:], 64, ref[r*32+c:], 32)
+			}
+		}
+		_ = sum
 	}
 }
 

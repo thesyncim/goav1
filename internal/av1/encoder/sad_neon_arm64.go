@@ -70,6 +70,12 @@ type sad8x8DualNEONCtx struct {
 //go:noescape
 func sad8x8DualNEONAsm(ctx *sad8x8DualNEONCtx)
 
+//go:noescape
+func sad16x16DualNEONAsm(ctx *sad8x8DualNEONCtx)
+
+//go:noescape
+func sad32x32DualNEONAsm(ctx *sad8x8DualNEONCtx)
+
 // sad8x8DualNEON is the NEON 8x8 SAD with independent source and reference
 // strides.
 func sad8x8DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
@@ -80,6 +86,32 @@ func sad8x8DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
 		RefStride: int64(refStride),
 	}
 	sad8x8DualNEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
+// sad16x16DualNEON is the NEON 16x16 SAD with independent source and
+// reference strides.
+func sad16x16DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
+	ctx := sad8x8DualNEONCtx{
+		Src:       unsafe.Pointer(&src[0]),
+		Ref:       unsafe.Pointer(&ref[0]),
+		SrcStride: int64(srcStride),
+		RefStride: int64(refStride),
+	}
+	sad16x16DualNEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
+// sad32x32DualNEON is the NEON 32x32 SAD with independent source and
+// reference strides.
+func sad32x32DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
+	ctx := sad8x8DualNEONCtx{
+		Src:       unsafe.Pointer(&src[0]),
+		Ref:       unsafe.Pointer(&ref[0]),
+		SrcStride: int64(srcStride),
+		RefStride: int64(refStride),
+	}
+	sad32x32DualNEONAsm(&ctx)
 	return int(ctx.Sum)
 }
 
@@ -116,5 +148,7 @@ func init() {
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON
 	sad8x8DualImpl = sad8x8DualNEON
+	sad16x16DualImpl = sad16x16DualNEON
+	sad32x32DualImpl = sad32x32DualNEON
 	sad8x8CompoundAvgBlockImpl = sad8x8CompoundAvgBlockNEON
 }

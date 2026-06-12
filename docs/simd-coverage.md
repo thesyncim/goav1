@@ -133,6 +133,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
   allocations.
+- Subpel-refine prediction scoring now has 16x16 and 32x32 dual-stride SAD
+  surfaces, with arm64 NEON kernels for the source-vs-prediction-scratch case.
+  This replaces four or sixteen 8x8 dual-SAD calls per 16x16/32x32 subpel probe
+  with one larger kernel call. Compile gates cover native arm64, linux/arm64,
+  darwin/amd64, and pure-Go arm64; runtime benchmark rows are still pending
+  because newly built local binaries currently hang before Go code starts.
 - The compound LAST/GOLDEN precheck now uses an arm64 NEON 8x8
   rounded-average SAD kernel (`urhadd` + widening absolute difference) instead
   of the scalar per-pixel average loop. `BenchmarkSAD8x8CompoundAvgBlock` is
