@@ -97,6 +97,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   count-only lane is now roughly `507-536 ns/op`, zero allocations on the local
   M4 Max; the sign/golomb pass avoids exact abs-level work unless the clamped
   level proves a Golomb tail is possible.
+- TX-type trial snapshot restores are split by coefficient plane: luma-only
+  candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
+  only after the candidate survives the luma rate bound. In the refreshed
+  P-frame CPU profile, the hot pre-luma restore site is about `60 ms` cumulative
+  versus the earlier monolithic restore line around `150 ms`; selector behavior
+  is covered by the seeded reference tests and `BenchmarkChooseInter8x8TXType`.
 - `motion.LumaSubpelProber` now indexes the regular 8-tap subpel tables
   directly for its 8-bit luma probes instead of re-entering the generic
   multi-filter selector per probe. `BenchmarkLumaSubpelProberPredict` improved

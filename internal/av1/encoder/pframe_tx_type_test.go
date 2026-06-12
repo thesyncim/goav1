@@ -128,6 +128,40 @@ func TestTrialTXBBitsInterMatchesReference(t *testing.T) {
 	}
 }
 
+func BenchmarkChooseInter8x8TXType(b *testing.B) {
+	st := newTXTypeTestState(b, 96)
+	src := SourceFrame420{
+		Y:            make([]byte, 64),
+		U:            make([]byte, 16),
+		V:            make([]byte, 16),
+		YStride:      8,
+		ChromaStride: 4,
+		Width:        8,
+		Height:       8,
+	}
+	rng := rand.New(rand.NewSource(109))
+	for i := range src.Y {
+		src.Y[i] = uint8(rng.Intn(256))
+		st.predY[i] = uint8(rng.Intn(256))
+	}
+	for i := range src.U {
+		src.U[i] = uint8(rng.Intn(256))
+		src.V[i] = uint8(rng.Intn(256))
+		st.predU[i] = uint8(rng.Intn(256))
+		st.predV[i] = uint8(rng.Intn(256))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	var typ transform.Type
+	for range b.N {
+		dctDcode := prepareTXTypeDCTCandidate(st, src)
+		typ = st.chooseInter8x8TXType(src, 0, 0, dctDcode)
+	}
+	if typ == transform.TypeCount {
+		b.Fatal(typ)
+	}
+}
+
 func prepareTXTypeDCTCandidate(st *lossyEncodeState, src SourceFrame420) int64 {
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 	st.prepareInterTXB(src.Y, st.predY[:64], 8, src.YStride, 0, 0, 8, 8, st.yQuant, st.lumaQ[:64])
@@ -205,7 +239,10 @@ func trialTXBBitsInterReference(st *lossyEncodeState, qcoeff []int16, n int, siz
 	return ((bits<<9)*st.rdMult + 256) >> 9
 }
 
-func newTXTypeTestState(t *testing.T, qIndex uint8) *lossyEncodeState {
+func newTXTypeTestState(t interface {
+	Helper()
+	Fatal(args ...any)
+}, qIndex uint8) *lossyEncodeState {
 	t.Helper()
 	var st lossyEncodeState
 	st.qIndex = qIndex

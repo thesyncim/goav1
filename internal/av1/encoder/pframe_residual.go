@@ -1754,11 +1754,12 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		if lumaDcode<<7 >= bestCost {
 			continue
 		}
-		baseTrialCDFs.restore(&st.trialCDFs)
+		baseTrialCDFs.restoreY(&st.trialCDFs)
 		lumaBits := st.trialTXBBitsInter(tmpY, 8, tile.TransformSize8x8, typ)
 		if (lumaDcode<<7)+lumaBits >= bestCost {
 			continue
 		}
+		baseTrialCDFs.restoreUV(&st.trialCDFs)
 		st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
 		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
 		cost := st.rdDcode << 7
@@ -1813,20 +1814,28 @@ func (s *coeffTrial8x8Snapshot) save(cdfs *tile.CoeffCDFs) {
 }
 
 func (s *coeffTrial8x8Snapshot) restore(cdfs *tile.CoeffCDFs) {
-	cdfs.TXBSkip[0][0] = s.txbSkip4x4UV
+	s.restoreUV(cdfs)
+	s.restoreY(cdfs)
+}
+
+func (s *coeffTrial8x8Snapshot) restoreY(cdfs *tile.CoeffCDFs) {
 	cdfs.TXBSkip[1][0] = s.txbSkip8x8Y
-	cdfs.EOBExtra[0][tile.CoeffPlaneUV] = s.eobExtra4x4UV
 	cdfs.EOBExtra[1][tile.CoeffPlaneY] = s.eobExtra8x8Y
 	cdfs.DCSign[tile.CoeffPlaneY][0] = s.dcSignY0
+	cdfs.CoeffBR[1][tile.CoeffPlaneY] = s.coeffBR8x8Y
+	cdfs.CoeffBase[1][tile.CoeffPlaneY] = s.coeffBase8x8Y
+	cdfs.CoeffBaseEOB[1][tile.CoeffPlaneY] = s.coeffBaseEOB8x8Y
+	cdfs.EOBFlag64[tile.CoeffPlaneY][0] = s.eobFlag64Y0
+}
+
+func (s *coeffTrial8x8Snapshot) restoreUV(cdfs *tile.CoeffCDFs) {
+	cdfs.TXBSkip[0][0] = s.txbSkip4x4UV
+	cdfs.EOBExtra[0][tile.CoeffPlaneUV] = s.eobExtra4x4UV
 	cdfs.DCSign[tile.CoeffPlaneUV][0] = s.dcSignUV0
 	cdfs.CoeffBR[0][tile.CoeffPlaneUV] = s.coeffBR4x4UV
-	cdfs.CoeffBR[1][tile.CoeffPlaneY] = s.coeffBR8x8Y
 	cdfs.CoeffBase[0][tile.CoeffPlaneUV] = s.coeffBase4x4UV
-	cdfs.CoeffBase[1][tile.CoeffPlaneY] = s.coeffBase8x8Y
 	cdfs.CoeffBaseEOB[0][tile.CoeffPlaneUV] = s.coeffBaseEOB4x4UV
-	cdfs.CoeffBaseEOB[1][tile.CoeffPlaneY] = s.coeffBaseEOB8x8Y
 	cdfs.EOBFlag16[tile.CoeffPlaneUV][0] = s.eobFlag16UV0
-	cdfs.EOBFlag64[tile.CoeffPlaneY][0] = s.eobFlag64Y0
 }
 
 // residualBlockPureGo is the portable residual extraction.
