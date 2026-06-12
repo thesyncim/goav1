@@ -17,7 +17,7 @@ func TestDetectedMatchesArch(t *testing.T) {
 		if !Detected.SSE2 {
 			t.Fatalf("expected SSE2 on amd64, got %#v", Detected)
 		}
-		if Detected.NEON || Detected.SVE {
+		if Detected.NEON || Detected.DOTPROD || Detected.I8MM || Detected.SVE || Detected.SVE2 {
 			t.Fatalf("arm64 features unexpectedly set on amd64: %#v", Detected)
 		}
 	case "arm64":
