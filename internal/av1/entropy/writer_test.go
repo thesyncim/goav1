@@ -314,14 +314,16 @@ func TestWriteCDF4MatchesWriteCDF(t *testing.T) {
 func TestCountingWriterTellMatchesWriter(t *testing.T) {
 	rng := rand.New(rand.NewSource(83))
 	icdf := buildICDF(t, []int{3, 1, 4, 1})
-	var normalCDF, countCDF CDF
+	var normalCDF, countCDF, bitCounterCDF CDF
 	if err := normalCDF.Init([]uint16{4096, 15000, 28000}); err != nil {
 		t.Fatal(err)
 	}
 	countCDF = normalCDF
+	bitCounterCDF = normalCDF
 
 	normal := NewWriter(make([]byte, 0, 1<<16))
 	count := NewCountingWriter()
+	bitCounter := NewBitCounter()
 	for i := range 5000 {
 		switch rng.Intn(4) {
 		case 0:
@@ -329,24 +331,28 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			p := uint32(1 + rng.Intn(CDFProbTop-1))
 			normal.WriteBoolQ15(bit, p)
 			count.WriteBoolQ15(bit, p)
+			bitCounter.WriteBoolQ15(bit, p)
 		case 1:
 			bit := rng.Intn(2)
 			normal.WriteBit(bit)
 			count.WriteBit(bit)
+			bitCounter.WriteBit(bit)
 		case 2:
 			sym := rng.Intn(4)
 			normal.WriteCDF4(&normalCDF, sym)
 			count.WriteCDF4(&countCDF, sym)
-			if normalCDF != countCDF {
-				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v", i, normalCDF.Values(), countCDF.Values())
+			bitCounter.WriteCDF4(&bitCounterCDF, sym)
+			if normalCDF != countCDF || normalCDF != bitCounterCDF {
+				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF.Values(), countCDF.Values(), bitCounterCDF.Values())
 			}
 		default:
 			sym := rng.Intn(4)
 			normal.WriteSymbol(sym, icdf, 4)
 			count.WriteSymbol(sym, icdf, 4)
+			bitCounter.WriteSymbol(sym, icdf, 4)
 		}
-		if normal.Tell() != count.Tell() {
-			t.Fatalf("tell diverged after op %d: normal=%d count=%d", i, normal.Tell(), count.Tell())
+		if normal.Tell() != count.Tell() || normal.Tell() != bitCounter.Tell() {
+			t.Fatalf("tell diverged after op %d: normal=%d count=%d bitCounter=%d", i, normal.Tell(), count.Tell(), bitCounter.Tell())
 		}
 	}
 	if _, err := count.Finish(); !errors.Is(err, ErrCountOnlyFinish) {

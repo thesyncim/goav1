@@ -1001,18 +1001,17 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 }
 
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
-	tw := entropy.NewCountingWriter()
 	if n == 8 && size == tile.TransformSize8x8 {
 		txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
 		if !ok {
 			return 1 << 59
 		}
-		base := tw.Tell()
-		tile.WriteCoefficientsTXB8x8Y2DTrusted(&tw, &st.trialCDFs, qcoeff[:64], st.levels, txCDF, txSymbol)
-		bits := int64(tw.Tell() - base)
-		return ((bits<<9)*st.rdMult + 256) >> 9
+		_, bits := tile.CountCoefficientsTXB8x8Y2DTrusted(&st.trialCDFs, qcoeff[:64], txCDF, txSymbol)
+		rate := int64(bits)
+		return ((rate<<9)*st.rdMult + 256) >> 9
 	}
 
+	tw := entropy.NewCountingWriter()
 	scan := st.scan4
 	var txCDF *entropy.CDF
 	txSymbol := 0

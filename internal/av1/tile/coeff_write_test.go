@@ -173,6 +173,51 @@ func TestWriteCoefficientsTXB8x8Y2DTrustedMatchesGeneric(t *testing.T) {
 	}
 }
 
+func TestCountCoefficientsTXB8x8Y2DTrustedMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(241))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	var writerTXCDF, countTXCDF entropy.CDF
+	if err := writerTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	countTXCDF = writerTXCDF
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		symbol := rng.Intn(16)
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult := WriteCoefficientsTXB8x8Y2DTrusted(&w, &writerCDFs, coeffs, scratch, &writerTXCDF, symbol)
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB8x8Y2DTrusted(&countCDFs, coeffs, &countTXCDF, symbol)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+		if countTXCDF != writerTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+	}
+}
+
 func TestWriteCoefficientsTXB8x8Y2DContextTrustedMatchesGeneric(t *testing.T) {
 	rng := rand.New(rand.NewSource(177))
 	txSize, err := TransformSize8x8.TransformSize()
@@ -532,6 +577,17 @@ func BenchmarkWriteCoefficientsTXB8x8Y2D(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
 			WriteCoefficientsTXB8x8Y2DTrusted(&w, &cdfs, blocks[i&255], scratch, nil, 0)
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB8x8Y2DTrusted(&cdfs, blocks[i&255], nil, 0)
 		}
 	})
 }

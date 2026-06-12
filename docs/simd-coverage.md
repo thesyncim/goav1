@@ -42,10 +42,10 @@ Same run shape with SVT pinned to baseline NEON via `-svt-asm neon`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 103.69 | 1.157 | 4.041 | 3.49x | 29.7 |
-| SVT-AV1 `--asm neon` | 170.55 | 0.704 | 1.654 | 2.35x | 72.6 |
+| goav1 | 105.32 | 1.139 | 4.018 | 3.53x | 29.9 |
+| SVT-AV1 `--asm neon` | 178.34 | 0.673 | 1.626 | 2.42x | 73.8 |
 
-Pinning SVT to baseline NEON still leaves SVT about 2.44x more CPU-efficient.
+Pinning SVT to baseline NEON still leaves SVT about 2.47x more CPU-efficient.
 The remaining gap is therefore not only DOTPROD/I8MM.
 
 ## Coverage Ledger
@@ -91,12 +91,16 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   materialization and removing the 16 KiB `trialBuf` scratch from lossy encoder
   state. `TestCountingWriterTellMatchesWriter` covers mixed bool/bit/CDF/symbol
   streams.
+- The 8x8 inter TX-type trial path uses `entropy.BitCounter` through
+  `tile.CountCoefficientsTXB8x8Y2DTrusted`, avoiding the generic writer carrier
+  while preserving exact `Tell()` and CDF evolution. The tile microbench's
+  count-only lane is `531-550 ns/op`, zero allocations on the local M4 Max.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
   allocations.
 - Fresh P-frame benchmark: `BenchmarkVideoEncoderPFrame1080p-4` is
-  `76.5-76.7 ms/op`, zero allocs/op in the cleanest local repeat. Allocation is
+  `77.2-79.1 ms/op`, zero allocs/op in the cleanest local repeat. Allocation is
   not the dominant CPU gap; the CPU profile is.
 
 ## Next Implementation Order
