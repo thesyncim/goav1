@@ -132,41 +132,66 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 // writeSingleReference codes the single_ref bit tree, the exact inverse of
 // readSingleReference.
 func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, ref ReferenceFrame) error {
-	type refBit struct {
-		bit int
-		val bool
-	}
-	var bits []refBit
-	switch ref {
-	case ReferenceFrameLast:
-		bits = []refBit{{0, false}, {2, false}, {3, false}}
-	case ReferenceFrameLast2:
-		bits = []refBit{{0, false}, {2, false}, {3, true}}
-	case ReferenceFrameLast3:
-		bits = []refBit{{0, false}, {2, true}, {4, false}}
-	case ReferenceFrameGolden:
-		bits = []refBit{{0, false}, {2, true}, {4, true}}
-	case ReferenceFrameBWD:
-		bits = []refBit{{0, true}, {1, false}, {5, false}}
-	case ReferenceFrameAltref2:
-		bits = []refBit{{0, true}, {1, false}, {5, true}}
-	case ReferenceFrameAltref:
-		bits = []refBit{{0, true}, {1, true}}
-	default:
+	if !ref.Valid() {
 		return ErrInvalidDecodeState
 	}
-	for _, b := range bits {
-		context, err := singleRefContext(ctx, req, b.bit)
-		if err != nil {
-			return err
-		}
-		cdf, err := cdfs.SingleRefCDF(b.bit, context)
-		if err != nil {
-			return err
-		}
-		w.WriteBinaryCDFTrusted(cdf, boolToSym(b.val))
+	p := singleRefWritePatterns[ref]
+	step0 := p.steps[0]
+	context, err := singleRefContext(ctx, req, int(step0.bit))
+	if err != nil {
+		return err
 	}
+	cdf, err := cdfs.SingleRefCDF(int(step0.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
+
+	step1 := p.steps[1]
+	context, err = singleRefContext(ctx, req, int(step1.bit))
+	if err != nil {
+		return err
+	}
+	cdf, err = cdfs.SingleRefCDF(int(step1.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step1.symbol))
+	if p.count == 2 {
+		return nil
+	}
+
+	step2 := p.steps[2]
+	context, err = singleRefContext(ctx, req, int(step2.bit))
+	if err != nil {
+		return err
+	}
+	cdf, err = cdfs.SingleRefCDF(int(step2.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step2.symbol))
 	return nil
+}
+
+type singleRefWriteStep struct {
+	bit    uint8
+	symbol uint8
+}
+
+type singleRefWritePattern struct {
+	count uint8
+	steps [3]singleRefWriteStep
+}
+
+var singleRefWritePatterns = [referenceFrameCount]singleRefWritePattern{
+	ReferenceFrameLast:    {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 0}, {3, 0}}},
+	ReferenceFrameLast2:   {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 0}, {3, 1}}},
+	ReferenceFrameLast3:   {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 1}, {4, 0}}},
+	ReferenceFrameGolden:  {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 1}, {4, 1}}},
+	ReferenceFrameBWD:     {count: 3, steps: [3]singleRefWriteStep{{0, 1}, {1, 0}, {5, 0}}},
+	ReferenceFrameAltref2: {count: 3, steps: [3]singleRefWriteStep{{0, 1}, {1, 0}, {5, 1}}},
+	ReferenceFrameAltref:  {count: 2, steps: [3]singleRefWriteStep{{0, 1}, {1, 1}}},
 }
 
 func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs InterReferencesResult) error {

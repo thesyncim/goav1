@@ -143,6 +143,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   skip-transform, and tx-partition split bits. It is guarded by
   `TestWriteBinaryCDFTrustedMatchesWriteCDF`, and the count-only path is covered
   by the mixed-stream `TestCountingWriterTellMatchesWriter` gate.
+- Single-reference frame selection now reads its fixed write-side bit patterns
+  from a compact `uint8` table and emits the two or three symbols directly,
+  avoiding the former per-call `[]refBit` construction and loop.
 - Trial TXB pricing uses `entropy.NewCountingWriter`, preserving exact
   `Tell()` against the byte writer while skipping unused entropy byte
   materialization and removing the 16 KiB `trialBuf` scratch from lossy encoder
