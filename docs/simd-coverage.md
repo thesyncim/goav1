@@ -212,6 +212,13 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   skip-transform, and tx-partition split bits. It is guarded by
   `TestWriteBinaryCDFTrustedMatchesWriteCDF`, and the count-only path is covered
   by the mixed-stream `TestCountingWriterTellMatchesWriter` gate.
+- `BenchmarkWriterBitStream` now gates the direct equiprobable-bit writer and
+  counter paths used by literal and coefficient-sign emission. The current
+  source-shaped split expression measures about `15.04-15.32 us` for the byte
+  writer and `14.33-14.47 us` for the bit counter per 4096-bit stream, zero
+  allocations. A 16-bit masked split expression was rejected: paired rows were
+  `15.16-15.76 us` for the byte writer and `14.31-14.54 us` for the bit
+  counter, so it did not beat the existing formula.
 - `BitCounter.normalize` keeps the count-only arithmetic source-shaped but now
   uses an `int32` ready-byte count and derives the post-flush bit count from the
   pre-flush count. It also computes the normalization shift with
@@ -228,6 +235,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `23.70-24.16 us` after, so keep watching rectangular/generic writer use.
   `BenchmarkVideoEncoderPFrame1080p` stayed neutral to slightly faster:
   `74.90-75.37 ms/op` before and `74.56-75.01 ms/op` after, zero allocations.
+- A source-shaped shift-before-cast CDF arithmetic variant matching SVT's
+  `(fl >> EC_PROB_SHIFT)` spelling was retested but not kept. It helped the
+  binary trusted stream only slightly (`19.04-19.23 us` versus `19.13-19.57 us`)
+  while the hotter CDF4 writer and counter lanes were neutral to slower
+  (`19.06-19.20 us` versus `18.94-19.08 us`, and `18.25-18.43 us` versus
+  `18.25-18.42 us`).
 - Single-reference and compound-reference frame selection now read their fixed
   write-side bit patterns from compact `uint8` tables and emit the symbols
   directly, avoiding the former single-ref per-call `[]refBit` construction and
