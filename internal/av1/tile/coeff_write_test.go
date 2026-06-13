@@ -652,6 +652,106 @@ func TestWriteCoefficientsTXB4x4Y2DContextTrustedMatchesGeneric(t *testing.T) {
 	}
 }
 
+func TestWriteCoefficientsTXB4x4Y2DContextTrustedTXTypeMatchesHook(t *testing.T) {
+	rng := rand.New(rand.NewSource(249))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, _ := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
+	set, err := ExtTXSetTypeFor(TransformSize4x4, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbols, err := ExtTXTypeCount(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := ExtTXSetIndex(TransformSize4x4, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	square, err := TransformSizeSquare(TransformSize4x4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hookCoeffCDFs, directCoeffCDFs CoeffCDFs
+	if err := hookCoeffCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := directCoeffCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	var hookTXCDFs, directTXCDFs TransformTypeCDFs
+	if err := hookTXCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	if err := directTXCDFs.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	hookTXCDF, err := hookTXCDFs.InterCDF(index, square, symbols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directTXCDF, err := directTXCDFs.InterCDF(index, square, symbols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	directWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	hooks := 0
+	wantHooks := 0
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+		txSymbol := rng.Intn(symbols)
+		afterSkip := func() error {
+			hooks++
+			hookWriter.WriteCDF(hookTXCDF, txSymbol)
+			return nil
+		}
+
+		hookResult, err := WriteCoefficientsTXB4x4Y2DContextTrustedArray(&hookWriter, &hookCoeffCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx, afterSkip)
+		if err != nil {
+			t.Fatalf("hook attempt %d: %v", attempt, err)
+		}
+		directResult := WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&directWriter, &directCoeffCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx, directTXCDF, txSymbol)
+		if directResult != hookResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, directResult, hookResult)
+		}
+		if directCoeffCDFs != hookCoeffCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(directCoeffCDFs, hookCoeffCDFs))
+		}
+		if directTXCDFs != hookTXCDFs {
+			t.Fatalf("attempt %d transform CDFs diverged", attempt)
+		}
+		if directWriter.Tell() != hookWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, directWriter.Tell(), hookWriter.Tell())
+		}
+		if !hookResult.AllZero {
+			wantHooks++
+		}
+		if hooks != wantHooks {
+			t.Fatalf("attempt %d hooks=%d want %d", attempt, hooks, wantHooks)
+		}
+	}
+
+	hookBytes, err := hookWriter.Finish()
+	if err != nil {
+		t.Fatalf("hook finish: %v", err)
+	}
+	directBytes, err := directWriter.Finish()
+	if err != nil {
+		t.Fatalf("direct finish: %v", err)
+	}
+	if string(directBytes) != string(hookBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
 func TestCountCoefficientsTXB4x4UV2DTrustedMatchesWriter(t *testing.T) {
 	rng := rand.New(rand.NewSource(242))
 	txSize, err := TransformSize4x4.TransformSize()
@@ -1974,6 +2074,89 @@ func BenchmarkWriteCoefficientsTXB32x32UV2D(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
 			WriteCoefficientsTXB32x32UV2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2)
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB4x4Y2DContextTrusted(b *testing.B) {
+	rng := rand.New(rand.NewSource(239))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, _ := coeffScanAndScratch(b, TransformSize4x4, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+	set, err := ExtTXSetTypeFor(TransformSize4x4, true, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	symbols, err := ExtTXTypeCount(set)
+	if err != nil {
+		b.Fatal(err)
+	}
+	index, err := ExtTXSetIndex(TransformSize4x4, true, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	square, err := TransformSizeSquare(TransformSize4x4)
+	if err != nil {
+		b.Fatal(err)
+	}
+	txSymbol, err := ExtTXSymbolForType(set, transform.TypeDCTDCT)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("hook", func(b *testing.B) {
+		var coeffCDFs CoeffCDFs
+		if err := coeffCDFs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDFs TransformTypeCDFs
+		if err := txCDFs.InitDefault(); err != nil {
+			b.Fatal(err)
+		}
+		txCDF, err := txCDFs.InterCDF(index, square, symbols)
+		if err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		var w entropy.Writer
+		afterSkip := func() error {
+			w.WriteCDF(txCDF, txSymbol)
+			return nil
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w = entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB4x4Y2DContextTrustedArray(&w, &coeffCDFs, (*[16]int16)(blocks[i&255]), 0, 0, afterSkip); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("direct-tx", func(b *testing.B) {
+		var coeffCDFs CoeffCDFs
+		if err := coeffCDFs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDFs TransformTypeCDFs
+		if err := txCDFs.InitDefault(); err != nil {
+			b.Fatal(err)
+		}
+		txCDF, err := txCDFs.InterCDF(index, square, symbols)
+		if err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&w, &coeffCDFs, (*[16]int16)(blocks[i&255]), 0, 0, txCDF, txSymbol)
 		}
 	})
 }

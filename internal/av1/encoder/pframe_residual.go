@@ -2193,19 +2193,27 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
 	if w == 4 && h == 4 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize4x4 && afterSkip != nil {
-		if coeffCtx == nil {
-			return tile.ErrInvalidDecodeState
+		qcoeff4 := (*[16]int16)(qcoeff)
+		var txCDF *entropy.CDF
+		txSymbol := 0
+		ok := true
+		if txb4x4NonZero(qcoeff4) {
+			txCDF, txSymbol, ok = st.interTXCDFAndSymbol(ctxReq.Size, txType)
 		}
-		blockDims, ok := ctxReq.PlaneBlock.Dimensions()
-		if !ok {
-			return tile.ErrInvalidDecodeState
-		}
-		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
-		result, err := tile.WriteCoefficientsTXB4x4Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, afterSkip)
-		if err != nil {
-			return err
-		}
-		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+		if ok {
+			if coeffCtx == nil {
+				return tile.ErrInvalidDecodeState
+			}
+			blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+			if !ok {
+				return tile.ErrInvalidDecodeState
+			}
+			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
+			result := tile.WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(st.w, &st.coeffCDFs, qcoeff4, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+				return err
+			}
+		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 			return err
 		}
 	} else if w == 8 && h == 8 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip != nil {
@@ -2341,6 +2349,14 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 		}
 	}
 	return nil
+}
+
+func txb4x4NonZero(coeffs *[16]int16) bool {
+	var acc int16
+	for _, c := range coeffs {
+		acc |= c
+	}
+	return acc != 0
 }
 
 func (st *lossyEncodeState) interTXCDFAndSymbol(size tile.TransformSize, typ transform.Type) (*entropy.CDF, int, bool) {

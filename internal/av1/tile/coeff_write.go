@@ -1435,9 +1435,27 @@ func WriteCoefficientsTXB4x4Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs
 	return WriteCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, (*[16]int16)(coeffs), txbSkipContext, dcSignContext, afterSkip)
 }
 
+// WriteCoefficientsTXB4x4Y2DContextTrustedTXType is the validation-free 4x4
+// luma/Class2D specialization for real coding when the inter tx_type CDF and
+// symbol are already known. txCDF is adapted in place when non-nil.
+func WriteCoefficientsTXB4x4Y2DContextTrustedTXType(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	return WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w, cdfs, (*[16]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
+}
+
+// WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray is the pointer-shaped form
+// for real 4x4 luma coding with a pre-resolved inter tx_type symbol.
+func WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	result, _ := writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, nil, txCDF, txSymbol)
+	return result
+}
+
 // WriteCoefficientsTXB4x4Y2DContextTrustedArray is the pointer-shaped form for
 // real 4x4 luma coding with already-derived coefficient contexts.
 func WriteCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error) (TXBDecodeResult, error) {
+	return writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, afterSkip, nil, 0)
+}
+
+func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, error) {
 	const (
 		maxEOB = 16
 		stride = uint8(8)
@@ -1462,6 +1480,8 @@ func WriteCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 		if err := afterSkip(); err != nil {
 			return TXBDecodeResult{}, err
 		}
+	} else if txCDF != nil {
+		w.WriteCDF(txCDF, txSymbol)
 	}
 
 	token, extra, _ := EOBPositionToken(eob)

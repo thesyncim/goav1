@@ -449,6 +449,18 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   rewrite was worse at `17.612/17.597 us` and introduced `6432 B/op` with
   `3 allocs/op`. The existing callback shape remains the best measured Go
   form for that planner path.
+- The 4x4 final luma coefficient writer now has a direct inter-tx-type entry
+  point, matching SVT's `av1_write_coeffs_txb_1d` order: write `txb_skip`,
+  return for all-zero blocks, then write luma `tx_type` before the EOB token.
+  The p-frame caller guards the direct path with a 16-coefficient OR scan so
+  zero blocks do not resolve a transform CDF that SVT/AV1 would not code.
+  `BenchmarkWriteCoefficientsTXB4x4Y2DContextTrusted` measured steady rows of
+  `139.8-145.1 ns/op` for the hook path and `138.6-140.8 ns/op` for the
+  direct-tx path, both zero allocations. Full-frame throughput is neutral in
+  same-machine repeats: clean `origin/main` measured median `74.35 ms/op`, and
+  the guarded direct path measured median `74.53 ms/op`, zero steady
+  allocations. This is kept as source-shape and hook-removal alignment, not as a
+  claimed frame-level speedup.
 
 ## Next Implementation Order
 
