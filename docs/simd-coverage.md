@@ -94,9 +94,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `uint8` padded offsets. Escape analysis still reports the hot inputs and
   scratch as non-escaping; compiler BCE still leaves some scan/CDF/level checks
   in this path, so further changes need proof instead of assumption.
-  The hot scan table also carries `uint8` EOB lower/base-range contexts, so the
-  trusted reverse pass no longer reloads the position table or branches through
-  the generic EOB context helpers for the final coefficient.
+  The 8x8 trusted writer/counter now read a fixed packed scan table with
+  `uint8` coefficient positions, `uint8` padded offsets, and `uint8` EOB
+  lower/base-range contexts, so the trusted reverse pass no longer slices the
+  generic scan metadata, reloads the position table, or branches through the
+  generic EOB context helpers for the final coefficient.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.
