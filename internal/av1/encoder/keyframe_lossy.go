@@ -1,9 +1,8 @@
 package encoder
 
 import (
-	"sync"
-
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -44,12 +43,12 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
 func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width))
+	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width), keyframeTileOptions{})
 }
 
 // encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
 // tile-column split, which must match the coder pool the caller sized.
-func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8) ([]byte, SourceFrame420, error) {
+func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8, tileOpts keyframeTileOptions) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -123,47 +122,42 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	}
 	nTiles := int(header.Tile.Cols)
 	miCols := uint16(src.Width / 4)
-	bounds := func(t int) (uint16, uint16) {
-		c0 := header.Tile.ColStartSB[t] * 16
-		c1 := header.Tile.ColStartSB[t+1] * 16
-		if c1 > miCols {
-			c1 = miCols
+	payloads := tileOpts.payloads
+	if cap(payloads) < nTiles {
+		payloads = make([]TilePayload, nTiles)
+	} else {
+		payloads = payloads[:nTiles]
+		for i := range payloads {
+			payloads[i] = TilePayload{}
 		}
-		return c0, c1
 	}
-	payloads := make([]TilePayload, nTiles)
-	var wg sync.WaitGroup
-	errs := make([]error, nTiles)
-	coder := func(t int) *pframeCoder {
-		if tilePC != nil {
-			return tilePC(t)
+	errs := tileOpts.errs
+	if cap(errs) < nTiles {
+		errs = make([]error, nTiles)
+	} else {
+		errs = errs[:nTiles]
+		for i := range errs {
+			errs[i] = nil
 		}
-		return &pframeCoder{}
 	}
-	for t := 1; t < nTiles; t++ {
-		c0, c1 := bounds(t)
-		wg.Add(1)
-		go func(t int, c0, c1 uint16) {
-			defer wg.Done()
-			data, err := coder(t).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
-			if err != nil {
-				errs[t] = err
-				return
-			}
-			payloads[t].Data = data
-		}(t, c0, c1)
+	req := keyframeTileRun{
+		src:      src,
+		recon:    &recon,
+		qIndex:   qIndex,
+		tile:     header.Tile,
+		miCols:   miCols,
+		lfMap:    lfMap,
+		payloads: payloads,
+		errs:     errs,
 	}
-	c0, c1 := bounds(0)
-	tile0, tile0Err := coder(0).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
-	wg.Wait()
-	if tile0Err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encode tile 0: %w", tile0Err)
+	var err error
+	if tileOpts.stream != nil {
+		err = tileOpts.stream.runKeyframeTileWorkers(req)
+	} else {
+		err = runKeyframeTilesDefault(req, tilePC)
 	}
-	payloads[0].Data = tile0
-	for t := 1; t < nTiles; t++ {
-		if errs[t] != nil {
-			return nil, SourceFrame420{}, fmt.Errorf("encode tile %d: %w", t, errs[t])
-		}
+	if err != nil {
+		return nil, SourceFrame420{}, err
 	}
 
 	if lfLevel > 0 {
@@ -207,6 +201,62 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		return nil, SourceFrame420{}, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, recon, nil
+}
+
+type keyframeTileOptions struct {
+	payloads []TilePayload
+	errs     []error
+	stream   *VideoEncoder
+}
+
+type keyframeTileRun struct {
+	src      SourceFrame420
+	recon    *SourceFrame420
+	qIndex   uint8
+	tile     TileInfo
+	miCols   uint16
+	lfMap    *threading.FrameWorkLoopFilterMap
+	payloads []TilePayload
+	errs     []error
+}
+
+func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCoder) error {
+	nTiles := len(req.payloads)
+	var wg sync.WaitGroup
+	for t := 1; t < nTiles; t++ {
+		c0, c1 := tileColBounds(req.tile, t, req.miCols)
+		pc := &pframeCoder{}
+		if tilePC != nil {
+			pc = tilePC(t)
+		}
+		wg.Add(1)
+		go func(t int, c0, c1 uint16, pc *pframeCoder) {
+			defer wg.Done()
+			data, err := pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+			if err != nil {
+				req.errs[t] = err
+				return
+			}
+			req.payloads[t].Data = data
+		}(t, c0, c1, pc)
+	}
+	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+	pc0 := &pframeCoder{}
+	if tilePC != nil {
+		pc0 = tilePC(0)
+	}
+	tile0, tile0Err := pc0.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	wg.Wait()
+	if tile0Err != nil {
+		return fmt.Errorf("encode tile 0: %w", tile0Err)
+	}
+	req.payloads[0].Data = tile0
+	for t := 1; t < nTiles; t++ {
+		if req.errs[t] != nil {
+			return fmt.Errorf("encode tile %d: %w", t, req.errs[t])
+		}
+	}
+	return nil
 }
 
 func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams {

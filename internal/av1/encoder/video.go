@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // video.go is the streaming encoder surface: a VideoEncoder owns the reference
@@ -76,6 +77,9 @@ type VideoEncoder struct {
 		referenceMode parser.ReferenceMode
 		tile          TileInfo
 		miCols        uint16
+		lfMap         *threading.FrameWorkLoopFilterMap
+		payloads      []TilePayload
+		errs          []error
 	}
 
 	// The in-loop filters of a finished frame run concurrently with the
@@ -116,6 +120,7 @@ type tileWorkRange struct {
 	first  int
 	stride int
 	limit  int
+	key    bool
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -456,6 +461,12 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if len(e.tilePCs) < nTiles {
 			e.tilePCs = make([]pframeCoder, nTiles)
 		}
+		if cap(e.payloads) < nTiles {
+			e.payloads = make([]TilePayload, nTiles)
+		}
+		if cap(e.tileErrs) < nTiles {
+			e.tileErrs = make([]error, nTiles)
+		}
 		e.configureDecisionStats(nTiles)
 		// The keyframe path reuses the filter appliers a backgrounded pass
 		// may still hold.
@@ -467,12 +478,11 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// the working point; rate control pays the debt back over the next
 		// frames through the buffer.
 		keyQ := e.keyframeQIndex()
-		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
-			if t == 0 {
-				return &e.pc
-			}
-			return &e.tilePCs[t]
-		}, &e.cdefApp, e.tileColsLog2)
+		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
+			payloads: e.payloads[:nTiles],
+			errs:     e.tileErrs[:nTiles],
+			stream:   e,
+		})
 		if err != nil {
 			return nil, false, err
 		}
@@ -593,11 +603,17 @@ func (e *VideoEncoder) startTileWorkers() {
 				tj := &e.tileJobParams
 				for t := work.first; t < work.limit; t += work.stride {
 					c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
-					data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
-					if err != nil {
-						e.tileErrs[t] = err
+					var data []byte
+					var err error
+					if work.key {
+						data, err = e.tilePCs[t].encodeKeyframeTile(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap)
 					} else {
-						e.payloads[t].Data = data
+						data, err = e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
+					}
+					if err != nil {
+						tj.errs[t] = err
+					} else {
+						tj.payloads[t].Data = data
 					}
 				}
 				e.tileWait.Done()
@@ -605,6 +621,47 @@ func (e *VideoEncoder) startTileWorkers() {
 		}()
 	}
 	e.tileStarted = true
+}
+
+func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
+	nTiles := len(req.payloads)
+	if nTiles == 1 {
+		c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+		data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+		if err != nil {
+			return fmt.Errorf("encode tile 0: %w", err)
+		}
+		req.payloads[0].Data = data
+		return nil
+	}
+	tj := &e.tileJobParams
+	tj.src, tj.out = req.src, req.recon
+	tj.effQ = req.qIndex
+	tj.tile, tj.miCols = req.tile, req.miCols
+	tj.lfMap = req.lfMap
+	tj.payloads, tj.errs = req.payloads, req.errs
+	e.startTileWorkers()
+	jobs := nTiles - 1
+	if jobs > 15 {
+		jobs = 15
+	}
+	e.tileWait.Add(jobs)
+	for j := 0; j < jobs; j++ {
+		e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles, key: true}
+	}
+	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+	data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	e.tileWait.Wait()
+	if err != nil {
+		return fmt.Errorf("encode tile 0: %w", err)
+	}
+	req.payloads[0].Data = data
+	for t := 1; t < nTiles; t++ {
+		if req.errs[t] != nil {
+			return fmt.Errorf("encode tile %d: %w", t, req.errs[t])
+		}
+	}
+	return nil
 }
 
 // startFilterWorker launches the persistent in-loop filter worker once; it
@@ -813,6 +870,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	e.configureDecisionStats(nTiles)
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)
+	}
+	if cap(e.tileErrs) < nTiles {
 		e.tileErrs = make([]error, nTiles)
 	}
 	payloads := e.payloads[:nTiles]
@@ -863,6 +922,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.effQ, tj.prevCtx = effQ, prevCtx
 		tj.referenceMode = referenceMode
 		tj.tile, tj.miCols = header.Tile, miCols
+		tj.lfMap = nil
+		tj.payloads, tj.errs = payloads, errs
 		e.startTileWorkers()
 		jobs := nTiles - 1
 		if jobs > 15 {

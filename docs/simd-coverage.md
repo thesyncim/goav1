@@ -105,6 +105,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   sentinel guard as the other square sizes. This avoids clearing stale
   oversized backing capacity after resolution changes and prevents stale
   32x32 SAD reuse if a block reaches coding without a fresh partition score.
+- Streaming keyframes now reuse the encoder's persistent tile-column workers
+  and encoder-owned tile payload/error slices. This removes per-keyframe worker
+  goroutine fanout and scratch allocation from periodic scene-cut/keyframe
+  paths; the one-shot helper keeps its simple per-call path. This is a
+  scheduler-overhead cleanup only, with no new FPS claim while local runtime
+  binaries are still blocked before Go code starts.
 - `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
   path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
   stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero
