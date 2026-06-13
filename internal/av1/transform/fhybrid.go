@@ -24,15 +24,14 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
 	if size.Width == 8 && size.Height == 8 {
-		vertical, horizontal, ok := forward8x8HybridTypes(typ)
-		if !ok ||
+		if !forwardBlock8x8HybridSupported(typ) ||
 			coeffStride < 8 || residualStride < 8 ||
 			!blockFits(len(residual), residualStride, 8, 8) ||
 			!coeffBlockFits(len(coeff), coeffStride, 8, 8) ||
 			len(scratch) < 64 {
 			return ErrInvalidTransform
 		}
-		forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
+		forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ)
 		return nil
 	}
 	if !forwardHybridSupported(size, typ) {
@@ -76,30 +75,38 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 // coefficient and residual strides must be at least 8, and coeff/residual/scratch
 // must contain the addressed 8x8 region.
 func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) error {
-	vertical, horizontal, ok := forward8x8HybridTypes(typ)
-	if !ok {
+	if !forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ) {
 		return ErrInvalidTransform
 	}
-	forwardBlock8x8Hybrid(coeff, coeffStride, residual, residualStride, scratch, vertical, horizontal)
 	return nil
 }
 
-func forward8x8HybridTypes(typ Type) (tx1DType, tx1DType, bool) {
+func forwardBlock8x8HybridSupported(typ Type) bool {
 	switch typ {
-	case TypeADSTDCT:
-		return tx1DADST, tx1DDCT, true
-	case TypeDCTADST:
-		return tx1DDCT, tx1DADST, true
-	case TypeADSTADST:
-		return tx1DADST, tx1DADST, true
-	case TypeIDTX:
-		return tx1DIdentity, tx1DIdentity, true
+	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX:
+		return true
 	default:
-		return 0, 0, false
+		return false
 	}
 }
 
-func forwardBlock8x8Hybrid(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, vertical, horizontal tx1DType) {
+func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
+	switch typ {
+	case TypeADSTDCT:
+		forwardBlock8x8ADSTDCT(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeDCTADST:
+		forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeADSTADST:
+		forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeIDTX:
+		forwardBlock8x8IDTX(coeff, coeffStride, residual, residualStride, scratch)
+	default:
+		return false
+	}
+	return true
+}
+
+func forwardBlock8x8ADSTDCT(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
@@ -108,7 +115,7 @@ func forwardBlock8x8Hybrid(coeff []int32, coeffStride int, residual []int16, res
 		for r := range 8 {
 			in[r] = int32(residual[r*residualStride+c]) << 2
 		}
-		fwd1D8(&in, &out, vertical)
+		fwdADST8(&in, &out)
 		fwdRoundShift1x8(&out)
 		for r := range 8 {
 			scratch[r*8+c] = out[r]
@@ -119,7 +126,88 @@ func forwardBlock8x8Hybrid(coeff []int32, coeffStride int, residual []int16, res
 		for c := range 8 {
 			in[c] = scratch[row+c]
 		}
-		fwd1D8(&in, &out, horizontal)
+		fwdDCT8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8DCTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdDCT8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdADST8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8ADSTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdADST8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdADST8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8IDTX(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdIdentity8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdIdentity8(&in, &out)
 		for c := range 8 {
 			coeff[c*coeffStride+r] = out[c]
 		}
@@ -198,16 +286,9 @@ func fwd1D(input []int32, output []int32, typ tx1DType) {
 	}
 }
 
-func fwd1D8(input, output *[8]int32, typ tx1DType) {
-	switch typ {
-	case tx1DDCT:
-		fwdDCT8(input, output)
-	case tx1DADST:
-		fwdADST8(input, output)
-	case tx1DIdentity:
-		for i := range 8 {
-			output[i] = input[i] * 2
-		}
+func fwdIdentity8(input, output *[8]int32) {
+	for i := range 8 {
+		output[i] = input[i] * 2
 	}
 }
 
