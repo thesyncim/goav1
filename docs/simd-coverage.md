@@ -213,9 +213,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   by the mixed-stream `TestCountingWriterTellMatchesWriter` gate.
 - `BitCounter.normalize` keeps the count-only arithmetic source-shaped but now
   uses an `int32` ready-byte count and derives the post-flush bit count from the
-  pre-flush count. Compiler reports for entropy, tile, and encoder builds now
-  inline it at all count-only call sites (`encodeQ15`, `WriteBoolQ15`,
-  `WriteBit`, `WriteBinaryCDFTrusted`, and `WriteCDF4`) with no new heap escape.
+  pre-flush count. It also computes the normalization shift with
+  `bits.LeadingZeros16(uint16(rng))`, matching the 16-bit AV1 range width
+  instead of using a 32-bit length expression. Compiler reports for entropy,
+  tile, and encoder builds still inline it at all count-only call sites
+  (`encodeQ15`, `WriteBoolQ15`, `WriteBit`, `WriteBinaryCDFTrusted`, and
+  `WriteCDF4`) with no new heap escape.
 - Single-reference and compound-reference frame selection now read their fixed
   write-side bit patterns from compact `uint8` tables and emit the symbols
   directly, avoiding the former single-ref per-call `[]refBit` construction and
@@ -363,12 +366,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   baseline probe was `38.0-39.3 ns/op` for 8x8, while the direct-helper variant
   measured `40.1-45.0 ns/op`.
 - `BenchmarkBitCounterCDF4Stream` now gates the count-only range-coder CDF4
-  path that appears under TXB coefficient pricing. The generic counter path
-  measures about `19.86-20.07 us` per 4096-symbol stream; the specialized
-  `BitCounter.WriteCDF4` path measures about `19.21-19.32 us`, zero allocations.
-  A branchless saturated-count update was rejected after it regressed the
-  specialized stream to roughly `19.29-19.67 us` and did not improve the tile
-  trusted-count benchmark.
+  path that appears under TXB coefficient pricing. On a clean `70027abc`
+  baseline worktree, the specialized `BitCounter.WriteCDF4` path measured
+  `19.06-19.19 us` per 4096-symbol stream; final repeat rows after the 16-bit
+  normalization-shift change measure `17.97-18.01 us`, zero allocations. The
+  generic counter lane remains neutral/noisy at about `19.3-20.7 us`. The same
+  change moves
+  `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` from `447.3-451.4 ns/op`
+  to final repeat rows of `427.5-435.5 ns/op`, zero allocations. A branchless
+  saturated-count update and a trace-preserving `WriteBit` count wrapper were
+  both rejected: neither improved the trusted-count path after focused
+  measurement.
 - Current P-frame diagnostics: the profiled
   `BenchmarkVideoEncoderPFrame1080p-4` sample is `79.4 ms/op`, and non-profiled
   repeat rows are around `78.0-78.8 ms/op` with zero steady-state allocations.

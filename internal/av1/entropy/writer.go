@@ -171,7 +171,7 @@ func (w *Writer) normalize(low uint64, rng uint32) {
 
 func (w *BitCounter) normalize(rng uint32) {
 	c := w.cnt
-	d := int32(16 - bits.Len32(rng))
+	d := int32(bits.LeadingZeros16(uint16(rng)))
 	s := c + d
 	if s >= 40 {
 		numBytesReady := (s >> 3) + 1
