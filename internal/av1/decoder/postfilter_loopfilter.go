@@ -1078,7 +1078,17 @@ func frameWorkStoreLoopFilterLumaEdgeSegment(record *threading.FrameWorkLoopFilt
 }
 
 func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, record *threading.FrameWorkLoopFilterBlockRecord, plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, bounds frameWorkLoopFilterBounds, edge loopfilter.Edge, x4 int, y4 int, length4 int, tx tile.TransformSize, currentWidth uint8, currentLevel uint8, needPreviousLevel bool) (bool, error) {
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, x4, y4, int(plan.MICols), int(plan.MIRows))
+	var previous *threading.FrameWorkLoopFilterBlockRecord
+	var ok bool
+	var err error
+	switch edge {
+	case loopfilter.EdgeVertical:
+		previous, ok, err = frameWorkLoopFilterPreviousVerticalRecord(filterMap, x4, y4, int(plan.MICols), int(plan.MIRows))
+	case loopfilter.EdgeHorizontal:
+		previous, ok, err = frameWorkLoopFilterPreviousHorizontalRecord(filterMap, x4, y4, int(plan.MICols), int(plan.MIRows))
+	default:
+		return true, loopfilter.ErrInvalidFilter
+	}
 	if err != nil {
 		return true, err
 	}
@@ -1243,7 +1253,16 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 	if err != nil {
 		return 0, 0, err
 	}
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+	var previous *threading.FrameWorkLoopFilterBlockRecord
+	var ok bool
+	switch edge {
+	case loopfilter.EdgeVertical:
+		previous, ok, err = frameWorkLoopFilterPreviousVerticalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	case loopfilter.EdgeHorizontal:
+		previous, ok, err = frameWorkLoopFilterPreviousHorizontalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	default:
+		return 0, 0, loopfilter.ErrInvalidFilter
+	}
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1317,7 +1336,17 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 // (get_filter_level fallback in set_lpf_parameters).
 func frameWorkLoopFilterPreviousLumaCellLevel(ctx FrameWorkPostFilterContext, filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int) (uint8, error) {
 	boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+	var previous *threading.FrameWorkLoopFilterBlockRecord
+	var ok bool
+	var err error
+	switch edge {
+	case loopfilter.EdgeVertical:
+		previous, ok, err = frameWorkLoopFilterPreviousVerticalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	case loopfilter.EdgeHorizontal:
+		previous, ok, err = frameWorkLoopFilterPreviousHorizontalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	default:
+		return 0, loopfilter.ErrInvalidFilter
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -1335,7 +1364,16 @@ func frameWorkLoopFilterPreviousLumaCellWidth(ctx FrameWorkPostFilterContext, fi
 	if err != nil {
 		return 0, err
 	}
-	previous, ok, err := frameWorkLoopFilterPreviousRecord(filterMap, edge, boundaryX4, boundaryY4, cols, rows)
+	var previous *threading.FrameWorkLoopFilterBlockRecord
+	var ok bool
+	switch edge {
+	case loopfilter.EdgeVertical:
+		previous, ok, err = frameWorkLoopFilterPreviousVerticalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	case loopfilter.EdgeHorizontal:
+		previous, ok, err = frameWorkLoopFilterPreviousHorizontalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
+	default:
+		return 0, loopfilter.ErrInvalidFilter
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -1353,24 +1391,42 @@ func frameWorkLoopFilterPreviousLumaCellWidth(ctx FrameWorkPostFilterContext, fi
 }
 
 func frameWorkLoopFilterPreviousRecord(filterMap FrameWorkLoopFilterMap, edge loopfilter.Edge, x4 int, y4 int, cols int, rows int) (*threading.FrameWorkLoopFilterBlockRecord, bool, error) {
-	prevCol := x4
-	prevRow := y4
 	switch edge {
 	case loopfilter.EdgeVertical:
-		prevCol--
+		return frameWorkLoopFilterPreviousVerticalRecord(filterMap, x4, y4, cols, rows)
 	case loopfilter.EdgeHorizontal:
-		prevRow--
+		return frameWorkLoopFilterPreviousHorizontalRecord(filterMap, x4, y4, cols, rows)
 	default:
 		return nil, false, loopfilter.ErrInvalidFilter
 	}
-	if prevCol < 0 || prevRow < 0 {
+}
+
+func frameWorkLoopFilterPreviousVerticalRecord(filterMap FrameWorkLoopFilterMap, x4 int, y4 int, cols int, rows int) (*threading.FrameWorkLoopFilterBlockRecord, bool, error) {
+	prevCol := x4 - 1
+	if prevCol < 0 || y4 < 0 {
 		return nil, false, nil
 	}
-	if prevCol >= cols || prevRow >= rows ||
-		prevRow >= int(filterMap.Rows) || prevCol >= int(filterMap.Stride) {
+	if prevCol >= cols || y4 >= rows ||
+		y4 >= int(filterMap.Rows) || prevCol >= int(filterMap.Stride) {
 		return nil, false, threading.ErrInvalidBatch
 	}
-	record := &filterMap.Records[prevRow*int(filterMap.Stride)+prevCol]
+	record := &filterMap.Records[y4*int(filterMap.Stride)+prevCol]
+	if !record.Valid {
+		return nil, false, threading.ErrInvalidBatch
+	}
+	return record, true, nil
+}
+
+func frameWorkLoopFilterPreviousHorizontalRecord(filterMap FrameWorkLoopFilterMap, x4 int, y4 int, cols int, rows int) (*threading.FrameWorkLoopFilterBlockRecord, bool, error) {
+	prevRow := y4 - 1
+	if x4 < 0 || prevRow < 0 {
+		return nil, false, nil
+	}
+	if x4 >= cols || prevRow >= rows ||
+		prevRow >= int(filterMap.Rows) || x4 >= int(filterMap.Stride) {
+		return nil, false, threading.ErrInvalidBatch
+	}
+	record := &filterMap.Records[prevRow*int(filterMap.Stride)+x4]
 	if !record.Valid {
 		return nil, false, threading.ErrInvalidBatch
 	}
