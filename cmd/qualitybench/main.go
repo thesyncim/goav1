@@ -26,6 +26,7 @@ import (
 	"time"
 
 	goav1 "github.com/thesyncim/goav1"
+	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 const (
@@ -61,6 +62,9 @@ type benchConfig struct {
 	tiles               int
 	goldenInterval      int
 	keyInterval         int
+	goMaxProcs          int
+	svtLP               int
+	svtASM              string
 	keep                bool
 }
 
@@ -69,6 +73,9 @@ type encodeResult struct {
 	targetBPS        int
 	bytes            int64
 	duration         time.Duration
+	cpuUser          time.Duration
+	cpuSystem        time.Duration
+	cpuAvailable     bool
 	encodedPath      string
 	encodedContainer string
 	encodedBytes     int64
@@ -109,6 +116,10 @@ type benchRow struct {
 	encoder   string
 	targetBPS int
 	actualBPS int64
+	duration  time.Duration
+	cpuUser   time.Duration
+	cpuSystem time.Duration
+	cpuOK     bool
 	encodeFPS string
 	bytes     int64
 	metrics   metrics
@@ -163,6 +174,7 @@ type qualitybenchMetadata struct {
 	Go             runtimeMetadata             `json:"go"`
 	Git            gitMetadata                 `json:"git"`
 	Config         metadataConfig              `json:"config"`
+	FairnessNotes  []string                    `json:"fairness_notes,omitempty"`
 	MetricFilters  map[string]bool             `json:"metric_filters"`
 	Tools          map[string]toolMetadata     `json:"tools"`
 	Clips          []clipMetadata              `json:"clips"`
@@ -170,9 +182,11 @@ type qualitybenchMetadata struct {
 }
 
 type runtimeMetadata struct {
-	Version string `json:"version"`
-	GOOS    string `json:"goos"`
-	GOARCH  string `json:"goarch"`
+	Version      string   `json:"version"`
+	GOOS         string   `json:"goos"`
+	GOARCH       string   `json:"goarch"`
+	SIMDTier     string   `json:"simd_tier"`
+	SIMDFeatures []string `json:"simd_features,omitempty"`
 }
 
 type gitMetadata struct {
@@ -200,6 +214,9 @@ type metadataConfig struct {
 	Tiles            int      `json:"tiles"`
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
+	GoMaxProcs       int      `json:"gomaxprocs"`
+	SVTLP            int      `json:"svt_lp"`
+	SVTASM           string   `json:"svt_asm,omitempty"`
 }
 
 type toolMetadata struct {
@@ -239,10 +256,21 @@ type encoderInvocationMetadata struct {
 	DecodedPath      string            `json:"decoded_path,omitempty"`
 	DecodedBytes     int64             `json:"decoded_bytes,omitempty"`
 	DecodedSHA256    string            `json:"decoded_sha256,omitempty"`
+	EncodeWallSecs   float64           `json:"encode_wall_seconds,omitempty"`
+	CPUAvailable     bool              `json:"cpu_available,omitempty"`
+	CPUUserSecs      float64           `json:"cpu_user_seconds,omitempty"`
+	CPUSystemSecs    float64           `json:"cpu_system_seconds,omitempty"`
+	CPUTotalSecs     float64           `json:"cpu_total_seconds,omitempty"`
+	ObservedParallel float64           `json:"observed_parallelism,omitempty"`
 	Status           string            `json:"status"`
 	Error            string            `json:"error,omitempty"`
 	Command          []string          `json:"command,omitempty"`
 	Settings         map[string]string `json:"settings,omitempty"`
+}
+
+type processCPUTimes struct {
+	user   time.Duration
+	system time.Duration
 }
 
 func main() {
@@ -256,6 +284,9 @@ func run() error {
 	cfg, err := parseFlags()
 	if err != nil {
 		return err
+	}
+	if cfg.goMaxProcs > 0 {
+		runtime.GOMAXPROCS(cfg.goMaxProcs)
 	}
 	cleanup := false
 	if cfg.workdir == "" {
@@ -289,7 +320,8 @@ func run() error {
 	defer writer.Flush()
 	if err := writer.Write([]string{
 		"clip", "width", "height", "frames", "fps", "encoder", "target_bps",
-		"actual_bps", "encode_fps", "bytes", "psnr_avg", "ssim_all",
+		"actual_bps", "encode_fps", "encode_wall_sec", "cpu_user_sec",
+		"cpu_system_sec", "cpu_total_sec", "observed_parallelism", "bytes", "psnr_avg", "ssim_all",
 		"xpsnr_y", "vmaf", "status", "error",
 	}); err != nil {
 		return err
@@ -431,6 +463,9 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.tiles, "tiles", 0, "tile-column log2 override for encoders that expose one")
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
+	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
+	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
+	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
@@ -494,6 +529,19 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.keyInterval < 0 {
 		return benchConfig{}, fmt.Errorf("invalid key interval %d", cfg.keyInterval)
+	}
+	if cfg.goMaxProcs < 0 {
+		return benchConfig{}, fmt.Errorf("invalid GOMAXPROCS %d", cfg.goMaxProcs)
+	}
+	if cfg.svtLP < 0 || cfg.svtLP > 6 {
+		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
+	}
+	if cfg.svtASM != "" {
+		var ok bool
+		cfg.svtASM, ok = canonicalSVTASMName(cfg.svtASM)
+		if !ok {
+			return benchConfig{}, fmt.Errorf("invalid SVT --asm value %q: valid values are c, neon, crc32, neon_dotprod, neon_i8mm, sve, sve2, max", cfg.svtASM)
+		}
 	}
 	return cfg, nil
 }
@@ -560,6 +608,29 @@ func parseMetricList(s string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func canonicalSVTASMName(name string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(name)) {
+	case "c":
+		return "c", true
+	case "neon":
+		return "neon", true
+	case "crc32":
+		return "crc32", true
+	case "neon_dotprod", "dotprod":
+		return "neon_dotprod", true
+	case "neon_i8mm", "i8mm":
+		return "neon_i8mm", true
+	case "sve":
+		return "sve", true
+	case "sve2":
+		return "sve2", true
+	case "max":
+		return "max", true
+	default:
+		return "", false
+	}
 }
 
 func parseRequiredEncoderList(s string, selected []string) ([]string, error) {
@@ -875,6 +946,10 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				encoder:   result.encoder,
 				targetBPS: result.targetBPS,
 				actualBPS: actualBPS,
+				duration:  result.duration,
+				cpuUser:   result.cpuUser,
+				cpuSystem: result.cpuSystem,
+				cpuOK:     result.cpuAvailable,
 				encodeFPS: encodeFPS,
 				bytes:     result.bytes,
 				metrics:   m,
@@ -907,6 +982,12 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				DecodedPath:      decodedPath,
 				DecodedBytes:     result.decodedBytes,
 				DecodedSHA256:    result.decodedSHA256,
+				EncodeWallSecs:   durationSeconds(result.duration),
+				CPUAvailable:     result.cpuAvailable,
+				CPUUserSecs:      durationSeconds(result.cpuUser),
+				CPUSystemSecs:    durationSeconds(result.cpuSystem),
+				CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
+				ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
 				Status:           result.status,
 				Error:            result.errText,
 				Command:          result.command,
@@ -978,6 +1059,11 @@ func writeBenchRow(writer *csv.Writer, row benchRow) error {
 		strconv.Itoa(row.targetBPS),
 		strconv.FormatInt(row.actualBPS, 10),
 		row.encodeFPS,
+		formatSeconds(row.duration),
+		formatCPUSeconds(row.cpuUser, row.cpuOK),
+		formatCPUSeconds(row.cpuSystem, row.cpuOK),
+		formatCPUSeconds(totalCPU(row.cpuUser, row.cpuSystem), row.cpuOK),
+		formatObservedParallelism(row.duration, row.cpuUser, row.cpuSystem, row.cpuOK),
 		strconv.FormatInt(row.bytes, 10),
 		row.metrics.psnr,
 		row.metrics.ssim,
@@ -986,6 +1072,46 @@ func writeBenchRow(writer *csv.Writer, row benchRow) error {
 		row.status,
 		row.errText,
 	})
+}
+
+func totalCPU(user, system time.Duration) time.Duration {
+	return user + system
+}
+
+func durationSeconds(d time.Duration) float64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Seconds()
+}
+
+func observedParallelism(wall, user, system time.Duration, cpuOK bool) float64 {
+	if !cpuOK || wall <= 0 {
+		return 0
+	}
+	return totalCPU(user, system).Seconds() / wall.Seconds()
+}
+
+func formatSeconds(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(d.Seconds(), 'f', 3, 64)
+}
+
+func formatCPUSeconds(d time.Duration, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return strconv.FormatFloat(d.Seconds(), 'f', 3, 64)
+}
+
+func formatObservedParallelism(wall, user, system time.Duration, cpuOK bool) string {
+	v := observedParallelism(wall, user, system, cpuOK)
+	if v == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
 }
 
 func writeStatsHeader(writer *csv.Writer) error {
@@ -1206,12 +1332,15 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpe
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
-			Version: runtime.Version(),
-			GOOS:    runtime.GOOS,
-			GOARCH:  runtime.GOARCH,
+			Version:      runtime.Version(),
+			GOOS:         runtime.GOOS,
+			GOARCH:       runtime.GOARCH,
+			SIMDTier:     detectedSIMDTier(),
+			SIMDFeatures: detectedSIMDFeatures(),
 		},
 		Git:           currentGitMetadata(),
 		Config:        metadataConfigFor(cfg),
+		FairnessNotes: fairnessNotes(cfg),
 		MetricFilters: metricFilterAvailability(filters),
 		Tools:         toolMetadataForRun(),
 		Clips:         clipMetadata,
@@ -1311,7 +1440,99 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		Tiles:            cfg.tiles,
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
+		GoMaxProcs:       cfg.goMaxProcs,
+		SVTLP:            cfg.svtLP,
+		SVTASM:           cfg.svtASM,
 	}
+}
+
+func detectedSIMDTier() string {
+	return simdTierFor(cpufeatures.Detected)
+}
+
+func detectedSIMDFeatures() []string {
+	return simdFeaturesFor(cpufeatures.Detected)
+}
+
+func simdTierFor(f cpufeatures.Features) string {
+	switch {
+	case f.SVE2:
+		return "sve2"
+	case f.SVE:
+		return "sve"
+	case f.I8MM:
+		return "neon_i8mm"
+	case f.DOTPROD:
+		return "neon_dotprod"
+	case f.NEON:
+		return "neon"
+	case f.AVX512:
+		return "avx512"
+	case f.AVX2:
+		return "avx2"
+	case f.SSE42:
+		return "sse4_2"
+	case f.SSE41:
+		return "sse4_1"
+	case f.SSE2:
+		return "sse2"
+	default:
+		return "purego"
+	}
+}
+
+func simdFeaturesFor(f cpufeatures.Features) []string {
+	var out []string
+	if f.SSE2 {
+		out = append(out, "sse2")
+	}
+	if f.SSE41 {
+		out = append(out, "sse4_1")
+	}
+	if f.SSE42 {
+		out = append(out, "sse4_2")
+	}
+	if f.AVX2 {
+		out = append(out, "avx2")
+	}
+	if f.AVX512 {
+		out = append(out, "avx512")
+	}
+	if f.NEON {
+		out = append(out, "neon")
+	}
+	if f.DOTPROD {
+		out = append(out, "neon_dotprod")
+	}
+	if f.I8MM {
+		out = append(out, "neon_i8mm")
+	}
+	if f.SVE {
+		out = append(out, "sve")
+	}
+	if f.SVE2 {
+		out = append(out, "sve2")
+	}
+	return out
+}
+
+func fairnessNotes(cfg benchConfig) []string {
+	notes := []string{
+		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
+		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
+		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
+		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
+		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
+	}
+	if cfg.svtLP == 0 {
+		notes = append(notes, "SVT-AV1 is run with --lp 0 by default, letting SVT choose its parallelism level from the machine rather than forcing a misleading numeric match.")
+	}
+	if cfg.svtASM == "" {
+		notes = append(notes, "SVT-AV1 is run with its default --asm max setting; report this as a best-SVT row, not as baseline-NEON-equivalent SIMD coverage.")
+	} else {
+		notes = append(notes, "SVT-AV1 is run with --asm "+cfg.svtASM+" so the comparison records an explicit assembly tier.")
+	}
+	return notes
 }
 
 func metricFilterAvailability(filters map[string]bool) map[string]bool {
@@ -1732,6 +1953,10 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			"tile_columns":    strconv.Itoa(cfg.tiles),
 			"golden_interval": strconv.Itoa(cfg.goldenInterval),
 			"key_interval":    strconv.Itoa(cfg.keyInterval),
+			"gomaxprocs":      strconv.Itoa(runtime.GOMAXPROCS(0)),
+			"num_cpu":         strconv.Itoa(runtime.NumCPU()),
+			"simd_tier":       detectedSIMDTier(),
+			"simd_features":   strings.Join(detectedSIMDFeatures(), ","),
 		},
 	}
 	out, err := os.Create(result.decodedYUV)
@@ -1773,10 +1998,18 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			statsBefore = enc.DecisionStats()
 		}
 		forceKey := cfg.keyInterval > 0 && i > 0 && i%cfg.keyInterval == 0
+		cpuBefore, cpuOK := currentProcessCPUTimes()
 		frameStart := time.Now()
 		encoded, err := enc.Encode(frame, forceKey)
 		frameDuration := time.Since(frameStart)
 		encodeDuration += frameDuration
+		if cpuOK {
+			if cpuAfter, ok := currentProcessCPUTimes(); ok {
+				result.cpuUser += nonNegativeDuration(cpuAfter.user - cpuBefore.user)
+				result.cpuSystem += nonNegativeDuration(cpuAfter.system - cpuBefore.system)
+				result.cpuAvailable = true
+			}
+		}
 		if err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
@@ -1910,6 +2143,24 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		targetBPS:        bitrate,
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
+		settings: map[string]string{
+			"preset":       "13",
+			"rate_control": "cbr",
+			"target_kbps":  strconv.Itoa(kbps(bitrate)),
+			"lookahead":    "0",
+			"pred_struct":  "1",
+			"rtc":          "1",
+			"scd":          "0",
+			"tf":           "0",
+			"svt_lp":       strconv.Itoa(cfg.svtLP),
+			"svt_lp_note":  "parallelism level 0..6, not a processor/thread count",
+		},
+	}
+	if cfg.svtASM == "" {
+		result.settings["svt_asm"] = "default"
+		result.settings["svt_asm_note"] = "SVT default, currently max unless overridden by SVT"
+	} else {
+		result.settings["svt_asm"] = cfg.svtASM
 	}
 	if _, err := exec.LookPath("SvtAv1EncApp"); err != nil {
 		result.status, result.errText = "skipped", "SvtAv1EncApp not found"
@@ -1942,7 +2193,10 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--irefresh-type", "2",
 		"--keyint", keyint,
 		"--progress", "0",
-		"--lp", "4",
+		"--lp", strconv.Itoa(cfg.svtLP),
+	}
+	if cfg.svtASM != "" {
+		args = append(args, "--asm", cfg.svtASM)
 	}
 	if cfg.tiles > 0 {
 		args = append(args, "--tile-columns", strconv.Itoa(cfg.tiles))
@@ -1992,11 +2246,23 @@ func timeCommand(name string, args []string, result *encodeResult) time.Duration
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
 	elapsed := time.Since(start)
+	if cmd.ProcessState != nil {
+		result.cpuUser = cmd.ProcessState.UserTime()
+		result.cpuSystem = cmd.ProcessState.SystemTime()
+		result.cpuAvailable = true
+	}
 	if err != nil {
 		result.status = "error"
 		result.errText = trimCommandOutput(err, out)
 	}
 	return elapsed
+}
+
+func nonNegativeDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 func commandLine(name string, args []string) []string {

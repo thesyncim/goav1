@@ -191,6 +191,30 @@ func TestUpdateCDF(t *testing.T) {
 	}
 }
 
+func TestUpdateCDFValuesMatchesWindow(t *testing.T) {
+	for symbols := 2; symbols <= MaxSymbols; symbols++ {
+		for _, count := range []uint16{0, 1, 15, 16, 31, MaxCDFCount} {
+			for symbol := 0; symbol < symbols; symbol++ {
+				var fixed [MaxSymbols + 1]uint16
+				if err := InitUniformCDF(fixed[:], symbols); err != nil {
+					t.Fatal(err)
+				}
+				fixed[symbols] = count
+				window := append([]uint16(nil), fixed[:symbols+1]...)
+
+				updateCDFValues(&fixed, symbols, symbol)
+				updateCDFWindow(window, symbol)
+
+				for i, want := range window {
+					if fixed[i] != want {
+						t.Fatalf("symbols=%d count=%d symbol=%d cdf=%v want %v", symbols, count, symbol, fixed[:symbols+1], window)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestRejectsInvalidCDF(t *testing.T) {
 	tests := []struct {
 		name    string

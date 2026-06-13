@@ -1,8 +1,10 @@
 package entropy
 
 import (
+	"errors"
 	"math/rand"
 	"testing"
+	"unsafe"
 )
 
 // These tests are the oracle round-trip gate for the range Writer: every stream
@@ -41,6 +43,26 @@ func buildICDF(t *testing.T, weights []int) []uint16 {
 		t.Fatalf("ValidateCDF: %v", err)
 	}
 	return icdf
+}
+
+func TestWriterHotStructSize(t *testing.T) {
+	if size := unsafe.Sizeof(Writer{}); size > 64 {
+		t.Fatalf("Writer size=%d max=64", size)
+	}
+}
+
+func TestWriterNilDestinationFinishes(t *testing.T) {
+	w := NewWriter(nil)
+	for i := range 32 {
+		w.WriteBit(i & 1)
+	}
+	buf, err := w.Finish()
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if len(buf) == 0 {
+		t.Fatal("nil destination produced no bytes")
+	}
 }
 
 func TestWriterRoundTripBools(t *testing.T) {
@@ -94,6 +116,31 @@ func TestWriterRoundTripLiterals(t *testing.T) {
 		if got != vals[i] {
 			t.Fatalf("literal[%d] = %d, want %d (%d bits)", i, got, vals[i], nbits[i])
 		}
+	}
+}
+
+func TestWriteBitMatchesBoolQ15(t *testing.T) {
+	rng := rand.New(rand.NewSource(43))
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 5000 {
+		bit := rng.Intn(2)
+		generic.WriteBoolQ15(bit, 1<<14)
+		specialized.WriteBit(bit)
+		if generic.Tell() != specialized.Tell() {
+			t.Fatalf("tell diverged at %d: generic=%d specialized=%d", i, generic.Tell(), specialized.Tell())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
 	}
 }
 
@@ -233,6 +280,134 @@ func TestWriterAdaptiveRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteBinaryCDFTrustedMatchesWriteCDF(t *testing.T) {
+	rng := rand.New(rand.NewSource(37))
+	var genericCDF, specializedCDF CDF
+	if err := genericCDF.Init([]uint16{18000}); err != nil {
+		t.Fatal(err)
+	}
+	specializedCDF = genericCDF
+
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 4000 {
+		sym := rng.Intn(2)
+		generic.WriteCDF(&genericCDF, sym)
+		specialized.WriteBinaryCDFTrusted(&specializedCDF, sym)
+		if genericCDF != specializedCDF {
+			t.Fatalf("cdf diverged after symbol %d: generic=%v specialized=%v", i, genericCDF.Values(), specializedCDF.Values())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
+	}
+}
+
+func TestWriteCDF4MatchesWriteCDF(t *testing.T) {
+	rng := rand.New(rand.NewSource(41))
+	var genericCDF, specializedCDF CDF
+	if err := genericCDF.Init([]uint16{4096, 15000, 28000}); err != nil {
+		t.Fatal(err)
+	}
+	specializedCDF = genericCDF
+
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 4000 {
+		sym := rng.Intn(4)
+		generic.WriteCDF(&genericCDF, sym)
+		specialized.WriteCDF4(&specializedCDF, sym)
+		if genericCDF != specializedCDF {
+			t.Fatalf("cdf diverged after symbol %d: generic=%v specialized=%v", i, genericCDF.Values(), specializedCDF.Values())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
+	}
+}
+
+func TestCountingWriterTellMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(83))
+	icdf := buildICDF(t, []int{3, 1, 4, 1})
+	var normalBinaryCDF, countBinaryCDF, bitCounterBinaryCDF CDF
+	if err := normalBinaryCDF.Init([]uint16{18000}); err != nil {
+		t.Fatal(err)
+	}
+	countBinaryCDF = normalBinaryCDF
+	bitCounterBinaryCDF = normalBinaryCDF
+	var normalCDF, countCDF, bitCounterCDF CDF
+	if err := normalCDF.Init([]uint16{4096, 15000, 28000}); err != nil {
+		t.Fatal(err)
+	}
+	countCDF = normalCDF
+	bitCounterCDF = normalCDF
+
+	normal := NewWriter(make([]byte, 0, 1<<16))
+	count := NewCountingWriter()
+	bitCounter := NewBitCounter()
+	for i := range 5000 {
+		switch rng.Intn(5) {
+		case 0:
+			bit := rng.Intn(2)
+			p := uint32(1 + rng.Intn(CDFProbTop-1))
+			normal.WriteBoolQ15(bit, p)
+			count.WriteBoolQ15(bit, p)
+			bitCounter.WriteBoolQ15(bit, p)
+		case 1:
+			bit := rng.Intn(2)
+			normal.WriteBit(bit)
+			count.WriteBit(bit)
+			bitCounter.WriteBit(bit)
+		case 2:
+			sym := rng.Intn(4)
+			normal.WriteCDF4(&normalCDF, sym)
+			count.WriteCDF4(&countCDF, sym)
+			bitCounter.WriteCDF4(&bitCounterCDF, sym)
+			if normalCDF != countCDF || normalCDF != bitCounterCDF {
+				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF.Values(), countCDF.Values(), bitCounterCDF.Values())
+			}
+		case 3:
+			sym := rng.Intn(2)
+			normal.WriteBinaryCDFTrusted(&normalBinaryCDF, sym)
+			count.WriteBinaryCDFTrusted(&countBinaryCDF, sym)
+			bitCounter.WriteBinaryCDFTrusted(&bitCounterBinaryCDF, sym)
+			if normalBinaryCDF != countBinaryCDF || normalBinaryCDF != bitCounterBinaryCDF {
+				t.Fatalf("binary cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalBinaryCDF.Values(), countBinaryCDF.Values(), bitCounterBinaryCDF.Values())
+			}
+		default:
+			sym := rng.Intn(4)
+			normal.WriteSymbol(sym, icdf, 4)
+			count.WriteSymbol(sym, icdf, 4)
+			bitCounter.WriteSymbol(sym, icdf, 4)
+		}
+		if normal.Tell() != count.Tell() || normal.Tell() != bitCounter.Tell() {
+			t.Fatalf("tell diverged after op %d: normal=%d count=%d bitCounter=%d", i, normal.Tell(), count.Tell(), bitCounter.Tell())
+		}
+	}
+	if _, err := count.Finish(); !errors.Is(err, ErrCountOnlyFinish) {
+		t.Fatalf("count-only finish err = %v, want %v", err, ErrCountOnlyFinish)
+	}
+	if _, err := normal.Finish(); err != nil {
+		t.Fatalf("normal finish: %v", err)
+	}
+}
+
 func TestWriterZeroAlloc(t *testing.T) {
 	icdf := buildICDF(t, []int{2, 3, 5, 7})
 	dst := make([]byte, 0, 1<<16)
@@ -250,4 +425,97 @@ func TestWriterZeroAlloc(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("encode path allocated %v objects/run, want 0", allocs)
 	}
+}
+
+func BenchmarkWriterBinaryCDFStream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(69))
+	for i := range syms {
+		if rng.Intn(8) == 0 {
+			syms[i] = 1
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{18000}); err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, 0, 1<<16)
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteBinaryCDFTrusted(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func BenchmarkWriterCDF4Stream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(71))
+	for i := range syms {
+		switch r := rng.Intn(16); {
+		case r < 9:
+			syms[i] = 0
+		case r < 13:
+			syms[i] = 1
+		case r < 15:
+			syms[i] = 2
+		default:
+			syms[i] = 3
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{4096, 15000, 28000}); err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, 0, 1<<16)
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("specialized", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF4(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

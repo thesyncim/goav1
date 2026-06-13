@@ -204,6 +204,29 @@ type coeffScanHot struct {
 	padded        uint16
 	lower2DOffset int8
 	br2DOffset    int8
+	lowerEOBCtx   uint8
+	brEOBCtx      uint8
+}
+
+// coeffScanHot8x8 is the packed table shape for trusted small-transform
+// writers/counters. Larger transform sizes keep uint16 positions because padded
+// offsets exceed 255.
+type coeffScanHot8x8 struct {
+	pos           uint8
+	padded        uint8
+	lower2DOffset int8
+	br2DOffset    int8
+	lowerEOBCtx   uint8
+	brEOBCtx      uint8
+}
+
+type coeffScanHot16x16 struct {
+	pos           uint8
+	padded        uint16
+	lower2DOffset int8
+	br2DOffset    int8
+	lowerEOBCtx   uint8
+	brEOBCtx      uint8
 }
 
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
@@ -212,6 +235,10 @@ var coeffPosTable [transformSizeCount][]coeffPos
 var coeffPosHotTable [transformSizeCount][]coeffPosHot
 var coeffScanTable [transformSizeCount][3][]int16
 var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
+var coeffScanHot4x4Y2D [16]coeffScanHot8x8
+var coeffScanHot8x8Y2D [64]coeffScanHot8x8
+var coeffScanHot16x16Y2D [256]coeffScanHot16x16
+var coeffScanHot32x32Y2D [1024]coeffScanHot
 
 func init() {
 	for size := range transformSizeCount {
@@ -313,9 +340,50 @@ func init() {
 							padded:        p.padded,
 							lower2DOffset: p.lower2DOffset,
 							br2DOffset:    p.br2DOffset,
+							lowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
+							brEOBCtx:      coeffBRContextEOBFast(positions[pos], class, pos),
 						}
 					}
 					coeffScanHotTable[size][class] = scanHot
+					if size == TransformSize4x4 {
+						for c, p := range scanHot {
+							coeffScanHot4x4Y2D[c] = coeffScanHot8x8{
+								pos:           uint8(p.pos),
+								padded:        uint8(p.padded),
+								lower2DOffset: p.lower2DOffset,
+								br2DOffset:    p.br2DOffset,
+								lowerEOBCtx:   p.lowerEOBCtx,
+								brEOBCtx:      p.brEOBCtx,
+							}
+						}
+					}
+					if size == TransformSize8x8 {
+						for c, p := range scanHot {
+							coeffScanHot8x8Y2D[c] = coeffScanHot8x8{
+								pos:           uint8(p.pos),
+								padded:        uint8(p.padded),
+								lower2DOffset: p.lower2DOffset,
+								br2DOffset:    p.br2DOffset,
+								lowerEOBCtx:   p.lowerEOBCtx,
+								brEOBCtx:      p.brEOBCtx,
+							}
+						}
+					}
+					if size == TransformSize16x16 {
+						for c, p := range scanHot {
+							coeffScanHot16x16Y2D[c] = coeffScanHot16x16{
+								pos:           uint8(p.pos),
+								padded:        p.padded,
+								lower2DOffset: p.lower2DOffset,
+								br2DOffset:    p.br2DOffset,
+								lowerEOBCtx:   p.lowerEOBCtx,
+								brEOBCtx:      p.brEOBCtx,
+							}
+						}
+					}
+					if size == TransformSize32x32 {
+						copy(coeffScanHot32x32Y2D[:], scanHot)
+					}
 				}
 			}
 		}

@@ -60,14 +60,7 @@ jobs:
             libaom-example-
       - name: fetch example fixture
         shell: bash
-        run: |
-          set -e
-          mkdir -p internal/av1/testdata/libaom
-          fixture="internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
-          if [ ! -f "$fixture" ]; then
-            curl -fsSL -o "$fixture" \
-              "https://storage.googleapis.com/aom-test-data/av1-1-b8-00-quantizer-00.ivf"
-          fi
+        run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: go test
         run: go test -count=1 ./...
 
@@ -90,14 +83,7 @@ jobs:
           restore-keys: |
             libaom-example-
       - name: fetch example fixture
-        run: |
-          set -e
-          mkdir -p internal/av1/testdata/libaom
-          fixture="internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
-          if [ ! -f "$fixture" ]; then
-            curl -fsSL -o "$fixture" \
-              "https://storage.googleapis.com/aom-test-data/av1-1-b8-00-quantizer-00.ivf"
-          fi
+        run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: go test -race
         run: go test -race -count=1 ./...
 
@@ -120,14 +106,7 @@ jobs:
           restore-keys: |
             libaom-example-
       - name: fetch example fixture
-        run: |
-          set -e
-          mkdir -p internal/av1/testdata/libaom
-          fixture="internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
-          if [ ! -f "$fixture" ]; then
-            curl -fsSL -o "$fixture" \
-              "https://storage.googleapis.com/aom-test-data/av1-1-b8-00-quantizer-00.ivf"
-          fi
+        run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: make alloc
         run: make alloc
       - name: compiler reports
@@ -168,14 +147,7 @@ jobs:
           restore-keys: |
             libaom-example-
       - name: fetch example fixture
-        run: |
-          set -e
-          mkdir -p internal/av1/testdata/libaom
-          fixture="internal/av1/testdata/libaom/av1-1-b8-00-quantizer-00.ivf"
-          if [ ! -f "$fixture" ]; then
-            curl -fsSL -o "$fixture" \
-              "https://storage.googleapis.com/aom-test-data/av1-1-b8-00-quantizer-00.ivf"
-          fi
+        run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: build aom-go-dec
         run: make build-cmd
       - name: cli smoke test

@@ -21,8 +21,11 @@ type Features struct {
 	AVX512 bool
 
 	// ARM64 feature flags. Always false on non-arm64 builds.
-	NEON bool
-	SVE  bool
+	NEON    bool
+	DOTPROD bool
+	I8MM    bool
+	SVE     bool
+	SVE2    bool
 }
 
 // Detected is the result of feature detection, populated exactly once at

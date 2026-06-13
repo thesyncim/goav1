@@ -242,3 +242,71 @@ func updateCDFWindow(cdf []uint16, symbol int) {
 		cdf[symbols] = count + 1
 	}
 }
+
+// updateCDFValues is the hot fixed-storage twin of updateCDFWindow. Most AV1
+// syntax CDFs are binary through quaternary; spelling those out avoids the
+// slice-window loop overhead in the encoder's WriteCDF path while keeping the
+// exact update_cdf arithmetic.
+func updateCDFValues(values *[MaxSymbols + 1]uint16, symbols, symbol int) {
+	count := values[symbols]
+	rate := uint(4 + (count >> 4))
+	if symbols > 3 {
+		rate++
+	}
+	up := func(v uint16) uint16 {
+		return v + ((uint16(CDFProbTop) - v) >> rate)
+	}
+	down := func(v uint16) uint16 {
+		return v - (v >> rate)
+	}
+	switch symbols {
+	case 2:
+		if symbol == 0 {
+			values[0] = down(values[0])
+		} else {
+			values[0] = up(values[0])
+		}
+	case 3:
+		switch symbol {
+		case 0:
+			values[0] = down(values[0])
+			values[1] = down(values[1])
+		case 1:
+			values[0] = up(values[0])
+			values[1] = down(values[1])
+		default:
+			values[0] = up(values[0])
+			values[1] = up(values[1])
+		}
+	case 4:
+		switch symbol {
+		case 0:
+			values[0] = down(values[0])
+			values[1] = down(values[1])
+			values[2] = down(values[2])
+		case 1:
+			values[0] = up(values[0])
+			values[1] = down(values[1])
+			values[2] = down(values[2])
+		case 2:
+			values[0] = up(values[0])
+			values[1] = up(values[1])
+			values[2] = down(values[2])
+		default:
+			values[0] = up(values[0])
+			values[1] = up(values[1])
+			values[2] = up(values[2])
+		}
+	default:
+		last := symbols - 1
+		for i := 0; i < symbol; i++ {
+			values[i] = up(values[i])
+		}
+		for i := symbol; i < last; i++ {
+			values[i] = down(values[i])
+		}
+	}
+	if count < MaxCDFCount {
+		values[symbols] = count + 1
+	}
+}

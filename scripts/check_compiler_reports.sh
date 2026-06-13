@@ -29,7 +29,7 @@ $0 ~ /(make\(|new\(|func literal|moved to heap)/ &&
 $0 ~ /(escapes to heap|moved to heap)/ {
 	print
 }
-' "$raw" | sed -E 's/^([^:]+):[0-9]+:[0-9]+:/\1:*:*:/' | sort -u >"$escapes"
+' "$raw" | sed -E 's/^([^:]+):[0-9]+:[0-9]+:/\1:*:*:/; s/init\.[0-9]+/init.N/g' | sort -u >"$escapes"
 
 awk '
 /^# / {

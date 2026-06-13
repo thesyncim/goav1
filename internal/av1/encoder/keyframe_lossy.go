@@ -1,9 +1,8 @@
 package encoder
 
 import (
-	"sync"
-
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -44,12 +43,12 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
 func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width))
+	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width), keyframeTileOptions{})
 }
 
 // encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
 // tile-column split, which must match the coder pool the caller sized.
-func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8) ([]byte, SourceFrame420, error) {
+func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8, tileOpts keyframeTileOptions) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
@@ -123,47 +122,42 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	}
 	nTiles := int(header.Tile.Cols)
 	miCols := uint16(src.Width / 4)
-	bounds := func(t int) (uint16, uint16) {
-		c0 := header.Tile.ColStartSB[t] * 16
-		c1 := header.Tile.ColStartSB[t+1] * 16
-		if c1 > miCols {
-			c1 = miCols
+	payloads := tileOpts.payloads
+	if cap(payloads) < nTiles {
+		payloads = make([]TilePayload, nTiles)
+	} else {
+		payloads = payloads[:nTiles]
+		for i := range payloads {
+			payloads[i] = TilePayload{}
 		}
-		return c0, c1
 	}
-	payloads := make([]TilePayload, nTiles)
-	var wg sync.WaitGroup
-	errs := make([]error, nTiles)
-	coder := func(t int) *pframeCoder {
-		if tilePC != nil {
-			return tilePC(t)
+	errs := tileOpts.errs
+	if cap(errs) < nTiles {
+		errs = make([]error, nTiles)
+	} else {
+		errs = errs[:nTiles]
+		for i := range errs {
+			errs[i] = nil
 		}
-		return &pframeCoder{}
 	}
-	for t := 1; t < nTiles; t++ {
-		c0, c1 := bounds(t)
-		wg.Add(1)
-		go func(t int, c0, c1 uint16) {
-			defer wg.Done()
-			data, err := coder(t).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
-			if err != nil {
-				errs[t] = err
-				return
-			}
-			payloads[t].Data = data
-		}(t, c0, c1)
+	req := keyframeTileRun{
+		src:      src,
+		recon:    &recon,
+		qIndex:   qIndex,
+		tile:     header.Tile,
+		miCols:   miCols,
+		lfMap:    lfMap,
+		payloads: payloads,
+		errs:     errs,
 	}
-	c0, c1 := bounds(0)
-	tile0, tile0Err := coder(0).encodeKeyframeTile(src, &recon, qIndex, c0, c1, lfMap)
-	wg.Wait()
-	if tile0Err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encode tile 0: %w", tile0Err)
+	var err error
+	if tileOpts.stream != nil {
+		err = tileOpts.stream.runKeyframeTileWorkers(req)
+	} else {
+		err = runKeyframeTilesDefault(req, tilePC)
 	}
-	payloads[0].Data = tile0
-	for t := 1; t < nTiles; t++ {
-		if errs[t] != nil {
-			return nil, SourceFrame420{}, fmt.Errorf("encode tile %d: %w", t, errs[t])
-		}
+	if err != nil {
+		return nil, SourceFrame420{}, err
 	}
 
 	if lfLevel > 0 {
@@ -209,6 +203,62 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	return out, recon, nil
 }
 
+type keyframeTileOptions struct {
+	payloads []TilePayload
+	errs     []error
+	stream   *VideoEncoder
+}
+
+type keyframeTileRun struct {
+	src      SourceFrame420
+	recon    *SourceFrame420
+	qIndex   uint8
+	tile     TileInfo
+	miCols   uint16
+	lfMap    *threading.FrameWorkLoopFilterMap
+	payloads []TilePayload
+	errs     []error
+}
+
+func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCoder) error {
+	nTiles := len(req.payloads)
+	var wg sync.WaitGroup
+	for t := 1; t < nTiles; t++ {
+		c0, c1 := tileColBounds(req.tile, t, req.miCols)
+		pc := &pframeCoder{}
+		if tilePC != nil {
+			pc = tilePC(t)
+		}
+		wg.Add(1)
+		go func(t int, c0, c1 uint16, pc *pframeCoder) {
+			defer wg.Done()
+			data, err := pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+			if err != nil {
+				req.errs[t] = err
+				return
+			}
+			req.payloads[t].Data = data
+		}(t, c0, c1, pc)
+	}
+	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+	pc0 := &pframeCoder{}
+	if tilePC != nil {
+		pc0 = tilePC(0)
+	}
+	tile0, tile0Err := pc0.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	wg.Wait()
+	if tile0Err != nil {
+		return fmt.Errorf("encode tile 0: %w", tile0Err)
+	}
+	req.payloads[0].Data = tile0
+	for t := 1; t < nTiles; t++ {
+		if req.errs[t] != nil {
+			return fmt.Errorf("encode tile %d: %w", t, req.errs[t])
+		}
+	}
+	return nil
+}
+
 func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams {
 	header := losslessKeyframeHeader(width, height)
 	header.Quantization = QuantizationParams{BaseQIdx: qIndex}
@@ -251,8 +301,8 @@ type lossyEncodeState struct {
 	scan8x4, scan4x8             []int16
 	levels                       []uint8
 	trialCDFs                    tile.CoeffCDFs
-	trialBuf                     []byte
 	trialReady                   bool
+	trial8x8CDFs                 coeffTrial8x8Snapshot
 	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd     uint32
 	keyVisW, keyVisH             int
@@ -383,9 +433,6 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 	// multiplier shape.
 	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
 		return nil, err
-	}
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
 	}
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
@@ -983,6 +1030,38 @@ func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py,
 // trialTXBBits trial-codes one quantized transform block and returns the
 // priced rate term.
 func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int16, n int) int64 {
+	if n == 4 {
+		if plane == tile.CoeffPlaneY {
+			return st.trialTXBBitsY4x4((*[16]int16)(qcoeff))
+		}
+		if plane == tile.CoeffPlaneUV {
+			return st.trialTXBBitsUV4x4((*[16]int16)(qcoeff))
+		}
+	}
+	if n == 8 {
+		if plane == tile.CoeffPlaneY {
+			return st.trialTXBBitsY8x8((*[64]int16)(qcoeff))
+		}
+		if plane == tile.CoeffPlaneUV {
+			return st.trialTXBBitsUV8x8((*[64]int16)(qcoeff))
+		}
+	}
+	if n == 16 {
+		if plane == tile.CoeffPlaneY {
+			return st.trialTXBBitsY16x16((*[256]int16)(qcoeff))
+		}
+		if plane == tile.CoeffPlaneUV {
+			return st.trialTXBBitsUV16x16((*[256]int16)(qcoeff))
+		}
+	}
+	if n == 32 {
+		if plane == tile.CoeffPlaneY {
+			return st.trialTXBBitsY32x32((*[1024]int16)(qcoeff))
+		}
+		if plane == tile.CoeffPlaneUV {
+			return st.trialTXBBitsUV32x32((*[1024]int16)(qcoeff))
+		}
+	}
 	size, scan := tile.TransformSize4x4, st.scan4
 	switch n {
 	case 8:
@@ -992,7 +1071,7 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 	case 32:
 		size, scan = tile.TransformSize32x32, st.scan32
 	}
-	tw := entropy.NewWriter(st.trialBuf[:0])
+	tw := entropy.NewCountingWriter()
 	base := tw.Tell()
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
 		Size: size, Plane: plane, Class: transform.Class2D,
@@ -1000,25 +1079,114 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 		return 1 << 59
 	}
 	bits := int64(tw.Tell() - base)
-	return ((bits<<9)*st.rdMult + 256) >> 9
+	return st.txbBitsToRate(int(bits))
+}
+
+func (st *lossyEncodeState) trialTXBBitsY4x4(qcoeff *[16]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB4x4Y2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV4x4(qcoeff *[16]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB4x4UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY8x8(qcoeff *[64]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, nil, 0)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV8x8(qcoeff *[64]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB8x8UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY16x16(qcoeff *[256]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV16x16(qcoeff *[256]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB16x16UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY32x32(qcoeff *[1024]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV32x32(qcoeff *[1024]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB32x32UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) txbBitsToRate(bits int) int64 {
+	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
 }
 
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
+	if n == 8 && size == tile.TransformSize8x8 {
+		return st.trialTXBBitsInter8x8((*[64]int16)(qcoeff), typ)
+	}
+	if n == 16 && size == tile.TransformSize16x16 {
+		return st.trialTXBBitsInter16x16((*[256]int16)(qcoeff), typ)
+	}
+	if n == 32 && size == tile.TransformSize32x32 {
+		return st.trialTXBBitsInter32x32((*[1024]int16)(qcoeff), typ)
+	}
+
+	tw := entropy.NewCountingWriter()
 	scan := st.scan4
-	if n == 8 {
-		scan = st.scan8
-	}
-	tw := entropy.NewWriter(st.trialBuf[:0])
-	txCDFs := st.txCDFs
-	txReq := tile.InterTransformTypeRequest{
-		Size:        size,
-		QIndexKnown: true,
-		QIndex:      st.qIndex,
-	}
-	afterSkip := func() error {
-		return tile.WriteInterTransformType(&tw, &txCDFs, txReq, typ)
+	var txCDF *entropy.CDF
+	txSymbol := 0
+	if st.qIndex == 0 {
+		if typ != transform.TypeDCTDCT {
+			return 1 << 59
+		}
+	} else {
+		set, err := tile.ExtTXSetTypeFor(size, true, false)
+		if err != nil {
+			return 1 << 59
+		}
+		symbols, err := tile.ExtTXTypeCount(set)
+		if err != nil {
+			return 1 << 59
+		}
+		if symbols <= 1 {
+			if typ != transform.TypeDCTDCT {
+				return 1 << 59
+			}
+		} else {
+			index, err := tile.ExtTXSetIndex(size, true, false)
+			if err != nil {
+				return 1 << 59
+			}
+			square, err := tile.TransformSizeSquare(size)
+			if err != nil {
+				return 1 << 59
+			}
+			txCDF, err = st.txCDFs.InterCDF(index, square, symbols)
+			if err != nil {
+				return 1 << 59
+			}
+			txSymbol, err = tile.ExtTXSymbolForType(set, typ)
+			if err != nil {
+				return 1 << 59
+			}
+		}
 	}
 	base := tw.Tell()
+	afterSkip := func() error {
+		if txCDF == nil {
+			return nil
+		}
+		saved := *txCDF
+		tw.WriteCDF(txCDF, txSymbol)
+		*txCDF = saved
+		return nil
+	}
 	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
 		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
 	}, qcoeff[:n*n], scan, st.levels); err != nil {
@@ -1026,6 +1194,36 @@ func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.T
 	}
 	bits := int64(tw.Tell() - base)
 	return ((bits<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter8x8(qcoeff *[64]int16, typ transform.Type) int64 {
+	txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
+	if !ok {
+		return 1 << 59
+	}
+	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
+	rate := int64(bits)
+	return ((rate<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter16x16(qcoeff *[256]int16, typ transform.Type) int64 {
+	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize16x16, typ)
+	if !ok {
+		return 1 << 59
+	}
+	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
+	rate := int64(bits)
+	return ((rate<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter32x32(qcoeff *[1024]int16, typ transform.Type) int64 {
+	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize32x32, typ)
+	if !ok {
+		return 1 << 59
+	}
+	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
+	rate := int64(bits)
+	return ((rate<<9)*st.rdMult + 256) >> 9
 }
 
 // trialChromaCost prices the two DC-predicted chroma transform blocks of an

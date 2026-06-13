@@ -37,6 +37,11 @@ import (
 // offs > 0 in propagate_carry_bwd).
 var ErrCarryUnderflow = errors.New("entropy: range coder carry underflow")
 
+// ErrCountOnlyFinish signals Finish on a count-only writer. Count-only writers
+// maintain exact range-coder state for Tell-based pricing, but intentionally do
+// not retain entropy bytes.
+var ErrCountOnlyFinish = errors.New("entropy: count-only writer cannot finish")
+
 // Writer is the AV1 range/entropy encoder. Callers own the output buffer
 // (EncodeInto style): NewWriter takes a destination slice that grows only if it
 // is too small, and Finish returns the sub-slice holding the finalized bytes.
@@ -57,12 +62,50 @@ type Writer struct {
 	err  error  // od_ec_enc.error (sticky)
 }
 
+// BitCounter is the output-free range encoder used by exact encoder rate
+// trials. It keeps the same low/rng/cnt/offs state as Writer, but has no output
+// slice, carry propagation, or sticky error path.
+type BitCounter struct {
+	offs int
+	low  uint64
+	rng  uint32
+	cnt  int32
+}
+
+var emptyWriterBuf = make([]byte, 0)
+
+func writerBacking(dst []byte) []byte {
+	if cap(dst) == 0 {
+		return emptyWriterBuf
+	}
+	return dst[:cap(dst)]
+}
+
 // NewWriter initializes the encoder writing into dst[:0] (its full capacity is
 // used as the backing buffer; it grows in place if exhausted). This is
 // od_ec_enc_reset: low=0, rng=0x8000, cnt=-9.
 func NewWriter(dst []byte) Writer {
 	return Writer{
-		buf: dst[:cap(dst)],
+		buf: writerBacking(dst),
+		rng: 0x8000,
+		cnt: -9,
+	}
+}
+
+// NewCountingWriter initializes a range encoder that preserves low/rng/cnt/offs
+// exactly enough for Tell-based rate pricing, but discards output bytes. It is
+// only for encoder trials that never call Finish.
+func NewCountingWriter() Writer {
+	return Writer{
+		rng: 0x8000,
+		cnt: -9,
+	}
+}
+
+// NewBitCounter initializes an output-free range encoder for exact Tell-based
+// rate pricing.
+func NewBitCounter() BitCounter {
+	return BitCounter{
 		rng: 0x8000,
 		cnt: -9,
 	}
@@ -71,12 +114,16 @@ func NewWriter(dst []byte) Writer {
 // Reset rearms the writer over dst, the in-place form of NewWriter for
 // callers that keep one Writer alive across streams.
 func (w *Writer) Reset(dst []byte) {
-	w.buf = dst[:cap(dst)]
+	w.buf = writerBacking(dst)
 	w.offs = 0
 	w.low = 0
 	w.rng = 0x8000
 	w.cnt = -9
 	w.err = nil
+}
+
+func (w *BitCounter) Tell() int {
+	return int(w.cnt+10) + w.offs*8
 }
 
 // ensure guarantees len(w.buf) >= n, growing (amortized) like the C realloc.
@@ -100,17 +147,39 @@ func (w *Writer) normalize(low uint64, rng uint32) {
 	d := int32(16 - bits.Len32(rng)) // 16 - OD_ILOG_NZ(rng)
 	s := c + d
 	if s >= 40 { // 56 - 16 (see entenc.c rationale)
-		w.ensure(w.offs + 8)
 		numBytesReady := uint32((s >> 3) + 1)
 		c += 24 - int32(numBytesReady<<3)
-		output := low >> uint32(c)
-		low &= (uint64(1) << uint32(c)) - 1
-		mask := uint64(1) << (numBytesReady << 3)
-		carry := output & mask
-		mask--
-		output &= mask
-		w.writeOut(output, carry, numBytesReady)
+		keepMask := (uint64(1) << uint32(c)) - 1
+		if w.buf == nil {
+			low &= keepMask
+			w.offs += int(numBytesReady)
+		} else {
+			w.ensure(w.offs + 8)
+			output := low >> uint32(c)
+			low &= keepMask
+			mask := uint64(1) << (numBytesReady << 3)
+			carry := output & mask
+			mask--
+			output &= mask
+			w.writeOut(output, carry, numBytesReady)
+		}
 		s = c + d - 24
+	}
+	w.low = low << uint32(d)
+	w.rng = rng << uint32(d)
+	w.cnt = s
+}
+
+func (w *BitCounter) normalize(low uint64, rng uint32) {
+	c := w.cnt
+	d := int32(16 - bits.Len32(rng))
+	s := c + d
+	if s >= 40 {
+		numBytesReady := (s >> 3) + 1
+		c += 24 - (numBytesReady << 3)
+		low &= (uint64(1) << uint32(c)) - 1
+		w.offs += int(numBytesReady)
+		s -= numBytesReady << 3
 	}
 	w.low = low << uint32(d)
 	w.rng = rng << uint32(d)
@@ -162,6 +231,21 @@ func (w *Writer) encodeQ15(fl, fh uint32, s, nsyms int) {
 	w.normalize(l, r)
 }
 
+func (w *BitCounter) encodeQ15(fl, fh uint32, s, nsyms int) {
+	l := w.low
+	r := w.rng
+	n := uint32(nsyms - 1)
+	if fl < CDFProbTop {
+		u := ((r>>8)*(fl>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(n-uint32(s-1))
+		v := ((r>>8)*(fh>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(n-uint32(s))
+		l += uint64(r - u)
+		r = u - v
+	} else {
+		r -= ((r>>8)*(fh>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(n-uint32(s))
+	}
+	w.normalize(l, r)
+}
+
 // WriteBoolQ15 codes a single binary value val (0/1) where f is the Q15
 // probability that val is one. Port of od_ec_encode_bool_q15.
 func (w *Writer) WriteBoolQ15(val int, f uint32) {
@@ -172,6 +256,56 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 	r := w.rng
 	v := ((r >> 8) * (f >> ecProbShift)) >> (7 - ecProbShift)
 	v += ecMinProb
+	if val != 0 {
+		l += uint64(r - v)
+		r = v
+	} else {
+		r -= v
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteBoolQ15(val int, f uint32) {
+	if traceEntropyReads {
+		traceWriteBool(uint16(f))
+	}
+	l := w.low
+	r := w.rng
+	v := ((r >> 8) * (f >> ecProbShift)) >> (7 - ecProbShift)
+	v += ecMinProb
+	if val != 0 {
+		l += uint64(r - v)
+		r = v
+	} else {
+		r -= v
+	}
+	w.normalize(l, r)
+}
+
+// WriteBit codes one equiprobable bit, matching WriteBoolQ15(val, 1<<14).
+func (w *Writer) WriteBit(val int) {
+	if traceEntropyReads {
+		traceWriteBool(1 << 14)
+	}
+	l := w.low
+	r := w.rng
+	v := (r>>8)<<7 + ecMinProb
+	if val != 0 {
+		l += uint64(r - v)
+		r = v
+	} else {
+		r -= v
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteBit(val int) {
+	if traceEntropyReads {
+		traceWriteBool(1 << 14)
+	}
+	l := w.low
+	r := w.rng
+	v := (r>>8)<<7 + ecMinProb
 	if val != 0 {
 		l += uint64(r - v)
 		r = v
@@ -195,11 +329,27 @@ func (w *Writer) WriteSymbol(s int, icdf []uint16, nsyms int) {
 	w.encodeQ15(fl, uint32(icdf[s]), s, nsyms)
 }
 
+func (w *BitCounter) WriteSymbol(s int, icdf []uint16, nsyms int) {
+	if traceEntropyReads {
+		traceWriteCDF(icdf[0], nsyms)
+	}
+	fl := uint32(CDFProbTop)
+	if s > 0 {
+		fl = uint32(icdf[s-1])
+	}
+	w.encodeQ15(fl, uint32(icdf[s]), s, nsyms)
+}
+
 // WriteSymbolAdaptive codes symbol s from the adaptive inverse CDF cdf (len ==
 // nsyms+1, the trailing slot holding the adaptation count) and then adapts cdf in
 // place via the same updateCDFWindow the decoder's ReadSymbol uses, so both sides
 // evolve the CDF identically.
 func (w *Writer) WriteSymbolAdaptive(s int, cdf []uint16) {
+	w.WriteSymbol(s, cdf, len(cdf)-1)
+	updateCDFWindow(cdf, s)
+}
+
+func (w *BitCounter) WriteSymbolAdaptive(s int, cdf []uint16) {
 	w.WriteSymbol(s, cdf, len(cdf)-1)
 	updateCDFWindow(cdf, s)
 }
@@ -210,9 +360,298 @@ func (w *Writer) WriteSymbolAdaptive(s int, cdf []uint16) {
 // callers coding under disable_cdf_update use WriteSymbol with a non-adapting CDF.
 func (w *Writer) WriteCDF(cdf *CDF, s int) {
 	n := int(cdf.symbols)
-	vals := cdf.values[:n+1]
-	w.WriteSymbol(s, vals, n)
-	updateCDFWindow(vals, s)
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], n)
+	}
+	fl := uint32(CDFProbTop)
+	if s > 0 {
+		fl = uint32(values[s-1])
+	}
+	w.encodeQ15(fl, uint32(values[s]), s, n)
+	switch n {
+	case 2:
+		count := values[2]
+		rate := uint(4 + (count >> 4))
+		v := values[0]
+		if s == 0 {
+			values[0] = v - (v >> rate)
+		} else {
+			values[0] = v + ((uint16(CDFProbTop) - v) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[2] = count + 1
+		}
+	case 3:
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		v0, v1 := values[0], values[1]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[3] = count + 1
+		}
+	case 4:
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		v0, v1, v2 := values[0], values[1], values[2]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 2:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 - (v2 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
+	default:
+		updateCDFValues(values, n, s)
+	}
+}
+
+func (w *BitCounter) WriteCDF(cdf *CDF, s int) {
+	n := int(cdf.symbols)
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], n)
+	}
+	fl := uint32(CDFProbTop)
+	if s > 0 {
+		fl = uint32(values[s-1])
+	}
+	w.encodeQ15(fl, uint32(values[s]), s, n)
+	switch n {
+	case 2:
+		count := values[2]
+		rate := uint(4 + (count >> 4))
+		v := values[0]
+		if s == 0 {
+			values[0] = v - (v >> rate)
+		} else {
+			values[0] = v + ((uint16(CDFProbTop) - v) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[2] = count + 1
+		}
+	case 3:
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		v0, v1 := values[0], values[1]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[3] = count + 1
+		}
+	case 4:
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		v0, v1, v2 := values[0], values[1], values[2]
+		switch s {
+		case 0:
+			values[0] = v0 - (v0 >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 1:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 - (v1 >> rate)
+			values[2] = v2 - (v2 >> rate)
+		case 2:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 - (v2 >> rate)
+		default:
+			values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+			values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+			values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		}
+		if count < MaxCDFCount {
+			values[4] = count + 1
+		}
+	default:
+		updateCDFValues(values, n, s)
+	}
+}
+
+// WriteBinaryCDFTrusted codes symbol s from a known two-symbol adaptive CDF. It
+// is the binary specialization of WriteCDF for hot boolean syntax paths whose
+// table shape has already been validated by the caller.
+func (w *Writer) WriteBinaryCDFTrusted(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 2)
+	}
+	v0 := values[0]
+	l := w.low
+	r := w.rng
+	u := ((r >> 8) * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)
+	u += ecMinProb
+	count := values[2]
+	rate := uint(4 + (count >> 4))
+	if s == 0 {
+		r -= u
+		values[0] = v0 - (v0 >> rate)
+	} else {
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[2] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 2)
+	}
+	v0 := values[0]
+	l := w.low
+	r := w.rng
+	u := ((r >> 8) * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)
+	u += ecMinProb
+	count := values[2]
+	rate := uint(4 + (count >> 4))
+	if s == 0 {
+		r -= u
+		values[0] = v0 - (v0 >> rate)
+	} else {
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[2] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+// WriteCDF4 codes symbol s using a known 4-symbol adaptive CDF. It is the
+// quaternary specialization of WriteCDF for coefficient-base hot paths whose
+// table shape is fixed by AV1 syntax.
+func (w *Writer) WriteCDF4(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 4)
+	}
+	v0, v1, v2 := values[0], values[1], values[2]
+	l := w.low
+	r := w.rng
+	count := values[4]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+	default:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[4] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 4)
+	}
+	v0, v1, v2 := values[0], values[1], values[2]
+	l := w.low
+	r := w.rng
+	count := values[4]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+	default:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[4] = count + 1
+	}
+	w.normalize(l, r)
 }
 
 // WriteLiteral codes the low n bits of value MSB-first as equiprobable bits,
@@ -220,7 +659,13 @@ func (w *Writer) WriteCDF(cdf *CDF, s int) {
 // the exact inverse of Reader.ReadBits.
 func (w *Writer) WriteLiteral(value uint32, n int) {
 	for i := n - 1; i >= 0; i-- {
-		w.WriteBoolQ15(int((value>>uint(i))&1), 1<<14)
+		w.WriteBit(int((value >> uint(i)) & 1))
+	}
+}
+
+func (w *BitCounter) WriteLiteral(value uint32, n int) {
+	for i := n - 1; i >= 0; i-- {
+		w.WriteBit(int((value >> uint(i)) & 1))
 	}
 }
 
@@ -228,6 +673,9 @@ func (w *Writer) WriteLiteral(value uint32, n int) {
 // correctly regardless of trailing bytes and returns the finalized bytes. Port of
 // od_ec_enc_done. The writer must not be used after Finish.
 func (w *Writer) Finish() ([]byte, error) {
+	if w.buf == nil {
+		return nil, ErrCountOnlyFinish
+	}
 	if w.err != nil {
 		return nil, w.err
 	}

@@ -156,7 +156,6 @@ func (h *hmeState) run(src SourceFrame420) {
 	for range jobs {
 		<-h.done
 	}
-	defer func() { h.srcQ, h.refQ = h.refQ, h.srcQ }()
 
 	jobs = 0
 	for b := range hmeBands {
@@ -173,6 +172,7 @@ func (h *hmeState) run(src SourceFrame420) {
 	for range jobs {
 		<-h.done
 	}
+	h.srcQ, h.refQ = h.refQ, h.srcQ
 }
 
 // cutDetected reports whether the last run looks like a scene cut: at least
@@ -198,7 +198,7 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			qx := min(rx*8, qw-8)
 			qy := min(ry*8, qh-8)
 			srcBlock := h.srcQ[qy*qw+qx:]
-			zero := sad8x8DualImpl(srcBlock, qw, h.refQ[qy*qw+qx:], qw)
+			zero := sad8x8Dual(srcBlock, qw, h.refQ[qy*qw+qx:], qw)
 			bestDX, bestDY, bestSAD := 0, 0, zero
 			// Static fast path mirrors the full-res search's bar.
 			if zero <= 8*8*2 {
@@ -212,7 +212,7 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 						if dx == 0 && dy == 0 {
 							continue
 						}
-						if s := sad8x8DualImpl(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
+						if s := sad8x8Dual(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
 							bestSAD, bestDX, bestDY = s, dx, dy
 						}
 					}
@@ -222,7 +222,7 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 					if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
 						continue
 					}
-					if s := sad8x8DualImpl(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
+					if s := sad8x8Dual(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
 						bestSAD, bestDX, bestDY = s, dx, dy
 					}
 				}

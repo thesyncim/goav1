@@ -96,6 +96,1023 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteCoefficientsTXB8x8Y2DTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(133))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	for _, withAfterSkip := range []bool{false, true} {
+		var genericCDFs, fastCDFs CoeffCDFs
+		if err := genericCDFs.InitDefault(96); err != nil {
+			t.Fatal(err)
+		}
+		if err := fastCDFs.InitDefault(96); err != nil {
+			t.Fatal(err)
+		}
+		genericWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+		fastWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+		var genericTXCDF, fastTXCDF entropy.CDF
+		if err := genericTXCDF.InitUniform(16); err != nil {
+			t.Fatal(err)
+		}
+		fastTXCDF = genericTXCDF
+
+		for attempt := range 256 {
+			coeffs := randomCoeffs(rng, scan, len(scan))
+			var genericAfterSkip func() error
+			var fastTXCDFPtr *entropy.CDF
+			fastTXSymbol := 0
+			if withAfterSkip {
+				symbol := attempt & 15
+				genericAfterSkip = func() error {
+					saved := genericTXCDF
+					genericWriter.WriteCDF(&genericTXCDF, symbol)
+					genericTXCDF = saved
+					return nil
+				}
+				fastTXCDFPtr = &fastTXCDF
+				fastTXSymbol = symbol
+			}
+
+			genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+				Size: TransformSize8x8, Plane: CoeffPlaneY, Class: transform.Class2D, AfterSkip: genericAfterSkip,
+			}, coeffs, scan, genericScratch)
+			if err != nil {
+				t.Fatalf("generic attempt %d withAfterSkip=%t: %v", attempt, withAfterSkip, err)
+			}
+			fastResult := WriteCoefficientsTXB8x8Y2DTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, fastTXCDFPtr, fastTXSymbol)
+			if fastResult != genericResult {
+				t.Fatalf("attempt %d withAfterSkip=%t result=%+v want %+v", attempt, withAfterSkip, fastResult, genericResult)
+			}
+			if fastCDFs != genericCDFs {
+				t.Fatalf("attempt %d withAfterSkip=%t coefficient CDFs diverged at %s", attempt, withAfterSkip, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+			}
+			if fastTXCDF != genericTXCDF {
+				t.Fatalf("attempt %d withAfterSkip=%t tx CDFs diverged", attempt, withAfterSkip)
+			}
+			if fastWriter.Tell() != genericWriter.Tell() {
+				t.Fatalf("attempt %d withAfterSkip=%t tell=%d want %d", attempt, withAfterSkip, fastWriter.Tell(), genericWriter.Tell())
+			}
+		}
+
+		genericBytes, err := genericWriter.Finish()
+		if err != nil {
+			t.Fatalf("generic finish withAfterSkip=%t: %v", withAfterSkip, err)
+		}
+		fastBytes, err := fastWriter.Finish()
+		if err != nil {
+			t.Fatalf("fast finish withAfterSkip=%t: %v", withAfterSkip, err)
+		}
+		if string(fastBytes) != string(genericBytes) {
+			t.Fatalf("withAfterSkip=%t final bytes diverged", withAfterSkip)
+		}
+	}
+}
+
+func TestCountCoefficientsTXB8x8Y2DTrustedMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(241))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	var writerTXCDF, countTXCDF entropy.CDF
+	if err := writerTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	countTXCDF = writerTXCDF
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		symbol := rng.Intn(16)
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult := WriteCoefficientsTXB8x8Y2DTrusted(&w, &writerCDFs, coeffs, scratch, &writerTXCDF, symbol)
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB8x8Y2DTrusted(&countCDFs, coeffs, &countTXCDF, symbol)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+		if countTXCDF != writerTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+	}
+}
+
+func TestCountCoefficientsTXB8x8Y2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(244))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize8x8, Plane: CoeffPlaneY, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB8x8Y2DTrusted(&countCDFs, coeffs, nil, 0)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB8x8UV2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(245))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize8x8, Plane: CoeffPlaneUV, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB8x8UV2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB16x16Y2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(246))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize16x16, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize16x16, Plane: CoeffPlaneY, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB16x16Y2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB16x16UV2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(247))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize16x16, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize16x16, Plane: CoeffPlaneUV, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB16x16UV2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB32x32Y2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(248))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize32x32, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize32x32, Plane: CoeffPlaneY, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB32x32Y2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB32x32UV2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(249))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize32x32, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize32x32, Plane: CoeffPlaneUV, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB32x32UV2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB16x16Y2DTrustedWithTXTypeMatchesGenericWriter(t *testing.T) {
+	testCountY2DTrustedWithTXTypeMatchesGenericWriter(t, TransformSize16x16, 250, 512, CountCoefficientsTXB16x16Y2DTrustedWithTXType)
+}
+
+func TestCountCoefficientsTXB32x32Y2DTrustedWithTXTypeMatchesGenericWriter(t *testing.T) {
+	testCountY2DTrustedWithTXTypeMatchesGenericWriter(t, TransformSize32x32, 251, 256, CountCoefficientsTXB32x32Y2DTrustedWithTXType)
+}
+
+func testCountY2DTrustedWithTXTypeMatchesGenericWriter(t *testing.T, size TransformSize, seed int64, attempts int, count func(*CoeffCDFs, []int16, *entropy.CDF, int) (TXBDecodeResult, int)) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(seed))
+	txSize, err := size.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, size, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	var writerTXCDF, countTXCDF entropy.CDF
+	if err := writerTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	countTXCDF = writerTXCDF
+
+	for attempt := range attempts {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		if attempt%11 == 0 {
+			coeffs[int(scan[0])] = int16(1 + rng.Intn(5))
+		}
+		symbol := rng.Intn(16)
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		afterSkip := func() error {
+			saved := writerTXCDF
+			w.WriteCDF(&writerTXCDF, symbol)
+			writerTXCDF = saved
+			return nil
+		}
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: size, Plane: CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := count(&countCDFs, coeffs, &countTXCDF, symbol)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+		if countTXCDF != writerTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+	}
+}
+
+func TestCountCoefficientsTXB4x4Y2DTrustedMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(243))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize4x4, Plane: CoeffPlaneY, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("attempt %d writer: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB4x4Y2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestCountCoefficientsTXB4x4UV2DTrustedMatchesWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(242))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize4x4, Plane: CoeffPlaneUV, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("attempt %d writer: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB4x4UV2DTrusted(&countCDFs, coeffs)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
+func TestWriteCoefficientsTXB8x8Y2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(177))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	var genericTXCDF, fastTXCDF entropy.CDF
+	if err := genericTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	fastTXCDF = genericTXCDF
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+		symbol := rng.Intn(16)
+		genericAfterSkip := func() error {
+			genericWriter.WriteCDF(&genericTXCDF, symbol)
+			return nil
+		}
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize8x8,
+			Plane:          CoeffPlaneY,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+			AfterSkip:      genericAfterSkip,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB8x8Y2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx, &fastTXCDF, symbol)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastTXCDF != genericTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func TestWriteCoefficientsTXB8x8UV2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(181))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize8x8,
+			Plane:          CoeffPlaneUV,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB8x8UV2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func TestWriteCoefficientsTXB16x16Y2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(183))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize16x16, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<17))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<17))
+	var genericTXCDF, fastTXCDF entropy.CDF
+	if err := genericTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	fastTXCDF = genericTXCDF
+
+	for attempt := range 192 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+		symbol := rng.Intn(16)
+		genericAfterSkip := func() error {
+			genericWriter.WriteCDF(&genericTXCDF, symbol)
+			return nil
+		}
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize16x16,
+			Plane:          CoeffPlaneY,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+			AfterSkip:      genericAfterSkip,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB16x16Y2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx, &fastTXCDF, symbol)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastTXCDF != genericTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func TestWriteCoefficientsTXB16x16UV2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(185))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize16x16, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<17))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<17))
+
+	for attempt := range 192 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize16x16,
+			Plane:          CoeffPlaneUV,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB16x16UV2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func TestWriteCoefficientsTXB32x32Y2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(187))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize32x32, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<18))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<18))
+	var genericTXCDF, fastTXCDF entropy.CDF
+	if err := genericTXCDF.InitUniform(16); err != nil {
+		t.Fatal(err)
+	}
+	fastTXCDF = genericTXCDF
+
+	for attempt := range 96 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+		symbol := rng.Intn(16)
+		genericAfterSkip := func() error {
+			genericWriter.WriteCDF(&genericTXCDF, symbol)
+			return nil
+		}
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize32x32,
+			Plane:          CoeffPlaneY,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+			AfterSkip:      genericAfterSkip,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB32x32Y2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx, &fastTXCDF, symbol)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastTXCDF != genericTXCDF {
+			t.Fatalf("attempt %d tx CDF diverged", attempt)
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func TestWriteCoefficientsTXB32x32UV2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(189))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize32x32, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<18))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<18))
+
+	for attempt := range 96 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize32x32,
+			Plane:          CoeffPlaneUV,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB32x32UV2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
+func firstCoeffCDFDiff(a, b CoeffCDFs) string {
+	for tx := range a.TXBSkip {
+		for ctx := range a.TXBSkip[tx] {
+			if a.TXBSkip[tx][ctx] != b.TXBSkip[tx][ctx] {
+				return "TXBSkip"
+			}
+		}
+	}
+	for tx := range a.EOBExtra {
+		for plane := range a.EOBExtra[tx] {
+			for ctx := range a.EOBExtra[tx][plane] {
+				if a.EOBExtra[tx][plane][ctx] != b.EOBExtra[tx][plane][ctx] {
+					return "EOBExtra"
+				}
+			}
+		}
+	}
+	for plane := range a.DCSign {
+		for ctx := range a.DCSign[plane] {
+			if a.DCSign[plane][ctx] != b.DCSign[plane][ctx] {
+				return "DCSign"
+			}
+		}
+	}
+	for tx := range a.CoeffBR {
+		for plane := range a.CoeffBR[tx] {
+			for ctx := range a.CoeffBR[tx][plane] {
+				if a.CoeffBR[tx][plane][ctx] != b.CoeffBR[tx][plane][ctx] {
+					return "CoeffBR"
+				}
+			}
+		}
+	}
+	for tx := range a.CoeffBase {
+		for plane := range a.CoeffBase[tx] {
+			for ctx := range a.CoeffBase[tx][plane] {
+				if a.CoeffBase[tx][plane][ctx] != b.CoeffBase[tx][plane][ctx] {
+					return "CoeffBase"
+				}
+			}
+		}
+	}
+	for tx := range a.CoeffBaseEOB {
+		for plane := range a.CoeffBaseEOB[tx] {
+			for ctx := range a.CoeffBaseEOB[tx][plane] {
+				if a.CoeffBaseEOB[tx][plane][ctx] != b.CoeffBaseEOB[tx][plane][ctx] {
+					return "CoeffBaseEOB"
+				}
+			}
+		}
+	}
+	for plane := range a.EOBFlag16 {
+		for ctx := range a.EOBFlag16[plane] {
+			if a.EOBFlag16[plane][ctx] != b.EOBFlag16[plane][ctx] {
+				return "EOBFlag16"
+			}
+		}
+	}
+	for plane := range a.EOBFlag32 {
+		for ctx := range a.EOBFlag32[plane] {
+			if a.EOBFlag32[plane][ctx] != b.EOBFlag32[plane][ctx] {
+				return "EOBFlag32"
+			}
+		}
+	}
+	for plane := range a.EOBFlag64 {
+		for ctx := range a.EOBFlag64[plane] {
+			if a.EOBFlag64[plane][ctx] != b.EOBFlag64[plane][ctx] {
+				return "EOBFlag64"
+			}
+		}
+	}
+	for plane := range a.EOBFlag128 {
+		for ctx := range a.EOBFlag128[plane] {
+			if a.EOBFlag128[plane][ctx] != b.EOBFlag128[plane][ctx] {
+				return "EOBFlag128"
+			}
+		}
+	}
+	for plane := range a.EOBFlag256 {
+		for ctx := range a.EOBFlag256[plane] {
+			if a.EOBFlag256[plane][ctx] != b.EOBFlag256[plane][ctx] {
+				return "EOBFlag256"
+			}
+		}
+	}
+	for plane := range a.EOBFlag512 {
+		for ctx := range a.EOBFlag512[plane] {
+			if a.EOBFlag512[plane][ctx] != b.EOBFlag512[plane][ctx] {
+				return "EOBFlag512"
+			}
+		}
+	}
+	for plane := range a.EOBFlag1024 {
+		for ctx := range a.EOBFlag1024[plane] {
+			if a.EOBFlag1024[plane][ctx] != b.EOBFlag1024[plane][ctx] {
+				return "EOBFlag1024"
+			}
+		}
+	}
+	return "unknown"
+}
+
 // TestWriteCoefficientsTXBWithContextRoundTrip drives the carrier path: a
 // sequence of TXBs at random plane positions coded through the encoder-side
 // CoeffEntropyContext carrier must decode exactly through the decoder's
@@ -237,4 +1254,670 @@ func randomCoeffs(rng *rand.Rand, scan []int16, maxEOB int) []int16 {
 		coeffs[int(scan[c])] = int16(level)
 	}
 	return coeffs
+}
+
+func BenchmarkWriteCoefficientsTXB8x8Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(233))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize8x8, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize8x8, Plane: CoeffPlaneY, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB8x8Y2DTrusted(&w, &cdfs, blocks[i&255], scratch, nil, 0)
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB8x8Y2DTrusted(&cdfs, blocks[i&255], nil, 0)
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB8x8UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(235))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize8x8, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize8x8,
+				Plane:          CoeffPlaneUV,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB8x8UV2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2)
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB8x8UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(236))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize8x8, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize8x8, Plane: CoeffPlaneUV, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB8x8UV2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB16x16Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(237))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize16x16, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize16x16, Plane: CoeffPlaneY, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("generic-counting-writer-tx", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDF entropy.CDF
+		if err := txCDF.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			symbol := i & 15
+			afterSkip := func() error {
+				saved := txCDF
+				w.WriteCDF(&txCDF, symbol)
+				txCDF = saved
+				return nil
+			}
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize16x16, Plane: CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB16x16Y2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+	b.Run("trusted-count-tx", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDF entropy.CDF
+		if err := txCDF.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB16x16Y2DTrustedWithTXType(&cdfs, blocks[i&255], &txCDF, i&15)
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB16x16UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(238))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize16x16, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize16x16, Plane: CoeffPlaneUV, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB16x16UV2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB16x16Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(241))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize16x16, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize16x16,
+				Plane:          CoeffPlaneY,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB16x16Y2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2, nil, 0)
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB16x16UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(242))
+	txSize, err := TransformSize16x16.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize16x16, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize16x16,
+				Plane:          CoeffPlaneUV,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB16x16UV2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2)
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB32x32Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(239))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize32x32, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize32x32, Plane: CoeffPlaneY, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("generic-counting-writer-tx", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDF entropy.CDF
+		if err := txCDF.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			symbol := i & 15
+			afterSkip := func() error {
+				saved := txCDF
+				w.WriteCDF(&txCDF, symbol)
+				txCDF = saved
+				return nil
+			}
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize32x32, Plane: CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB32x32Y2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+	b.Run("trusted-count-tx", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		var txCDF entropy.CDF
+		if err := txCDF.InitUniform(16); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB32x32Y2DTrustedWithTXType(&cdfs, blocks[i&255], &txCDF, i&15)
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB32x32UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(240))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize32x32, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize32x32, Plane: CoeffPlaneUV, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB32x32UV2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB32x32Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(243))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize32x32, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 1<<17)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize32x32,
+				Plane:          CoeffPlaneY,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 1<<17)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB32x32Y2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2, nil, 0)
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB32x32UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(244))
+	txSize, err := TransformSize32x32.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize32x32, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 1<<17)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize32x32,
+				Plane:          CoeffPlaneUV,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 1<<17)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB32x32UV2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2)
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB4x4Y2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(235))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize4x4, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize4x4, Plane: CoeffPlaneY, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB4x4Y2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
+}
+
+func BenchmarkCountCoefficientsTXB4x4UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(234))
+	txSize, err := TransformSize4x4.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize4x4, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic-counting-writer", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewCountingWriter()
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size: TransformSize4x4, Plane: CoeffPlaneUV, Class: transform.Class2D,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted-count", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			CountCoefficientsTXB4x4UV2DTrusted(&cdfs, blocks[i&255])
+		}
+	})
 }

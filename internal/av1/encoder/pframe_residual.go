@@ -314,12 +314,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	}
 
 	// The mode and partition searches trial-code against throwaway
-	// contexts; they re-arm lazily on first use each frame. The buffer
-	// exists from the first tile so no frame mid-stream pays it.
+	// contexts; they re-arm CDFs lazily on first use each frame.
 	st.trialReady = false
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
-	}
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
 	st.keyVisW, st.keyVisH = src.Width, src.Height
@@ -365,14 +361,17 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		st.mv64Grid = make([]motion.Vector, st.grid64Cols*grid64Rows)
 		st.sad64Grid = make([]int32, st.grid64Cols*grid64Rows)
 	}
-	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
-		st.sad64Grid[i] = -1
-	}
-	for i := range st.sad8Grid {
+	for i := range st.sad8Grid[:st.grid8Cols*grid8Rows] {
 		st.sad8Grid[i] = -1
 	}
 	for i := range st.sad16Grid[:st.grid16Cols*grid16Rows] {
 		st.sad16Grid[i] = -1
+	}
+	for i := range st.sad32Grid[:st.grid32Cols*grid32Rows] {
+		st.sad32Grid[i] = -1
+	}
+	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
+		st.sad64Grid[i] = -1
 	}
 	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
 	// over the four independent 8x8 searches and still be coded as one block:
@@ -480,11 +479,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			}
 			base := py*src.YStride + px
 			refBase := (py+dy)*src.YStride + px + dx
-			sad64 := 0
-			for _, q := range [4][2]int{{0, 0}, {32, 0}, {0, 32}, {32, 32}} {
-				qoff := q[1]*src.YStride + q[0]
-				sad64 += sadBlock(src.Y, ref.Y, base+qoff, refBase+qoff, src.YStride, 32, 1<<30)
-			}
+			sad64 := sad64x64(src.Y[base:], ref.Y[refBase:], src.YStride)
 			if sad64 <= childCost+mergeBias64 {
 				idx64 := (py/64)*st.grid64Cols + px/64
 				st.mv64Grid[idx64] = mv64
@@ -729,7 +724,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	case n == 32:
 		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-		mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+		if st.sad32Grid[idx] >= 0 {
+			mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+		}
 	case n == 16:
 		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
 		if st.sad16Grid[idx] >= 0 {
@@ -800,7 +797,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if bw == 8 && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
 			if err := predictCompoundInto(st.sadScratch[:64], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, 8, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
-				compoundSAD := sad8x8DualImpl(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:64], 8)
+				compoundSAD := sad8x8Dual(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:64], 8)
 				compoundBias := 64 + 12*st.sadPerBit
 				if compoundSAD+compoundBias < fullSAD {
 					compound = true
@@ -915,11 +912,32 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 						if dr <= 16 && dc <= 16 {
 							mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
 							if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
+								srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+								predBlock := st.sadScratch[:bw*bh]
 								nearSAD := 0
-								for r := 0; r < bh; r += 8 {
-									for c := 0; c < bw; c += 8 {
-										nearSAD += sad8x8DualImpl(src.Y[(lumaPY+r)*src.YStride+lumaPX+c:], src.YStride, st.sadScratch[r*bw+c:], bw)
-									}
+								switch {
+								case bw == 8 && bh == 8:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 16 && bh == 16:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 32 && bh == 32:
+									nearSAD = sad32x32Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 64 && bh == 64:
+									nearSAD = sadDualBlock(srcBlock, src.YStride, predBlock, bw, bw)
+								case bw == 16 && bh == 8:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad8x8Dual(srcBlock[8:], src.YStride, predBlock[8:], bw)
+								case bw == 8 && bh == 16:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad8x8Dual(srcBlock[8*src.YStride:], src.YStride, predBlock[8*bw:], bw)
+								case bw == 32 && bh == 16:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad16x16Dual(srcBlock[16:], src.YStride, predBlock[16:], bw)
+								case bw == 16 && bh == 32:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad16x16Dual(srcBlock[16*src.YStride:], src.YStride, predBlock[16*bw:], bw)
+								default:
+									nearSAD = sadRectDualBlock(srcBlock, src.YStride, predBlock, bw, bw, bh)
 								}
 								// Two extra cascade symbols pick NEARESTMV.
 								if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
@@ -969,6 +987,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// way, so this cannot affect parity).
 	skip := fullSAD*4 <= bw*bh
 	splitTX := false
+	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		var lumaZero bool
@@ -988,6 +1007,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		lumaRdD, lumaRdR := st.rdDcode, st.rdRcode
 		uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 		vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+		dctRdD = st.rdDcode
 		skip = lumaZero && uZero && vZero
 		if !skip {
 			// Rate-priced skip (RDCOST shapes): code when distortion saved
@@ -1047,11 +1067,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				// dense whole-block coefficients, and a wrong split costs
 				// more than a missed one.
 			case st.armTrial():
-				costFull := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ[:n*n], n) + lumaRdD<<7
+				costFull := st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ[:256])) + lumaRdD<<7
 				costSplit := splitD << 7
-				for i := range 4 {
-					costSplit += st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], cN)
-				}
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[0:64]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[64:128]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[128:192]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[192:256]))
 				if costSplit < costFull {
 					splitTX = true
 				}
@@ -1060,8 +1081,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 
 	txType := transform.TypeDCTDCT
-	if !skip && !splitTX && bw == 8 && bh == 8 {
-		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY)
+	if !skip && !splitTX && bw == 8 && bh == 8 && st.qIndex <= 96 {
+		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
 	}
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
@@ -1325,9 +1346,6 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
 			return err
 		}
-		if cap(st.trialBuf) == 0 {
-			st.trialBuf = make([]byte, 1<<14)
-		}
 		st.trialReady = true
 	}
 	mode, angleDelta := func() (tile.IntraMode, int) {
@@ -1498,21 +1516,10 @@ func compoundGoldenLikely(st *lossyEncodeState, src, ref SourceFrame420, golden 
 }
 
 func sad8x8CompoundAvg(src, ref0, ref1 []byte, srcStride, stride0, stride1, px, py, dx0, dy0, dx1, dy1 int) int {
-	total := 0
-	for r := range 8 {
-		srcOff := (py+r)*srcStride + px
-		ref0Off := (py+dy0+r)*stride0 + px + dx0
-		ref1Off := (py+dy1+r)*stride1 + px + dx1
-		for c := range 8 {
-			pred := (int(ref0[ref0Off+c]) + int(ref1[ref1Off+c]) + 1) >> 1
-			d := int(src[srcOff+c]) - pred
-			if d < 0 {
-				d = -d
-			}
-			total += d
-		}
-	}
-	return total
+	srcOff := py*srcStride + px
+	ref0Off := (py+dy0)*stride0 + px + dx0
+	ref1Off := (py+dy1)*stride1 + px + dx1
+	return sad8x8CompoundAvgBlock(src[srcOff:], srcStride, ref0[ref0Off:], stride0, ref1[ref1Off:], stride1)
 }
 
 func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
@@ -1532,6 +1539,222 @@ func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
 // eight to sixteen of a greedy descent; the coded prediction always goes
 // through the exact convolve later, so search shape cannot affect parity.
 func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	switch n {
+	case 8:
+		return st.subpelRefine8x8(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	case 16:
+		return st.subpelRefine16x16(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	case 32:
+		return st.subpelRefine32x32(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	}
+	return st.subpelRefineGeneric(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
+}
+
+func (st *lossyEncodeState) subpelRefine8x8(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 8)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:64]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelRefine16x16(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 16)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:256]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 32)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:1024]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict8x8(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 8, 8, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad8x8Dual(srcBlock, stride, probe, 8)
+}
+
+func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict16x16(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 16, 16, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad16x16Dual(srcBlock, stride, probe, 16)
+}
+
+func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict32x32(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 32, 32, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad32x32Dual(srcBlock, stride, probe, 32)
+}
+
+func subpelQuarterAxis(sl, sr, center int) int {
+	if sl < 0 || sr < 0 {
+		return 0
+	}
+	den := sl + sr - 2*center
+	if den <= 0 {
+		return 0
+	}
+	est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
+	if est > 4 {
+		return 4
+	}
+	if est < -4 {
+		return -4
+	}
+	return est
+}
+
+func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	// The probes sit within one pixel of the full-pel start, so geometry
 	// validation hoists into the prober; blocks near the frame edge fall
 	// back to the fully validated predictor per probe.
@@ -1539,20 +1762,24 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 		Pix: refPlane, Stride: stride, Width: width, Height: height,
 	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
 	startMV := mv
+	probe := st.sadScratch[:n*n]
+	srcBlock := src[py*stride+px:]
 	exact := func(cand motion.Vector) int {
-		if !st.prober.Predict(st.sadScratch[:n*n], motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-			if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
+		if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
 				return -1
 			}
 		}
-		base := py*stride + px
-		s := 0
-		for r := 0; r < n; r += 8 {
-			for c := 0; c < n; c += 8 {
-				s += sad8x8DualImpl(src[base+r*stride+c:], stride, st.sadScratch[r*n+c:], n)
-			}
+		switch n {
+		case 8:
+			return sad8x8Dual(srcBlock, stride, probe, n)
+		case 16:
+			return sad16x16Dual(srcBlock, stride, probe, n)
+		case 32:
+			return sad32x32Dual(srcBlock, stride, probe, n)
+		default:
+			return sadDualBlock(srcBlock, stride, probe, n, n)
 		}
-		return s
 	}
 	start := mv
 	center := bestSAD
@@ -1573,25 +1800,8 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 	}
 	// Stage 2: per-axis parabola through the exact half-pel SADs locates the
 	// quarter-pel minimum; verify its surrounding even-1/8 positions.
-	quarterAxis := func(sl, sr int) int {
-		if sl < 0 || sr < 0 {
-			return 0
-		}
-		den := sl + sr - 2*center
-		if den <= 0 {
-			return 0
-		}
-		est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
-		if est > 4 {
-			est = 4
-		}
-		if est < -4 {
-			est = -4
-		}
-		return est
-	}
-	estX := quarterAxis(half[0], half[1])
-	estY := quarterAxis(half[2], half[3])
+	estX := subpelQuarterAxis(half[0], half[1], center)
+	estY := subpelQuarterAxis(half[2], half[3], center)
 	for _, e := range [2][2]int{{estX &^ 1, estY &^ 1}, {(estX + 1) &^ 1, (estY + 1) &^ 1}} {
 		if e[0] == 0 && e[1] == 0 {
 			continue
@@ -1621,14 +1831,13 @@ func txScaleForSize(n int) uint8 {
 func sadBlock(src, ref []byte, base, refBase, stride, n, limit int) int {
 	switch n {
 	case 8:
-		return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
+		return sad8x8(src[base:], ref[refBase:], stride, limit)
 	case 16:
-		return sad16x16Impl(src[base:], ref[refBase:], stride)
+		return sad16x16(src[base:], ref[refBase:], stride)
 	case 32:
-		return sad16x16Impl(src[base:], ref[refBase:], stride) +
-			sad16x16Impl(src[base+16:], ref[refBase+16:], stride) +
-			sad16x16Impl(src[base+16*stride:], ref[refBase+16*stride:], stride) +
-			sad16x16Impl(src[base+16*stride+16:], ref[refBase+16*stride+16:], stride)
+		return sad32x32(src[base:], ref[refBase:], stride)
+	case 64:
+		return sad64x64(src[base:], ref[refBase:], stride)
 	}
 	total := 0
 	for r := range n {
@@ -1652,12 +1861,27 @@ func sadRectBlock(src, ref []byte, base, refBase, stride, bw, bh, limit int) int
 	if bw == bh {
 		return sadBlock(src, ref, base, refBase, stride, bw, limit)
 	}
+	srcBlock := src[base : base+(bh-1)*stride+bw]
+	refBlock := ref[refBase : refBase+(bh-1)*stride+bw]
+	switch {
+	case bw == 16 && bh == 8:
+		return sad8x8(srcBlock, refBlock, stride, limit) +
+			sad8x8(srcBlock[8:], refBlock[8:], stride, limit)
+	case bw == 8 && bh == 16:
+		return sad8x8(srcBlock, refBlock, stride, limit) +
+			sad8x8(srcBlock[8*stride:], refBlock[8*stride:], stride, limit)
+	case bw == 32 && bh == 16:
+		return sad16x16(srcBlock, refBlock, stride) +
+			sad16x16(srcBlock[16:], refBlock[16:], stride)
+	case bw == 16 && bh == 32:
+		return sad16x16(srcBlock, refBlock, stride) +
+			sad16x16(srcBlock[16*stride:], refBlock[16*stride:], stride)
+	}
 	total := 0
 	for r := range bh {
-		row := base + r*stride
-		refRow := refBase + r*stride
+		row := r * stride
 		for c := range bw {
-			d := int(src[row+c]) - int(ref[refRow+c])
+			d := int(srcBlock[row+c]) - int(refBlock[row+c])
 			if d < 0 {
 				d = -d
 			}
@@ -1665,6 +1889,68 @@ func sadRectBlock(src, ref []byte, base, refBase, stride, bw, bh, limit int) int
 		}
 		if total >= limit {
 			return total
+		}
+	}
+	return total
+}
+
+func sadDualBlock(src []byte, srcStride int, ref []byte, refStride int, n int) int {
+	switch n {
+	case 8:
+		return sad8x8Dual(src, srcStride, ref, refStride)
+	case 16:
+		return sad16x16Dual(src, srcStride, ref, refStride)
+	case 32:
+		return sad32x32Dual(src, srcStride, ref, refStride)
+	case 64:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32:], srcStride, ref[32:], refStride) +
+			sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
+			sad32x32Dual(src[32*srcStride+32:], srcStride, ref[32*refStride+32:], refStride)
+	}
+	total := 0
+	for r := range n {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range n {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, bh int) int {
+	if bw == bh {
+		return sadDualBlock(src, srcStride, ref, refStride, bw)
+	}
+	switch {
+	case bw == 16 && bh == 8:
+		return sad8x8Dual(src, srcStride, ref, refStride) +
+			sad8x8Dual(src[8:], srcStride, ref[8:], refStride)
+	case bw == 8 && bh == 16:
+		return sad8x8Dual(src, srcStride, ref, refStride) +
+			sad8x8Dual(src[8*srcStride:], srcStride, ref[8*refStride:], refStride)
+	case bw == 32 && bh == 16:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16:], srcStride, ref[16:], refStride)
+	case bw == 16 && bh == 32:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride)
+	}
+	total := 0
+	for r := range bh {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range bw {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
 		}
 	}
 	return total
@@ -1718,36 +2004,51 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	return allZero
 }
 
-func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int) transform.Type {
+func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int, dctDcode int64) transform.Type {
 	if !st.armTrial() {
 		return transform.TypeDCTDCT
 	}
 	bestType := transform.TypeDCTDCT
-	bestCost := int64(1 << 62)
 	saveDcode, saveDskip, saveRcode := st.rdDcode, st.rdDskip, st.rdRcode
-	baseTrialCDFs := st.trialCDFs
+	baseTrialCDFs := &st.trial8x8CDFs
+	baseTrialCDFs.save(&st.trialCDFs)
+	bestCost := dctDcode << 7
+	bestCost += st.trialTXBBitsInter8x8((*[64]int16)(st.lumaQ[:64]), transform.TypeDCTDCT)
+	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16]))
+	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16]))
 	tmpY := st.lumaQ2[:64]
+	tmpY64 := (*[64]int16)(tmpY)
 	tmpU := st.lumaQ2[64:80]
 	tmpV := st.lumaQ2[80:96]
+	tmpU16 := (*[16]int16)(tmpU)
+	tmpV16 := (*[16]int16)(tmpV)
 	for _, typ := range [...]transform.Type{
-		transform.TypeDCTDCT,
 		transform.TypeADSTDCT,
 		transform.TypeDCTADST,
 		transform.TypeADSTADST,
 		transform.TypeIDTX,
 	} {
-		st.trialCDFs = baseTrialCDFs
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		lumaZero := st.prepareInterTXBTyped(src.Y, st.predY[:64], 8, src.YStride, lumaPX, lumaPY, 8, 8, st.yQuant, tmpY, typ)
 		if typ != transform.TypeDCTDCT && lumaZero {
 			continue
 		}
+		lumaDcode := st.rdDcode
+		if lumaDcode<<7 >= bestCost {
+			continue
+		}
+		baseTrialCDFs.restoreY(&st.trialCDFs)
+		lumaBits := st.trialTXBBitsInter8x8(tmpY64, typ)
+		if (lumaDcode<<7)+lumaBits >= bestCost {
+			continue
+		}
+		baseTrialCDFs.restoreUV(&st.trialCDFs)
 		st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
 		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
 		cost := st.rdDcode << 7
-		cost += st.trialTXBBitsInter(tmpY, 8, tile.TransformSize8x8, typ)
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpU, 4)
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpV, 4)
+		cost += lumaBits
+		cost += st.trialTXBBitsUV4x4(tmpU16)
+		cost += st.trialTXBBitsUV4x4(tmpV16)
 		if cost < bestCost {
 			bestCost = cost
 			bestType = typ
@@ -1757,8 +2058,67 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		}
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = saveDcode, saveDskip, saveRcode
-	st.trialCDFs = baseTrialCDFs
+	baseTrialCDFs.restore(&st.trialCDFs)
 	return bestType
+}
+
+type coeffTrial8x8Snapshot struct {
+	txbSkip4x4UV      entropy.CDF
+	txbSkip8x8Y       entropy.CDF
+	eobExtra4x4UV     [tile.EOBCoefContexts]entropy.CDF
+	eobExtra8x8Y      [tile.EOBCoefContexts]entropy.CDF
+	dcSignY0          entropy.CDF
+	dcSignUV0         entropy.CDF
+	coeffBR4x4UV      [tile.CoeffBRContexts]entropy.CDF
+	coeffBR8x8Y       [tile.CoeffBRContexts]entropy.CDF
+	coeffBase4x4UV    [tile.CoeffBaseContexts]entropy.CDF
+	coeffBase8x8Y     [tile.CoeffBaseContexts]entropy.CDF
+	coeffBaseEOB4x4UV [tile.EOBBaseContexts]entropy.CDF
+	coeffBaseEOB8x8Y  [tile.EOBBaseContexts]entropy.CDF
+	eobFlag16UV0      entropy.CDF
+	eobFlag64Y0       entropy.CDF
+}
+
+func (s *coeffTrial8x8Snapshot) save(cdfs *tile.CoeffCDFs) {
+	s.txbSkip4x4UV = cdfs.TXBSkip[0][0]
+	s.txbSkip8x8Y = cdfs.TXBSkip[1][0]
+	s.eobExtra4x4UV = cdfs.EOBExtra[0][tile.CoeffPlaneUV]
+	s.eobExtra8x8Y = cdfs.EOBExtra[1][tile.CoeffPlaneY]
+	s.dcSignY0 = cdfs.DCSign[tile.CoeffPlaneY][0]
+	s.dcSignUV0 = cdfs.DCSign[tile.CoeffPlaneUV][0]
+	s.coeffBR4x4UV = cdfs.CoeffBR[0][tile.CoeffPlaneUV]
+	s.coeffBR8x8Y = cdfs.CoeffBR[1][tile.CoeffPlaneY]
+	s.coeffBase4x4UV = cdfs.CoeffBase[0][tile.CoeffPlaneUV]
+	s.coeffBase8x8Y = cdfs.CoeffBase[1][tile.CoeffPlaneY]
+	s.coeffBaseEOB4x4UV = cdfs.CoeffBaseEOB[0][tile.CoeffPlaneUV]
+	s.coeffBaseEOB8x8Y = cdfs.CoeffBaseEOB[1][tile.CoeffPlaneY]
+	s.eobFlag16UV0 = cdfs.EOBFlag16[tile.CoeffPlaneUV][0]
+	s.eobFlag64Y0 = cdfs.EOBFlag64[tile.CoeffPlaneY][0]
+}
+
+func (s *coeffTrial8x8Snapshot) restore(cdfs *tile.CoeffCDFs) {
+	s.restoreUV(cdfs)
+	s.restoreY(cdfs)
+}
+
+func (s *coeffTrial8x8Snapshot) restoreY(cdfs *tile.CoeffCDFs) {
+	cdfs.TXBSkip[1][0] = s.txbSkip8x8Y
+	cdfs.EOBExtra[1][tile.CoeffPlaneY] = s.eobExtra8x8Y
+	cdfs.DCSign[tile.CoeffPlaneY][0] = s.dcSignY0
+	cdfs.CoeffBR[1][tile.CoeffPlaneY] = s.coeffBR8x8Y
+	cdfs.CoeffBase[1][tile.CoeffPlaneY] = s.coeffBase8x8Y
+	cdfs.CoeffBaseEOB[1][tile.CoeffPlaneY] = s.coeffBaseEOB8x8Y
+	cdfs.EOBFlag64[tile.CoeffPlaneY][0] = s.eobFlag64Y0
+}
+
+func (s *coeffTrial8x8Snapshot) restoreUV(cdfs *tile.CoeffCDFs) {
+	cdfs.TXBSkip[0][0] = s.txbSkip4x4UV
+	cdfs.EOBExtra[0][tile.CoeffPlaneUV] = s.eobExtra4x4UV
+	cdfs.DCSign[tile.CoeffPlaneUV][0] = s.dcSignUV0
+	cdfs.CoeffBR[0][tile.CoeffPlaneUV] = s.coeffBR4x4UV
+	cdfs.CoeffBase[0][tile.CoeffPlaneUV] = s.coeffBase4x4UV
+	cdfs.CoeffBaseEOB[0][tile.CoeffPlaneUV] = s.coeffBaseEOB4x4UV
+	cdfs.EOBFlag16[tile.CoeffPlaneUV][0] = s.eobFlag16UV0
 }
 
 // residualBlockPureGo is the portable residual extraction.
@@ -1807,8 +2167,79 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 
 func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
-		return err
+	if w == 8 && h == 8 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip != nil {
+		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
+		if ok {
+			txbCtx, err := coeffCtx.TXBContext(ctxReq)
+			if err != nil {
+				return err
+			}
+			result := tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+				return err
+			}
+		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+			return err
+		}
+	} else if w == 16 && h == 16 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip != nil && txType == transform.TypeDCTDCT {
+		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
+		if ok {
+			txbCtx, err := coeffCtx.TXBContext(ctxReq)
+			if err != nil {
+				return err
+			}
+			result := tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+				return err
+			}
+		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+			return err
+		}
+	} else if w == 32 && h == 32 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip != nil && txType == transform.TypeDCTDCT {
+		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
+		if ok {
+			txbCtx, err := coeffCtx.TXBContext(ctxReq)
+			if err != nil {
+				return err
+			}
+			result := tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+				return err
+			}
+		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+			return err
+		}
+	} else if w == 8 && h == 8 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip == nil && txType == transform.TypeDCTDCT {
+		txbCtx, err := coeffCtx.TXBContext(ctxReq)
+		if err != nil {
+			return err
+		}
+		result := tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			return err
+		}
+	} else if w == 16 && h == 16 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip == nil && txType == transform.TypeDCTDCT {
+		txbCtx, err := coeffCtx.TXBContext(ctxReq)
+		if err != nil {
+			return err
+		}
+		result := tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			return err
+		}
+	} else if w == 32 && h == 32 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip == nil && txType == transform.TypeDCTDCT {
+		txbCtx, err := coeffCtx.TXBContext(ctxReq)
+		if err != nil {
+			return err
+		}
+		result := tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+			return err
+		}
 	}
 	n := w * h
 	dq := &st.dqScratch
@@ -1834,12 +2265,78 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 	return nil
 }
 
+func (st *lossyEncodeState) interTXCDFAndSymbol(size tile.TransformSize, typ transform.Type) (*entropy.CDF, int, bool) {
+	if size == tile.TransformSize8x8 {
+		return st.inter8x8TXCDFAndSymbol(typ)
+	}
+	if st.qIndex == 0 {
+		return nil, 0, typ == transform.TypeDCTDCT
+	}
+	set, err := tile.ExtTXSetTypeFor(size, true, false)
+	if err != nil {
+		return nil, 0, false
+	}
+	symbols, err := tile.ExtTXTypeCount(set)
+	if err != nil {
+		return nil, 0, false
+	}
+	if symbols <= 1 {
+		return nil, 0, typ == transform.TypeDCTDCT
+	}
+	index, err := tile.ExtTXSetIndex(size, true, false)
+	if err != nil {
+		return nil, 0, false
+	}
+	square, err := tile.TransformSizeSquare(size)
+	if err != nil {
+		return nil, 0, false
+	}
+	cdf, err := st.txCDFs.InterCDF(index, square, symbols)
+	if err != nil {
+		return nil, 0, false
+	}
+	symbol, err := tile.ExtTXSymbolForType(set, typ)
+	if err != nil {
+		return nil, 0, false
+	}
+	return cdf, symbol, true
+}
+
+func (st *lossyEncodeState) inter8x8TXCDFAndSymbol(typ transform.Type) (*entropy.CDF, int, bool) {
+	if st.qIndex == 0 {
+		return nil, 0, typ == transform.TypeDCTDCT
+	}
+	symbol := 0
+	switch typ {
+	case transform.TypeIDTX:
+		symbol = 0
+	case transform.TypeDCTDCT:
+		symbol = 7
+	case transform.TypeADSTDCT:
+		symbol = 8
+	case transform.TypeDCTADST:
+		symbol = 9
+	case transform.TypeADSTADST:
+		symbol = 12
+	default:
+		return nil, 0, false
+	}
+	cdf := &st.txCDFs.Inter[1][tile.TransformSize8x8]
+	if cdf.Symbols() != 16 {
+		return nil, 0, false
+	}
+	return cdf, symbol, true
+}
+
 // forwardTransformBlock dispatches the forward transform for every coded
 // DCT_DCT shape and the small square hybrid transforms enabled in the realtime
 // inter tx_type selector.
 func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
 	if typ == transform.TypeDCTDCT {
 		return forwardDCTBlock(tran, residual, w, h)
+	}
+	if w == 8 && h == 8 {
+		return transform.ForwardBlock8x8HybridTrusted(tran, h, residual, w, scratch, typ)
 	}
 	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
@@ -1854,9 +2351,6 @@ func (st *lossyEncodeState) armTrial() bool {
 	if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
 		return false
 	}
-	if cap(st.trialBuf) == 0 {
-		st.trialBuf = make([]byte, 1<<14)
-	}
 	st.trialReady = true
 	return true
 }
@@ -1867,36 +2361,60 @@ func (st *lossyEncodeState) interHeaderCost() int64 {
 	return (int64(24) << 9) * st.rdMult >> 9
 }
 
-// trialInterCost prices coding one motion-compensated block exactly: the
-// true transform-quantize pass for distortion and the real coefficient coder
-// for bits. The prediction lands in sadScratch.
-func (st *lossyEncodeState) trialInterCost(src SourceFrame420, ref SourceFrame420, px, py, n int, mv motion.Vector) int64 {
-	pred := st.sadScratch[:n*n]
-	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, n, n, mv, false, false); err != nil {
+// trialInterCost8x8 prices coding one motion-compensated 8x8 block exactly:
+// the true transform-quantize pass for distortion and the real coefficient
+// coder for bits. The prediction lands in sadScratch.
+func (st *lossyEncodeState) trialInterCost8x8(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
+	pred := st.sadScratch[:64]
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 8, 8, mv, false, false); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-	st.prepareInterTXB(src.Y, pred, n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-	cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + st.rdDcode<<7
-	// The chroma transform structure differs between the shapes too: one
-	// large block against four small ones per plane.
-	cn := n / 2
+	st.prepareInterTXB(src.Y, pred, 8, src.YStride, px, py, 8, 8, st.yQuant, st.lumaQ2[:64])
+	cost := st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[:64])) + st.rdDcode<<7
+
 	halfW, halfH := src.Width/2, src.Height/2
-	for plane := 1; plane <= 2; plane++ {
-		data, rdata, q := src.U, ref.U, st.uQuant
-		qc := st.uQ[:cn*cn]
-		if plane == 2 {
-			data, rdata, q = src.V, ref.V, st.vQuant
-			qc = st.vQ[:cn*cn]
-		}
-		cpred := st.sadScratch[n*n : n*n+cn*cn]
-		if err := predictInto(cpred, rdata, src.ChromaStride, halfW, halfH, px/2, py/2, cn, cn, mv, true, true); err != nil {
-			return 1 << 59
-		}
-		st.rdDcode = 0
-		st.prepareInterTXB(data, cpred, cn, src.ChromaStride, px/2, py/2, cn, cn, q, qc)
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn) + st.rdDcode<<7
+	cpred := st.sadScratch[:16]
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+		return 1 << 59
 	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.U, cpred, 4, src.ChromaStride, px/2, py/2, 4, 4, st.uQuant, st.uQ[:16])
+	cost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16])) + st.rdDcode<<7
+
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.V, cpred, 4, src.ChromaStride, px/2, py/2, 4, 4, st.vQuant, st.vQ[:16])
+	cost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16])) + st.rdDcode<<7
+	return cost
+}
+
+func (st *lossyEncodeState) trialInterCost16x16(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
+	pred := st.sadScratch[:256]
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 16, mv, false, false); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+	st.prepareInterTXB(src.Y, pred, 16, src.YStride, px, py, 16, 16, st.yQuant, st.lumaQ2[:256])
+	cost := st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ2[:256])) + st.rdDcode<<7
+
+	halfW, halfH := src.Width/2, src.Height/2
+	cpred := st.sadScratch[:64]
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.U, cpred, 8, src.ChromaStride, px/2, py/2, 8, 8, st.uQuant, st.uQ[:64])
+	cost += st.trialTXBBitsUV8x8((*[64]int16)(st.uQ[:64])) + st.rdDcode<<7
+
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.V, cpred, 8, src.ChromaStride, px/2, py/2, 8, 8, st.vQuant, st.vQ[:64])
+	cost += st.trialTXBBitsUV8x8((*[64]int16)(st.vQ[:64])) + st.rdDcode<<7
 	return cost
 }
 
@@ -1906,14 +2424,14 @@ func (st *lossyEncodeState) trialInterMergeWins(src SourceFrame420, ref SourceFr
 	if !st.armTrial() {
 		return false
 	}
-	children := int64(0)
-	for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-		cx, cy := px+off[0], py+off[1]
-		idx8 := (cy/8)*st.grid8Cols + cx/8
-		children += st.trialInterCost(src, ref, cx, cy, 8, st.mv8Grid[idx8]) + st.interHeaderCost()
-	}
+	headerCost := st.interHeaderCost()
+	idx8 := (py/8)*st.grid8Cols + px/8
+	children := st.trialInterCost8x8(src, ref, px, py, st.mv8Grid[idx8]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px+8, py, st.mv8Grid[idx8+1]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px, py+8, st.mv8Grid[idx8+st.grid8Cols]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px+8, py+8, st.mv8Grid[idx8+st.grid8Cols+1]) + headerCost
 	idx16 := (py/16)*st.grid16Cols + px/16
-	merged := st.trialInterCost(src, ref, px, py, 16, st.mv16Grid[idx16]) + st.interHeaderCost()
+	merged := st.trialInterCost16x16(src, ref, px, py, st.mv16Grid[idx16]) + headerCost
 	// The trial models full-pel prediction without chroma, so it only
 	// overrides the calibrated SAD rule on a decisive margin.
 	return merged*16 <= children*15
@@ -1966,74 +2484,63 @@ const (
 // seed (the hierarchical pre-pass vector), extending reach to the seed
 // +-reach px while always probing zero motion first.
 func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY, reach int) (int, int, int) {
-	// sad dispatches to the architecture SAD kernel; limit is an early-exit
-	// hint the kernel may ignore, so callers compare the return value.
-	sad := func(dx, dy, limit int) int {
-		base := py*stride + px
-		refBase := (py+dy)*stride + px + dx
-		switch n {
-		case 8:
-			return sad8x8Impl(src[base:], ref[refBase:], stride, limit)
-		case 16:
-			return sad16x16Impl(src[base:], ref[refBase:], stride)
-		case 32:
-			return sad16x16Impl(src[base:], ref[refBase:], stride) +
-				sad16x16Impl(src[base+16:], ref[refBase+16:], stride) +
-				sad16x16Impl(src[base+16*stride:], ref[refBase+16*stride:], stride) +
-				sad16x16Impl(src[base+16*stride+16:], ref[refBase+16*stride+16:], stride)
-		}
-		total := 0
-		for r := range n {
-			row := base + r*stride
-			refRow := refBase + r*stride
-			for c := range n {
-				d := int(src[row+c]) - int(ref[refRow+c])
-				if d < 0 {
-					d = -d
-				}
-				total += d
-			}
-			if total >= limit {
-				return total
-			}
-		}
-		return total
-	}
-	clampLo := func(v, lo int) int {
-		if v < lo {
-			return lo
-		}
-		return v
-	}
-	clampHi := func(v, hi int) int {
-		if v > hi {
-			return hi
-		}
-		return v
-	}
-	seedDX = clampHi(clampLo(seedDX, -px), width-n-px) &^ 1
-	seedDY = clampHi(clampLo(seedDY, -py), height-n-py) &^ 1
-	minDX := clampLo(seedDX-reach, -px)
-	maxDX := clampHi(seedDX+reach, width-n-px)
-	minDY := clampLo(seedDY-reach, -py)
-	maxDY := clampHi(seedDY+reach, height-n-py)
+	seedDX = minInt(maxInt(seedDX, -px), width-n-px) &^ 1
+	seedDY = minInt(maxInt(seedDY, -py), height-n-py) &^ 1
+	minDX := maxInt(seedDX-reach, -px)
+	maxDX := minInt(seedDX+reach, width-n-px)
+	minDY := maxInt(seedDY-reach, -py)
+	maxDY := minInt(seedDY+reach, height-n-py)
 
+	base := py*stride + px
+	srcBlock := src[base:]
+	switch n {
+	case 8:
+		return fullPelDiamondSearch8(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
+	case 16:
+		return fullPelDiamondSearch16(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
+	case 32:
+		return fullPelDiamondSearch32(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
+	case 64:
+		return fullPelDiamondSearch64(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
+	default:
+		return fullPelDiamondSearchGeneric(src, ref, base, stride, n, minDX, maxDX, minDY, maxDY)
+	}
+}
+
+func fullPelDiamondSearch8(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
 	bestDX, bestDY := 0, 0
-	bestSAD := sad(0, 0, 1<<30)
+	bestSAD := sad8x8(srcBlock, ref[base:], stride, 1<<30)
 	// Static-content fast path: when zero motion is already a near-perfect
 	// match (below ~2 per sample, the quantizer's noise floor at realtime
 	// qindexes), searching cannot pay for its own cost.
-	if bestSAD <= n*n*2 {
+	if bestSAD <= 8*8*2 {
 		return 0, 0, bestSAD
 	}
 	// Coarse even-step raster with row-granular early exit, then a +-2 even
 	// diamond refinement.
 	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
+		refRow := base + dy*stride
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad8x8x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
 			if dx == 0 && dy == 0 {
 				continue
 			}
-			if s := sad(dx, dy, bestSAD); s < bestSAD {
+			if s := sad8x8(srcBlock, ref[refRow+dx:], stride, bestSAD); s < bestSAD {
 				bestSAD, bestDX, bestDY = s, dx, dy
 			}
 		}
@@ -2043,7 +2550,171 @@ func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, 
 		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
 			continue
 		}
-		if s := sad(dx, dy, bestSAD); s < bestSAD {
+		if s := sad8x8(srcBlock, ref[base+dy*stride+dx:], stride, bestSAD); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
+}
+
+func fullPelDiamondSearch16(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
+	bestDX, bestDY := 0, 0
+	bestSAD := sad16x16(srcBlock, ref[base:], stride)
+	if bestSAD <= 16*16*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad16x16x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sad16x16(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sad16x16(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
+}
+
+func fullPelDiamondSearch32(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
+	bestDX, bestDY := 0, 0
+	bestSAD := sad32x32(srcBlock, ref[base:], stride)
+	if bestSAD <= 32*32*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad32x32x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sad32x32(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sad32x32(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
+}
+
+func fullPelDiamondSearch64(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
+	bestDX, bestDY := 0, 0
+	bestSAD := sad64x64(srcBlock, ref[base:], stride)
+	if bestSAD <= 64*64*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad64x64x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sad64x64(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sad64x64(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
+}
+
+func fullPelDiamondSearchGeneric(src, ref []byte, base, stride, n, minDX, maxDX, minDY, maxDY int) (int, int, int) {
+	bestDX, bestDY := 0, 0
+	bestSAD := sadBlock(src, ref, base, base, stride, n, 1<<30)
+	if bestSAD <= n*n*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sadBlock(src, ref, base, refRow+dx, stride, n, bestSAD); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sadBlock(src, ref, base, base+dy*stride+dx, stride, n, bestSAD); s < bestSAD {
 			bestSAD, bestDX, bestDY = s, dx, dy
 		}
 	}

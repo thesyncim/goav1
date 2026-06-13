@@ -49,9 +49,12 @@ go run ./cmd/qualitybench \
   -require-corpus -min-clips 6 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
+  -gomaxprocs 4 \
+  -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
+  -svt-asm neon \
   -workdir /tmp/goav1-quality
 ```
 
@@ -62,6 +65,26 @@ non-VMAF run as state-of-the-art visual validation.
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
+
+For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
+equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
+encoder parallelism level in the range `0..6`, where `0` lets SVT choose from
+the machine. Use `-gomaxprocs` to make the goav1 cap explicit for a run. A fair
+report should include the chosen `GOMAXPROCS`, the chosen `-svt-lp`, and the
+CSV/metadata timing columns: `encode_wall_sec`,
+`cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
+`observed_parallelism`. Use wall time for user-visible speed, and CPU seconds
+or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
+encoder consumed a larger CPU budget. If sweeping SVT levels, report each
+`--lp` as an SVT level, not as a target thread count. For a closest-budget SVT
+row, sweep `-svt-lp 0..6` and select by measured `observed_parallelism`, not by
+matching `GOMAXPROCS=N` to `--lp N`.
+
+Also report SVT's assembly tier. SVT-AV1 `--asm` defaults to `max`, which may
+use kernels above baseline NEON on Apple silicon, such as `neon_dotprod` or
+`neon_i8mm`. `qualitybench -svt-asm` forwards this limiter and records it in
+metadata. Use `-svt-asm neon` for a baseline-NEON row against goav1's current
+arm64 SIMD coverage, and omit it or pass `-svt-asm max` for a best-SVT row.
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter

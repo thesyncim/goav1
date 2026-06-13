@@ -57,22 +57,23 @@ func FuzzDequantizeBlockScaledQMatrix(f *testing.F) {
 		// length-validation guard.
 		if rawQM&1 != 0 && len(iqMatrix) > 0 {
 			short := iqMatrix[:len(iqMatrix)-1]
-			if err := DequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, short); !errors.Is(err, ErrInvalidQuantizer) {
+			if err := DequantizeBlockScaledQMatrixBitDepth(dst, dstStride, coeff, coeffStride, width, height, q, txScale, short, bitDepth); !errors.Is(err, ErrInvalidQuantizer) {
 				t.Fatalf("short qmatrix accepted err=%v", err)
 			}
 		}
 
-		if err := DequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix); err != nil {
+		if err := DequantizeBlockScaledQMatrixBitDepth(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth); err != nil {
 			t.Fatalf("DequantizeBlockScaledQMatrix err=%v", err)
 		}
 		// Spot-check the formula and bound the magnitude: each
 		// dequant result must be int32 representable; this catches
 		// any pathological multiply that overflows the bound used by
-		// downstream inverse-transform code. The 8-bit dq_coeff clamp
-		// libaom applies in decode_coefs() (av1/decoder/decodetxb.c:312)
-		// limits |dq_coeff| <= (1 << 15) - 1.
-		dqMax := int32(1)<<15 - 1
-		dqMin := -int32(1) << 15
+		// downstream inverse-transform code. dqCoeffBounds mirrors
+		// libaom's bit-depth-specific clamp in decode_coefs().
+		dqMin, dqMax, ok := dqCoeffBounds(bitDepth)
+		if !ok {
+			t.Fatalf("invalid bit depth %d", bitDepth)
+		}
 		for row := range height {
 			for col := range width {
 				scale := int32(ac)
@@ -81,19 +82,7 @@ func FuzzDequantizeBlockScaledQMatrix(f *testing.F) {
 				}
 				scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
 				input := int32(coeff[col*coeffStride+row])
-				negative := input < 0
-				if negative {
-					input = -input
-				}
-				want := (input * scale) >> txScale
-				if negative {
-					want = -want
-				}
-				if want < dqMin {
-					want = dqMin
-				} else if want > dqMax {
-					want = dqMax
-				}
+				want := dequantScalar(input, scale, txScale, dqMin, dqMax)
 				got := dst[col*dstStride+row]
 				if got != want {
 					t.Fatalf("sample(%d,%d)=%d want %d", col, row, got, want)

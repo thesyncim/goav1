@@ -2,8 +2,10 @@ package encoder
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // video.go is the streaming encoder surface: a VideoEncoder owns the reference
@@ -63,9 +65,9 @@ type VideoEncoder struct {
 	tuGroup       []byte
 	tuScratch     []byte
 	tuScratch2    []byte
-	tileWork      chan int
-	tileDone      chan struct{}
-	tileStarted   bool
+	tileWork      chan tileWorkRange
+	tileWait      sync.WaitGroup
+	tileWorkers   int
 	tileJobParams struct {
 		src, refRecon SourceFrame420
 		golden        *SourceFrame420
@@ -75,6 +77,9 @@ type VideoEncoder struct {
 		referenceMode parser.ReferenceMode
 		tile          TileInfo
 		miCols        uint16
+		lfMap         *threading.FrameWorkLoopFilterMap
+		payloads      []TilePayload
+		errs          []error
 	}
 
 	// The in-loop filters of a finished frame run concurrently with the
@@ -109,6 +114,13 @@ type VideoEncoder struct {
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
+}
+
+type tileWorkRange struct {
+	first  int
+	stride int
+	limit  int
+	key    bool
 }
 
 // RateControlConfig describes closed-loop CBR rate control: a target bitrate
@@ -251,13 +263,13 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 
 // defaultTileColsLog2 picks the inter-frame tile-column split: two columns
 // once a frame is wide enough that per-tile entropy coding pays for the
-// goroutine handoff, four at HD, sixteen at full HD - narrow tiles balance
-// the per-frame join across a modern core count for a fifth of a percent of
-// rate.
+// goroutine handoff, four at HD, and thirty-ish legal columns at full HD.
+// The full-HD split intentionally saturates the persistent worker pool; the
+// tile syntax clamps the requested power-of-two layout to the legal SB grid.
 func defaultTileColsLog2(width int) uint8 {
 	switch {
 	case width >= 1920:
-		return 3
+		return 5
 	case width >= 1280:
 		return 2
 	case width >= 512:
@@ -449,6 +461,12 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		if len(e.tilePCs) < nTiles {
 			e.tilePCs = make([]pframeCoder, nTiles)
 		}
+		if cap(e.payloads) < nTiles {
+			e.payloads = make([]TilePayload, nTiles)
+		}
+		if cap(e.tileErrs) < nTiles {
+			e.tileErrs = make([]error, nTiles)
+		}
 		e.configureDecisionStats(nTiles)
 		// The keyframe path reuses the filter appliers a backgrounded pass
 		// may still hold.
@@ -460,12 +478,11 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// the working point; rate control pays the debt back over the next
 		// frames through the buffer.
 		keyQ := e.keyframeQIndex()
-		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, func(t int) *pframeCoder {
-			if t == 0 {
-				return &e.pc
-			}
-			return &e.tilePCs[t]
-		}, &e.cdefApp, e.tileColsLog2)
+		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
+			payloads: e.payloads[:nTiles],
+			errs:     e.tileErrs[:nTiles],
+			stream:   e,
+		})
 		if err != nil {
 			return nil, false, err
 		}
@@ -572,31 +589,80 @@ func tileColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
 	return c0, c1
 }
 
-// startTileWorkers launches the persistent tile-column workers once; they
-// park on the job channel between frames so the steady-state encode path
-// spawns no goroutines.
-func (e *VideoEncoder) startTileWorkers() {
-	if e.tileStarted {
+// startTileWorkers grows the persistent tile-column worker pool to the number
+// needed by the current tile layout. Workers park on the job channel between
+// frames, and narrow streams avoid spawning idle goroutines they never use.
+func (e *VideoEncoder) startTileWorkers(workers int) {
+	if workers <= e.tileWorkers {
 		return
 	}
-	e.tileWork = make(chan int, 16)
-	e.tileDone = make(chan struct{}, 16)
-	for range 15 {
+	if e.tileWork == nil {
+		e.tileWork = make(chan tileWorkRange, 16)
+	}
+	for ; e.tileWorkers < workers; e.tileWorkers++ {
 		go func() {
-			for t := range e.tileWork {
+			for work := range e.tileWork {
 				tj := &e.tileJobParams
-				c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
-				data, err := e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
-				if err != nil {
-					e.tileErrs[t] = err
-				} else {
-					e.payloads[t].Data = data
+				for t := work.first; t < work.limit; t += work.stride {
+					c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
+					var data []byte
+					var err error
+					if work.key {
+						data, err = e.tilePCs[t].encodeKeyframeTile(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap)
+					} else {
+						data, err = e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
+					}
+					if err != nil {
+						tj.errs[t] = err
+					} else {
+						tj.payloads[t].Data = data
+					}
 				}
-				e.tileDone <- struct{}{}
+				e.tileWait.Done()
 			}
 		}()
 	}
-	e.tileStarted = true
+}
+
+func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
+	nTiles := len(req.payloads)
+	if nTiles == 1 {
+		c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+		data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+		if err != nil {
+			return fmt.Errorf("encode tile 0: %w", err)
+		}
+		req.payloads[0].Data = data
+		return nil
+	}
+	tj := &e.tileJobParams
+	tj.src, tj.out = req.src, req.recon
+	tj.effQ = req.qIndex
+	tj.tile, tj.miCols = req.tile, req.miCols
+	tj.lfMap = req.lfMap
+	tj.payloads, tj.errs = req.payloads, req.errs
+	jobs := nTiles - 1
+	if jobs > 15 {
+		jobs = 15
+	}
+	e.startTileWorkers(jobs)
+	e.tileWait.Add(jobs)
+	for j := 0; j < jobs; j++ {
+		e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles, key: true}
+	}
+	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
+	data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	e.tileWait.Wait()
+	if err != nil {
+		return fmt.Errorf("encode tile 0: %w", err)
+	}
+	req.payloads[0].Data = data
+	for t := 1; t < nTiles; t++ {
+		if req.errs[t] != nil {
+			return fmt.Errorf("encode tile %d: %w", t, req.errs[t])
+		}
+	}
+	return nil
 }
 
 // startFilterWorker launches the persistent in-loop filter worker once; it
@@ -805,6 +871,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	e.configureDecisionStats(nTiles)
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)
+	}
+	if cap(e.tileErrs) < nTiles {
 		e.tileErrs = make([]error, nTiles)
 	}
 	payloads := e.payloads[:nTiles]
@@ -855,15 +923,20 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.effQ, tj.prevCtx = effQ, prevCtx
 		tj.referenceMode = referenceMode
 		tj.tile, tj.miCols = header.Tile, miCols
-		e.startTileWorkers()
-		for t := 1; t < nTiles; t++ {
-			e.tileWork <- t
+		tj.lfMap = nil
+		tj.payloads, tj.errs = payloads, errs
+		jobs := nTiles - 1
+		if jobs > 15 {
+			jobs = 15
+		}
+		e.startTileWorkers(jobs)
+		e.tileWait.Add(jobs)
+		for j := 0; j < jobs; j++ {
+			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
 		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, c0, c1)
-		for t := 1; t < nTiles; t++ {
-			<-e.tileDone
-		}
+		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
 		}

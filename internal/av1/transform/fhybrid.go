@@ -23,6 +23,17 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 	if typ == TypeDCTDCT {
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
+	if size.Width == 8 && size.Height == 8 {
+		if !forwardBlock8x8HybridSupported(typ) ||
+			coeffStride < 8 || residualStride < 8 ||
+			!blockFits(len(residual), residualStride, 8, 8) ||
+			!coeffBlockFits(len(coeff), coeffStride, 8, 8) ||
+			len(scratch) < 64 {
+			return ErrInvalidTransform
+		}
+		forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ)
+		return nil
+	}
 	if !forwardHybridSupported(size, typ) {
 		return ErrInvalidTransform
 	}
@@ -57,6 +68,135 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		}
 	}
 	return nil
+}
+
+// ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
+// for callers that already proved the block shape and scratch sizes. The
+// coefficient and residual strides must be at least 8, and coeff/residual/scratch
+// must contain the addressed 8x8 region.
+func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) error {
+	if !forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ) {
+		return ErrInvalidTransform
+	}
+	return nil
+}
+
+func forwardBlock8x8HybridSupported(typ Type) bool {
+	switch typ {
+	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX:
+		return true
+	default:
+		return false
+	}
+}
+
+func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
+	switch typ {
+	case TypeADSTDCT:
+		forwardBlock8x8ADSTDCT(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeDCTADST:
+		forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeADSTADST:
+		forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeIDTX:
+		forwardBlock8x8IDTX(coeff, coeffStride, residual, residualStride, scratch)
+	default:
+		return false
+	}
+	return true
+}
+
+func forwardBlock8x8ADSTDCT(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdADST8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdDCT8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8DCTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdDCT8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdADST8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8ADSTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	var in, out [8]int32
+	for c := range 8 {
+		for r := range 8 {
+			in[r] = int32(residual[r*residualStride+c]) << 2
+		}
+		fwdADST8(&in, &out)
+		fwdRoundShift1x8(&out)
+		for r := range 8 {
+			scratch[r*8+c] = out[r]
+		}
+	}
+	for r := range 8 {
+		row := r * 8
+		for c := range 8 {
+			in[c] = scratch[row+c]
+		}
+		fwdADST8(&in, &out)
+		for c := range 8 {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+}
+
+func forwardBlock8x8IDTX(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	_ = coeff[7*coeffStride+7]
+	_ = residual[7*residualStride+7]
+	_ = scratch[63]
+	for r := range 8 {
+		srcRow := r * residualStride
+		for c := range 8 {
+			coeff[c*coeffStride+r] = int32(residual[srcRow+c]) << 3
+		}
+	}
 }
 
 func forwardHybridSupported(size Size, typ Type) bool {
@@ -131,6 +271,19 @@ func fwd1D(input []int32, output []int32, typ tx1DType) {
 	}
 }
 
+func fwdIdentity8(input, output *[8]int32) {
+	for i := range 8 {
+		output[i] = input[i] * 2
+	}
+}
+
+func fwdRoundShift1x8(arr *[8]int32) {
+	for i := range 8 {
+		v := arr[i]
+		arr[i] = (v + 1 + (v >> 31)) >> 1
+	}
+}
+
 func fwdADST4(input, output *[4]int32) {
 	x0, x1, x2, x3 := input[0], input[1], input[2], input[3]
 	if x0|x1|x2|x3 == 0 {
@@ -170,69 +323,69 @@ func fwdADST4(input, output *[4]int32) {
 }
 
 func fwdADST8(input, output *[8]int32) {
-	var step [8]int32
-	output[0] = input[0]
-	output[1] = -input[7]
-	output[2] = -input[3]
-	output[3] = input[4]
-	output[4] = -input[1]
-	output[5] = input[6]
-	output[6] = input[2]
-	output[7] = -input[5]
+	const (
+		c4  int32 = 8153
+		c12 int32 = 7839
+		c16 int32 = 7568
+		c20 int32 = 7225
+		c28 int32 = 6333
+		c32 int32 = 5793
+		c36 int32 = 5197
+		c44 int32 = 3862
+		c48 int32 = 3135
+		c52 int32 = 2378
+		c60 int32 = 803
+	)
 
-	step[0] = output[0]
-	step[1] = output[1]
-	step[2] = fwdHalfBtf13(fwdCospi13[32], output[2], fwdCospi13[32], output[3])
-	step[3] = fwdHalfBtf13(fwdCospi13[32], output[2], -fwdCospi13[32], output[3])
-	step[4] = output[4]
-	step[5] = output[5]
-	step[6] = fwdHalfBtf13(fwdCospi13[32], output[6], fwdCospi13[32], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[32], output[6], -fwdCospi13[32], output[7])
+	s0 := input[0]
+	s1 := -input[7]
+	s2 := fwdHalfBtf13(c32, -input[3], c32, input[4])
+	s3 := fwdHalfBtf13(c32, -input[3], -c32, input[4])
+	s4 := -input[1]
+	s5 := input[6]
+	s6 := fwdHalfBtf13(c32, input[2], c32, -input[5])
+	s7 := fwdHalfBtf13(c32, input[2], -c32, -input[5])
 
-	output[0] = step[0] + step[2]
-	output[1] = step[1] + step[3]
-	output[2] = step[0] - step[2]
-	output[3] = step[1] - step[3]
-	output[4] = step[4] + step[6]
-	output[5] = step[5] + step[7]
-	output[6] = step[4] - step[6]
-	output[7] = step[5] - step[7]
+	t0 := s0 + s2
+	t1 := s1 + s3
+	t2 := s0 - s2
+	t3 := s1 - s3
+	t4 := s4 + s6
+	t5 := s5 + s7
+	t6 := s4 - s6
+	t7 := s5 - s7
 
-	step[0] = output[0]
-	step[1] = output[1]
-	step[2] = output[2]
-	step[3] = output[3]
-	step[4] = fwdHalfBtf13(fwdCospi13[16], output[4], fwdCospi13[48], output[5])
-	step[5] = fwdHalfBtf13(fwdCospi13[48], output[4], -fwdCospi13[16], output[5])
-	step[6] = fwdHalfBtf13(-fwdCospi13[48], output[6], fwdCospi13[16], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[16], output[6], fwdCospi13[48], output[7])
+	s4 = fwdHalfBtf13(c16, t4, c48, t5)
+	s5 = fwdHalfBtf13(c48, t4, -c16, t5)
+	s6 = fwdHalfBtf13(-c48, t6, c16, t7)
+	s7 = fwdHalfBtf13(c16, t6, c48, t7)
 
-	output[0] = step[0] + step[4]
-	output[1] = step[1] + step[5]
-	output[2] = step[2] + step[6]
-	output[3] = step[3] + step[7]
-	output[4] = step[0] - step[4]
-	output[5] = step[1] - step[5]
-	output[6] = step[2] - step[6]
-	output[7] = step[3] - step[7]
+	t4 = t0 - s4
+	t5 = t1 - s5
+	t6 = t2 - s6
+	t7 = t3 - s7
+	t0 += s4
+	t1 += s5
+	t2 += s6
+	t3 += s7
 
-	step[0] = fwdHalfBtf13(fwdCospi13[4], output[0], fwdCospi13[60], output[1])
-	step[1] = fwdHalfBtf13(fwdCospi13[60], output[0], -fwdCospi13[4], output[1])
-	step[2] = fwdHalfBtf13(fwdCospi13[20], output[2], fwdCospi13[44], output[3])
-	step[3] = fwdHalfBtf13(fwdCospi13[44], output[2], -fwdCospi13[20], output[3])
-	step[4] = fwdHalfBtf13(fwdCospi13[36], output[4], fwdCospi13[28], output[5])
-	step[5] = fwdHalfBtf13(fwdCospi13[28], output[4], -fwdCospi13[36], output[5])
-	step[6] = fwdHalfBtf13(fwdCospi13[52], output[6], fwdCospi13[12], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[12], output[6], -fwdCospi13[52], output[7])
+	s0 = fwdHalfBtf13(c4, t0, c60, t1)
+	s1 = fwdHalfBtf13(c60, t0, -c4, t1)
+	s2 = fwdHalfBtf13(c20, t2, c44, t3)
+	s3 = fwdHalfBtf13(c44, t2, -c20, t3)
+	s4 = fwdHalfBtf13(c36, t4, c28, t5)
+	s5 = fwdHalfBtf13(c28, t4, -c36, t5)
+	s6 = fwdHalfBtf13(c52, t6, c12, t7)
+	s7 = fwdHalfBtf13(c12, t6, -c52, t7)
 
-	output[0] = step[1]
-	output[1] = step[6]
-	output[2] = step[3]
-	output[3] = step[4]
-	output[4] = step[5]
-	output[5] = step[2]
-	output[6] = step[7]
-	output[7] = step[0]
+	output[0] = s1
+	output[1] = s6
+	output[2] = s3
+	output[3] = s4
+	output[4] = s5
+	output[5] = s2
+	output[6] = s7
+	output[7] = s0
 }
 
 func fwdIdentity1D(input []int32, output []int32) {
