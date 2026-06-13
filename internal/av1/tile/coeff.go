@@ -204,6 +204,8 @@ type coeffScanHot struct {
 	padded        uint16
 	lower2DOffset int8
 	br2DOffset    int8
+	lowerEOBCtx   uint8
+	brEOBCtx      uint8
 }
 
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
@@ -313,6 +315,8 @@ func init() {
 							padded:        p.padded,
 							lower2DOffset: p.lower2DOffset,
 							br2DOffset:    p.br2DOffset,
+							lowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
+							brEOBCtx:      coeffBRContextEOBFast(positions[pos], class, pos),
 						}
 					}
 					coeffScanHotTable[size][class] = scanHot

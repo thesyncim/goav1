@@ -340,16 +340,16 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 		}
 	}
 
+	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY]
 	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneY]
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
-	posTable := coeffPosTable[TransformSize8x8]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
 		level := absInt(int(coeff64[pos]))
 		if c == eob-1 {
-			ctx := coeffLowerLevelsCtxEOBFast(maxEOB, c)
-			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY][ctx], minInt(level, 3)-1)
+			ctx := int(p.lowerEOBCtx)
+			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -363,7 +363,7 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(coeffBRContextEOBFast(posTable[pos], transform.Class2D, pos))
+				brCtx = int(p.brEOBCtx)
 			} else if pos != 0 {
 				pad := uint8(p.padded)
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
@@ -491,16 +491,16 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 		}
 	}
 
+	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY]
 	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneY]
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
-	posTable := coeffPosTable[TransformSize8x8]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
 		level := absInt(int(coeff64[pos]))
 		if c == eob-1 {
-			ctx := coeffLowerLevelsCtxEOBFast(maxEOB, c)
-			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY][ctx], minInt(level, 3)-1)
+			ctx := int(p.lowerEOBCtx)
+			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -514,7 +514,7 @@ func writeCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeff
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(coeffBRContextEOBFast(posTable[pos], transform.Class2D, pos))
+				brCtx = int(p.brEOBCtx)
 			} else if pos != 0 {
 				pad := uint8(p.padded)
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
