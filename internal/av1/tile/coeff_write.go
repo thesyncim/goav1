@@ -582,13 +582,30 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 // contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
 // same Tell delta that a byte writer would observe.
 func CountCoefficientsTXB16x16Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB16x16Y2DTrustedArray(cdfs, (*[256]int16)(coeffs))
+	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, (*[256]int16)(coeffs), nil, 0)
+}
+
+// CountCoefficientsTXB16x16Y2DTrustedWithTXType is the inter trial-pricing
+// variant: it writes the already-derived transform-type symbol after txb_skip,
+// then restores txCDF so trial pricing does not adapt the real transform CDFs.
+func CountCoefficientsTXB16x16Y2DTrustedWithTXType(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
+	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, (*[256]int16)(coeffs), txCDF, txSymbol)
 }
 
 // CountCoefficientsTXB16x16Y2DTrustedArray is
 // CountCoefficientsTXB16x16Y2DTrusted for callers that can prove the
 // 256-coefficient shape before the hot call.
 func CountCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]int16) (TXBDecodeResult, int) {
+	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, coeff256, nil, 0)
+}
+
+// CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray is the pointer-shaped
+// form for inter transform-type trial pricing.
+func CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(cdfs *CoeffCDFs, coeff256 *[256]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
+	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, coeff256, txCDF, txSymbol)
+}
+
+func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
 	const (
 		maxEOB     = 256
 		scratchLen = 400
@@ -611,6 +628,11 @@ func CountCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
+	}
+	if txCDF != nil {
+		saved := *txCDF
+		w.WriteCDF(txCDF, txSymbol)
+		*txCDF = saved
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
@@ -1040,14 +1062,27 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 // contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
 // same Tell delta that a byte writer would observe.
 func CountCoefficientsTXB32x32Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB32x32Y2DTrustedArray(cdfs, (*[1024]int16)(coeffs))
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneY, nil, 0)
 }
 
 // CountCoefficientsTXB32x32Y2DTrustedArray is
 // CountCoefficientsTXB32x32Y2DTrusted for callers that can prove the
 // 1024-coefficient shape before the hot call.
 func CountCoefficientsTXB32x32Y2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneY)
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneY, nil, 0)
+}
+
+// CountCoefficientsTXB32x32Y2DTrustedWithTXType is the inter trial-pricing
+// variant: it writes the already-derived transform-type symbol after txb_skip,
+// then restores txCDF so trial pricing does not adapt the real transform CDFs.
+func CountCoefficientsTXB32x32Y2DTrustedWithTXType(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneY, txCDF, txSymbol)
+}
+
+// CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray is the pointer-shaped
+// form for inter transform-type trial pricing.
+func CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneY, txCDF, txSymbol)
 }
 
 // CountCoefficientsTXB32x32UV2DTrusted is the exact output-free rate-pricing
@@ -1055,17 +1090,17 @@ func CountCoefficientsTXB32x32Y2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]
 // contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
 // same Tell delta that a byte writer would observe.
 func CountCoefficientsTXB32x32UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB32x32UV2DTrustedArray(cdfs, (*[1024]int16)(coeffs))
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneUV, nil, 0)
 }
 
 // CountCoefficientsTXB32x32UV2DTrustedArray is
 // CountCoefficientsTXB32x32UV2DTrusted for callers that can prove the
 // 1024-coefficient shape before the hot call.
 func CountCoefficientsTXB32x32UV2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneUV)
+	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneUV, nil, 0)
 }
 
-func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType) (TXBDecodeResult, int) {
+func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
 	const (
 		maxEOB     = 1024
 		scratchLen = 1296
@@ -1088,6 +1123,11 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
+	}
+	if txCDF != nil {
+		saved := *txCDF
+		w.WriteCDF(txCDF, txSymbol)
+		*txCDF = saved
 	}
 
 	token, extra, _ := EOBPositionToken(eob)

@@ -1038,29 +1038,35 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 			return st.trialTXBBitsUV4x4((*[16]int16)(qcoeff))
 		}
 	}
-	if n == 8 && plane == tile.CoeffPlaneY {
-		_, bits := tile.CountCoefficientsTXB8x8Y2DTrusted(&st.trialCDFs, qcoeff, nil, 0)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+	if n == 8 {
+		if plane == tile.CoeffPlaneY {
+			_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, (*[64]int16)(qcoeff), nil, 0)
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
+		if plane == tile.CoeffPlaneUV {
+			_, bits := tile.CountCoefficientsTXB8x8UV2DTrustedArray(&st.trialCDFs, (*[64]int16)(qcoeff))
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
 	}
-	if n == 8 && plane == tile.CoeffPlaneUV {
-		_, bits := tile.CountCoefficientsTXB8x8UV2DTrusted(&st.trialCDFs, qcoeff)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+	if n == 16 {
+		if plane == tile.CoeffPlaneY {
+			_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedArray(&st.trialCDFs, (*[256]int16)(qcoeff))
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
+		if plane == tile.CoeffPlaneUV {
+			_, bits := tile.CountCoefficientsTXB16x16UV2DTrustedArray(&st.trialCDFs, (*[256]int16)(qcoeff))
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
 	}
-	if n == 16 && plane == tile.CoeffPlaneY {
-		_, bits := tile.CountCoefficientsTXB16x16Y2DTrusted(&st.trialCDFs, qcoeff)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
-	}
-	if n == 16 && plane == tile.CoeffPlaneUV {
-		_, bits := tile.CountCoefficientsTXB16x16UV2DTrusted(&st.trialCDFs, qcoeff)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
-	}
-	if n == 32 && plane == tile.CoeffPlaneY {
-		_, bits := tile.CountCoefficientsTXB32x32Y2DTrusted(&st.trialCDFs, qcoeff)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
-	}
-	if n == 32 && plane == tile.CoeffPlaneUV {
-		_, bits := tile.CountCoefficientsTXB32x32UV2DTrusted(&st.trialCDFs, qcoeff)
-		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+	if n == 32 {
+		if plane == tile.CoeffPlaneY {
+			_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedArray(&st.trialCDFs, (*[1024]int16)(qcoeff))
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
+		if plane == tile.CoeffPlaneUV {
+			_, bits := tile.CountCoefficientsTXB32x32UV2DTrustedArray(&st.trialCDFs, (*[1024]int16)(qcoeff))
+			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+		}
 	}
 	size, scan := tile.TransformSize4x4, st.scan4
 	switch n {
@@ -1095,6 +1101,12 @@ func (st *lossyEncodeState) trialTXBBitsUV4x4(qcoeff *[16]int16) int64 {
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
 	if n == 8 && size == tile.TransformSize8x8 {
 		return st.trialTXBBitsInter8x8((*[64]int16)(qcoeff), typ)
+	}
+	if n == 16 && size == tile.TransformSize16x16 {
+		return st.trialTXBBitsInter16x16((*[256]int16)(qcoeff), typ)
+	}
+	if n == 32 && size == tile.TransformSize32x32 {
+		return st.trialTXBBitsInter32x32((*[1024]int16)(qcoeff), typ)
 	}
 
 	tw := entropy.NewCountingWriter()
@@ -1162,6 +1174,26 @@ func (st *lossyEncodeState) trialTXBBitsInter8x8(qcoeff *[64]int16, typ transfor
 		return 1 << 59
 	}
 	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
+	rate := int64(bits)
+	return ((rate<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter16x16(qcoeff *[256]int16, typ transform.Type) int64 {
+	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize16x16, typ)
+	if !ok {
+		return 1 << 59
+	}
+	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
+	rate := int64(bits)
+	return ((rate<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsInter32x32(qcoeff *[1024]int16, typ transform.Type) int64 {
+	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize32x32, typ)
+	if !ok {
+		return 1 << 59
+	}
+	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
 	rate := int64(bits)
 	return ((rate<<9)*st.rdMult + 256) >> 9
 }

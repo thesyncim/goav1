@@ -94,35 +94,65 @@ func TestChooseInter8x8TXTypeSeededMatchesReference(t *testing.T) {
 
 func TestTrialTXBBitsInterMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(91))
-	for attempt := range 128 {
-		qcoeff := make([]int16, 64)
-		for i := range qcoeff {
-			if rng.Intn(4) != 0 {
-				continue
+	cases := []struct {
+		n     int
+		size  tile.TransformSize
+		types []transform.Type
+	}{
+		{
+			n:    8,
+			size: tile.TransformSize8x8,
+			types: []transform.Type{
+				transform.TypeDCTDCT,
+				transform.TypeADSTDCT,
+				transform.TypeDCTADST,
+				transform.TypeADSTADST,
+				transform.TypeIDTX,
+			},
+		},
+		{
+			n:    16,
+			size: tile.TransformSize16x16,
+			types: []transform.Type{
+				transform.TypeDCTDCT,
+				transform.TypeADSTDCT,
+				transform.TypeDCTADST,
+				transform.TypeADSTADST,
+				transform.TypeIDTX,
+			},
+		},
+		{
+			n:     32,
+			size:  tile.TransformSize32x32,
+			types: []transform.Type{transform.TypeDCTDCT, transform.TypeIDTX},
+		},
+	}
+	for _, tc := range cases {
+		for attempt := range 128 {
+			qcoeff := make([]int16, tc.n*tc.n)
+			qcoeff[0] = 1
+			for i := range qcoeff {
+				if i == 0 || rng.Intn(4) != 0 {
+					continue
+				}
+				v := int16(1 + rng.Intn(7))
+				if rng.Intn(2) == 0 {
+					v = -v
+				}
+				qcoeff[i] = v
 			}
-			v := int16(1 + rng.Intn(7))
-			if rng.Intn(2) == 0 {
-				v = -v
-			}
-			qcoeff[i] = v
-		}
-		for _, typ := range [...]transform.Type{
-			transform.TypeDCTDCT,
-			transform.TypeADSTDCT,
-			transform.TypeDCTADST,
-			transform.TypeADSTADST,
-			transform.TypeIDTX,
-		} {
-			fast := newTXTypeTestState(t, 96)
-			reference := newTXTypeTestState(t, 96)
-			txBefore := fast.txCDFs
-			got := fast.trialTXBBitsInter(qcoeff, 8, tile.TransformSize8x8, typ)
-			want := trialTXBBitsInterReference(reference, qcoeff, 8, tile.TransformSize8x8, typ)
-			if got != want {
-				t.Fatalf("attempt %d typ %v: trial bits=%d want %d", attempt, typ, got, want)
-			}
-			if fast.txCDFs != txBefore {
-				t.Fatalf("attempt %d typ %v: trial mutated transform cdfs", attempt, typ)
+			for _, typ := range tc.types {
+				fast := newTXTypeTestState(t, 96)
+				reference := newTXTypeTestState(t, 96)
+				txBefore := fast.txCDFs
+				got := fast.trialTXBBitsInter(qcoeff, tc.n, tc.size, typ)
+				want := trialTXBBitsInterReference(reference, qcoeff, tc.n, tc.size, typ)
+				if got != want {
+					t.Fatalf("%dx%d attempt %d typ %v: trial bits=%d want %d", tc.n, tc.n, attempt, typ, got, want)
+				}
+				if fast.txCDFs != txBefore {
+					t.Fatalf("%dx%d attempt %d typ %v: trial mutated transform cdfs", tc.n, tc.n, attempt, typ)
+				}
 			}
 		}
 	}
@@ -215,8 +245,13 @@ func chooseInter8x8TXTypeReference(st *lossyEncodeState, src SourceFrame420, lum
 
 func trialTXBBitsInterReference(st *lossyEncodeState, qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
 	scan := st.scan4
-	if n == 8 {
+	switch n {
+	case 8:
 		scan = st.scan8
+	case 16:
+		scan = st.scan16
+	case 32:
+		scan = st.scan32
 	}
 	buf := make([]byte, 0, 1<<14)
 	tw := entropy.NewWriter(buf)

@@ -162,9 +162,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `tile.CountCoefficientsTXB32x32Y2DTrusted`, and
   `tile.CountCoefficientsTXB32x32UV2DTrusted`. This keeps larger split/merge
   decisions on the count-only path while preserving exact CDF and `Tell()`
-  evolution against the generic writer. Larger non-square luma/chroma TXBs still
-  use the generic counting writer until profiles justify the extra source-shaped
-  specializations.
+  evolution against the generic writer. Square 16x16/32x32 inter TX-type trials
+  also use trusted luma counters that write the after-skip transform-type symbol
+  and restore the transform CDF, matching the existing 8x8 trial behavior.
+  Larger non-square luma/chroma TXBs still use the generic counting writer until
+  profiles justify the extra source-shaped specializations.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed
