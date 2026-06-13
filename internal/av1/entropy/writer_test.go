@@ -519,3 +519,54 @@ func BenchmarkWriterCDF4Stream(b *testing.B) {
 		}
 	})
 }
+
+var bitCounterCDF4BenchSink int
+
+func BenchmarkBitCounterCDF4Stream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(71))
+	for i := range syms {
+		switch r := rng.Intn(16); {
+		case r < 9:
+			syms[i] = 0
+		case r < 13:
+			syms[i] = 1
+		case r < 15:
+			syms[i] = 2
+		default:
+			syms[i] = 3
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{4096, 15000, 28000}); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		sum := 0
+		for b.Loop() {
+			cdf := base
+			w := NewBitCounter()
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			sum += w.Tell()
+		}
+		bitCounterCDF4BenchSink = sum
+	})
+	b.Run("specialized", func(b *testing.B) {
+		b.ReportAllocs()
+		sum := 0
+		for b.Loop() {
+			cdf := base
+			w := NewBitCounter()
+			for _, sym := range syms {
+				w.WriteCDF4(&cdf, sym)
+			}
+			sum += w.Tell()
+		}
+		bitCounterCDF4BenchSink = sum
+	})
+}
