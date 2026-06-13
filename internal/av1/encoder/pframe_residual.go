@@ -1552,7 +1552,18 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 			}
 		}
 		base := py*stride + px
-		return sadDualBlock(src[base:], stride, st.sadScratch[:n*n], n, n)
+		srcBlock := src[base:]
+		predBlock := st.sadScratch[:n*n]
+		switch n {
+		case 8:
+			return sad8x8Dual(srcBlock, stride, predBlock, n)
+		case 16:
+			return sad16x16Dual(srcBlock, stride, predBlock, n)
+		case 32:
+			return sad32x32Dual(srcBlock, stride, predBlock, n)
+		default:
+			return sadDualBlock(srcBlock, stride, predBlock, n, n)
+		}
 	}
 	start := mv
 	center := bestSAD
