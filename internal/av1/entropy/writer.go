@@ -175,11 +175,11 @@ func (w *BitCounter) normalize(low uint64, rng uint32) {
 	d := int32(16 - bits.Len32(rng))
 	s := c + d
 	if s >= 40 {
-		numBytesReady := uint32((s >> 3) + 1)
-		c += 24 - int32(numBytesReady<<3)
+		numBytesReady := (s >> 3) + 1
+		c += 24 - (numBytesReady << 3)
 		low &= (uint64(1) << uint32(c)) - 1
 		w.offs += int(numBytesReady)
-		s = c + d - 24
+		s -= numBytesReady << 3
 	}
 	w.low = low << uint32(d)
 	w.rng = rng << uint32(d)
