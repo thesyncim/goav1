@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"math/bits"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -332,6 +334,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 
 	var levels [256]uint8
 	var absLevels [64]uint16
+	var nonZeroBits uint64
 	var signBits uint64
 	culLevel := 0
 	dcValue := 0
@@ -347,6 +350,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 			}
 			level := absInt(int(cv))
 			absLevels[c] = uint16(level)
+			nonZeroBits |= 1 << uint(c)
 			if cv < 0 {
 				signBits |= 1 << uint(c)
 			}
@@ -404,13 +408,11 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		}
 	}
 
-	for c := range eob {
+	for nz := nonZeroBits; nz != 0; nz &= nz - 1 {
+		c := bits.TrailingZeros64(nz)
 		p := &scanHot[c]
 		pos := int(p.pos)
 		level := int(absLevels[c])
-		if level == 0 {
-			continue
-		}
 		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)

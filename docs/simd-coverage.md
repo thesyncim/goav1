@@ -234,6 +234,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   The tile microbench's count-only luma lane is roughly `507-536 ns/op`, zero
   allocations on the local M4 Max; the sign/golomb pass avoids exact abs-level
   work unless the clamped level proves a Golomb tail is possible.
+- The hot 8x8 luma count-only sign/Golomb pass now records non-zero scan slots
+  in a `uint64` while filling levels, then iterates those set bits in forward
+  scan order. This keeps SVT's `av1_write_coeffs_txb_1d` symbol order but skips
+  per-slot zero checks in sparse trial blocks. On the local M4 Max, a
+  `BenchmarkVideoEncoderPFrame1080p-4` A/B run with `GOMAXPROCS=4`, `-cpu=4`,
+  `-benchtime=8x`, and `-count=7` measured baseline `81.76/81.70 ms`
+  mean/median and patched `80.31/80.23 ms`; the reversed order measured
+  baseline `81.50/81.44 ms` and patched `80.60/80.00 ms`.
 - Fixed 4x4 trial TXBs now price through trusted count-only luma/chroma paths:
   `tile.CountCoefficientsTXB4x4Y2DTrusted` for luma trial costs and
   `tile.CountCoefficientsTXB4x4UV2DTrusted` for chroma. This keeps the common
