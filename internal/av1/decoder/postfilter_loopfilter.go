@@ -801,19 +801,15 @@ func frameWorkLoopFilterAlignedPlane(plane frame.Plane, planeW int32, planeH int
 
 func frameWorkCountAppliedLoopFilterEdge(result *FrameWorkLoopFilterPostFilterApplyResult, edge *FrameWorkLoopFilterPostFilterEdge) {
 	result.Edges++
-	if edge.Plane <= loopfilter.PlaneV {
-		result.PlaneEdges[int(edge.Plane)]++
-	}
+	plane := edge.Plane
+	result.PlaneEdges[plane]++
 	if edge.Level == 0 {
 		return
 	}
 	result.Applied++
-	if edge.Plane <= loopfilter.PlaneV {
-		plane := int(edge.Plane)
-		result.PlaneApplied[plane]++
-		if edge.Level > result.PlaneMaxLevel[plane] {
-			result.PlaneMaxLevel[plane] = edge.Level
-		}
+	result.PlaneApplied[plane]++
+	if edge.Level > result.PlaneMaxLevel[plane] {
+		result.PlaneMaxLevel[plane] = edge.Level
 	}
 	if edge.Level > result.MaxLevel {
 		result.MaxLevel = edge.Level
@@ -2631,16 +2627,14 @@ func frameWorkLoopFilterEdgeFits(width uint8, edge loopfilter.Edge, x int32, y i
 
 func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, edge FrameWorkLoopFilterPostFilterEdge) {
 	plan.EdgeCandidates++
-	if edge.Plane <= loopfilter.PlaneV {
-		plan.PlaneEdgeCandidates[int(edge.Plane)]++
-	}
+	plan.PlaneEdgeCandidates[edge.Plane]++
 	if edge.LevelFromPrevious {
 		plan.PreviousLevelEdges++
 	}
-	if plan.StoredEdges < uint32(len(edges)) {
-		storedEdges := int(plan.StoredEdges)
+	storedEdges := plan.StoredEdges
+	if storedEdges < uint32(len(edges)) {
 		edges[storedEdges] = edge
-		plan.StoredEdges++
+		plan.StoredEdges = storedEdges + 1
 		return
 	}
 	plan.DroppedEdges++
