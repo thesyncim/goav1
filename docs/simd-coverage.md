@@ -106,6 +106,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   trusted count/write call. Compiler reports keep inputs non-escaping and lower
   the generic inter TXB-pricing wrapper cost by isolating the 8x8 fast path;
   runtime rows remain pending.
+- Final emitted 8x8 chroma TXBs now use a trusted Class2D writer with
+  caller-derived txb-skip/dc-sign contexts, the packed 8x8 scan metadata, and a
+  stack level buffer. The generic writer remains active for rectangular chroma
+  and non-DCT paths; this is a scalar fixed-shape cleanup, not new ASM coverage.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.

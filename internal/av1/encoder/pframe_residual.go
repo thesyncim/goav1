@@ -1916,6 +1916,15 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 			return err
 		}
+	} else if w == 8 && h == 8 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip == nil && txType == transform.TypeDCTDCT {
+		txbCtx, err := coeffCtx.TXBContext(ctxReq)
+		if err != nil {
+			return err
+		}
+		result := tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			return err
+		}
 	} else {
 		if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 			return err

@@ -619,6 +619,65 @@ func TestWriteCoefficientsTXB8x8Y2DContextTrustedMatchesGeneric(t *testing.T) {
 	}
 }
 
+func TestWriteCoefficientsTXB8x8UV2DContextTrustedMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(181))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, genericScratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+	fastScratch := make([]uint8, len(genericScratch))
+
+	var genericCDFs, fastCDFs CoeffCDFs
+	if err := genericCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := fastCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	genericWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+	fastWriter := entropy.NewWriter(make([]byte, 0, 1<<16))
+
+	for attempt := range 256 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		txbCtx := uint8(rng.Intn(TXBSkipContexts))
+		dcCtx := uint8(rng.Intn(3))
+
+		genericResult, err := WriteCoefficientsTXB(&genericWriter, &genericCDFs, TXBEncodeRequest{
+			Size:           TransformSize8x8,
+			Plane:          CoeffPlaneUV,
+			Class:          transform.Class2D,
+			TXBSkipContext: txbCtx,
+			DCSignContext:  dcCtx,
+		}, coeffs, scan, genericScratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		fastResult := WriteCoefficientsTXB8x8UV2DContextTrusted(&fastWriter, &fastCDFs, coeffs, fastScratch, txbCtx, dcCtx)
+		if fastResult != genericResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
+		}
+		if fastCDFs != genericCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(fastCDFs, genericCDFs))
+		}
+		if fastWriter.Tell() != genericWriter.Tell() {
+			t.Fatalf("attempt %d tell=%d want %d", attempt, fastWriter.Tell(), genericWriter.Tell())
+		}
+	}
+
+	genericBytes, err := genericWriter.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	fastBytes, err := fastWriter.Finish()
+	if err != nil {
+		t.Fatalf("fast finish: %v", err)
+	}
+	if string(fastBytes) != string(genericBytes) {
+		t.Fatal("final bytes diverged")
+	}
+}
+
 func firstCoeffCDFDiff(a, b CoeffCDFs) string {
 	for tx := range a.TXBSkip {
 		for ctx := range a.TXBSkip[tx] {
@@ -916,6 +975,54 @@ func BenchmarkWriteCoefficientsTXB8x8Y2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			CountCoefficientsTXB8x8Y2DTrusted(&cdfs, blocks[i&255], nil, 0)
+		}
+	})
+}
+
+func BenchmarkWriteCoefficientsTXB8x8UV2D(b *testing.B) {
+	rng := rand.New(rand.NewSource(235))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		b.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(b, TransformSize8x8, txSize, transform.Class2D)
+	blocks := make([][]int16, 256)
+	for i := range blocks {
+		blocks[i] = randomCoeffs(rng, scan, len(scan))
+	}
+
+	b.Run("generic", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			if _, err := WriteCoefficientsTXB(&w, &cdfs, TXBEncodeRequest{
+				Size:           TransformSize8x8,
+				Plane:          CoeffPlaneUV,
+				Class:          transform.Class2D,
+				TXBSkipContext: 1,
+				DCSignContext:  2,
+			}, blocks[i&255], scan, scratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("trusted", func(b *testing.B) {
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(96); err != nil {
+			b.Fatal(err)
+		}
+		buf := make([]byte, 0, 4096)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w := entropy.NewWriter(buf[:0])
+			WriteCoefficientsTXB8x8UV2DContextTrusted(&w, &cdfs, blocks[i&255], scratch, 1, 2)
 		}
 	})
 }
