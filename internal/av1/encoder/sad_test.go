@@ -112,6 +112,25 @@ func TestSAD32x32ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD64x64ComposedMatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(4564))
+	const stride = 151
+	src := make([]byte, stride*160)
+	ref := make([]byte, stride*160)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		off := rng.Intn(stride*96) + rng.Intn(stride-64)
+		want := sadRectBlockReference(src, ref, off, off, stride, 64, 64)
+		got := sad64x64(src[off:], ref[off:], stride)
+		if got != want {
+			t.Fatalf("off %d: impl %d want %d", off, got, want)
+		}
+	}
+}
+
 func TestSAD32x32x4Step4ImplMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(46))
 	const stride = 117
@@ -622,6 +641,32 @@ func BenchmarkSAD32x32Composed16x16(b *testing.B) {
 			sad16x16Impl(src[16:], ref[16:], 64) +
 			sad16x16Impl(src[16*64:], ref[16*64:], 64) +
 			sad16x16Impl(src[16*64+16:], ref[16*64+16:], 64)
+	}
+}
+
+func BenchmarkSAD64x64(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad64x64(src, ref, 96)
+	}
+}
+
+func BenchmarkSAD64x64ScalarReference(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sadRectBlockReference(src, ref, 0, 0, 96, 64, 64)
 	}
 }
 

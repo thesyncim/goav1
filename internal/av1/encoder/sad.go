@@ -97,6 +97,15 @@ func sad32x32PureGo(src, ref []byte, stride int) int {
 	return total
 }
 
+// sad64x64 composes the square 64x64 shape from the active 32x32 kernel. This
+// keeps 64-tier merge/fallback probes on the same optimized path as 32x32.
+func sad64x64(src, ref []byte, stride int) int {
+	return sad32x32(src, ref, stride) +
+		sad32x32(src[32:], ref[32:], stride) +
+		sad32x32(src[32*stride:], ref[32*stride:], stride) +
+		sad32x32(src[32*stride+32:], ref[32*stride+32:], stride)
+}
+
 // sad8x8x4Step4PureGo is the portable reference for four horizontal 8x8 SAD
 // candidates spaced by the raster search's four-pixel x step.
 func sad8x8x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {

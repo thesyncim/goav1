@@ -168,6 +168,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
   allocations.
+- Square 64x64 SAD now composes four active 32x32 kernels instead of falling
+  through the scalar square helper. This covers 64-tier merge scoring and rare
+  fallback 64x64 search/zero probes with existing arm64 NEON coverage; focused
+  benchmark rows remain pending while local runtime binaries are blocked.
 - Subpel-refine prediction scoring now has 16x16 and 32x32 dual-stride SAD
   surfaces, with arm64 NEON kernels for the source-vs-prediction-scratch case.
   This replaces four or sixteen 8x8 dual-SAD calls per 16x16/32x32 subpel probe

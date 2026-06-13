@@ -479,11 +479,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			}
 			base := py*src.YStride + px
 			refBase := (py+dy)*src.YStride + px + dx
-			sad64 := 0
-			for _, q := range [4][2]int{{0, 0}, {32, 0}, {0, 32}, {32, 32}} {
-				qoff := q[1]*src.YStride + q[0]
-				sad64 += sadBlock(src.Y, ref.Y, base+qoff, refBase+qoff, src.YStride, 32, 1<<30)
-			}
+			sad64 := sad64x64(src.Y[base:], ref.Y[refBase:], src.YStride)
 			if sad64 <= childCost+mergeBias64 {
 				idx64 := (py/64)*st.grid64Cols + px/64
 				st.mv64Grid[idx64] = mv64
@@ -1609,6 +1605,8 @@ func sadBlock(src, ref []byte, base, refBase, stride, n, limit int) int {
 		return sad16x16(src[base:], ref[refBase:], stride)
 	case 32:
 		return sad32x32(src[base:], ref[refBase:], stride)
+	case 64:
+		return sad64x64(src[base:], ref[refBase:], stride)
 	}
 	total := 0
 	for r := range n {
