@@ -143,7 +143,7 @@ func (w *Writer) normalize(low uint64, rng uint32) {
 		return
 	}
 	c := w.cnt
-	d := int32(16 - bits.Len32(rng)) // 16 - OD_ILOG_NZ(rng)
+	d := int32(bits.LeadingZeros16(uint16(rng))) // 16 - OD_ILOG_NZ(rng)
 	s := c + d
 	if s >= 40 { // 56 - 16 (see entenc.c rationale)
 		numBytesReady := uint32((s >> 3) + 1)

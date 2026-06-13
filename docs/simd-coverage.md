@@ -202,9 +202,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   per-frame defer. Both are scheduler/dispatch cleanups, not concurrency
   increases.
 - `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
-  path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
-  stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero
-  allocations.
+  path and is guarded by `TestWriteCDF4MatchesWriteCDF`; after byte-writer
+  normalization moved to the 16-bit shift expression below, the specialized
+  local writer stream benchmark is about `18.6-19.0 us` per 4096-symbol
+  stream, zero allocations.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
   coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
   single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,
@@ -219,6 +220,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   tile, and encoder builds still inline it at all count-only call sites
   (`encodeQ15`, `WriteBoolQ15`, `WriteBit`, `WriteBinaryCDFTrusted`, and
   `WriteCDF4`) with no new heap escape.
+- `Writer.normalize` now uses the same 16-bit normalization-shift expression
+  for emitted bytes. Paired local repeats after temporarily restoring the old
+  expression measured `BenchmarkWriterCDF4Stream/specialized` at
+  `19.98-20.43 us` before and `18.60-19.01 us` after, zero allocations. The
+  generic CDF4 lane traded off from `23.04-23.68 us` before to
+  `23.70-24.16 us` after, so keep watching rectangular/generic writer use.
+  `BenchmarkVideoEncoderPFrame1080p` stayed neutral to slightly faster:
+  `74.90-75.37 ms/op` before and `74.56-75.01 ms/op` after, zero allocations.
 - Single-reference and compound-reference frame selection now read their fixed
   write-side bit patterns from compact `uint8` tables and emit the symbols
   directly, avoiding the former single-ref per-call `[]refBit` construction and
