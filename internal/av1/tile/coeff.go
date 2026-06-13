@@ -220,6 +220,15 @@ type coeffScanHot8x8 struct {
 	brEOBCtx      uint8
 }
 
+type coeffScanHot16x16 struct {
+	pos           uint8
+	padded        uint16
+	lower2DOffset int8
+	br2DOffset    int8
+	lowerEOBCtx   uint8
+	brEOBCtx      uint8
+}
+
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
 // valid coefficient index of size, indexed in [0, maxEOB).
 var coeffPosTable [transformSizeCount][]coeffPos
@@ -228,6 +237,7 @@ var coeffScanTable [transformSizeCount][3][]int16
 var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
 var coeffScanHot4x4Y2D [16]coeffScanHot8x8
 var coeffScanHot8x8Y2D [64]coeffScanHot8x8
+var coeffScanHot16x16Y2D [256]coeffScanHot16x16
 
 func init() {
 	for size := range transformSizeCount {
@@ -351,6 +361,18 @@ func init() {
 							coeffScanHot8x8Y2D[c] = coeffScanHot8x8{
 								pos:           uint8(p.pos),
 								padded:        uint8(p.padded),
+								lower2DOffset: p.lower2DOffset,
+								br2DOffset:    p.br2DOffset,
+								lowerEOBCtx:   p.lowerEOBCtx,
+								brEOBCtx:      p.brEOBCtx,
+							}
+						}
+					}
+					if size == TransformSize16x16 {
+						for c, p := range scanHot {
+							coeffScanHot16x16Y2D[c] = coeffScanHot16x16{
+								pos:           uint8(p.pos),
+								padded:        p.padded,
 								lower2DOffset: p.lower2DOffset,
 								br2DOffset:    p.br2DOffset,
 								lowerEOBCtx:   p.lowerEOBCtx,

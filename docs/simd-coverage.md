@@ -143,6 +143,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `tile.CountCoefficientsTXB4x4UV2DTrusted` for chroma. This keeps the common
   small-block trials out of the generic writer/scratch path while preserving
   exact CDF and `Tell()` evolution; runtime rows are still pending.
+- 16x16 luma trial pricing now uses
+  `tile.CountCoefficientsTXB16x16Y2DTrusted`, keeping larger luma split/merge
+  decisions on the count-only path while preserving exact CDF and `Tell()`
+  evolution against the generic writer. Chroma 16x16 and larger luma TXBs still
+  use the generic counting writer until profiles justify the extra source-shaped
+  specializations.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed
