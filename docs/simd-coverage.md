@@ -63,7 +63,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | Area | SVT SIMD coverage | goav1 status | Decision |
 | --- | --- | --- | --- |
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
-| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has a trusted 8x8 path, stack level buffer, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
+| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, and the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
@@ -143,12 +143,15 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `tile.CountCoefficientsTXB4x4UV2DTrusted` for chroma. This keeps the common
   small-block trials out of the generic writer/scratch path while preserving
   exact CDF and `Tell()` evolution; runtime rows are still pending.
-- 16x16 trial pricing now uses `tile.CountCoefficientsTXB16x16Y2DTrusted`
-  for luma and `tile.CountCoefficientsTXB16x16UV2DTrusted` for chroma, keeping
-  larger split/merge decisions on the count-only path while preserving exact CDF
-  and `Tell()` evolution against the generic writer. Larger luma/chroma TXBs
-  still use the generic counting writer until profiles justify the extra
-  source-shaped specializations.
+- 16x16 and 32x32 trial pricing now use trusted count-only luma/chroma paths:
+  `tile.CountCoefficientsTXB16x16Y2DTrusted`,
+  `tile.CountCoefficientsTXB16x16UV2DTrusted`,
+  `tile.CountCoefficientsTXB32x32Y2DTrusted`, and
+  `tile.CountCoefficientsTXB32x32UV2DTrusted`. This keeps larger split/merge
+  decisions on the count-only path while preserving exact CDF and `Tell()`
+  evolution against the generic writer. Larger non-square luma/chroma TXBs still
+  use the generic counting writer until profiles justify the extra source-shaped
+  specializations.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed

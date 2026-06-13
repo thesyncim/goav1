@@ -238,6 +238,7 @@ var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
 var coeffScanHot4x4Y2D [16]coeffScanHot8x8
 var coeffScanHot8x8Y2D [64]coeffScanHot8x8
 var coeffScanHot16x16Y2D [256]coeffScanHot16x16
+var coeffScanHot32x32Y2D [1024]coeffScanHot
 
 func init() {
 	for size := range transformSizeCount {
@@ -379,6 +380,9 @@ func init() {
 								brEOBCtx:      p.brEOBCtx,
 							}
 						}
+					}
+					if size == TransformSize32x32 {
+						copy(coeffScanHot32x32Y2D[:], scanHot)
 					}
 				}
 			}
