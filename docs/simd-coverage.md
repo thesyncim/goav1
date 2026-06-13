@@ -276,6 +276,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   but the exact-probe SAD path no longer switches on `n` per candidate, and the
   compiler no longer reports the hot `sadScratch[:n*n]` bounds check on those
   sizes.
+- The 8x8, 16x16, and 32x32 luma subpel prober entry points now bypass the
+  generic `regularSubpelKernel(blockSize, phase)` branch on fractional probes
+  and index the regular 8-tap kernel table directly. Compile diagnostics move
+  the sized prober bodies to cost `421` versus the generic prober's `461` and no
+  longer report the hot kernel-table bounds checks there; the cold integer-pel
+  case still falls back to the generic copy path. The indirect convolve dispatch
+  still limits escape precision, so this is a dispatch/BCE cleanup rather than a
+  new allocation claim.
 - The 8x8 hybrid forward-transform path now dispatches directly to the
   array-backed DCT/ADST/IDTX kernels instead of copying through the generic
   slice helper for each row/column. `BenchmarkForwardBlockHybrid8x8` moved

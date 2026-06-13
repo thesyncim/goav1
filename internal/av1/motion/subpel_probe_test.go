@@ -51,8 +51,29 @@ func TestLumaSubpelProberMatchesRegularPredictor(t *testing.T) {
 			if string(got) != string(want) {
 				t.Fatalf("n=%d delta=%+v: prober output diverged", n, delta)
 			}
+			if n >= 8 {
+				gotFast := make([]byte, n*n)
+				if ok := predictSubpelForSize(&prober, gotFast, n, delta); !ok {
+					t.Fatalf("n=%d delta=%+v: sized prober rejected interior probe", n, delta)
+				}
+				if string(gotFast) != string(want) {
+					t.Fatalf("n=%d delta=%+v: sized prober output diverged", n, delta)
+				}
+			}
 		}
 	}
+}
+
+func predictSubpelForSize(p *LumaSubpelProber, dst []byte, n int, delta Vector) bool {
+	switch n {
+	case 8:
+		return p.Predict8x8(dst, delta)
+	case 16:
+		return p.Predict16x16(dst, delta)
+	case 32:
+		return p.Predict32x32(dst, delta)
+	}
+	return p.Predict(dst, delta)
 }
 
 var subpelProbeSink byte
@@ -91,7 +112,7 @@ func BenchmarkLumaSubpelProberPredict(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if !prober.Predict(dst, deltas[i&3]) {
+				if !predictSubpelForSize(&prober, dst, n, deltas[i&3]) {
 					b.Fatal("interior probe rejected")
 				}
 			}

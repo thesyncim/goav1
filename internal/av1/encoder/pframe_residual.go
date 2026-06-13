@@ -1710,7 +1710,7 @@ func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, widt
 }
 
 func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
-	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+	if !st.prober.Predict8x8(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
 		if err := predictInto(probe, refPlane, stride, width, height, px, py, 8, 8, cand, false, false); err != nil {
 			return -1
 		}
@@ -1719,7 +1719,7 @@ func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, str
 }
 
 func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
-	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+	if !st.prober.Predict16x16(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
 		if err := predictInto(probe, refPlane, stride, width, height, px, py, 16, 16, cand, false, false); err != nil {
 			return -1
 		}
@@ -1728,7 +1728,7 @@ func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, s
 }
 
 func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
-	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+	if !st.prober.Predict32x32(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
 		if err := predictInto(probe, refPlane, stride, width, height, px, py, 32, 32, cand, false, false); err != nil {
 			return -1
 		}
