@@ -1861,26 +1861,27 @@ func sadRectBlock(src, ref []byte, base, refBase, stride, bw, bh, limit int) int
 	if bw == bh {
 		return sadBlock(src, ref, base, refBase, stride, bw, limit)
 	}
+	srcBlock := src[base : base+(bh-1)*stride+bw]
+	refBlock := ref[refBase : refBase+(bh-1)*stride+bw]
 	switch {
 	case bw == 16 && bh == 8:
-		return sad8x8(src[base:], ref[refBase:], stride, limit) +
-			sad8x8(src[base+8:], ref[refBase+8:], stride, limit)
+		return sad8x8(srcBlock, refBlock, stride, limit) +
+			sad8x8(srcBlock[8:], refBlock[8:], stride, limit)
 	case bw == 8 && bh == 16:
-		return sad8x8(src[base:], ref[refBase:], stride, limit) +
-			sad8x8(src[base+8*stride:], ref[refBase+8*stride:], stride, limit)
+		return sad8x8(srcBlock, refBlock, stride, limit) +
+			sad8x8(srcBlock[8*stride:], refBlock[8*stride:], stride, limit)
 	case bw == 32 && bh == 16:
-		return sad16x16(src[base:], ref[refBase:], stride) +
-			sad16x16(src[base+16:], ref[refBase+16:], stride)
+		return sad16x16(srcBlock, refBlock, stride) +
+			sad16x16(srcBlock[16:], refBlock[16:], stride)
 	case bw == 16 && bh == 32:
-		return sad16x16(src[base:], ref[refBase:], stride) +
-			sad16x16(src[base+16*stride:], ref[refBase+16*stride:], stride)
+		return sad16x16(srcBlock, refBlock, stride) +
+			sad16x16(srcBlock[16*stride:], refBlock[16*stride:], stride)
 	}
 	total := 0
 	for r := range bh {
-		row := base + r*stride
-		refRow := refBase + r*stride
+		row := r * stride
 		for c := range bw {
-			d := int(src[row+c]) - int(ref[refRow+c])
+			d := int(srcBlock[row+c]) - int(refBlock[row+c])
 			if d < 0 {
 				d = -d
 			}
