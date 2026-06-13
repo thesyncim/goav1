@@ -177,6 +177,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   and restore the transform CDF, matching the existing 8x8 trial behavior.
   Larger non-square luma/chroma TXBs still use the generic counting writer until
   profiles justify the extra source-shaped specializations.
+- P-frame 16x16 split trials and 8x8/16x16 merge pricing now call typed
+  square-TXB rate helpers directly, avoiding the non-inlined generic
+  `trialTXBBits(plane, []int16, n)` dispatcher on those known-shape luma/chroma
+  decisions while preserving the same trusted coefficient counters.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed

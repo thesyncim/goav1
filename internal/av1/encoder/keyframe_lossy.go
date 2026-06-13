@@ -1040,32 +1040,26 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 	}
 	if n == 8 {
 		if plane == tile.CoeffPlaneY {
-			_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, (*[64]int16)(qcoeff), nil, 0)
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsY8x8((*[64]int16)(qcoeff))
 		}
 		if plane == tile.CoeffPlaneUV {
-			_, bits := tile.CountCoefficientsTXB8x8UV2DTrustedArray(&st.trialCDFs, (*[64]int16)(qcoeff))
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsUV8x8((*[64]int16)(qcoeff))
 		}
 	}
 	if n == 16 {
 		if plane == tile.CoeffPlaneY {
-			_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedArray(&st.trialCDFs, (*[256]int16)(qcoeff))
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsY16x16((*[256]int16)(qcoeff))
 		}
 		if plane == tile.CoeffPlaneUV {
-			_, bits := tile.CountCoefficientsTXB16x16UV2DTrustedArray(&st.trialCDFs, (*[256]int16)(qcoeff))
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsUV16x16((*[256]int16)(qcoeff))
 		}
 	}
 	if n == 32 {
 		if plane == tile.CoeffPlaneY {
-			_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedArray(&st.trialCDFs, (*[1024]int16)(qcoeff))
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsY32x32((*[1024]int16)(qcoeff))
 		}
 		if plane == tile.CoeffPlaneUV {
-			_, bits := tile.CountCoefficientsTXB32x32UV2DTrustedArray(&st.trialCDFs, (*[1024]int16)(qcoeff))
-			return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+			return st.trialTXBBitsUV32x32((*[1024]int16)(qcoeff))
 		}
 	}
 	size, scan := tile.TransformSize4x4, st.scan4
@@ -1085,16 +1079,50 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 		return 1 << 59
 	}
 	bits := int64(tw.Tell() - base)
-	return ((bits<<9)*st.rdMult + 256) >> 9
+	return st.txbBitsToRate(int(bits))
 }
 
 func (st *lossyEncodeState) trialTXBBitsY4x4(qcoeff *[16]int16) int64 {
 	_, bits := tile.CountCoefficientsTXB4x4Y2DTrustedArray(&st.trialCDFs, qcoeff)
-	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+	return st.txbBitsToRate(bits)
 }
 
 func (st *lossyEncodeState) trialTXBBitsUV4x4(qcoeff *[16]int16) int64 {
 	_, bits := tile.CountCoefficientsTXB4x4UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY8x8(qcoeff *[64]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, nil, 0)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV8x8(qcoeff *[64]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB8x8UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY16x16(qcoeff *[256]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV16x16(qcoeff *[256]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB16x16UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsY32x32(qcoeff *[1024]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV32x32(qcoeff *[1024]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB32x32UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return st.txbBitsToRate(bits)
+}
+
+func (st *lossyEncodeState) txbBitsToRate(bits int) int64 {
 	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
 }
 

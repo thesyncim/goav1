@@ -1067,11 +1067,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				// dense whole-block coefficients, and a wrong split costs
 				// more than a missed one.
 			case st.armTrial():
-				costFull := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ[:n*n], n) + lumaRdD<<7
+				costFull := st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ[:256])) + lumaRdD<<7
 				costSplit := splitD << 7
-				for i := range 4 {
-					costSplit += st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], cN)
-				}
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[0:64]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[64:128]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[128:192]))
+				costSplit += st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[192:256]))
 				if costSplit < costFull {
 					splitTX = true
 				}
@@ -2170,7 +2171,16 @@ func (st *lossyEncodeState) trialInterCost(src SourceFrame420, ref SourceFrame42
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 	st.prepareInterTXB(src.Y, pred, n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-	cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + st.rdDcode<<7
+	cost := int64(0)
+	switch n {
+	case 8:
+		cost = st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[:64]))
+	case 16:
+		cost = st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ2[:256]))
+	default:
+		cost = st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n)
+	}
+	cost += st.rdDcode << 7
 	// The chroma transform structure differs between the shapes too: one
 	// large block against four small ones per plane.
 	cn := n / 2
@@ -2188,7 +2198,23 @@ func (st *lossyEncodeState) trialInterCost(src SourceFrame420, ref SourceFrame42
 		}
 		st.rdDcode = 0
 		st.prepareInterTXB(data, cpred, cn, src.ChromaStride, px/2, py/2, cn, cn, q, qc)
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn) + st.rdDcode<<7
+		switch cn {
+		case 4:
+			if plane == 1 {
+				cost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:]))
+			} else {
+				cost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:]))
+			}
+		case 8:
+			if plane == 1 {
+				cost += st.trialTXBBitsUV8x8((*[64]int16)(st.uQ[:]))
+			} else {
+				cost += st.trialTXBBitsUV8x8((*[64]int16)(st.vQ[:]))
+			}
+		default:
+			cost += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn)
+		}
+		cost += st.rdDcode << 7
 	}
 	return cost
 }
