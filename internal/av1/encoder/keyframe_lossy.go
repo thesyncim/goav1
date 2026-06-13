@@ -1038,6 +1038,10 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 			return st.trialTXBBitsUV4x4((*[16]int16)(qcoeff))
 		}
 	}
+	if n == 8 && plane == tile.CoeffPlaneY {
+		_, bits := tile.CountCoefficientsTXB8x8Y2DTrusted(&st.trialCDFs, qcoeff, nil, 0)
+		return ((int64(bits)<<9)*st.rdMult + 256) >> 9
+	}
 	size, scan := tile.TransformSize4x4, st.scan4
 	switch n {
 	case 8:

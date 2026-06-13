@@ -218,6 +218,47 @@ func TestCountCoefficientsTXB8x8Y2DTrustedMatchesWriter(t *testing.T) {
 	}
 }
 
+func TestCountCoefficientsTXB8x8Y2DTrustedMatchesGenericWriter(t *testing.T) {
+	rng := rand.New(rand.NewSource(244))
+	txSize, err := TransformSize8x8.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, scratch := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
+
+	var writerCDFs, countCDFs CoeffCDFs
+	if err := writerCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+	if err := countCDFs.InitDefault(96); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := range 512 {
+		coeffs := randomCoeffs(rng, scan, len(scan))
+		w := entropy.NewCountingWriter()
+		base := w.Tell()
+		writerResult, err := WriteCoefficientsTXB(&w, &writerCDFs, TXBEncodeRequest{
+			Size: TransformSize8x8, Plane: CoeffPlaneY, Class: transform.Class2D,
+		}, coeffs, scan, scratch)
+		if err != nil {
+			t.Fatalf("generic attempt %d: %v", attempt, err)
+		}
+		writerBits := w.Tell() - base
+
+		countResult, countBits := CountCoefficientsTXB8x8Y2DTrusted(&countCDFs, coeffs, nil, 0)
+		if countResult != writerResult {
+			t.Fatalf("attempt %d result=%+v want %+v", attempt, countResult, writerResult)
+		}
+		if countBits != writerBits {
+			t.Fatalf("attempt %d bits=%d want %d", attempt, countBits, writerBits)
+		}
+		if countCDFs != writerCDFs {
+			t.Fatalf("attempt %d coefficient CDFs diverged at %s", attempt, firstCoeffCDFDiff(countCDFs, writerCDFs))
+		}
+	}
+}
+
 func TestCountCoefficientsTXB4x4Y2DTrustedMatchesWriter(t *testing.T) {
 	rng := rand.New(rand.NewSource(243))
 	txSize, err := TransformSize4x4.TransformSize()
