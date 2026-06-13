@@ -100,8 +100,8 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | Area | SVT SIMD coverage | goav1 status | Decision |
 | --- | --- | --- | --- |
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
-| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and branchless sign extraction. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
-| Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
+| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits; branchless sign extraction was tested and rejected. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list and extra scan-table attempts regressed. |
+| Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries. `BenchmarkBitCounterCDF4Stream` now gates the exact count-only CDF4 path. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, and the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar, though the 8x8 trusted hybrid path now dispatches once per tx type instead of per 1-D row/column | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
@@ -355,13 +355,24 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   widened reference windows, and four independent accumulators; compiler
   reports show the direct dispatch wrappers inline at the 8x8/16x16/32x32
   raster call sites and inside the 64x64 composition helper, while the
-  stack-local NEON contexts remain non-escaping. Runtime benchmark rows are
-  still pending because newly built local binaries currently hang before Go
-  code starts.
+  stack-local NEON contexts remain non-escaping. `BenchmarkFullPelDiamondSearch8`
+  currently sits around `89.9-98.7 ns/op` with zero allocations.
+- `BenchmarkSubpelRefine8x8` now gates the exact 8x8 subpel refine scorer. The
+  initial rows are `151.5-159.8 ns/op`, zero allocations. A direct arm64 NEON
+  helper experiment for the subpel probe was rejected: the same-checkout
+  baseline probe was `38.0-39.3 ns/op` for 8x8, while the direct-helper variant
+  measured `40.1-45.0 ns/op`.
+- `BenchmarkBitCounterCDF4Stream` now gates the count-only range-coder CDF4
+  path that appears under TXB coefficient pricing. The generic counter path
+  measures about `19.86-20.07 us` per 4096-symbol stream; the specialized
+  `BitCounter.WriteCDF4` path measures about `19.21-19.32 us`, zero allocations.
+  A branchless saturated-count update was rejected after it regressed the
+  specialized stream to roughly `19.29-19.67 us` and did not improve the tile
+  trusted-count benchmark.
 - Current P-frame diagnostics: the profiled
-  `BenchmarkVideoEncoderPFrame1080p-4` sample is `92.3 ms/op`, with repeat
-  rows around `88.4-92.1 ms/op` and zero or one tiny allocation. Allocation is
-  not the dominant CPU gap; the CPU profile is.
+  `BenchmarkVideoEncoderPFrame1080p-4` sample is `79.4 ms/op`, and non-profiled
+  repeat rows are around `78.0-78.8 ms/op` with zero steady-state allocations.
+  Allocation is not the dominant CPU gap; the CPU profile is.
 
 ## Next Implementation Order
 
@@ -369,7 +380,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
    and baseline NEON (`-svt-asm neon`). Report both `--lp` and `--asm`.
 2. Prototype a tiny TXB prep kernel only if it replaces work already proven hot:
    eob/level-buffer/stat extraction for the 8x8 luma path. Keep it only if both
-   coefficient microbenchmarks and the fair row improve.
+   `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` and the fair row improve.
 3. Add encoder search metric kernels only with direct profile mapping, such as
    additional batched candidates or RD metrics that remain visible after the
    existing SAD/residual-stat NEON work.
