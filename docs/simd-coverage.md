@@ -172,6 +172,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   tiny stack `[16]uint16` plus a single sign bitset. Compiler reports lower both
   count-helper costs from `1645 -> 1639`, keep hot inputs non-escaping, and
   remove three remaining bounds checks from each touched range.
+- Trusted 32x32 count and final writer reverse passes now use the existing
+  padded/clamped level window for base-range coding instead of re-reading exact
+  coefficient magnitudes. Exact magnitudes are still read for the Golomb tail,
+  where they are required. This avoids a large `[1024]uint16` stack cache while
+  removing one remaining bounds check in each touched range; compiler costs stay
+  flat and hot inputs remain non-escaping.
 - Final emitted 32x32 square luma/chroma TXBs now use trusted Class2D writers
   with caller-derived txb-skip/dc-sign contexts, packed 32x32 scan metadata, and
   stack level buffers. This covers 64x64 luma split children and 64x64 chroma

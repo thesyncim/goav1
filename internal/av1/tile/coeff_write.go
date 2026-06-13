@@ -1183,7 +1183,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff1024[pos]))
+		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1347,7 +1347,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff1024[pos]))
+		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
