@@ -2156,6 +2156,8 @@ func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, 
 		return fullPelDiamondSearch16(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
 	case 32:
 		return fullPelDiamondSearch32(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
+	case 64:
+		return fullPelDiamondSearch64(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
 	default:
 		return fullPelDiamondSearchGeneric(src, ref, base, stride, n, minDX, maxDX, minDY, maxDY)
 	}
@@ -2295,6 +2297,51 @@ func fullPelDiamondSearch32(srcBlock []byte, ref []byte, base, stride, minDX, ma
 			continue
 		}
 		if s := sad32x32(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
+}
+
+func fullPelDiamondSearch64(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
+	bestDX, bestDY := 0, 0
+	bestSAD := sad64x64(srcBlock, ref[base:], stride)
+	if bestSAD <= 64*64*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		dx := minDX &^ 1
+		for ; dx+12 <= maxDX; dx += 16 {
+			s0, s1, s2, s3 := sad64x64x4Step4(srcBlock, ref[refRow+dx:], stride)
+			if s0 < bestSAD {
+				bestSAD, bestDX, bestDY = s0, dx, dy
+			}
+			if s1 < bestSAD {
+				bestSAD, bestDX, bestDY = s1, dx+4, dy
+			}
+			if s2 < bestSAD {
+				bestSAD, bestDX, bestDY = s2, dx+8, dy
+			}
+			if s3 < bestSAD {
+				bestSAD, bestDX, bestDY = s3, dx+12, dy
+			}
+		}
+		for ; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sad64x64(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sad64x64(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
 			bestSAD, bestDX, bestDY = s, dx, dy
 		}
 	}

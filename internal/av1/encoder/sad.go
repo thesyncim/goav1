@@ -106,6 +106,29 @@ func sad64x64(src, ref []byte, stride int) int {
 		sad32x32(src[32*stride+32:], ref[32*stride+32:], stride)
 }
 
+// sad64x64x4Step4 composes four horizontal 64x64 candidates from the active
+// 32x32 x4 kernel, matching the full-pel raster search's step-4 candidate
+// grouping without adding a separate assembly surface.
+func sad64x64x4Step4(src, ref []byte, stride int) (int, int, int, int) {
+	s0, s1, s2, s3 := sad32x32x4Step4(src, ref, stride)
+	t0, t1, t2, t3 := sad32x32x4Step4(src[32:], ref[32:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	t0, t1, t2, t3 = sad32x32x4Step4(src[32*stride:], ref[32*stride:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	t0, t1, t2, t3 = sad32x32x4Step4(src[32*stride+32:], ref[32*stride+32:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	return s0, s1, s2, s3
+}
+
 // sad8x8x4Step4PureGo is the portable reference for four horizontal 8x8 SAD
 // candidates spaced by the raster search's four-pixel x step.
 func sad8x8x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {

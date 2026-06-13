@@ -131,6 +131,34 @@ func TestSAD64x64ComposedMatchesReference(t *testing.T) {
 	}
 }
 
+func TestSAD64x64x4Step4MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(4565))
+	const (
+		stride = 151
+		height = 160
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		row := rng.Intn(height - 64)
+		col := rng.Intn(stride - 76)
+		off := row*stride + col
+		w0 := sadRectBlockReference(src, ref, off, off, stride, 64, 64)
+		w1 := sadRectBlockReference(src, ref, off, off+4, stride, 64, 64)
+		w2 := sadRectBlockReference(src, ref, off, off+8, stride, 64, 64)
+		w3 := sadRectBlockReference(src, ref, off, off+12, stride, 64, 64)
+		g0, g1, g2, g3 := sad64x64x4Step4(src[off:], ref[off:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("off %d: impl (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+	}
+}
+
 func TestSAD32x32x4Step4ImplMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(46))
 	const stride = 117
@@ -300,7 +328,7 @@ func TestFullPelDiamondSearchSeededMatchesReference(t *testing.T) {
 		src[i] = uint8(rng.Intn(256))
 		ref[i] = uint8(rng.Intn(256))
 	}
-	for _, n := range []int{8, 12, 16, 32} {
+	for _, n := range []int{8, 12, 16, 32, 64} {
 		for _, reach := range []int{4, 8} {
 			for range 200 {
 				px := rng.Intn((width-n)/8+1) * 8
@@ -654,6 +682,19 @@ func BenchmarkSAD64x64(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad64x64(src, ref, 96)
+	}
+}
+
+func BenchmarkSAD64x64x4Step4(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _ = sad64x64x4Step4(src, ref, 96)
 	}
 }
 
