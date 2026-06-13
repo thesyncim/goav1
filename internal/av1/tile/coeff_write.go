@@ -1201,6 +1201,170 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	}, w.Tell() - base
 }
 
+// WriteCoefficientsTXB32x32Y2DContextTrusted is the validation-free 32x32
+// luma/Class2D specialization for real coding with already-derived coefficient
+// contexts. If txCDF is non-nil, txSymbol is written after txb_skip and txCDF
+// is adapted in place.
+func WriteCoefficientsTXB32x32Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, (*[1024]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
+}
+
+// WriteCoefficientsTXB32x32Y2DContextTrustedArray is the pointer-shaped form
+// for real 32x32 luma coding with already-derived coefficient contexts.
+func WriteCoefficientsTXB32x32Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
+}
+
+// WriteCoefficientsTXB32x32UV2DContextTrusted is the validation-free 32x32
+// chroma/Class2D specialization for real coding with already-derived
+// coefficient contexts.
+func WriteCoefficientsTXB32x32UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
+	return WriteCoefficientsTXB32x32UV2DContextTrustedArray(w, cdfs, (*[1024]int16)(coeffs), txbSkipContext, dcSignContext)
+}
+
+// WriteCoefficientsTXB32x32UV2DContextTrustedArray is the pointer-shaped form
+// for real 32x32 chroma coding with already-derived coefficient contexts.
+func WriteCoefficientsTXB32x32UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneUV, txbSkipContext, dcSignContext, nil, 0)
+}
+
+func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	const (
+		maxEOB     = 1024
+		scratchLen = 1296
+		stride     = uint16(36)
+		txCtx      = 3
+		txBR       = 3
+	)
+	scanHot := &coeffScanHot32x32Y2D
+
+	eob := 0
+	for c := maxEOB - 1; c >= 0; c-- {
+		if coeff1024[scanHot[c].pos] != 0 {
+			eob = c + 1
+			break
+		}
+	}
+
+	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	if eob == 0 {
+		return TXBDecodeResult{AllZero: true}
+	}
+	if txCDF != nil {
+		w.WriteCDF(txCDF, txSymbol)
+	}
+
+	token, extra, _ := EOBPositionToken(eob)
+	w.WriteCDF(&cdfs.EOBFlag1024[plane][0], token-1)
+	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
+		firstBit := (extra >> (offsetBits - 1)) & 1
+		w.WriteCDF(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
+		if offsetBits > 1 {
+			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
+		}
+	}
+
+	var levels [scratchLen]uint8
+	culLevel := 0
+	dcValue := 0
+	maxScanLine := 0
+	for c := range eob {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		cv := coeff1024[pos]
+		levels[p.padded] = coeffAbsClamp127(cv)
+		if cv != 0 {
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			level := absInt(int(cv))
+			culLevel += level
+			if pos == 0 {
+				dcValue = int(cv)
+			}
+		}
+	}
+
+	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][plane]
+	baseCDFs := &cdfs.CoeffBase[txCtx][plane]
+	brCDFs := &cdfs.CoeffBR[txBR][plane]
+	for c := eob - 1; c >= 0; c-- {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		level := absInt(int(coeff1024[pos]))
+		if c == eob-1 {
+			ctx := int(p.lowerEOBCtx)
+			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+		} else {
+			ctx := 0
+			if pos != 0 {
+				pad := p.padded
+				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			}
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+		}
+		if level > NumBaseLevels {
+			brCtx := 0
+			if c == eob-1 {
+				brCtx = int(p.brEOBCtx)
+			} else if pos != 0 {
+				pad := p.padded
+				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
+					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			} else {
+				pad := p.padded
+				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
+				brCtx = minInt((mag+1)>>1, 6)
+			}
+			brCDF := &brCDFs[brCtx]
+			baseRange := level - 1 - NumBaseLevels
+			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+				k := minInt(baseRange-idx, BRCDFSize-1)
+				w.WriteCDF4(brCDF, k)
+				if k < BRCDFSize-1 {
+					break
+				}
+			}
+		}
+	}
+
+	for c := range eob {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		cv := coeff1024[pos]
+		if cv == 0 {
+			continue
+		}
+		sign := int(uint16(cv) >> 15)
+		if pos == 0 {
+			w.WriteCDF(&cdfs.DCSign[plane][dcSignContext], sign)
+		} else {
+			w.WriteBit(sign)
+		}
+		if levels[p.padded] >= MaxBaseBRRange {
+			level := absInt(int(cv))
+			writeGolomb(w, level-MaxBaseBRRange)
+		}
+	}
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if dcValue < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if dcValue > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+	return TXBDecodeResult{
+		EOB:         uint16(eob),
+		MaxScanLine: uint16(maxScanLine),
+		CulLevel:    uint8(culLevel),
+	}
+}
+
 // CountCoefficientsTXB4x4Y2DTrusted is the exact output-free rate-pricing
 // specialization for 4x4 luma/Class2D trials with zero txb_skip/dc_sign
 // contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the

@@ -1930,6 +1930,20 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
 			return err
 		}
+	} else if w == 32 && h == 32 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip != nil && txType == transform.TypeDCTDCT {
+		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
+		if ok {
+			txbCtx, err := coeffCtx.TXBContext(ctxReq)
+			if err != nil {
+				return err
+			}
+			result := tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+				return err
+			}
+		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+			return err
+		}
 	} else if w == 8 && h == 8 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip == nil && txType == transform.TypeDCTDCT {
 		txbCtx, err := coeffCtx.TXBContext(ctxReq)
 		if err != nil {
@@ -1945,6 +1959,15 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return err
 		}
 		result := tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			return err
+		}
+	} else if w == 32 && h == 32 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip == nil && txType == transform.TypeDCTDCT {
+		txbCtx, err := coeffCtx.TXBContext(ctxReq)
+		if err != nil {
+			return err
+		}
+		result := tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
 		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 			return err
 		}

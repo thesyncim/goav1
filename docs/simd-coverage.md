@@ -113,8 +113,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - Final emitted 16x16 square luma/chroma TXBs now use trusted Class2D writers
   with caller-derived txb-skip/dc-sign contexts, packed 16x16 scan metadata, and
   stack level buffers. The luma path still writes the inter tx_type symbol at
-  the same after-skip position when required; rectangular and 32x32 final writes
-  remain on the generic writer.
+  the same after-skip position when required; rectangular final writes remain on
+  the generic writer.
+- Final emitted 32x32 square luma/chroma TXBs now use trusted Class2D writers
+  with caller-derived txb-skip/dc-sign contexts, packed 32x32 scan metadata, and
+  stack level buffers. This covers 64x64 luma split children and 64x64 chroma
+  square TXBs; rectangular final writes still use the generic writer.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.
