@@ -219,6 +219,12 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   concrete ADST_DCT, DCT_ADST, ADST_ADST, or IDTX loops. That removes the
   repeated per-row/per-column 1-D type switch while preserving the same scalar
   `fwdADST8`/`fwdDCT8` kernels.
+- `fwdADST8` now keeps its staged butterfly in scalar temporaries with typed
+  fixed cosine constants, avoiding the former intermediate `[8]int32` stage
+  array and writes through the caller output buffer before the final
+  permutation. The compiler now emits it as a leaf/no-frame function and
+  reports no escaping inputs/outputs; this is scalar hygiene, not ADST SIMD
+  parity with SVT's NEON forward-transform kernels.
 - The encoder's 8x8 inter tx-type trial now calls a trusted 8x8 hybrid forward
   transform entry point after DCT_DCT has already taken the specialized DCT
   path. This skips the checked `ForwardBlock` shape/type dispatch on every

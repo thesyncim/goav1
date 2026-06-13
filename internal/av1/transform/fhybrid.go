@@ -338,69 +338,69 @@ func fwdADST4(input, output *[4]int32) {
 }
 
 func fwdADST8(input, output *[8]int32) {
-	var step [8]int32
-	output[0] = input[0]
-	output[1] = -input[7]
-	output[2] = -input[3]
-	output[3] = input[4]
-	output[4] = -input[1]
-	output[5] = input[6]
-	output[6] = input[2]
-	output[7] = -input[5]
+	const (
+		c4  int32 = 8153
+		c12 int32 = 7839
+		c16 int32 = 7568
+		c20 int32 = 7225
+		c28 int32 = 6333
+		c32 int32 = 5793
+		c36 int32 = 5197
+		c44 int32 = 3862
+		c48 int32 = 3135
+		c52 int32 = 2378
+		c60 int32 = 803
+	)
 
-	step[0] = output[0]
-	step[1] = output[1]
-	step[2] = fwdHalfBtf13(fwdCospi13[32], output[2], fwdCospi13[32], output[3])
-	step[3] = fwdHalfBtf13(fwdCospi13[32], output[2], -fwdCospi13[32], output[3])
-	step[4] = output[4]
-	step[5] = output[5]
-	step[6] = fwdHalfBtf13(fwdCospi13[32], output[6], fwdCospi13[32], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[32], output[6], -fwdCospi13[32], output[7])
+	s0 := input[0]
+	s1 := -input[7]
+	s2 := fwdHalfBtf13(c32, -input[3], c32, input[4])
+	s3 := fwdHalfBtf13(c32, -input[3], -c32, input[4])
+	s4 := -input[1]
+	s5 := input[6]
+	s6 := fwdHalfBtf13(c32, input[2], c32, -input[5])
+	s7 := fwdHalfBtf13(c32, input[2], -c32, -input[5])
 
-	output[0] = step[0] + step[2]
-	output[1] = step[1] + step[3]
-	output[2] = step[0] - step[2]
-	output[3] = step[1] - step[3]
-	output[4] = step[4] + step[6]
-	output[5] = step[5] + step[7]
-	output[6] = step[4] - step[6]
-	output[7] = step[5] - step[7]
+	t0 := s0 + s2
+	t1 := s1 + s3
+	t2 := s0 - s2
+	t3 := s1 - s3
+	t4 := s4 + s6
+	t5 := s5 + s7
+	t6 := s4 - s6
+	t7 := s5 - s7
 
-	step[0] = output[0]
-	step[1] = output[1]
-	step[2] = output[2]
-	step[3] = output[3]
-	step[4] = fwdHalfBtf13(fwdCospi13[16], output[4], fwdCospi13[48], output[5])
-	step[5] = fwdHalfBtf13(fwdCospi13[48], output[4], -fwdCospi13[16], output[5])
-	step[6] = fwdHalfBtf13(-fwdCospi13[48], output[6], fwdCospi13[16], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[16], output[6], fwdCospi13[48], output[7])
+	s4 = fwdHalfBtf13(c16, t4, c48, t5)
+	s5 = fwdHalfBtf13(c48, t4, -c16, t5)
+	s6 = fwdHalfBtf13(-c48, t6, c16, t7)
+	s7 = fwdHalfBtf13(c16, t6, c48, t7)
 
-	output[0] = step[0] + step[4]
-	output[1] = step[1] + step[5]
-	output[2] = step[2] + step[6]
-	output[3] = step[3] + step[7]
-	output[4] = step[0] - step[4]
-	output[5] = step[1] - step[5]
-	output[6] = step[2] - step[6]
-	output[7] = step[3] - step[7]
+	t4 = t0 - s4
+	t5 = t1 - s5
+	t6 = t2 - s6
+	t7 = t3 - s7
+	t0 += s4
+	t1 += s5
+	t2 += s6
+	t3 += s7
 
-	step[0] = fwdHalfBtf13(fwdCospi13[4], output[0], fwdCospi13[60], output[1])
-	step[1] = fwdHalfBtf13(fwdCospi13[60], output[0], -fwdCospi13[4], output[1])
-	step[2] = fwdHalfBtf13(fwdCospi13[20], output[2], fwdCospi13[44], output[3])
-	step[3] = fwdHalfBtf13(fwdCospi13[44], output[2], -fwdCospi13[20], output[3])
-	step[4] = fwdHalfBtf13(fwdCospi13[36], output[4], fwdCospi13[28], output[5])
-	step[5] = fwdHalfBtf13(fwdCospi13[28], output[4], -fwdCospi13[36], output[5])
-	step[6] = fwdHalfBtf13(fwdCospi13[52], output[6], fwdCospi13[12], output[7])
-	step[7] = fwdHalfBtf13(fwdCospi13[12], output[6], -fwdCospi13[52], output[7])
+	s0 = fwdHalfBtf13(c4, t0, c60, t1)
+	s1 = fwdHalfBtf13(c60, t0, -c4, t1)
+	s2 = fwdHalfBtf13(c20, t2, c44, t3)
+	s3 = fwdHalfBtf13(c44, t2, -c20, t3)
+	s4 = fwdHalfBtf13(c36, t4, c28, t5)
+	s5 = fwdHalfBtf13(c28, t4, -c36, t5)
+	s6 = fwdHalfBtf13(c52, t6, c12, t7)
+	s7 = fwdHalfBtf13(c12, t6, -c52, t7)
 
-	output[0] = step[1]
-	output[1] = step[6]
-	output[2] = step[3]
-	output[3] = step[4]
-	output[4] = step[5]
-	output[5] = step[2]
-	output[6] = step[7]
-	output[7] = step[0]
+	output[0] = s1
+	output[1] = s6
+	output[2] = s3
+	output[3] = s4
+	output[4] = s5
+	output[5] = s2
+	output[6] = s7
+	output[7] = s0
 }
 
 func fwdIdentity1D(input []int32, output []int32) {
