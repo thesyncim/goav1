@@ -164,6 +164,25 @@ func BenchmarkForwardBlockHybrid8x8(b *testing.B) {
 	}
 }
 
+func BenchmarkForwardBlock8x8HybridTrusted(b *testing.B) {
+	residual := make([]int16, 64)
+	for i := range residual {
+		residual[i] = int16((i*37+11)%511 - 255)
+	}
+	coeff := make([]int32, 64)
+	scratch := make([]int32, 64)
+	for _, typ := range []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX} {
+		b.Run(typeName(typ), func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				if err := ForwardBlock8x8HybridTrusted(coeff, 8, residual, 8, scratch, typ); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func typeName(typ Type) string {
 	switch typ {
 	case TypeADSTDCT:

@@ -339,6 +339,22 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   permutation. The compiler now emits it as a leaf/no-frame function and
   reports no escaping inputs/outputs; this is scalar hygiene, not ADST SIMD
   parity with SVT's NEON forward-transform kernels.
+- `BenchmarkForwardBlock8x8HybridTrusted` now gates the exact 8x8 trusted
+  hybrid entry used under inter TX-type trials. On the local M4 Max, current
+  rows are `270.6-280.4 ns/op` for ADST_DCT, `298.0-305.2 ns/op` for DCT_ADST,
+  `271.3-279.1 ns/op` for ADST_ADST, and `25.85-28.57 ns/op` for IDTX, all zero
+  allocations. SVT's matching 8x8 surface is still a real SIMD advantage:
+  `svt_av1_fwd_txfm2d_8x8_neon` runs DCT/ADST/identity row and column kernels
+  in vector batches, and the source also contains N2/N4 plus SSE4.1/AVX2
+  variants for the same transform family.
+- The encoder's 8x8 hybrid transform dispatch now switches once at the
+  already-known 8x8 boundary and calls per-type trusted wrappers, avoiding the
+  generic trusted full-type switch in the TX-type selector path. The wrappers
+  inline into `forwardTransformBlock`, and escape analysis keeps
+  coeff/residual/scratch non-escaping. `BenchmarkChooseInter8x8TXType` moved
+  from `11287.6 ns/op` mean / `11315 ns/op` median to `11153.3 ns/op` mean /
+  `11115 ns/op` median over seven local repeats, with zero allocations. This
+  is a scalar dispatch cleanup, not a substitute for forward ADST8 SIMD.
 - The encoder's 8x8 inter tx-type trial now calls a trusted 8x8 hybrid forward
   transform entry point after DCT_DCT has already taken the specialized DCT
   path. This skips the checked `ForwardBlock` shape/type dispatch on every

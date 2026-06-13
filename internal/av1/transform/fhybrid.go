@@ -81,6 +81,26 @@ func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int
 	return nil
 }
 
+// ForwardBlock8x8ADSTDCTTrusted computes the trusted 8x8 ADST_DCT transform.
+func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	forwardBlock8x8ADSTDCT(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+// ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
+func ForwardBlock8x8DCTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+// ForwardBlock8x8ADSTADSTTrusted computes the trusted 8x8 ADST_ADST transform.
+func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+// ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
+func ForwardBlock8x8IDTXTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	forwardBlock8x8IDTX(coeff, coeffStride, residual, residualStride, scratch)
+}
+
 func forwardBlock8x8HybridSupported(typ Type) bool {
 	switch typ {
 	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX:

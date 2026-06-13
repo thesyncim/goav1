@@ -2414,7 +2414,19 @@ func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h
 		return forwardDCTBlock(tran, residual, w, h)
 	}
 	if w == 8 && h == 8 {
-		return transform.ForwardBlock8x8HybridTrusted(tran, h, residual, w, scratch, typ)
+		switch typ {
+		case transform.TypeADSTDCT:
+			transform.ForwardBlock8x8ADSTDCTTrusted(tran, h, residual, w, scratch)
+		case transform.TypeDCTADST:
+			transform.ForwardBlock8x8DCTADSTTrusted(tran, h, residual, w, scratch)
+		case transform.TypeADSTADST:
+			transform.ForwardBlock8x8ADSTADSTTrusted(tran, h, residual, w, scratch)
+		case transform.TypeIDTX:
+			transform.ForwardBlock8x8IDTXTrusted(tran, h, residual, w, scratch)
+		default:
+			return transform.ErrInvalidTransform
+		}
+		return nil
 	}
 	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
