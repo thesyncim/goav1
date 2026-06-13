@@ -938,3 +938,32 @@ func BenchmarkFullPelDiamondSearch8(b *testing.B) {
 	}
 	fullPelDiamondBenchSink = sum
 }
+
+func BenchmarkSubpelRefine8x8(b *testing.B) {
+	const (
+		width  = 96
+		height = 80
+		stride = 112
+		px     = 32
+		py     = 24
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(i*7 + i/stride*11)
+		ref[i] = uint8(i*13 + i/stride*3 + 17)
+	}
+	mv := motion.Vector{Row: 8, Col: -8}
+	base := py*stride + px
+	refBase := (py+int(mv.Row)/8)*stride + px + int(mv.Col)/8
+	bestSAD := sadBlock(src, ref, base, refBase, stride, 8, 1<<30)
+
+	var st lossyEncodeState
+	b.ReportAllocs()
+	sum := 0
+	for b.Loop() {
+		gotMV, sad := st.subpelRefine8x8(src, ref, stride, width, height, px, py, mv, bestSAD)
+		sum += int(gotMV.Row) + int(gotMV.Col) + sad
+	}
+	fullPelDiamondBenchSink = sum
+}
