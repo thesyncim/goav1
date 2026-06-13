@@ -133,6 +133,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   paths; the one-shot helper keeps its simple per-call path. This is a
   scheduler-overhead cleanup only, with no new FPS claim while local runtime
   binaries are still blocked before Go code starts.
+- Persistent tile-column workers now grow only to the active job count for the
+  current tile layout, so 2-/4-tile streams do not start the full 15-worker
+  pool. HME pyramid rotation also uses an explicit queue swap instead of a
+  per-frame defer. Both are scheduler/dispatch cleanups, not concurrency
+  increases.
 - `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
   path and is guarded by `TestWriteCDF4MatchesWriteCDF`; the local writer
   stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero

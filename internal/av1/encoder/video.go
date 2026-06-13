@@ -67,7 +67,7 @@ type VideoEncoder struct {
 	tuScratch2    []byte
 	tileWork      chan tileWorkRange
 	tileWait      sync.WaitGroup
-	tileStarted   bool
+	tileWorkers   int
 	tileJobParams struct {
 		src, refRecon SourceFrame420
 		golden        *SourceFrame420
@@ -589,15 +589,17 @@ func tileColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
 	return c0, c1
 }
 
-// startTileWorkers launches the persistent tile-column workers once; they
-// park on the job channel between frames so the steady-state encode path
-// spawns no goroutines.
-func (e *VideoEncoder) startTileWorkers() {
-	if e.tileStarted {
+// startTileWorkers grows the persistent tile-column worker pool to the number
+// needed by the current tile layout. Workers park on the job channel between
+// frames, and narrow streams avoid spawning idle goroutines they never use.
+func (e *VideoEncoder) startTileWorkers(workers int) {
+	if workers <= e.tileWorkers {
 		return
 	}
-	e.tileWork = make(chan tileWorkRange, 16)
-	for range 15 {
+	if e.tileWork == nil {
+		e.tileWork = make(chan tileWorkRange, 16)
+	}
+	for ; e.tileWorkers < workers; e.tileWorkers++ {
 		go func() {
 			for work := range e.tileWork {
 				tj := &e.tileJobParams
@@ -620,7 +622,6 @@ func (e *VideoEncoder) startTileWorkers() {
 			}
 		}()
 	}
-	e.tileStarted = true
 }
 
 func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
@@ -640,11 +641,11 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	tj.tile, tj.miCols = req.tile, req.miCols
 	tj.lfMap = req.lfMap
 	tj.payloads, tj.errs = req.payloads, req.errs
-	e.startTileWorkers()
 	jobs := nTiles - 1
 	if jobs > 15 {
 		jobs = 15
 	}
+	e.startTileWorkers(jobs)
 	e.tileWait.Add(jobs)
 	for j := 0; j < jobs; j++ {
 		e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles, key: true}
@@ -924,11 +925,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.tile, tj.miCols = header.Tile, miCols
 		tj.lfMap = nil
 		tj.payloads, tj.errs = payloads, errs
-		e.startTileWorkers()
 		jobs := nTiles - 1
 		if jobs > 15 {
 			jobs = 15
 		}
+		e.startTileWorkers(jobs)
 		e.tileWait.Add(jobs)
 		for j := 0; j < jobs; j++ {
 			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}

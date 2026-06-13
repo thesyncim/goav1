@@ -156,7 +156,6 @@ func (h *hmeState) run(src SourceFrame420) {
 	for range jobs {
 		<-h.done
 	}
-	defer func() { h.srcQ, h.refQ = h.refQ, h.srcQ }()
 
 	jobs = 0
 	for b := range hmeBands {
@@ -173,6 +172,7 @@ func (h *hmeState) run(src SourceFrame420) {
 	for range jobs {
 		<-h.done
 	}
+	h.srcQ, h.refQ = h.refQ, h.srcQ
 }
 
 // cutDetected reports whether the last run looks like a scene cut: at least
