@@ -174,24 +174,53 @@ func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	return nil
 }
 
-type singleRefWriteStep struct {
+type interRefWriteStep struct {
 	bit    uint8
 	symbol uint8
 }
 
-type singleRefWritePattern struct {
+type interRefWritePattern struct {
 	count uint8
-	steps [3]singleRefWriteStep
+	steps [3]interRefWriteStep
 }
 
-var singleRefWritePatterns = [referenceFrameCount]singleRefWritePattern{
-	ReferenceFrameLast:    {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 0}, {3, 0}}},
-	ReferenceFrameLast2:   {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 0}, {3, 1}}},
-	ReferenceFrameLast3:   {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 1}, {4, 0}}},
-	ReferenceFrameGolden:  {count: 3, steps: [3]singleRefWriteStep{{0, 0}, {2, 1}, {4, 1}}},
-	ReferenceFrameBWD:     {count: 3, steps: [3]singleRefWriteStep{{0, 1}, {1, 0}, {5, 0}}},
-	ReferenceFrameAltref2: {count: 3, steps: [3]singleRefWriteStep{{0, 1}, {1, 0}, {5, 1}}},
-	ReferenceFrameAltref:  {count: 2, steps: [3]singleRefWriteStep{{0, 1}, {1, 1}}},
+var singleRefWritePatterns = [referenceFrameCount]interRefWritePattern{
+	ReferenceFrameLast:    {count: 3, steps: [3]interRefWriteStep{{0, 0}, {2, 0}, {3, 0}}},
+	ReferenceFrameLast2:   {count: 3, steps: [3]interRefWriteStep{{0, 0}, {2, 0}, {3, 1}}},
+	ReferenceFrameLast3:   {count: 3, steps: [3]interRefWriteStep{{0, 0}, {2, 1}, {4, 0}}},
+	ReferenceFrameGolden:  {count: 3, steps: [3]interRefWriteStep{{0, 0}, {2, 1}, {4, 1}}},
+	ReferenceFrameBWD:     {count: 3, steps: [3]interRefWriteStep{{0, 1}, {1, 0}, {5, 0}}},
+	ReferenceFrameAltref2: {count: 3, steps: [3]interRefWriteStep{{0, 1}, {1, 0}, {5, 1}}},
+	ReferenceFrameAltref:  {count: 2, steps: [3]interRefWriteStep{{0, 1}, {1, 1}}},
+}
+
+const referenceFramePairPatternCount = int(referenceFrameCount) * int(referenceFrameCount)
+
+const (
+	uniCompRefPatternLastLast2  = int(ReferenceFrameLast)*int(referenceFrameCount) + int(ReferenceFrameLast2)
+	uniCompRefPatternLastLast3  = int(ReferenceFrameLast)*int(referenceFrameCount) + int(ReferenceFrameLast3)
+	uniCompRefPatternLastGolden = int(ReferenceFrameLast)*int(referenceFrameCount) + int(ReferenceFrameGolden)
+	uniCompRefPatternBWDAltref  = int(ReferenceFrameBWD)*int(referenceFrameCount) + int(ReferenceFrameAltref)
+)
+
+var uniCompRefWritePatterns = [referenceFramePairPatternCount]interRefWritePattern{
+	uniCompRefPatternLastLast2:  {count: 2, steps: [3]interRefWriteStep{{0, 0}, {1, 0}}},
+	uniCompRefPatternLastLast3:  {count: 3, steps: [3]interRefWriteStep{{0, 0}, {1, 1}, {2, 0}}},
+	uniCompRefPatternLastGolden: {count: 3, steps: [3]interRefWriteStep{{0, 0}, {1, 1}, {2, 1}}},
+	uniCompRefPatternBWDAltref:  {count: 1, steps: [3]interRefWriteStep{{0, 1}}},
+}
+
+var compFwdRefWritePatterns = [referenceFrameCount]interRefWritePattern{
+	ReferenceFrameLast:   {count: 2, steps: [3]interRefWriteStep{{0, 0}, {1, 0}}},
+	ReferenceFrameLast2:  {count: 2, steps: [3]interRefWriteStep{{0, 0}, {1, 1}}},
+	ReferenceFrameLast3:  {count: 2, steps: [3]interRefWriteStep{{0, 1}, {2, 0}}},
+	ReferenceFrameGolden: {count: 2, steps: [3]interRefWriteStep{{0, 1}, {2, 1}}},
+}
+
+var compBwdRefWritePatterns = [3]interRefWritePattern{
+	{count: 2, steps: [3]interRefWriteStep{{0, 0}, {1, 0}}},
+	{count: 2, steps: [3]interRefWriteStep{{0, 0}, {1, 1}}},
+	{count: 1, steps: [3]interRefWriteStep{{0, 1}}},
 }
 
 func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs InterReferencesResult) error {
@@ -236,122 +265,110 @@ func compoundReferencesUnidir(refs InterReferencesResult) (bool, error) {
 }
 
 func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs [2]ReferenceFrame) error {
-	switch refs {
-	case [2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}:
-		return writeUniCompRefBit(w, cdfs, ctx, req, 0, true)
-	case [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2}:
-		if err := writeUniCompRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		return writeUniCompRefBit(w, cdfs, ctx, req, 1, false)
-	case [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast3}:
-		if err := writeUniCompRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		if err := writeUniCompRefBit(w, cdfs, ctx, req, 1, true); err != nil {
-			return err
-		}
-		return writeUniCompRefBit(w, cdfs, ctx, req, 2, false)
-	case [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}:
-		if err := writeUniCompRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		if err := writeUniCompRefBit(w, cdfs, ctx, req, 1, true); err != nil {
-			return err
-		}
-		return writeUniCompRefBit(w, cdfs, ctx, req, 2, true)
-	default:
+	if refs[0] < ReferenceFrameLast || refs[0] >= referenceFrameCount ||
+		refs[1] < ReferenceFrameLast || refs[1] >= referenceFrameCount {
 		return ErrInvalidDecodeState
 	}
+	p := uniCompRefWritePatterns[int(refs[0])*int(referenceFrameCount)+int(refs[1])]
+	if p.count == 0 {
+		return ErrInvalidDecodeState
+	}
+
+	step0 := p.steps[0]
+	context, err := uniCompRefContext(ctx, req, int(step0.bit))
+	if err != nil {
+		return err
+	}
+	cdf, err := cdfs.UniCompRefCDF(int(step0.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
+	if p.count == 1 {
+		return nil
+	}
+
+	step1 := p.steps[1]
+	context, err = uniCompRefContext(ctx, req, int(step1.bit))
+	if err != nil {
+		return err
+	}
+	cdf, err = cdfs.UniCompRefCDF(int(step1.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step1.symbol))
+	if p.count == 2 {
+		return nil
+	}
+
+	step2 := p.steps[2]
+	context, err = uniCompRefContext(ctx, req, int(step2.bit))
+	if err != nil {
+		return err
+	}
+	cdf, err = cdfs.UniCompRefCDF(int(step2.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step2.symbol))
+	return nil
 }
 
 func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs [2]ReferenceFrame) error {
-	switch refs[0] {
-	case ReferenceFrameLast:
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 1, false); err != nil {
-			return err
-		}
-	case ReferenceFrameLast2:
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 1, true); err != nil {
-			return err
-		}
-	case ReferenceFrameLast3:
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 0, true); err != nil {
-			return err
-		}
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 2, false); err != nil {
-			return err
-		}
-	case ReferenceFrameGolden:
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 0, true); err != nil {
-			return err
-		}
-		if err := writeCompFwdRefBit(w, cdfs, ctx, req, 2, true); err != nil {
-			return err
-		}
-	default:
+	fwd := int(refs[0])
+	bwd := int(refs[1]) - int(ReferenceFrameBWD)
+	if uint(fwd) > uint(ReferenceFrameGolden) || uint(bwd) >= uint(len(compBwdRefWritePatterns)) {
 		return ErrInvalidDecodeState
 	}
 
-	switch refs[1] {
-	case ReferenceFrameBWD:
-		if err := writeCompBwdRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		return writeCompBwdRefBit(w, cdfs, ctx, req, 1, false)
-	case ReferenceFrameAltref2:
-		if err := writeCompBwdRefBit(w, cdfs, ctx, req, 0, false); err != nil {
-			return err
-		}
-		return writeCompBwdRefBit(w, cdfs, ctx, req, 1, true)
-	case ReferenceFrameAltref:
-		return writeCompBwdRefBit(w, cdfs, ctx, req, 0, true)
-	default:
-		return ErrInvalidDecodeState
+	p := compFwdRefWritePatterns[fwd]
+	step0 := p.steps[0]
+	context, err := compFwdRefContext(ctx, req, int(step0.bit))
+	if err != nil {
+		return err
 	}
-}
+	cdf, err := cdfs.CompFwdRefCDF(int(step0.bit), context)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
 
-func writeCompFwdRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, bit int, value bool) error {
-	context, err := compFwdRefContext(ctx, req, bit)
+	step1 := p.steps[1]
+	context, err = compFwdRefContext(ctx, req, int(step1.bit))
 	if err != nil {
 		return err
 	}
-	cdf, err := cdfs.CompFwdRefCDF(bit, context)
+	cdf, err = cdfs.CompFwdRefCDF(int(step1.bit), context)
 	if err != nil {
 		return err
 	}
-	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
-	return nil
-}
+	w.WriteBinaryCDFTrusted(cdf, int(step1.symbol))
 
-func writeCompBwdRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, bit int, value bool) error {
-	context, err := compBwdRefContext(ctx, req, bit)
+	p = compBwdRefWritePatterns[bwd]
+	step0 = p.steps[0]
+	context, err = compBwdRefContext(ctx, req, int(step0.bit))
 	if err != nil {
 		return err
 	}
-	cdf, err := cdfs.CompBwdRefCDF(bit, context)
+	cdf, err = cdfs.CompBwdRefCDF(int(step0.bit), context)
 	if err != nil {
 		return err
 	}
-	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
-	return nil
-}
+	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
+	if p.count == 1 {
+		return nil
+	}
 
-func writeUniCompRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, bit int, value bool) error {
-	context, err := uniCompRefContext(ctx, req, bit)
+	step1 = p.steps[1]
+	context, err = compBwdRefContext(ctx, req, int(step1.bit))
 	if err != nil {
 		return err
 	}
-	cdf, err := cdfs.UniCompRefCDF(bit, context)
+	cdf, err = cdfs.CompBwdRefCDF(int(step1.bit), context)
 	if err != nil {
 		return err
 	}
-	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
+	w.WriteBinaryCDFTrusted(cdf, int(step1.symbol))
 	return nil
 }
