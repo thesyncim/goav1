@@ -181,6 +181,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   square-TXB rate helpers directly, avoiding the non-inlined generic
   `trialTXBBits(plane, []int16, n)` dispatcher on those known-shape luma/chroma
   decisions while preserving the same trusted coefficient counters.
+- Merge pricing now splits the exact 8x8 child and 16x16 parent cost paths so
+  their prediction, quantization, and coefficient-rate slices use fixed sizes.
+  The compiler no longer reports the old `n*n` and `cn*cn` slice-bound checks
+  in that exact-cost routine; the remaining checks there are motion-vector grid
+  lookups for the four child blocks and one parent block.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed

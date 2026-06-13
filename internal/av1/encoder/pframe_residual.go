@@ -2161,61 +2161,60 @@ func (st *lossyEncodeState) interHeaderCost() int64 {
 	return (int64(24) << 9) * st.rdMult >> 9
 }
 
-// trialInterCost prices coding one motion-compensated block exactly: the
-// true transform-quantize pass for distortion and the real coefficient coder
-// for bits. The prediction lands in sadScratch.
-func (st *lossyEncodeState) trialInterCost(src SourceFrame420, ref SourceFrame420, px, py, n int, mv motion.Vector) int64 {
-	pred := st.sadScratch[:n*n]
-	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, n, n, mv, false, false); err != nil {
+// trialInterCost8x8 prices coding one motion-compensated 8x8 block exactly:
+// the true transform-quantize pass for distortion and the real coefficient
+// coder for bits. The prediction lands in sadScratch.
+func (st *lossyEncodeState) trialInterCost8x8(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
+	pred := st.sadScratch[:64]
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 8, 8, mv, false, false); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-	st.prepareInterTXB(src.Y, pred, n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-	cost := int64(0)
-	switch n {
-	case 8:
-		cost = st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[:64]))
-	case 16:
-		cost = st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ2[:256]))
-	default:
-		cost = st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n)
-	}
-	cost += st.rdDcode << 7
-	// The chroma transform structure differs between the shapes too: one
-	// large block against four small ones per plane.
-	cn := n / 2
+	st.prepareInterTXB(src.Y, pred, 8, src.YStride, px, py, 8, 8, st.yQuant, st.lumaQ2[:64])
+	cost := st.trialTXBBitsY8x8((*[64]int16)(st.lumaQ2[:64])) + st.rdDcode<<7
+
 	halfW, halfH := src.Width/2, src.Height/2
-	for plane := 1; plane <= 2; plane++ {
-		data, rdata, q := src.U, ref.U, st.uQuant
-		qc := st.uQ[:cn*cn]
-		if plane == 2 {
-			data, rdata, q = src.V, ref.V, st.vQuant
-			qc = st.vQ[:cn*cn]
-		}
-		cpred := st.sadScratch[n*n : n*n+cn*cn]
-		if err := predictInto(cpred, rdata, src.ChromaStride, halfW, halfH, px/2, py/2, cn, cn, mv, true, true); err != nil {
-			return 1 << 59
-		}
-		st.rdDcode = 0
-		st.prepareInterTXB(data, cpred, cn, src.ChromaStride, px/2, py/2, cn, cn, q, qc)
-		switch cn {
-		case 4:
-			if plane == 1 {
-				cost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:]))
-			} else {
-				cost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:]))
-			}
-		case 8:
-			if plane == 1 {
-				cost += st.trialTXBBitsUV8x8((*[64]int16)(st.uQ[:]))
-			} else {
-				cost += st.trialTXBBitsUV8x8((*[64]int16)(st.vQ[:]))
-			}
-		default:
-			cost += st.trialTXBBits(tile.CoeffPlaneUV, qc, cn)
-		}
-		cost += st.rdDcode << 7
+	cpred := st.sadScratch[:16]
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+		return 1 << 59
 	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.U, cpred, 4, src.ChromaStride, px/2, py/2, 4, 4, st.uQuant, st.uQ[:16])
+	cost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16])) + st.rdDcode<<7
+
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.V, cpred, 4, src.ChromaStride, px/2, py/2, 4, 4, st.vQuant, st.vQ[:16])
+	cost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16])) + st.rdDcode<<7
+	return cost
+}
+
+func (st *lossyEncodeState) trialInterCost16x16(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
+	pred := st.sadScratch[:256]
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 16, mv, false, false); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+	st.prepareInterTXB(src.Y, pred, 16, src.YStride, px, py, 16, 16, st.yQuant, st.lumaQ2[:256])
+	cost := st.trialTXBBitsY16x16((*[256]int16)(st.lumaQ2[:256])) + st.rdDcode<<7
+
+	halfW, halfH := src.Width/2, src.Height/2
+	cpred := st.sadScratch[:64]
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.U, cpred, 8, src.ChromaStride, px/2, py/2, 8, 8, st.uQuant, st.uQ[:64])
+	cost += st.trialTXBBitsUV8x8((*[64]int16)(st.uQ[:64])) + st.rdDcode<<7
+
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+		return 1 << 59
+	}
+	st.rdDcode = 0
+	st.prepareInterTXB(src.V, cpred, 8, src.ChromaStride, px/2, py/2, 8, 8, st.vQuant, st.vQ[:64])
+	cost += st.trialTXBBitsUV8x8((*[64]int16)(st.vQ[:64])) + st.rdDcode<<7
 	return cost
 }
 
@@ -2225,14 +2224,14 @@ func (st *lossyEncodeState) trialInterMergeWins(src SourceFrame420, ref SourceFr
 	if !st.armTrial() {
 		return false
 	}
-	children := int64(0)
-	for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-		cx, cy := px+off[0], py+off[1]
-		idx8 := (cy/8)*st.grid8Cols + cx/8
-		children += st.trialInterCost(src, ref, cx, cy, 8, st.mv8Grid[idx8]) + st.interHeaderCost()
-	}
+	headerCost := st.interHeaderCost()
+	idx8 := (py/8)*st.grid8Cols + px/8
+	children := st.trialInterCost8x8(src, ref, px, py, st.mv8Grid[idx8]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px+8, py, st.mv8Grid[idx8+1]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px, py+8, st.mv8Grid[idx8+st.grid8Cols]) + headerCost
+	children += st.trialInterCost8x8(src, ref, px+8, py+8, st.mv8Grid[idx8+st.grid8Cols+1]) + headerCost
 	idx16 := (py/16)*st.grid16Cols + px/16
-	merged := st.trialInterCost(src, ref, px, py, 16, st.mv16Grid[idx16]) + st.interHeaderCost()
+	merged := st.trialInterCost16x16(src, ref, px, py, st.mv16Grid[idx16]) + headerCost
 	// The trial models full-pel prediction without chroma, so it only
 	// overrides the calibrated SAD rule on a decisive margin.
 	return merged*16 <= children*15
