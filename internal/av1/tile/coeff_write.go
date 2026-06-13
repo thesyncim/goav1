@@ -1466,6 +1466,8 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	}
 
 	var levels [64]uint8
+	var absLevels [maxEOB]uint16
+	var signBits uint16
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1479,6 +1481,10 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
+			if cv < 0 {
+				signBits |= uint16(1) << uint(c)
+			}
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -1492,7 +1498,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff16[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1536,18 +1542,17 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff16[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
-		sign := int(uint16(cv) >> 15)
+		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
 	}
@@ -1612,6 +1617,8 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	}
 
 	var levels [64]uint8
+	var absLevels [maxEOB]uint16
+	var signBits uint16
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1625,6 +1632,10 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
+			if cv < 0 {
+				signBits |= uint16(1) << uint(c)
+			}
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -1638,7 +1649,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff16[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1682,18 +1693,17 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff16[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
-		sign := int(uint16(cv) >> 15)
+		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
 	}

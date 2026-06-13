@@ -168,6 +168,10 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   lowers compiler costs from `1721 -> 1707`, `1645 -> 1631`, and `1638 -> 1624`,
   keeps hot inputs non-escaping, and removes one/two remaining bounds checks in
   the touched ranges. This is scalar memory-traffic cleanup, not an fps claim.
+- Trusted 4x4 luma/chroma count paths now use the same exact-level cache with a
+  tiny stack `[16]uint16` plus a single sign bitset. Compiler reports lower both
+  count-helper costs from `1645 -> 1639`, keep hot inputs non-escaping, and
+  remove three remaining bounds checks from each touched range.
 - Final emitted 32x32 square luma/chroma TXBs now use trusted Class2D writers
   with caller-derived txb-skip/dc-sign contexts, packed 32x32 scan metadata, and
   stack level buffers. This covers 64x64 luma split children and 64x64 chroma
