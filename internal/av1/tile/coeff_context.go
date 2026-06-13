@@ -42,6 +42,13 @@ func (c *CoeffEntropyContext) TXBContext(req CoeffContextRequest) (TXBContext, e
 	return c.txbContextKnown(req, txDims, blockDims)
 }
 
+// TXBContextTrusted derives coefficient contexts for callers that have already
+// validated req, txDims, blockDims, and neighbor state. It is intended for
+// internal hot paths that have selected a shape-specific coefficient writer.
+func (c *CoeffEntropyContext) TXBContextTrusted(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) TXBContext {
+	return c.txbContextTrusted(req, txDims, blockDims)
+}
+
 func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) (TXBContext, error) {
 	dcSign := int8(0)
 	plane := int(req.Plane)

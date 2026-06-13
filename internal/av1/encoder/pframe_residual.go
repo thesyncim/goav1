@@ -2195,10 +2195,14 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 	if w == 8 && h == 8 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip != nil {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
 		if ok {
-			txbCtx, err := coeffCtx.TXBContext(ctxReq)
-			if err != nil {
-				return err
+			if coeffCtx == nil {
+				return tile.ErrInvalidDecodeState
 			}
+			blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+			if !ok {
+				return tile.ErrInvalidDecodeState
+			}
+			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
 			result := tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
 			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 				return err
@@ -2209,10 +2213,14 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 	} else if w == 16 && h == 16 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip != nil && txType == transform.TypeDCTDCT {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
 		if ok {
-			txbCtx, err := coeffCtx.TXBContext(ctxReq)
-			if err != nil {
-				return err
+			if coeffCtx == nil {
+				return tile.ErrInvalidDecodeState
 			}
+			blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+			if !ok {
+				return tile.ErrInvalidDecodeState
+			}
+			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
 			result := tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
 			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 				return err
@@ -2223,10 +2231,14 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 	} else if w == 32 && h == 32 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip != nil && txType == transform.TypeDCTDCT {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
 		if ok {
-			txbCtx, err := coeffCtx.TXBContext(ctxReq)
-			if err != nil {
-				return err
+			if coeffCtx == nil {
+				return tile.ErrInvalidDecodeState
 			}
+			blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+			if !ok {
+				return tile.ErrInvalidDecodeState
+			}
+			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
 			result := tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
 			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 				return err
@@ -2235,28 +2247,40 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return err
 		}
 	} else if w == 8 && h == 8 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip == nil && txType == transform.TypeDCTDCT {
-		txbCtx, err := coeffCtx.TXBContext(ctxReq)
-		if err != nil {
-			return err
+		if coeffCtx == nil {
+			return tile.ErrInvalidDecodeState
 		}
+		blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+		if !ok {
+			return tile.ErrInvalidDecodeState
+		}
+		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
 		result := tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
 		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 			return err
 		}
 	} else if w == 16 && h == 16 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip == nil && txType == transform.TypeDCTDCT {
-		txbCtx, err := coeffCtx.TXBContext(ctxReq)
-		if err != nil {
-			return err
+		if coeffCtx == nil {
+			return tile.ErrInvalidDecodeState
 		}
+		blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+		if !ok {
+			return tile.ErrInvalidDecodeState
+		}
+		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
 		result := tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
 		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 			return err
 		}
 	} else if w == 32 && h == 32 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip == nil && txType == transform.TypeDCTDCT {
-		txbCtx, err := coeffCtx.TXBContext(ctxReq)
-		if err != nil {
-			return err
+		if coeffCtx == nil {
+			return tile.ErrInvalidDecodeState
 		}
+		blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+		if !ok {
+			return tile.ErrInvalidDecodeState
+		}
+		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
 		result := tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
 		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 			return err
