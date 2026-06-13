@@ -1068,19 +1068,12 @@ func frameWorkStoreLoopFilterLumaEdgeSegment(record *threading.FrameWorkLoopFilt
 	if !ok {
 		return nil
 	}
-	frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-		Plane:             loopfilter.PlaneY,
-		Edge:              edge,
-		X4:                uint16(segX4),
-		Y4:                uint16(segY4),
-		Length4:           uint16(length4),
-		Level:             level,
-		Transform:         tx,
-		Width:             uint8(w),
-		LevelFromPrevious: fromPrevious,
-		BlockMICol:        uint16(record.Block.MICol),
-		BlockMIRow:        uint16(record.Block.MIRow),
-	})
+	frameWorkStoreLoopFilterLumaEdge(
+		plan, edges, edge,
+		uint16(segX4), uint16(segY4), uint16(length4),
+		level, tx, uint8(w), fromPrevious,
+		uint16(record.Block.MICol), uint16(record.Block.MIRow),
+	)
 	return nil
 }
 
@@ -1133,19 +1126,12 @@ func frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx frameWorkLoopFilterLevel
 	if !ok {
 		return true, nil
 	}
-	frameWorkStoreLoopFilterEdge(plan, edges, FrameWorkLoopFilterPostFilterEdge{
-		Plane:             loopfilter.PlaneY,
-		Edge:              edge,
-		X4:                uint16(x4),
-		Y4:                uint16(y4),
-		Length4:           uint16(length4),
-		Level:             level,
-		Transform:         tx,
-		Width:             uint8(w),
-		LevelFromPrevious: fromPrevious,
-		BlockMICol:        uint16(record.Block.MICol),
-		BlockMIRow:        uint16(record.Block.MIRow),
-	})
+	frameWorkStoreLoopFilterLumaEdge(
+		plan, edges, edge,
+		uint16(x4), uint16(y4), uint16(length4),
+		level, tx, uint8(w), fromPrevious,
+		uint16(record.Block.MICol), uint16(record.Block.MIRow),
+	)
 	return true, nil
 }
 
@@ -2625,6 +2611,33 @@ func frameWorkStoreLoopFilterEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges
 	storedEdges := plan.StoredEdges
 	if storedEdges < uint32(len(edges)) {
 		edges[storedEdges] = edge
+		plan.StoredEdges = storedEdges + 1
+		return
+	}
+	plan.DroppedEdges++
+}
+
+func frameWorkStoreLoopFilterLumaEdge(plan *FrameWorkLoopFilterPostFilterPlan, edges []FrameWorkLoopFilterPostFilterEdge, edge loopfilter.Edge, x4, y4, length4 uint16, level uint8, tx tile.TransformSize, width uint8, fromPrevious bool, blockMICol, blockMIRow uint16) {
+	plan.EdgeCandidates++
+	plan.PlaneEdgeCandidates[loopfilter.PlaneY]++
+	if fromPrevious {
+		plan.PreviousLevelEdges++
+	}
+	storedEdges := plan.StoredEdges
+	if storedEdges < uint32(len(edges)) {
+		edges[storedEdges] = FrameWorkLoopFilterPostFilterEdge{
+			X4:                x4,
+			Y4:                y4,
+			Length4:           length4,
+			BlockMICol:        blockMICol,
+			BlockMIRow:        blockMIRow,
+			Plane:             loopfilter.PlaneY,
+			Edge:              edge,
+			Level:             level,
+			Width:             width,
+			Transform:         tx,
+			LevelFromPrevious: fromPrevious,
+		}
 		plan.StoredEdges = storedEdges + 1
 		return
 	}
