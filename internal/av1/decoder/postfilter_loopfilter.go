@@ -989,10 +989,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegments(ctx FrameWorkPostFilterContext, l
 	if length4 <= 0 {
 		return nil
 	}
-	currentWidth, err := frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx)
-	if err != nil {
-		return err
-	}
+	currentWidth := frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, tx)
 	return frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx, levelCtx, filterMap, record, plan, edges, bounds, edge, x4, y4, length4, tx, currentWidth, currentLevel)
 }
 
@@ -1278,10 +1275,7 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 			if !previous.TransformTree.Y.Valid() {
 				return 0, 0, threading.ErrInvalidBatch
 			}
-			width, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, previous.TransformTree.Y)
-			if err != nil {
-				return 0, 0, err
-			}
+			width = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, previous.TransformTree.Y)
 		}
 		*c = frameWorkLoopFilterLumaPreviousCache{
 			valid:  true,
@@ -1312,10 +1306,7 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 			if !ok {
 				return 0, 0, threading.ErrInvalidBatch
 			}
-			width, err = frameWorkLoopFilterWidth(loopfilter.PlaneY, edge, tx.Size)
-			if err != nil {
-				return 0, 0, err
-			}
+			width = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, tx.Size)
 			c.tx = tx
 			c.txWidth = width
 			c.txValid = true
