@@ -912,11 +912,32 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 						if dr <= 16 && dc <= 16 {
 							mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
 							if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
+								srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+								predBlock := st.sadScratch[:bw*bh]
 								nearSAD := 0
-								for r := 0; r < bh; r += 8 {
-									for c := 0; c < bw; c += 8 {
-										nearSAD += sad8x8Dual(src.Y[(lumaPY+r)*src.YStride+lumaPX+c:], src.YStride, st.sadScratch[r*bw+c:], bw)
-									}
+								switch {
+								case bw == 8 && bh == 8:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 16 && bh == 16:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 32 && bh == 32:
+									nearSAD = sad32x32Dual(srcBlock, src.YStride, predBlock, bw)
+								case bw == 64 && bh == 64:
+									nearSAD = sadDualBlock(srcBlock, src.YStride, predBlock, bw, bw)
+								case bw == 16 && bh == 8:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad8x8Dual(srcBlock[8:], src.YStride, predBlock[8:], bw)
+								case bw == 8 && bh == 16:
+									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad8x8Dual(srcBlock[8*src.YStride:], src.YStride, predBlock[8*bw:], bw)
+								case bw == 32 && bh == 16:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad16x16Dual(srcBlock[16:], src.YStride, predBlock[16:], bw)
+								case bw == 16 && bh == 32:
+									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+										sad16x16Dual(srcBlock[16*src.YStride:], src.YStride, predBlock[16*bw:], bw)
+								default:
+									nearSAD = sadRectDualBlock(srcBlock, src.YStride, predBlock, bw, bw, bh)
 								}
 								// Two extra cascade symbols pick NEARESTMV.
 								if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
@@ -1681,6 +1702,39 @@ func sadDualBlock(src []byte, srcStride int, ref []byte, refStride int, n int) i
 		srow := r * srcStride
 		rrow := r * refStride
 		for c := range n {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, bh int) int {
+	if bw == bh {
+		return sadDualBlock(src, srcStride, ref, refStride, bw)
+	}
+	switch {
+	case bw == 16 && bh == 8:
+		return sad8x8Dual(src, srcStride, ref, refStride) +
+			sad8x8Dual(src[8:], srcStride, ref[8:], refStride)
+	case bw == 8 && bh == 16:
+		return sad8x8Dual(src, srcStride, ref, refStride) +
+			sad8x8Dual(src[8*srcStride:], srcStride, ref[8*refStride:], refStride)
+	case bw == 32 && bh == 16:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16:], srcStride, ref[16:], refStride)
+	case bw == 16 && bh == 32:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride)
+	}
+	total := 0
+	for r := range bh {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range bw {
 			d := int(src[srow+c]) - int(ref[rrow+c])
 			if d < 0 {
 				d = -d

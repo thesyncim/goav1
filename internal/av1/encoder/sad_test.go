@@ -299,6 +299,31 @@ func TestSADRectBlockMatchesReference(t *testing.T) {
 	}
 }
 
+func TestSADRectDualBlockMatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(4901))
+	const srcStride, refStride = 97, 67
+	src := make([]byte, srcStride*128)
+	ref := make([]byte, refStride*128)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref {
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for _, size := range [][2]int{{8, 8}, {16, 8}, {8, 16}, {16, 16}, {32, 16}, {16, 32}, {32, 32}, {64, 64}, {24, 8}} {
+		bw, bh := size[0], size[1]
+		for range 500 {
+			so := rng.Intn(128-bh)*srcStride + rng.Intn(srcStride-bw)
+			ro := rng.Intn(128-bh)*refStride + rng.Intn(refStride-bw)
+			want := sadRectDualBlockReference(src[so:], srcStride, ref[ro:], refStride, bw, bh)
+			got := sadRectDualBlock(src[so:], srcStride, ref[ro:], refStride, bw, bh)
+			if got != want {
+				t.Fatalf("%dx%d so=%d ro=%d: got %d want %d", bw, bh, so, ro, got, want)
+			}
+		}
+	}
+}
+
 func sadRectBlockReference(src, ref []byte, base, refBase, stride, bw, bh int) int {
 	total := 0
 	for r := range bh {
@@ -306,6 +331,22 @@ func sadRectBlockReference(src, ref []byte, base, refBase, stride, bw, bh int) i
 		refRow := refBase + r*stride
 		for c := range bw {
 			d := int(src[row+c]) - int(ref[refRow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sadRectDualBlockReference(src []byte, srcStride int, ref []byte, refStride int, bw, bh int) int {
+	total := 0
+	for r := range bh {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range bw {
+			d := int(src[srow+c]) - int(ref[rrow+c])
 			if d < 0 {
 				d = -d
 			}
@@ -772,6 +813,42 @@ func BenchmarkSAD32x32DualComposed8x8(b *testing.B) {
 	for b.Loop() {
 		sum := 0
 		for r := 0; r < 32; r += 8 {
+			for c := 0; c < 32; c += 8 {
+				sum += sad8x8Dual(src[r*64+c:], 64, ref[r*32+c:], 32)
+			}
+		}
+		_ = sum
+	}
+}
+
+func BenchmarkSADRectDual32x16(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 32*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sadRectDualBlock(src, 64, ref, 32, 32, 16)
+	}
+}
+
+func BenchmarkSADRectDual32x16Composed8x8(b *testing.B) {
+	src := make([]byte, 64*64)
+	ref := make([]byte, 32*64)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sum := 0
+		for r := 0; r < 16; r += 8 {
 			for c := 0; c < 32; c += 8 {
 				sum += sad8x8Dual(src[r*64+c:], 64, ref[r*32+c:], 32)
 			}

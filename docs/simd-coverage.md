@@ -210,6 +210,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   with one larger kernel call. Compile gates cover native arm64, linux/arm64,
   darwin/amd64, and pure-Go arm64; runtime benchmark rows are still pending
   because newly built local binaries currently hang before Go code starts.
+- Inter predictor-swap scoring now uses the same square/rectangular dual-SAD
+  helper for emitted block sizes instead of summing 8x8 dual-SAD tiles after
+  materializing the candidate prediction. Larger square blocks hit one 16x16 or
+  32x32 dual kernel, and rectangular halves compose the matching 8x8/16x16
+  kernels.
 - The compound LAST/GOLDEN precheck now uses an arm64 NEON 8x8
   rounded-average SAD kernel (`urhadd` + widening absolute difference) instead
   of the scalar per-pixel average loop. `BenchmarkSAD8x8CompoundAvgBlock` is
