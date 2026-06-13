@@ -108,7 +108,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	txBR := int(geo.txBRCtx)
 
 	// 1) txb_skip (all_zero).
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][req.TXBSkipContext], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][req.TXBSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, nil
 	}
@@ -133,7 +133,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	w.WriteCDF(eobCDF, token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][req.Plane][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][req.Plane][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -240,7 +240,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 		level := absInt(v)
 		sign := int(uint16(cv) >> 15)
 		if c == 0 {
-			w.WriteCDF(&cdfs.DCSign[req.Plane][req.DCSignContext], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[req.Plane][req.DCSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -310,7 +310,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -324,7 +324,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -407,7 +407,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -461,7 +461,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -470,7 +470,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -553,7 +553,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneUV][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -625,7 +625,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -639,7 +639,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	w.WriteCDF(&cdfs.EOBFlag256[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -722,7 +722,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -777,7 +777,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -786,7 +786,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	w.WriteCDF(&cdfs.EOBFlag256[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -869,7 +869,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneUV][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -938,7 +938,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}
 	}
@@ -950,7 +950,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	w.WriteCDF(&cdfs.EOBFlag256[plane][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1033,7 +1033,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[plane][dcSignContext], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1120,7 +1120,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -1134,7 +1134,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	w.WriteCDF(&cdfs.EOBFlag1024[plane][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1217,7 +1217,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[plane][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1286,7 +1286,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}
 	}
@@ -1298,7 +1298,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	w.WriteCDF(&cdfs.EOBFlag1024[plane][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][plane][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1381,7 +1381,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[plane][dcSignContext], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1434,7 +1434,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -1443,7 +1443,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1526,7 +1526,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1580,7 +1580,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}, w.Tell() - base
 	}
@@ -1589,7 +1589,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1672,7 +1672,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneUV][0], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1726,7 +1726,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}
 	}
@@ -1745,7 +1745,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1828,7 +1828,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneY][dcSignContext], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
@@ -1882,7 +1882,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		}
 	}
 
-	w.WriteCDF(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
+	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
 		return TXBDecodeResult{AllZero: true}
 	}
@@ -1891,7 +1891,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
-		w.WriteCDF(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
+		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
 		if offsetBits > 1 {
 			w.WriteLiteral(uint32(extra&((1<<(offsetBits-1))-1)), offsetBits-1)
 		}
@@ -1974,7 +1974,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		}
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
-			w.WriteCDF(&cdfs.DCSign[CoeffPlaneUV][dcSignContext], sign)
+			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}

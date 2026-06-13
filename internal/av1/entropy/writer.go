@@ -502,6 +502,61 @@ func (w *BitCounter) WriteCDF(cdf *CDF, s int) {
 	}
 }
 
+// WriteBinaryCDFTrusted codes symbol s from a known two-symbol adaptive CDF. It
+// is the binary specialization of WriteCDF for hot boolean syntax paths whose
+// table shape has already been validated by the caller.
+func (w *Writer) WriteBinaryCDFTrusted(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 2)
+	}
+	v0 := values[0]
+	l := w.low
+	r := w.rng
+	u := ((r >> 8) * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)
+	u += ecMinProb
+	count := values[2]
+	rate := uint(4 + (count >> 4))
+	if s == 0 {
+		r -= u
+		values[0] = v0 - (v0 >> rate)
+	} else {
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[2] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 2)
+	}
+	v0 := values[0]
+	l := w.low
+	r := w.rng
+	u := ((r >> 8) * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)
+	u += ecMinProb
+	count := values[2]
+	rate := uint(4 + (count >> 4))
+	if s == 0 {
+		r -= u
+		values[0] = v0 - (v0 >> rate)
+	} else {
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[2] = count + 1
+	}
+	w.normalize(l, r)
+}
+
 // WriteCDF4 codes symbol s using a known 4-symbol adaptive CDF. It is the
 // quaternary specialization of WriteCDF for coefficient-base hot paths whose
 // table shape is fixed by AV1 syntax.
