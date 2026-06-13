@@ -208,8 +208,9 @@ type coeffScanHot struct {
 	brEOBCtx      uint8
 }
 
-// coeffScanHot8x8 is the packed table shape for the trusted 8x8 writer/counter.
-// Larger transform sizes keep uint16 positions because padded offsets exceed 255.
+// coeffScanHot8x8 is the packed table shape for trusted small-transform
+// writers/counters. Larger transform sizes keep uint16 positions because padded
+// offsets exceed 255.
 type coeffScanHot8x8 struct {
 	pos           uint8
 	padded        uint8
@@ -225,6 +226,7 @@ var coeffPosTable [transformSizeCount][]coeffPos
 var coeffPosHotTable [transformSizeCount][]coeffPosHot
 var coeffScanTable [transformSizeCount][3][]int16
 var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
+var coeffScanHot4x4Y2D [16]coeffScanHot8x8
 var coeffScanHot8x8Y2D [64]coeffScanHot8x8
 
 func init() {
@@ -332,6 +334,18 @@ func init() {
 						}
 					}
 					coeffScanHotTable[size][class] = scanHot
+					if size == TransformSize4x4 {
+						for c, p := range scanHot {
+							coeffScanHot4x4Y2D[c] = coeffScanHot8x8{
+								pos:           uint8(p.pos),
+								padded:        uint8(p.padded),
+								lower2DOffset: p.lower2DOffset,
+								br2DOffset:    p.br2DOffset,
+								lowerEOBCtx:   p.lowerEOBCtx,
+								brEOBCtx:      p.brEOBCtx,
+							}
+						}
+					}
 					if size == TransformSize8x8 {
 						for c, p := range scanHot {
 							coeffScanHot8x8Y2D[c] = coeffScanHot8x8{

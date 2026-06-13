@@ -1749,12 +1749,14 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 	baseTrialCDFs.save(&st.trialCDFs)
 	bestCost := dctDcode << 7
 	bestCost += st.trialTXBBitsInter8x8((*[64]int16)(st.lumaQ[:64]), transform.TypeDCTDCT)
-	bestCost += st.trialTXBBits(tile.CoeffPlaneUV, st.uQ[:16], 4)
-	bestCost += st.trialTXBBits(tile.CoeffPlaneUV, st.vQ[:16], 4)
+	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16]))
+	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16]))
 	tmpY := st.lumaQ2[:64]
 	tmpY64 := (*[64]int16)(tmpY)
 	tmpU := st.lumaQ2[64:80]
 	tmpV := st.lumaQ2[80:96]
+	tmpU16 := (*[16]int16)(tmpU)
+	tmpV16 := (*[16]int16)(tmpV)
 	for _, typ := range [...]transform.Type{
 		transform.TypeADSTDCT,
 		transform.TypeDCTADST,
@@ -1780,8 +1782,8 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
 		cost := st.rdDcode << 7
 		cost += lumaBits
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpU, 4)
-		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpV, 4)
+		cost += st.trialTXBBitsUV4x4(tmpU16)
+		cost += st.trialTXBBitsUV4x4(tmpV16)
 		if cost < bestCost {
 			bestCost = cost
 			bestType = typ

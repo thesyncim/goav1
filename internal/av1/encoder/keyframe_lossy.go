@@ -1030,6 +1030,9 @@ func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py,
 // trialTXBBits trial-codes one quantized transform block and returns the
 // priced rate term.
 func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int16, n int) int64 {
+	if plane == tile.CoeffPlaneUV && n == 4 {
+		return st.trialTXBBitsUV4x4((*[16]int16)(qcoeff))
+	}
 	size, scan := tile.TransformSize4x4, st.scan4
 	switch n {
 	case 8:
@@ -1048,6 +1051,11 @@ func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int
 	}
 	bits := int64(tw.Tell() - base)
 	return ((bits<<9)*st.rdMult + 256) >> 9
+}
+
+func (st *lossyEncodeState) trialTXBBitsUV4x4(qcoeff *[16]int16) int64 {
+	_, bits := tile.CountCoefficientsTXB4x4UV2DTrustedArray(&st.trialCDFs, qcoeff)
+	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
 }
 
 func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
