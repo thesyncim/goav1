@@ -198,6 +198,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   in same-session A/B from roughly `64-77 ns/op` to `44-56 ns/op` for 8x8 and
   from roughly `161-189 ns/op` to `116-118 ns/op` for 16x16, with zero
   allocations.
+- Subpel refine now has fixed 8x8, 16x16, and 32x32 paths for the common luma
+  probes. The search order and quarter-pel acceptance rules remain the same,
+  but the exact-probe SAD path no longer switches on `n` per candidate, and the
+  compiler no longer reports the hot `sadScratch[:n*n]` bounds check on those
+  sizes.
 - The 8x8 hybrid forward-transform path now dispatches directly to the
   array-backed DCT/ADST/IDTX kernels instead of copying through the generic
   slice helper for each row/column. `BenchmarkForwardBlockHybrid8x8` moved

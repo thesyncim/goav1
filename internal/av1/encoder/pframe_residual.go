@@ -1539,6 +1539,222 @@ func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
 // eight to sixteen of a greedy descent; the coded prediction always goes
 // through the exact convolve later, so search shape cannot affect parity.
 func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	switch n {
+	case 8:
+		return st.subpelRefine8x8(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	case 16:
+		return st.subpelRefine16x16(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	case 32:
+		return st.subpelRefine32x32(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	}
+	return st.subpelRefineGeneric(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
+}
+
+func (st *lossyEncodeState) subpelRefine8x8(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 8)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:64]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelRefine16x16(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 16)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:256]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 32)
+	start := mv
+	center := bestSAD
+	probe := st.sadScratch[:1024]
+	srcBlock := src[py*stride+px:]
+
+	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
+	halfLeft := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
+	if halfLeft >= 0 && halfLeft < bestSAD {
+		bestSAD, mv = halfLeft, left
+	}
+	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
+	halfRight := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
+	if halfRight >= 0 && halfRight < bestSAD {
+		bestSAD, mv = halfRight, right
+	}
+	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
+	halfUp := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
+	if halfUp >= 0 && halfUp < bestSAD {
+		bestSAD, mv = halfUp, up
+	}
+	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
+	halfDown := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
+	if halfDown >= 0 && halfDown < bestSAD {
+		bestSAD, mv = halfDown, down
+	}
+
+	estX := subpelQuarterAxis(halfLeft, halfRight, center)
+	estY := subpelQuarterAxis(halfUp, halfDown, center)
+	qx, qy := estX&^1, estY&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	qx, qy = (estX+1)&^1, (estY+1)&^1
+	if qx != 0 || qy != 0 {
+		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
+		if cand != mv && cand != start {
+			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
+				bestSAD, mv = s, cand
+			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 8, 8, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad8x8Dual(srcBlock, stride, probe, 8)
+}
+
+func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 16, 16, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad16x16Dual(srcBlock, stride, probe, 16)
+}
+
+func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 32, 32, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sad32x32Dual(srcBlock, stride, probe, 32)
+}
+
+func subpelQuarterAxis(sl, sr, center int) int {
+	if sl < 0 || sr < 0 {
+		return 0
+	}
+	den := sl + sr - 2*center
+	if den <= 0 {
+		return 0
+	}
+	est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
+	if est > 4 {
+		return 4
+	}
+	if est < -4 {
+		return -4
+	}
+	return est
+}
+
+func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	// The probes sit within one pixel of the full-pel start, so geometry
 	// validation hoists into the prober; blocks near the frame edge fall
 	// back to the fully validated predictor per probe.
@@ -1584,25 +1800,8 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 	}
 	// Stage 2: per-axis parabola through the exact half-pel SADs locates the
 	// quarter-pel minimum; verify its surrounding even-1/8 positions.
-	quarterAxis := func(sl, sr int) int {
-		if sl < 0 || sr < 0 {
-			return 0
-		}
-		den := sl + sr - 2*center
-		if den <= 0 {
-			return 0
-		}
-		est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
-		if est > 4 {
-			est = 4
-		}
-		if est < -4 {
-			est = -4
-		}
-		return est
-	}
-	estX := quarterAxis(half[0], half[1])
-	estY := quarterAxis(half[2], half[3])
+	estX := subpelQuarterAxis(half[0], half[1], center)
+	estY := subpelQuarterAxis(half[2], half[3], center)
 	for _, e := range [2][2]int{{estX &^ 1, estY &^ 1}, {(estX + 1) &^ 1, (estY + 1) &^ 1}} {
 		if e[0] == 0 && e[1] == 0 {
 			continue
