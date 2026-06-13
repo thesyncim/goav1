@@ -209,12 +209,12 @@ internal/av1/tile/block_loop_write.go:*:*: make([]diagonalCornerSlot, n) escapes
 internal/av1/tile/block_loop_write.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap
 internal/av1/tile/block_loop_write.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in WalkBlockLoopWrite:
 internal/av1/tile/coeff.go:*:*: make([]coeffPos, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:*:*: make([]coeffPos, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:*:*: make([]coeffPos, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]coeffPosHot, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:*:*: make([]coeffPosHot, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:*:*: make([]coeffPosHot, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]coeffScanHot, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:*:*: make([]coeffScanHot, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:*:*: make([]coeffScanHot, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]int16, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:*:*: make([]int16, maxEOB) escapes to heap in init.0:
+internal/av1/tile/coeff.go:*:*: make([]int16, maxEOB) escapes to heap in init.N:
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap
-internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap in init.1:
+internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap in init.N:
