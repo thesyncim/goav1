@@ -208,10 +208,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   surfaces, with arm64 NEON kernels for the source-vs-prediction-scratch case.
   The refine scorer dispatches 8x8/16x16/32x32 probes directly to the matching
   dual-SAD kernel, replacing four or sixteen 8x8 dual-SAD calls per 16x16/32x32
-  subpel probe with one larger kernel call. Compile gates cover native arm64,
-  linux/arm64, darwin/amd64, and pure-Go arm64; runtime benchmark rows are
-  still pending because newly built local binaries currently hang before Go code
-  starts.
+  subpel probe with one larger kernel call. It also hoists the source base and
+  prediction scratch slice once per refine call, so each exact probe avoids
+  recomputing the same geometry. Compile gates cover native arm64, linux/arm64,
+  darwin/amd64, and pure-Go arm64; runtime benchmark rows are still pending
+  because newly built local binaries currently hang before Go code starts.
 - Inter predictor-swap scoring now uses the same square/rectangular dual-SAD
   helper for emitted block sizes instead of summing 8x8 dual-SAD tiles after
   materializing the candidate prediction. Larger square blocks hit one 16x16 or

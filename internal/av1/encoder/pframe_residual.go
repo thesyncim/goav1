@@ -1545,24 +1545,23 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 		Pix: refPlane, Stride: stride, Width: width, Height: height,
 	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
 	startMV := mv
+	probe := st.sadScratch[:n*n]
+	srcBlock := src[py*stride+px:]
 	exact := func(cand motion.Vector) int {
-		if !st.prober.Predict(st.sadScratch[:n*n], motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-			if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
+		if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
 				return -1
 			}
 		}
-		base := py*stride + px
-		srcBlock := src[base:]
-		predBlock := st.sadScratch[:n*n]
 		switch n {
 		case 8:
-			return sad8x8Dual(srcBlock, stride, predBlock, n)
+			return sad8x8Dual(srcBlock, stride, probe, n)
 		case 16:
-			return sad16x16Dual(srcBlock, stride, predBlock, n)
+			return sad16x16Dual(srcBlock, stride, probe, n)
 		case 32:
-			return sad32x32Dual(srcBlock, stride, predBlock, n)
+			return sad32x32Dual(srcBlock, stride, probe, n)
 		default:
-			return sadDualBlock(srcBlock, stride, predBlock, n, n)
+			return sadDualBlock(srcBlock, stride, probe, n, n)
 		}
 	}
 	start := mv
