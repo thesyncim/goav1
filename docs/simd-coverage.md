@@ -99,6 +99,13 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   lower/base-range contexts, so the trusted reverse pass no longer slices the
   generic scan metadata, reloads the position table, or branches through the
   generic EOB context helpers for the final coefficient.
+- The trusted 8x8 coefficient APIs now expose pointer-shaped
+  64-coefficient forms; the slice APIs remain compatibility wrappers. The 8x8
+  TX-type selector and final luma writer use the pointer forms so the fixed
+  shape is proven at the block owner instead of inside the tile helper on every
+  trusted count/write call. Compiler reports keep inputs non-escaping and lower
+  the generic inter TXB-pricing wrapper cost by isolating the 8x8 fast path;
+  runtime rows remain pending.
 - Current coefficient writers accumulate `culLevel`, `dcValue`, and
   `maxScanLine` during level fill, then use branchless sign extraction in the
   sign/golomb pass.

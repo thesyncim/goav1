@@ -1750,10 +1750,11 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 	baseTrialCDFs := &st.trial8x8CDFs
 	baseTrialCDFs.save(&st.trialCDFs)
 	bestCost := dctDcode << 7
-	bestCost += st.trialTXBBitsInter(st.lumaQ[:64], 8, tile.TransformSize8x8, transform.TypeDCTDCT)
+	bestCost += st.trialTXBBitsInter8x8((*[64]int16)(st.lumaQ[:64]), transform.TypeDCTDCT)
 	bestCost += st.trialTXBBits(tile.CoeffPlaneUV, st.uQ[:16], 4)
 	bestCost += st.trialTXBBits(tile.CoeffPlaneUV, st.vQ[:16], 4)
 	tmpY := st.lumaQ2[:64]
+	tmpY64 := (*[64]int16)(tmpY)
 	tmpU := st.lumaQ2[64:80]
 	tmpV := st.lumaQ2[80:96]
 	for _, typ := range [...]transform.Type{
@@ -1772,7 +1773,7 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 			continue
 		}
 		baseTrialCDFs.restoreY(&st.trialCDFs)
-		lumaBits := st.trialTXBBitsInter(tmpY, 8, tile.TransformSize8x8, typ)
+		lumaBits := st.trialTXBBitsInter8x8(tmpY64, typ)
 		if (lumaDcode<<7)+lumaBits >= bestCost {
 			continue
 		}
@@ -1908,7 +1909,7 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			if err != nil {
 				return err
 			}
-			result := tile.WriteCoefficientsTXB8x8Y2DContextTrusted(st.w, &st.coeffCDFs, qcoeff, st.levels, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			result := tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
 			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
 				return err
 			}
