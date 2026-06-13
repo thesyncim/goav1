@@ -343,12 +343,16 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff64[pos]
-		levels[p.padded] = coeffAbsClamp127(cv)
+		level := absInt(int(cv))
+		if level > 127 {
+			levels[p.padded] = 127
+		} else {
+			levels[p.padded] = uint8(level)
+		}
 		if cv != 0 {
 			if pos > maxScanLine {
 				maxScanLine = pos
 			}
-			level := absInt(int(cv))
 			absLevels[c] = uint16(level)
 			nonZeroBits |= 1 << uint(c)
 			if cv < 0 {
