@@ -160,6 +160,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   stack level buffers. The luma path still writes the inter tx_type symbol at
   the same after-skip position when required; rectangular final writes remain on
   the generic writer.
+- Trusted 16x16 luma/chroma count paths and the final 16x16 writer now cache
+  exact absolute levels in a stack `[256]uint16` while filling the padded level
+  window. The reverse base-range and Golomb passes reuse those magnitudes while
+  signs are still read from the coefficient buffer; a wider abs+sign cache was
+  rejected because it increased compiler cost. The kept magnitude-only form
+  lowers compiler costs from `1721 -> 1707`, `1645 -> 1631`, and `1638 -> 1624`,
+  keeps hot inputs non-escaping, and removes one/two remaining bounds checks in
+  the touched ranges. This is scalar memory-traffic cleanup, not an fps claim.
 - Final emitted 32x32 square luma/chroma TXBs now use trusted Class2D writers
   with caller-derived txb-skip/dc-sign contexts, packed 32x32 scan metadata, and
   stack level buffers. This covers 64x64 luma split children and 64x64 chroma

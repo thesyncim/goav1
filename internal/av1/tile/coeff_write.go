@@ -656,6 +656,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	}
 
 	var levels [scratchLen]uint8
+	var absLevels [maxEOB]uint16
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -669,6 +670,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -682,7 +684,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff256[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -726,18 +728,18 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff256[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
+		cv := coeff256[pos]
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
 	}
@@ -803,6 +805,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	}
 
 	var levels [scratchLen]uint8
+	var absLevels [maxEOB]uint16
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -816,6 +819,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -829,7 +833,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff256[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -873,18 +877,18 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff256[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
+		cv := coeff256[pos]
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][0], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolombCounter(&w, level-MaxBaseBRRange)
 		}
 	}
@@ -967,6 +971,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	}
 
 	var levels [scratchLen]uint8
+	var absLevels [maxEOB]uint16
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -980,6 +985,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -993,7 +999,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff256[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1037,18 +1043,18 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff256[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
+		cv := coeff256[pos]
 		sign := int(uint16(cv) >> 15)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
 	}
