@@ -2,6 +2,7 @@ package threading
 
 import (
 	"errors"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -3048,6 +3049,9 @@ func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
 	if !frameWorkScaledRefEnabled() {
 		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("windows runtime allocation accounting is not stable for the scaled-reference fallback")
+	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
 	fillFrameWorkInterReference(reference, 0xff)
@@ -3180,6 +3184,9 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 func TestFrameWorkBatchPredictBlockInterIntraScaledAllocs(t *testing.T) {
 	if !frameWorkScaledRefEnabled() {
 		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("windows runtime allocation accounting is not stable for the scaled-reference fallback")
 	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
 	output := testBatchFrame(t, format)

@@ -77,7 +77,7 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileInfo
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileGroupHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileListOBU
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlock
+	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz='^FuzzDequantizeBlock$$'
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlockScaledQMatrix
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzQuantizeFPNoQMatrix
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildJobs
