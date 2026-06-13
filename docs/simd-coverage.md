@@ -129,13 +129,15 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   materialization and removing the 16 KiB `trialBuf` scratch from lossy encoder
   state. `TestCountingWriterTellMatchesWriter` covers mixed bool/bit/CDF/symbol
   streams.
-- 8x8 luma trial pricing uses `entropy.BitCounter` through
-  `tile.CountCoefficientsTXB8x8Y2DTrusted`, avoiding the generic writer carrier
-  for both the inter TX-type selector path and plain 8x8 Y trials. The TX-type
-  path passes/restores the transform CDF; plain trials pass nil. The tile
-  microbench's count-only lane is now roughly `507-536 ns/op`, zero allocations
-  on the local M4 Max; the sign/golomb pass avoids exact abs-level work unless
-  the clamped level proves a Golomb tail is possible.
+- 8x8 trial pricing uses `entropy.BitCounter` through
+  `tile.CountCoefficientsTXB8x8Y2DTrusted` for luma and
+  `tile.CountCoefficientsTXB8x8UV2DTrusted` for chroma, avoiding the generic
+  writer carrier for the inter TX-type selector path, plain 8x8 Y trials, and
+  8x8 UV trials from 16x16 block decisions. The TX-type luma path
+  passes/restores the transform CDF; plain Y and UV trials pass no TX-type CDF.
+  The tile microbench's count-only luma lane is roughly `507-536 ns/op`, zero
+  allocations on the local M4 Max; the sign/golomb pass avoids exact abs-level
+  work unless the clamped level proves a Golomb tail is possible.
 - Fixed 4x4 trial TXBs now price through trusted count-only luma/chroma paths:
   `tile.CountCoefficientsTXB4x4Y2DTrusted` for luma trial costs and
   `tile.CountCoefficientsTXB4x4UV2DTrusted` for chroma. This keeps the common
