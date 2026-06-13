@@ -1762,6 +1762,8 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	}
 
 	var levels [256]uint8
+	var absLevels [64]uint16
+	var signBits uint64
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1775,6 +1777,10 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
+			if cv < 0 {
+				signBits |= uint64(1) << uint(c)
+			}
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -1788,7 +1794,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeff64[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1832,18 +1838,17 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeff64[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
-		sign := int(uint16(cv) >> 15)
+		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
 	}
@@ -1908,6 +1913,8 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	}
 
 	var levels [256]uint8
+	var absLevels [64]uint16
+	var signBits uint64
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1921,6 +1928,10 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			absLevels[c] = uint16(level)
+			if cv < 0 {
+				signBits |= uint64(1) << uint(c)
+			}
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -1934,7 +1945,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		level := absInt(int(coeffs[pos]))
+		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
 			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
@@ -1978,18 +1989,17 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
-		cv := coeffs[pos]
-		if cv == 0 {
+		level := int(absLevels[c])
+		if level == 0 {
 			continue
 		}
-		sign := int(uint16(cv) >> 15)
+		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
 			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneUV][dcSignContext], sign)
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
+		if level >= MaxBaseBRRange {
 			writeGolomb(w, level-MaxBaseBRRange)
 		}
 	}

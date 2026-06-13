@@ -147,6 +147,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   caller-derived txb-skip/dc-sign contexts, the packed 8x8 scan metadata, and a
   stack level buffer. The generic writer remains active for rectangular chroma
   and non-DCT paths; this is a scalar fixed-shape cleanup, not new ASM coverage.
+- Final emitted 8x8 luma/chroma TXBs now cache exact absolute levels in a
+  stack `[64]uint16` plus signs in a `uint64` bitset while filling the padded
+  level window. The reverse base-range and sign/Golomb passes reuse that cache
+  instead of reloading coefficient magnitudes/signs. Compiler reports lower the
+  luma/chroma writer costs from `1654 -> 1648` and `1573 -> 1567`, keep hot
+  inputs non-escaping, and remove two remaining bounds checks from each touched
+  writer range. Focused runtime parity tests still stall locally, so this is not
+  an fps claim.
 - Final emitted 16x16 square luma/chroma TXBs now use trusted Class2D writers
   with caller-derived txb-skip/dc-sign contexts, packed 16x16 scan metadata, and
   stack level buffers. The luma path still writes the inter tx_type symbol at
