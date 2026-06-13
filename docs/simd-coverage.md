@@ -135,10 +135,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   count-only lane is now roughly `507-536 ns/op`, zero allocations on the local
   M4 Max; the sign/golomb pass avoids exact abs-level work unless the clamped
   level proves a Golomb tail is possible.
-- The 8x8 TX-type selector now also prices fixed 4x4 UV TXBs through
-  `tile.CountCoefficientsTXB4x4UV2DTrusted`, keeping chroma trials out of the
-  generic writer/scratch path while preserving exact CDF and `Tell()` evolution;
-  runtime rows are still pending.
+- Fixed 4x4 trial TXBs now price through trusted count-only luma/chroma paths:
+  `tile.CountCoefficientsTXB4x4Y2DTrusted` for luma trial costs and
+  `tile.CountCoefficientsTXB4x4UV2DTrusted` for chroma. This keeps the common
+  small-block trials out of the generic writer/scratch path while preserving
+  exact CDF and `Tell()` evolution; runtime rows are still pending.
 - TX-type trial snapshot restores are split by coefficient plane: luma-only
   candidates now restore only the 8x8 Y CDF subset, and UV CDFs are restored
   only after the candidate survives the luma rate bound. In the refreshed
