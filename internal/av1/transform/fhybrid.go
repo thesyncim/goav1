@@ -191,25 +191,10 @@ func forwardBlock8x8IDTX(coeff []int32, coeffStride int, residual []int16, resid
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
-	var in, out [8]int32
-	for c := range 8 {
-		for r := range 8 {
-			in[r] = int32(residual[r*residualStride+c]) << 2
-		}
-		fwdIdentity8(&in, &out)
-		fwdRoundShift1x8(&out)
-		for r := range 8 {
-			scratch[r*8+c] = out[r]
-		}
-	}
 	for r := range 8 {
-		row := r * 8
+		srcRow := r * residualStride
 		for c := range 8 {
-			in[c] = scratch[row+c]
-		}
-		fwdIdentity8(&in, &out)
-		for c := range 8 {
-			coeff[c*coeffStride+r] = out[c]
+			coeff[c*coeffStride+r] = int32(residual[srcRow+c]) << 3
 		}
 	}
 }

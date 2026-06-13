@@ -273,6 +273,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   ADST/IDTX trial while preserving the checked API and parity tests. Compiler
   reports still show the ADST body itself is too large to inline, so SVT's
   forward-transform SIMD gap remains open.
+- The 8x8 IDTX forward-transform trial now writes the algebraic result
+  (`residual << 3`) straight into the transposed coefficient layout while
+  retaining the same caller validation. This removes the former identity
+  column pass, round-shift, scratch writes, row pass, and scratch reads; the
+  compiler now reports the IDTX helper as inlineable with non-escaping inputs.
 - Rectangular SAD for emitted inter block sizes now reuses existing 8x8/16x16
   NEON kernels. On the local M4 Max, `BenchmarkSADRect32x16` is about
   `14.5-14.7 ns/op` versus `239-244 ns/op` for the scalar reference, with zero
