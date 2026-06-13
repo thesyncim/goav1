@@ -30,7 +30,7 @@ func WriteSkipTransform(w *entropy.Writer, cdfs *BlockModeCDFs, ctx *BlockModeCo
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(skip))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(skip))
 	return nil
 }
 

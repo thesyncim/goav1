@@ -129,7 +129,7 @@ func (d *transformTreeWriter) write(from TransformSize, depth int, x4 int, y4 in
 		if split {
 			symbol = 1
 		}
-		d.w.WriteCDF(cdf, symbol)
+		d.w.WriteBinaryCDFTrusted(cdf, symbol)
 	}
 	if split && dims.Max > 1 {
 		sub := dims.Sub

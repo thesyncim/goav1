@@ -39,7 +39,7 @@ func WriteIntraFlag(w *entropy.Writer, cdfs *IntraModeCDFs, ctx *BlockModeContex
 		if err != nil {
 			return err
 		}
-		w.WriteCDF(cdf, boolToSym(!intra))
+		w.WriteBinaryCDFTrusted(cdf, boolToSym(!intra))
 		return nil
 	}
 	if req.AllowIntrabc {
@@ -116,7 +116,7 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 			if err != nil {
 				return err
 			}
-			w.WriteCDF(cdf, boolToSym(refs.Compound))
+			w.WriteBinaryCDFTrusted(cdf, boolToSym(refs.Compound))
 		default:
 			return ErrInvalidDecodeState
 		}
@@ -164,7 +164,7 @@ func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 		if err != nil {
 			return err
 		}
-		w.WriteCDF(cdf, boolToSym(b.val))
+		w.WriteBinaryCDFTrusted(cdf, boolToSym(b.val))
 	}
 	return nil
 }
@@ -185,7 +185,7 @@ func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockMo
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(!unidir))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(!unidir))
 	if unidir {
 		return writeUniCompoundReferences(w, cdfs, ctx, req, refs.Ref)
 	}
@@ -301,7 +301,7 @@ func writeCompFwdRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeCon
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(value))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
 	return nil
 }
 
@@ -314,7 +314,7 @@ func writeCompBwdRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeCon
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(value))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
 	return nil
 }
 
@@ -327,6 +327,6 @@ func writeUniCompRefBit(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeCon
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(value))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(value))
 	return nil
 }

@@ -138,7 +138,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   stream benchmark is about `20.3-20.4 us` per 4096-symbol stream, zero
   allocations.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
-  coefficient txb-skip, eob-extra, and dc-sign syntax. It is guarded by
+  coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
+  single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,
+  skip-transform, and tx-partition split bits. It is guarded by
   `TestWriteBinaryCDFTrustedMatchesWriteCDF`, and the count-only path is covered
   by the mixed-stream `TestCountingWriterTellMatchesWriter` gate.
 - Trial TXB pricing uses `entropy.NewCountingWriter`, preserving exact

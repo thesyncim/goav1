@@ -59,7 +59,7 @@ func WriteSingleInterMode(w *entropy.Writer, cdfs *InterModeCDFs, modeContext ui
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(mode != InterModeNewMV))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(mode != InterModeNewMV))
 	if mode == InterModeNewMV {
 		return nil
 	}
@@ -69,7 +69,7 @@ func WriteSingleInterMode(w *entropy.Writer, cdfs *InterModeCDFs, modeContext ui
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(mode != InterModeGlobalMV))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(mode != InterModeGlobalMV))
 	if mode == InterModeGlobalMV {
 		return nil
 	}
@@ -79,7 +79,7 @@ func WriteSingleInterMode(w *entropy.Writer, cdfs *InterModeCDFs, modeContext ui
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(mode != InterModeNearestMV))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(mode != InterModeNearestMV))
 	return nil
 }
 
@@ -161,7 +161,7 @@ func writeDRLBit(w *entropy.Writer, cdfs *InterModeCDFs, context uint8, bit bool
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, boolToSym(bit))
+	w.WriteBinaryCDFTrusted(cdf, boolToSym(bit))
 	return nil
 }
 
@@ -314,7 +314,7 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(signCDF, boolToSym(sign))
+	w.WriteBinaryCDFTrusted(signCDF, boolToSym(sign))
 	classesCDF, err := cdfs.ClassesCDF()
 	if err != nil {
 		return err
@@ -326,7 +326,7 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 		if err != nil {
 			return err
 		}
-		w.WriteCDF(class0CDF, integerPart)
+		w.WriteBinaryCDFTrusted(class0CDF, integerPart)
 	} else {
 		n := mvClass + MVClass0Bits - 1
 		for i := range n {
@@ -334,7 +334,7 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 			if err != nil {
 				return err
 			}
-			w.WriteCDF(bitCDF, (integerPart>>i)&1)
+			w.WriteBinaryCDFTrusted(bitCDF, (integerPart>>i)&1)
 		}
 	}
 	if precision.UsesSubpel() {
@@ -358,7 +358,7 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 			if err != nil {
 				return err
 			}
-			w.WriteCDF(hpCDF, highPrecision)
+			w.WriteBinaryCDFTrusted(hpCDF, highPrecision)
 		}
 	}
 	return nil
