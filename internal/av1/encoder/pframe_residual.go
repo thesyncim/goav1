@@ -135,6 +135,36 @@ type pframeCoder struct {
 	decisionStatsEnabled bool
 }
 
+const (
+	sadCacheBits      = 20
+	sadCacheValueMask = (uint32(1) << sadCacheBits) - 1
+	sadCacheMaxEpoch  = (uint32(1) << (32 - sadCacheBits)) - 1
+)
+
+func sadCachePack(epoch uint32, sad int) uint32 {
+	return epoch<<sadCacheBits | uint32(sad)
+}
+
+func sadCacheValid(v uint32, epoch uint32) bool {
+	return epoch != 0 && v>>sadCacheBits == epoch
+}
+
+func sadCacheValue(v uint32) int {
+	return int(v & sadCacheValueMask)
+}
+
+func (st *lossyEncodeState) beginSADCacheFrame() {
+	st.sadCacheEpoch++
+	if st.sadCacheEpoch <= sadCacheMaxEpoch {
+		return
+	}
+	clear(st.sad8Grid)
+	clear(st.sad16Grid)
+	clear(st.sad32Grid)
+	clear(st.sad64Grid)
+	st.sadCacheEpoch = 1
+}
+
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
 // allocated on first use and reused afterwards. When prev is non-nil the
 // symbol contexts chain from it - the saved state of the frame named by
@@ -341,38 +371,28 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	grid16Rows := (int(miRows) + 3) / 4
 	if len(st.mv16Grid) < st.grid16Cols*grid16Rows {
 		st.mv16Grid = make([]motion.Vector, st.grid16Cols*grid16Rows)
-		st.sad16Grid = make([]int32, st.grid16Cols*grid16Rows)
+		st.sad16Grid = make([]uint32, st.grid16Cols*grid16Rows)
 	}
 	st.grid8Cols = (int(miCols) + 1) / 2
 	grid8Rows := (int(miRows) + 1) / 2
 	if len(st.mv8Grid) < st.grid8Cols*grid8Rows {
 		st.mv8Grid = make([]motion.Vector, st.grid8Cols*grid8Rows)
-		st.sad8Grid = make([]int32, st.grid8Cols*grid8Rows)
+		st.sad8Grid = make([]uint32, st.grid8Cols*grid8Rows)
 	}
 	st.grid32Cols = (int(miCols) + 7) / 8
 	grid32Rows := (int(miRows) + 7) / 8
 	if len(st.mv32Grid) < st.grid32Cols*grid32Rows {
 		st.mv32Grid = make([]motion.Vector, st.grid32Cols*grid32Rows)
-		st.sad32Grid = make([]int32, st.grid32Cols*grid32Rows)
+		st.sad32Grid = make([]uint32, st.grid32Cols*grid32Rows)
 	}
 	st.grid64Cols = (int(miCols) + 15) / 16
 	grid64Rows := (int(miRows) + 15) / 16
 	if len(st.mv64Grid) < st.grid64Cols*grid64Rows {
 		st.mv64Grid = make([]motion.Vector, st.grid64Cols*grid64Rows)
-		st.sad64Grid = make([]int32, st.grid64Cols*grid64Rows)
+		st.sad64Grid = make([]uint32, st.grid64Cols*grid64Rows)
 	}
-	for i := range st.sad8Grid[:st.grid8Cols*grid8Rows] {
-		st.sad8Grid[i] = -1
-	}
-	for i := range st.sad16Grid[:st.grid16Cols*grid16Rows] {
-		st.sad16Grid[i] = -1
-	}
-	for i := range st.sad32Grid[:st.grid32Cols*grid32Rows] {
-		st.sad32Grid[i] = -1
-	}
-	for i := range st.sad64Grid[:st.grid64Cols*grid64Rows] {
-		st.sad64Grid[i] = -1
-	}
+	st.beginSADCacheFrame()
+	sadEpoch := st.sadCacheEpoch
 	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
 	// over the four independent 8x8 searches and still be coded as one block:
 	// the saved mode/MV syntax of three blocks outweighs a small residual
@@ -391,7 +411,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// four child searches they cannot use.
 	evaluate16Merged := func(px, py int) int {
 		idx16 := (py/16)*st.grid16Cols + px/16
-		if st.sad16Grid[idx16] < 0 {
+		sad16Entry := st.sad16Grid[idx16]
+		if !sadCacheValid(sad16Entry, sadEpoch) {
 			seedDX, seedDY, reach := 0, 0, fullPelReach
 			if st.hme != nil {
 				var trusted bool
@@ -411,9 +432,10 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 				}
 			}
 			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
-			st.sad16Grid[idx16] = int32(sad16)
+			sad16Entry = sadCachePack(sadEpoch, sad16)
+			st.sad16Grid[idx16] = sad16Entry
 		}
-		return int(st.sad16Grid[idx16])
+		return sadCacheValue(sad16Entry)
 	}
 	children8 := func(px, py int) int {
 		seedDX, seedDY, reach := 0, 0, fullPelReach
@@ -428,12 +450,14 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
 			cx, cy := px+off[0], py+off[1]
 			idx8 := (cy/8)*st.grid8Cols + cx/8
-			if st.sad8Grid[idx8] < 0 {
+			sad8Entry := st.sad8Grid[idx8]
+			if !sadCacheValid(sad8Entry, sadEpoch) {
 				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY, reach)
 				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-				st.sad8Grid[idx8] = int32(sad)
+				sad8Entry = sadCachePack(sadEpoch, sad)
+				st.sad8Grid[idx8] = sad8Entry
 			}
-			sum8 += int(st.sad8Grid[idx8])
+			sum8 += sadCacheValue(sad8Entry)
 		}
 		return sum8
 	}
@@ -483,7 +507,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			if sad64 <= childCost+mergeBias64 {
 				idx64 := (py/64)*st.grid64Cols + px/64
 				st.mv64Grid[idx64] = mv64
-				st.sad64Grid[idx64] = int32(sad64)
+				st.sad64Grid[idx64] = sadCachePack(sadEpoch, sad64)
 				return tile.PartitionNone, nil
 			}
 			return tile.PartitionSplit, nil
@@ -524,7 +548,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			if sad32 <= childCost+mergeBias32 {
 				idx32 := (py/32)*st.grid32Cols + px/32
 				st.mv32Grid[idx32] = mv32
-				st.sad32Grid[idx32] = int32(sad32)
+				st.sad32Grid[idx32] = sadCachePack(sadEpoch, sad32)
 				return tile.PartitionNone, nil
 			}
 			// Rect halves one tier up from the 16-tier shape: a 32x16
@@ -544,7 +568,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			tryHalf := func(ia, ib int, ax, ay, bx, by int) bool {
 				mva := st.mv16Grid[idx[ia]]
 				mvb := st.mv16Grid[idx[ib]]
-				sa, sb := int(st.sad16Grid[idx[ia]]), int(st.sad16Grid[idx[ib]])
+				sa, sb := sadCacheValue(st.sad16Grid[idx[ia]]), sadCacheValue(st.sad16Grid[idx[ib]])
 				best, bestA, bestB := mva, sa, halfSAD(bx, by, mva)
 				if mvb != mva {
 					ca, cb := halfSAD(ax, ay, mvb), sb
@@ -556,7 +580,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 					return false
 				}
 				st.mv16Grid[idx[ia]], st.mv16Grid[idx[ib]] = best, best
-				st.sad16Grid[idx[ia]], st.sad16Grid[idx[ib]] = int32(bestA), int32(bestB)
+				st.sad16Grid[idx[ia]], st.sad16Grid[idx[ib]] = sadCachePack(sadEpoch, bestA), sadCachePack(sadEpoch, bestB)
 				return true
 			}
 			if tryHalf(0, 1, px, py, px+16, py) && tryHalf(2, 3, px, py+16, px+16, py+16) {
@@ -605,7 +629,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 			tryHalf := func(ia, ib int, ax, ay, bx, by int) bool {
 				mva := st.mv8Grid[idx[ia]]
 				mvb := st.mv8Grid[idx[ib]]
-				sa, sb := int(st.sad8Grid[idx[ia]]), int(st.sad8Grid[idx[ib]])
+				sa, sb := sadCacheValue(st.sad8Grid[idx[ia]]), sadCacheValue(st.sad8Grid[idx[ib]])
 				best, bestA, bestB := mva, sa, childSAD(bx, by, mva)
 				if mvb != mva {
 					ca, cb := childSAD(ax, ay, mvb), sb
@@ -617,7 +641,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 					return false
 				}
 				st.mv8Grid[idx[ia]], st.mv8Grid[idx[ib]] = best, best
-				st.sad8Grid[idx[ia]], st.sad8Grid[idx[ib]] = int32(bestA), int32(bestB)
+				st.sad8Grid[idx[ia]], st.sad8Grid[idx[ib]] = sadCachePack(sadEpoch, bestA), sadCachePack(sadEpoch, bestB)
 				return true
 			}
 			if tryHalf(0, 1, px, py, px+8, py) && tryHalf(2, 3, px, py+8, px+8, py+8) {
@@ -691,6 +715,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	lumaPY := int(block.MIRow) * 4
 	var mv motion.Vector
 	fullSAD := -1
+	sadEpoch := st.sadCacheEpoch
 	switch {
 	case bw != bh:
 		// Rect halves exist only where the partition decider proved the two
@@ -702,9 +727,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			if bh > bw {
 				i1 = i0 + st.grid16Cols
 			}
-			if st.sad16Grid[i0] >= 0 && st.sad16Grid[i1] >= 0 {
+			if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
 				mv = st.mv16Grid[i0]
-				fullSAD = int(st.sad16Grid[i0]) + int(st.sad16Grid[i1])
+				fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
 			}
 			break
 		}
@@ -713,28 +738,28 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if bh > bw {
 			i1 = i0 + st.grid8Cols
 		}
-		if st.sad8Grid[i0] >= 0 && st.sad8Grid[i1] >= 0 {
+		if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
 			mv = st.mv8Grid[i0]
-			fullSAD = int(st.sad8Grid[i0]) + int(st.sad8Grid[i1])
+			fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
 		}
 	case n == 64:
 		idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
-		if st.sad64Grid[idx] >= 0 {
-			mv, fullSAD = st.mv64Grid[idx], int(st.sad64Grid[idx])
+		if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
+			mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
 		}
 	case n == 32:
 		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-		if st.sad32Grid[idx] >= 0 {
-			mv, fullSAD = st.mv32Grid[idx], int(st.sad32Grid[idx])
+		if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
+			mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
 		}
 	case n == 16:
 		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
-		if st.sad16Grid[idx] >= 0 {
-			mv, fullSAD = st.mv16Grid[idx], int(st.sad16Grid[idx])
+		if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
+			mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
 		}
 	default:
-		if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; st.sad8Grid[idx] >= 0 {
-			mv, fullSAD = st.mv8Grid[idx], int(st.sad8Grid[idx])
+		if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
+			mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
 		}
 	}
 	if fullSAD < 0 {

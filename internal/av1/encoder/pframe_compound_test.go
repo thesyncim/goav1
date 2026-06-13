@@ -55,7 +55,7 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 	st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
 	st.grid8Cols = 2
 	st.mv8Grid = make([]motion.Vector, 4)
-	st.sad8Grid = []int32{-1, -1, -1, -1}
+	st.sad8Grid = make([]uint32, 4)
 
 	block := tile.BlockVisit{
 		MIColEnd:  2,
@@ -154,19 +154,21 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 			case w == 16 && h == 16:
 				st.grid16Cols = 1
 				st.mv16Grid = make([]motion.Vector, 1)
-				st.sad16Grid = []int32{-1}
+				st.sad16Grid = make([]uint32, 1)
 			case w == 32 && h == 32:
 				st.grid32Cols = 1
 				st.mv32Grid = make([]motion.Vector, 1)
-				st.sad32Grid = []int32{-1}
+				st.sad32Grid = make([]uint32, 1)
 			case w >= 32 || h >= 32:
+				st.sadCacheEpoch = 1
 				st.grid16Cols = max(1, w/16)
 				st.mv16Grid = make([]motion.Vector, 2)
-				st.sad16Grid = []int32{1 << 15, 1 << 15}
+				st.sad16Grid = []uint32{sadCachePack(st.sadCacheEpoch, 1<<15), sadCachePack(st.sadCacheEpoch, 1<<15)}
 			default:
+				st.sadCacheEpoch = 1
 				st.grid8Cols = max(1, w/8)
 				st.mv8Grid = make([]motion.Vector, 2)
-				st.sad8Grid = []int32{1 << 14, 1 << 14}
+				st.sad8Grid = []uint32{sadCachePack(st.sadCacheEpoch, 1<<14), sadCachePack(st.sadCacheEpoch, 1<<14)}
 			}
 
 			miW, miH := uint16(w/4), uint16(h/4)

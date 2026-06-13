@@ -290,10 +290,11 @@ type lossyEncodeState struct {
 	treeCDFs  tile.TransformCDFs
 	mvCDFs    tile.MVCDFs
 
-	qIndex uint8
-	yQuant quantize.Quantizer
-	uQuant quantize.Quantizer
-	vQuant quantize.Quantizer
+	qIndex        uint8
+	sadCacheEpoch uint32
+	yQuant        quantize.Quantizer
+	uQuant        quantize.Quantizer
+	vQuant        quantize.Quantizer
 
 	scan8, scan4, scan16, scan32 []int16
 	scan16x8, scan8x16           []int16
@@ -369,18 +370,19 @@ type lossyEncodeState struct {
 
 	// Per-frame motion partition grids filled by the 16x16 partition decider:
 	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
-	// split leaves do not repeat the search. sad < 0 marks an empty slot.
+	// split leaves do not repeat the search. SAD entries are tagged by
+	// sadCacheEpoch to avoid bulk-invalidating the grids every tile.
 	mv16Grid   []motion.Vector
-	sad16Grid  []int32
+	sad16Grid  []uint32
 	grid16Cols int
 	mv8Grid    []motion.Vector
-	sad8Grid   []int32
+	sad8Grid   []uint32
 	grid8Cols  int
 	mv32Grid   []motion.Vector
-	sad32Grid  []int32
+	sad32Grid  []uint32
 	grid32Cols int
 	mv64Grid   []motion.Vector
-	sad64Grid  []int32
+	sad64Grid  []uint32
 	grid64Cols int
 }
 

@@ -105,14 +105,6 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 1024) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 1024) escapes to heap in (*lossyEncodeState).initScans:
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid16Cols * grid16Rows) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid16Cols * grid16Rows) escapes to heap in (*pframeCoder).encodeTile:
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid32Cols * grid32Rows) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid32Cols * grid32Rows) escapes to heap in (*pframeCoder).encodeTile:
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid64Cols * grid64Rows) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid64Cols * grid64Rows) escapes to heap in (*pframeCoder).encodeTile:
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid8Cols * grid8Rows) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, st.grid8Cols * grid8Rows) escapes to heap in (*pframeCoder).encodeTile:
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid16Cols * grid16Rows) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid16Cols * grid16Rows) escapes to heap in (*pframeCoder).encodeTile:
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid32Cols * grid32Rows) escapes to heap
@@ -123,6 +115,14 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid8Cols 
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid8Cols * grid8Rows) escapes to heap in (*pframeCoder).encodeTile:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).reset:
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid16Cols * grid16Rows) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid16Cols * grid16Rows) escapes to heap in (*pframeCoder).encodeTile:
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid32Cols * grid32Rows) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid32Cols * grid32Rows) escapes to heap in (*pframeCoder).encodeTile:
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid64Cols * grid64Rows) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid64Cols * grid64Rows) escapes to heap in (*pframeCoder).encodeTile:
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid8Cols * grid8Rows) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid8Cols * grid8Rows) escapes to heap in (*pframeCoder).encodeTile:
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint8, scratchLen) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint8, scratchLen) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: pc
