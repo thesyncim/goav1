@@ -31,6 +31,43 @@ from the machine. Therefore `GOMAXPROCS=4` and `--lp 4` are not equivalent
 knobs; fair reporting must include wall time, CPU time, observed parallelism,
 `--lp`, and `--asm`.
 
+## Coverage Policy
+
+For the SVT comparison, "covered" means one of these must be true:
+
+- goav1 has a same-tier assembly/SIMD kernel for the active encoder work.
+- goav1 has a focused benchmark proving the scalar path beats or matches the
+  assembly-shaped alternative on the target CPU.
+- The SVT kernel belongs to a feature that this encoder does not execute in the
+  measured mode; those entries stay marked out-of-scope, not covered.
+
+SVT `--asm max` on this machine can select baseline NEON, DOTPROD, and I8MM
+families. Therefore max-tier rows are not equivalent to goav1's current
+baseline-NEON dispatch. Until DOTPROD/I8MM variants are wired and measured,
+report max-tier SVT rows as best-SVT rows and baseline `-svt-asm neon` rows as
+the closest assembly-tier control.
+
+## SVT v4.0.1 ARM Inventory
+
+The installed SVT binary matches tag `v4.0.1`, commit
+`4ae9272b588a05ee6e77a43e8dfdac05f54c4ff0`. Its ARM SIMD source inventory is:
+
+- Baseline NEON: transform, TXB/context prep, quantize/dequant, SAD/search,
+  variance/SSE/block-error/Hadamard, convolve/inter prediction, intra/CFL,
+  blend/wedge, CDEF, loop filter, restoration, superres-style resize helpers,
+  temporal filtering, picture analysis, k-means, and memory helpers.
+- DOTPROD: convolve, joint convolve, scaled convolve, CDEF, SAD/search, SSE,
+  variance, corner matching, and picture analysis.
+- I8MM: convolve, joint convolve, scaled convolve, intra prediction, and warp.
+- SVE/SVE2: present in source, but not active for the local Apple M4 row.
+
+The current high-priority coverage gaps for the measured goav1 encoder are
+TXB prep/context extraction, forward ADST/hybrid transform trials, and any
+search/RD metrics still proven hot after the existing SAD and residual-stat
+NEON kernels. DOTPROD/I8MM convolve and CDEF are max-tier fairness gaps, but
+they should follow a profile row that shows those paths are active enough to
+matter in the measured encoder mode.
+
 ## Current Speed Snapshot
 
 Fresh synthetic 1080p/120-frame single-rate row on 2026-06-12 with
@@ -148,6 +185,11 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   skip-transform, and tx-partition split bits. It is guarded by
   `TestWriteBinaryCDFTrustedMatchesWriteCDF`, and the count-only path is covered
   by the mixed-stream `TestCountingWriterTellMatchesWriter` gate.
+- `BitCounter.normalize` keeps the count-only arithmetic source-shaped but now
+  uses an `int32` ready-byte count and derives the post-flush bit count from the
+  pre-flush count. Compiler reports for entropy, tile, and encoder builds now
+  inline it at all count-only call sites (`encodeQ15`, `WriteBoolQ15`,
+  `WriteBit`, `WriteBinaryCDFTrusted`, and `WriteCDF4`) with no new heap escape.
 - Single-reference and compound-reference frame selection now read their fixed
   write-side bit patterns from compact `uint8` tables and emit the symbols
   directly, avoiding the former single-ref per-call `[]refBit` construction and
@@ -281,8 +323,9 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 2. Prototype a tiny TXB prep kernel only if it replaces work already proven hot:
    eob/level-buffer/stat extraction for the 8x8 luma path. Keep it only if both
    coefficient microbenchmarks and the fair row improve.
-3. Add encoder search metric kernels with direct profile mapping:
-   batched candidates.
+3. Add encoder search metric kernels only with direct profile mapping, such as
+   additional batched candidates or RD metrics that remain visible after the
+   existing SAD/residual-stat NEON work.
 4. Add forward ADST8/tx-type trial SIMD before broad transform-surface work.
 5. Use the arm64 DOTPROD/I8MM feature metadata already detected by goav1 to
    decide whether convolve, SAD, or CDEF variants make sense relative to SVT
