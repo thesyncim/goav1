@@ -424,6 +424,31 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `BenchmarkVideoEncoderPFrame1080p-4` sample is `79.4 ms/op`, and non-profiled
   repeat rows are around `78.0-78.8 ms/op` with zero steady-state allocations.
   Allocation is not the dominant CPU gap; the CPU profile is.
+- Latest P-frame profile on 2026-06-13 after the trusted 8x8 hybrid-dispatch
+  safe point measured `71.695 ms/op`, `4666 B/op`, and `1 alloc/op` with
+  `GOMAXPROCS=4`, `-benchtime=40x`, and a CPU profile. The top local costs are
+  still 8x8 TXB coefficient pricing (`CountCoefficientsTXB8x8Y2DTrustedArray`,
+  `1.51 s` cumulative of `8.12 s`) and loop-filter postfilter planning
+  (`loopFilterPostFilterPlanTrustedSweep`, `1.32 s` cumulative). SVT maps the
+  TXB prep side to `svt_av1_txb_init_levels_neon`,
+  `svt_av1_get_nz_map_contexts_neon`, and
+  `svt_av1_compute_cul_level_neon`; its loop-filter edge decision maps to
+  `deblocking_filter.c:set_lpf_parameters`, followed by NEON filter kernels.
+- A zero-symbol split for `BitCounter.WriteCDF4` was rejected on 2026-06-13.
+  It preserved CDF/Tell parity, but
+  `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` moved from mean/median
+  `414.75/410.65 ns/op` to `425.56/424.65 ns/op`, and
+  `BenchmarkCountCoefficientsTXB8x8UV2D/trusted-count` moved from
+  `438.61/437.60 ns/op` to `466.64/457.80 ns/op`, zero allocations. The
+  caller-level `level == 0` branch did not beat the existing four-way CDF4
+  switch.
+- Direct luma transform-tree replay inside the loop-filter planner was also
+  rejected on 2026-06-13. Removing the `ForEachLumaTXB` callback but passing the
+  large context through recursion moved `BenchmarkLoopFilterPostFilterPlanTrusted`
+  from mean/median `13.330/13.317 us` to `13.707/13.496 us`; a replay-object
+  rewrite was worse at `17.612/17.597 us` and introduced `6432 B/op` with
+  `3 allocs/op`. The existing callback shape remains the best measured Go
+  form for that planner path.
 
 ## Next Implementation Order
 
