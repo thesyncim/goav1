@@ -912,3 +912,29 @@ func BenchmarkSAD8x8CompoundAvgBlockScalarReference(b *testing.B) {
 		sad8x8CompoundAvgBlockPureGo(src, 64, ref0, 64, ref1, 64)
 	}
 }
+
+var fullPelDiamondBenchSink int
+
+func BenchmarkFullPelDiamondSearch8(b *testing.B) {
+	const (
+		width  = 96
+		height = 80
+		stride = 112
+		px     = 32
+		py     = 24
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(i*7 + i/stride*11)
+		ref[i] = uint8(i*13 + i/stride*3 + 17)
+	}
+
+	b.ReportAllocs()
+	sum := 0
+	for b.Loop() {
+		dx, dy, sad := fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, 8, 0, 0, fullPelReach)
+		sum += dx + dy + sad
+	}
+	fullPelDiamondBenchSink = sum
+}
