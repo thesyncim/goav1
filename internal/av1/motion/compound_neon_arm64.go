@@ -30,6 +30,18 @@ type compoundFilter8NEONCtx struct {
 	roundOffset uintptr
 }
 
+type compound2D8NEONCtx struct {
+	dst    *uint16
+	ref    *byte
+	kernel *int16
+	xKern  *int16
+	refStr uintptr
+	width  uintptr
+	height uintptr
+	im     *int16
+	imStr  uintptr
+}
+
 //go:noescape
 func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 
@@ -38,6 +50,9 @@ func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
 
 //go:noescape
 func compoundY8NEONAsm(ctx *compoundFilter8NEONCtx)
+
+//go:noescape
+func compound2D8NEONAsm(ctx *compound2D8NEONCtx)
 
 func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	if round0 != compoundRound0Bits ||
@@ -100,8 +115,47 @@ func predictInterCompoundRef8ToConvBufYNEON(out []uint16, ref frame.Plane, refX 
 	compoundY8NEONAsm(&ctx)
 }
 
+func predictInterCompoundRef8ToConvBuf2DNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	// The horizontal asm consumes one extra byte in the last width>=8 group
+	// while forming slide vectors, so require that byte to be resident.
+	if offsetBits != 19 ||
+		width < 8 || width%8 != 0 ||
+		!planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		predictInterCompoundRef8ToConvBuf2DPureGo(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	xk := xKernel
+	yk := yKernel
+	if scratch != nil {
+		predictInterCompoundRef8ToConvBuf2DNEONWithIM(out, ref, refX, refY, width, height, xk, yk, &scratch.im8)
+		return
+	}
+	var im compoundIM16
+	predictInterCompoundRef8ToConvBuf2DNEONWithIM(out, ref, refX, refY, width, height, xk, yk, &im)
+}
+
+func predictInterCompoundRef8ToConvBuf2DNEONWithIM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *compoundIM16) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	ctx := compound2D8NEONCtx{
+		dst:    &out[0],
+		ref:    &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+		kernel: &yKernel[0],
+		xKern:  &xKernel[0],
+		refStr: uintptr(ref.Stride),
+		width:  uintptr(width),
+		height: uintptr(height),
+		im:     &im[0],
+		imStr:  uintptr(maxBlockSize),
+	}
+	compound2D8NEONAsm(&ctx)
+}
+
 func init() {
 	if cpu.Detected.NEON {
+		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON

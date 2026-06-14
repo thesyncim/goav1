@@ -73,39 +73,29 @@ matter in the measured encoder mode.
 
 Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-14 with
 `GOMAXPROCS=4` for goav1, after the latest metric/search/convolve assembly
-safe points. These rows use `qualitybench -bitrates 8000000` on the synthetic
-fixture. SVT `--lp` was swept from `0..6`; no max-tier or baseline-NEON row
-reached goav1's observed `3.52x` CPU parallelism, so there is no true
-equal-CPU-budget row in this sweep.
+safe points including the resident 8-bit compound 2D CONV_BUF kernel. These
+rows use `qualitybench -encoders goav1,svt-av1 -bitrates 8000000` on the
+synthetic fixture. SVT `--lp` was swept from `0..6`; no max-tier or
+baseline-NEON row reached goav1's observed `3.55x-3.61x` CPU parallelism, so
+there is still no true equal-CPU-budget row in this sweep.
 
-| Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 102.53 | 1.170 | 4.120 | 3.52x | 29.1 |
-| SVT-AV1 `--lp 0 --asm max`, fastest max-tier row | 174.58 | 0.687 | 1.624 | 2.36x | 73.9 |
-| SVT-AV1 `--lp 4 --asm max` | 166.44 | 0.721 | 1.673 | 2.32x | 71.7 |
+The first one-shot full sweep showed goav1 around `104-106 fps` and SVT rows
+around `165-170 fps` for the fastest non-`--lp 1` settings, but selected
+warm/interleaved repeats were materially faster for both encoders. Current
+selected warm medians:
 
-Best-SVT wall-clock gap in this full sweep is about 1.70x in SVT's favor. The
-max-tier CPU-normalized gap is still about 2.46x-2.54x by frames/CPU-s,
-depending on whether the numeric `--lp 4` row or the fastest wall row is used.
-That gap should be reported by CPU seconds or frames/CPU-s, not only by wall
-FPS. Wall FPS is noisier because the two encoders do not consume the same
-parallelism, and `--lp 4` is not semantically equivalent to `GOMAXPROCS=4`.
+| Comparison row | goav1 FPS | SVT FPS | goav1 CPU s | SVT CPU s | goav1 observed | SVT observed | Wall gap | CPU-efficiency gap |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SVT-AV1 `--lp 4 --asm max` | 111.25 | 219.07 | 3.874 | 1.460 | 3.60x | 2.66x | 1.97x | 2.66x |
+| SVT-AV1 `--lp 4 --asm neon` | 111.07 | 215.61 | 3.868 | 1.521 | 3.58x | 2.73x | 1.94x | 2.54x |
 
-Same-shape control with SVT pinned to baseline NEON via `-svt-asm neon`:
-
-| Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 102.53 | 1.170 | 4.120 | 3.52x | 29.1 |
-| SVT-AV1 `--lp 0 --asm neon` | 128.50 | 0.934 | 1.878 | 2.01x | 63.9 |
-| SVT-AV1 `--lp 4 --asm neon`, fastest baseline-NEON row | 161.04 | 0.745 | 1.744 | 2.34x | 68.8 |
-
-Pinning SVT to baseline NEON still leaves SVT about 1.25x-1.57x faster by wall
-time and about 2.19x-2.36x more CPU-efficient. A two-repeat confirmation pass
-on the selected rows produced medians of goav1 `103.50 fps`, SVT `--lp 0 --asm
-max` `159.89 fps`, and SVT `--lp 4 --asm neon` `160.78 fps`, so the current
-wall gap should be treated as roughly 1.55x-1.70x while the CPU-normalized gap
-remains roughly 2.35x-2.55x. The remaining gap is therefore not only
-DOTPROD/I8MM.
+The honest current gap is therefore roughly `1.9x-2.0x` by wall time on warmed
+selected rows, and roughly `2.5x-2.7x` by frames per CPU-second. The first
+one-shot sweep still matters as a noise warning, but the warmed medians are the
+better current branch estimate. The gap should be reported by CPU seconds or
+frames/CPU-s as well as wall FPS, because SVT `--lp 4` is an encoder
+parallelism level and still consumes less observed CPU parallelism than
+`GOMAXPROCS=4` does for goav1.
 
 ## Coverage Ledger
 
@@ -118,7 +108,7 @@ DOTPROD/I8MM.
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the practical 4-wide and width-multiple-of-8 square/rectangular low-bitdepth shapes through 64x64, a measured DOTPROD SSE/variance tier for winning width-multiple-of-8 rows, an arm64 NEON coefficient block-error reducer matching SVT's `svt_av1_block_error_neon`, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. These metric kernels are now dispatched by feature tier but still do not change encoder mode decisions unless that path is called. | DOTPROD SSE/variance is partially closed for measured-winning rows; small `8x4`/`8x8` variance remains baseline NEON because DOTPROD loses there. Baseline block-error is covered; broader max-tier metric/search coverage remains open. Only wire these into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX, ADST_DCT, DCT_ADST, and ADST_ADST tx-type trials now have arm64 NEON matching SVT's identity, ADST-column/DCT-row, DCT-column/ADST-row, and ADST-column/ADST-row surfaces. Larger/rectangular ADST and flip-ADST surfaces are still scalar or unsupported in this encoder mode set. | High for the current profile: the active 8x8 tx-type trial surface is covered, but SVT's broader forward-transform matrix still includes rectangular/N2/N4/flip ADST variants. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
-| Inter prediction/convolve | Convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit X/Y one-axis convolve now keeps width>=8 4-tap filters on the NEON body instead of falling back to scalar. The 8-bit compound/joint-convolve copy, X-only, and Y-only branches now have arm64 NEON kernels for resident width-multiple-of-8 CONV_BUF blocks. Filtered compound 2D remains scalar, and there is no dotprod/i8mm compound tier. | Baseline coverage is better for active 4-tap one-axis paths and the copy/X/Y compound branches, but max-tier coverage is still not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
+| Inter prediction/convolve | Convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit X/Y one-axis convolve now keeps width>=8 4-tap filters on the NEON body instead of falling back to scalar. The 8-bit compound/joint-convolve copy, X-only, Y-only, and filtered 2D branches now have arm64 NEON kernels for resident width-multiple-of-8 CONV_BUF blocks. Width-4, clamped-edge, scaled, highbd compound, and max-tier dotprod/i8mm compound variants remain uncovered. | Baseline coverage is better for active 4-tap one-axis paths and the copy/X/Y/2D compound branches, but max-tier coverage is still not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
 | Intra, CFL, blend, wedge, palette | Intra, CFL, blend, wedge, palette-related SIMD | Intra predictors, CFL, blend and min/max have NEON/AVX2 coverage; wedge/palette are feature-dependent | Low unless these paths become hot in the encoder mode set. |
 | Loop filter, CDEF, restoration, superres, film grain | Broad NEON and highbd variants | goav1 has NEON/AVX2 coverage for these postfilter/decoder-style kernels | Mostly covered for current profile. Loopfilter still appears, so optimize only with a focused profile. |
 | Temporal filtering, pic analysis, k-means, mem | SVT has NEON files for these encoder pipeline helpers | Not part of the current low-delay goav1 encode path | Do not chase for this benchmark until the feature exists and profiles hot. |
@@ -162,16 +152,21 @@ DOTPROD/I8MM.
 - arm64 8-bit compound copy-to-CONV_BUF now mirrors SVT's
   `svt_av1_jnt_convolve_2d_copy_neon` surface for resident width-multiple-of-8
   blocks. `BenchmarkCompoundConvBufCopy8_32` moved from a `381.3 ns/op` median
-  scalar row to `51.55 ns/op` with the NEON dispatch, all zero allocations.
+  scalar row to `49.74 ns/op` with the NEON dispatch, all zero allocations.
 - arm64 8-bit compound X-to-CONV_BUF now mirrors SVT's no-average
   `svt_av1_jnt_convolve_x_neon` branch for resident width-multiple-of-8
   blocks. `BenchmarkCompoundConvBufX8_32` moved from a `1245 ns/op` median
-  scalar row to `261.4 ns/op` with the NEON dispatch, all zero allocations.
+  scalar row to `258.0 ns/op` with the NEON dispatch, all zero allocations.
 - arm64 8-bit compound Y-to-CONV_BUF now mirrors SVT's no-average
   `svt_av1_jnt_convolve_y_neon` branch for resident width-multiple-of-8
   blocks. `BenchmarkCompoundConvBufY8_32` moved from a `1929 ns/op` median
-  scalar row to `259.4 ns/op` with the NEON dispatch, all zero allocations.
-  Filtered compound 2D is unchanged and remains the larger convolve parity gap.
+  scalar row to `255.1 ns/op` with the NEON dispatch, all zero allocations.
+- arm64 8-bit compound 2D-to-CONV_BUF now mirrors SVT's no-average
+  `svt_av1_jnt_convolve_2d_neon` branch for resident width-multiple-of-8
+  blocks. `BenchmarkCompoundConvBuf2D8_32` moved from a `3061 ns/op` median
+  scalar row to `509.1 ns/op` with the NEON dispatch, and
+  `BenchmarkCompoundConvBuf2D8_8` measures `57.72 ns/op`, all zero
+  allocations.
 - The trusted 8x8 coefficient writer stack-allocates its 256-byte padded level buffer.
   Larger scratch remains caller-owned or state-owned; forced reuse changes have
   already regressed and should not be repeated without benchmark proof.

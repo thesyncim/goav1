@@ -30,13 +30,15 @@ const (
 )
 
 type compoundIM [compoundIMMaxSamples]int32
+type compoundIM16 [compoundIMMaxSamples]int16
 
 // CompoundConvolveScratch carries reusable temporary storage for compound
 // two-dimensional interpolation. The 2D path overwrites every sample it reads,
 // so framework callers keep this scratch live across blocks to avoid clearing a
 // large stack array on every compound reference.
 type CompoundConvolveScratch struct {
-	im compoundIM
+	im  compoundIM
+	im8 compoundIM16
 }
 
 // compoundRound0 ports get_conv_params_no_round() round_0 selection for the
@@ -433,7 +435,7 @@ func predictInterCompoundRefHighBDToConvBufCopyClamped(out []uint16, ref frame.P
 func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, subX int, subY int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, roundOffset int, scratch *CompoundConvolveScratch) {
 	switch {
 	case subX != 0 && subY != 0:
-		predictInterCompoundRef8ToConvBuf2D(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
 	case subX != 0:
 		predictInterCompoundRef8ToConvBufXImpl(out, ref, refX, refY, width, height, xKernel, roundOffset)
 	case subY != 0:
@@ -443,7 +445,9 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	}
 }
 
-func predictInterCompoundRef8ToConvBuf2D(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
+var predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DPureGo
+
+func predictInterCompoundRef8ToConvBuf2DPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
 	if scratch != nil {
 		predictInterCompoundRef8ToConvBuf2DWithIM(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, &scratch.im)
 		return

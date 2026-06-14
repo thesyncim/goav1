@@ -231,3 +231,156 @@ cyColLoop:
 
 cyDone:
 	RET
+
+#define D_DST    0
+#define D_REF    8
+#define D_KERNEL 16
+#define D_XKERN  24
+#define D_REFSTR 32
+#define D_WIDTH  40
+#define D_HEIGHT 48
+#define D_IM     56
+#define D_IMSTR  64
+
+// func compound2D8NEONAsm(ctx *compound2D8NEONCtx)
+//
+// Resident 8-bit 2D joint convolve with do_average == 0. The horizontal pass
+// matches SVT's int16 intermediate: round(xBias + horizontal_sum, 3). The
+// vertical pass writes CONV_BUF precision: round(yBias + vertical_sum, 7).
+TEXT ·compound2D8NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD D_DST(R0), R1
+	MOVD D_REF(R0), R2
+	MOVD D_KERNEL(R0), R3
+	MOVD D_XKERN(R0), R12
+	MOVD D_REFSTR(R0), R5
+	MOVD D_WIDTH(R0), R6
+	MOVD D_HEIGHT(R0), R7
+	MOVD D_IM(R0), R13
+	MOVD D_IMSTR(R0), R14
+	LSL  $1, R14, R14 // int16 elements -> bytes
+
+	ADD  $7, R7, R15 // imH = height + filterTaps - 1
+
+	WORD $0x4c407580 // ld1 {v0.8h}, [x12]  horizontal taps
+	MOVD $16384, R11 // xBias = 1 << (8 + FILTER_BITS - 1)
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R2, R16  // ref row cursor
+	MOVD R13, R17 // im row cursor
+
+c2hRowLoop:
+	CBZ  R15, c2hDone
+	MOVD R16, R9
+	MOVD R17, R10
+	MOVD R6, R8
+
+c2hColLoop:
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f000411 // movi v17.4s, #0
+	WORD $0x4c407121 // ld1 {v1.16b}, [x9]
+	WORD $0x2f08a422 // ushll  v2.8h, v1.8b, #0
+	WORD $0x6f08a423 // ushll2 v3.8h, v1.16b, #0
+	WORD $0x0f402050 // smlal  v16.4s, v2.4h, v0.h[0]
+	WORD $0x4f402051 // smlal2 v17.4s, v2.8h, v0.h[0]
+	WORD $0x6e031044 // ext v4.16b, v2.16b, v3.16b, #2
+	WORD $0x0f502090 // smlal  v16.4s, v4.4h, v0.h[1]
+	WORD $0x4f502091 // smlal2 v17.4s, v4.8h, v0.h[1]
+	WORD $0x6e032044 // ext v4.16b, v2.16b, v3.16b, #4
+	WORD $0x0f602090 // smlal  v16.4s, v4.4h, v0.h[2]
+	WORD $0x4f602091 // smlal2 v17.4s, v4.8h, v0.h[2]
+	WORD $0x6e033044 // ext v4.16b, v2.16b, v3.16b, #6
+	WORD $0x0f702090 // smlal  v16.4s, v4.4h, v0.h[3]
+	WORD $0x4f702091 // smlal2 v17.4s, v4.8h, v0.h[3]
+	WORD $0x6e034044 // ext v4.16b, v2.16b, v3.16b, #8
+	WORD $0x0f402890 // smlal  v16.4s, v4.4h, v0.h[4]
+	WORD $0x4f402891 // smlal2 v17.4s, v4.8h, v0.h[4]
+	WORD $0x6e035044 // ext v4.16b, v2.16b, v3.16b, #10
+	WORD $0x0f502890 // smlal  v16.4s, v4.4h, v0.h[5]
+	WORD $0x4f502891 // smlal2 v17.4s, v4.8h, v0.h[5]
+	WORD $0x6e036044 // ext v4.16b, v2.16b, v3.16b, #12
+	WORD $0x0f602890 // smlal  v16.4s, v4.4h, v0.h[6]
+	WORD $0x4f602891 // smlal2 v17.4s, v4.8h, v0.h[6]
+	WORD $0x6e037044 // ext v4.16b, v2.16b, v3.16b, #14
+	WORD $0x0f702890 // smlal  v16.4s, v4.4h, v0.h[7]
+	WORD $0x4f702891 // smlal2 v17.4s, v4.8h, v0.h[7]
+
+	WORD $0x4eb28610 // add v16.4s, v16.4s, v18.4s
+	WORD $0x4eb28631 // add v17.4s, v17.4s, v18.4s
+	WORD $0x4f3d2610 // srshr v16.4s, v16.4s, #3
+	WORD $0x4f3d2631 // srshr v17.4s, v17.4s, #3
+	WORD $0x0e612a10 // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30 // xtn2 v16.8h, v17.4s
+	WORD $0x4c007550 // st1 {v16.8h}, [x10]
+
+	ADD  $8, R9, R9
+	ADD  $16, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, c2hColLoop
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R15, R15
+	CBNZ R15, c2hRowLoop
+
+c2hDone:
+	WORD $0x4c407460 // ld1 {v0.8h}, [x3]  vertical taps
+	MOVD $524288, R11 // yBias = 1 << 19
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R13, R17 // im row-window base
+
+c2vRowLoop:
+	CBZ  R7, c2vDone
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+c2vColLoop:
+	MOVD R11, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x4eb21e51 // mov v17.16b, v18.16b
+
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f402030 // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x4f402031 // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f502030 // smlal  v16.4s, v1.4h, v0.h[1]
+	WORD $0x4f502031 // smlal2 v17.4s, v1.8h, v0.h[1]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f602030 // smlal  v16.4s, v1.4h, v0.h[2]
+	WORD $0x4f602031 // smlal2 v17.4s, v1.8h, v0.h[2]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f702030 // smlal  v16.4s, v1.4h, v0.h[3]
+	WORD $0x4f702031 // smlal2 v17.4s, v1.8h, v0.h[3]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f402830 // smlal  v16.4s, v1.4h, v0.h[4]
+	WORD $0x4f402831 // smlal2 v17.4s, v1.8h, v0.h[4]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f502830 // smlal  v16.4s, v1.4h, v0.h[5]
+	WORD $0x4f502831 // smlal2 v17.4s, v1.8h, v0.h[5]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f602830 // smlal  v16.4s, v1.4h, v0.h[6]
+	WORD $0x4f602831 // smlal2 v17.4s, v1.8h, v0.h[6]
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f702830 // smlal  v16.4s, v1.4h, v0.h[7]
+	WORD $0x4f702831 // smlal2 v17.4s, v1.8h, v0.h[7]
+
+	WORD $0x4f392610 // srshr v16.4s, v16.4s, #7
+	WORD $0x4f392631 // srshr v17.4s, v17.4s, #7
+	WORD $0x0e614a10 // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30 // sqxtn2 v16.8h, v17.4s
+	WORD $0x4c007550 // st1 {v16.8h}, [x10]
+
+	ADD  $16, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, c2vColLoop
+
+	ADD  R6<<1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, c2vRowLoop
+
+c2vDone:
+	RET
