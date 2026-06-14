@@ -472,6 +472,16 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `424.5 ns/op` to `425.1 ns/op`. A one-forward-pass prep that combined EOB,
   padded levels, sign bits, and cumulative level was worse at median
   `436.7 ns/op`. Both stayed at zero allocations, and neither was kept.
+- The 8x8 UV count-only sign/Golomb pass now mirrors the luma sparse-bitset
+  walk in SVT's `av1_write_coeffs_txb_1d` tail: while filling levels it records
+  non-zero scan slots in a `uint64`, then emits signs/tails by set-bit order
+  instead of scanning every entry up to EOB and branching on zero. Same-session
+  `BenchmarkCountCoefficientsTXB8x8UV2D/trusted-count` moved from median
+  `465.4 ns/op` to `452.7 ns/op` over seven `500000x` rows, with zero
+  allocations; a `1000000x` patched repeat had median `448.9 ns/op`.
+  Compiler reports keep the wrapper inlineable, `entropy.NewBitCounter`
+  inlined, `cdfs`/coefficient pointers non-escaping, and the neighbor-context
+  bounds checks elided.
 - The next tx-type-search experiment also stayed Go-only and was rejected on
   2026-06-14. SVT maps the comparable 8x8 forward-transform surface to
   `svt_av1_fwd_txfm2d_8x8_neon` plus the N2/N4 variants, with NEON ADST row and
