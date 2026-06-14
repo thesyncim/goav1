@@ -74,30 +74,33 @@ matter in the measured encoder mode.
 Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-14 with
 `GOMAXPROCS=4` for goav1. These rows include the SIMD safe points landed since
 the older 2026-06-12 snapshot; do not attribute the full delta to any one
-kernel.
+kernel. SVT `--lp` was swept from `0..6`; no max-tier row reached goav1's
+observed `3.48x` CPU parallelism, so there is no true equal-CPU-budget row in
+this sweep.
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1, paired with SVT `--lp 0 --asm max` | 135.99 | 0.882 | 3.081 | 3.49x | 39.0 |
-| SVT-AV1 `--lp 0 --asm max` | 226.19 | 0.531 | 1.186 | 2.24x | 101.2 |
-| goav1, paired with SVT `--lp 4 --asm max` | 138.16 | 0.869 | 3.027 | 3.49x | 39.6 |
-| SVT-AV1 `--lp 4 --asm max` | 226.21 | 0.530 | 1.188 | 2.24x | 101.0 |
+| goav1 | 137.48 | 0.873 | 3.037 | 3.48x | 39.5 |
+| SVT-AV1 `--lp 0 --asm max` | 229.07 | 0.524 | 1.190 | 2.27x | 100.8 |
+| SVT-AV1 `--lp 3 --asm max`, fastest max-tier row | 231.95 | 0.517 | 1.152 | 2.23x | 104.2 |
+| SVT-AV1 `--lp 4 --asm max`, closest max-tier observed parallelism | 230.04 | 0.522 | 1.204 | 2.31x | 99.7 |
 
-Best-SVT wall-clock gap is now about 1.64x-1.66x in SVT's favor, while the
-CPU-normalized gap is still about 2.55x-2.60x by frames/CPU-s. That gap should
-be reported by CPU seconds or frames/CPU-s, not only by wall FPS. Wall FPS is
-noisier because the two encoders do not consume the same parallelism, and
-`--lp 4` is not semantically equivalent to `GOMAXPROCS=4`.
+Best-SVT wall-clock gap is now about 1.69x in SVT's favor. The max-tier
+CPU-normalized gap is still about 2.52x-2.64x by frames/CPU-s, depending on
+whether the closest observed-parallelism row or fastest wall row is used. That
+gap should be reported by CPU seconds or frames/CPU-s, not only by wall FPS.
+Wall FPS is noisier because the two encoders do not consume the same
+parallelism, and `--lp 4` is not semantically equivalent to `GOMAXPROCS=4`.
 
 Same-shape control with SVT pinned to baseline NEON via `-svt-asm neon`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 137.70 | 0.871 | 3.046 | 3.49x | 39.4 |
-| SVT-AV1 `--lp 0 --asm neon` | 218.92 | 0.548 | 1.271 | 2.32x | 94.4 |
+| goav1 | 137.48 | 0.873 | 3.037 | 3.48x | 39.5 |
+| SVT-AV1 `--lp 0 --asm neon` | 223.44 | 0.537 | 1.274 | 2.37x | 94.2 |
 
-Pinning SVT to baseline NEON still leaves SVT about 1.59x faster by wall time
-and about 2.40x more CPU-efficient. The remaining gap is therefore not only
+Pinning SVT to baseline NEON still leaves SVT about 1.63x faster by wall time
+and about 2.38x more CPU-efficient. The remaining gap is therefore not only
 DOTPROD/I8MM.
 
 ## Coverage Ledger
@@ -107,7 +110,7 @@ DOTPROD/I8MM.
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits. Metric dispatch selects a measured DOTPROD tier for winning pixel SSE/variance rows, and SAD/search dispatch selects DOTPROD for measured-winning step-4 x4 raster groups. The rest of the active arm64 dispatch remains baseline NEON unless another feature-tier kernel is proved. | Do not claim max-tier parity until DOTPROD/I8MM convolve, broader search, CDEF, and remaining metric surfaces are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits/nonzero bitsets on measured-winning count paths. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous 8x8 extra scan-table and branchless sign rewrites regressed or tied after paired measurement. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
-| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32/64x64 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, `sad32x32x4d`, and `sad64x64x4d` have arm64 NEON coverage through direct or composed kernels. DOTPROD now dispatches for the measured-winning 16x16/32x32 step-4 x4 raster-search groups, which also moves composed 64x64 step-4 groups; standalone 16x16/32x32 DOTPROD SAD was tested but left undispatched because baseline NEON ties or wins. | Baseline NEON coverage for current SAD/search probes is much closer, and one active max-tier DOTPROD search surface is now covered. Generic four-reference x4, dual-stride SAD, convolve, CDEF, and I8MM search-adjacent surfaces remain open until profile proof and measured kernels exist. |
+| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32/64x64 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, `sad32x32x4d`, and `sad64x64x4d` have arm64 NEON coverage through direct or composed kernels. DOTPROD now dispatches for measured-winning 16x16/32x32 step-4 x4 raster-search groups and generic four-reference 16x16/32x32 x4 groups; composed 64x64 x4 groups move through the active 32x32 x4 tier. Standalone 16x16/32x32 DOTPROD SAD was tested but left undispatched because baseline NEON ties or wins. | Baseline NEON coverage for current SAD/search probes is much closer, and active max-tier DOTPROD search surfaces are partially covered. Dual-stride SAD, convolve, CDEF, and I8MM search-adjacent surfaces remain open until profile proof and measured kernels exist. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the practical 4-wide and width-multiple-of-8 square/rectangular low-bitdepth shapes through 64x64, a measured DOTPROD SSE/variance tier for winning width-multiple-of-8 rows, an arm64 NEON coefficient block-error reducer matching SVT's `svt_av1_block_error_neon`, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. These metric kernels are now dispatched by feature tier but still do not change encoder mode decisions unless that path is called. | DOTPROD SSE/variance is partially closed for measured-winning rows; small `8x4`/`8x8` variance remains baseline NEON because DOTPROD loses there. Baseline block-error is covered; broader max-tier metric/search coverage remains open. Only wire these into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX, ADST_DCT, DCT_ADST, and ADST_ADST tx-type trials now have arm64 NEON matching SVT's identity, ADST-column/DCT-row, DCT-column/ADST-row, and ADST-column/ADST-row surfaces. Larger/rectangular ADST and flip-ADST surfaces are still scalar or unsupported in this encoder mode set. | High for the current profile: the active 8x8 tx-type trial surface is covered, but SVT's broader forward-transform matrix still includes rectangular/N2/N4/flip ADST variants. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
@@ -135,6 +138,11 @@ DOTPROD/I8MM.
   zero allocations. Standalone `16x16` DOTPROD tied baseline NEON and
   standalone `32x32` DOTPROD lost, so those direct SAD kernels remain on
   baseline NEON.
+- Generic four-reference arm64 SAD x4 groups also have a DOTPROD tier now.
+  Paired medians were `16x16x4` baseline NEON `16.93 ns/op` vs DOTPROD
+  `16.72 ns/op`, and `32x32x4` baseline NEON `52.98 ns/op` vs DOTPROD
+  `48.75 ns/op`, all zero allocations. The 16x16 win is small but repeatable
+  over the longer 11-sample run; 32x32 is the clearer search-kernel win.
 - The trusted 8x8 coefficient writer stack-allocates its 256-byte padded level buffer.
   Larger scratch remains caller-owned or state-owned; forced reuse changes have
   already regressed and should not be repeated without benchmark proof.

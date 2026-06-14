@@ -153,6 +153,12 @@ func sad8x8x4NEONAsm(ctx *sad8x8x4NEONCtx)
 //go:noescape
 func sad16x16x4NEONAsm(ctx *sad8x8x4NEONCtx)
 
+//go:noescape
+func sad16x16x4DotProdAsm(ctx *sad8x8x4NEONCtx)
+
+//go:noescape
+func sad32x32x4DotProdAsm(ctx *sad8x8x4NEONCtx)
+
 func sad8x8x4NEON(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
 	ctx := sad8x8x4NEONCtx{
 		Src:    unsafe.Pointer(&src[0]),
@@ -179,6 +185,19 @@ func sad16x16x4NEON(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
+func sad16x16x4DotProd(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref0:   unsafe.Pointer(&ref0[0]),
+		Ref1:   unsafe.Pointer(&ref1[0]),
+		Ref2:   unsafe.Pointer(&ref2[0]),
+		Ref3:   unsafe.Pointer(&ref3[0]),
+		Stride: int64(stride),
+	}
+	sad16x16x4DotProdAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
 func sad32x32x4NEON(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
 	ctx := sad8x8x4NEONCtx{
 		Src:    unsafe.Pointer(&src[0]),
@@ -189,6 +208,19 @@ func sad32x32x4NEON(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 		Stride: int64(stride),
 	}
 	sad32x32x4NEONAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
+func sad32x32x4DotProd(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref0:   unsafe.Pointer(&ref0[0]),
+		Ref1:   unsafe.Pointer(&ref1[0]),
+		Ref2:   unsafe.Pointer(&ref2[0]),
+		Ref3:   unsafe.Pointer(&ref3[0]),
+		Stride: int64(stride),
+	}
+	sad32x32x4DotProdAsm(&ctx)
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
@@ -328,6 +360,8 @@ func init() {
 	sad32x32x4Impl = sad32x32x4NEON
 	sad32x32x4Step4Impl = sad32x32x4Step4NEON
 	if useDotProdSAD {
+		sad16x16x4Impl = sad16x16x4DotProd
+		sad32x32x4Impl = sad32x32x4DotProd
 		sad16x16x4Step4Impl = sad16x16x4Step4DotProd
 		sad32x32x4Step4Impl = sad32x32x4Step4DotProd
 	}

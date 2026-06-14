@@ -43,6 +43,26 @@ func TestSADDotProdMatchesPureGo(t *testing.T) {
 			t.Fatalf("32x32x4 off %d: dotprod (%d,%d,%d,%d) want (%d,%d,%d,%d)",
 				off, g0, g1, g2, g3, w0, w1, w2, w3)
 		}
+
+		row := rng.Intn(64) + 32
+		col := rng.Intn(stride-72) + 32
+		off = row*stride + col
+		ref0 := off + 2
+		ref1 := off - 2
+		ref2 := off + 2*stride
+		ref3 := off - 2*stride
+		w0, w1, w2, w3 = sad16x16x4PureGo(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		g0, g1, g2, g3 = sad16x16x4DotProd(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("16x16x4d off %d: dotprod (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+		w0, w1, w2, w3 = sad32x32x4PureGo(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		g0, g1, g2, g3 = sad32x32x4DotProd(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("32x32x4d off %d: dotprod (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
 	}
 }
 
@@ -106,6 +126,41 @@ func BenchmarkSADX4Step4DotProd(b *testing.B) {
 			sum := 0
 			for b.Loop() {
 				s0, s1, s2, s3 := tc.fn(src, ref, 96)
+				sum += s0 + s1 + s2 + s3
+			}
+			sadDotProdBenchSink = sum
+		})
+	}
+}
+
+func BenchmarkSADX4DotProd(b *testing.B) {
+	if !cpu.Detected.DOTPROD {
+		b.Skip("DOTPROD not detected")
+	}
+
+	const stride = 96
+	src := make([]byte, stride*stride)
+	ref := make([]byte, stride*stride)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 32*stride + 32
+
+	for _, tc := range []struct {
+		name string
+		fn   func([]byte, []byte, []byte, []byte, []byte, int) (int, int, int, int)
+	}{
+		{"16x16x4/NEON", sad16x16x4NEON},
+		{"16x16x4/DOTPROD", sad16x16x4DotProd},
+		{"32x32x4/NEON", sad32x32x4NEON},
+		{"32x32x4/DOTPROD", sad32x32x4DotProd},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			sum := 0
+			for b.Loop() {
+				s0, s1, s2, s3 := tc.fn(src[off:], ref[off+2:], ref[off-2:], ref[off+2*stride:], ref[off-2*stride:], stride)
 				sum += s0 + s1 + s2 + s3
 			}
 			sadDotProdBenchSink = sum

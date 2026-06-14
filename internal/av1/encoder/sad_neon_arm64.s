@@ -263,6 +263,62 @@ x4dloop16:
 	MOVD R5, X4DSUM3(R0)
 	RET
 
+// DOTPROD-tier 16x16 SAD for four arbitrary reference origins. This is the
+// four-reference counterpart to the step-4 search kernel; each source row feeds
+// four UABD+UDOT accumulators.
+//
+// func sad16x16x4DotProdAsm(ctx *sad8x8x4NEONCtx)
+TEXT ·sad16x16x4DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD X4DSRC(R0), R1
+	MOVD X4DREF0(R0), R2
+	MOVD X4DREF1(R0), R7
+	MOVD X4DREF2(R0), R8
+	MOVD X4DREF3(R0), R9
+	MOVD X4DSTRIDE(R0), R3
+
+	WORD $0x4f000415 // movi v21.4s, #0
+	WORD $0x4f000416 // movi v22.4s, #0
+	WORD $0x4f000417 // movi v23.4s, #0
+	WORD $0x4f000418 // movi v24.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $16, R4
+dp16x4dloop:
+	VLD1 (R1), [V0.B16]
+	VLD1 (R2), [V1.B16]
+	VLD1 (R7), [V10.B16]
+	VLD1 (R8), [V11.B16]
+	VLD1 (R9), [V12.B16]
+	WORD $0x6e217402 // uabd v2.16b, v0.16b, v1.16b
+	WORD $0x6e2a7403 // uabd v3.16b, v0.16b, v10.16b
+	WORD $0x6e2b7404 // uabd v4.16b, v0.16b, v11.16b
+	WORD $0x6e2c7406 // uabd v6.16b, v0.16b, v12.16b
+	WORD $0x6e9f9455 // udot v21.4s, v2.16b, v31.16b
+	WORD $0x6e9f9476 // udot v22.4s, v3.16b, v31.16b
+	WORD $0x6e9f9497 // udot v23.4s, v4.16b, v31.16b
+	WORD $0x6e9f94d8 // udot v24.4s, v6.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+	SUB  $1, R4
+	CBNZ R4, dp16x4dloop
+
+	WORD $0x6eb03aa0 // uaddlv d0, v21.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM0(R0)
+	WORD $0x6eb03ac0 // uaddlv d0, v22.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM1(R0)
+	WORD $0x6eb03ae0 // uaddlv d0, v23.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM2(R0)
+	WORD $0x6eb03b00 // uaddlv d0, v24.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM3(R0)
+	RET
+
 // NEON 32x32 SAD for four arbitrary reference origins. Each row consumes two
 // 16-byte source chunks and accumulates both chunks into the same four
 // candidate sums.
@@ -370,6 +426,78 @@ x4dloop32:
 	VMOV V16.S[0], R5
 	MOVD R5, X4DSUM2(R0)
 	VMOV V17.S[0], R5
+	MOVD R5, X4DSUM3(R0)
+	RET
+
+// DOTPROD-tier 32x32 SAD for four arbitrary reference origins.
+//
+// func sad32x32x4DotProdAsm(ctx *sad8x8x4NEONCtx)
+TEXT ·sad32x32x4DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD X4DSRC(R0), R1
+	MOVD X4DREF0(R0), R2
+	MOVD X4DREF1(R0), R7
+	MOVD X4DREF2(R0), R8
+	MOVD X4DREF3(R0), R9
+	MOVD X4DSTRIDE(R0), R3
+
+	WORD $0x4f000415 // movi v21.4s, #0
+	WORD $0x4f000416 // movi v22.4s, #0
+	WORD $0x4f000417 // movi v23.4s, #0
+	WORD $0x4f000418 // movi v24.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $32, R4
+dp32x4dloop:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	VLD1 (R7), [V10.B16]
+	ADD  $16, R7, R12
+	VLD1 (R12), [V18.B16]
+	VLD1 (R8), [V11.B16]
+	ADD  $16, R8, R13
+	VLD1 (R13), [V19.B16]
+	VLD1 (R9), [V12.B16]
+	ADD  $16, R9, R14
+	VLD1 (R14), [V20.B16]
+	WORD $0x6e217402 // uabd v2.16b,  v0.16b,  v1.16b
+	WORD $0x6e2a7403 // uabd v3.16b,  v0.16b,  v10.16b
+	WORD $0x6e2b7404 // uabd v4.16b,  v0.16b,  v11.16b
+	WORD $0x6e2c7406 // uabd v6.16b,  v0.16b,  v12.16b
+	WORD $0x6e2575e7 // uabd v7.16b,  v15.16b, v5.16b
+	WORD $0x6e3275e8 // uabd v8.16b,  v15.16b, v18.16b
+	WORD $0x6e3375e9 // uabd v9.16b,  v15.16b, v19.16b
+	WORD $0x6e3475ed // uabd v13.16b, v15.16b, v20.16b
+	WORD $0x6e9f9455 // udot v21.4s, v2.16b,  v31.16b
+	WORD $0x6e9f9476 // udot v22.4s, v3.16b,  v31.16b
+	WORD $0x6e9f9497 // udot v23.4s, v4.16b,  v31.16b
+	WORD $0x6e9f94d8 // udot v24.4s, v6.16b,  v31.16b
+	WORD $0x6e9f94f5 // udot v21.4s, v7.16b,  v31.16b
+	WORD $0x6e9f9516 // udot v22.4s, v8.16b,  v31.16b
+	WORD $0x6e9f9537 // udot v23.4s, v9.16b,  v31.16b
+	WORD $0x6e9f95b8 // udot v24.4s, v13.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+	SUB  $1, R4
+	CBNZ R4, dp32x4dloop
+
+	WORD $0x6eb03aa0 // uaddlv d0, v21.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM0(R0)
+	WORD $0x6eb03ac0 // uaddlv d0, v22.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM1(R0)
+	WORD $0x6eb03ae0 // uaddlv d0, v23.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4DSUM2(R0)
+	WORD $0x6eb03b00 // uaddlv d0, v24.4s
+	VMOV V0.D[0], R5
 	MOVD R5, X4DSUM3(R0)
 	RET
 
