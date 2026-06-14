@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"math/rand"
+	"slices"
 	"testing"
 )
 
@@ -124,4 +125,76 @@ func TestSATDCoeffsMatchesReference(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestHadamard8x8ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(6108))
+	const (
+		stride = 19
+		height = 16
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 500 {
+		row := rng.Intn(height - 8)
+		col := rng.Intn(stride - 8)
+		for r := range 8 {
+			for c := range 8 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var want [64]int32
+		var got [64]int32
+		srcOff := row*stride + col
+		hadamard8x8PureGo(src[srcOff:], stride, want[:])
+		hadamard8x8Impl(src[srcOff:], stride, got[:])
+		if !sameHadamard8x8Order(got[:], want[:]) {
+			t.Fatalf("offset=%d got %v want %v", srcOff, got, want)
+		}
+	}
+}
+
+func TestHadamard8x8MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(6109))
+	const (
+		stride = 23
+		height = 18
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 500 {
+		row := rng.Intn(height - 8)
+		col := rng.Intn(stride - 8)
+		for r := range 8 {
+			for c := range 8 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var want [64]int32
+		var got [64]int32
+		srcOff := row*stride + col
+		hadamard8x8PureGo(src[srcOff:], stride, want[:])
+		hadamard8x8(src[srcOff:], stride, got[:])
+		if !sameHadamard8x8Order(got[:], want[:]) {
+			t.Fatalf("offset=%d got %v want %v", srcOff, got, want)
+		}
+	}
+}
+
+func sameHadamard8x8Order(got, want []int32) bool {
+	if slices.Equal(got, want) {
+		return true
+	}
+	for r := range 8 {
+		for c := range 8 {
+			if got[r*8+c] != want[c*8+r] {
+				return false
+			}
+		}
+	}
+	return true
 }

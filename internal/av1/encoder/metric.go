@@ -9,6 +9,7 @@ var pixelStats8x8Impl = pixelStats8x8PureGo
 var pixelStats16x16Impl = pixelStats16x16PureGo
 var pixelStats32x32Impl = pixelStats32x32PureGo
 var satdCoeffsImpl = satdCoeffsPureGo
+var hadamard8x8Impl = hadamard8x8PureGo
 
 func pixelStats8x8PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 8, 8)
@@ -79,4 +80,54 @@ func satdCoeffsPureGo(coeff []int32, count int) int {
 		total += int(v)
 	}
 	return total
+}
+
+// hadamard8x8PureGo mirrors SVT's svt_aom_hadamard_8x8_c low-bitdepth
+// producer. SVT allows SIMD implementations to use a transposed coefficient
+// order because the consumer is SATD, which is order-invariant.
+func hadamard8x8PureGo(src []int16, srcStride int, coeff []int32) {
+	_ = src[7*srcStride+7]
+	_ = coeff[63]
+	var buffer [64]int16
+	var buffer2 [64]int16
+	for idx := range 8 {
+		hadamardCol8(src[idx:], srcStride, buffer[idx*8:])
+	}
+	for idx := range 8 {
+		hadamardCol8(buffer[idx:], 8, buffer2[idx*8:])
+	}
+	for idx := range 64 {
+		coeff[idx] = int32(buffer2[idx])
+	}
+}
+
+func hadamardCol8(src []int16, srcStride int, coeff []int16) {
+	_ = src[7*srcStride]
+	_ = coeff[7]
+	b0 := src[0*srcStride] + src[1*srcStride]
+	b1 := src[0*srcStride] - src[1*srcStride]
+	b2 := src[2*srcStride] + src[3*srcStride]
+	b3 := src[2*srcStride] - src[3*srcStride]
+	b4 := src[4*srcStride] + src[5*srcStride]
+	b5 := src[4*srcStride] - src[5*srcStride]
+	b6 := src[6*srcStride] + src[7*srcStride]
+	b7 := src[6*srcStride] - src[7*srcStride]
+
+	c0 := b0 + b2
+	c1 := b1 + b3
+	c2 := b0 - b2
+	c3 := b1 - b3
+	c4 := b4 + b6
+	c5 := b5 + b7
+	c6 := b4 - b6
+	c7 := b5 - b7
+
+	coeff[0] = c0 + c4
+	coeff[7] = c1 + c5
+	coeff[3] = c2 + c6
+	coeff[4] = c3 + c7
+	coeff[2] = c0 - c4
+	coeff[6] = c1 - c5
+	coeff[1] = c2 - c6
+	coeff[5] = c3 - c7
 }

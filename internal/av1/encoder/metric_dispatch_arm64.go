@@ -17,3 +17,7 @@ func pixelStats32x32(src []byte, srcStride int, ref []byte, refStride int) (uint
 func satdCoeffs(coeff []int32, count int) int {
 	return satdCoeffsNEON(coeff, count)
 }
+
+func hadamard8x8(src []int16, srcStride int, coeff []int32) {
+	hadamard8x8NEON(src, srcStride, coeff)
+}
