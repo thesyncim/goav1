@@ -461,6 +461,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   the guarded direct path measured median `74.53 ms/op`, zero steady
   allocations. This is kept as source-shape and hook-removal alignment, not as a
   claimed frame-level speedup.
+- Two Go-only TXB prep rewrites for
+  `CountCoefficientsTXB8x8Y2DTrustedArray` were rejected on 2026-06-14. The
+  SVT equivalent keeps prep split across `svt_av1_txb_init_levels_neon`,
+  `svt_av1_get_nz_map_contexts_neon`, and `svt_av1_compute_cul_level_neon`;
+  goav1 already folds the nonzero-map contexts into `coeffScanHot8x8Y2D`, so
+  the tested Go opportunities were memory-touch reductions. Skipping zero scan
+  entries before padded-level stores preserved parity but moved
+  `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` from median
+  `424.5 ns/op` to `425.1 ns/op`. A one-forward-pass prep that combined EOB,
+  padded levels, sign bits, and cumulative level was worse at median
+  `436.7 ns/op`. Both stayed at zero allocations, and neither was kept.
 
 ## Next Implementation Order
 
