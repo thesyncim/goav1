@@ -664,6 +664,23 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   P-frame row moved from median `79.21 ms/op` to `77.19 ms/op`, also at
   `0 allocs/op`. This is a scalar temp-array cleanup; SVT's batched ADST NEON
   surface remains an open assembly gap.
+- The mixed 8x8 DCT halves now use a value-returning `fwdDCT8Values` core in
+  the same style, scoped to `ADST_DCT` row DCT and `DCT_ADST` column DCT so the
+  standalone DCT dispatch and tight `BenchmarkForwardDCT8x8` target stay
+  comparable. A direct helper parity test checks `fwdDCT8Values` against the
+  pointer-shaped `fwdDCT8`. Compiler diagnostics keep `fwdRoundShift1Value`
+  inlined and report the touched coeff/residual/scratch buffers as
+  non-escaping; the DCT value core is intentionally too large to inline, like
+  the ADST value core. Paired `2000000x` transform rows moved medians from
+  `ADST_DCT=204.3 ns/op` and `DCT_ADST=219.3 ns/op` to `112.6` and
+  `113.3 ns/op`, with `ADST_ADST=131.6 -> 132.2 ns/op`,
+  `IDTX=26.50 -> 26.07 ns/op`, and `BenchmarkForwardDCT8x8=21.19 -> 21.01 ns/op`;
+  all rows stayed at `0 allocs/op`. The tx-type selector row moved from median
+  `10903 ns/op` to `10607 ns/op`. A same-shape small `GOMAXPROCS=4`,
+  `-benchtime=8x`, `-count=5` P-frame row was neutral/noisy
+  (`78.28 ms/op -> 78.69 ms/op`), so no end-to-end win is claimed from that row.
+  This closes the scalar temp-array gap in the mixed 8x8 hybrid DCT halves; the
+  remaining SVT parity gap is still the batched assembly transform surface.
 
 ## Next Implementation Order
 

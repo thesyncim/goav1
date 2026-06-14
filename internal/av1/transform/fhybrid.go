@@ -130,7 +130,6 @@ func forwardBlock8x8ADSTDCT(coeff []int32, coeffStride int, residual []int16, re
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
-	var in, out [8]int32
 	for c := range 8 {
 		o0, o1, o2, o3, o4, o5, o6, o7 := fwdADST8Values(
 			int32(residual[0*residualStride+c])<<2,
@@ -153,13 +152,24 @@ func forwardBlock8x8ADSTDCT(coeff []int32, coeffStride int, residual []int16, re
 	}
 	for r := range 8 {
 		row := r * 8
-		for c := range 8 {
-			in[c] = scratch[row+c]
-		}
-		fwdDCT8(&in, &out)
-		for c := range 8 {
-			coeff[c*coeffStride+r] = out[c]
-		}
+		o0, o1, o2, o3, o4, o5, o6, o7 := fwdDCT8Values(
+			scratch[row+0],
+			scratch[row+1],
+			scratch[row+2],
+			scratch[row+3],
+			scratch[row+4],
+			scratch[row+5],
+			scratch[row+6],
+			scratch[row+7],
+		)
+		coeff[0*coeffStride+r] = o0
+		coeff[1*coeffStride+r] = o1
+		coeff[2*coeffStride+r] = o2
+		coeff[3*coeffStride+r] = o3
+		coeff[4*coeffStride+r] = o4
+		coeff[5*coeffStride+r] = o5
+		coeff[6*coeffStride+r] = o6
+		coeff[7*coeffStride+r] = o7
 	}
 }
 
@@ -167,16 +177,25 @@ func forwardBlock8x8DCTADST(coeff []int32, coeffStride int, residual []int16, re
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
-	var in, out [8]int32
 	for c := range 8 {
-		for r := range 8 {
-			in[r] = int32(residual[r*residualStride+c]) << 2
-		}
-		fwdDCT8(&in, &out)
-		fwdRoundShift1x8(&out)
-		for r := range 8 {
-			scratch[r*8+c] = out[r]
-		}
+		o0, o1, o2, o3, o4, o5, o6, o7 := fwdDCT8Values(
+			int32(residual[0*residualStride+c])<<2,
+			int32(residual[1*residualStride+c])<<2,
+			int32(residual[2*residualStride+c])<<2,
+			int32(residual[3*residualStride+c])<<2,
+			int32(residual[4*residualStride+c])<<2,
+			int32(residual[5*residualStride+c])<<2,
+			int32(residual[6*residualStride+c])<<2,
+			int32(residual[7*residualStride+c])<<2,
+		)
+		scratch[0*8+c] = fwdRoundShift1Value(o0)
+		scratch[1*8+c] = fwdRoundShift1Value(o1)
+		scratch[2*8+c] = fwdRoundShift1Value(o2)
+		scratch[3*8+c] = fwdRoundShift1Value(o3)
+		scratch[4*8+c] = fwdRoundShift1Value(o4)
+		scratch[5*8+c] = fwdRoundShift1Value(o5)
+		scratch[6*8+c] = fwdRoundShift1Value(o6)
+		scratch[7*8+c] = fwdRoundShift1Value(o7)
 	}
 	for r := range 8 {
 		row := r * 8
@@ -347,6 +366,59 @@ func fwdRoundShift1x8(arr *[8]int32) {
 
 func fwdRoundShift1Value(v int32) int32 {
 	return (v + 1 + (v >> 31)) >> 1
+}
+
+// fwdDCT8Values is the same cos-bit-13 DCT8 as fwdDCT8, shaped for the
+// 8x8 hybrid block paths so they can pass scalar row/column values without
+// filling temporary input and output arrays around every 1-D pass.
+func fwdDCT8Values(x0, x1, x2, x3, x4, x5, x6, x7 int32) (int32, int32, int32, int32, int32, int32, int32, int32) {
+	const (
+		c8  int32 = 8035
+		c16 int32 = 7568
+		c24 int32 = 6811
+		c32 int32 = 5793
+		c40 int32 = 4551
+		c48 int32 = 3135
+		c56 int32 = 1598
+	)
+
+	b0 := x0 + x7
+	b1 := x1 + x6
+	b2 := x2 + x5
+	b3 := x3 + x4
+	b4 := -x4 + x3
+	b5 := -x5 + x2
+	b6 := -x6 + x1
+	b7 := -x7 + x0
+
+	s0 := b0 + b3
+	s1 := b1 + b2
+	s2 := -b2 + b1
+	s3 := -b3 + b0
+	s4 := b4
+	s5 := fwdHalfBtf13(-c32, b5, c32, b6)
+	s6 := fwdHalfBtf13(c32, b6, c32, b5)
+	s7 := b7
+
+	b0 = fwdHalfBtf13(c32, s0, c32, s1)
+	b1 = fwdHalfBtf13(-c32, s1, c32, s0)
+	b2 = fwdHalfBtf13(c48, s2, c16, s3)
+	b3 = fwdHalfBtf13(c48, s3, -c16, s2)
+	b4 = s4 + s5
+	b5 = -s5 + s4
+	b6 = -s6 + s7
+	b7 = s7 + s6
+
+	s0 = b0
+	s1 = b1
+	s2 = b2
+	s3 = b3
+	s4 = fwdHalfBtf13(c56, b4, c8, b7)
+	s5 = fwdHalfBtf13(c24, b5, c40, b6)
+	s6 = fwdHalfBtf13(c24, b6, -c40, b5)
+	s7 = fwdHalfBtf13(c56, b7, -c8, b4)
+
+	return s0, s4, s2, s6, s1, s5, s3, s7
 }
 
 // fwdADST8Values is the same cos-bit-13 ADST8 as fwdADST8, shaped for the

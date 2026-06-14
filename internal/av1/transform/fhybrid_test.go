@@ -129,6 +129,42 @@ func TestForwardBlock8x8HybridTrustedRejectsUnsupported(t *testing.T) {
 	}
 }
 
+func TestFwdDCT8ValuesMatchesPointerCore(t *testing.T) {
+	rng := rand.New(rand.NewSource(14))
+	cases := [][8]int32{
+		{},
+		{1, -2, 3, -4, 5, -6, 7, -8},
+		{-1020, -364, 511, 2044, 17, -93, 728, -155},
+	}
+	for range 1000 {
+		var input [8]int32
+		for i := range input {
+			input[i] = int32(rng.Intn(4097) - 2048)
+		}
+		cases = append(cases, input)
+	}
+	for trial, input := range cases {
+		var want [8]int32
+		fwdDCT8(&input, &want)
+		o0, o1, o2, o3, o4, o5, o6, o7 := fwdDCT8Values(
+			input[0],
+			input[1],
+			input[2],
+			input[3],
+			input[4],
+			input[5],
+			input[6],
+			input[7],
+		)
+		got := [8]int32{o0, o1, o2, o3, o4, o5, o6, o7}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("trial %d output[%d]=%d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 func TestForwardBlockHybridZeroAlloc(t *testing.T) {
 	residual := make([]int16, 64)
 	for i := range residual {
