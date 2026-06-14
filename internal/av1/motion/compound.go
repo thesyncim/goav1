@@ -439,7 +439,7 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	case subY != 0:
 		predictInterCompoundRef8ToConvBufY(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 	default:
-		predictInterCompoundRef8ToConvBufCopy(out, ref, refX, refY, width, height, round0, roundOffset)
+		predictInterCompoundRef8ToConvBufCopyImpl(out, ref, refX, refY, width, height, round0, roundOffset)
 	}
 }
 
@@ -702,7 +702,9 @@ func compoundY8ClampedConvBufSample(ref frame.Plane, sx int, sy int, scale int, 
 	return uint16(roundPowerOfTwo(res, compoundRound1Bits) + roundOffset)
 }
 
-func predictInterCompoundRef8ToConvBufCopy(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
+var predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyPureGo
+
+func predictInterCompoundRef8ToConvBufCopyPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	bits := 2*filterBits - compoundRound1Bits - round0
 	scale := 1 << bits
 	xLo, xHi := clampedXInterior(refX, 1, ref.Width, width)
