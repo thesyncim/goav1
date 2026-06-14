@@ -98,7 +98,7 @@ func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []i
 
 // ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
 func ForwardBlock8x8IDTXTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8IDTX(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8IDTXImpl(coeff, coeffStride, residual, residualStride, scratch)
 }
 
 func forwardBlock8x8HybridSupported(typ Type) bool {
@@ -119,7 +119,7 @@ func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16
 	case TypeADSTADST:
 		forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeIDTX:
-		forwardBlock8x8IDTX(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8IDTXImpl(coeff, coeffStride, residual, residualStride, scratch)
 	default:
 		return false
 	}
@@ -267,7 +267,7 @@ func forwardBlock8x8ADSTADST(coeff []int32, coeffStride int, residual []int16, r
 	}
 }
 
-func forwardBlock8x8IDTX(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+func forwardBlock8x8IDTXPureGo(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]

@@ -104,7 +104,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32/64x64 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, `sad32x32x4d`, and `sad64x64x4d` have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the active square 8x8/16x16/32x32 sizes with 64x64 composed from 32x32, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. None of these are wired into decisions because the measured encoder does not call that path. | Baseline square SSE/variance, coefficient-SATD reduction, and 4x4/8x8/16x16/32x32 Hadamard production are present and benchmarked but not used for decisions yet. Only wire them into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
-| Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar, though the 8x8 trusted hybrid path now dispatches once per tx type instead of per 1-D row/column | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
+| Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX tx-type trial now has arm64 NEON matching SVT's identity surface. Forward ADST tx-type trial work is still scalar, though the 8x8 trusted hybrid path now dispatches once per tx type instead of per 1-D row/column | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
 | Inter prediction/convolve | Convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; compound paths reuse convolve/blend, no dotprod/i8mm tier | Baseline coverage is good, max-tier coverage is not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
 | Intra, CFL, blend, wedge, palette | Intra, CFL, blend, wedge, palette-related SIMD | Intra predictors, CFL, blend and min/max have NEON/AVX2 coverage; wedge/palette are feature-dependent | Low unless these paths become hot in the encoder mode set. |
@@ -749,15 +749,18 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 - The next tx-type-search experiment also stayed Go-only and was rejected on
   2026-06-14. SVT maps the comparable 8x8 forward-transform surface to
   `svt_av1_fwd_txfm2d_8x8_neon` plus the N2/N4 variants, with NEON ADST row and
-  column helpers (`highbd_fadst8_*_neon`). goav1 has NEON for the DCT_DCT 8x8
-  dispatch, but the current 8x8 ADST hybrid trials are still pure Go. Baseline
+  column helpers (`highbd_fadst8_*_neon`). Baseline
   `BenchmarkChooseInter8x8TXType` measured median `11261 ns/op`; an early-IDTX
   pruning bound preserved `TestChooseInter8x8TXTypeSeededMatchesReference` but
-  moved the median to `11303 ns/op`, so it was reverted. Focused transform rows
-  make the remaining SIMD gap explicit: `BenchmarkForwardDCT8x8` sits around
-  `20.7-24.7 ns/op`, `IDTX` around `25.5-27.6 ns/op`, while
-  `ADST_DCT`/`DCT_ADST`/`ADST_ADST` hybrid 8x8 rows are about
-  `276.8-305.7 ns/op`, all zero allocations.
+  moved the median to `11303 ns/op`, so it was reverted. A later source-shaped
+  arm64 NEON IDTX kernel was kept because it directly covers SVT's identity
+  branch for the active trusted 8x8 tx-type trial: same-shape
+  `BenchmarkForwardBlock8x8HybridTrusted/IDTX` moved from median `25.83 ns/op`
+  to `6.881 ns/op`, while direct `BenchmarkForwardBlock8x8IDTXImpl` measured
+  median `7.365 ns/op` versus `25.22 ns/op` for the pure-Go body, all
+  `0 allocs/op`. The remaining 8x8 forward-transform SIMD gap is ADST:
+  current focused rows are roughly `106-108 ns/op` for
+  `ADST_DCT`/`DCT_ADST` and `125 ns/op` for `ADST_ADST`, all zero allocations.
 - `BenchmarkForwardADST8` was added on 2026-06-14 as the tight 1-D gate for
   future 8x8 ADST SIMD work. Compiler reports show `fwdHalfBtf13` and
   `fwdRoundShift1x8` inline into the scalar hybrid path, while `fwdADST8` and

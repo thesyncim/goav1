@@ -129,6 +129,27 @@ func TestForwardBlock8x8HybridTrustedRejectsUnsupported(t *testing.T) {
 	}
 }
 
+func TestForwardBlock8x8IDTXImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(15))
+	const resStride, coeffStride = 19, 13
+	residual := make([]int16, resStride*16)
+	for trial := range 3000 {
+		for i := range residual {
+			residual[i] = int16(rng.Intn(511) - 255)
+		}
+		var gotScratch, wantScratch [64]int32
+		got := make([]int32, coeffStride*16)
+		want := make([]int32, coeffStride*16)
+		forwardBlock8x8IDTXImpl(got, coeffStride, residual, resStride, gotScratch[:])
+		forwardBlock8x8IDTXPureGo(want, coeffStride, residual, resStride, wantScratch[:])
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("trial %d coeff[%d]=%d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 func TestFwdDCT8ValuesMatchesPointerCore(t *testing.T) {
 	rng := rand.New(rand.NewSource(14))
 	cases := [][8]int32{
@@ -216,6 +237,27 @@ func BenchmarkForwardBlock8x8HybridTrusted(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkForwardBlock8x8IDTXImpl(b *testing.B) {
+	benchmarkForwardBlock8x8IDTX(b, forwardBlock8x8IDTXImpl)
+}
+
+func BenchmarkForwardBlock8x8IDTXPureGo(b *testing.B) {
+	benchmarkForwardBlock8x8IDTX(b, forwardBlock8x8IDTXPureGo)
+}
+
+func benchmarkForwardBlock8x8IDTX(b *testing.B, fn func([]int32, int, []int16, int, []int32)) {
+	residual := make([]int16, 64)
+	for i := range residual {
+		residual[i] = int16((i*37+11)%511 - 255)
+	}
+	coeff := make([]int32, 64)
+	scratch := make([]int32, 64)
+	b.ReportAllocs()
+	for b.Loop() {
+		fn(coeff, 8, residual, 8, scratch)
 	}
 }
 
