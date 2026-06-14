@@ -89,6 +89,37 @@ func sad8x8x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
+// sad8x8x4NEONCtx carries four arbitrary 8x8 reference origins for one shared
+// source block. Field offsets are mirrored in assembly.
+type sad8x8x4NEONCtx struct {
+	Src    unsafe.Pointer
+	Ref0   unsafe.Pointer
+	Ref1   unsafe.Pointer
+	Ref2   unsafe.Pointer
+	Ref3   unsafe.Pointer
+	Stride int64
+	Sum0   int64
+	Sum1   int64
+	Sum2   int64
+	Sum3   int64
+}
+
+//go:noescape
+func sad8x8x4NEONAsm(ctx *sad8x8x4NEONCtx)
+
+func sad8x8x4NEON(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref0:   unsafe.Pointer(&ref0[0]),
+		Ref1:   unsafe.Pointer(&ref1[0]),
+		Ref2:   unsafe.Pointer(&ref2[0]),
+		Ref3:   unsafe.Pointer(&ref3[0]),
+		Stride: int64(stride),
+	}
+	sad8x8x4NEONAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
 func sad16x16x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 	ctx := sad8x8x4Step4NEONCtx{
 		Src:    unsafe.Pointer(&src[0]),
@@ -199,6 +230,7 @@ func init() {
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON
 	sad8x8x4Step4Impl = sad8x8x4Step4NEON
+	sad8x8x4Impl = sad8x8x4NEON
 	sad16x16x4Step4Impl = sad16x16x4Step4NEON
 	sad32x32x4Step4Impl = sad32x32x4Step4NEON
 	sad8x8DualImpl = sad8x8DualNEON

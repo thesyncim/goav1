@@ -20,6 +20,10 @@ var sad32x32Impl = sad32x32PureGo
 // raster search stride, where candidates are separated by four pixels.
 var sad8x8x4Step4Impl = sad8x8x4Step4PureGo
 
+// sad8x8x4Impl computes four 8x8 SADs against arbitrary reference origins.
+// It mirrors SVT's sad8x8x4d surface for small non-raster candidate groups.
+var sad8x8x4Impl = sad8x8x4PureGo
+
 // sad16x16x4Step4Impl computes four 16x16 SADs against reference blocks whose
 // x origins are ref+0, ref+4, ref+8, and ref+12.
 var sad16x16x4Step4Impl = sad16x16x4Step4PureGo
@@ -192,6 +196,41 @@ func sad16x16x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {
 			sum2 += d2
 
 			d3 := s - int(ref[row+c+12])
+			if d3 < 0 {
+				d3 = -d3
+			}
+			sum3 += d3
+		}
+	}
+	return sum0, sum1, sum2, sum3
+}
+
+func sad8x8x4PureGo(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	sum0, sum1, sum2, sum3 := 0, 0, 0, 0
+	for r := range 8 {
+		row := r * stride
+		for c := range 8 {
+			s := int(src[row+c])
+
+			d0 := s - int(ref0[row+c])
+			if d0 < 0 {
+				d0 = -d0
+			}
+			sum0 += d0
+
+			d1 := s - int(ref1[row+c])
+			if d1 < 0 {
+				d1 = -d1
+			}
+			sum1 += d1
+
+			d2 := s - int(ref2[row+c])
+			if d2 < 0 {
+				d2 = -d2
+			}
+			sum2 += d2
+
+			d3 := s - int(ref3[row+c])
 			if d3 < 0 {
 				d3 = -d3
 			}

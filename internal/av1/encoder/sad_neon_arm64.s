@@ -116,6 +116,79 @@ x4loop:
 	MOVD R5, X4SUM3(R0)
 	RET
 
+#define X4DSRC    0
+#define X4DREF0   8
+#define X4DREF1   16
+#define X4DREF2   24
+#define X4DREF3   32
+#define X4DSTRIDE 40
+#define X4DSUM0   48
+#define X4DSUM1   56
+#define X4DSUM2   64
+#define X4DSUM3   72
+
+// NEON 8x8 SAD for four arbitrary reference origins. This is the generic
+// four-ref counterpart to SVT's sad8x8x4d: one source row load feeds four
+// independent absolute-difference accumulators.
+
+// func sad8x8x4NEONAsm(ctx *sad8x8x4NEONCtx)
+TEXT ·sad8x8x4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD X4DSRC(R0), R1
+	MOVD X4DREF0(R0), R2
+	MOVD X4DREF1(R0), R7
+	MOVD X4DREF2(R0), R8
+	MOVD X4DREF3(R0), R9
+	MOVD X4DSTRIDE(R0), R3
+
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B8]
+	VLD1 (R7), [V10.B8]
+	VLD1 (R8), [V11.B8]
+	VLD1 (R9), [V12.B8]
+	WORD $0x2e217002 // uabdl v2.8h, v0.8b, v1.8b
+	WORD $0x2e2a7003 // uabdl v3.8h, v0.8b, v10.8b
+	WORD $0x2e2b7004 // uabdl v4.8h, v0.8b, v11.8b
+	WORD $0x2e2c7006 // uabdl v6.8h, v0.8b, v12.8b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+
+	MOVD $7, R4
+x4dloop:
+	VLD1 (R1), [V0.B8]
+	VLD1 (R2), [V1.B8]
+	VLD1 (R7), [V10.B8]
+	VLD1 (R8), [V11.B8]
+	VLD1 (R9), [V12.B8]
+	WORD $0x2e215002 // uabal v2.8h, v0.8b, v1.8b
+	WORD $0x2e2a5003 // uabal v3.8h, v0.8b, v10.8b
+	WORD $0x2e2b5004 // uabal v4.8h, v0.8b, v11.8b
+	WORD $0x2e2c5006 // uabal v6.8h, v0.8b, v12.8b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+	SUB  $1, R4
+	CBNZ R4, x4dloop
+
+	WORD $0x6e70384d // uaddlv s13, v2.8h
+	WORD $0x6e70386e // uaddlv s14, v3.8h
+	WORD $0x6e70388f // uaddlv s15, v4.8h
+	WORD $0x6e7038d0 // uaddlv s16, v6.8h
+	VMOV V13.S[0], R5
+	MOVD R5, X4DSUM0(R0)
+	VMOV V14.S[0], R5
+	MOVD R5, X4DSUM1(R0)
+	VMOV V15.S[0], R5
+	MOVD R5, X4DSUM2(R0)
+	VMOV V16.S[0], R5
+	MOVD R5, X4DSUM3(R0)
+	RET
+
 // NEON 16x16 SAD for four horizontal candidates separated by four pixels.
 // Each candidate keeps separate low/high uint16 accumulators, matching the
 // single-candidate 16x16 kernel while sharing source loads across four refs.
