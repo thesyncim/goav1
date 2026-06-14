@@ -94,6 +94,22 @@ func BenchmarkConvolveY8_32(b *testing.B) {
 	})
 }
 
+func BenchmarkConvolveX8_4tap_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters4[3]
+	runConvolveBench(b, 32, 32, func() {
+		convolveX8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk)
+	})
+}
+
+func BenchmarkConvolveY8_4tap_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters4[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveY8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+}
+
 func BenchmarkCompoundConvBuf2D8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
