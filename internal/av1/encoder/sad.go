@@ -141,6 +141,28 @@ func sad64x64x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return s0, s1, s2, s3
 }
 
+// sad64x64x4 composes four arbitrary 64x64 candidates from the active 32x32x4
+// kernel, mirroring SVT's sad64x64x4d surface without a separate asm body.
+func sad64x64x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	s0, s1, s2, s3 := sad32x32x4(src, ref0, ref1, ref2, ref3, stride)
+	t0, t1, t2, t3 := sad32x32x4(src[32:], ref0[32:], ref1[32:], ref2[32:], ref3[32:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	t0, t1, t2, t3 = sad32x32x4(src[32*stride:], ref0[32*stride:], ref1[32*stride:], ref2[32*stride:], ref3[32*stride:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	t0, t1, t2, t3 = sad32x32x4(src[32*stride+32:], ref0[32*stride+32:], ref1[32*stride+32:], ref2[32*stride+32:], ref3[32*stride+32:], stride)
+	s0 += t0
+	s1 += t1
+	s2 += t2
+	s3 += t3
+	return s0, s1, s2, s3
+}
+
 // sad8x8x4Step4PureGo is the portable reference for four horizontal 8x8 SAD
 // candidates spaced by the raster search's four-pixel x step.
 func sad8x8x4Step4PureGo(src, ref []byte, stride int) (int, int, int, int) {

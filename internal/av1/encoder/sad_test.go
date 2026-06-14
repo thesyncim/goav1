@@ -237,6 +237,38 @@ func TestSAD64x64x4Step4MatchesReference(t *testing.T) {
 	}
 }
 
+func TestSAD64x64x4MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(4566))
+	const (
+		stride = 160
+		height = 192
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 500 {
+		row := rng.Intn(56) + 64
+		col := rng.Intn(stride-136) + 64
+		off := row*stride + col
+		ref0 := off + 2
+		ref1 := off - 2
+		ref2 := off + 2*stride
+		ref3 := off - 2*stride
+		w0 := sadRectBlockReference(src, ref, off, ref0, stride, 64, 64)
+		w1 := sadRectBlockReference(src, ref, off, ref1, stride, 64, 64)
+		w2 := sadRectBlockReference(src, ref, off, ref2, stride, 64, 64)
+		w3 := sadRectBlockReference(src, ref, off, ref3, stride, 64, 64)
+		g0, g1, g2, g3 := sad64x64x4(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("off %d: impl (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+	}
+}
+
 func TestSAD32x32x4Step4ImplMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(46))
 	const stride = 117
@@ -862,6 +894,57 @@ func BenchmarkSAD64x64x4Step4(b *testing.B) {
 	}
 }
 
+func BenchmarkSAD64x64x4(b *testing.B) {
+	const stride = 160
+	src := make([]byte, stride*160)
+	ref := make([]byte, stride*160)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 64*stride + 64
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _ = sad64x64x4(src[off:], ref[off+2:], ref[off-2:], ref[off+2*stride:], ref[off-2*stride:], stride)
+	}
+}
+
+func BenchmarkSAD64x64x4ScalarReference(b *testing.B) {
+	const stride = 160
+	src := make([]byte, stride*160)
+	ref := make([]byte, stride*160)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 64*stride + 64
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sadRectBlockReference(src, ref, off, off+2, stride, 64, 64) +
+			sadRectBlockReference(src, ref, off, off-2, stride, 64, 64) +
+			sadRectBlockReference(src, ref, off, off+2*stride, stride, 64, 64) +
+			sadRectBlockReference(src, ref, off, off-2*stride, stride, 64, 64)
+	}
+}
+
+func BenchmarkSAD64x64x4Composed(b *testing.B) {
+	const stride = 160
+	src := make([]byte, stride*160)
+	ref := make([]byte, stride*160)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 64*stride + 64
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sad64x64(src[off:], ref[off+2:], stride) +
+			sad64x64(src[off:], ref[off-2:], stride) +
+			sad64x64(src[off:], ref[off+2*stride:], stride) +
+			sad64x64(src[off:], ref[off-2*stride:], stride)
+	}
+}
+
 func BenchmarkSAD64x64ScalarReference(b *testing.B) {
 	src := make([]byte, 96*96)
 	ref := make([]byte, 96*96)
@@ -1178,6 +1261,30 @@ func BenchmarkFullPelDiamondSearch32(b *testing.B) {
 	sum := 0
 	for b.Loop() {
 		dx, dy, sad := fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, 32, 0, 0, fullPelReach)
+		sum += dx + dy + sad
+	}
+	fullPelDiamondBenchSink = sum
+}
+
+func BenchmarkFullPelDiamondSearch64(b *testing.B) {
+	const (
+		width  = 176
+		height = 160
+		stride = 192
+		px     = 64
+		py     = 48
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(i*7 + i/stride*11)
+		ref[i] = uint8(i*13 + i/stride*3 + 17)
+	}
+
+	b.ReportAllocs()
+	sum := 0
+	for b.Loop() {
+		dx, dy, sad := fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, 64, 0, 0, fullPelReach)
 		sum += dx + dy + sad
 	}
 	fullPelDiamondBenchSink = sum

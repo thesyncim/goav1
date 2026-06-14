@@ -2808,13 +2808,35 @@ func fullPelDiamondSearch64(srcBlock []byte, ref []byte, base, stride, minDX, ma
 			}
 		}
 	}
-	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
-		dx, dy := cand[0], cand[1]
-		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-			continue
+	refineDX, refineDY := bestDX, bestDY
+	if refineDX+2 <= maxDX && refineDX-2 >= minDX && refineDY+2 <= maxDY && refineDY-2 >= minDY {
+		s0, s1, s2, s3 := sad64x64x4(srcBlock,
+			ref[base+refineDY*stride+refineDX+2:],
+			ref[base+refineDY*stride+refineDX-2:],
+			ref[base+(refineDY+2)*stride+refineDX:],
+			ref[base+(refineDY-2)*stride+refineDX:],
+			stride)
+		if s0 < bestSAD {
+			bestSAD, bestDX, bestDY = s0, refineDX+2, refineDY
 		}
-		if s := sad64x64(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
-			bestSAD, bestDX, bestDY = s, dx, dy
+		if s1 < bestSAD {
+			bestSAD, bestDX, bestDY = s1, refineDX-2, refineDY
+		}
+		if s2 < bestSAD {
+			bestSAD, bestDX, bestDY = s2, refineDX, refineDY+2
+		}
+		if s3 < bestSAD {
+			bestSAD, bestDX, bestDY = s3, refineDX, refineDY-2
+		}
+	} else {
+		for _, cand := range [4][2]int{{refineDX + 2, refineDY}, {refineDX - 2, refineDY}, {refineDX, refineDY + 2}, {refineDX, refineDY - 2}} {
+			dx, dy := cand[0], cand[1]
+			if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+				continue
+			}
+			if s := sad64x64(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
 		}
 	}
 	return bestDX, bestDY, bestSAD
