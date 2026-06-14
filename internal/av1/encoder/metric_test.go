@@ -27,7 +27,11 @@ func TestPixelStatsImplMatchesPureGo(t *testing.T) {
 		impl func([]byte, int, []byte, int) (uint32, int32)
 	}{
 		{w: 8, h: 8, pure: pixelStats8x8PureGo, impl: pixelStats8x8Impl},
+		{w: 16, h: 8, pure: pixelStats16x8PureGo, impl: pixelStats16x8Impl},
+		{w: 8, h: 16, pure: pixelStats8x16PureGo, impl: pixelStats8x16Impl},
 		{w: 16, h: 16, pure: pixelStats16x16PureGo, impl: pixelStats16x16Impl},
+		{w: 32, h: 16, pure: pixelStats32x16PureGo, impl: pixelStats32x16Impl},
+		{w: 16, h: 32, pure: pixelStats16x32PureGo, impl: pixelStats16x32Impl},
 		{w: 32, h: 32, pure: pixelStats32x32PureGo, impl: pixelStats32x32Impl},
 	} {
 		for range 1000 {
@@ -63,28 +67,32 @@ func TestSSEVarianceMatchesReference(t *testing.T) {
 		ref[i] = uint8(rng.Intn(256))
 	}
 	for _, sh := range []struct {
-		n     int
+		w, h  int
 		fn    func([]byte, int, []byte, int) (uint32, uint32)
 		shift uint
 	}{
-		{n: 8, fn: sseVariance8x8, shift: 6},
-		{n: 16, fn: sseVariance16x16, shift: 8},
-		{n: 32, fn: sseVariance32x32, shift: 10},
-		{n: 64, fn: sseVariance64x64, shift: 12},
+		{w: 8, h: 8, fn: sseVariance8x8, shift: 6},
+		{w: 16, h: 8, fn: sseVariance16x8, shift: 7},
+		{w: 8, h: 16, fn: sseVariance8x16, shift: 7},
+		{w: 16, h: 16, fn: sseVariance16x16, shift: 8},
+		{w: 32, h: 16, fn: sseVariance32x16, shift: 9},
+		{w: 16, h: 32, fn: sseVariance16x32, shift: 9},
+		{w: 32, h: 32, fn: sseVariance32x32, shift: 10},
+		{w: 64, h: 64, fn: sseVariance64x64, shift: 12},
 	} {
 		for range 500 {
-			srow := rng.Intn(height - sh.n)
-			scol := rng.Intn(srcStride - sh.n)
-			rrow := rng.Intn(height - sh.n)
-			rcol := rng.Intn(refStride - sh.n)
+			srow := rng.Intn(height - sh.h)
+			scol := rng.Intn(srcStride - sh.w)
+			rrow := rng.Intn(height - sh.h)
+			rcol := rng.Intn(refStride - sh.w)
 			srcOff := srow*srcStride + scol
 			refOff := rrow*refStride + rcol
-			wantSSE, wantSum := pixelStatsPureGo(src[srcOff:], srcStride, ref[refOff:], refStride, sh.n, sh.n)
+			wantSSE, wantSum := pixelStatsPureGo(src[srcOff:], srcStride, ref[refOff:], refStride, sh.w, sh.h)
 			wantVar := varianceFromStats(wantSSE, wantSum, sh.shift)
 			gotSSE, gotVar := sh.fn(src[srcOff:], srcStride, ref[refOff:], refStride)
 			if gotSSE != wantSSE || gotVar != wantVar {
 				t.Fatalf("%dx%d srcOff=%d refOff=%d: got sse=%d var=%d want sse=%d var=%d",
-					sh.n, sh.n, srcOff, refOff, gotSSE, gotVar, wantSSE, wantVar)
+					sh.w, sh.h, srcOff, refOff, gotSSE, gotVar, wantSSE, wantVar)
 			}
 		}
 	}

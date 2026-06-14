@@ -548,15 +548,26 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `193.8-200.5 ns/op` versus `790-891 ns/op` scalar, all zero allocations.
 - Pixel-domain SSE/variance now has a baseline arm64 NEON stats kernel for
   square 8x8/16x16/32x32 blocks, with 64x64 composed from four 32x32 stats
-  calls. This mirrors SVT's `sse_neon.c`/`variance_neon.c` metric surface for
-  the active square sizes without changing mode decisions. On the local M4 Max,
-  `BenchmarkPixelStats8x8NEON` is about `7.12-7.42 ns/op` versus
-  `29.69-31.06 ns/op` scalar, `BenchmarkPixelStats16x16NEON` is about
-  `25.64-26.06 ns/op` versus `126.2-127.3 ns/op` scalar,
-  `BenchmarkPixelStats32x32NEON` is about `97.73-102.5 ns/op` versus
-  `482.0-497.2 ns/op` scalar, and composed `BenchmarkSSEVariance64x64NEON`
-  is about `400.2-417.8 ns/op` versus `1905-1942 ns/op` scalar, all zero
-  allocations.
+  calls. The same kernel is now also surfaced for the active rectangular
+  16x8/8x16/32x16/16x32 metric shapes, matching the relevant width-multiple-of-8
+  portion of SVT's `sse_neon.c`/`variance_neon.c` surface without changing mode
+  decisions. On the local M4 Max, `BenchmarkPixelStats8x8NEON` is about
+  `7.12-7.42 ns/op` versus `29.69-31.06 ns/op` scalar,
+  `BenchmarkPixelStats16x16NEON` is about `25.64-26.06 ns/op` versus
+  `126.2-127.3 ns/op` scalar, `BenchmarkPixelStats32x32NEON` is about
+  `97.73-102.5 ns/op` versus `482.0-497.2 ns/op` scalar, and composed
+  `BenchmarkSSEVariance64x64NEON` is about `400.2-417.8 ns/op` versus
+  `1905-1942 ns/op` scalar, all zero allocations. The new rectangular median
+  rows are `BenchmarkPixelStats16x8NEON` `12.41 ns/op` versus `64.12 ns/op`
+  scalar, `BenchmarkPixelStats8x16NEON` `12.56 ns/op` versus `64.64 ns/op`
+  scalar, `BenchmarkPixelStats32x16NEON` `45.10 ns/op` versus `237.4 ns/op`
+  scalar, and `BenchmarkPixelStats16x32NEON` `46.23 ns/op` versus
+  `239.0 ns/op` scalar. The matching variance rows are
+  `BenchmarkSSEVariance16x8NEON` `12.79 ns/op` versus `58.57 ns/op` scalar,
+  `BenchmarkSSEVariance8x16NEON` `12.64 ns/op` versus `65.08 ns/op` scalar,
+  `BenchmarkSSEVariance32x16NEON` `45.55 ns/op` versus `231.6 ns/op` scalar,
+  and `BenchmarkSSEVariance16x32NEON` `46.60 ns/op` versus `232.6 ns/op`
+  scalar, all zero allocations.
 - Coefficient SATD reduction now has an arm64 NEON reducer mirroring SVT's
   `svt_aom_satd_neon` loop over 16 int32 coefficients per iteration. It covers
   the AV1 coefficient counts `{16,64,256,1024}` and is parity-tested against

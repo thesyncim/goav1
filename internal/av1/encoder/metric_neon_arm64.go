@@ -68,8 +68,24 @@ func pixelStats8x8NEON(src []byte, srcStride int, ref []byte, refStride int) (ss
 	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 8)
 }
 
+func pixelStats16x8NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 8)
+}
+
+func pixelStats8x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 16)
+}
+
 func pixelStats16x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 16)
+}
+
+func pixelStats32x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 16)
+}
+
+func pixelStats16x32NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 32)
 }
 
 func pixelStats32x32NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
@@ -125,7 +141,11 @@ func hadamard32x32NEON(src []int16, srcStride int, coeff []int32) {
 
 func init() {
 	pixelStats8x8Impl = pixelStats8x8NEON
+	pixelStats16x8Impl = pixelStats16x8NEON
+	pixelStats8x16Impl = pixelStats8x16NEON
 	pixelStats16x16Impl = pixelStats16x16NEON
+	pixelStats32x16Impl = pixelStats32x16NEON
+	pixelStats16x32Impl = pixelStats16x32NEON
 	pixelStats32x32Impl = pixelStats32x32NEON
 	satdCoeffsImpl = satdCoeffsNEON
 	hadamard4x4Impl = hadamard4x4NEON
