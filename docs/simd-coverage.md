@@ -403,6 +403,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   raster call sites and inside the 64x64 composition helper, while the
   stack-local NEON contexts remain non-escaping. `BenchmarkFullPelDiamondSearch8`
   currently sits around `89.9-98.7 ns/op` with zero allocations.
+- A 2026-06-14 arm64 SAD wrapper cleanup that replaced `&slice[0]` pointer
+  extraction with `unsafe.SliceData` was rejected. It removed 21 reported BCE
+  sites in `sad_neon_arm64.go` and kept the same escape count, but paired local
+  rows did not show a reliable runtime win: full-pel 8x8 search moved only
+  slightly (`92.70 ns/op` baseline median versus `91.99 ns/op` patched), while
+  `BenchmarkSAD8x8CompoundAvgBlock` regressed (`6.33 ns/op` versus
+  `6.59 ns/op`). Keep the indexed form until a narrower wrapper change improves
+  an end-to-end search row without regressing the direct SAD kernels.
 - `BenchmarkSubpelRefine8x8` now gates the exact 8x8 subpel refine scorer. The
   initial rows are `151.5-159.8 ns/op`, zero allocations. A direct arm64 NEON
   helper experiment for the subpel probe was rejected: the same-checkout
