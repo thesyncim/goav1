@@ -132,7 +132,11 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	if err != nil {
 		return TXBDecodeResult{}, err
 	}
-	w.WriteCDF(eobCDF, token-1)
+	if eobMultiSizeTable[req.Size] == 2 && req.Plane == CoeffPlaneY {
+		w.WriteCDF7(eobCDF, token-1)
+	} else {
+		w.WriteCDF(eobCDF, token-1)
+	}
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][req.Plane][token-3], firstBit)
@@ -323,7 +327,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
+	w.WriteCDF7(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
@@ -2094,7 +2098,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
+	w.WriteCDF7(&cdfs.EOBFlag64[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)

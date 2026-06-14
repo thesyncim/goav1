@@ -221,6 +221,16 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   writer neutral/noisy (`trusted` median `500.0 ns/op` baseline versus
   `500.4 ns/op` patched) while the hot count-only lane improved from
   `422.9 ns/op` to `418.8 ns/op`.
+- `WriteCDF7` now covers the fixed seven-symbol 8x8 luma EOB-token CDF
+  (`eob_flag_cdf64`, SVT writes it with symbol count `7`). The CDF7 stream
+  microbench moved from median `40876 ns/op` generic writer to `18997 ns/op`
+  specialized, and from `36869 ns/op` generic counter to `18249 ns/op`
+  specialized, zero allocations. Clean previous-commit A/B on
+  `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` moved from median
+  `421.1 ns/op` to `412.5 ns/op`, zero allocations; the compiler reports the
+  new writer/counter receivers and CDF pointers as non-escaping. The matching
+  UV route was tested but not kept because its trusted-count median moved from
+  `439.2 ns/op` to `441.5 ns/op` in the all-plane patch.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
   coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
   single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,

@@ -710,6 +710,187 @@ func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
 	w.normalize(r)
 }
 
+// WriteCDF7 codes symbol s using a known seven-symbol adaptive CDF. It covers
+// the fixed EOB-flag64 coefficient token CDF used by 8x8 TXBs.
+func (w *Writer) WriteCDF7(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 7)
+	}
+	v0, v1, v2 := values[0], values[1], values[2]
+	v3, v4, v5 := values[3], values[4], values[5]
+	l := w.low
+	r := w.rng
+	count := values[7]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*6
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*6
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*5
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*5
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 3:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		v := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 4:
+		u := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v4) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 5:
+		u := ((q * (uint32(v4) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v5) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 + ((uint16(CDFProbTop) - v4) >> rate)
+		values[5] = v5 - (v5 >> rate)
+	default:
+		u := ((q * (uint32(v5) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 + ((uint16(CDFProbTop) - v4) >> rate)
+		values[5] = v5 + ((uint16(CDFProbTop) - v5) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[7] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteCDF7(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 7)
+	}
+	v0, v1, v2 := values[0], values[1], values[2]
+	v3, v4, v5 := values[3], values[4], values[5]
+	r := w.rng
+	count := values[7]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*6
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*6
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*5
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*5
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 3:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		v := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 - (v3 >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 4:
+		u := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v4) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 - (v4 >> rate)
+		values[5] = v5 - (v5 >> rate)
+	case 5:
+		u := ((q * (uint32(v4) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v5) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 + ((uint16(CDFProbTop) - v4) >> rate)
+		values[5] = v5 - (v5 >> rate)
+	default:
+		u := ((q * (uint32(v5) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+		values[4] = v4 + ((uint16(CDFProbTop) - v4) >> rate)
+		values[5] = v5 + ((uint16(CDFProbTop) - v5) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[7] = count + 1
+	}
+	w.normalize(r)
+}
+
 // WriteLiteral codes the low n bits of value MSB-first as equiprobable bits,
 // matching aom_write_literal -> aom_write_bit -> od_ec_encode_bool_q15(., 1<<14),
 // the exact inverse of Reader.ReadBits.
