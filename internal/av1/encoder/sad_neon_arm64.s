@@ -442,6 +442,63 @@ x4loop16:
 	MOVD R5, X4SUM3(R0)
 	RET
 
+// DOTPROD-tier 16x16 SAD for four horizontal step-4 candidates. This keeps
+// SVT's UABD+UDOT SAD shape while reusing the baseline NEON reference-window
+// extraction.
+//
+//   udot v21.4s, v2.16b, v31.16b -> 0x6e9f9455
+//   udot v22.4s, v3.16b, v31.16b -> 0x6e9f9476
+//   udot v23.4s, v4.16b, v31.16b -> 0x6e9f9497
+//   udot v24.4s, v6.16b, v31.16b -> 0x6e9f94d8
+//
+// func sad16x16x4Step4DotProdAsm(ctx *sad8x8x4Step4NEONCtx)
+TEXT ·sad16x16x4Step4DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	WORD $0x4f000415 // movi v21.4s, #0
+	WORD $0x4f000416 // movi v22.4s, #0
+	WORD $0x4f000417 // movi v23.4s, #0
+	WORD $0x4f000418 // movi v24.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $16, R4
+dp16x4loop:
+	VLD1 (R1), [V0.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	WORD $0x6e05202a // ext  v10.16b, v1.16b, v5.16b, #4
+	WORD $0x6e05402b // ext  v11.16b, v1.16b, v5.16b, #8
+	WORD $0x6e05602c // ext  v12.16b, v1.16b, v5.16b, #12
+	WORD $0x6e217402 // uabd v2.16b, v0.16b, v1.16b
+	WORD $0x6e2a7403 // uabd v3.16b, v0.16b, v10.16b
+	WORD $0x6e2b7404 // uabd v4.16b, v0.16b, v11.16b
+	WORD $0x6e2c7406 // uabd v6.16b, v0.16b, v12.16b
+	WORD $0x6e9f9455 // udot v21.4s, v2.16b, v31.16b
+	WORD $0x6e9f9476 // udot v22.4s, v3.16b, v31.16b
+	WORD $0x6e9f9497 // udot v23.4s, v4.16b, v31.16b
+	WORD $0x6e9f94d8 // udot v24.4s, v6.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, dp16x4loop
+
+	WORD $0x6eb03aa0 // uaddlv d0, v21.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM0(R0)
+	WORD $0x6eb03ac0 // uaddlv d0, v22.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM1(R0)
+	WORD $0x6eb03ae0 // uaddlv d0, v23.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM2(R0)
+	WORD $0x6eb03b00 // uaddlv d0, v24.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM3(R0)
+	RET
+
 // NEON 32x32 SAD for four horizontal candidates separated by four pixels. Each
 // row consumes two 16-byte source chunks; the second chunk accumulates into the
 // same low/high candidate sums as the first.
@@ -541,6 +598,76 @@ x4loop32:
 	MOVD R5, X4SUM3(R0)
 	RET
 
+// DOTPROD-tier 32x32 SAD for four horizontal step-4 candidates.
+//
+//   uabd v7.16b,  v15.16b, v5.16b  -> 0x6e2575e7
+//   uabd v8.16b,  v15.16b, v18.16b -> 0x6e3275e8
+//   uabd v9.16b,  v15.16b, v19.16b -> 0x6e3375e9
+//   uabd v13.16b, v15.16b, v20.16b -> 0x6e3475ed
+//
+// func sad32x32x4Step4DotProdAsm(ctx *sad8x8x4Step4NEONCtx)
+TEXT ·sad32x32x4Step4DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	WORD $0x4f000415 // movi v21.4s, #0
+	WORD $0x4f000416 // movi v22.4s, #0
+	WORD $0x4f000417 // movi v23.4s, #0
+	WORD $0x4f000418 // movi v24.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $32, R4
+dp32x4loop:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	ADD  $32, R2, R12
+	VLD1 (R12), [V14.B16]
+	WORD $0x6e05202a // ext  v10.16b, v1.16b, v5.16b,  #4
+	WORD $0x6e05402b // ext  v11.16b, v1.16b, v5.16b,  #8
+	WORD $0x6e05602c // ext  v12.16b, v1.16b, v5.16b,  #12
+	WORD $0x6e0e20b2 // ext  v18.16b, v5.16b, v14.16b, #4
+	WORD $0x6e0e40b3 // ext  v19.16b, v5.16b, v14.16b, #8
+	WORD $0x6e0e60b4 // ext  v20.16b, v5.16b, v14.16b, #12
+	WORD $0x6e217402 // uabd v2.16b,  v0.16b,  v1.16b
+	WORD $0x6e2a7403 // uabd v3.16b,  v0.16b,  v10.16b
+	WORD $0x6e2b7404 // uabd v4.16b,  v0.16b,  v11.16b
+	WORD $0x6e2c7406 // uabd v6.16b,  v0.16b,  v12.16b
+	WORD $0x6e2575e7 // uabd v7.16b,  v15.16b, v5.16b
+	WORD $0x6e3275e8 // uabd v8.16b,  v15.16b, v18.16b
+	WORD $0x6e3375e9 // uabd v9.16b,  v15.16b, v19.16b
+	WORD $0x6e3475ed // uabd v13.16b, v15.16b, v20.16b
+	WORD $0x6e9f9455 // udot v21.4s, v2.16b,  v31.16b
+	WORD $0x6e9f9476 // udot v22.4s, v3.16b,  v31.16b
+	WORD $0x6e9f9497 // udot v23.4s, v4.16b,  v31.16b
+	WORD $0x6e9f94d8 // udot v24.4s, v6.16b,  v31.16b
+	WORD $0x6e9f94f5 // udot v21.4s, v7.16b,  v31.16b
+	WORD $0x6e9f9516 // udot v22.4s, v8.16b,  v31.16b
+	WORD $0x6e9f9537 // udot v23.4s, v9.16b,  v31.16b
+	WORD $0x6e9f95b8 // udot v24.4s, v13.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, dp32x4loop
+
+	WORD $0x6eb03aa0 // uaddlv d0, v21.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM0(R0)
+	WORD $0x6eb03ac0 // uaddlv d0, v22.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM1(R0)
+	WORD $0x6eb03ae0 // uaddlv d0, v23.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM2(R0)
+	WORD $0x6eb03b00 // uaddlv d0, v24.4s
+	VMOV V0.D[0], R5
+	MOVD R5, X4SUM3(R0)
+	RET
+
 // NEON 16x16 sum of absolute differences: 16-byte rows accumulated with the
 // paired widening instructions (UABDL/UABDL2 for row 0, UABAL/UABAL2 for the
 // rest), the two uint16 accumulators added and reduced with UADDLV.
@@ -581,6 +708,40 @@ loop16:
 	VADD V3.H8, V2.H8, V2.H8
 	WORD $0x6e703844 // uaddlv s4, v2.8h
 	VMOV V4.S[0], R5
+	MOVD R5, SUM(R0)
+	RET
+
+// DOTPROD-tier 16x16 SAD: byte absolute differences are accumulated by
+// dotting with a vector of ones, matching SVT's vabdq_u8 + vdotq_u32 idiom.
+//
+//   movi  v31.16b, #1              -> 0x4f00e43f
+//   movi  v16.4s,  #0              -> 0x4f000410
+//   uabd  v2.16b,  v0.16b, v1.16b -> 0x6e217402
+//   udot  v16.4s,  v2.16b, v31.16b -> 0x6e9f9450
+//   uaddlv d0,     v16.4s          -> 0x6eb03a00
+//
+// func sad16x16DotProdAsm(ctx *sad8x8NEONCtx)
+TEXT ·sad16x16DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $16, R4
+dp16loop:
+	VLD1 (R1), [V0.B16]
+	VLD1 (R2), [V1.B16]
+	WORD $0x6e217402 // uabd v2.16b, v0.16b, v1.16b
+	WORD $0x6e9f9450 // udot v16.4s, v2.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, dp16loop
+
+	WORD $0x6eb03a00 // uaddlv d0, v16.4s
+	VMOV V0.D[0], R5
 	MOVD R5, SUM(R0)
 	RET
 
@@ -639,6 +800,43 @@ loop32:
 	VADD V6.H8, V2.H8, V2.H8
 	WORD $0x6e703844 // uaddlv s4, v2.8h
 	VMOV V4.S[0], R5
+	MOVD R5, SUM(R0)
+	RET
+
+// DOTPROD-tier 32x32 SAD. The sum is bounded by 1024*255, so each u32 dot
+// accumulator lane is comfortably below overflow.
+//
+//   uabd v3.16b, v4.16b, v5.16b -> 0x6e257483
+//   udot v16.4s, v3.16b, v31.16b -> 0x6e9f9470
+//
+// func sad32x32DotProdAsm(ctx *sad8x8NEONCtx)
+TEXT ·sad32x32DotProdAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SRC(R0), R1
+	MOVD REF(R0), R2
+	MOVD STRIDE(R0), R3
+
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f00e43f // movi v31.16b, #1
+	MOVD $32, R4
+dp32loop:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R6
+	VLD1 (R6), [V4.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R7
+	VLD1 (R7), [V5.B16]
+	WORD $0x6e217402 // uabd v2.16b, v0.16b, v1.16b
+	WORD $0x6e257483 // uabd v3.16b, v4.16b, v5.16b
+	WORD $0x6e9f9450 // udot v16.4s, v2.16b, v31.16b
+	WORD $0x6e9f9470 // udot v16.4s, v3.16b, v31.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	SUB  $1, R4
+	CBNZ R4, dp32loop
+
+	WORD $0x6eb03a00 // uaddlv d0, v16.4s
+	VMOV V0.D[0], R5
 	MOVD R5, SUM(R0)
 	RET
 

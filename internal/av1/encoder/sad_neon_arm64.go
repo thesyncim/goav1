@@ -2,7 +2,11 @@
 
 package encoder
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
+)
 
 // sad8x8NEONCtx carries the kernel arguments; the assembly writes the sum into
 // Sum. Field offsets are mirrored by #define in sad_neon_arm64.s.
@@ -32,6 +36,11 @@ func sad8x8NEON(src, ref []byte, stride int, limit int) int {
 //go:noescape
 func sad16x16NEONAsm(ctx *sad8x8NEONCtx)
 
+//go:noescape
+func sad16x16DotProdAsm(ctx *sad8x8NEONCtx)
+
+var useDotProdSAD = cpu.Detected.DOTPROD
+
 // sad16x16NEON computes the full 16x16 SAD with paired widening
 // absolute-difference accumulation over 16-byte rows.
 func sad16x16NEON(src, ref []byte, stride int) int {
@@ -44,8 +53,22 @@ func sad16x16NEON(src, ref []byte, stride int) int {
 	return int(ctx.Sum)
 }
 
+// sad16x16DotProd computes the full 16x16 SAD with SVT-style UABD+UDOT.
+func sad16x16DotProd(src, ref []byte, stride int) int {
+	ctx := sad8x8NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad16x16DotProdAsm(&ctx)
+	return int(ctx.Sum)
+}
+
 //go:noescape
 func sad32x32NEONAsm(ctx *sad8x8NEONCtx)
+
+//go:noescape
+func sad32x32DotProdAsm(ctx *sad8x8NEONCtx)
 
 // sad32x32NEON computes the full 32x32 SAD in one assembly call.
 func sad32x32NEON(src, ref []byte, stride int) int {
@@ -55,6 +78,17 @@ func sad32x32NEON(src, ref []byte, stride int) int {
 		Stride: int64(stride),
 	}
 	sad32x32NEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
+// sad32x32DotProd computes the full 32x32 SAD with SVT-style UABD+UDOT.
+func sad32x32DotProd(src, ref []byte, stride int) int {
+	ctx := sad8x8NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad32x32DotProdAsm(&ctx)
 	return int(ctx.Sum)
 }
 
@@ -77,7 +111,13 @@ func sad8x8x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
 func sad16x16x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
 
 //go:noescape
+func sad16x16x4Step4DotProdAsm(ctx *sad8x8x4Step4NEONCtx)
+
+//go:noescape
 func sad32x32x4Step4NEONAsm(ctx *sad8x8x4Step4NEONCtx)
+
+//go:noescape
+func sad32x32x4Step4DotProdAsm(ctx *sad8x8x4Step4NEONCtx)
 
 //go:noescape
 func sad32x32x4NEONAsm(ctx *sad8x8x4NEONCtx)
@@ -162,6 +202,16 @@ func sad16x16x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
+func sad16x16x4Step4DotProd(src, ref []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4Step4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad16x16x4Step4DotProdAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
 func sad32x32x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 	ctx := sad8x8x4Step4NEONCtx{
 		Src:    unsafe.Pointer(&src[0]),
@@ -169,6 +219,16 @@ func sad32x32x4Step4NEON(src, ref []byte, stride int) (int, int, int, int) {
 		Stride: int64(stride),
 	}
 	sad32x32x4Step4NEONAsm(&ctx)
+	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
+}
+
+func sad32x32x4Step4DotProd(src, ref []byte, stride int) (int, int, int, int) {
+	ctx := sad8x8x4Step4NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad32x32x4Step4DotProdAsm(&ctx)
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
@@ -267,6 +327,10 @@ func init() {
 	sad16x16x4Step4Impl = sad16x16x4Step4NEON
 	sad32x32x4Impl = sad32x32x4NEON
 	sad32x32x4Step4Impl = sad32x32x4Step4NEON
+	if useDotProdSAD {
+		sad16x16x4Step4Impl = sad16x16x4Step4DotProd
+		sad32x32x4Step4Impl = sad32x32x4Step4DotProd
+	}
 	sad8x8DualImpl = sad8x8DualNEON
 	sad16x16DualImpl = sad16x16DualNEON
 	sad32x32DualImpl = sad32x32DualNEON
