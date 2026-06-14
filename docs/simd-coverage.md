@@ -515,6 +515,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   Compiler reports keep the wrapper inlineable, `entropy.NewBitCounter`
   inlined, `cdfs`/coefficient pointers non-escaping, and the neighbor-context
   bounds checks elided.
+- Applying that sparse-bitset sign/Golomb tail to the real 8x8 luma writer was
+  rejected on 2026-06-14. It preserved 8x8 writer/count parity and zero
+  allocations, but the luma-only patch regressed the guarded rows in a fresh
+  paired run: `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted` moved from median
+  `487.1 ns/op` to `491.6 ns/op`, and the untouched
+  `trusted-count` control moved from `431.0 ns/op` to `434.3 ns/op`. The real
+  writer keeps its scan-and-branch tail until an end-to-end row proves the extra
+  bitset bookkeeping is worthwhile.
 - A SVT-shaped cumulative-level saturation guard was rejected on 2026-06-14 for
   the 8x8 trusted-count TXB prep loop. SVT's separate
   `svt_av1_compute_cul_level_c` can break once the sum reaches
