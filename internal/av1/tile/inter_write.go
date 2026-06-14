@@ -258,7 +258,7 @@ func WriteMotionVector(w *entropy.Writer, cdfs *MVCDFs, mv motion.Vector, ref mo
 	if err != nil {
 		return err
 	}
-	w.WriteCDF(cdf, int(joint))
+	w.WriteCDF4(cdf, int(joint))
 	if joint.HasVertical() {
 		if err := WriteMVComponentDiff(w, &cdfs.Components[mvComponentRow], precision, diffRow); err != nil {
 			return err
@@ -347,7 +347,7 @@ func WriteMVComponentDiff(w *entropy.Writer, cdfs *MVComponentCDFs, precision MV
 		if err != nil {
 			return err
 		}
-		w.WriteCDF(fpCDF, fraction)
+		w.WriteCDF4(fpCDF, fraction)
 		if precision.UsesHighPrecision() {
 			var hpCDF *entropy.CDF
 			if mvClass == 0 {

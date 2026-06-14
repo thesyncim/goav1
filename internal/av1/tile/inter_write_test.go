@@ -365,3 +365,44 @@ func randomSmallVector(rng *rand.Rand) motion.Vector {
 		Col: int16(rng.Intn(257) - 128),
 	}
 }
+
+func BenchmarkWriteMotionVectorStream(b *testing.B) {
+	const streamLen = 2048
+	rng := rand.New(rand.NewSource(137))
+	precisions := []MVSubpelPrecision{MVSubpelNone, MVSubpelLow, MVSubpelHigh}
+	type op struct {
+		mv, ref   motion.Vector
+		precision MVSubpelPrecision
+	}
+	ops := make([]op, streamLen)
+	for i := range ops {
+		precision := precisions[rng.Intn(len(precisions))]
+		ref := randomSmallVector(rng)
+		ops[i] = op{
+			mv: motion.Vector{
+				Row: ref.Row + int16(randomMVDiff(rng, precision)),
+				Col: ref.Col + int16(randomMVDiff(rng, precision)),
+			},
+			ref:       ref,
+			precision: precision,
+		}
+	}
+	var base MVCDFs
+	if err := base.InitDefault(); err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, 0, 1<<16)
+	b.ReportAllocs()
+	for b.Loop() {
+		cdfs := base
+		w := entropy.NewWriter(buf[:0])
+		for _, o := range ops {
+			if err := WriteMotionVector(&w, &cdfs, o.mv, o.ref, o.precision); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if _, err := w.Finish(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

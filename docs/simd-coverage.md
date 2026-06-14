@@ -206,6 +206,13 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   normalization moved to the 16-bit shift expression below, the specialized
   local writer stream benchmark is about `18.6-19.0 us` per 4096-symbol
   stream, zero allocations.
+- Motion-vector writing now routes the four-symbol joint and fractional-pel
+  CDFs through `WriteCDF4` instead of the generic adaptive CDF writer, matching
+  SVT's same CDF source shape while using the local fixed-arity specialization.
+  `BenchmarkWriteMotionVectorStream` moved from `173478 ns/op` mean /
+  `172227 ns/op` median to `161569 ns/op` mean / `161805 ns/op` median for a
+  2048-vector stream, zero allocations; the compiler reports the touched writer
+  and CDF parameters as non-escaping and no `inter_write.go` bounds checks.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
   coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
   single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,
