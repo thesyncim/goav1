@@ -88,12 +88,12 @@ func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []in
 
 // ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
 func ForwardBlock8x8DCTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8DCTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
 }
 
 // ForwardBlock8x8ADSTADSTTrusted computes the trusted 8x8 ADST_ADST transform.
 func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8ADSTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
 }
 
 // ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
@@ -115,9 +115,9 @@ func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16
 	case TypeADSTDCT:
 		forwardBlock8x8ADSTDCTImpl(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeDCTADST:
-		forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8DCTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeADSTADST:
-		forwardBlock8x8ADSTADST(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8ADSTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeIDTX:
 		forwardBlock8x8IDTXImpl(coeff, coeffStride, residual, residualStride, scratch)
 	default:
@@ -173,7 +173,7 @@ func forwardBlock8x8ADSTDCTPureGo(coeff []int32, coeffStride int, residual []int
 	}
 }
 
-func forwardBlock8x8DCTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+func forwardBlock8x8DCTADSTPureGo(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
@@ -220,7 +220,7 @@ func forwardBlock8x8DCTADST(coeff []int32, coeffStride int, residual []int16, re
 	}
 }
 
-func forwardBlock8x8ADSTADST(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+func forwardBlock8x8ADSTADSTPureGo(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
