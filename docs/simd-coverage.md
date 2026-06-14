@@ -540,6 +540,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   zero-input row to `1.78-1.89 ns/op`, but dense rows moved to
   `7.15-7.41 ns/op` and full `ADST_ADST` 8x8 rows regressed to roughly
   `285.0-292.6 ns/op`.
+- An 8x8 scalar column-rounding unroll was rejected on 2026-06-14. SVT's
+  `svt_av1_fwd_txfm2d_8x8_sse4_1` keeps rounding inside the vectorized
+  8x8 column pipeline before transpose; in Go, unrolling `fwdRoundShift1x8`
+  globally helped `DCT_ADST` but regressed `ADST_ADST`. Narrowing the unroll to
+  only `DCT_ADST` still was not safe: same-session `2000000x` baseline medians
+  were `ADST_DCT=275.8 ns/op`, `DCT_ADST=305.0 ns/op`, and
+  `ADST_ADST=278.7 ns/op`; the narrowed patch measured
+  `ADST_DCT=276.4 ns/op`, `DCT_ADST=286.1 ns/op`, and
+  `ADST_ADST=288.3 ns/op`, all zero allocations. The code was reverted; this
+  reinforces that the remaining gap wants an actual 8x8 ADST SIMD kernel rather
+  than scalar code-shape churn.
 
 ## Next Implementation Order
 
