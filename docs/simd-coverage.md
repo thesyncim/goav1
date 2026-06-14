@@ -101,7 +101,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | --- | --- | --- | --- |
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list, extra scan-table, and branchless sign rewrites regressed or tied after paired measurement. |
-| Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`, `normalize`, and `WriteBit` are top profile entries. `BenchmarkBitCounterCDF4Stream` now gates the exact count-only CDF4 path. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
+| Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, and the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar, though the 8x8 trusted hybrid path now dispatches once per tx type instead of per 1-D row/column | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
@@ -221,6 +221,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   writer neutral/noisy (`trusted` median `500.0 ns/op` baseline versus
   `500.4 ns/op` patched) while the hot count-only lane improved from
   `422.9 ns/op` to `418.8 ns/op`.
+- `WriteCDF5` now covers the fixed five-symbol 4x4 EOB-token CDF
+  (`eob_flag_cdf16`, SVT writes it with symbol count `5`). The CDF5 stream
+  microbench moved from median `39560 ns/op` generic writer to `18981 ns/op`
+  specialized, and from `35058 ns/op` generic counter to `18268 ns/op`
+  specialized, zero allocations. Same-session A/B on 4x4 coefficient benches
+  kept both luma and chroma routes: luma trusted count moved from median
+  `123.1 ns/op` to `120.4 ns/op`, chroma trusted count from `112.4 ns/op` to
+  `110.3 ns/op`, and the luma final-write direct-tx path from `140.1 ns/op` to
+  `137.7 ns/op`, all zero allocations. Compiler reports the new writer/counter
+  receivers and CDF pointers as non-escaping; the 4x4 trusted wrappers keep
+  their existing inline/non-escape shape.
 - `WriteCDF7` now covers the fixed seven-symbol 8x8 luma EOB-token CDF
   (`eob_flag_cdf64`, SVT writes it with symbol count `7`). The CDF7 stream
   microbench moved from median `40876 ns/op` generic writer to `18997 ns/op`

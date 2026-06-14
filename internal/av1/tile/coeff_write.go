@@ -132,7 +132,9 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	if err != nil {
 		return TXBDecodeResult{}, err
 	}
-	if eobMultiSizeTable[req.Size] == 2 && req.Plane == CoeffPlaneY {
+	if eobMultiSizeTable[req.Size] == 0 {
+		w.WriteCDF5(eobCDF, token-1)
+	} else if eobMultiSizeTable[req.Size] == 2 && req.Plane == CoeffPlaneY {
 		w.WriteCDF7(eobCDF, token-1)
 	} else {
 		w.WriteCDF(eobCDF, token-1)
@@ -1489,7 +1491,7 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneY][0], token-1)
+	w.WriteCDF5(&cdfs.EOBFlag16[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
@@ -1639,7 +1641,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneY][0], token-1)
+	w.WriteCDF5(&cdfs.EOBFlag16[CoeffPlaneY][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneY][token-3], firstBit)
@@ -1786,7 +1788,7 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneUV][0], token-1)
+	w.WriteCDF5(&cdfs.EOBFlag16[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)
@@ -1937,7 +1939,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	}
 
 	token, extra, _ := EOBPositionToken(eob)
-	w.WriteCDF(&cdfs.EOBFlag16[CoeffPlaneUV][0], token-1)
+	w.WriteCDF5(&cdfs.EOBFlag16[CoeffPlaneUV][0], token-1)
 	if offsetBits := int(eobOffsetBits[token]); offsetBits > 0 {
 		firstBit := (extra >> (offsetBits - 1)) & 1
 		w.WriteBinaryCDFTrusted(&cdfs.EOBExtra[txCtx][CoeffPlaneUV][token-3], firstBit)

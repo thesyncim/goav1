@@ -710,6 +710,123 @@ func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
 	w.normalize(r)
 }
 
+// WriteCDF5 codes symbol s using a known five-symbol adaptive CDF. It covers
+// the fixed EOB-flag16 coefficient token CDF used by 4x4 TXBs.
+func (w *Writer) WriteCDF5(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 5)
+	}
+	v0, v1, v2, v3 := values[0], values[1], values[2], values[3]
+	l := w.low
+	r := w.rng
+	count := values[5]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 3:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 - (v3 >> rate)
+	default:
+		u := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[5] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteCDF5(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 5)
+	}
+	v0, v1, v2, v3 := values[0], values[1], values[2], values[3]
+	r := w.rng
+	count := values[5]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*4
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 2:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+		v := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 - (v2 >> rate)
+		values[3] = v3 - (v3 >> rate)
+	case 3:
+		u := ((q * (uint32(v2) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 - (v3 >> rate)
+	default:
+		u := ((q * (uint32(v3) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+		values[2] = v2 + ((uint16(CDFProbTop) - v2) >> rate)
+		values[3] = v3 + ((uint16(CDFProbTop) - v3) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[5] = count + 1
+	}
+	w.normalize(r)
+}
+
 // WriteCDF7 codes symbol s using a known seven-symbol adaptive CDF. It covers
 // the fixed EOB-flag64 coefficient token CDF used by 8x8 TXBs.
 func (w *Writer) WriteCDF7(cdf *CDF, s int) {
