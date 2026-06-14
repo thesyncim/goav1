@@ -1013,6 +1013,29 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 	if handled, err := frameWorkTryAppendLoopFilterFixedLumaEdge(levelCtx, filterMap, record, plan, edges, bounds, edge, x4, y4, length4, tx, currentWidth, currentLevel, needPreviousLevel); handled || err != nil {
 		return err
 	}
+	color := ctx.Event.SequenceHeader.ColorConfig
+	cols := int(plan.MICols)
+	rows := int(plan.MIRows)
+	if currentLevel != 0 {
+		for offset := range length4 {
+			// SVT's set_lpf_parameters keeps level at curr_level when it is
+			// non-zero; only previous-side transform width can still split the
+			// edge along this MI-cell run.
+			previousWidth, _, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, false)
+			if err != nil {
+				return err
+			}
+			width := min(previousWidth, currentWidth)
+			if width != segWidth {
+				if err := frameWorkStoreLoopFilterLumaEdgeSegment(record, plan, edges, bounds, edge, x4, y4, segStart, offset, tx, segWidth, currentLevel, false); err != nil {
+					return err
+				}
+				segStart = offset
+				segWidth = width
+			}
+		}
+		return frameWorkStoreLoopFilterLumaEdgeSegment(record, plan, edges, bounds, edge, x4, y4, segStart, length4, tx, segWidth, currentLevel, false)
+	}
 	for offset := range length4 {
 		// libaom resolves filter level and width per MI cell along the edge
 		// (set_lpf_parameters): the current block's level is constant, but the
@@ -1022,7 +1045,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 		// block's level (level_from_previous); a TX edge bordering an
 		// intra block at one cell and an inter (level-0) block at another must
 		// therefore split on both width and level.
-		previousWidth, previousLevel, err := previousCache.lookup(levelCtx, filterMap, ctx.Event.SequenceHeader.ColorConfig, edge, x4, y4, offset, int(plan.MICols), int(plan.MIRows), needPreviousLevel)
+		previousWidth, previousLevel, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, needPreviousLevel)
 		if err != nil {
 			return err
 		}
@@ -1406,11 +1429,13 @@ func frameWorkLoopFilterPreviousVerticalRecord(filterMap FrameWorkLoopFilterMap,
 	if prevCol < 0 || y4 < 0 {
 		return nil, false, nil
 	}
+	stride := int(filterMap.Stride)
+	mapRows := int(filterMap.Rows)
 	if prevCol >= cols || y4 >= rows ||
-		y4 >= int(filterMap.Rows) || prevCol >= int(filterMap.Stride) {
+		y4 >= mapRows || prevCol >= stride {
 		return nil, false, threading.ErrInvalidBatch
 	}
-	record := &filterMap.Records[y4*int(filterMap.Stride)+prevCol]
+	record := &filterMap.Records[y4*stride+prevCol]
 	if !record.Valid {
 		return nil, false, threading.ErrInvalidBatch
 	}
@@ -1422,11 +1447,13 @@ func frameWorkLoopFilterPreviousHorizontalRecord(filterMap FrameWorkLoopFilterMa
 	if x4 < 0 || prevRow < 0 {
 		return nil, false, nil
 	}
+	stride := int(filterMap.Stride)
+	mapRows := int(filterMap.Rows)
 	if x4 >= cols || prevRow >= rows ||
-		prevRow >= int(filterMap.Rows) || x4 >= int(filterMap.Stride) {
+		prevRow >= mapRows || x4 >= stride {
 		return nil, false, threading.ErrInvalidBatch
 	}
-	record := &filterMap.Records[prevRow*int(filterMap.Stride)+x4]
+	record := &filterMap.Records[prevRow*stride+x4]
 	if !record.Valid {
 		return nil, false, threading.ErrInvalidBatch
 	}

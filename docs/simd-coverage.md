@@ -449,6 +449,18 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   rewrite was worse at `17.612/17.597 us` and introduced `6432 B/op` with
   `3 allocs/op`. The existing callback shape remains the best measured Go
   form for that planner path.
+- The luma loop-filter segment splitter now follows SVT's
+  `deblocking_filter.c:set_lpf_parameters` non-zero-current-level shape more
+  closely: when the current side already has a non-zero level, the per-MI-cell
+  loop resolves only previous-side transform width and skips previous-level
+  fallback checks. It also hoists the repeated frame color and map dimension
+  conversions out of that loop. Same-session
+  `BenchmarkLoopFilterPostFilterPlanTrusted` baseline at `50000x` had median
+  `13778 ns/op`; the split path measured median `13624 ns/op` at `50000x` and
+  `13504 ns/op` at `200000x`, zero allocations. Compiler reports keep the
+  previous-record lookup helpers inlineable at cost `78`, with `record`,
+  `plan`, and `edges` non-escaping; the existing cached-record map-slice escape
+  report remains and should be revisited separately.
 - The 4x4 final luma coefficient writer now has a direct inter-tx-type entry
   point, matching SVT's `av1_write_coeffs_txb_1d` order: write `txb_skip`,
   return for all-zero blocks, then write luma `tx_type` before the EOB token.
