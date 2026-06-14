@@ -153,6 +153,88 @@ sloop:
 #define H_SRCSTRIDE 8
 #define H_COEFF     16
 
+// SVT-shaped low-bitdepth 4x4 Hadamard producer. This mirrors
+// svt_aom_hadamard_4x4_neon: load four int16 residual rows, run the 4-point
+// signed-halving Hadamard butterfly, transpose, rerun the butterfly, and
+// sign-extend the int16 outputs to int32 coefficients.
+//
+//   shadd v16.4h, v0.4h,  v1.4h  -> 0x0e610410
+//   shsub v17.4h, v0.4h,  v1.4h  -> 0x0e612411
+//   shadd v18.4h, v2.4h,  v3.4h  -> 0x0e630452
+//   shsub v19.4h, v2.4h,  v3.4h  -> 0x0e632453
+//   add   v0.4h,  v16.4h, v18.4h -> 0x0e728600
+//   add   v1.4h,  v17.4h, v19.4h -> 0x0e738621
+//   sub   v2.4h,  v16.4h, v18.4h -> 0x2e728602
+//   sub   v3.4h,  v17.4h, v19.4h -> 0x2e738623
+//   trn1  v16.4h, v0.4h,  v1.4h  -> 0x0e412810
+//   trn2  v17.4h, v0.4h,  v1.4h  -> 0x0e416811
+//   trn1  v18.4h, v2.4h,  v3.4h  -> 0x0e432852
+//   trn2  v19.4h, v2.4h,  v3.4h  -> 0x0e436853
+//   trn1  v0.2s,  v16.2s, v18.2s -> 0x0e922a00
+//   trn2  v2.2s,  v16.2s, v18.2s -> 0x0e926a02
+//   trn1  v1.2s,  v17.2s, v19.2s -> 0x0e932a21
+//   trn2  v3.2s,  v17.2s, v19.2s -> 0x0e936a23
+//   sshll v16.4s, v0.4h,  #0     -> 0x0f10a410
+//   sshll v17.4s, v1.4h,  #0     -> 0x0f10a431
+//   sshll v18.4s, v2.4h,  #0     -> 0x0f10a452
+//   sshll v19.4s, v3.4h,  #0     -> 0x0f10a473
+
+// func hadamard4x4NEONAsm(ctx *hadamard8x8NEONCtx)
+TEXT ·hadamard4x4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD H_SRC(R0), R1
+	MOVD H_SRCSTRIDE(R0), R2
+	MOVD H_COEFF(R0), R3
+	LSL  $1, R2
+
+	VLD1 (R1), [V0.H4]
+	ADD  R2, R1
+	VLD1 (R1), [V1.H4]
+	ADD  R2, R1
+	VLD1 (R1), [V2.H4]
+	ADD  R2, R1
+	VLD1 (R1), [V3.H4]
+
+	WORD $0x0e610410 // shadd v16.4h, v0.4h, v1.4h
+	WORD $0x0e612411 // shsub v17.4h, v0.4h, v1.4h
+	WORD $0x0e630452 // shadd v18.4h, v2.4h, v3.4h
+	WORD $0x0e632453 // shsub v19.4h, v2.4h, v3.4h
+	WORD $0x0e728600 // add v0.4h, v16.4h, v18.4h
+	WORD $0x0e738621 // add v1.4h, v17.4h, v19.4h
+	WORD $0x2e728602 // sub v2.4h, v16.4h, v18.4h
+	WORD $0x2e738623 // sub v3.4h, v17.4h, v19.4h
+
+	WORD $0x0e412810 // trn1 v16.4h, v0.4h, v1.4h
+	WORD $0x0e416811 // trn2 v17.4h, v0.4h, v1.4h
+	WORD $0x0e432852 // trn1 v18.4h, v2.4h, v3.4h
+	WORD $0x0e436853 // trn2 v19.4h, v2.4h, v3.4h
+	WORD $0x0e922a00 // trn1 v0.2s, v16.2s, v18.2s
+	WORD $0x0e926a02 // trn2 v2.2s, v16.2s, v18.2s
+	WORD $0x0e932a21 // trn1 v1.2s, v17.2s, v19.2s
+	WORD $0x0e936a23 // trn2 v3.2s, v17.2s, v19.2s
+
+	WORD $0x0e610410 // shadd v16.4h, v0.4h, v1.4h
+	WORD $0x0e612411 // shsub v17.4h, v0.4h, v1.4h
+	WORD $0x0e630452 // shadd v18.4h, v2.4h, v3.4h
+	WORD $0x0e632453 // shsub v19.4h, v2.4h, v3.4h
+	WORD $0x0e728600 // add v0.4h, v16.4h, v18.4h
+	WORD $0x0e738621 // add v1.4h, v17.4h, v19.4h
+	WORD $0x2e728602 // sub v2.4h, v16.4h, v18.4h
+	WORD $0x2e738623 // sub v3.4h, v17.4h, v19.4h
+
+	WORD $0x0f10a410 // sshll v16.4s, v0.4h, #0
+	WORD $0x0f10a431 // sshll v17.4s, v1.4h, #0
+	WORD $0x0f10a452 // sshll v18.4s, v2.4h, #0
+	WORD $0x0f10a473 // sshll v19.4s, v3.4h, #0
+	VST1 [V16.S4], (R3)
+	ADD  $16, R3
+	VST1 [V17.S4], (R3)
+	ADD  $16, R3
+	VST1 [V18.S4], (R3)
+	ADD  $16, R3
+	VST1 [V19.S4], (R3)
+	RET
+
 // func hadamard8x8NEONAsm(ctx *hadamard8x8NEONCtx)
 TEXT ·hadamard8x8NEONAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0

@@ -127,6 +127,74 @@ func TestSATDCoeffsMatchesReference(t *testing.T) {
 	}
 }
 
+func TestHadamard4x4ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(6117))
+	const (
+		stride = 13
+		height = 12
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 500 {
+		row := rng.Intn(height - 4)
+		col := rng.Intn(stride - 4)
+		for r := range 4 {
+			for c := range 4 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [16]int32
+		var wantNEON [16]int32
+		var got [16]int32
+		srcOff := row*stride + col
+		hadamard4x4PureGo(src[srcOff:], stride, wantC[:])
+		hadamard4x4SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard4x4Impl(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 16) != satdCoeffsPureGo(wantC[:], 16) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 16), satdCoeffsPureGo(wantC[:], 16))
+		}
+	}
+}
+
+func TestHadamard4x4MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(6118))
+	const (
+		stride = 17
+		height = 14
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 500 {
+		row := rng.Intn(height - 4)
+		col := rng.Intn(stride - 4)
+		for r := range 4 {
+			for c := range 4 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [16]int32
+		var wantNEON [16]int32
+		var got [16]int32
+		srcOff := row*stride + col
+		hadamard4x4PureGo(src[srcOff:], stride, wantC[:])
+		hadamard4x4SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard4x4(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 16) != satdCoeffsPureGo(wantC[:], 16) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 16), satdCoeffsPureGo(wantC[:], 16))
+		}
+	}
+}
+
 func TestHadamard8x8ImplMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(6108))
 	const (
@@ -383,6 +451,41 @@ func hadamard16x16SVTNEONReference(src []int16, srcStride int, coeff []int32) {
 			coeff[192+base+8+lane] = c[1][3][lane]
 			coeff[192+base+12+lane] = c[3][3][lane]
 		}
+	}
+}
+
+func hadamard4x4SVTNEONReference(src []int16, srcStride int, coeff []int32) {
+	var a [4][4]int16
+	for r := range 4 {
+		for c := range 4 {
+			a[r][c] = src[r*srcStride+c]
+		}
+	}
+	hadamard4x4OnePass(&a)
+	for r := range 4 {
+		for c := r + 1; c < 4; c++ {
+			a[r][c], a[c][r] = a[c][r], a[r][c]
+		}
+	}
+	hadamard4x4OnePass(&a)
+	for r := range 4 {
+		for c := range 4 {
+			coeff[r*4+c] = int32(a[r][c])
+		}
+	}
+}
+
+func hadamard4x4OnePass(a *[4][4]int16) {
+	for lane := range 4 {
+		b0 := (a[0][lane] + a[1][lane]) >> 1
+		b1 := (a[0][lane] - a[1][lane]) >> 1
+		b2 := (a[2][lane] + a[3][lane]) >> 1
+		b3 := (a[2][lane] - a[3][lane]) >> 1
+
+		a[0][lane] = b0 + b2
+		a[1][lane] = b1 + b3
+		a[2][lane] = b0 - b2
+		a[3][lane] = b1 - b3
 	}
 }
 

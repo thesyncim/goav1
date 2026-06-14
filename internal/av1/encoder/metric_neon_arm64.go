@@ -31,6 +31,9 @@ type satdCoeffsNEONCtx struct {
 //go:noescape
 func satdCoeffsNEONAsm(ctx *satdCoeffsNEONCtx)
 
+//go:noescape
+func hadamard4x4NEONAsm(ctx *hadamard8x8NEONCtx)
+
 // hadamard8x8NEONCtx carries SVT's low-bitdepth 8x8 Hadamard producer
 // arguments. Field offsets are mirrored by #define in metric_neon_arm64.s.
 type hadamard8x8NEONCtx struct {
@@ -82,6 +85,15 @@ func satdCoeffsNEON(coeff []int32, count int) int {
 	return int(ctx.Sum)
 }
 
+func hadamard4x4NEON(src []int16, srcStride int, coeff []int32) {
+	ctx := hadamard8x8NEONCtx{
+		Src:       unsafe.Pointer(&src[0]),
+		SrcStride: int64(srcStride),
+		Coeff:     unsafe.Pointer(&coeff[0]),
+	}
+	hadamard4x4NEONAsm(&ctx)
+}
+
 func hadamard8x8NEON(src []int16, srcStride int, coeff []int32) {
 	ctx := hadamard8x8NEONCtx{
 		Src:       unsafe.Pointer(&src[0]),
@@ -116,6 +128,7 @@ func init() {
 	pixelStats16x16Impl = pixelStats16x16NEON
 	pixelStats32x32Impl = pixelStats32x32NEON
 	satdCoeffsImpl = satdCoeffsNEON
+	hadamard4x4Impl = hadamard4x4NEON
 	hadamard8x8Impl = hadamard8x8NEON
 	hadamard16x16Impl = hadamard16x16NEON
 	hadamard32x32Impl = hadamard32x32NEON

@@ -18,6 +18,10 @@ func satdCoeffs(coeff []int32, count int) int {
 	return satdCoeffsNEON(coeff, count)
 }
 
+func hadamard4x4(src []int16, srcStride int, coeff []int32) {
+	hadamard4x4NEON(src, srcStride, coeff)
+}
+
 func hadamard8x8(src []int16, srcStride int, coeff []int32) {
 	hadamard8x8NEON(src, srcStride, coeff)
 }

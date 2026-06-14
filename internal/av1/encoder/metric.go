@@ -9,6 +9,7 @@ var pixelStats8x8Impl = pixelStats8x8PureGo
 var pixelStats16x16Impl = pixelStats16x16PureGo
 var pixelStats32x32Impl = pixelStats32x32PureGo
 var satdCoeffsImpl = satdCoeffsPureGo
+var hadamard4x4Impl = hadamard4x4PureGo
 var hadamard8x8Impl = hadamard8x8PureGo
 var hadamard16x16Impl = hadamard16x16PureGo
 var hadamard32x32Impl = hadamard32x32PureGo
@@ -82,6 +83,41 @@ func satdCoeffsPureGo(coeff []int32, count int) int {
 		total += int(v)
 	}
 	return total
+}
+
+// hadamard4x4PureGo mirrors SVT's svt_aom_hadamard_4x4_c low-bitdepth
+// producer, including the final transpose used to match the SSE2 coefficient
+// order.
+func hadamard4x4PureGo(src []int16, srcStride int, coeff []int32) {
+	_ = src[3*srcStride+3]
+	_ = coeff[15]
+	var buffer [16]int16
+	var buffer2 [16]int16
+	for idx := range 4 {
+		hadamardCol4(src[idx:], srcStride, buffer[idx*4:])
+	}
+	for idx := range 4 {
+		hadamardCol4(buffer[idx:], 4, buffer2[idx*4:])
+	}
+	for i := range 4 {
+		for j := range 4 {
+			coeff[i*4+j] = int32(buffer2[j*4+i])
+		}
+	}
+}
+
+func hadamardCol4(src []int16, srcStride int, coeff []int16) {
+	_ = src[3*srcStride]
+	_ = coeff[3]
+	b0 := (src[0*srcStride] + src[1*srcStride]) >> 1
+	b1 := (src[0*srcStride] - src[1*srcStride]) >> 1
+	b2 := (src[2*srcStride] + src[3*srcStride]) >> 1
+	b3 := (src[2*srcStride] - src[3*srcStride]) >> 1
+
+	coeff[0] = b0 + b2
+	coeff[1] = b1 + b3
+	coeff[2] = b0 - b2
+	coeff[3] = b1 - b3
 }
 
 // hadamard8x8PureGo mirrors SVT's svt_aom_hadamard_8x8_c low-bitdepth
