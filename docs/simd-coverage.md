@@ -606,6 +606,16 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `trusted-count` control moved from `431.0 ns/op` to `434.3 ns/op`. The real
   writer keeps its scan-and-branch tail until an end-to-end row proves the extra
   bitset bookkeeping is worthwhile.
+- A narrower branchless sign-bit extraction in the 8x8 luma prep loops was also
+  rejected on 2026-06-14. Replacing the nested `cv < 0` branch with
+  `uint16(cv)>>15` preserved writer/count parity and kept all hot inputs
+  non-escaping, but compiler cost/BCE shape was unchanged and paired
+  `1000000x`, `-count=9` rows moved
+  `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted` from median `482.1 ns/op` to
+  `492.3 ns/op`, while `trusted-count` was effectively neutral/noisy
+  (`425.2 -> 426.2 ns/op`). The untouched UV count control measured
+  `453.6 -> 452.5 ns/op`. The current explicit sign branch remains the better
+  measured 8x8 luma prep shape.
 - A SVT-shaped cumulative-level saturation guard was rejected on 2026-06-14 for
   the 8x8 trusted-count TXB prep loop. SVT's separate
   `svt_av1_compute_cul_level_c` can break once the sum reaches
