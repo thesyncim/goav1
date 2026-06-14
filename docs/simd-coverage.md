@@ -540,6 +540,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `13680 ns/op` over nine repeats, with `0 B/op` and `0 allocs/op`. Hot-size
   guards pin `FrameWorkLoopFilterBlockRecord` at `34 B`, the luma previous cache
   at `76 B`, and the chroma previous cache at `50 B`.
+- A segmented-luma first-cell seed was tested but not kept. The idea was to
+  initialize the active segment from offset zero before scanning the remaining
+  MI cells, avoiding the baseline's first empty `frameWorkStoreLoopFilterLumaEdgeSegment`
+  call when the first resolved level/width is non-zero. It preserved tests and
+  zero allocations, but same-session
+  `BenchmarkLoopFilterPostFilterPlanTrusted` moved from median `13627 ns/op`
+  to `13708 ns/op` at `100000x`, and compiler cost for
+  `frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth` rose from `792` to
+  `989` while the non-escape shape stayed unchanged. The current range-loop
+  form remains better until a broader SVT `set_lpf_parameters`-shaped rewrite
+  removes more than this one empty helper call.
 - The 4x4 final luma coefficient writer now has a direct inter-tx-type entry
   point, matching SVT's `av1_write_coeffs_txb_1d` order: write `txb_skip`,
   return for all-zero blocks, then write luma `tx_type` before the EOB token.
