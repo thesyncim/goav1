@@ -435,7 +435,7 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	case subX != 0 && subY != 0:
 		predictInterCompoundRef8ToConvBuf2D(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
 	case subX != 0:
-		predictInterCompoundRef8ToConvBufX(out, ref, refX, refY, width, height, xKernel, roundOffset)
+		predictInterCompoundRef8ToConvBufXImpl(out, ref, refX, refY, width, height, xKernel, roundOffset)
 	case subY != 0:
 		predictInterCompoundRef8ToConvBufY(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 	default:
@@ -559,7 +559,9 @@ func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, re
 	}
 }
 
-func predictInterCompoundRef8ToConvBufX(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
+var predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXPureGo
+
+func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
