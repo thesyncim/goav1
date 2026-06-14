@@ -507,6 +507,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   Compiler reports keep the wrapper inlineable, `entropy.NewBitCounter`
   inlined, `cdfs`/coefficient pointers non-escaping, and the neighbor-context
   bounds checks elided.
+- A SVT-shaped cumulative-level saturation guard was rejected on 2026-06-14 for
+  the 8x8 trusted-count TXB prep loop. SVT's separate
+  `svt_av1_compute_cul_level_c` can break once the sum reaches
+  `COEFF_CONTEXT_MASK`, but goav1's combined prep loop must still fill level,
+  sign, and tail state for coefficient coding. Guarding `culLevel += level` in
+  both 8x8 luma and UV count paths preserved parity and zero allocations, but
+  same-benchtime `1000000x` rows did not improve: luma median was effectively
+  neutral (`415.6 ns/op` baseline versus `415.1 ns/op` patched), while UV
+  regressed (`434.0 ns/op` baseline versus `441.3 ns/op` patched). The code was
+  reverted; the useful source-shape lesson is that only a real split prep/kernel
+  can benefit from the SVT early-exit form.
 - The next tx-type-search experiment also stayed Go-only and was rejected on
   2026-06-14. SVT maps the comparable 8x8 forward-transform surface to
   `svt_av1_fwd_txfm2d_8x8_neon` plus the N2/N4 variants, with NEON ADST row and
