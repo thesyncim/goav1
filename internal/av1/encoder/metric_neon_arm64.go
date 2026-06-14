@@ -45,6 +45,9 @@ func hadamard8x8NEONAsm(ctx *hadamard8x8NEONCtx)
 //go:noescape
 func hadamard16x16CombineNEONAsm(coeff unsafe.Pointer)
 
+//go:noescape
+func hadamard32x32CombineNEONAsm(coeff unsafe.Pointer)
+
 func pixelStatsNEON(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
 	ctx := pixelStatsNEONCtx{
 		Src:       unsafe.Pointer(&src[0]),
@@ -98,6 +101,16 @@ func hadamard16x16NEON(src []int16, srcStride int, coeff []int32) {
 	hadamard16x16CombineNEONAsm(unsafe.Pointer(&coeff[0]))
 }
 
+func hadamard32x32NEON(src []int16, srcStride int, coeff []int32) {
+	_ = src[31*srcStride+31]
+	_ = coeff[1023]
+	hadamard16x16NEON(src, srcStride, coeff)
+	hadamard16x16NEON(src[16:], srcStride, coeff[256:])
+	hadamard16x16NEON(src[16*srcStride:], srcStride, coeff[512:])
+	hadamard16x16NEON(src[16*srcStride+16:], srcStride, coeff[768:])
+	hadamard32x32CombineNEONAsm(unsafe.Pointer(&coeff[0]))
+}
+
 func init() {
 	pixelStats8x8Impl = pixelStats8x8NEON
 	pixelStats16x16Impl = pixelStats16x16NEON
@@ -105,4 +118,5 @@ func init() {
 	satdCoeffsImpl = satdCoeffsNEON
 	hadamard8x8Impl = hadamard8x8NEON
 	hadamard16x16Impl = hadamard16x16NEON
+	hadamard32x32Impl = hadamard32x32NEON
 }

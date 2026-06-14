@@ -253,6 +253,74 @@ func TestHadamard16x16MatchesReference(t *testing.T) {
 	}
 }
 
+func TestHadamard32x32ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(6114))
+	const (
+		stride = 53
+		height = 45
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 150 {
+		row := rng.Intn(height - 32)
+		col := rng.Intn(stride - 32)
+		for r := range 32 {
+			for c := range 32 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [1024]int32
+		var wantNEON [1024]int32
+		var got [1024]int32
+		srcOff := row*stride + col
+		hadamard32x32PureGo(src[srcOff:], stride, wantC[:])
+		hadamard32x32SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard32x32Impl(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 1024) != satdCoeffsPureGo(wantC[:], 1024) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 1024), satdCoeffsPureGo(wantC[:], 1024))
+		}
+	}
+}
+
+func TestHadamard32x32MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(6115))
+	const (
+		stride = 59
+		height = 47
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 150 {
+		row := rng.Intn(height - 32)
+		col := rng.Intn(stride - 32)
+		for r := range 32 {
+			for c := range 32 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [1024]int32
+		var wantNEON [1024]int32
+		var got [1024]int32
+		srcOff := row*stride + col
+		hadamard32x32PureGo(src[srcOff:], stride, wantC[:])
+		hadamard32x32SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard32x32(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 1024) != satdCoeffsPureGo(wantC[:], 1024) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 1024), satdCoeffsPureGo(wantC[:], 1024))
+		}
+	}
+}
+
 func sameHadamard8x8Order(got, want []int32) bool {
 	if slices.Equal(got, want) {
 		return true
@@ -314,6 +382,33 @@ func hadamard16x16SVTNEONReference(src []int16, srcStride int, coeff []int32) {
 			coeff[192+base+4+lane] = c[2][3][lane]
 			coeff[192+base+8+lane] = c[1][3][lane]
 			coeff[192+base+12+lane] = c[3][3][lane]
+		}
+	}
+}
+
+func hadamard32x32SVTNEONReference(src []int16, srcStride int, coeff []int32) {
+	hadamard16x16SVTNEONReference(src, srcStride, coeff)
+	hadamard16x16SVTNEONReference(src[16:], srcStride, coeff[256:])
+	hadamard16x16SVTNEONReference(src[16*srcStride:], srcStride, coeff[512:])
+	hadamard16x16SVTNEONReference(src[16*srcStride+16:], srcStride, coeff[768:])
+
+	for base := 0; base < 256; base += 4 {
+		for lane := range 4 {
+			idx := base + lane
+			a0 := coeff[idx]
+			a1 := coeff[256+idx]
+			a2 := coeff[512+idx]
+			a3 := coeff[768+idx]
+
+			b0 := (a0 + a1) >> 2
+			b1 := (a0 - a1) >> 2
+			b2 := (a2 + a3) >> 2
+			b3 := (a2 - a3) >> 2
+
+			coeff[idx] = b0 + b2
+			coeff[256+idx] = b1 + b3
+			coeff[512+idx] = b0 - b2
+			coeff[768+idx] = b1 - b3
 		}
 	}
 }

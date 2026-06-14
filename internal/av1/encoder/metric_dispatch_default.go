@@ -25,3 +25,7 @@ func hadamard8x8(src []int16, srcStride int, coeff []int32) {
 func hadamard16x16(src []int16, srcStride int, coeff []int32) {
 	hadamard16x16Impl(src, srcStride, coeff)
 }
+
+func hadamard32x32(src []int16, srcStride int, coeff []int32) {
+	hadamard32x32Impl(src, srcStride, coeff)
+}

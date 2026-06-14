@@ -440,3 +440,54 @@ h16loop:
 	SUB $1, R1
 	CBNZ R1, h16loop
 	RET
+
+// SVT-shaped 32x32 Hadamard quadrant combine. The caller has already produced
+// four 16x16 NEON-order coefficient quadrants at offsets 0, 256, 512, and 768.
+// This mirrors svt_aom_hadamard_32x32_neon's add/sub, signed shift-right by
+// two, and final quadrant stores.
+//
+//   sshr v4.4s, v4.4s, #2 -> 0x4f3e0484
+//   sshr v5.4s, v5.4s, #2 -> 0x4f3e04a5
+//   sshr v6.4s, v6.4s, #2 -> 0x4f3e04c6
+//   sshr v7.4s, v7.4s, #2 -> 0x4f3e04e7
+
+// func hadamard32x32CombineNEONAsm(coeff unsafe.Pointer)
+TEXT ·hadamard32x32CombineNEONAsm(SB), NOSPLIT, $0-8
+	MOVD coeff+0(FP), R0
+	MOVD $64, R1
+h32loop:
+	MOVD R0, R2
+	ADD  $1024, R2
+	MOVD R0, R3
+	ADD  $2048, R3
+	MOVD R0, R4
+	ADD  $3072, R4
+
+	VLD1 (R0), [V0.S4]
+	VLD1 (R2), [V1.S4]
+	VLD1 (R3), [V2.S4]
+	VLD1 (R4), [V3.S4]
+
+	VADD V1.S4, V0.S4, V4.S4
+	VSUB V1.S4, V0.S4, V5.S4
+	VADD V3.S4, V2.S4, V6.S4
+	VSUB V3.S4, V2.S4, V7.S4
+	WORD $0x4f3e0484 // sshr v4.4s, v4.4s, #2
+	WORD $0x4f3e04a5 // sshr v5.4s, v5.4s, #2
+	WORD $0x4f3e04c6 // sshr v6.4s, v6.4s, #2
+	WORD $0x4f3e04e7 // sshr v7.4s, v7.4s, #2
+
+	VADD V6.S4, V4.S4, V16.S4
+	VADD V7.S4, V5.S4, V17.S4
+	VSUB V6.S4, V4.S4, V18.S4
+	VSUB V7.S4, V5.S4, V19.S4
+
+	VST1 [V16.S4], (R0)
+	VST1 [V17.S4], (R2)
+	VST1 [V18.S4], (R3)
+	VST1 [V19.S4], (R4)
+
+	ADD $16, R0
+	SUB $1, R1
+	CBNZ R1, h32loop
+	RET

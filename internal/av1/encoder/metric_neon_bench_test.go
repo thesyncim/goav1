@@ -208,3 +208,33 @@ func benchHadamard16x16(b *testing.B, fn func([]int16, int, []int32)) {
 		b.Fatal("unexpected zero Hadamard")
 	}
 }
+
+func BenchmarkHadamard32x32Scalar(b *testing.B) {
+	benchHadamard32x32(b, hadamard32x32PureGo)
+}
+
+func BenchmarkHadamard32x32NEON(b *testing.B) {
+	benchHadamard32x32(b, hadamard32x32NEON)
+}
+
+func benchHadamard32x32(b *testing.B, fn func([]int16, int, []int32)) {
+	rng := rand.New(rand.NewSource(6116))
+	const (
+		stride = 64
+		height = 40
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	src = src[stride+7:]
+	var coeff [1024]int32
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fn(src, stride, coeff[:])
+	}
+	if coeff[0] == 0 && coeff[1] == 0 {
+		b.Fatal("unexpected zero Hadamard")
+	}
+}
