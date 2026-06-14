@@ -100,7 +100,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | Area | SVT SIMD coverage | goav1 status | Decision |
 | --- | --- | --- | --- |
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
-| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list, extra scan-table, and branchless sign rewrites regressed or tied after paired measurement. |
+| TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits/nonzero bitsets on measured-winning count paths. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous 8x8 extra scan-table and branchless sign rewrites regressed or tied after paired measurement. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32/64x64 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, `sad32x32x4d`, and `sad64x64x4d` have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
@@ -346,6 +346,20 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   and restore the transform CDF, matching the existing 8x8 trial behavior.
   Larger non-square luma/chroma TXBs still use the generic counting writer until
   profiles justify the extra source-shaped specializations.
+- The measured-winning 16x16 luma and 32x32 count-only sign/Golomb passes now
+  record non-zero scan slots in stack bitsets while filling the padded level
+  window, then iterate set bits in forward scan order. This mirrors the
+  previously kept sparse 8x8 count shape without changing symbol order. On the
+  local M4 Max, `BenchmarkCountCoefficientsTXB16x16Y2D/trusted-count` moved
+  from `2404-2485 ns/op` to `2296-2399 ns/op`, `trusted-count-tx` moved from
+  `2432-2520 ns/op` to `2369-2429 ns/op`,
+  `BenchmarkCountCoefficientsTXB32x32Y2D/trusted-count` moved from
+  `11330-11588 ns/op` to `10413-10438 ns/op`, `trusted-count-tx` moved from
+  `11324-11468 ns/op` to `10425-10501 ns/op`, and
+  `BenchmarkCountCoefficientsTXB32x32UV2D/trusted-count` moved from
+  `11744-13189 ns/op` to `10776-10880 ns/op`; all rows stayed at
+  `0 allocs/op`. The 16x16 UV bitset variant was tested and not kept because it
+  moved from `2623-2671 ns/op` baseline to `2635-2717 ns/op`.
 - P-frame 16x16 split trials and 8x8/16x16 merge pricing now call typed
   square-TXB rate helpers directly, avoiding the non-inlined generic
   `trialTXBBits(plane, []int16, n)` dispatcher on those known-shape luma/chroma

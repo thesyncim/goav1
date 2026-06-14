@@ -669,6 +669,8 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 
 	var levels [scratchLen]uint8
 	var absLevels [maxEOB]uint16
+	var nonZeroBits [4]uint64
+	var signBits [4]uint64
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -683,6 +685,12 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 			}
 			level := absInt(int(cv))
 			absLevels[c] = uint16(level)
+			word := c >> 6
+			bit := uint(c & 63)
+			nonZeroBits[word] |= 1 << bit
+			if cv < 0 {
+				signBits[word] |= 1 << bit
+			}
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -737,22 +745,21 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		}
 	}
 
-	for c := range eob {
-		p := &scanHot[c]
-		pos := int(p.pos)
-		level := int(absLevels[c])
-		if level == 0 {
-			continue
-		}
-		cv := coeff256[pos]
-		sign := int(uint16(cv) >> 15)
-		if pos == 0 {
-			w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
-		} else {
-			w.WriteBit(sign)
-		}
-		if level >= MaxBaseBRRange {
-			writeGolombCounter(&w, level-MaxBaseBRRange)
+	for word, bits64 := range nonZeroBits {
+		for nz := bits64; nz != 0; nz &= nz - 1 {
+			c := word*64 + bits.TrailingZeros64(nz)
+			p := &scanHot[c]
+			pos := int(p.pos)
+			level := int(absLevels[c])
+			sign := int((signBits[word] >> uint(c&63)) & 1)
+			if pos == 0 {
+				w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
+			} else {
+				w.WriteBit(sign)
+			}
+			if level >= MaxBaseBRRange {
+				writeGolombCounter(&w, level-MaxBaseBRRange)
+			}
 		}
 	}
 	if culLevel > CoeffContextMask {
@@ -1169,6 +1176,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	}
 
 	var levels [scratchLen]uint8
+	var nonZeroBits [16]uint64
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1182,6 +1190,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 				maxScanLine = pos
 			}
 			level := absInt(int(cv))
+			nonZeroBits[c>>6] |= 1 << uint(c&63)
 			culLevel += level
 			if pos == 0 {
 				dcValue = int(cv)
@@ -1236,22 +1245,22 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		}
 	}
 
-	for c := range eob {
-		p := &scanHot[c]
-		pos := int(p.pos)
-		cv := coeff1024[pos]
-		if cv == 0 {
-			continue
-		}
-		sign := int(uint16(cv) >> 15)
-		if pos == 0 {
-			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][0], sign)
-		} else {
-			w.WriteBit(sign)
-		}
-		if levels[p.padded] >= MaxBaseBRRange {
-			level := absInt(int(cv))
-			writeGolombCounter(&w, level-MaxBaseBRRange)
+	for word, bits64 := range nonZeroBits {
+		for nz := bits64; nz != 0; nz &= nz - 1 {
+			c := word*64 + bits.TrailingZeros64(nz)
+			p := &scanHot[c]
+			pos := int(p.pos)
+			cv := coeff1024[pos]
+			sign := int(uint16(cv) >> 15)
+			if pos == 0 {
+				w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][0], sign)
+			} else {
+				w.WriteBit(sign)
+			}
+			if levels[p.padded] >= MaxBaseBRRange {
+				level := absInt(int(cv))
+				writeGolombCounter(&w, level-MaxBaseBRRange)
+			}
 		}
 	}
 	if culLevel > CoeffContextMask {
