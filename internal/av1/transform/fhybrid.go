@@ -83,7 +83,7 @@ func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int
 
 // ForwardBlock8x8ADSTDCTTrusted computes the trusted 8x8 ADST_DCT transform.
 func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8ADSTDCT(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8ADSTDCTImpl(coeff, coeffStride, residual, residualStride, scratch)
 }
 
 // ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
@@ -113,7 +113,7 @@ func forwardBlock8x8HybridSupported(typ Type) bool {
 func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
 	switch typ {
 	case TypeADSTDCT:
-		forwardBlock8x8ADSTDCT(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8ADSTDCTImpl(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeDCTADST:
 		forwardBlock8x8DCTADST(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeADSTADST:
@@ -126,7 +126,7 @@ func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16
 	return true
 }
 
-func forwardBlock8x8ADSTDCT(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+func forwardBlock8x8ADSTDCTPureGo(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = coeff[7*coeffStride+7]
 	_ = residual[7*residualStride+7]
 	_ = scratch[63]
