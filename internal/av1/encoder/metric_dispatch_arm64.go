@@ -19,14 +19,23 @@ func pixelStats4x8(src []byte, srcStride int, ref []byte, refStride int) (uint32
 }
 
 func pixelStats16x8(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats16x8DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats16x8NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats8x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats8x16DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats8x16NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats16x4(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats16x4DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats16x4NEON(src, srcStride, ref, refStride)
 }
 
@@ -35,42 +44,72 @@ func pixelStats4x16(src []byte, srcStride int, ref []byte, refStride int) (uint3
 }
 
 func pixelStats16x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats16x16DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats16x16NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats32x8(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats32x8DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats32x8NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats8x32(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats8x32DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats8x32NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats32x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats32x16DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats32x16NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats16x32(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats16x32DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats16x32NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats32x32(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats32x32DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats32x32NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats64x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats64x16DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats64x16NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats16x64(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats16x64DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats16x64NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats64x32(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats64x32DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats64x32NEON(src, srcStride, ref, refStride)
 }
 
 func pixelStats32x64(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	if useDotProdPixelStats {
+		return pixelStats32x64DotProd(src, srcStride, ref, refStride)
+	}
 	return pixelStats32x64NEON(src, srcStride, ref, refStride)
 }
 

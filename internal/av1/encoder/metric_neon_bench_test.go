@@ -5,6 +5,8 @@ package encoder
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 func benchPixelStats(b *testing.B, fn func([]byte, int, []byte, int) (uint32, int32)) {
@@ -178,6 +180,86 @@ func BenchmarkPixelStats32x64Scalar(b *testing.B) {
 
 func BenchmarkPixelStats32x64NEON(b *testing.B) {
 	benchPixelStats(b, pixelStats32x64NEON)
+}
+
+func BenchmarkPixelStatsDotProd(b *testing.B) {
+	if !cpu.Detected.DOTPROD {
+		b.Skip("DOTPROD not detected")
+	}
+	for _, tc := range []struct {
+		name string
+		neon func([]byte, int, []byte, int) (uint32, int32)
+		dp   func([]byte, int, []byte, int) (uint32, int32)
+	}{
+		{"8x4", pixelStats8x4NEON, pixelStats8x4DotProd},
+		{"8x8", pixelStats8x8NEON, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+			return pixelStatsDotProd(src, srcStride, ref, refStride, 8, 8)
+		}},
+		{"16x4", pixelStats16x4NEON, pixelStats16x4DotProd},
+		{"16x8", pixelStats16x8NEON, pixelStats16x8DotProd},
+		{"8x16", pixelStats8x16NEON, pixelStats8x16DotProd},
+		{"16x16", pixelStats16x16NEON, pixelStats16x16DotProd},
+		{"32x8", pixelStats32x8NEON, pixelStats32x8DotProd},
+		{"8x32", pixelStats8x32NEON, pixelStats8x32DotProd},
+		{"32x16", pixelStats32x16NEON, pixelStats32x16DotProd},
+		{"16x32", pixelStats16x32NEON, pixelStats16x32DotProd},
+		{"32x32", pixelStats32x32NEON, pixelStats32x32DotProd},
+		{"64x16", pixelStats64x16NEON, pixelStats64x16DotProd},
+		{"16x64", pixelStats16x64NEON, pixelStats16x64DotProd},
+		{"64x32", pixelStats64x32NEON, pixelStats64x32DotProd},
+		{"32x64", pixelStats32x64NEON, pixelStats32x64DotProd},
+	} {
+		b.Run(tc.name+"/NEON", func(b *testing.B) {
+			benchPixelStats(b, tc.neon)
+		})
+		b.Run(tc.name+"/DOTPROD", func(b *testing.B) {
+			benchPixelStats(b, tc.dp)
+		})
+	}
+}
+
+func BenchmarkSSEVarianceDotProd(b *testing.B) {
+	if !cpu.Detected.DOTPROD {
+		b.Skip("DOTPROD not detected")
+	}
+	for _, tc := range []struct {
+		name  string
+		shift uint
+		neon  func([]byte, int, []byte, int) (uint32, int32)
+		dp    func([]byte, int, []byte, int) (uint32, int32)
+	}{
+		{"8x4", 5, pixelStats8x4NEON, pixelStats8x4DotProd},
+		{"8x8", 6, pixelStats8x8NEON, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+			return pixelStatsDotProd(src, srcStride, ref, refStride, 8, 8)
+		}},
+		{"16x4", 6, pixelStats16x4NEON, pixelStats16x4DotProd},
+		{"16x8", 7, pixelStats16x8NEON, pixelStats16x8DotProd},
+		{"8x16", 7, pixelStats8x16NEON, pixelStats8x16DotProd},
+		{"16x16", 8, pixelStats16x16NEON, pixelStats16x16DotProd},
+		{"32x8", 8, pixelStats32x8NEON, pixelStats32x8DotProd},
+		{"8x32", 8, pixelStats8x32NEON, pixelStats8x32DotProd},
+		{"32x16", 9, pixelStats32x16NEON, pixelStats32x16DotProd},
+		{"16x32", 9, pixelStats16x32NEON, pixelStats16x32DotProd},
+		{"32x32", 10, pixelStats32x32NEON, pixelStats32x32DotProd},
+		{"64x16", 10, pixelStats64x16NEON, pixelStats64x16DotProd},
+		{"16x64", 10, pixelStats16x64NEON, pixelStats16x64DotProd},
+		{"64x32", 11, pixelStats64x32NEON, pixelStats64x32DotProd},
+		{"32x64", 11, pixelStats32x64NEON, pixelStats32x64DotProd},
+	} {
+		b.Run(tc.name+"/NEON", func(b *testing.B) {
+			benchSSEVarianceFromStats(b, tc.neon, tc.shift)
+		})
+		b.Run(tc.name+"/DOTPROD", func(b *testing.B) {
+			benchSSEVarianceFromStats(b, tc.dp, tc.shift)
+		})
+	}
+}
+
+func benchSSEVarianceFromStats(b *testing.B, fn func([]byte, int, []byte, int) (uint32, int32), shift uint) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := fn(src, srcStride, ref, refStride)
+		return sse, varianceFromStats(sse, sum, shift)
+	})
 }
 
 func BenchmarkSSEVariance4x4Scalar(b *testing.B) {
