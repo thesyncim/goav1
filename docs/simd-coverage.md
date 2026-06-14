@@ -697,18 +697,19 @@ DOTPROD/I8MM.
   saturated-count update and a trace-preserving `WriteBit` count wrapper were
   both rejected: neither improved the trusted-count path after focused
   measurement.
-- Current P-frame diagnostics: the profiled
-  `BenchmarkVideoEncoderPFrame1080p-4` sample is `79.4 ms/op`, and non-profiled
-  repeat rows are around `78.0-78.8 ms/op` with zero steady-state allocations.
-  Allocation is not the dominant CPU gap; the CPU profile is.
-- Latest P-frame profile on 2026-06-13 after the trusted 8x8 hybrid-dispatch
-  safe point measured `71.695 ms/op`, `4666 B/op`, and `1 alloc/op` with
-  `GOMAXPROCS=4`, `-benchtime=40x`, and a CPU profile. The top local costs are
-  still 8x8 TXB coefficient pricing (`CountCoefficientsTXB8x8Y2DTrustedArray`,
-  `1.51 s` cumulative of `8.12 s`) and loop-filter postfilter planning
-  (`loopFilterPostFilterPlanTrustedSweep`, `1.32 s` cumulative). SVT maps the
-  TXB prep side to `svt_av1_txb_init_levels_neon`,
-  `svt_av1_get_nz_map_contexts_neon`, and
+- Current P-frame diagnostics: the 2026-06-14 profiled
+  `BenchmarkVideoEncoderPFrame1080p-4` sample is `76.073 ms/op`, `5094 B/op`,
+  and `1 alloc/op` with `GOMAXPROCS=4`, `-cpu=4`, `-benchtime=20x`, and a CPU
+  profile. Allocation is not the dominant CPU gap; the CPU profile is.
+- Latest P-frame profile on 2026-06-14 after the SAD DOTPROD safe points has
+  `4.61 s` of samples. The top local costs are still 8x8 TXB coefficient
+  pricing (`CountCoefficientsTXB8x8Y2DTrustedArray`, `0.75 s` cumulative) and
+  loop-filter postfilter planning (`loopFilterPostFilterPlanTrustedSweep`,
+  `0.77 s` cumulative). Subpel refinement is visible but smaller
+  (`subpelRefine8x8`, `0.25 s` cumulative; `subpelExact8x8`, `0.20 s`
+  cumulative), and convolve max-tier work is a narrow slice in this sample
+  (`convolveY8NEONAsm`, `0.06 s` flat). SVT maps the TXB prep side to
+  `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`, and
   `svt_av1_compute_cul_level_neon`; its loop-filter edge decision maps to
   `deblocking_filter.c:set_lpf_parameters`, followed by NEON filter kernels.
 - A zero-symbol split for `BitCounter.WriteCDF4` was rejected on 2026-06-13.
