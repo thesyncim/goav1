@@ -132,11 +132,32 @@ func BenchmarkCompoundConvBuf2D8_8(b *testing.B) {
 	})
 }
 
+func BenchmarkCompoundConvBuf2D8_4x16(b *testing.B) {
+	_, ref := benchPlanes(16, 8)
+	var buf CompoundConvBuf
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 4, 16, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 3, 5, RegularFilters, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
 func BenchmarkCompoundConvBufX8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
 		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 3, 0, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBufX8_4x16(b *testing.B) {
+	_, ref := benchPlanes(16, 8)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 4, 16, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 3, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -152,11 +173,31 @@ func BenchmarkCompoundConvBufY8_32(b *testing.B) {
 	})
 }
 
+func BenchmarkCompoundConvBufY8_4x16(b *testing.B) {
+	_, ref := benchPlanes(16, 8)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 4, 16, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 0, 5, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
 func BenchmarkCompoundConvBufCopy8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
 		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 0, 0, RegularFilters, nil); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkCompoundConvBufCopy8_4x16(b *testing.B) {
+	_, ref := benchPlanes(16, 8)
+	var buf CompoundConvBuf
+	runConvolveBench(b, 4, 16, func() {
+		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 0, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})

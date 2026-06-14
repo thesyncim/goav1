@@ -363,11 +363,15 @@ func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T
 		filters       InterpFilters
 	}{
 		{"copy interior", 3, 4, 16, 8, 0, 0, RegularFilters},
+		{"copy width4 interior", 7, 6, 4, 8, 0, 0, RegularFilters},
 		{"copy edge", -2, 16, 16, 8, 0, 0, RegularFilters},
 		{"x regular interior", 2, 4, 16, 8, 5, 0, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
+		{"x width4 interior", 7, 6, 4, 8, 5, 0, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
 		{"x smooth right edge", 13, 5, 8, 8, 7, 0, InterpFilters{X: InterpEightTapSmooth, Y: InterpEightTapRegular}},
 		{"y sharp top edge", 4, -3, 16, 8, 0, 11, InterpFilters{X: InterpEightTapRegular, Y: InterpMultiTapSharp}},
+		{"y width4 interior", 7, 6, 4, 8, 0, 11, InterpFilters{X: InterpEightTapRegular, Y: InterpMultiTapSharp}},
 		{"2d regular interior", 4, 4, 16, 16, 3, 9, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}},
+		{"2d width4 interior", 7, 6, 4, 8, 3, 9, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}},
 		{"2d fourtap left edge", -2, 3, 4, 16, 4, 12, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}},
 		{"2d bilinear bottom edge", 9, 14, 8, 4, 8, 8, InterpFilters{X: InterpBilinear, Y: InterpBilinear}},
 	}
