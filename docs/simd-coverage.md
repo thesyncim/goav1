@@ -580,6 +580,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `424.5 ns/op` to `425.1 ns/op`. A one-forward-pass prep that combined EOB,
   padded levels, sign bits, and cumulative level was worse at median
   `436.7 ns/op`. Both stayed at zero allocations, and neither was kept.
+- Trusted 8x8 count-only BCE proof hints were rejected on 2026-06-14. Adding a
+  one-time `scanHot[eob-1]` / `absLevels[eob-1]` proof after the nonzero-EOB
+  branch removed two reported bounds checks in the luma/UV count-function
+  regions, but the extra proof did not pay for itself: paired `500000x` rows
+  moved `BenchmarkWriteCoefficientsTXB8x8Y2D/trusted-count` from median
+  `416.2 ns/op` to `420.1 ns/op`, and
+  `BenchmarkCountCoefficientsTXB8x8UV2D/trusted-count` from `436.9 ns/op` to
+  `443.1 ns/op`, all zero allocations. The loops stay on the current shape.
 - The 8x8 UV count-only sign/Golomb pass now mirrors the luma sparse-bitset
   walk in SVT's `av1_write_coeffs_txb_1d` tail: while filling levels it records
   non-zero scan slots in a `uint64`, then emits signs/tails by set-bit order
