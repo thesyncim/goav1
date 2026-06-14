@@ -300,3 +300,143 @@ TEXT ·hadamard8x8NEONAsm(SB), NOSPLIT, $0-8
 	ADD  $16, R3
 	VST1 [V17.S4], (R3)
 	RET
+
+// SVT-shaped 16x16 Hadamard quadrant combine. The caller has already produced
+// four 8x8 NEON-order coefficient quadrants at offsets 0, 64, 128, and 192.
+// This mirrors svt_aom_hadamard_16x16_neon's signed halving add/sub combine
+// and row-quarter store order.
+//
+//   shadd v4.4s, v0.4s, v1.4s  -> 0x4ea10404
+//   shsub v5.4s, v0.4s, v1.4s  -> 0x4ea12405
+//   shadd v6.4s, v2.4s, v3.4s  -> 0x4ea30446
+//   shsub v7.4s, v2.4s, v3.4s  -> 0x4ea32447
+
+// func hadamard16x16CombineNEONAsm(coeff unsafe.Pointer)
+TEXT ·hadamard16x16CombineNEONAsm(SB), NOSPLIT, $0-8
+	MOVD coeff+0(FP), R0
+	MOVD $4, R1
+h16loop:
+	MOVD R0, R4
+	MOVD R0, R8
+	MOVD R0, R5
+	ADD  $256, R5
+	MOVD R5, R9
+	MOVD R0, R6
+	ADD  $512, R6
+	MOVD R6, R10
+	MOVD R0, R7
+	ADD  $768, R7
+	MOVD R7, R11
+
+	VLD1 (R4), [V0.S4]
+	VLD1 (R5), [V1.S4]
+	VLD1 (R6), [V2.S4]
+	VLD1 (R7), [V3.S4]
+	WORD $0x4ea10404 // shadd v4.4s, v0.4s, v1.4s
+	WORD $0x4ea12405 // shsub v5.4s, v0.4s, v1.4s
+	WORD $0x4ea30446 // shadd v6.4s, v2.4s, v3.4s
+	WORD $0x4ea32447 // shsub v7.4s, v2.4s, v3.4s
+	VADD V6.S4, V4.S4, V16.S4
+	VADD V7.S4, V5.S4, V17.S4
+	VSUB V6.S4, V4.S4, V18.S4
+	VSUB V7.S4, V5.S4, V19.S4
+
+	ADD $16, R4
+	ADD $16, R5
+	ADD $16, R6
+	ADD $16, R7
+	VLD1 (R4), [V0.S4]
+	VLD1 (R5), [V1.S4]
+	VLD1 (R6), [V2.S4]
+	VLD1 (R7), [V3.S4]
+	WORD $0x4ea10404 // shadd v4.4s, v0.4s, v1.4s
+	WORD $0x4ea12405 // shsub v5.4s, v0.4s, v1.4s
+	WORD $0x4ea30446 // shadd v6.4s, v2.4s, v3.4s
+	WORD $0x4ea32447 // shsub v7.4s, v2.4s, v3.4s
+	VADD V6.S4, V4.S4, V20.S4
+	VADD V7.S4, V5.S4, V21.S4
+	VSUB V6.S4, V4.S4, V22.S4
+	VSUB V7.S4, V5.S4, V23.S4
+
+	ADD $16, R4
+	ADD $16, R5
+	ADD $16, R6
+	ADD $16, R7
+	VLD1 (R4), [V0.S4]
+	VLD1 (R5), [V1.S4]
+	VLD1 (R6), [V2.S4]
+	VLD1 (R7), [V3.S4]
+	WORD $0x4ea10404 // shadd v4.4s, v0.4s, v1.4s
+	WORD $0x4ea12405 // shsub v5.4s, v0.4s, v1.4s
+	WORD $0x4ea30446 // shadd v6.4s, v2.4s, v3.4s
+	WORD $0x4ea32447 // shsub v7.4s, v2.4s, v3.4s
+	VADD V6.S4, V4.S4, V24.S4
+	VADD V7.S4, V5.S4, V25.S4
+	VSUB V6.S4, V4.S4, V26.S4
+	VSUB V7.S4, V5.S4, V27.S4
+
+	ADD $16, R4
+	ADD $16, R5
+	ADD $16, R6
+	ADD $16, R7
+	VLD1 (R4), [V0.S4]
+	VLD1 (R5), [V1.S4]
+	VLD1 (R6), [V2.S4]
+	VLD1 (R7), [V3.S4]
+	WORD $0x4ea10404 // shadd v4.4s, v0.4s, v1.4s
+	WORD $0x4ea12405 // shsub v5.4s, v0.4s, v1.4s
+	WORD $0x4ea30446 // shadd v6.4s, v2.4s, v3.4s
+	WORD $0x4ea32447 // shsub v7.4s, v2.4s, v3.4s
+	VADD V6.S4, V4.S4, V28.S4
+	VADD V7.S4, V5.S4, V29.S4
+	VSUB V6.S4, V4.S4, V30.S4
+	VSUB V7.S4, V5.S4, V31.S4
+
+	VST1 [V16.S4], (R8)
+	MOVD R8, R12
+	ADD  $16, R12
+	VST1 [V24.S4], (R12)
+	MOVD R8, R12
+	ADD  $32, R12
+	VST1 [V20.S4], (R12)
+	MOVD R8, R12
+	ADD  $48, R12
+	VST1 [V28.S4], (R12)
+
+	VST1 [V17.S4], (R9)
+	MOVD R9, R12
+	ADD  $16, R12
+	VST1 [V25.S4], (R12)
+	MOVD R9, R12
+	ADD  $32, R12
+	VST1 [V21.S4], (R12)
+	MOVD R9, R12
+	ADD  $48, R12
+	VST1 [V29.S4], (R12)
+
+	VST1 [V18.S4], (R10)
+	MOVD R10, R12
+	ADD  $16, R12
+	VST1 [V26.S4], (R12)
+	MOVD R10, R12
+	ADD  $32, R12
+	VST1 [V22.S4], (R12)
+	MOVD R10, R12
+	ADD  $48, R12
+	VST1 [V30.S4], (R12)
+
+	VST1 [V19.S4], (R11)
+	MOVD R11, R12
+	ADD  $16, R12
+	VST1 [V27.S4], (R12)
+	MOVD R11, R12
+	ADD  $32, R12
+	VST1 [V23.S4], (R12)
+	MOVD R11, R12
+	ADD  $48, R12
+	VST1 [V31.S4], (R12)
+
+	ADD $64, R0
+	SUB $1, R1
+	CBNZ R1, h16loop
+	RET

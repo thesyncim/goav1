@@ -21,3 +21,7 @@ func satdCoeffs(coeff []int32, count int) int {
 func hadamard8x8(src []int16, srcStride int, coeff []int32) {
 	hadamard8x8Impl(src, srcStride, coeff)
 }
+
+func hadamard16x16(src []int16, srcStride int, coeff []int32) {
+	hadamard16x16Impl(src, srcStride, coeff)
+}

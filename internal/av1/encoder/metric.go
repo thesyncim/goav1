@@ -10,6 +10,7 @@ var pixelStats16x16Impl = pixelStats16x16PureGo
 var pixelStats32x32Impl = pixelStats32x32PureGo
 var satdCoeffsImpl = satdCoeffsPureGo
 var hadamard8x8Impl = hadamard8x8PureGo
+var hadamard16x16Impl = hadamard16x16PureGo
 
 func pixelStats8x8PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 8, 8)
@@ -130,4 +131,32 @@ func hadamardCol8(src []int16, srcStride int, coeff []int16) {
 	coeff[6] = c1 - c5
 	coeff[1] = c2 - c6
 	coeff[5] = c3 - c7
+}
+
+// hadamard16x16PureGo mirrors SVT's svt_aom_hadamard_16x16_c: four 8x8
+// producers followed by the source-shaped quadrant combine.
+func hadamard16x16PureGo(src []int16, srcStride int, coeff []int32) {
+	_ = src[15*srcStride+15]
+	_ = coeff[255]
+	hadamard8x8PureGo(src, srcStride, coeff)
+	hadamard8x8PureGo(src[8:], srcStride, coeff[64:])
+	hadamard8x8PureGo(src[8*srcStride:], srcStride, coeff[128:])
+	hadamard8x8PureGo(src[8*srcStride+8:], srcStride, coeff[192:])
+
+	for idx := range 64 {
+		a0 := coeff[idx]
+		a1 := coeff[64+idx]
+		a2 := coeff[128+idx]
+		a3 := coeff[192+idx]
+
+		b0 := (a0 + a1) >> 1
+		b1 := (a0 - a1) >> 1
+		b2 := (a2 + a3) >> 1
+		b3 := (a2 - a3) >> 1
+
+		coeff[idx] = b0 + b2
+		coeff[64+idx] = b1 + b3
+		coeff[128+idx] = b0 - b2
+		coeff[192+idx] = b1 - b3
+	}
 }

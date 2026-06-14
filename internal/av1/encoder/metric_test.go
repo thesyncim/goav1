@@ -185,6 +185,74 @@ func TestHadamard8x8MatchesReference(t *testing.T) {
 	}
 }
 
+func TestHadamard16x16ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(6111))
+	const (
+		stride = 29
+		height = 25
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 300 {
+		row := rng.Intn(height - 16)
+		col := rng.Intn(stride - 16)
+		for r := range 16 {
+			for c := range 16 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [256]int32
+		var wantNEON [256]int32
+		var got [256]int32
+		srcOff := row*stride + col
+		hadamard16x16PureGo(src[srcOff:], stride, wantC[:])
+		hadamard16x16SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard16x16Impl(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 256) != satdCoeffsPureGo(wantC[:], 256) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 256), satdCoeffsPureGo(wantC[:], 256))
+		}
+	}
+}
+
+func TestHadamard16x16MatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(6112))
+	const (
+		stride = 31
+		height = 27
+	)
+	src := make([]int16, stride*height)
+	for i := range src {
+		src[i] = int16(rng.Intn(511) - 255)
+	}
+	for range 300 {
+		row := rng.Intn(height - 16)
+		col := rng.Intn(stride - 16)
+		for r := range 16 {
+			for c := range 16 {
+				src[(row+r)*stride+col+c] = int16(rng.Intn(511) - 255)
+			}
+		}
+		var wantC [256]int32
+		var wantNEON [256]int32
+		var got [256]int32
+		srcOff := row*stride + col
+		hadamard16x16PureGo(src[srcOff:], stride, wantC[:])
+		hadamard16x16SVTNEONReference(src[srcOff:], stride, wantNEON[:])
+		hadamard16x16(src[srcOff:], stride, got[:])
+		if !slices.Equal(got[:], wantC[:]) && !slices.Equal(got[:], wantNEON[:]) {
+			t.Fatalf("offset=%d got %v wantC %v wantNEON %v", srcOff, got, wantC, wantNEON)
+		}
+		if satdCoeffsPureGo(got[:], 256) != satdCoeffsPureGo(wantC[:], 256) {
+			t.Fatalf("offset=%d SATD got %d want %d", srcOff, satdCoeffsPureGo(got[:], 256), satdCoeffsPureGo(wantC[:], 256))
+		}
+	}
+}
+
 func sameHadamard8x8Order(got, want []int32) bool {
 	if slices.Equal(got, want) {
 		return true
@@ -197,4 +265,65 @@ func sameHadamard8x8Order(got, want []int32) bool {
 		}
 	}
 	return true
+}
+
+func hadamard16x16SVTNEONReference(src []int16, srcStride int, coeff []int32) {
+	hadamard8x8TransposeReference(src, srcStride, coeff)
+	hadamard8x8TransposeReference(src[8:], srcStride, coeff[64:])
+	hadamard8x8TransposeReference(src[8*srcStride:], srcStride, coeff[128:])
+	hadamard8x8TransposeReference(src[8*srcStride+8:], srcStride, coeff[192:])
+
+	for base := 0; base < 64; base += 16 {
+		var c [4][4][4]int32
+		for g, off := range []int{0, 4, 8, 12} {
+			for lane := range 4 {
+				idx := base + off + lane
+				a0 := coeff[idx]
+				a1 := coeff[64+idx]
+				a2 := coeff[128+idx]
+				a3 := coeff[192+idx]
+
+				b0 := (a0 + a1) >> 1
+				b1 := (a0 - a1) >> 1
+				b2 := (a2 + a3) >> 1
+				b3 := (a2 - a3) >> 1
+
+				c[g][0][lane] = b0 + b2
+				c[g][1][lane] = b1 + b3
+				c[g][2][lane] = b0 - b2
+				c[g][3][lane] = b1 - b3
+			}
+		}
+		for lane := range 4 {
+			coeff[base+0+lane] = c[0][0][lane]
+			coeff[base+4+lane] = c[2][0][lane]
+			coeff[base+8+lane] = c[1][0][lane]
+			coeff[base+12+lane] = c[3][0][lane]
+
+			coeff[64+base+0+lane] = c[0][1][lane]
+			coeff[64+base+4+lane] = c[2][1][lane]
+			coeff[64+base+8+lane] = c[1][1][lane]
+			coeff[64+base+12+lane] = c[3][1][lane]
+
+			coeff[128+base+0+lane] = c[0][2][lane]
+			coeff[128+base+4+lane] = c[2][2][lane]
+			coeff[128+base+8+lane] = c[1][2][lane]
+			coeff[128+base+12+lane] = c[3][2][lane]
+
+			coeff[192+base+0+lane] = c[0][3][lane]
+			coeff[192+base+4+lane] = c[2][3][lane]
+			coeff[192+base+8+lane] = c[1][3][lane]
+			coeff[192+base+12+lane] = c[3][3][lane]
+		}
+	}
+}
+
+func hadamard8x8TransposeReference(src []int16, srcStride int, coeff []int32) {
+	var tmp [64]int32
+	hadamard8x8PureGo(src, srcStride, tmp[:])
+	for r := range 8 {
+		for c := range 8 {
+			coeff[r*8+c] = tmp[c*8+r]
+		}
+	}
 }
