@@ -545,6 +545,78 @@ func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
 	w.normalize(r)
 }
 
+// WriteCDF3 codes symbol s using a known three-symbol adaptive CDF. It is the
+// ternary specialization of WriteCDF for coefficient-base-EOB syntax whose
+// table shape is fixed by AV1 syntax.
+func (w *Writer) WriteCDF3(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 3)
+	}
+	v0, v1 := values[0], values[1]
+	l := w.low
+	r := w.rng
+	count := values[3]
+	rate := uint(4 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+	default:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		l += uint64(r - u)
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[3] = count + 1
+	}
+	w.normalize(l, r)
+}
+
+func (w *BitCounter) WriteCDF3(cdf *CDF, s int) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 3)
+	}
+	v0, v1 := values[0], values[1]
+	r := w.rng
+	count := values[3]
+	rate := uint(4 + (count >> 4))
+	q := r >> 8
+	switch s {
+	case 0:
+		r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		values[0] = v0 - (v0 >> rate)
+		values[1] = v1 - (v1 >> rate)
+	case 1:
+		u := ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*2
+		v := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u - v
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 - (v1 >> rate)
+	default:
+		u := ((q * (uint32(v1) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		r = u
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+		values[1] = v1 + ((uint16(CDFProbTop) - v1) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[3] = count + 1
+	}
+	w.normalize(r)
+}
+
 // WriteCDF4 codes symbol s using a known 4-symbol adaptive CDF. It is the
 // quaternary specialization of WriteCDF for coefficient-base hot paths whose
 // table shape is fixed by AV1 syntax.

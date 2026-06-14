@@ -181,7 +181,7 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 			if err != nil {
 				return TXBDecodeResult{}, ErrInvalidDecodeState
 			}
-			w.WriteCDF(&cdfs.CoeffBaseEOB[txCtx][req.Plane][ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&cdfs.CoeffBaseEOB[txCtx][req.Plane][ctx], minInt(level, 3)-1)
 		} else if req.Class == transform.Class2D {
 			p := &posTable[pos]
 			ctx := 0
@@ -374,7 +374,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -525,7 +525,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -693,7 +693,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -842,7 +842,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1008,7 +1008,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1192,7 +1192,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1356,7 +1356,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1530,7 +1530,7 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1680,7 +1680,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1827,7 +1827,7 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -1978,7 +1978,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -2139,7 +2139,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
@@ -2290,7 +2290,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		level := int(absLevels[c])
 		if c == eob-1 {
 			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF(&baseEOBCDFs[ctx], minInt(level, 3)-1)
+			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
