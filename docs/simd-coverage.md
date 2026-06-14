@@ -213,6 +213,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `172227 ns/op` median to `161569 ns/op` mean / `161805 ns/op` median for a
   2048-vector stream, zero allocations; the compiler reports the touched writer
   and CDF parameters as non-escaping and no `inter_write.go` bounds checks.
+- `WriteCDF3` now covers the fixed three-symbol coefficient-base-EOB CDFs
+  (`coeff_base_eob_cdf`, `CDF_SIZE(3)` in SVT). The stream microbench moved
+  from `22633 ns/op` median generic writer to `18335 ns/op` specialized, and
+  from `18331 ns/op` median generic counter to `17729 ns/op` specialized, zero
+  allocations. On the 8x8 TXB bench, exact previous-commit A/B left the byte
+  writer neutral/noisy (`trusted` median `500.0 ns/op` baseline versus
+  `500.4 ns/op` patched) while the hot count-only lane improved from
+  `422.9 ns/op` to `418.8 ns/op`.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
   coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
   single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,

@@ -311,6 +311,37 @@ func TestWriteBinaryCDFTrustedMatchesWriteCDF(t *testing.T) {
 	}
 }
 
+func TestWriteCDF3MatchesWriteCDF(t *testing.T) {
+	rng := rand.New(rand.NewSource(39))
+	var genericCDF, specializedCDF CDF
+	if err := genericCDF.Init([]uint16{9000, 22000}); err != nil {
+		t.Fatal(err)
+	}
+	specializedCDF = genericCDF
+
+	generic := NewWriter(make([]byte, 0, 1<<16))
+	specialized := NewWriter(make([]byte, 0, 1<<16))
+	for i := range 4000 {
+		sym := rng.Intn(3)
+		generic.WriteCDF(&genericCDF, sym)
+		specialized.WriteCDF3(&specializedCDF, sym)
+		if genericCDF != specializedCDF {
+			t.Fatalf("cdf diverged after symbol %d: generic=%v specialized=%v", i, genericCDF.Values(), specializedCDF.Values())
+		}
+	}
+	genericBytes, err := generic.Finish()
+	if err != nil {
+		t.Fatalf("generic finish: %v", err)
+	}
+	specializedBytes, err := specialized.Finish()
+	if err != nil {
+		t.Fatalf("specialized finish: %v", err)
+	}
+	if string(genericBytes) != string(specializedBytes) {
+		t.Fatalf("encoded bytes diverged: generic=%x specialized=%x", genericBytes, specializedBytes)
+	}
+}
+
 func TestWriteCDF4MatchesWriteCDF(t *testing.T) {
 	rng := rand.New(rand.NewSource(41))
 	var genericCDF, specializedCDF CDF
@@ -357,12 +388,18 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 	}
 	countCDF = normalCDF
 	bitCounterCDF = normalCDF
+	var normalCDF3, countCDF3, bitCounterCDF3 CDF
+	if err := normalCDF3.Init([]uint16{9000, 22000}); err != nil {
+		t.Fatal(err)
+	}
+	countCDF3 = normalCDF3
+	bitCounterCDF3 = normalCDF3
 
 	normal := NewWriter(make([]byte, 0, 1<<16))
 	count := NewCountingWriter()
 	bitCounter := NewBitCounter()
 	for i := range 5000 {
-		switch rng.Intn(5) {
+		switch rng.Intn(6) {
 		case 0:
 			bit := rng.Intn(2)
 			p := uint32(1 + rng.Intn(CDFProbTop-1))
@@ -383,6 +420,14 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF.Values(), countCDF.Values(), bitCounterCDF.Values())
 			}
 		case 3:
+			sym := rng.Intn(3)
+			normal.WriteCDF3(&normalCDF3, sym)
+			count.WriteCDF3(&countCDF3, sym)
+			bitCounter.WriteCDF3(&bitCounterCDF3, sym)
+			if normalCDF3 != countCDF3 || normalCDF3 != bitCounterCDF3 {
+				t.Fatalf("cdf3 diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF3.Values(), countCDF3.Values(), bitCounterCDF3.Values())
+			}
+		case 4:
 			sym := rng.Intn(2)
 			normal.WriteBinaryCDFTrusted(&normalBinaryCDF, sym)
 			count.WriteBinaryCDFTrusted(&countBinaryCDF, sym)
@@ -462,6 +507,54 @@ func BenchmarkWriterBinaryCDFStream(b *testing.B) {
 			w := NewWriter(buf[:0])
 			for _, sym := range syms {
 				w.WriteBinaryCDFTrusted(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func BenchmarkWriterCDF3Stream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(70))
+	for i := range syms {
+		switch r := rng.Intn(16); {
+		case r < 10:
+			syms[i] = 0
+		case r < 14:
+			syms[i] = 1
+		default:
+			syms[i] = 2
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{9000, 22000}); err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, 0, 1<<16)
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			if _, err := w.Finish(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("specialized", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			cdf := base
+			w := NewWriter(buf[:0])
+			for _, sym := range syms {
+				w.WriteCDF3(&cdf, sym)
 			}
 			if _, err := w.Finish(); err != nil {
 				b.Fatal(err)
@@ -550,6 +643,53 @@ func BenchmarkWriterBitStream(b *testing.B) {
 			w := NewBitCounter()
 			for _, sym := range syms {
 				w.WriteBit(sym)
+			}
+			sum += w.Tell()
+		}
+		bitCounterCDF4BenchSink = sum
+	})
+}
+
+func BenchmarkBitCounterCDF3Stream(b *testing.B) {
+	const streamLen = 4096
+	syms := make([]int, streamLen)
+	rng := rand.New(rand.NewSource(70))
+	for i := range syms {
+		switch r := rng.Intn(16); {
+		case r < 10:
+			syms[i] = 0
+		case r < 14:
+			syms[i] = 1
+		default:
+			syms[i] = 2
+		}
+	}
+	var base CDF
+	if err := base.Init([]uint16{9000, 22000}); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(streamLen)
+	b.Run("generic", func(b *testing.B) {
+		b.ReportAllocs()
+		sum := 0
+		for b.Loop() {
+			cdf := base
+			w := NewBitCounter()
+			for _, sym := range syms {
+				w.WriteCDF(&cdf, sym)
+			}
+			sum += w.Tell()
+		}
+		bitCounterCDF4BenchSink = sum
+	})
+	b.Run("specialized", func(b *testing.B) {
+		b.ReportAllocs()
+		sum := 0
+		for b.Loop() {
+			cdf := base
+			w := NewBitCounter()
+			for _, sym := range syms {
+				w.WriteCDF3(&cdf, sym)
 			}
 			sum += w.Tell()
 		}
