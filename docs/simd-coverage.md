@@ -459,8 +459,21 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `13778 ns/op`; the split path measured median `13624 ns/op` at `50000x` and
   `13504 ns/op` at `200000x`, zero allocations. Compiler reports keep the
   previous-record lookup helpers inlineable at cost `78`, with `record`,
-  `plan`, and `edges` non-escaping; the existing cached-record map-slice escape
-  report remains and should be revisited separately.
+  `plan`, and `edges` non-escaping; the follow-up value-cache entry below clears
+  the cached-record map-slice escape report.
+- The loop-filter planner previous-record caches now store compact
+  `FrameWorkLoopFilterBlockRecord` values instead of retaining pointers into
+  `FrameWorkLoopFilterMap.Records`, matching the stack-owned hot-path shape used
+  elsewhere in the planner. This clears the cached-record escape source for both
+  luma and chroma: `-gcflags='all=-m=2 -d=ssa/check_bce/debug=1'` reports the
+  luma cache lookup, chroma cache lookup, and trusted planner `filterMap` inputs
+  as non-escaping, while the previous-record lookup helpers stay inlineable at
+  cost `78` and the trusted planner wrapper remains inlineable at cost `78`.
+  Same-session `BenchmarkLoopFilterPostFilterPlanTrusted` baseline at `100000x`
+  had median `13936 ns/op`; the value-cache version measured median
+  `13680 ns/op` over nine repeats, with `0 B/op` and `0 allocs/op`. Hot-size
+  guards pin `FrameWorkLoopFilterBlockRecord` at `34 B`, the luma previous cache
+  at `76 B`, and the chroma previous cache at `50 B`.
 - The 4x4 final luma coefficient writer now has a direct inter-tx-type entry
   point, matching SVT's `av1_write_coeffs_txb_1d` order: write `txb_skip`,
   return for all-zero blocks, then write luma `tx_type` before the EOB token.

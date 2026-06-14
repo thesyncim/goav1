@@ -1259,7 +1259,7 @@ type frameWorkLoopFilterLumaPreviousCache struct {
 	valid      bool
 	miCol      uint16
 	miRow      uint16
-	record     *threading.FrameWorkLoopFilterBlockRecord
+	record     threading.FrameWorkLoopFilterBlockRecord
 	req        tile.TransformTreeRequest
 	fixed      bool
 	width      uint8
@@ -1309,7 +1309,7 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 			valid:  true,
 			miCol:  previous.Block.MICol,
 			miRow:  previous.Block.MIRow,
-			record: previous,
+			record: *previous,
 			req:    req,
 			fixed:  fixed,
 			width:  width,
@@ -1343,7 +1343,7 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 		}
 	}
 	if needLevel && !c.levelValid {
-		level, err := frameWorkResolveLoopFilterLevel(levelCtx, c.record, loopfilter.PlaneY, edge)
+		level, err := frameWorkResolveLoopFilterLevel(levelCtx, &c.record, loopfilter.PlaneY, edge)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -2146,7 +2146,7 @@ type frameWorkLoopFilterChromaPreviousCache struct {
 	valid      bool
 	miCol      uint16
 	miRow      uint16
-	record     *threading.FrameWorkLoopFilterBlockRecord
+	record     threading.FrameWorkLoopFilterBlockRecord
 	block      tile.TransformBlock
 	blockOK    bool
 	width      uint8
@@ -2183,7 +2183,7 @@ func (c *frameWorkLoopFilterChromaPreviousCache) lookup(levelCtx frameWorkLoopFi
 			valid:   true,
 			miCol:   previous.Block.MICol,
 			miRow:   previous.Block.MIRow,
-			record:  previous,
+			record:  *previous,
 			block:   block,
 			blockOK: blockOK,
 			width:   width,
@@ -2198,7 +2198,7 @@ func (c *frameWorkLoopFilterChromaPreviousCache) lookup(levelCtx frameWorkLoopFi
 		return 0, false, 0, nil
 	}
 	if needLevel && !c.levelValid {
-		level, err := frameWorkResolveLoopFilterLevel(levelCtx, c.record, plane, edge)
+		level, err := frameWorkResolveLoopFilterLevel(levelCtx, &c.record, plane, edge)
 		if err != nil {
 			return 0, false, 0, err
 		}
