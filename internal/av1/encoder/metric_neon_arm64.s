@@ -95,6 +95,55 @@ mnext:
 	MOVD R7, M_SUM(R0)
 	RET
 
+// Pixel-domain SSE/signed-sum statistics over a 4-wide block. This mirrors the
+// generic width>=8 metric kernel but uses exact four-byte row loads so edge
+// probes do not overread the row. The upper four byte lanes are zeroed before
+// each row, making the existing 8-lane widening math contribute only lanes 0..3.
+//
+//   movi v0.4s, #0               -> 0x4f000400
+//   movi v1.4s, #0               -> 0x4f000401
+//   ld1  {v0.s}[0], [x8]         -> 0x0d408100
+//   ld1  {v1.s}[0], [x9]         -> 0x0d408121
+//
+// func pixelStats4NEONAsm(ctx *pixelStatsNEONCtx)
+TEXT ·pixelStats4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD M_SRC(R0), R1
+	MOVD M_SRCSTRIDE(R0), R2
+	MOVD M_REF(R0), R3
+	MOVD M_REFSTRIDE(R0), R4
+	MOVD M_H(R0), R6
+
+	WORD $0x6e301e10 // eor v16.16b, v16.16b, v16.16b
+	WORD $0x6e311e31 // eor v17.16b, v17.16b, v17.16b
+	WORD $0x6e321e52 // eor v18.16b, v18.16b, v18.16b
+
+m4row:
+	MOVD R1, R8
+	MOVD R3, R9
+	WORD $0x4f000400 // movi v0.4s, #0
+	WORD $0x4f000401 // movi v1.4s, #0
+	WORD $0x0d408100 // ld1 {v0.s}[0], [x8]
+	WORD $0x0d408121 // ld1 {v1.s}[0], [x9]
+	WORD $0x2e212002 // usubl  v2.8h,  v0.8b, v1.8b
+	WORD $0x4e602844 // saddlp v4.4s,  v2.8h
+	WORD $0x4ea48652 // add    v18.4s, v18.4s, v4.4s
+	WORD $0x0e628050 // smlal  v16.4s, v2.4h, v2.4h
+	WORD $0x4e628051 // smlal2 v17.4s, v2.8h, v2.8h
+	ADD  R2, R1
+	ADD  R4, R3
+	SUB  $1, R6
+	CBNZ R6, m4row
+
+	WORD $0x4eb18610 // add    v16.4s, v16.4s, v17.4s
+	WORD $0x6eb03a00 // uaddlv d0,     v16.4s
+	WORD $0x4eb03a41 // saddlv d1,     v18.4s
+	VMOV V0.D[0], R7
+	MOVD R7, M_SSE(R0)
+	VMOV V1.D[0], R7
+	MOVD R7, M_SUM(R0)
+	RET
+
 // SVT-shaped coefficient SATD reducer:
 //   for each int32 coefficient: sum += abs(coeff[i])
 //

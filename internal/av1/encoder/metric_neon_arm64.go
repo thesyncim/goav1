@@ -20,6 +20,9 @@ type pixelStatsNEONCtx struct {
 //go:noescape
 func pixelStatsNEONAsm(ctx *pixelStatsNEONCtx)
 
+//go:noescape
+func pixelStats4NEONAsm(ctx *pixelStatsNEONCtx)
+
 // satdCoeffsNEONCtx carries SVT's int32 coefficient SATD reducer arguments.
 // Field offsets are mirrored by #define in metric_neon_arm64.s.
 type satdCoeffsNEONCtx struct {
@@ -64,8 +67,33 @@ func pixelStatsNEON(src []byte, srcStride int, ref []byte, refStride int, w, h i
 	return uint32(ctx.SSE), int32(ctx.Sum)
 }
 
+func pixelStats4NEON(src []byte, srcStride int, ref []byte, refStride int, h int) (sse uint32, sum int32) {
+	ctx := pixelStatsNEONCtx{
+		Src:       unsafe.Pointer(&src[0]),
+		SrcStride: int64(srcStride),
+		Ref:       unsafe.Pointer(&ref[0]),
+		RefStride: int64(refStride),
+		W:         4,
+		H:         int64(h),
+	}
+	pixelStats4NEONAsm(&ctx)
+	return uint32(ctx.SSE), int32(ctx.Sum)
+}
+
 func pixelStats8x8NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 8)
+}
+
+func pixelStats4x4NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStats4NEON(src, srcStride, ref, refStride, 4)
+}
+
+func pixelStats8x4NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 4)
+}
+
+func pixelStats4x8NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStats4NEON(src, srcStride, ref, refStride, 8)
 }
 
 func pixelStats16x8NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
@@ -74,6 +102,14 @@ func pixelStats16x8NEON(src []byte, srcStride int, ref []byte, refStride int) (s
 
 func pixelStats8x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 16)
+}
+
+func pixelStats16x4NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 4)
+}
+
+func pixelStats4x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStats4NEON(src, srcStride, ref, refStride, 16)
 }
 
 func pixelStats16x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
@@ -165,8 +201,13 @@ func hadamard32x32NEON(src []int16, srcStride int, coeff []int32) {
 
 func init() {
 	pixelStats8x8Impl = pixelStats8x8NEON
+	pixelStats4x4Impl = pixelStats4x4NEON
+	pixelStats8x4Impl = pixelStats8x4NEON
+	pixelStats4x8Impl = pixelStats4x8NEON
 	pixelStats16x8Impl = pixelStats16x8NEON
 	pixelStats8x16Impl = pixelStats8x16NEON
+	pixelStats16x4Impl = pixelStats16x4NEON
+	pixelStats4x16Impl = pixelStats4x16NEON
 	pixelStats16x16Impl = pixelStats16x16NEON
 	pixelStats32x8Impl = pixelStats32x8NEON
 	pixelStats8x32Impl = pixelStats8x32NEON

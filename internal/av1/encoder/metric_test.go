@@ -26,9 +26,14 @@ func TestPixelStatsImplMatchesPureGo(t *testing.T) {
 		pure func([]byte, int, []byte, int) (uint32, int32)
 		impl func([]byte, int, []byte, int) (uint32, int32)
 	}{
+		{w: 4, h: 4, pure: pixelStats4x4PureGo, impl: pixelStats4x4Impl},
+		{w: 8, h: 4, pure: pixelStats8x4PureGo, impl: pixelStats8x4Impl},
+		{w: 4, h: 8, pure: pixelStats4x8PureGo, impl: pixelStats4x8Impl},
 		{w: 8, h: 8, pure: pixelStats8x8PureGo, impl: pixelStats8x8Impl},
 		{w: 16, h: 8, pure: pixelStats16x8PureGo, impl: pixelStats16x8Impl},
 		{w: 8, h: 16, pure: pixelStats8x16PureGo, impl: pixelStats8x16Impl},
+		{w: 16, h: 4, pure: pixelStats16x4PureGo, impl: pixelStats16x4Impl},
+		{w: 4, h: 16, pure: pixelStats4x16PureGo, impl: pixelStats4x16Impl},
 		{w: 16, h: 16, pure: pixelStats16x16PureGo, impl: pixelStats16x16Impl},
 		{w: 32, h: 8, pure: pixelStats32x8PureGo, impl: pixelStats32x8Impl},
 		{w: 8, h: 32, pure: pixelStats8x32PureGo, impl: pixelStats8x32Impl},
@@ -77,9 +82,14 @@ func TestSSEVarianceMatchesReference(t *testing.T) {
 		fn    func([]byte, int, []byte, int) (uint32, uint32)
 		shift uint
 	}{
+		{w: 4, h: 4, fn: sseVariance4x4, shift: 4},
+		{w: 8, h: 4, fn: sseVariance8x4, shift: 5},
+		{w: 4, h: 8, fn: sseVariance4x8, shift: 5},
 		{w: 8, h: 8, fn: sseVariance8x8, shift: 6},
 		{w: 16, h: 8, fn: sseVariance16x8, shift: 7},
 		{w: 8, h: 16, fn: sseVariance8x16, shift: 7},
+		{w: 16, h: 4, fn: sseVariance16x4, shift: 6},
+		{w: 4, h: 16, fn: sseVariance4x16, shift: 6},
 		{w: 16, h: 16, fn: sseVariance16x16, shift: 8},
 		{w: 32, h: 8, fn: sseVariance32x8, shift: 8},
 		{w: 8, h: 32, fn: sseVariance8x32, shift: 8},

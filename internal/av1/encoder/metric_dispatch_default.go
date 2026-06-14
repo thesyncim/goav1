@@ -6,12 +6,32 @@ func pixelStats8x8(src []byte, srcStride int, ref []byte, refStride int) (uint32
 	return pixelStats8x8Impl(src, srcStride, ref, refStride)
 }
 
+func pixelStats4x4(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	return pixelStats4x4Impl(src, srcStride, ref, refStride)
+}
+
+func pixelStats8x4(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	return pixelStats8x4Impl(src, srcStride, ref, refStride)
+}
+
+func pixelStats4x8(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	return pixelStats4x8Impl(src, srcStride, ref, refStride)
+}
+
 func pixelStats16x8(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStats16x8Impl(src, srcStride, ref, refStride)
 }
 
 func pixelStats8x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStats8x16Impl(src, srcStride, ref, refStride)
+}
+
+func pixelStats16x4(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	return pixelStats16x4Impl(src, srcStride, ref, refStride)
+}
+
+func pixelStats4x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
+	return pixelStats4x16Impl(src, srcStride, ref, refStride)
 }
 
 func pixelStats16x16(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
