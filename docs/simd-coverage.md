@@ -538,8 +538,14 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   Same-session `BenchmarkLoopFilterPostFilterPlanTrusted` baseline at `100000x`
   had median `13936 ns/op`; the value-cache version measured median
   `13680 ns/op` over nine repeats, with `0 B/op` and `0 allocs/op`. Hot-size
-  guards pin `FrameWorkLoopFilterBlockRecord` at `34 B`, the luma previous cache
-  at `76 B`, and the chroma previous cache at `50 B`.
+  guards pin `FrameWorkLoopFilterBlockRecord` at `34 B`. The previous-record
+  cache field order now keeps the `uint16` coordinates before the byte-sized
+  validity/level fields, shrinking the luma previous cache from `76 B` to
+  `74 B` and the chroma previous cache from `50 B` to `48 B` without changing
+  the cached values. Focused `BenchmarkLoopFilterPostFilterPlanTrusted` rows
+  stayed zero-alloc but did not improve in the same session (`13559 ns/op`
+  baseline median versus `13838 ns/op` packed median), so this is kept as
+  stack/cache-footprint hygiene rather than a planner speed claim.
 - A segmented-luma first-cell seed was tested but not kept. The idea was to
   initialize the active segment from offset zero before scanning the remaining
   MI cells, avoiding the baseline's first empty `frameWorkStoreLoopFilterLumaEdgeSegment`

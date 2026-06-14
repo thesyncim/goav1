@@ -1256,14 +1256,14 @@ func frameWorkLoopFilterPreviousLumaRunInBlock(record *threading.FrameWorkLoopFi
 }
 
 type frameWorkLoopFilterLumaPreviousCache struct {
-	valid      bool
 	miCol      uint16
 	miRow      uint16
 	record     threading.FrameWorkLoopFilterBlockRecord
 	req        tile.TransformTreeRequest
+	tx         tile.TransformBlock
+	valid      bool
 	fixed      bool
 	width      uint8
-	tx         tile.TransformBlock
 	txWidth    uint8
 	txValid    bool
 	level      uint8
@@ -2143,11 +2143,11 @@ func frameWorkLoopFilterPreviousChromaRunInBlock(record *threading.FrameWorkLoop
 }
 
 type frameWorkLoopFilterChromaPreviousCache struct {
-	valid      bool
 	miCol      uint16
 	miRow      uint16
 	record     threading.FrameWorkLoopFilterBlockRecord
 	block      tile.TransformBlock
+	valid      bool
 	blockOK    bool
 	width      uint8
 	level      uint8
