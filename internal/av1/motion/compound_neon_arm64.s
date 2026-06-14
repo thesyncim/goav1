@@ -75,7 +75,7 @@ done:
 #define X_HEIGHT      40
 #define X_ROUNDOFFSET 48
 
-// func compoundX8NEONAsm(ctx *compoundX8NEONCtx)
+// func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
 //
 // Resident horizontal 8-tap joint convolve with do_average == 0:
 //     dst = round((k0*s0 + ... + k7*s7), ROUND0_BITS) + roundOffset
@@ -148,4 +148,86 @@ cxColLoop:
 	CBNZ R7, cxRowLoop
 
 cxDone:
+	RET
+
+// func compoundY8NEONAsm(ctx *compoundFilter8NEONCtx)
+//
+// Resident vertical 8-tap joint convolve with do_average == 0. The vertical
+// sum carries FILTER_BITS precision, so compound output is round(sum, 3) plus
+// the CONV_BUF round offset.
+TEXT ·compoundY8NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD X_DST(R0), R1
+	MOVD X_REF(R0), R2
+	MOVD X_KERNEL(R0), R3
+	MOVD X_REFSTR(R0), R5
+	MOVD X_WIDTH(R0), R6
+	MOVD X_HEIGHT(R0), R7
+	MOVD X_ROUNDOFFSET(R0), R12
+
+	WORD $0x4c407460 // ld1 {v0.8h}, [x3]   load 8 taps
+	WORD $0x4e020d85 // dup v5.8h, w12      roundOffset
+
+cyRowLoop:
+	CBZ  R7, cyDone
+	MOVD R1, R10 // dst cursor
+	MOVD R2, R11 // ref row-window base for this output row
+	MOVD R6, R8  // remaining columns
+
+cyColLoop:
+	MOVD R11, R9 // R9 walks the 8 tap rows; post-index by ref stride
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f000411 // movi v17.4s, #0
+
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f402030 // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x4f402031 // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f502030 // smlal  v16.4s, v1.4h, v0.h[1]
+	WORD $0x4f502031 // smlal2 v17.4s, v1.8h, v0.h[1]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f602030 // smlal  v16.4s, v1.4h, v0.h[2]
+	WORD $0x4f602031 // smlal2 v17.4s, v1.8h, v0.h[2]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f702030 // smlal  v16.4s, v1.4h, v0.h[3]
+	WORD $0x4f702031 // smlal2 v17.4s, v1.8h, v0.h[3]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f402830 // smlal  v16.4s, v1.4h, v0.h[4]
+	WORD $0x4f402831 // smlal2 v17.4s, v1.8h, v0.h[4]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f502830 // smlal  v16.4s, v1.4h, v0.h[5]
+	WORD $0x4f502831 // smlal2 v17.4s, v1.8h, v0.h[5]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f602830 // smlal  v16.4s, v1.4h, v0.h[6]
+	WORD $0x4f602831 // smlal2 v17.4s, v1.8h, v0.h[6]
+	WORD $0x0cc57121 // ld1 {v1.8b}, [x9], x5
+	WORD $0x2f08a421 // ushll v1.8h, v1.8b, #0
+	WORD $0x0f702830 // smlal  v16.4s, v1.4h, v0.h[7]
+	WORD $0x4f702831 // smlal2 v17.4s, v1.8h, v0.h[7]
+
+	WORD $0x4f3d2610 // srshr v16.4s, v16.4s, #3
+	WORD $0x4f3d2631 // srshr v17.4s, v17.4s, #3
+	WORD $0x0e614a10 // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30 // sqxtn2 v16.8h, v17.4s
+	WORD $0x4e658610 // add v16.8h, v16.8h, v5.8h
+	WORD $0x4c007550 // st1 {v16.8h}, [x10]
+
+	ADD  $16, R10, R10
+	ADD  $8, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, cyColLoop
+
+	ADD  R6<<1, R1
+	ADD  R5, R2, R2
+	SUB  $1, R7, R7
+	CBNZ R7, cyRowLoop
+
+cyDone:
 	RET

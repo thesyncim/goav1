@@ -20,7 +20,7 @@ type compoundCopy8NEONCtx struct {
 	roundOffset uintptr
 }
 
-type compoundX8NEONCtx struct {
+type compoundFilter8NEONCtx struct {
 	dst         *uint16
 	ref         *byte
 	kernel      *int16
@@ -34,7 +34,10 @@ type compoundX8NEONCtx struct {
 func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 
 //go:noescape
-func compoundX8NEONAsm(ctx *compoundX8NEONCtx)
+func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
+
+//go:noescape
+func compoundY8NEONAsm(ctx *compoundFilter8NEONCtx)
 
 func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	if round0 != compoundRound0Bits ||
@@ -64,7 +67,7 @@ func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX 
 		return
 	}
 	k := kernel
-	ctx := compoundX8NEONCtx{
+	ctx := compoundFilter8NEONCtx{
 		dst:         &out[0],
 		ref:         &ref.Pix[refY*ref.Stride+refX-fo],
 		kernel:      &k[0],
@@ -76,9 +79,31 @@ func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX 
 	compoundX8NEONAsm(&ctx)
 }
 
+func predictInterCompoundRef8ToConvBufYNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	if round0 != compoundRound0Bits ||
+		width < 8 || width%8 != 0 ||
+		!planeRegionFits(ref, 1, refX, refY-fo, width, height+filterTaps-1) {
+		predictInterCompoundRef8ToConvBufYPureGo(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	k := kernel
+	ctx := compoundFilter8NEONCtx{
+		dst:         &out[0],
+		ref:         &ref.Pix[(refY-fo)*ref.Stride+refX],
+		kernel:      &k[0],
+		refStr:      uintptr(ref.Stride),
+		width:       uintptr(width),
+		height:      uintptr(height),
+		roundOffset: uintptr(roundOffset),
+	}
+	compoundY8NEONAsm(&ctx)
+}
+
 func init() {
 	if cpu.Detected.NEON {
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
+		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 	}
 }

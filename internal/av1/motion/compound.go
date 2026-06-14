@@ -437,7 +437,7 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	case subX != 0:
 		predictInterCompoundRef8ToConvBufXImpl(out, ref, refX, refY, width, height, xKernel, roundOffset)
 	case subY != 0:
-		predictInterCompoundRef8ToConvBufY(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
+		predictInterCompoundRef8ToConvBufYImpl(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 	default:
 		predictInterCompoundRef8ToConvBufCopyImpl(out, ref, refX, refY, width, height, round0, roundOffset)
 	}
@@ -636,7 +636,9 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 	}
 }
 
-func predictInterCompoundRef8ToConvBufY(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+var predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYPureGo
+
+func predictInterCompoundRef8ToConvBufYPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
 	fo := filterTaps/2 - 1
 	bits := filterBits - round0
 	scale := 1 << bits
