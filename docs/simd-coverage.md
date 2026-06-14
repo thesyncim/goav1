@@ -201,6 +201,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   pool. HME pyramid rotation also uses an explicit queue swap instead of a
   per-frame defer. Both are scheduler/dispatch cleanups, not concurrency
   increases.
+- A zero-input fast path for scalar `fwdADST8` was tested but not kept. SVT's
+  `svt_av1_fwd_txfm2d_8x8_neon` batches ADST_DCT/DCT_ADST/ADST_ADST through
+  `highbd_fadst8_xn_neon`; the Go scalar kernel has clean escape analysis but
+  is too large to inline. The branch made synthetic zero rows much faster
+  (`BenchmarkForwardADST8/zero` median `6.871 -> 1.773 ns/op`) but regressed
+  dense ADST8 (`6.754 -> 7.050 ns/op`) and two of the three full trusted 8x8
+  hybrid modes (`ADST_DCT` `267.5 -> 277.9 ns/op`, `ADST_ADST`
+  `265.2 -> 273.0 ns/op`; `DCT_ADST` improved `295.2 -> 288.7 ns/op`).
+  Because P-frame TX-type trials score nonzero residuals across all three ADST
+  shapes, this stays scalar/source-shaped until a batched NEON-style 2D kernel
+  is implemented and measured.
 - `WriteCDF4` uses a single symbol switch for the quaternary coefficient-base
   path and is guarded by `TestWriteCDF4MatchesWriteCDF`; after byte-writer
   normalization moved to the 16-bit shift expression below, the specialized
