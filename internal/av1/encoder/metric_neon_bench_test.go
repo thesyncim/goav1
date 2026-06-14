@@ -99,3 +99,52 @@ func benchSSEVariance64x64(b *testing.B, fn func([]byte, int, []byte, int) (uint
 		b.Fatal("unexpected zero metric")
 	}
 }
+
+func BenchmarkSATDCoeffs16Scalar(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsPureGo, 16)
+}
+
+func BenchmarkSATDCoeffs16NEON(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsNEON, 16)
+}
+
+func BenchmarkSATDCoeffs64Scalar(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsPureGo, 64)
+}
+
+func BenchmarkSATDCoeffs64NEON(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsNEON, 64)
+}
+
+func BenchmarkSATDCoeffs256Scalar(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsPureGo, 256)
+}
+
+func BenchmarkSATDCoeffs256NEON(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsNEON, 256)
+}
+
+func BenchmarkSATDCoeffs1024Scalar(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsPureGo, 1024)
+}
+
+func BenchmarkSATDCoeffs1024NEON(b *testing.B) {
+	benchSATDCoeffs(b, satdCoeffsNEON, 1024)
+}
+
+func benchSATDCoeffs(b *testing.B, fn func([]int32, int) int, count int) {
+	rng := rand.New(rand.NewSource(6107))
+	coeff := make([]int32, count)
+	for i := range coeff {
+		coeff[i] = int32(rng.Intn(65281) - 32640)
+	}
+	var satd int
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		satd = fn(coeff, count)
+	}
+	if satd == 0 {
+		b.Fatal("unexpected zero SATD")
+	}
+}

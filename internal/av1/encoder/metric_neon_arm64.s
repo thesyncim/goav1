@@ -94,3 +94,50 @@ mnext:
 	VMOV V1.D[0], R7
 	MOVD R7, M_SUM(R0)
 	RET
+
+// SVT-shaped coefficient SATD reducer:
+//   for each int32 coefficient: sum += abs(coeff[i])
+//
+// SVT's `svt_aom_satd_neon` processes 16 TranLow coefficients per iteration.
+// This mirrors that loop shape for the AV1 TX sizes {16,64,256,1024}.
+//
+//   abs   v0.4s,  v0.4s             -> 0x4ea0b800
+//   abs   v1.4s,  v1.4s             -> 0x4ea0b821
+//   abs   v2.4s,  v2.4s             -> 0x4ea0b842
+//   abs   v3.4s,  v3.4s             -> 0x4ea0b863
+//   add   v16.4s, v16.4s, v0.4s     -> 0x4ea08610
+//   add   v16.4s, v16.4s, v1.4s     -> 0x4ea18610
+//   add   v16.4s, v16.4s, v2.4s     -> 0x4ea28610
+//   add   v16.4s, v16.4s, v3.4s     -> 0x4ea38610
+//   saddlv d0,     v16.4s           -> 0x4eb03a00
+
+#define S_COEFF 0
+#define S_COUNT 8
+#define S_SUM   16
+
+// func satdCoeffsNEONAsm(ctx *satdCoeffsNEONCtx)
+TEXT ·satdCoeffsNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD S_COEFF(R0), R1
+	MOVD S_COUNT(R0), R2
+	WORD $0x6e301e10 // eor v16.16b, v16.16b, v16.16b
+	LSR  $4, R2
+sloop:
+	VLD1.P 16(R1), [V0.S4]
+	VLD1.P 16(R1), [V1.S4]
+	VLD1.P 16(R1), [V2.S4]
+	VLD1.P 16(R1), [V3.S4]
+	WORD $0x4ea0b800 // abs v0.4s, v0.4s
+	WORD $0x4ea0b821 // abs v1.4s, v1.4s
+	WORD $0x4ea0b842 // abs v2.4s, v2.4s
+	WORD $0x4ea0b863 // abs v3.4s, v3.4s
+	WORD $0x4ea08610 // add v16.4s, v16.4s, v0.4s
+	WORD $0x4ea18610 // add v16.4s, v16.4s, v1.4s
+	WORD $0x4ea28610 // add v16.4s, v16.4s, v2.4s
+	WORD $0x4ea38610 // add v16.4s, v16.4s, v3.4s
+	SUB  $1, R2
+	CBNZ R2, sloop
+	WORD $0x4eb03a00 // saddlv d0, v16.4s
+	VMOV V0.D[0], R3
+	MOVD R3, S_SUM(R0)
+	RET

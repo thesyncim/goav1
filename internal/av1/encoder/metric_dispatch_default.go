@@ -13,3 +13,7 @@ func pixelStats16x16(src []byte, srcStride int, ref []byte, refStride int) (uint
 func pixelStats32x32(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStats32x32Impl(src, srcStride, ref, refStride)
 }
+
+func satdCoeffs(coeff []int32, count int) int {
+	return satdCoeffsImpl(coeff, count)
+}

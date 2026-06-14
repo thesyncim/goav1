@@ -20,6 +20,17 @@ type pixelStatsNEONCtx struct {
 //go:noescape
 func pixelStatsNEONAsm(ctx *pixelStatsNEONCtx)
 
+// satdCoeffsNEONCtx carries SVT's int32 coefficient SATD reducer arguments.
+// Field offsets are mirrored by #define in metric_neon_arm64.s.
+type satdCoeffsNEONCtx struct {
+	Coeff unsafe.Pointer
+	Count int64
+	Sum   int64
+}
+
+//go:noescape
+func satdCoeffsNEONAsm(ctx *satdCoeffsNEONCtx)
+
 func pixelStatsNEON(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
 	ctx := pixelStatsNEONCtx{
 		Src:       unsafe.Pointer(&src[0]),
@@ -45,8 +56,18 @@ func pixelStats32x32NEON(src []byte, srcStride int, ref []byte, refStride int) (
 	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 32)
 }
 
+func satdCoeffsNEON(coeff []int32, count int) int {
+	ctx := satdCoeffsNEONCtx{
+		Coeff: unsafe.Pointer(&coeff[0]),
+		Count: int64(count),
+	}
+	satdCoeffsNEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
 func init() {
 	pixelStats8x8Impl = pixelStats8x8NEON
 	pixelStats16x16Impl = pixelStats16x16NEON
 	pixelStats32x32Impl = pixelStats32x32NEON
+	satdCoeffsImpl = satdCoeffsNEON
 }

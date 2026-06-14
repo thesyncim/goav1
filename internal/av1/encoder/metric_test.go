@@ -88,3 +88,40 @@ func TestSSEVarianceMatchesReference(t *testing.T) {
 		}
 	}
 }
+
+func TestSATDCoeffsImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(6105))
+	coeff := make([]int32, 1024)
+	for i := range coeff {
+		coeff[i] = int32(rng.Intn(65281) - 32640)
+	}
+	for _, count := range []int{16, 64, 256, 1024} {
+		for range 200 {
+			for i := range coeff[:count] {
+				coeff[i] = int32(rng.Intn(65281) - 32640)
+			}
+			want := satdCoeffsPureGo(coeff, count)
+			got := satdCoeffsImpl(coeff, count)
+			if got != want {
+				t.Fatalf("count=%d got %d want %d", count, got, want)
+			}
+		}
+	}
+}
+
+func TestSATDCoeffsMatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(6106))
+	coeff := make([]int32, 1024)
+	for _, count := range []int{16, 64, 256, 1024} {
+		for range 200 {
+			for i := range coeff[:count] {
+				coeff[i] = int32(rng.Intn(65281) - 32640)
+			}
+			want := satdCoeffsPureGo(coeff, count)
+			got := satdCoeffs(coeff, count)
+			if got != want {
+				t.Fatalf("count=%d got %d want %d", count, got, want)
+			}
+		}
+	}
+}

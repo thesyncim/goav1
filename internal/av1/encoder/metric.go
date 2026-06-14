@@ -8,6 +8,7 @@ package encoder
 var pixelStats8x8Impl = pixelStats8x8PureGo
 var pixelStats16x16Impl = pixelStats16x16PureGo
 var pixelStats32x32Impl = pixelStats32x32PureGo
+var satdCoeffsImpl = satdCoeffsPureGo
 
 func pixelStats8x8PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 8, 8)
@@ -63,4 +64,19 @@ func sseVariance64x64(src []byte, srcStride int, ref []byte, refStride int) (sse
 
 func varianceFromStats(sse uint32, sum int32, shift uint) uint32 {
 	return sse - uint32((int64(sum)*int64(sum))>>shift)
+}
+
+// satdCoeffsPureGo mirrors SVT's svt_aom_satd_c reducer. The caller supplies
+// the active coefficient count; SVT's SIMD reducer is specialized for counts
+// that are multiples of 16, which covers the AV1 {16,64,256,1024} TX sizes.
+func satdCoeffsPureGo(coeff []int32, count int) int {
+	total := 0
+	for i := 0; i < count; i++ {
+		v := coeff[i]
+		if v < 0 {
+			v = -v
+		}
+		total += int(v)
+	}
+	return total
 }
