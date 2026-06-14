@@ -103,7 +103,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits/nonzero bitsets on measured-winning count paths. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous 8x8 extra scan-table and branchless sign rewrites regressed or tied after paired measurement. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
 | SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32/64x64 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, `sad32x32x4d`, and `sad64x64x4d` have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
-| Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the active square 8x8/16x16/32x32 sizes with 64x64 composed from 32x32, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. None of these are wired into decisions because the measured encoder does not call that path. | Baseline square SSE/variance, coefficient-SATD reduction, and 4x4/8x8/16x16/32x32 Hadamard production are present and benchmarked but not used for decisions yet. Only wire them into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
+| Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the width-multiple-of-8 square/rectangular low-bitdepth shapes through 64x64, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. None of these are wired into decisions because the measured encoder does not call that path. | Width-4 variance/SSE and DOTPROD variants remain gaps. Baseline width>=8 SSE/variance, coefficient-SATD reduction, and 4x4/8x8/16x16/32x32 Hadamard production are present and benchmarked but not used for decisions yet. Only wire them into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX, ADST_DCT, DCT_ADST, and ADST_ADST tx-type trials now have arm64 NEON matching SVT's identity, ADST-column/DCT-row, DCT-column/ADST-row, and ADST-column/ADST-row surfaces. Larger/rectangular ADST and flip-ADST surfaces are still scalar or unsupported in this encoder mode set. | High for the current profile: the active 8x8 tx-type trial surface is covered, but SVT's broader forward-transform matrix still includes rectangular/N2/N4/flip ADST variants. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
 | Inter prediction/convolve | Convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; compound paths reuse convolve/blend, no dotprod/i8mm tier | Baseline coverage is good, max-tier coverage is not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
@@ -546,27 +546,43 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `BenchmarkRDStats256NEON` is about `49.1-50.3 ns/op` versus
   `180-186 ns/op` scalar, and `BenchmarkRDStats1024NEON` is about
   `193.8-200.5 ns/op` versus `790-891 ns/op` scalar, all zero allocations.
-- Pixel-domain SSE/variance now has a baseline arm64 NEON stats kernel for
-  square 8x8/16x16/32x32 blocks, with 64x64 composed from four 32x32 stats
-  calls. The same kernel is now also surfaced for the active rectangular
-  16x8/8x16/32x16/16x32 metric shapes, matching the relevant width-multiple-of-8
-  portion of SVT's `sse_neon.c`/`variance_neon.c` surface without changing mode
-  decisions. On the local M4 Max, `BenchmarkPixelStats8x8NEON` is about
+- Pixel-domain SSE/variance now has a baseline arm64 NEON stats kernel for the
+  width-multiple-of-8 low-bitdepth metric surface through 64x64:
+  8x8/16x8/8x16/16x16/32x8/8x32/32x16/16x32/32x32/64x16/16x64/64x32/32x64,
+  with 64x64 composed from four 32x32 stats calls. This matches the practical
+  width>=8 portion of SVT's `sse_neon.c`/`variance_neon.c` surface without
+  changing mode decisions; width-4 variance remains a separate gap because the
+  current generic metric asm is intentionally 8-wide at minimum. On the local
+  M4 Max, the square rows remain `BenchmarkPixelStats8x8NEON` about
   `7.12-7.42 ns/op` versus `29.69-31.06 ns/op` scalar,
-  `BenchmarkPixelStats16x16NEON` is about `25.64-26.06 ns/op` versus
-  `126.2-127.3 ns/op` scalar, `BenchmarkPixelStats32x32NEON` is about
+  `BenchmarkPixelStats16x16NEON` about `25.64-26.06 ns/op` versus
+  `126.2-127.3 ns/op` scalar, `BenchmarkPixelStats32x32NEON` about
   `97.73-102.5 ns/op` versus `482.0-497.2 ns/op` scalar, and composed
-  `BenchmarkSSEVariance64x64NEON` is about `400.2-417.8 ns/op` versus
-  `1905-1942 ns/op` scalar, all zero allocations. The new rectangular median
+  `BenchmarkSSEVariance64x64NEON` about `400.2-417.8 ns/op` versus
+  `1905-1942 ns/op` scalar, all zero allocations. Earlier rectangular median
   rows are `BenchmarkPixelStats16x8NEON` `12.41 ns/op` versus `64.12 ns/op`
   scalar, `BenchmarkPixelStats8x16NEON` `12.56 ns/op` versus `64.64 ns/op`
   scalar, `BenchmarkPixelStats32x16NEON` `45.10 ns/op` versus `237.4 ns/op`
   scalar, and `BenchmarkPixelStats16x32NEON` `46.23 ns/op` versus
-  `239.0 ns/op` scalar. The matching variance rows are
+  `239.0 ns/op` scalar; their matching variance rows are
   `BenchmarkSSEVariance16x8NEON` `12.79 ns/op` versus `58.57 ns/op` scalar,
   `BenchmarkSSEVariance8x16NEON` `12.64 ns/op` versus `65.08 ns/op` scalar,
   `BenchmarkSSEVariance32x16NEON` `45.55 ns/op` versus `231.6 ns/op` scalar,
   and `BenchmarkSSEVariance16x32NEON` `46.60 ns/op` versus `232.6 ns/op`
+  scalar, all zero allocations. The wider rectangular median rows are
+  `BenchmarkPixelStats32x8NEON` `23.12 ns/op` versus `120.8 ns/op` scalar,
+  `BenchmarkPixelStats8x32NEON` `24.12 ns/op` versus `123.7 ns/op` scalar,
+  `BenchmarkPixelStats64x16NEON` `88.61 ns/op` versus `476.2 ns/op` scalar,
+  `BenchmarkPixelStats16x64NEON` `91.49 ns/op` versus `469.7 ns/op` scalar,
+  `BenchmarkPixelStats64x32NEON` `177.3 ns/op` versus `947.2 ns/op` scalar,
+  and `BenchmarkPixelStats32x64NEON` `179.2 ns/op` versus `931.7 ns/op`
+  scalar. Their matching variance medians are `BenchmarkSSEVariance32x8NEON`
+  `23.93 ns/op` versus `118.6 ns/op` scalar,
+  `BenchmarkSSEVariance8x32NEON` `24.51 ns/op` versus `121.1 ns/op` scalar,
+  `BenchmarkSSEVariance64x16NEON` `89.22 ns/op` versus `464.8 ns/op` scalar,
+  `BenchmarkSSEVariance16x64NEON` `91.66 ns/op` versus `460.0 ns/op` scalar,
+  `BenchmarkSSEVariance64x32NEON` `178.4 ns/op` versus `923.2 ns/op` scalar,
+  and `BenchmarkSSEVariance32x64NEON` `179.8 ns/op` versus `910.0 ns/op`
   scalar, all zero allocations.
 - Coefficient SATD reduction now has an arm64 NEON reducer mirroring SVT's
   `svt_aom_satd_neon` loop over 16 int32 coefficients per iteration. It covers

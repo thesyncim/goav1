@@ -80,6 +80,14 @@ func pixelStats16x16NEON(src []byte, srcStride int, ref []byte, refStride int) (
 	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 16)
 }
 
+func pixelStats32x8NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 8)
+}
+
+func pixelStats8x32NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 8, 32)
+}
+
 func pixelStats32x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 16)
 }
@@ -90,6 +98,22 @@ func pixelStats16x32NEON(src []byte, srcStride int, ref []byte, refStride int) (
 
 func pixelStats32x32NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 32)
+}
+
+func pixelStats64x16NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 64, 16)
+}
+
+func pixelStats16x64NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 16, 64)
+}
+
+func pixelStats64x32NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 64, 32)
+}
+
+func pixelStats32x64NEON(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsNEON(src, srcStride, ref, refStride, 32, 64)
 }
 
 func satdCoeffsNEON(coeff []int32, count int) int {
@@ -144,9 +168,15 @@ func init() {
 	pixelStats16x8Impl = pixelStats16x8NEON
 	pixelStats8x16Impl = pixelStats8x16NEON
 	pixelStats16x16Impl = pixelStats16x16NEON
+	pixelStats32x8Impl = pixelStats32x8NEON
+	pixelStats8x32Impl = pixelStats8x32NEON
 	pixelStats32x16Impl = pixelStats32x16NEON
 	pixelStats16x32Impl = pixelStats16x32NEON
 	pixelStats32x32Impl = pixelStats32x32NEON
+	pixelStats64x16Impl = pixelStats64x16NEON
+	pixelStats16x64Impl = pixelStats16x64NEON
+	pixelStats64x32Impl = pixelStats64x32NEON
+	pixelStats32x64Impl = pixelStats32x64NEON
 	satdCoeffsImpl = satdCoeffsNEON
 	hadamard4x4Impl = hadamard4x4NEON
 	hadamard8x8Impl = hadamard8x8NEON

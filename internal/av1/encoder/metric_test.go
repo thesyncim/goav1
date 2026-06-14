@@ -30,9 +30,15 @@ func TestPixelStatsImplMatchesPureGo(t *testing.T) {
 		{w: 16, h: 8, pure: pixelStats16x8PureGo, impl: pixelStats16x8Impl},
 		{w: 8, h: 16, pure: pixelStats8x16PureGo, impl: pixelStats8x16Impl},
 		{w: 16, h: 16, pure: pixelStats16x16PureGo, impl: pixelStats16x16Impl},
+		{w: 32, h: 8, pure: pixelStats32x8PureGo, impl: pixelStats32x8Impl},
+		{w: 8, h: 32, pure: pixelStats8x32PureGo, impl: pixelStats8x32Impl},
 		{w: 32, h: 16, pure: pixelStats32x16PureGo, impl: pixelStats32x16Impl},
 		{w: 16, h: 32, pure: pixelStats16x32PureGo, impl: pixelStats16x32Impl},
 		{w: 32, h: 32, pure: pixelStats32x32PureGo, impl: pixelStats32x32Impl},
+		{w: 64, h: 16, pure: pixelStats64x16PureGo, impl: pixelStats64x16Impl},
+		{w: 16, h: 64, pure: pixelStats16x64PureGo, impl: pixelStats16x64Impl},
+		{w: 64, h: 32, pure: pixelStats64x32PureGo, impl: pixelStats64x32Impl},
+		{w: 32, h: 64, pure: pixelStats32x64PureGo, impl: pixelStats32x64Impl},
 	} {
 		for range 1000 {
 			srow := rng.Intn(height - sh.h)
@@ -75,9 +81,15 @@ func TestSSEVarianceMatchesReference(t *testing.T) {
 		{w: 16, h: 8, fn: sseVariance16x8, shift: 7},
 		{w: 8, h: 16, fn: sseVariance8x16, shift: 7},
 		{w: 16, h: 16, fn: sseVariance16x16, shift: 8},
+		{w: 32, h: 8, fn: sseVariance32x8, shift: 8},
+		{w: 8, h: 32, fn: sseVariance8x32, shift: 8},
 		{w: 32, h: 16, fn: sseVariance32x16, shift: 9},
 		{w: 16, h: 32, fn: sseVariance16x32, shift: 9},
 		{w: 32, h: 32, fn: sseVariance32x32, shift: 10},
+		{w: 64, h: 16, fn: sseVariance64x16, shift: 10},
+		{w: 16, h: 64, fn: sseVariance16x64, shift: 10},
+		{w: 64, h: 32, fn: sseVariance64x32, shift: 11},
+		{w: 32, h: 64, fn: sseVariance32x64, shift: 11},
 		{w: 64, h: 64, fn: sseVariance64x64, shift: 12},
 	} {
 		for range 500 {

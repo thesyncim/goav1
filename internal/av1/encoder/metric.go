@@ -9,9 +9,15 @@ var pixelStats8x8Impl = pixelStats8x8PureGo
 var pixelStats16x8Impl = pixelStats16x8PureGo
 var pixelStats8x16Impl = pixelStats8x16PureGo
 var pixelStats16x16Impl = pixelStats16x16PureGo
+var pixelStats32x8Impl = pixelStats32x8PureGo
+var pixelStats8x32Impl = pixelStats8x32PureGo
 var pixelStats32x16Impl = pixelStats32x16PureGo
 var pixelStats16x32Impl = pixelStats16x32PureGo
 var pixelStats32x32Impl = pixelStats32x32PureGo
+var pixelStats64x16Impl = pixelStats64x16PureGo
+var pixelStats16x64Impl = pixelStats16x64PureGo
+var pixelStats64x32Impl = pixelStats64x32PureGo
+var pixelStats32x64Impl = pixelStats32x64PureGo
 var satdCoeffsImpl = satdCoeffsPureGo
 var hadamard4x4Impl = hadamard4x4PureGo
 var hadamard8x8Impl = hadamard8x8PureGo
@@ -34,6 +40,14 @@ func pixelStats16x16PureGo(src []byte, srcStride int, ref []byte, refStride int)
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 16, 16)
 }
 
+func pixelStats32x8PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 32, 8)
+}
+
+func pixelStats8x32PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 8, 32)
+}
+
 func pixelStats32x16PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 32, 16)
 }
@@ -44,6 +58,22 @@ func pixelStats16x32PureGo(src []byte, srcStride int, ref []byte, refStride int)
 
 func pixelStats32x32PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
 	return pixelStatsPureGo(src, srcStride, ref, refStride, 32, 32)
+}
+
+func pixelStats64x16PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 64, 16)
+}
+
+func pixelStats16x64PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 16, 64)
+}
+
+func pixelStats64x32PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 64, 32)
+}
+
+func pixelStats32x64PureGo(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, sum int32) {
+	return pixelStatsPureGo(src, srcStride, ref, refStride, 32, 64)
 }
 
 func pixelStatsPureGo(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
@@ -81,6 +111,16 @@ func sseVariance16x16(src []byte, srcStride int, ref []byte, refStride int) (sse
 	return sse, varianceFromStats(sse, sum, 8)
 }
 
+func sseVariance32x8(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats32x8(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 8)
+}
+
+func sseVariance8x32(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats8x32(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 8)
+}
+
 func sseVariance32x16(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
 	sse, sum := pixelStats32x16(src, srcStride, ref, refStride)
 	return sse, varianceFromStats(sse, sum, 9)
@@ -94,6 +134,26 @@ func sseVariance16x32(src []byte, srcStride int, ref []byte, refStride int) (sse
 func sseVariance32x32(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
 	sse, sum := pixelStats32x32(src, srcStride, ref, refStride)
 	return sse, varianceFromStats(sse, sum, 10)
+}
+
+func sseVariance64x16(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats64x16(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 10)
+}
+
+func sseVariance16x64(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats16x64(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 10)
+}
+
+func sseVariance64x32(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats64x32(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 11)
+}
+
+func sseVariance32x64(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {
+	sse, sum := pixelStats32x64(src, srcStride, ref, refStride)
+	return sse, varianceFromStats(sse, sum, 11)
 }
 
 func sseVariance64x64(src []byte, srcStride int, ref []byte, refStride int) (sse uint32, variance uint32) {

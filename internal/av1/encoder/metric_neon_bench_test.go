@@ -68,6 +68,22 @@ func BenchmarkPixelStats16x16NEON(b *testing.B) {
 	benchPixelStats(b, pixelStats16x16NEON)
 }
 
+func BenchmarkPixelStats32x8Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats32x8PureGo)
+}
+
+func BenchmarkPixelStats32x8NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats32x8NEON)
+}
+
+func BenchmarkPixelStats8x32Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats8x32PureGo)
+}
+
+func BenchmarkPixelStats8x32NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats8x32NEON)
+}
+
 func BenchmarkPixelStats32x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats32x16PureGo)
 }
@@ -92,6 +108,38 @@ func BenchmarkPixelStats32x32NEON(b *testing.B) {
 	benchPixelStats(b, pixelStats32x32NEON)
 }
 
+func BenchmarkPixelStats64x16Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats64x16PureGo)
+}
+
+func BenchmarkPixelStats64x16NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats64x16NEON)
+}
+
+func BenchmarkPixelStats16x64Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats16x64PureGo)
+}
+
+func BenchmarkPixelStats16x64NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats16x64NEON)
+}
+
+func BenchmarkPixelStats64x32Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats64x32PureGo)
+}
+
+func BenchmarkPixelStats64x32NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats64x32NEON)
+}
+
+func BenchmarkPixelStats32x64Scalar(b *testing.B) {
+	benchPixelStats(b, pixelStats32x64PureGo)
+}
+
+func BenchmarkPixelStats32x64NEON(b *testing.B) {
+	benchPixelStats(b, pixelStats32x64NEON)
+}
+
 func BenchmarkSSEVariance16x8Scalar(b *testing.B) {
 	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
 		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 16, 8)
@@ -114,6 +162,28 @@ func BenchmarkSSEVariance8x16NEON(b *testing.B) {
 	benchSSEVariance(b, sseVariance8x16)
 }
 
+func BenchmarkSSEVariance32x8Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 32, 8)
+		return sse, varianceFromStats(sse, sum, 8)
+	})
+}
+
+func BenchmarkSSEVariance32x8NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance32x8)
+}
+
+func BenchmarkSSEVariance8x32Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 8, 32)
+		return sse, varianceFromStats(sse, sum, 8)
+	})
+}
+
+func BenchmarkSSEVariance8x32NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance8x32)
+}
+
 func BenchmarkSSEVariance32x16Scalar(b *testing.B) {
 	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
 		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 32, 16)
@@ -134,6 +204,50 @@ func BenchmarkSSEVariance16x32Scalar(b *testing.B) {
 
 func BenchmarkSSEVariance16x32NEON(b *testing.B) {
 	benchSSEVariance(b, sseVariance16x32)
+}
+
+func BenchmarkSSEVariance64x16Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 64, 16)
+		return sse, varianceFromStats(sse, sum, 10)
+	})
+}
+
+func BenchmarkSSEVariance64x16NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance64x16)
+}
+
+func BenchmarkSSEVariance16x64Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 16, 64)
+		return sse, varianceFromStats(sse, sum, 10)
+	})
+}
+
+func BenchmarkSSEVariance16x64NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance16x64)
+}
+
+func BenchmarkSSEVariance64x32Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 64, 32)
+		return sse, varianceFromStats(sse, sum, 11)
+	})
+}
+
+func BenchmarkSSEVariance64x32NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance64x32)
+}
+
+func BenchmarkSSEVariance32x64Scalar(b *testing.B) {
+	benchSSEVariance(b, func(src []byte, srcStride int, ref []byte, refStride int) (uint32, uint32) {
+		sse, sum := pixelStatsPureGo(src, srcStride, ref, refStride, 32, 64)
+		return sse, varianceFromStats(sse, sum, 11)
+	})
+}
+
+func BenchmarkSSEVariance32x64NEON(b *testing.B) {
+	benchSSEVariance(b, sseVariance32x64)
 }
 
 func BenchmarkSSEVariance64x64Scalar(b *testing.B) {
