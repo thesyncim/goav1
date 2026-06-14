@@ -650,6 +650,20 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `ADST_ADST=288.3 ns/op`, all zero allocations. The code was reverted; this
   reinforces that the remaining gap wants an actual 8x8 ADST SIMD kernel rather
   than scalar code-shape churn.
+- The 8x8 hybrid ADST passes now use a value-returning `fwdADST8Values` core
+  so the ADST row/column paths no longer fill an input array and drain an
+  output array around every 1-D pass. The pointer-shaped `fwdADST8` remains the
+  tight 1-D benchmark target. Compiler diagnostics keep the trusted wrappers
+  inlineable, report coeff/residual/scratch as non-escaping, and inline
+  `fwdRoundShift1Value`; the value core itself stays too large to inline. Paired
+  `2000000x` rows moved `BenchmarkForwardBlock8x8HybridTrusted` medians from
+  `ADST_DCT=272.0 ns/op`, `DCT_ADST=296.4 ns/op`, and
+  `ADST_ADST=267.4 ns/op` to `201.2`, `219.4`, and `128.7 ns/op`, with zero
+  allocations. The tx-type selector row moved from median `11049 ns/op` to
+  `10730 ns/op`, and a small `GOMAXPROCS=4`, `-benchtime=8x`, `-count=5`
+  P-frame row moved from median `79.21 ms/op` to `77.19 ms/op`, also at
+  `0 allocs/op`. This is a scalar temp-array cleanup; SVT's batched ADST NEON
+  surface remains an open assembly gap.
 
 ## Next Implementation Order
 
