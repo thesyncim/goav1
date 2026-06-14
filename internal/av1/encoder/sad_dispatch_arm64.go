@@ -30,6 +30,10 @@ func sad16x16x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return sad16x16x4Step4NEON(src, ref, stride)
 }
 
+func sad32x32x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
+	return sad32x32x4NEON(src, ref0, ref1, ref2, ref3, stride)
+}
+
 func sad32x32x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return sad32x32x4Step4NEON(src, ref, stride)
 }

@@ -102,7 +102,7 @@ The remaining gap is therefore not only DOTPROD/I8MM.
 | CPU feature tiers | `ASM_NEON`, `ASM_NEON_DOTPROD`, `ASM_NEON_I8MM`, `ASM_SVE`, `ASM_SVE2` | arm64 detects NEON plus Darwin DOTPROD/I8MM/SVE/SVE2 feature bits, but dispatch still uses only the baseline NEON tier | Do not claim max-tier parity until DOTPROD/I8MM kernels are wired and measured. Pin SVT with `-svt-asm neon` for baseline-tier rows. |
 | TXB coefficient prep and contexts | `encodetxb_neon.c`: `svt_av1_txb_init_levels_neon`, `svt_av1_get_nz_map_contexts_neon`; `av1_quantize_neon.c`: `svt_av1_compute_cul_level_neon` | No assembly. Hot Go writer has trusted 4x4/8x8/16x16/32x32 count-only trial paths, stack level buffers, fixed CDF storage, and recorded sign bits. | High priority because profile points at coefficient/range coding. Prototype only narrow, measured kernels; previous nonzero-list, extra scan-table, and branchless sign rewrites regressed or tied after paired measurement. |
 | Range coder and CDF update | SVT does not make this a comparable named SIMD surface; arithmetic coding is serial | `WriteBinaryCDFTrusted`, `WriteCDF4`/`WriteCDF5`/`WriteCDF7`, `normalize`, and `WriteBit` are top scalar cleanup entries. Fixed-arity writer/counter streams gate the exact count-only paths. | Keep source-shaped Go unless a benchmark proves assembly beats call/setup cost. This is a hot scalar issue, not an SVT SIMD parity item. |
-| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16 SAD counterparts to SVT's `sad8x8x4d` and `sad16x16x4d` have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
+| SAD/search metrics | Broad SAD loops, PME SAD, external all/eight SAD, highbd SAD in `compute_sad_neon.c` and `sad_neon.c`; DOTPROD variants exist | `sad8x8`, `sad16x16`, `sad32x32`, `sad8x8Dual`, emitted rect sizes `16x8`, `8x16`, `32x16`, `16x32`, the 8x8 compound-average precheck SAD, the current 8x8/16x16/32x32/64x64 full-pel raster x4 candidate groups, and generic four-reference 8x8/16x16/32x32 SAD counterparts to SVT's `sad8x8x4d`, `sad16x16x4d`, and `sad32x32x4d` have arm64 NEON coverage through direct or composed kernels | Baseline NEON coverage for current SAD/search probes is now much closer. Add DOTPROD/I8MM only after runtime feature detection and profile proof. |
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, but not SVT's full metric surface | Medium-high. Implement only where the encoder actually uses the metric or where a mode-search change will use it. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; forward ADST/other tx-type trial work is scalar, though the 8x8 trusted hybrid path now dispatches once per tx type instead of per 1-D row/column | High for the current profile: `transform.fwdADST8` is visible in P-frame TX-type trials. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
@@ -480,6 +480,15 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   diamond refinement was tested but not kept: same-session
   `BenchmarkFullPelDiamondSearch16` moved from a baseline median around
   `159.6 ns/op` to a patched median around `163.2 ns/op`.
+- A generic four-reference 32x32 SAD surface now mirrors SVT's
+  `sad32x32x4d`. The direct kernel is covered by
+  `TestSAD32x32x4ImplMatchesPureGo`; a 7-run
+  `BenchmarkSAD32x32x4` repeat after production wiring had a `56.16 ns/op`
+  median versus `87.50 ns/op` for four separate active `sad32x32` calls and
+  about `1245 ns/op` for scalar, all zero allocations. Unlike the 8x8/16x16
+  generic x4 kernels, this one pays off in the full 32x32 search row:
+  `BenchmarkFullPelDiamondSearch32` moved from a baseline median around
+  `534.3 ns/op` to a patched median around `514.7 ns/op`.
 - A 2026-06-14 arm64 SAD wrapper cleanup that replaced `&slice[0]` pointer
   extraction with `unsafe.SliceData` was rejected. It removed 21 reported BCE
   sites in `sad_neon_arm64.go` and kept the same escape count, but paired local

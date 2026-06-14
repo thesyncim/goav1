@@ -102,6 +102,32 @@ func TestSAD16x16x4ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD32x32x4ImplMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(426))
+	const stride = 137
+	src := make([]byte, stride*128)
+	ref := make([]byte, stride*128)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		row := rng.Intn(56) + 32
+		col := rng.Intn(stride-72) + 32
+		off := row*stride + col
+		ref0 := off + 2
+		ref1 := off - 2
+		ref2 := off + 2*stride
+		ref3 := off - 2*stride
+		w0, w1, w2, w3 := sad32x32x4PureGo(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		g0, g1, g2, g3 := sad32x32x4Impl(src[off:], ref[ref0:], ref[ref1:], ref[ref2:], ref[ref3:], stride)
+		if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+			t.Fatalf("off %d: impl (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+				off, g0, g1, g2, g3, w0, w1, w2, w3)
+		}
+	}
+}
+
 // TestSAD16x16ImplMatchesPureGo proves the 16x16 kernel bit-exact with the
 // portable reference.
 func TestSAD16x16ImplMatchesPureGo(t *testing.T) {
@@ -749,6 +775,51 @@ func BenchmarkSAD32x32x4Step4Composed(b *testing.B) {
 	}
 }
 
+func BenchmarkSAD32x32x4(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 32*96 + 32
+	b.ReportAllocs()
+	for b.Loop() {
+		sad32x32x4(src[off:], ref[off+2:], ref[off-2:], ref[off+2*96:], ref[off-2*96:], 96)
+	}
+}
+
+func BenchmarkSAD32x32x4ScalarReference(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 32*96 + 32
+	b.ReportAllocs()
+	for b.Loop() {
+		sad32x32x4PureGo(src[off:], ref[off+2:], ref[off-2:], ref[off+2*96:], ref[off-2*96:], 96)
+	}
+}
+
+func BenchmarkSAD32x32x4Composed(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i*13 + 5)
+	}
+	off := 32*96 + 32
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = sad32x32(src[off:], ref[off+2:], 96) +
+			sad32x32(src[off:], ref[off-2:], 96) +
+			sad32x32(src[off:], ref[off+2*96:], 96) +
+			sad32x32(src[off:], ref[off-2*96:], 96)
+	}
+}
+
 func BenchmarkSAD32x32Composed16x16(b *testing.B) {
 	src := make([]byte, 64*64)
 	ref := make([]byte, 64*64)
@@ -1083,6 +1154,30 @@ func BenchmarkFullPelDiamondSearch16(b *testing.B) {
 	sum := 0
 	for b.Loop() {
 		dx, dy, sad := fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, 16, 0, 0, fullPelReach)
+		sum += dx + dy + sad
+	}
+	fullPelDiamondBenchSink = sum
+}
+
+func BenchmarkFullPelDiamondSearch32(b *testing.B) {
+	const (
+		width  = 128
+		height = 112
+		stride = 160
+		px     = 48
+		py     = 40
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(i*7 + i/stride*11)
+		ref[i] = uint8(i*13 + i/stride*3 + 17)
+	}
+
+	b.ReportAllocs()
+	sum := 0
+	for b.Loop() {
+		dx, dy, sad := fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, 32, 0, 0, fullPelReach)
 		sum += dx + dy + sad
 	}
 	fullPelDiamondBenchSink = sum

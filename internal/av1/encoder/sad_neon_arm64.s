@@ -263,6 +263,116 @@ x4dloop16:
 	MOVD R5, X4DSUM3(R0)
 	RET
 
+// NEON 32x32 SAD for four arbitrary reference origins. Each row consumes two
+// 16-byte source chunks and accumulates both chunks into the same four
+// candidate sums.
+
+// func sad32x32x4NEONAsm(ctx *sad8x8x4NEONCtx)
+TEXT ·sad32x32x4NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD X4DSRC(R0), R1
+	MOVD X4DREF0(R0), R2
+	MOVD X4DREF1(R0), R7
+	MOVD X4DREF2(R0), R8
+	MOVD X4DREF3(R0), R9
+	MOVD X4DSTRIDE(R0), R3
+
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	VLD1 (R7), [V10.B16]
+	ADD  $16, R7, R12
+	VLD1 (R12), [V18.B16]
+	VLD1 (R8), [V11.B16]
+	ADD  $16, R8, R13
+	VLD1 (R13), [V19.B16]
+	VLD1 (R9), [V12.B16]
+	ADD  $16, R9, R14
+	VLD1 (R14), [V20.B16]
+	WORD $0x2e217002 // uabdl  v2.8h,  v0.8b,   v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h,  v0.16b,  v1.16b
+	WORD $0x2e2a7004 // uabdl  v4.8h,  v0.8b,   v10.8b
+	WORD $0x6e2a7006 // uabdl2 v6.8h,  v0.16b,  v10.16b
+	WORD $0x2e2b7007 // uabdl  v7.8h,  v0.8b,   v11.8b
+	WORD $0x6e2b7008 // uabdl2 v8.8h,  v0.16b,  v11.16b
+	WORD $0x2e2c7009 // uabdl  v9.8h,  v0.8b,   v12.8b
+	WORD $0x6e2c700d // uabdl2 v13.8h, v0.16b,  v12.16b
+	WORD $0x2e2551e2 // uabal  v2.8h,  v15.8b,  v5.8b
+	WORD $0x6e2551e3 // uabal2 v3.8h,  v15.16b, v5.16b
+	WORD $0x2e3251e4 // uabal  v4.8h,  v15.8b,  v18.8b
+	WORD $0x6e3251e6 // uabal2 v6.8h,  v15.16b, v18.16b
+	WORD $0x2e3351e7 // uabal  v7.8h,  v15.8b,  v19.8b
+	WORD $0x6e3351e8 // uabal2 v8.8h,  v15.16b, v19.16b
+	WORD $0x2e3451e9 // uabal  v9.8h,  v15.8b,  v20.8b
+	WORD $0x6e3451ed // uabal2 v13.8h, v15.16b, v20.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+
+	MOVD $31, R4
+x4dloop32:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R11
+	VLD1 (R11), [V15.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	VLD1 (R7), [V10.B16]
+	ADD  $16, R7, R12
+	VLD1 (R12), [V18.B16]
+	VLD1 (R8), [V11.B16]
+	ADD  $16, R8, R13
+	VLD1 (R13), [V19.B16]
+	VLD1 (R9), [V12.B16]
+	ADD  $16, R9, R14
+	VLD1 (R14), [V20.B16]
+	WORD $0x2e215002 // uabal  v2.8h,  v0.8b,   v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h,  v0.16b,  v1.16b
+	WORD $0x2e2a5004 // uabal  v4.8h,  v0.8b,   v10.8b
+	WORD $0x6e2a5006 // uabal2 v6.8h,  v0.16b,  v10.16b
+	WORD $0x2e2b5007 // uabal  v7.8h,  v0.8b,   v11.8b
+	WORD $0x6e2b5008 // uabal2 v8.8h,  v0.16b,  v11.16b
+	WORD $0x2e2c5009 // uabal  v9.8h,  v0.8b,   v12.8b
+	WORD $0x6e2c500d // uabal2 v13.8h, v0.16b,  v12.16b
+	WORD $0x2e2551e2 // uabal  v2.8h,  v15.8b,  v5.8b
+	WORD $0x6e2551e3 // uabal2 v3.8h,  v15.16b, v5.16b
+	WORD $0x2e3251e4 // uabal  v4.8h,  v15.8b,  v18.8b
+	WORD $0x6e3251e6 // uabal2 v6.8h,  v15.16b, v18.16b
+	WORD $0x2e3351e7 // uabal  v7.8h,  v15.8b,  v19.8b
+	WORD $0x6e3351e8 // uabal2 v8.8h,  v15.16b, v19.16b
+	WORD $0x2e3451e9 // uabal  v9.8h,  v15.8b,  v20.8b
+	WORD $0x6e3451ed // uabal2 v13.8h, v15.16b, v20.16b
+	ADD  R3, R1
+	ADD  R3, R2
+	ADD  R3, R7
+	ADD  R3, R8
+	ADD  R3, R9
+	SUB  $1, R4
+	CBNZ R4, x4dloop32
+
+	VADD V3.H8, V2.H8, V2.H8
+	VADD V6.H8, V4.H8, V4.H8
+	VADD V8.H8, V7.H8, V7.H8
+	VADD V13.H8, V9.H8, V9.H8
+	WORD $0x6e70384e // uaddlv s14, v2.8h
+	WORD $0x6e70388f // uaddlv s15, v4.8h
+	WORD $0x6e7038f0 // uaddlv s16, v7.8h
+	WORD $0x6e703931 // uaddlv s17, v9.8h
+	VMOV V14.S[0], R5
+	MOVD R5, X4DSUM0(R0)
+	VMOV V15.S[0], R5
+	MOVD R5, X4DSUM1(R0)
+	VMOV V16.S[0], R5
+	MOVD R5, X4DSUM2(R0)
+	VMOV V17.S[0], R5
+	MOVD R5, X4DSUM3(R0)
+	RET
+
 // NEON 16x16 SAD for four horizontal candidates separated by four pixels.
 // Each candidate keeps separate low/high uint16 accumulators, matching the
 // single-candidate 16x16 kernel while sharing source loads across four refs.
