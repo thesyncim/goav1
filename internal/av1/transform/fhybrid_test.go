@@ -183,6 +183,45 @@ func BenchmarkForwardBlock8x8HybridTrusted(b *testing.B) {
 	}
 }
 
+func BenchmarkForwardADST8(b *testing.B) {
+	cases := []struct {
+		name string
+		base int32
+	}{
+		{
+			name: "dense",
+			base: -996,
+		},
+		{
+			name: "zero",
+			base: 0,
+		},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			var inputs [16][8]int32
+			for i := range inputs {
+				for j := range inputs[i] {
+					if tc.base == 0 {
+						continue
+					}
+					inputs[i][j] = tc.base + int32(i*13+j*37)
+				}
+			}
+			var out [8]int32
+			sum := int32(0)
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				fwdADST8(&inputs[i&15], &out)
+				sum += out[i&7]
+			}
+			forwardADST8BenchSink = sum
+		})
+	}
+}
+
+var forwardADST8BenchSink int32
+
 func typeName(typ Type) string {
 	switch typ {
 	case TypeADSTDCT:

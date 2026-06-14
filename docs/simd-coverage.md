@@ -484,6 +484,16 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `20.7-24.7 ns/op`, `IDTX` around `25.5-27.6 ns/op`, while
   `ADST_DCT`/`DCT_ADST`/`ADST_ADST` hybrid 8x8 rows are about
   `276.8-305.7 ns/op`, all zero allocations.
+- `BenchmarkForwardADST8` was added on 2026-06-14 as the tight 1-D gate for
+  future 8x8 ADST SIMD work. Compiler reports show `fwdHalfBtf13` and
+  `fwdRoundShift1x8` inline into the scalar hybrid path, while `fwdADST8` and
+  the 8x8 hybrid block bodies are intentionally too large to inline; the
+  trusted buffers do not escape. The rotating-input benchmark measures dense
+  `fwdADST8` at `6.88-7.34 ns/op` and zero input at `6.87-7.08 ns/op`, zero
+  allocations. A zero-vector shortcut was rejected: it improved the isolated
+  zero-input row to `1.78-1.89 ns/op`, but dense rows moved to
+  `7.15-7.41 ns/op` and full `ADST_ADST` 8x8 rows regressed to roughly
+  `285.0-292.6 ns/op`.
 
 ## Next Implementation Order
 
