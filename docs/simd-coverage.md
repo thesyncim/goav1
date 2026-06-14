@@ -242,6 +242,17 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   new writer/counter receivers and CDF pointers as non-escaping. The matching
   UV route was tested but not kept because its trusted-count median moved from
   `439.2 ns/op` to `441.5 ns/op` in the all-plane patch.
+- A nine-symbol specialization for the 16x16 EOB-token CDF was tested but not
+  kept. SVT writes `eob_flag_cdf256` with symbol count `9`, and the isolated
+  stream did improve (`BenchmarkWriterCDF9Stream` median `42510 -> 34143
+  ns/op`, `BenchmarkBitCounterCDF9Stream` median `37841 -> 29474 ns/op`, zero
+  allocations). The real 16x16 caller rows were mixed: all-route clean A/B
+  regressed generic luma final write (`3015 -> 3038 ns/op`) and generic chroma
+  count (`3140 -> 3151 ns/op`); after trimming to final trusted writes only,
+  final-only A/B still moved luma trusted write from median `2757 -> 2770
+  ns/op` while chroma improved `3096 -> 3063 ns/op`. The luma/count signal is
+  too weak for a hot-path code-size increase, so `eob_flag_cdf256` remains on
+  the generic CDF writer until a narrower caller shape proves out.
 - `WriteBinaryCDFTrusted` specializes known two-symbol adaptive CDF writes for
   coefficient txb-skip/eob-extra/dc-sign syntax, inter reference bits, the
   single-reference inter-mode cascade, DRL bits, MV sign/class0/integer/HP bits,
