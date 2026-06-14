@@ -472,6 +472,18 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   `424.5 ns/op` to `425.1 ns/op`. A one-forward-pass prep that combined EOB,
   padded levels, sign bits, and cumulative level was worse at median
   `436.7 ns/op`. Both stayed at zero allocations, and neither was kept.
+- The next tx-type-search experiment also stayed Go-only and was rejected on
+  2026-06-14. SVT maps the comparable 8x8 forward-transform surface to
+  `svt_av1_fwd_txfm2d_8x8_neon` plus the N2/N4 variants, with NEON ADST row and
+  column helpers (`highbd_fadst8_*_neon`). goav1 has NEON for the DCT_DCT 8x8
+  dispatch, but the current 8x8 ADST hybrid trials are still pure Go. Baseline
+  `BenchmarkChooseInter8x8TXType` measured median `11261 ns/op`; an early-IDTX
+  pruning bound preserved `TestChooseInter8x8TXTypeSeededMatchesReference` but
+  moved the median to `11303 ns/op`, so it was reverted. Focused transform rows
+  make the remaining SIMD gap explicit: `BenchmarkForwardDCT8x8` sits around
+  `20.7-24.7 ns/op`, `IDTX` around `25.5-27.6 ns/op`, while
+  `ADST_DCT`/`DCT_ADST`/`ADST_ADST` hybrid 8x8 rows are about
+  `276.8-305.7 ns/op`, all zero allocations.
 
 ## Next Implementation Order
 
