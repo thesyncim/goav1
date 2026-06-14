@@ -514,6 +514,24 @@ The remaining gap is therefore not only DOTPROD/I8MM.
   helper experiment for the subpel probe was rejected: the same-checkout
   baseline probe was `38.0-39.3 ns/op` for 8x8, while the direct-helper variant
   measured `40.1-45.0 ns/op`.
+- Residual extraction now has focused 8x8/16x16/32x32 scalar-vs-NEON benchmark
+  rows for the RD metric surface. On the local M4 Max, `BenchmarkResidual8x8NEON`
+  is about `6.65-8.71 ns/op` versus `39.3-40.2 ns/op` scalar,
+  `BenchmarkResidual16x16NEON` is about `19.1-20.2 ns/op` versus
+  `158-162 ns/op` scalar, and `BenchmarkResidual32x32NEON` is about
+  `44.6-47.3 ns/op` versus `575-761 ns/op` scalar, all zero allocations. Wiring
+  the lossy keyframe TXB residual loop through this dispatcher was tested but
+  rejected: a clean detached baseline `BenchmarkEncodeKeyframe1080p` 7-run
+  median was about `25.95 ms/op`, while the patched row was about
+  `29.82 ms/op`. A direct scalar guard for sub-8-wide inter residuals was also
+  rejected: `BenchmarkChooseInter8x8TXType` baseline rows were about
+  `10.15-10.32 us/op`, while the guard measured `10.25-10.61 us/op`.
+- RD transform-stat accumulation now has benchmark coverage through the full
+  active 8x8/16x16/32x32 coefficient counts. `BenchmarkRDStats64NEON` is about
+  `13.5-14.2 ns/op` versus `42.2-50.0 ns/op` scalar,
+  `BenchmarkRDStats256NEON` is about `49.1-50.3 ns/op` versus
+  `180-186 ns/op` scalar, and `BenchmarkRDStats1024NEON` is about
+  `193.8-200.5 ns/op` versus `790-891 ns/op` scalar, all zero allocations.
 - `BenchmarkBitCounterCDF4Stream` now gates the count-only range-coder CDF4
   path that appears under TXB coefficient pricing. On a clean `70027abc`
   baseline worktree, the specialized `BitCounter.WriteCDF4` path measured

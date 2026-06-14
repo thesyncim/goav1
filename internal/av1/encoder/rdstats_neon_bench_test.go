@@ -19,12 +19,15 @@ func benchResidual(b *testing.B, fn func([]int16, []byte, int, int, []byte, int,
 		pred[i] = byte(rng.Intn(256))
 	}
 	dst := make([]int16, w*h)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		fn(dst, src, stride+3, stride, pred, w, w, h)
 	}
 }
 
+func BenchmarkResidual32x32Scalar(b *testing.B) { benchResidual(b, residualBlockPureGo, 32, 32) }
+func BenchmarkResidual32x32NEON(b *testing.B)   { benchResidual(b, residualBlockNEON, 32, 32) }
 func BenchmarkResidual16x16Scalar(b *testing.B) { benchResidual(b, residualBlockPureGo, 16, 16) }
 func BenchmarkResidual16x16NEON(b *testing.B)   { benchResidual(b, residualBlockNEON, 16, 16) }
 func BenchmarkResidual8x8Scalar(b *testing.B)   { benchResidual(b, residualBlockPureGo, 8, 8) }
@@ -40,13 +43,16 @@ func benchRDStats(b *testing.B, fn func([]int32, []int16, int, int32, uint8) (in
 			qcoeff[i] = int16(rng.Intn(40) - 20)
 		}
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		fn(tran, qcoeff, n, 1365, 1)
 	}
 }
 
-func BenchmarkRDStats256Scalar(b *testing.B) { benchRDStats(b, rdStatsBlockPureGo, 256) }
-func BenchmarkRDStats256NEON(b *testing.B)   { benchRDStats(b, rdStatsBlockNEON, 256) }
-func BenchmarkRDStats64Scalar(b *testing.B)  { benchRDStats(b, rdStatsBlockPureGo, 64) }
-func BenchmarkRDStats64NEON(b *testing.B)    { benchRDStats(b, rdStatsBlockNEON, 64) }
+func BenchmarkRDStats1024Scalar(b *testing.B) { benchRDStats(b, rdStatsBlockPureGo, 1024) }
+func BenchmarkRDStats1024NEON(b *testing.B)   { benchRDStats(b, rdStatsBlockNEON, 1024) }
+func BenchmarkRDStats256Scalar(b *testing.B)  { benchRDStats(b, rdStatsBlockPureGo, 256) }
+func BenchmarkRDStats256NEON(b *testing.B)    { benchRDStats(b, rdStatsBlockNEON, 256) }
+func BenchmarkRDStats64Scalar(b *testing.B)   { benchRDStats(b, rdStatsBlockPureGo, 64) }
+func BenchmarkRDStats64NEON(b *testing.B)     { benchRDStats(b, rdStatsBlockNEON, 64) }
