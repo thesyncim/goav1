@@ -72,35 +72,39 @@ matter in the measured encoder mode.
 ## Current Speed Snapshot
 
 Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-14 with
-`GOMAXPROCS=4` for goav1. These rows include the SIMD safe points landed since
-the older 2026-06-12 snapshot; do not attribute the full delta to any one
-kernel. SVT `--lp` was swept from `0..6`; no max-tier row reached goav1's
-observed `3.48x` CPU parallelism, so there is no true equal-CPU-budget row in
-this sweep.
+`GOMAXPROCS=4` for goav1, after the latest metric/search/convolve assembly
+safe points. These rows use `qualitybench -bitrates 8000000` on the synthetic
+fixture. SVT `--lp` was swept from `0..6`; no max-tier or baseline-NEON row
+reached goav1's observed `3.52x` CPU parallelism, so there is no true
+equal-CPU-budget row in this sweep.
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 137.48 | 0.873 | 3.037 | 3.48x | 39.5 |
-| SVT-AV1 `--lp 0 --asm max` | 229.07 | 0.524 | 1.190 | 2.27x | 100.8 |
-| SVT-AV1 `--lp 3 --asm max`, fastest max-tier row | 231.95 | 0.517 | 1.152 | 2.23x | 104.2 |
-| SVT-AV1 `--lp 4 --asm max`, closest max-tier observed parallelism | 230.04 | 0.522 | 1.204 | 2.31x | 99.7 |
+| goav1 | 102.53 | 1.170 | 4.120 | 3.52x | 29.1 |
+| SVT-AV1 `--lp 0 --asm max`, fastest max-tier row | 174.58 | 0.687 | 1.624 | 2.36x | 73.9 |
+| SVT-AV1 `--lp 4 --asm max` | 166.44 | 0.721 | 1.673 | 2.32x | 71.7 |
 
-Best-SVT wall-clock gap is now about 1.69x in SVT's favor. The max-tier
-CPU-normalized gap is still about 2.52x-2.64x by frames/CPU-s, depending on
-whether the closest observed-parallelism row or fastest wall row is used. That
-gap should be reported by CPU seconds or frames/CPU-s, not only by wall FPS.
-Wall FPS is noisier because the two encoders do not consume the same
+Best-SVT wall-clock gap in this full sweep is about 1.70x in SVT's favor. The
+max-tier CPU-normalized gap is still about 2.46x-2.54x by frames/CPU-s,
+depending on whether the numeric `--lp 4` row or the fastest wall row is used.
+That gap should be reported by CPU seconds or frames/CPU-s, not only by wall
+FPS. Wall FPS is noisier because the two encoders do not consume the same
 parallelism, and `--lp 4` is not semantically equivalent to `GOMAXPROCS=4`.
 
 Same-shape control with SVT pinned to baseline NEON via `-svt-asm neon`:
 
 | Encoder | FPS | Wall s | CPU s | Observed parallelism | Frames/CPU-s |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| goav1 | 137.48 | 0.873 | 3.037 | 3.48x | 39.5 |
-| SVT-AV1 `--lp 0 --asm neon` | 223.44 | 0.537 | 1.274 | 2.37x | 94.2 |
+| goav1 | 102.53 | 1.170 | 4.120 | 3.52x | 29.1 |
+| SVT-AV1 `--lp 0 --asm neon` | 128.50 | 0.934 | 1.878 | 2.01x | 63.9 |
+| SVT-AV1 `--lp 4 --asm neon`, fastest baseline-NEON row | 161.04 | 0.745 | 1.744 | 2.34x | 68.8 |
 
-Pinning SVT to baseline NEON still leaves SVT about 1.63x faster by wall time
-and about 2.38x more CPU-efficient. The remaining gap is therefore not only
+Pinning SVT to baseline NEON still leaves SVT about 1.25x-1.57x faster by wall
+time and about 2.19x-2.36x more CPU-efficient. A two-repeat confirmation pass
+on the selected rows produced medians of goav1 `103.50 fps`, SVT `--lp 0 --asm
+max` `159.89 fps`, and SVT `--lp 4 --asm neon` `160.78 fps`, so the current
+wall gap should be treated as roughly 1.55x-1.70x while the CPU-normalized gap
+remains roughly 2.35x-2.55x. The remaining gap is therefore not only
 DOTPROD/I8MM.
 
 ## Coverage Ledger
