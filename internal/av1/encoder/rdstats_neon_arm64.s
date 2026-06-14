@@ -146,3 +146,58 @@ sloop:
 	VMOV V1.B[0], R4
 	MOVD R4, S_NONZERO(R0)
 	RET
+
+// SVT-shaped coefficient block error, eight TranLow lanes per iteration:
+//   error += (int16(coeff) - int16(dqcoeff))^2
+//   ssz   += int16(coeff)^2
+// SVT's load_tran_low_to_s16q narrows each int32 TranLow lane before the
+// subtract, so this body mirrors that truncation before widening for squares.
+
+#define B_COEFF 0
+#define B_DQCOEFF 8
+#define B_COUNT 16
+#define B_ERROR 24
+#define B_SSZ 32
+
+// func blockErrorNEONAsm(ctx *blockErrorNEONCtx)
+TEXT ·blockErrorNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD B_COEFF(R0), R1
+	MOVD B_DQCOEFF(R0), R2
+	MOVD B_COUNT(R0), R3
+	WORD $0x6e301e10 // eor v16.16b, v16.16b, v16.16b  error lo accumulator
+	WORD $0x6e311e31 // eor v17.16b, v17.16b, v17.16b  error hi accumulator
+	WORD $0x6e321e52 // eor v18.16b, v18.16b, v18.16b  coeff-square lo accumulator
+	WORD $0x6e331e73 // eor v19.16b, v19.16b, v19.16b  coeff-square hi accumulator
+	LSR  $3, R3
+beloop:
+	VLD1.P 32(R1), [V0.S4, V1.S4]
+	VLD1.P 32(R2), [V2.S4, V3.S4]
+	WORD $0x0e612804 // xtn    v4.4h, v0.4s
+	WORD $0x4e612824 // xtn2   v4.8h, v1.4s
+	WORD $0x0e612845 // xtn    v5.4h, v2.4s
+	WORD $0x4e612865 // xtn2   v5.8h, v3.4s
+	WORD $0x6e658486 // sub    v6.8h, v4.8h, v5.8h
+	WORD $0x0f10a4c7 // sshll  v7.4s, v6.4h, #0
+	WORD $0x4f10a4c8 // sshll2 v8.4s, v6.8h, #0
+	WORD $0x0ea780f0 // smlal  v16.2d, v7.2s, v7.2s
+	WORD $0x4ea780f1 // smlal2 v17.2d, v7.4s, v7.4s
+	WORD $0x0ea88110 // smlal  v16.2d, v8.2s, v8.2s
+	WORD $0x4ea88111 // smlal2 v17.2d, v8.4s, v8.4s
+	WORD $0x0f10a489 // sshll  v9.4s, v4.4h, #0
+	WORD $0x4f10a48a // sshll2 v10.4s, v4.8h, #0
+	WORD $0x0ea98132 // smlal  v18.2d, v9.2s, v9.2s
+	WORD $0x4ea98133 // smlal2 v19.2d, v9.4s, v9.4s
+	WORD $0x0eaa8152 // smlal  v18.2d, v10.2s, v10.2s
+	WORD $0x4eaa8153 // smlal2 v19.2d, v10.4s, v10.4s
+	SUB  $1, R3
+	CBNZ R3, beloop
+	WORD $0x4ef18610 // add  v16.2d, v16.2d, v17.2d
+	WORD $0x5ef1ba10 // addp d16, v16.2d
+	VMOV V16.D[0], R4
+	MOVD R4, B_ERROR(R0)
+	WORD $0x4ef38652 // add  v18.2d, v18.2d, v19.2d
+	WORD $0x5ef1ba52 // addp d18, v18.2d
+	VMOV V18.D[0], R4
+	MOVD R4, B_SSZ(R0)
+	RET

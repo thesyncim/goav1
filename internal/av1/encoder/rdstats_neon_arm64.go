@@ -33,8 +33,20 @@ type rdStatsNEONCtx struct {
 	NonZero int64
 }
 
+// blockErrorNEONCtx carries SVT-shaped coefficient block-error arguments.
+type blockErrorNEONCtx struct {
+	Coeff   unsafe.Pointer
+	DQCoeff unsafe.Pointer
+	Count   int64
+	Error   int64
+	SSZ     int64
+}
+
 //go:noescape
 func rdStatsNEONAsm(ctx *rdStatsNEONCtx)
+
+//go:noescape
+func blockErrorNEONAsm(ctx *blockErrorNEONCtx)
 
 // residualBlockImpl extracts the prediction residual; the NEON kernel covers
 // the 8/16/32-wide shapes the coder produces.
@@ -72,4 +84,21 @@ func rdStatsBlockNEON(tran []int32, qcoeff []int16, count int, step int32, ts ui
 	}
 	rdStatsNEONAsm(&ctx)
 	return ctx.DSkip, ctx.DCode, ctx.Rate << 9, ctx.NonZero == 0
+}
+
+func blockError(coeff []int32, dqcoeff []int32, count int) (err int64, ssz int64) {
+	return blockErrorNEON(coeff, dqcoeff, count)
+}
+
+func blockErrorNEON(coeff []int32, dqcoeff []int32, count int) (err int64, ssz int64) {
+	if count < 8 || count&7 != 0 {
+		return blockErrorPureGo(coeff, dqcoeff, count)
+	}
+	ctx := blockErrorNEONCtx{
+		Coeff:   unsafe.Pointer(&coeff[0]),
+		DQCoeff: unsafe.Pointer(&dqcoeff[0]),
+		Count:   int64(count),
+	}
+	blockErrorNEONAsm(&ctx)
+	return ctx.Error, ctx.SSZ
 }

@@ -56,3 +56,25 @@ func BenchmarkRDStats256Scalar(b *testing.B)  { benchRDStats(b, rdStatsBlockPure
 func BenchmarkRDStats256NEON(b *testing.B)    { benchRDStats(b, rdStatsBlockNEON, 256) }
 func BenchmarkRDStats64Scalar(b *testing.B)   { benchRDStats(b, rdStatsBlockPureGo, 64) }
 func BenchmarkRDStats64NEON(b *testing.B)     { benchRDStats(b, rdStatsBlockNEON, 64) }
+
+func benchBlockError(b *testing.B, fn func([]int32, []int32, int) (int64, int64), n int) {
+	rng := rand.New(rand.NewSource(3))
+	coeff := make([]int32, n)
+	dqcoeff := make([]int32, n)
+	for i := range coeff {
+		coeff[i] = int32(rng.Intn(1<<16) - 1<<15)
+		dqcoeff[i] = int32(rng.Intn(1<<16) - 1<<15)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fn(coeff, dqcoeff, n)
+	}
+}
+
+func BenchmarkBlockError1024Scalar(b *testing.B) { benchBlockError(b, blockErrorPureGo, 1024) }
+func BenchmarkBlockError1024NEON(b *testing.B)   { benchBlockError(b, blockErrorNEON, 1024) }
+func BenchmarkBlockError256Scalar(b *testing.B)  { benchBlockError(b, blockErrorPureGo, 256) }
+func BenchmarkBlockError256NEON(b *testing.B)    { benchBlockError(b, blockErrorNEON, 256) }
+func BenchmarkBlockError64Scalar(b *testing.B)   { benchBlockError(b, blockErrorPureGo, 64) }
+func BenchmarkBlockError64NEON(b *testing.B)     { benchBlockError(b, blockErrorNEON, 64) }
