@@ -104,6 +104,38 @@ type DependencyDescriptor struct {
 	AttachedStructure       DependencyDescriptorStructure
 }
 
+// DependencyDescriptorState keeps the last attached dependency structure for
+// compact descriptors that only carry a template ID.
+type DependencyDescriptorState struct {
+	Valid     bool
+	Structure DependencyDescriptorStructure
+}
+
+// Reset clears the remembered dependency structure.
+func (s *DependencyDescriptorState) Reset() {
+	if s != nil {
+		*s = DependencyDescriptorState{}
+	}
+}
+
+// Parse parses a dependency descriptor and updates state when the descriptor
+// carries an attached dependency structure.
+func (s *DependencyDescriptorState) Parse(src []byte) (DependencyDescriptor, int, error) {
+	var structure *DependencyDescriptorStructure
+	if s != nil && s.Valid {
+		structure = &s.Structure
+	}
+	descriptor, consumed, err := ParseDependencyDescriptor(src, structure)
+	if err != nil {
+		return DependencyDescriptor{}, 0, err
+	}
+	if descriptor.HasAttachedStructure && s != nil {
+		s.Valid = true
+		s.Structure = descriptor.AttachedStructure
+	}
+	return descriptor, consumed, nil
+}
+
 func PutDependencyDescriptorMandatory(dst []byte, descriptor DependencyDescriptorMandatory) (int, error) {
 	if len(dst) < DependencyDescriptorMandatorySize {
 		return 0, ErrShortBuffer

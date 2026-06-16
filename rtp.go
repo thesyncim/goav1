@@ -77,6 +77,10 @@ type RTPDependencyDescriptorStructure = internalrtp.DependencyDescriptorStructur
 // header extension value.
 type RTPDependencyDescriptor = internalrtp.DependencyDescriptor
 
+// RTPDependencyDescriptorState remembers the last attached dependency
+// structure and parses compact later descriptors against it.
+type RTPDependencyDescriptorState = internalrtp.DependencyDescriptorState
+
 const RTPDependencyDescriptorMandatorySize = internalrtp.DependencyDescriptorMandatorySize
 
 const (

@@ -139,6 +139,62 @@ func TestDependencyDescriptorParseActiveTargetsAndCustomChains(t *testing.T) {
 	}
 }
 
+func TestDependencyDescriptorStateParseRemembersAttachedStructure(t *testing.T) {
+	var w dependencyDescriptorTestBitWriter
+	w.writeBool(true)
+	w.writeBool(true)
+	w.writeBits(3, 6)
+	w.writeBits(1, 16)
+	w.writeBool(true)  // attached structure
+	w.writeBool(false) // active decode targets
+	w.writeBool(false) // custom dtis
+	w.writeBool(false) // custom frame diffs
+	w.writeBool(false) // custom chains
+	w.writeBits(3, 6)
+	w.writeBits(0, 5)
+	w.writeBits(3, 2)
+	w.writeBits(uint64(DependencyDescriptorDecodeTargetSwitch), 2)
+	w.writeBool(false)
+	w.writeBits(0, 1)
+	w.writeBool(false)
+
+	var state DependencyDescriptorState
+	key, consumed, err := state.Parse(w.bytes())
+	if err != nil {
+		t.Fatalf("state Parse key: %v", err)
+	}
+	if !state.Valid || consumed != len(w.bytes()) ||
+		!key.HasAttachedStructure || key.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch {
+		t.Fatalf("key=%+v consumed=%d len=%d state=%+v", key, consumed, len(w.bytes()), state)
+	}
+
+	var compact [DependencyDescriptorMandatorySize]byte
+	if _, err := PutDependencyDescriptorMandatory(compact[:], DependencyDescriptorMandatory{
+		FirstPacketInFrame: true,
+		LastPacketInFrame:  true,
+		TemplateID:         3,
+		FrameNumber:        2,
+	}); err != nil {
+		t.Fatalf("PutDependencyDescriptorMandatory: %v", err)
+	}
+	delta, consumed, err := state.Parse(compact[:])
+	if err != nil {
+		t.Fatalf("state Parse delta: %v", err)
+	}
+	if consumed != DependencyDescriptorMandatorySize ||
+		delta.Mandatory.FrameNumber != 2 ||
+		delta.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch {
+		t.Fatalf("delta=%+v consumed=%d", delta, consumed)
+	}
+	state.Reset()
+	if state.Valid {
+		t.Fatalf("Reset left state valid: %+v", state)
+	}
+	if _, _, err := state.Parse(compact[:]); !errors.Is(err, ErrInvalidDependencyDescriptor) {
+		t.Fatalf("missing reset state err=%v want ErrInvalidDependencyDescriptor", err)
+	}
+}
+
 func TestDependencyDescriptorRejectsInvalidFull(t *testing.T) {
 	if _, _, err := ParseDependencyDescriptor([]byte{0xc0, 0, 1}, nil); !errors.Is(err, ErrInvalidDependencyDescriptor) {
 		t.Fatalf("missing structure err=%v want ErrInvalidDependencyDescriptor", err)

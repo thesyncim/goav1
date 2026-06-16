@@ -418,15 +418,17 @@ func TestPublicRTPDependencyDescriptorParseEncoderRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor key: %v", err)
 	}
-	parsed, consumed, err := ParseRTPDependencyDescriptor(descriptorBytes, nil)
+	var descriptorState RTPDependencyDescriptorState
+	parsed, consumed, err := descriptorState.Parse(descriptorBytes)
 	if err != nil {
-		t.Fatalf("ParseRTPDependencyDescriptor key: %v", err)
+		t.Fatalf("state Parse key: %v", err)
 	}
 	if consumed != len(descriptorBytes) ||
 		parsed.Mandatory != (RTPDependencyDescriptorMandatory{FirstPacketInFrame: true, TemplateID: 0, FrameNumber: 100}) ||
 		!parsed.HasAttachedStructure || !parsed.HasActiveDecodeTargets ||
-		parsed.ActiveDecodeTargetsMask != 0x0f {
-		t.Fatalf("parsed key consumed=%d/%d descriptor=%+v", consumed, len(descriptorBytes), parsed)
+		parsed.ActiveDecodeTargetsMask != 0x0f ||
+		!descriptorState.Valid {
+		t.Fatalf("parsed key consumed=%d/%d descriptor=%+v state=%+v", consumed, len(descriptorBytes), parsed, descriptorState)
 	}
 	assertPublicRTPStructureMatchesEncoder(t, parsed.AttachedStructure, structure)
 	if parsed.FrameDependencies.SpatialID != 0 || parsed.FrameDependencies.TemporalID != 0 ||
@@ -447,10 +449,9 @@ func TestPublicRTPDependencyDescriptorParseEncoderRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor delta: %v", err)
 	}
-	parsedStructure := convertPublicEncoderRTPDependencyStructure(structure)
-	parsed, consumed, err = ParseRTPDependencyDescriptor(descriptorBytes, &parsedStructure)
+	parsed, consumed, err = descriptorState.Parse(descriptorBytes)
 	if err != nil {
-		t.Fatalf("ParseRTPDependencyDescriptor delta: %v", err)
+		t.Fatalf("state Parse delta: %v", err)
 	}
 	if consumed != len(descriptorBytes) ||
 		parsed.Mandatory.TemplateID != 5 ||
