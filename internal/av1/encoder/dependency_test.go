@@ -67,7 +67,11 @@ func TestWebRTCGenericFrameInfoForFrame(t *testing.T) {
 	if info.DependencyNum != 1 || info.Dependencies[0] != 100 {
 		t.Fatalf("dependencies = %+v count=%d", info.Dependencies, info.DependencyNum)
 	}
-	if info.DTINum != 2 || info.DTIs[0] != DecodeTargetNotPresent || info.DTIs[1] != DecodeTargetDiscardable {
+	if info.DTINum != 4 ||
+		info.DTIs[0] != DecodeTargetNotPresent ||
+		info.DTIs[1] != DecodeTargetNotPresent ||
+		info.DTIs[2] != DecodeTargetNotPresent ||
+		info.DTIs[3] != DecodeTargetDiscardable {
 		t.Fatalf("dtis = %+v count=%d", info.DTIs, info.DTINum)
 	}
 	if !out.Valid[4] || out.FrameIDs[4] != 101 || !out.Valid[3] {
@@ -92,7 +96,9 @@ func TestWebRTCGenericFrameInfoForFrameKeyResetsFrameIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCGenericFrameInfoForFrame key: %v", err)
 	}
-	if info.DependencyNum != 0 || info.DTIs[0] != DecodeTargetSwitch || info.DTIs[1] != DecodeTargetSwitch {
+	if info.DependencyNum != 0 || info.DTINum != 4 ||
+		info.DTIs[0] != DecodeTargetSwitch || info.DTIs[1] != DecodeTargetSwitch ||
+		info.DTIs[2] != DecodeTargetSwitch || info.DTIs[3] != DecodeTargetSwitch {
 		t.Fatalf("key info = %+v", info)
 	}
 	if out.Valid[7] || !out.Valid[0] || out.FrameIDs[0] != 99 {
@@ -109,7 +115,7 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if got.NumDecodeTargets != 2 || got.NumChains != 2 || got.TemplateNum != 4 || got.ResolutionNum != 2 {
+	if got.NumDecodeTargets != 4 || got.NumChains != 2 || got.TemplateNum != 4 || got.ResolutionNum != 2 {
 		t.Fatalf("shape = %+v", got)
 	}
 	if got.Resolutions[0] != (Resolution{Width: 320, Height: 180}) || got.Resolutions[1] != (Resolution{Width: 640, Height: 360}) {
@@ -118,19 +124,70 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	want := [...]struct {
 		spatial uint8
 		temp    uint8
-		d0      DecodeTargetIndication
-		d1      DecodeTargetIndication
+		dtis    [4]DecodeTargetIndication
 	}{
-		{spatial: 0, temp: 0, d0: DecodeTargetSwitch, d1: DecodeTargetNotPresent},
-		{spatial: 0, temp: 1, d0: DecodeTargetDiscardable, d1: DecodeTargetNotPresent},
-		{spatial: 1, temp: 0, d0: DecodeTargetNotPresent, d1: DecodeTargetSwitch},
-		{spatial: 1, temp: 1, d0: DecodeTargetNotPresent, d1: DecodeTargetDiscardable},
+		{spatial: 0, temp: 0, dtis: [4]DecodeTargetIndication{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetRequired, DecodeTargetRequired}},
+		{spatial: 0, temp: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetDiscardable, DecodeTargetNotPresent, DecodeTargetRequired}},
+		{spatial: 1, temp: 0, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetSwitch, DecodeTargetSwitch}},
+		{spatial: 1, temp: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetDiscardable}},
 	}
 	for i, want := range want {
 		template := got.Templates[i]
 		if template.SpatialID != want.spatial || template.TemporalID != want.temp ||
-			template.DTIs[0] != want.d0 || template.DTIs[1] != want.d1 {
+			template.DTINum != 4 || template.DTIs[0] != want.dtis[0] || template.DTIs[1] != want.dtis[1] ||
+			template.DTIs[2] != want.dtis[2] || template.DTIs[3] != want.dtis[3] {
 			t.Fatalf("template[%d] = %+v", i, template)
+		}
+	}
+}
+
+func TestWebRTCFrameDependencyStructureForConfigL2T2KeyShift(t *testing.T) {
+	cfg := Config{
+		Resolution:  Resolution{Width: 640, Height: 360},
+		Scalability: ScalabilityModeL2T2_KEY_SHIFT,
+	}
+	got, err := WebRTCFrameDependencyStructureForConfig(cfg)
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	if got.NumDecodeTargets != 4 || got.NumChains != 2 || got.TemplateNum != 7 || got.ResolutionNum != 2 {
+		t.Fatalf("shape = %+v", got)
+	}
+	want := [...]struct {
+		spatial    uint8
+		temporal   uint8
+		dtis       [4]DecodeTargetIndication
+		frameDiffs [WebRTCMaxFrameReferences]uint16
+		frameNum   uint8
+		chainDiffs [2]uint8
+	}{
+		{spatial: 0, temporal: 0, dtis: [4]DecodeTargetIndication{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetSwitch}, chainDiffs: [2]uint8{0, 0}},
+		{spatial: 0, temporal: 0, dtis: [4]DecodeTargetIndication{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetNotPresent, DecodeTargetNotPresent}, frameDiffs: [WebRTCMaxFrameReferences]uint16{2}, frameNum: 1, chainDiffs: [2]uint8{2, 1}},
+		{spatial: 0, temporal: 0, dtis: [4]DecodeTargetIndication{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetNotPresent, DecodeTargetNotPresent}, frameDiffs: [WebRTCMaxFrameReferences]uint16{4}, frameNum: 1, chainDiffs: [2]uint8{4, 1}},
+		{spatial: 0, temporal: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetDiscardable, DecodeTargetNotPresent, DecodeTargetNotPresent}, frameDiffs: [WebRTCMaxFrameReferences]uint16{2}, frameNum: 1, chainDiffs: [2]uint8{2, 3}},
+		{spatial: 1, temporal: 0, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetSwitch, DecodeTargetSwitch}, frameDiffs: [WebRTCMaxFrameReferences]uint16{1}, frameNum: 1, chainDiffs: [2]uint8{1, 1}},
+		{spatial: 1, temporal: 0, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetSwitch, DecodeTargetSwitch}, frameDiffs: [WebRTCMaxFrameReferences]uint16{4}, frameNum: 1, chainDiffs: [2]uint8{3, 4}},
+		{spatial: 1, temporal: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetDiscardable}, frameDiffs: [WebRTCMaxFrameReferences]uint16{2}, frameNum: 1, chainDiffs: [2]uint8{1, 2}},
+	}
+	for i, want := range want {
+		template := got.Templates[i]
+		if template.SpatialID != want.spatial || template.TemporalID != want.temporal ||
+			template.DTINum != 4 || template.FrameDiffNum != want.frameNum ||
+			template.ChainDiffNum != 2 {
+			t.Fatalf("template[%d] shape = %+v", i, template)
+		}
+		for j := 0; j < 4; j++ {
+			if template.DTIs[j] != want.dtis[j] {
+				t.Fatalf("template[%d] dti[%d]=%v want %v", i, j, template.DTIs[j], want.dtis[j])
+			}
+		}
+		for j := uint8(0); j < want.frameNum; j++ {
+			if template.FrameDiffs[j] != want.frameDiffs[j] {
+				t.Fatalf("template[%d] frame diff[%d]=%d want %d", i, j, template.FrameDiffs[j], want.frameDiffs[j])
+			}
+		}
+		if template.ChainDiffs[0] != want.chainDiffs[0] || template.ChainDiffs[1] != want.chainDiffs[1] {
+			t.Fatalf("template[%d] chain diffs=%+v want %+v", i, template.ChainDiffs, want.chainDiffs)
 		}
 	}
 }
@@ -144,21 +201,22 @@ func TestWebRTCFrameDependencyStructureForConfigL1T3(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if got.NumDecodeTargets != 1 || got.NumChains != 1 || got.TemplateNum != 3 || got.ResolutionNum != 1 {
+	if got.NumDecodeTargets != 3 || got.NumChains != 1 || got.TemplateNum != 3 || got.ResolutionNum != 1 {
 		t.Fatalf("shape = %+v", got)
 	}
 	if got.Resolutions[0] != (Resolution{Width: 640, Height: 360}) {
 		t.Fatalf("resolutions = %+v", got.Resolutions)
 	}
-	want := [...]DecodeTargetIndication{
-		DecodeTargetSwitch,
-		DecodeTargetDiscardable,
-		DecodeTargetDiscardable,
+	want := [...][3]DecodeTargetIndication{
+		{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetSwitch},
+		{DecodeTargetNotPresent, DecodeTargetDiscardable, DecodeTargetSwitch},
+		{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetDiscardable},
 	}
-	for i, wantDTI := range want {
+	for i, wantDTIs := range want {
 		template := got.Templates[i]
 		if template.SpatialID != 0 || template.TemporalID != uint8(i) ||
-			template.DTINum != 1 || template.DTIs[0] != wantDTI {
+			template.DTINum != 3 || template.DTIs[0] != wantDTIs[0] ||
+			template.DTIs[1] != wantDTIs[1] || template.DTIs[2] != wantDTIs[2] {
 			t.Fatalf("template[%d] = %+v", i, template)
 		}
 	}
@@ -173,9 +231,23 @@ func TestWebRTCTemplateIDForFrame(t *testing.T) {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
 	structure.StructureID = 62
+	info := WebRTCGenericFrameInfo{
+		FrameID:       10,
+		SpatialID:     1,
+		TemporalID:    0,
+		DependencyNum: 1,
+		DTINum:        structure.NumDecodeTargets,
+	}
+	info.Dependencies[0] = 9
+	info.DTIs = structure.Templates[2].DTIs
 	id, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{
-		SpatialID:  1,
-		TemporalID: 0,
+		FrameID:       info.FrameID,
+		SpatialID:     info.SpatialID,
+		TemporalID:    info.TemporalID,
+		Dependencies:  info.Dependencies,
+		DependencyNum: info.DependencyNum,
+		DTIs:          info.DTIs,
+		DTINum:        info.DTINum,
 	})
 	if err != nil {
 		t.Fatalf("WebRTCTemplateIDForFrame: %v", err)
@@ -233,7 +305,7 @@ func TestWebRTCTemporalUnitControlForFramesKeyUnit(t *testing.T) {
 		got.FrameIDState.FrameIDs[0] != 10 || got.FrameIDState.FrameIDs[1] != 11 {
 		t.Fatalf("states = refs %+v ids %+v", got.ReferenceState, got.FrameIDState)
 	}
-	if got.DependencyStructure.TemplateNum != 4 || got.DependencyStructure.NumDecodeTargets != 2 {
+	if got.DependencyStructure.TemplateNum != 4 || got.DependencyStructure.NumDecodeTargets != 4 {
 		t.Fatalf("dependency structure = %+v", got.DependencyStructure)
 	}
 }

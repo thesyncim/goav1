@@ -18,8 +18,11 @@
 // jobs and worker batches, decoder block coefficient reconstruction,
 // coefficient replay reconstruction adapters, one-block coefficient
 // decode/reconstruct helpers, decoder postfilter scratch binding, superres
-// upscaling, film-grain output helpers, and the WebRTC AV1 encoder control
-// foundation. The decoder and encoder APIs will grow at this top level as the
+// upscaling, film-grain output helpers, a realtime 8-bit I420 AV1 encoder for
+// single-spatial-layer WebRTC streams, RTP payload packetization with dependency
+// descriptors, and lower-level WebRTC encoder helpers for W3C SVC mode metadata,
+// temporal/spatial dependency structures, decode-target grids, and key-shift
+// scheduling. The decoder and encoder APIs will grow at this top level as the
 // internal pipeline stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices

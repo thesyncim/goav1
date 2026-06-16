@@ -10,7 +10,7 @@ Pair it with [ARCHITECTURE.md](../ARCHITECTURE.md) for the broader
 package map, [CONFORMANCE.md](../CONFORMANCE.md) for the feature
 inventory, and the executable example at
 [`cmd/dump_svc`](../cmd/dump_svc) for a working SVC driver that exits
-gracefully when the decoder hits an unsupported layer.
+with the selected spatial layer.
 
 ---
 
@@ -20,8 +20,8 @@ gracefully when the decoder hits an unsupported layer.
 2. [How AV1 signals layers](#how-av1-signals-layers)
 3. [The simple path: same-size spatial layers](#the-simple-path-same-size-spatial-layers)
 4. [The full path: multi-pool, mixed-resolution SVC](#the-full-path-multi-pool-mixed-resolution-svc)
-5. [The `FrameSurfaceProvider` / `FrameSurfaceReleaser` pattern](#the-framesurfaceprovider--framesurfacereleaser-pattern)
-6. [Scaled inter prediction: build tag and runtime flag](#scaled-inter-prediction-build-tag-and-runtime-flag)
+5. [The `DecoderFrameSurfaceProvider` / `DecoderFrameSurfaceReleaser` pattern](#the-decoderframesurfaceprovider--decoderframesurfacereleaser-pattern)
+6. [Scaled inter prediction](#scaled-inter-prediction)
 7. [Picking which layer to emit](#picking-which-layer-to-emit)
 8. [Current support status](#current-support-status)
 9. [Conformance vectors](#conformance-vectors)
@@ -221,49 +221,43 @@ goav1 ships two pieces of glue for this:
    where the caller allocates the per-layer backing slice
    (`make([]byte, backingSize)`) and calls `BindFramePool`.
 
-2. **`decoder.FrameSurfaceProvider` / `decoder.FrameSurfaceReleaser`**
-   (and `decoder.TemporalMotionReferenceProvider`) — pluggable
-   interfaces used by
-   `FrameWorkState.RunEventWithContextAndExternalReferences` (and the
-   `decoder.FrameLayerPool` adapter that satisfies both) to resolve
-   reference surfaces against whichever pool actually holds them.
+2. **`DecoderFrameSurfaceProvider` / `DecoderFrameSurfaceReleaser`**
+   (and `DecoderTemporalMotionReferenceProvider`) — pluggable
+   interfaces used by `DecoderFrameWorkExternalReferenceRuntime` to
+   resolve reference surfaces against whichever pool actually holds
+   them.
 
    The pattern is small enough to reproduce in full:
 
    ```go
-   type FrameSurfaceProvider interface {
-       FrameSurface(id int) (*frame.Frame, error)
+   type DecoderFrameSurfaceProvider interface {
+       FrameSurface(id int) (*av1.Frame, error)
    }
 
-   type FrameSurfaceReleaser interface {
+   type DecoderFrameSurfaceReleaser interface {
        ReleaseFrameSurfaces(ids []int) error
    }
    ```
 
-> Note: as of this writing, the `RunEventWithContextAndExternalReferences`
-> entry point and the `FrameSurfaceProvider` / `FrameSurfaceReleaser` /
-> `TemporalMotionReferenceProvider` interfaces live in the internal
-> decoder package
-> (`github.com/thesyncim/goav1/internal/av1/decoder`). They are exercised
-> end-to-end by the framework dry-run tests in
-> `internal/av1/testvector/libaom_oracle_test.go` (see the
-> `libaomSpatialLayers` helper, which is the canonical reference
-> implementation of an SVC-aware provider). A root-package re-export is
-> on the roadmap. Until then, integrators wiring full mixed-resolution
-> SVC will need to either:
->
-> - vendor the internal interface contract into their own helper, or
-> - import the internal package directly (Go permits this when the
->   importer lives under the same module root or, with replace
->   directives, in their own fork).
->
-> The `FrameLayerPool` root export is the production-ready half of
-> this stack; the missing root export is the
-> `RunEventWithContextAndExternalReferences` drive verb.
+   For callers using `FrameLayerPool`, the root package provides the
+   adapter directly. `currentSubPool` is the `*FramePool` selected for
+   the event's coded `FrameFormat`.
+
+   ```go
+   layerRefs := av1.NewDecoderFrameLayerPool(&layerPool)
+   runtime.External = av1.DecoderFrameWorkExternalReferenceRuntime{
+       Provider:      layerRefs,
+       Releaser:      layerRefs,
+       GlobalSurface: func(local int) int {
+           return av1.DecoderLayerPoolGlobalSurfaceID(&layerPool, currentSubPool, local)
+       },
+       FrameContexts: &sharedFrameContexts,
+   }
+   ```
 
 ---
 
-## The `FrameSurfaceProvider` / `FrameSurfaceReleaser` pattern
+## The `DecoderFrameSurfaceProvider` / `DecoderFrameSurfaceReleaser` pattern
 
 A working SVC provider needs to do four things:
 
@@ -275,17 +269,19 @@ A working SVC provider needs to do four things:
    encoding (`spatialID*256 + local`) for the same purpose.
 
 2. **Store global IDs in `DecoderSurfaceReferences`.** The
-   per-frame `globalSurface(local int) int` translator passed into
-   `RunEventWithContextAndExternalReferences` converts the output
-   surface's local index (returned by the per-layer pool) into the
-   global ID that gets refreshed into the reference slots.
+   per-frame `DecoderFrameWorkExternalReferenceRuntime.GlobalSurface`
+   translator converts the output surface's local index (returned by
+   the per-layer pool) into the global ID that gets refreshed into the
+   reference slots. When the current coded layer comes from a
+   `FrameLayerPool`, use
+   `DecoderLayerPoolGlobalSurfaceID(&layerPool, currentSubPool, local)`.
 
 3. **Implement `FrameSurface(id)` to route the lookup.** Decode the
    global ID back into `(layer, local)` and call the right per-layer
    pool's `Frame(local)` accessor:
 
    ```go
-   func (s *Layers) FrameSurface(id int) (*frame.Frame, error) {
+   func (s *Layers) FrameSurface(id int) (*av1.Frame, error) {
        layer, local := decodeGlobalID(id)
        return s.byID[layer].pool.Frame(local)
    }
@@ -310,49 +306,35 @@ A working SVC provider needs to do four things:
 
 For mid-frame motion-field projection across spatial layers
 (`UseRefFrameMVS == true`), the same pattern applies via
-`TemporalMotionReferenceProvider`. The per-layer state must also
+`DecoderTemporalMotionReferenceProvider`. The per-layer state must also
 carry its own temporal-MV scratch (one `mvStore` slot per local pool
-index) since the projection metadata is keyed by surface.
+index) since the projection metadata is keyed by surface. The root
+helpers `PublishDecoderTemporalMotionReference`,
+`ResolveDecoderTemporalMotionReferences`, and
+`ResolveDecoderTemporalMotionReferencesWithProvider` cover the common
+store/update operations.
 
-`decoder.FrameLayerPool` is a thin adapter over
-`frame.LayerPool` that already satisfies the provider and releaser
-interfaces, so callers using `FrameLayerPool` get the routing for
-free.
+`NewDecoderFrameLayerPool` is a thin adapter over `FrameLayerPool` that
+already satisfies the provider and releaser interfaces, so callers using
+`FrameLayerPool` get the routing for free.
 
 ---
 
-## Scaled inter prediction: build tag and runtime flag
+## Scaled inter prediction
 
 True spatial SVC needs *scaled inter prediction*: enhancement-layer
 frames reference base-layer surfaces at a different resolution and the
-decoder must apply the AV1 8-tap convolve at the appropriate scale
-factor. The reference implementation lives at
-`internal/av1/motion/scaled.go`; the threading dispatcher gates it
-behind two switches in
-`internal/av1/threading/predict_scaled.go`:
+decoder must apply the AV1 8-tap convolve at the appropriate scale factor. The
+reference implementation lives at `internal/av1/motion/scaled.go`, with the
+threading dispatcher in `internal/av1/threading/predict_scaled.go`. The SVC
+strict gates enable this path and L2T1/L2T2 pass every-frame MD5.
 
-- **Runtime opt-in (`GOAV1_SCALED_PRED=1`).** The default-built
-  decoder rejects size-mismatched references with the
-  `threading: invalid batch` error, preserving bit-exact behavior on
-  the fast same-size suite. Set `GOAV1_SCALED_PRED=1` in the process
-  environment to route mismatched references through the scaled
-  convolver.
-
-- **Compile-time pin (`-tags goav1_scaled_pred`).** Setting the
-  `goav1_scaled_pred` build tag pins the scaled-prediction path on
-  for the entire process. This is the developer-workflow knob used
-  when conformance scripts always want the scaled path live.
-
-Both routes exist so the scaled path can be enabled without
-recompilation while still letting CI configurations pin it on. The
-gate is checked once per block, not per pixel; the steady-state cost
-of probing the environment variable is amortised across the convolve.
-
-For now, set both when chasing SVC strict conformance:
+To run the SVC extended dry-run directly:
 
 ```sh
-GOAV1_SCALED_PRED=1 go test -tags goav1_oracle,goav1_scaled_pred \
-    ./internal/av1/testvector -run TestLibaomExtendedFrameWorkDryRun
+GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 \
+    go test -tags goav1_oracle ./internal/av1/testvector \
+    -run TestLibaomExtendedFrameWorkDryRun -count=1 -timeout 1800s -v
 ```
 
 ---
@@ -416,7 +398,8 @@ decoder.
 
 ## Current support status
 
-The SVC pipeline is in active development. As of this writing:
+The SVC decode pipeline is green on the committed strict gates. As of this
+writing:
 
 | Capability                                          | State                                      |
 |-----------------------------------------------------|--------------------------------------------|
@@ -425,14 +408,20 @@ The SVC pipeline is in active development. As of this writing:
 | Scalability metadata OBU parse                      | Complete; `Metadata.Scalability`.          |
 | Per-spatial-layer `FrameWorkState`                  | Complete; one state instance per layer.    |
 | Stream-global `DecoderSurfaceReferences` across layers | Complete; one reference set shared across all layer states. |
-| Multi-pool reference routing (`FrameSurfaceProvider`) | Complete in internal package; no root export yet. |
+| Multi-pool reference routing (`DecoderFrameSurfaceProvider`) | Complete and exported at root through `DecoderFrameWorkExternalReferenceRuntime`, `NewDecoderFrameLayerPool`, and provider resolve helpers. |
 | `FrameLayerPool` aggregator                         | Complete and exported at root.             |
-| Scaled inter prediction (8-tap convolve at scale)   | Complete; gated behind `GOAV1_SCALED_PRED=1` / `goav1_scaled_pred` tag. |
+| Scaled inter prediction (8-tap convolve at scale)   | Complete; exercised by L2T1/L2T2 strict gates. |
 | Warp + scaled fallback                              | Complete; pairs with scaled inter when warped-motion mismatches the reference scale. |
-| Inter-intra + scaled                                | In flight; basic path landed, edge cases under review. |
-| L1T2 single-pool decode (lenient first-frame MD5)   | Frame 0 PASS; later frames currently mismatch (`threading: invalid batch` on the same-size inter-layer ref path, under active fix). |
-| L2T1 / L2T2 multi-pool decode (lenient MD5)         | Higher spatial-layer frame 0 mismatches; under active fix. |
-| Strict every-frame parity                           | Not yet; tracked in CONFORMANCE.md.        |
+| Inter-intra + scaled                                | Complete for the committed strict SVC vectors. |
+| L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
+| L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
+| WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
+| Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
+
+The WebRTC control row is metadata/control support for already-produced frame
+payloads. The friendly `RTCEncoder` pixel path remains single-spatial-layer
+L1T1/L1T2/L1T3 today; spatial-SVC and simulcast pixel generation are still
+separate encoder work.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the
@@ -446,7 +435,7 @@ GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 \
     -run TestLibaomExtendedFrameWorkDryRun -count=1 -timeout 1800s -v
 ```
 
-For the lenient first-frame gate against `SuiteLevelRelevant`:
+For the strict relevant gate, including the L1T2 SVC vector:
 
 ```sh
 GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 \
@@ -454,8 +443,8 @@ GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 \
     -run TestLibaomFastFrameWorkDryRun -count=1 -timeout 600s -v
 ```
 
-CI does not currently gate on SVC vectors. The fast-suite eight-vector
-cohort that CI guards is non-SVC.
+The fast dry-run CI lane includes the current fast SVC vector. Full, extended,
+and profile lanes are still heavier local/release gates.
 
 ---
 
@@ -507,14 +496,15 @@ or helper that owns that slice of state.
      stream runner. This is the `cmd/dump_svc` and
      `cmd/aom-go-dec` shape.
    - **Multi-pool:** if spatial layers have distinct sizes, bind a
-     `FrameLayerPool` and drive the multi-pool entry point. Today
-     this means importing `internal/av1/decoder` for
-     `RunEventWithContextAndExternalReferences` and one of the
-     `FrameSurfaceProvider` implementations. The dry-run harness
-     (`libaomSpatialLayers` in
-     `internal/av1/testvector/libaom_oracle_test.go`) is the
-     reference implementation; it is small (~150 lines of glue) and
-     reusable.
+     `FrameLayerPool`, wrap it with `NewDecoderFrameLayerPool`, and
+     drive residual events with `DecoderFrameWorkExternalReferenceRuntime`.
+     The current event's `FramePool` must be the sub-pool matching that
+     event's coded `FrameFormat`; root helpers such as
+     `FrameCodedFormatFromHeaders`, `FrameLayerPool.SubPool`, and
+     `DecoderLayerPoolGlobalSurfaceID` provide the pieces. The dry-run
+     harness (`libaomSpatialLayers` in
+     `internal/av1/testvector/libaom_oracle_test.go`) remains the
+     reference implementation for full mixed-resolution orchestration.
 
 4. **Probe scratch sizes once.** Call
    `DecoderFrameWorkResidualLowOverheadStreamsPlan` (or the

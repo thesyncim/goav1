@@ -49,15 +49,18 @@ const (
 	EncoderScalabilityModeL2T3           = internalencoder.ScalabilityModeL2T3
 	EncoderScalabilityModeL2T3h          = internalencoder.ScalabilityModeL2T3h
 	EncoderScalabilityModeL2T3_KEY       = internalencoder.ScalabilityModeL2T3_KEY
+	EncoderScalabilityModeL2T3_KEY_SHIFT = internalencoder.ScalabilityModeL2T3_KEY_SHIFT
 	EncoderScalabilityModeL3T1           = internalencoder.ScalabilityModeL3T1
 	EncoderScalabilityModeL3T1h          = internalencoder.ScalabilityModeL3T1h
 	EncoderScalabilityModeL3T1_KEY       = internalencoder.ScalabilityModeL3T1_KEY
 	EncoderScalabilityModeL3T2           = internalencoder.ScalabilityModeL3T2
 	EncoderScalabilityModeL3T2h          = internalencoder.ScalabilityModeL3T2h
 	EncoderScalabilityModeL3T2_KEY       = internalencoder.ScalabilityModeL3T2_KEY
+	EncoderScalabilityModeL3T2_KEY_SHIFT = internalencoder.ScalabilityModeL3T2_KEY_SHIFT
 	EncoderScalabilityModeL3T3           = internalencoder.ScalabilityModeL3T3
 	EncoderScalabilityModeL3T3h          = internalencoder.ScalabilityModeL3T3h
 	EncoderScalabilityModeL3T3_KEY       = internalencoder.ScalabilityModeL3T3_KEY
+	EncoderScalabilityModeL3T3_KEY_SHIFT = internalencoder.ScalabilityModeL3T3_KEY_SHIFT
 	EncoderScalabilityModeS2T1           = internalencoder.ScalabilityModeS2T1
 	EncoderScalabilityModeS2T1h          = internalencoder.ScalabilityModeS2T1h
 	EncoderScalabilityModeS2T2           = internalencoder.ScalabilityModeS2T2
@@ -929,6 +932,10 @@ func EncoderWebRTCDeltaFrameTemporalUnitForConfig(config EncoderConfig, referenc
 
 func EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
 	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint)
+}
+
+func EncoderWebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, deltaPictureIndex uint64, firstFrameID uint64, orderHint uint8) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
+	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config, referenceState, frameIDState, deltaPictureIndex, firstFrameID, orderHint)
 }
 
 func EncoderWebRTCKeyFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {

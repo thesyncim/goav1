@@ -98,7 +98,11 @@ func writeFrameHeaderPrefixPayload(w *bitWriter, seq SequenceHeader, prefix Fram
 		if err := w.writeBool(prefix.ShowFrame); err != nil {
 			return err
 		}
-		if !prefix.ShowFrame {
+		if prefix.ShowFrame {
+			if err := writeFramePresentationDelay(w, seq, prefix); err != nil {
+				return err
+			}
+		} else {
 			if err := w.writeBool(prefix.ShowableFrame); err != nil {
 				return err
 			}
@@ -120,6 +124,9 @@ func writeShowExistingFrameHeaderPrefix(w *bitWriter, seq SequenceHeader, prefix
 	if err := w.writeBits(uint64(prefix.ExistingFrameIdx), 3); err != nil {
 		return err
 	}
+	if err := writeFramePresentationDelay(w, seq, prefix); err != nil {
+		return err
+	}
 	if seq.FrameIDNumbersPresent {
 		return w.writeBits(uint64(prefix.FrameID), sequenceFrameIDBits(seq))
 	}
@@ -139,6 +146,13 @@ func writeFrameHeaderFeatureFlags(w *bitWriter, seq SequenceHeader, prefix Frame
 		return w.writeBool(prefix.ForceIntegerMV)
 	}
 	return nil
+}
+
+func writeFramePresentationDelay(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix) error {
+	if !seq.DecoderModelInfoPresent || seq.TimingInfo.EqualPictureInterval {
+		return nil
+	}
+	return w.writeBits(uint64(prefix.FramePresentationDelay), seq.DecoderModelInfo.FramePresentationTimeLength)
 }
 
 func writeFrameHeaderReferencePrefix(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix) error {
@@ -173,8 +187,13 @@ func validateFrameHeaderPrefix(seq SequenceHeader, prefix FrameHeaderPrefix) err
 	if !prefix.FrameType.valid() || prefix.ExistingFrameIdx > 7 || prefix.PrimaryRefFrame > EncoderPrimaryRefNone {
 		return ErrInvalidFrame
 	}
-	if prefix.FramePresentationDelay != 0 {
-		return ErrUnsupported
+	presentationDelayEmitted := prefix.ShowExistingFrame || prefix.ShowFrame
+	if seq.DecoderModelInfoPresent && !seq.TimingInfo.EqualPictureInterval && presentationDelayEmitted {
+		if !valueFitsBits32(prefix.FramePresentationDelay, seq.DecoderModelInfo.FramePresentationTimeLength) {
+			return ErrInvalidFrame
+		}
+	} else if prefix.FramePresentationDelay != 0 {
+		return ErrInvalidFrame
 	}
 	if seq.ReducedStillPictureHeader && prefix.ShowExistingFrame {
 		return ErrInvalidFrame

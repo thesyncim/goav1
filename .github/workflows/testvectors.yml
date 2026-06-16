@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '19 3 * * 2'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -70,5 +72,109 @@ jobs:
           name: framework-dryrun-log
           path: |
             dryrun.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dryrun-full:
+    name: framework dry-run (full)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: cache libaom vectors
+        uses: actions/cache@v4
+        with:
+          path: internal/av1/testdata/libaom
+          key: libaom-full-${{ hashFiles('internal/av1/testvector/libaom_manifest.go') }}
+          restore-keys: |
+            libaom-full-
+            libaom-fast-
+      - name: full framework dry-run
+        run: |
+          set -o pipefail
+          make dryrun-full 2>&1 | tee dryrun-full.log
+      - name: upload full dry-run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: framework-dryrun-full-log
+          path: |
+            dryrun-full.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dryrun-extended:
+    name: framework dry-run (extended)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: cache libaom vectors
+        uses: actions/cache@v4
+        with:
+          path: internal/av1/testdata/libaom
+          key: libaom-extended-${{ hashFiles('internal/av1/testvector/libaom_manifest.go') }}
+          restore-keys: |
+            libaom-extended-
+            libaom-full-
+            libaom-fast-
+      - name: extended framework dry-run
+        run: |
+          set -o pipefail
+          make dryrun-extended 2>&1 | tee dryrun-extended.log
+      - name: upload extended dry-run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: framework-dryrun-extended-log
+          path: |
+            dryrun-extended.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dryrun-profiles:
+    name: framework dry-run (profiles)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: cache libaom vectors
+        uses: actions/cache@v4
+        with:
+          path: internal/av1/testdata/libaom
+          key: libaom-profiles-${{ hashFiles('internal/av1/testvector/libaom_manifest.go') }}
+          restore-keys: |
+            libaom-profiles-
+            libaom-full-
+            libaom-fast-
+      - name: profile corpus dry-run
+        run: |
+          set -o pipefail
+          make dryrun-profiles 2>&1 | tee dryrun-profiles.log
+      - name: upload profile dry-run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: framework-dryrun-profiles-log
+          path: |
+            dryrun-profiles.log
           if-no-files-found: ignore
           retention-days: 14

@@ -154,17 +154,67 @@ func webRTCDependencyDescriptorMatchFrame(structure WebRTCFrameDependencyStructu
 		}
 		match.frameDiffs[i] = uint16(diff)
 	}
-	if template.FrameDiffNum != match.frameDiffNum {
-		match.needCustomDiffs = true
-	} else {
-		for i := uint8(0); i < match.frameDiffNum; i++ {
-			if template.FrameDiffs[i] != match.frameDiffs[i] {
-				match.needCustomDiffs = true
+	match.needCustomDiffs = webRTCTemplateNeedsCustomDiffs(template, match.frameDiffs, match.frameDiffNum)
+	if match.needCustomDTIs || match.needCustomDiffs {
+		if better, ok := webRTCDependencyDescriptorBestTemplate(structure, info, match.frameDiffs, match.frameDiffNum); ok {
+			match.templateIndex = better.templateIndex
+			match.needCustomDTIs = better.needCustomDTIs
+			match.needCustomDiffs = better.needCustomDiffs
+		}
+	}
+	return match, nil
+}
+
+func webRTCDependencyDescriptorBestTemplate(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, frameDiffs [WebRTCMaxFrameReferences]uint16, frameDiffNum uint8) (webRTCDependencyDescriptorMatch, bool) {
+	var best webRTCDependencyDescriptorMatch
+	var bestCost uint8 = 0xff
+	found := false
+	for i := uint8(0); i < structure.TemplateNum; i++ {
+		template := structure.Templates[i]
+		if template.SpatialID != info.SpatialID || template.TemporalID != info.TemporalID {
+			continue
+		}
+		candidate := webRTCDependencyDescriptorMatch{
+			templateIndex: i,
+			frameDiffs:    frameDiffs,
+			frameDiffNum:  frameDiffNum,
+		}
+		for j := uint8(0); j < structure.NumDecodeTargets; j++ {
+			if info.DTIs[j] != template.DTIs[j] {
+				candidate.needCustomDTIs = true
+				break
+			}
+		}
+		candidate.needCustomDiffs = webRTCTemplateNeedsCustomDiffs(template, frameDiffs, frameDiffNum)
+		cost := uint8(0)
+		if candidate.needCustomDTIs {
+			cost += 2
+		}
+		if candidate.needCustomDiffs {
+			cost++
+		}
+		if !found || cost < bestCost {
+			best = candidate
+			bestCost = cost
+			found = true
+			if cost == 0 {
 				break
 			}
 		}
 	}
-	return match, nil
+	return best, found
+}
+
+func webRTCTemplateNeedsCustomDiffs(template WebRTCFrameDependencyTemplate, frameDiffs [WebRTCMaxFrameReferences]uint16, frameDiffNum uint8) bool {
+	if template.FrameDiffNum != frameDiffNum {
+		return true
+	}
+	for i := uint8(0); i < frameDiffNum; i++ {
+		if template.FrameDiffs[i] != frameDiffs[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func validateWebRTCDependencyStructure(structure WebRTCFrameDependencyStructure) error {

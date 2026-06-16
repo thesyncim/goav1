@@ -18,6 +18,13 @@ type WebRTCEncodedFrame struct {
 	// Descriptor is the serialized RTP dependency descriptor for a
 	// single-packet frame; keyframes attach the dependency structure.
 	Descriptor []byte
+	// Structure is the dependency structure used to serialize descriptors for
+	// this frame. Callers that fragment TU into multiple RTP payloads use it
+	// together with Info to attach per-packet dependency descriptors.
+	Structure WebRTCFrameDependencyStructure
+	// AttachDependencyStructure reports whether the first packet descriptor for
+	// this frame should carry Structure.
+	AttachDependencyStructure bool
 }
 
 // WebRTCStream encodes an L1T1, L1T2, or L1T3 stream with per-frame dependency
@@ -145,5 +152,12 @@ func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedF
 	}
 	s.idState = next
 	s.frameID++
-	return WebRTCEncodedFrame{TU: tu, Keyframe: key, Info: info, Descriptor: descriptor}, nil
+	return WebRTCEncodedFrame{
+		TU:                        tu,
+		Keyframe:                  key,
+		Info:                      info,
+		Descriptor:                descriptor,
+		Structure:                 s.structure,
+		AttachDependencyStructure: key,
+	}, nil
 }

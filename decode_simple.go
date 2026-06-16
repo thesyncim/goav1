@@ -314,6 +314,9 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 // valid only until the next DecodeNext / DecodeAll call or Close. See the
 // Decoder type documentation for full lifetime semantics.
 func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
+	if d == nil || d.payloadSource.len() == 0 {
+		return nil, false, errors.New("goav1: decoder is not initialized")
+	}
 	if d.closed {
 		return nil, false, errors.New("goav1: decoder closed")
 	}
@@ -411,6 +414,9 @@ func (d *Decoder) releaseShownSurfaces() {
 // independent copies). DecodeAll is intended for single-frame / last-frame
 // inspection and for measuring the decode without retaining pixels.
 func (d *Decoder) DecodeAll() ([]*Frame, error) {
+	if d == nil || d.payloadSource.len() == 0 {
+		return nil, errors.New("goav1: decoder is not initialized")
+	}
 	if d.closed {
 		return nil, errors.New("goav1: decoder closed")
 	}
@@ -433,6 +439,9 @@ func (d *Decoder) DecodeAll() ([]*Frame, error) {
 // the frame pool, reference state, and stream runner exactly as a fresh decode
 // would.
 func (d *Decoder) Reset() error {
+	if d == nil || d.payloadSource.len() == 0 {
+		return errors.New("goav1: decoder is not initialized")
+	}
 	if d.closed {
 		return errors.New("goav1: decoder closed")
 	}
@@ -454,6 +463,9 @@ func (d *Decoder) Reset() error {
 // Close releases the worker goroutine pool owned by the Decoder. After Close,
 // the Decoder must not be used. Close is idempotent.
 func (d *Decoder) Close() {
+	if d == nil {
+		return
+	}
 	if d.closed {
 		return
 	}

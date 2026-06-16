@@ -75,15 +75,18 @@ const (
 	ScalabilityModeL2T3
 	ScalabilityModeL2T3h
 	ScalabilityModeL2T3_KEY
+	ScalabilityModeL2T3_KEY_SHIFT
 	ScalabilityModeL3T1
 	ScalabilityModeL3T1h
 	ScalabilityModeL3T1_KEY
 	ScalabilityModeL3T2
 	ScalabilityModeL3T2h
 	ScalabilityModeL3T2_KEY
+	ScalabilityModeL3T2_KEY_SHIFT
 	ScalabilityModeL3T3
 	ScalabilityModeL3T3h
 	ScalabilityModeL3T3_KEY
+	ScalabilityModeL3T3_KEY_SHIFT
 	ScalabilityModeS2T1
 	ScalabilityModeS2T1h
 	ScalabilityModeS2T2
@@ -124,15 +127,18 @@ var scalabilityModes = [...]scalabilityInfo{
 	{name: "L2T3", spatial: 2, temporal: 3},
 	{name: "L2T3h", spatial: 2, temporal: 3, smallStep: true},
 	{name: "L2T3_KEY", spatial: 2, temporal: 3, key: true},
+	{name: "L2T3_KEY_SHIFT", spatial: 2, temporal: 3, key: true, keyShift: true},
 	{name: "L3T1", spatial: 3, temporal: 1},
 	{name: "L3T1h", spatial: 3, temporal: 1, smallStep: true},
 	{name: "L3T1_KEY", spatial: 3, temporal: 1, key: true},
 	{name: "L3T2", spatial: 3, temporal: 2},
 	{name: "L3T2h", spatial: 3, temporal: 2, smallStep: true},
 	{name: "L3T2_KEY", spatial: 3, temporal: 2, key: true},
+	{name: "L3T2_KEY_SHIFT", spatial: 3, temporal: 2, key: true, keyShift: true},
 	{name: "L3T3", spatial: 3, temporal: 3},
 	{name: "L3T3h", spatial: 3, temporal: 3, smallStep: true},
 	{name: "L3T3_KEY", spatial: 3, temporal: 3, key: true},
+	{name: "L3T3_KEY_SHIFT", spatial: 3, temporal: 3, key: true, keyShift: true},
 	{name: "S2T1", spatial: 2, temporal: 1, simulcast: true},
 	{name: "S2T1h", spatial: 2, temporal: 1, smallStep: true, simulcast: true},
 	{name: "S2T2", spatial: 2, temporal: 2, simulcast: true},
@@ -186,6 +192,8 @@ func ParseScalabilityMode(mode string) (ScalabilityMode, bool) {
 		return ScalabilityModeL2T3h, true
 	case "L2T3_KEY":
 		return ScalabilityModeL2T3_KEY, true
+	case "L2T3_KEY_SHIFT":
+		return ScalabilityModeL2T3_KEY_SHIFT, true
 	case "L3T1":
 		return ScalabilityModeL3T1, true
 	case "L3T1h":
@@ -198,12 +206,16 @@ func ParseScalabilityMode(mode string) (ScalabilityMode, bool) {
 		return ScalabilityModeL3T2h, true
 	case "L3T2_KEY":
 		return ScalabilityModeL3T2_KEY, true
+	case "L3T2_KEY_SHIFT":
+		return ScalabilityModeL3T2_KEY_SHIFT, true
 	case "L3T3":
 		return ScalabilityModeL3T3, true
 	case "L3T3h":
 		return ScalabilityModeL3T3h, true
 	case "L3T3_KEY":
 		return ScalabilityModeL3T3_KEY, true
+	case "L3T3_KEY_SHIFT":
+		return ScalabilityModeL3T3_KEY_SHIFT, true
 	case "S2T1":
 		return ScalabilityModeS2T1, true
 	case "S2T1h":
@@ -249,6 +261,14 @@ func (m ScalabilityMode) IsSimulcast() bool {
 	return m.Valid() && scalabilityModes[m].simulcast
 }
 
+func (m ScalabilityMode) UsesKeyFrameInterLayerDependency() bool {
+	return m.Valid() && scalabilityModes[m].key
+}
+
+func (m ScalabilityMode) UsesKeyFrameInterLayerDependencyShift() bool {
+	return m.Valid() && scalabilityModes[m].keyShift
+}
+
 func DefaultScalabilityMode(temporalLayers uint8, spatialLayers uint8) (ScalabilityMode, bool) {
 	if spatialLayers == 0 {
 		spatialLayers = 1
@@ -274,7 +294,7 @@ func LimitScalabilityModeSpatialLayers(mode ScalabilityMode, limit uint8) (Scala
 	if limit == 1 {
 		return scalabilityModeFor(1, info.temporal, false, false, false, false)
 	}
-	keyShift := info.keyShift && limit == 2 && info.temporal == 2
+	keyShift := info.keyShift && info.temporal > 1
 	return scalabilityModeFor(limit, info.temporal, info.key, info.smallStep, info.simulcast, keyShift)
 }
 
@@ -297,10 +317,7 @@ func scalabilityModeFor(spatial uint8, temporal uint8, key bool, smallStep bool,
 	case 2:
 		return scalabilityModeFor2Spatial(temporal, key, smallStep, simulcast, keyShift)
 	case 3:
-		if keyShift {
-			return 0, false
-		}
-		return scalabilityModeFor3Spatial(temporal, key, smallStep, simulcast)
+		return scalabilityModeFor3SpatialShift(temporal, key, smallStep, simulcast, keyShift)
 	default:
 		return 0, false
 	}
@@ -347,8 +364,13 @@ func scalabilityModeFor2Spatial(temporal uint8, key bool, smallStep bool, simulc
 		}
 	}
 	if keyShift {
-		if temporal == 2 && key {
-			return ScalabilityModeL2T2_KEY_SHIFT, true
+		if key {
+			switch temporal {
+			case 2:
+				return ScalabilityModeL2T2_KEY_SHIFT, true
+			case 3:
+				return ScalabilityModeL2T3_KEY_SHIFT, true
+			}
 		}
 		return 0, false
 	}
@@ -374,8 +396,12 @@ func scalabilityModeFor2Spatial(temporal uint8, key bool, smallStep bool, simulc
 }
 
 func scalabilityModeFor3Spatial(temporal uint8, key bool, smallStep bool, simulcast bool) (ScalabilityMode, bool) {
+	return scalabilityModeFor3SpatialShift(temporal, key, smallStep, simulcast, false)
+}
+
+func scalabilityModeFor3SpatialShift(temporal uint8, key bool, smallStep bool, simulcast bool, keyShift bool) (ScalabilityMode, bool) {
 	if simulcast {
-		if key {
+		if key || keyShift {
 			return 0, false
 		}
 		switch temporal {
@@ -399,7 +425,7 @@ func scalabilityModeFor3Spatial(temporal uint8, key bool, smallStep bool, simulc
 		}
 	}
 	if smallStep {
-		if key {
+		if key || keyShift {
 			return 0, false
 		}
 		switch temporal {
@@ -412,6 +438,17 @@ func scalabilityModeFor3Spatial(temporal uint8, key bool, smallStep bool, simulc
 		default:
 			return 0, false
 		}
+	}
+	if keyShift {
+		if key {
+			switch temporal {
+			case 2:
+				return ScalabilityModeL3T2_KEY_SHIFT, true
+			case 3:
+				return ScalabilityModeL3T3_KEY_SHIFT, true
+			}
+		}
+		return 0, false
 	}
 	switch temporal {
 	case 1:
@@ -818,7 +855,9 @@ var supportedResolutionScalingFactors = [...]Rational{
 	{Num: 8, Den: 1},
 	{Num: 4, Den: 1},
 	{Num: 2, Den: 1},
+	{Num: 3, Den: 2},
 	{Num: 1, Den: 1},
+	{Num: 2, Den: 3},
 	{Num: 1, Den: 2},
 	{Num: 1, Den: 4},
 	{Num: 1, Den: 8},
@@ -831,6 +870,10 @@ func SupportedResolutionScaling(from Resolution, to Resolution) (Rational, bool)
 	for _, factor := range supportedResolutionScalingFactors {
 		if int64(from.Width)*int64(factor.Num)/int64(factor.Den) == int64(to.Width) &&
 			int64(from.Height)*int64(factor.Num)/int64(factor.Den) == int64(to.Height) {
+			return factor, true
+		}
+		if int64(to.Width)*int64(factor.Den)/int64(factor.Num) == int64(from.Width) &&
+			int64(to.Height)*int64(factor.Den)/int64(factor.Num) == int64(from.Height) {
 			return factor, true
 		}
 	}

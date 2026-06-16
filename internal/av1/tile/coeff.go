@@ -1666,22 +1666,6 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	}, nil
 }
 
-func readBaseRangeFromArrCursorUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
-	ctx := int(context)
-	if ctx >= CoeffBRContexts {
-		panic("invalid coefficient base range context")
-	}
-	return readBaseRangeFromArrCursorUpdateTrusted(reader, arr, ctx)
-}
-
-func readBaseRangeFromArrCursorNoUpdate(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context uint8) uint8 {
-	ctx := int(context)
-	if ctx >= CoeffBRContexts {
-		panic("invalid coefficient base range context")
-	}
-	return readBaseRangeFromArrCursorNoUpdateTrusted(reader, arr, ctx)
-}
-
 func readBaseRangeFromArrCursorUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
 	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[context])
 }

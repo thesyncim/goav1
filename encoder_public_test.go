@@ -13,6 +13,9 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if !ok || mode != av1.EncoderScalabilityModeL2T2_KEY {
 		t.Fatalf("ParseEncoderScalabilityMode = %v,%v", mode, ok)
 	}
+	if shifted, ok := av1.ParseEncoderScalabilityMode("L3T3_KEY_SHIFT"); !ok || shifted != av1.EncoderScalabilityModeL3T3_KEY_SHIFT {
+		t.Fatalf("ParseEncoderScalabilityMode L3T3_KEY_SHIFT = %v,%v", shifted, ok)
+	}
 
 	cfg, err := av1.SetWebRTCEncoderSVCConfig(av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
@@ -64,7 +67,8 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncoderWebRTCGenericFrameInfoForFrame: %v", err)
 	}
-	if info.DependencyNum != 1 || info.Dependencies[0] != 7 || info.DTIs[1] != av1.EncoderDecodeTargetSwitch {
+	if info.DependencyNum != 1 || info.Dependencies[0] != 7 || info.DTINum != 4 ||
+		info.DTIs[2] != av1.EncoderDecodeTargetSwitch || info.DTIs[3] != av1.EncoderDecodeTargetSwitch {
 		t.Fatalf("generic frame info = %+v", info)
 	}
 	if nextIDState.Valid[0] != idState.Valid[0] || nextIDState.FrameIDs[0] != idState.FrameIDs[0] {
@@ -75,7 +79,7 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if structure.NumDecodeTargets != 2 || structure.TemplateNum != 4 {
+	if structure.NumDecodeTargets != 4 || structure.TemplateNum != 4 {
 		t.Fatalf("dependency structure = %+v", structure)
 	}
 
@@ -1454,9 +1458,9 @@ func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
 	if delta.Headers[1].Prefix.FrameType != av1.EncoderFrameHeaderTypeInter ||
 		delta.Headers[1].Size.UpscaledWidth != 640 ||
 		delta.Headers[1].Size.Height != 360 ||
-		delta.Headers[1].Size.RefreshFrameFlags != 0x02 ||
+		delta.Headers[1].Size.RefreshFrameFlags != 0x00 ||
 		delta.Headers[1].Size.RefFrameIdx[0] != 1 ||
-		delta.Headers[1].Size.RefFrameIdx[1] != 0 {
+		delta.Headers[1].Size.RefFrameIdx[1] != 2 {
 		t.Fatalf("delta header=%+v", delta.Headers[1])
 	}
 	var headerBuf [80]byte
@@ -1516,6 +1520,32 @@ func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfig(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForConfig allocated: %f", allocs)
+	}
+}
+
+func TestPublicEncoderWebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+		Scalability:       av1.EncoderScalabilityModeL3T3_KEY_SHIFT,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 700,
+	}
+	key, err := av1.EncoderWebRTCKeyFrameTemporalUnitForConfig(cfg, 0, 10)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	delta, err := av1.EncoderWebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 2, 20, 7)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex: %v", err)
+	}
+	if delta.FrameNum != 3 ||
+		delta.Frames[0].TemporalID != 2 ||
+		delta.Frames[1].TemporalID != 0 ||
+		delta.Frames[2].TemporalID != 1 ||
+		delta.Headers[0].Prefix.OrderHint != 7 {
+		t.Fatalf("delta=%+v", delta)
 	}
 }
 

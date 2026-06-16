@@ -89,6 +89,10 @@ type TileTemporalMotionField = internaltile.TemporalMotionField
 // TileTemporalMotionEntry is one entry of a TileTemporalMotionField.
 type TileTemporalMotionEntry = internaltile.TemporalMotionEntry
 
+// TileTemporalMotionReferenceFrame is the saved MV_REF side data and order-hint
+// metadata for one decoded reference frame.
+type TileTemporalMotionReferenceFrame = internaltile.TemporalMotionReferenceFrame
+
 // TileDecodeState is the per-job decode state: entropy reader,
 // delta-q/loopfilter state, segmentation/loop-filter caches, and the
 // frame-context retention flag.

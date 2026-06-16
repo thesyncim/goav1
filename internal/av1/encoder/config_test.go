@@ -39,8 +39,11 @@ func TestScalabilityModeParseAndLayers(t *testing.T) {
 	}{
 		{in: "L1T1", mode: ScalabilityModeL1T1, spatial: 1, temporal: 1},
 		{in: "L2T2_KEY_SHIFT", mode: ScalabilityModeL2T2_KEY_SHIFT, spatial: 2, temporal: 2, key: true},
+		{in: "L2T3_KEY_SHIFT", mode: ScalabilityModeL2T3_KEY_SHIFT, spatial: 2, temporal: 3, key: true},
 		{in: "L2T1h", mode: ScalabilityModeL2T1h, spatial: 2, temporal: 1, small: true},
+		{in: "L3T2_KEY_SHIFT", mode: ScalabilityModeL3T2_KEY_SHIFT, spatial: 3, temporal: 2, key: true},
 		{in: "L3T3_KEY", mode: ScalabilityModeL3T3_KEY, spatial: 3, temporal: 3, key: true},
+		{in: "L3T3_KEY_SHIFT", mode: ScalabilityModeL3T3_KEY_SHIFT, spatial: 3, temporal: 3, key: true},
 		{in: "S3T2h", mode: ScalabilityModeS3T2h, spatial: 3, temporal: 2, small: true, sim: true},
 	} {
 		got, ok := ParseScalabilityMode(tc.in)
@@ -54,12 +57,111 @@ func TestScalabilityModeParseAndLayers(t *testing.T) {
 		if got.UsesSmallResolutionStep() != tc.small || got.IsSimulcast() != tc.sim {
 			t.Fatalf("%q flags small=%v sim=%v", tc.in, got.UsesSmallResolutionStep(), got.IsSimulcast())
 		}
+		if got.UsesKeyFrameInterLayerDependency() != tc.key {
+			t.Fatalf("%q key flag=%v", tc.in, got.UsesKeyFrameInterLayerDependency())
+		}
 		if got.String() != tc.in {
 			t.Fatalf("%v.String() = %q; want %q", got, got.String(), tc.in)
 		}
 	}
 	if _, ok := ParseScalabilityMode("L4T4"); ok {
 		t.Fatal("ParseScalabilityMode accepted invalid mode")
+	}
+}
+
+func TestScalabilityModeAllWebRTCSVCModes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		spatial   uint8
+		temporal  uint8
+		key       bool
+		keyShift  bool
+		smallStep bool
+		simulcast bool
+	}{
+		{name: "L1T1", spatial: 1, temporal: 1},
+		{name: "L1T2", spatial: 1, temporal: 2},
+		{name: "L1T3", spatial: 1, temporal: 3},
+		{name: "L2T1", spatial: 2, temporal: 1},
+		{name: "L2T1h", spatial: 2, temporal: 1, smallStep: true},
+		{name: "L2T1_KEY", spatial: 2, temporal: 1, key: true},
+		{name: "L2T2", spatial: 2, temporal: 2},
+		{name: "L2T2h", spatial: 2, temporal: 2, smallStep: true},
+		{name: "L2T2_KEY", spatial: 2, temporal: 2, key: true},
+		{name: "L2T2_KEY_SHIFT", spatial: 2, temporal: 2, key: true, keyShift: true},
+		{name: "L2T3", spatial: 2, temporal: 3},
+		{name: "L2T3h", spatial: 2, temporal: 3, smallStep: true},
+		{name: "L2T3_KEY", spatial: 2, temporal: 3, key: true},
+		{name: "L2T3_KEY_SHIFT", spatial: 2, temporal: 3, key: true, keyShift: true},
+		{name: "L3T1", spatial: 3, temporal: 1},
+		{name: "L3T1h", spatial: 3, temporal: 1, smallStep: true},
+		{name: "L3T1_KEY", spatial: 3, temporal: 1, key: true},
+		{name: "L3T2", spatial: 3, temporal: 2},
+		{name: "L3T2h", spatial: 3, temporal: 2, smallStep: true},
+		{name: "L3T2_KEY", spatial: 3, temporal: 2, key: true},
+		{name: "L3T2_KEY_SHIFT", spatial: 3, temporal: 2, key: true, keyShift: true},
+		{name: "L3T3", spatial: 3, temporal: 3},
+		{name: "L3T3h", spatial: 3, temporal: 3, smallStep: true},
+		{name: "L3T3_KEY", spatial: 3, temporal: 3, key: true},
+		{name: "L3T3_KEY_SHIFT", spatial: 3, temporal: 3, key: true, keyShift: true},
+		{name: "S2T1", spatial: 2, temporal: 1, simulcast: true},
+		{name: "S2T1h", spatial: 2, temporal: 1, smallStep: true, simulcast: true},
+		{name: "S2T2", spatial: 2, temporal: 2, simulcast: true},
+		{name: "S2T2h", spatial: 2, temporal: 2, smallStep: true, simulcast: true},
+		{name: "S2T3", spatial: 2, temporal: 3, simulcast: true},
+		{name: "S2T3h", spatial: 2, temporal: 3, smallStep: true, simulcast: true},
+		{name: "S3T1", spatial: 3, temporal: 1, simulcast: true},
+		{name: "S3T1h", spatial: 3, temporal: 1, smallStep: true, simulcast: true},
+		{name: "S3T2", spatial: 3, temporal: 2, simulcast: true},
+		{name: "S3T2h", spatial: 3, temporal: 2, smallStep: true, simulcast: true},
+		{name: "S3T3", spatial: 3, temporal: 3, simulcast: true},
+		{name: "S3T3h", spatial: 3, temporal: 3, smallStep: true, simulcast: true},
+	} {
+		mode, ok := ParseScalabilityMode(tc.name)
+		if !ok {
+			t.Fatalf("ParseScalabilityMode(%q) failed", tc.name)
+		}
+		if got := mode.String(); got != tc.name {
+			t.Fatalf("%q String()=%q", tc.name, got)
+		}
+		spatial, temporal, key, ok := mode.Layers()
+		if !ok || spatial != tc.spatial || temporal != tc.temporal || key != tc.key {
+			t.Fatalf("%q Layers()=%d,%d,%v,%v", tc.name, spatial, temporal, key, ok)
+		}
+		if mode.UsesSmallResolutionStep() != tc.smallStep ||
+			mode.IsSimulcast() != tc.simulcast ||
+			mode.UsesKeyFrameInterLayerDependency() != tc.key ||
+			mode.UsesKeyFrameInterLayerDependencyShift() != tc.keyShift {
+			t.Fatalf("%q flags small=%v sim=%v key=%v shift=%v", tc.name,
+				mode.UsesSmallResolutionStep(),
+				mode.IsSimulcast(),
+				mode.UsesKeyFrameInterLayerDependency(),
+				mode.UsesKeyFrameInterLayerDependencyShift())
+		}
+		cfg, err := SetWebRTCSVCConfig(Config{
+			Resolution:  Resolution{Width: 1280, Height: 720},
+			Scalability: mode,
+		}, 0, 0)
+		if err != nil {
+			t.Fatalf("SetWebRTCSVCConfig(%q): %v", tc.name, err)
+		}
+		if cfg.SpatialLayerCount != tc.spatial || cfg.TemporalLayerCount != tc.temporal {
+			t.Fatalf("%q normalized layers=%d,%d", tc.name, cfg.SpatialLayerCount, cfg.TemporalLayerCount)
+		}
+		structure, err := WebRTCFrameDependencyStructureForConfig(cfg)
+		if err != nil {
+			t.Fatalf("WebRTCFrameDependencyStructureForConfig(%q): %v", tc.name, err)
+		}
+		wantTemplates := tc.spatial * tc.temporal
+		if mode == ScalabilityModeL2T2_KEY_SHIFT {
+			wantTemplates = 7
+		}
+		if structure.NumDecodeTargets != tc.spatial*tc.temporal ||
+			structure.NumChains != tc.spatial ||
+			structure.TemplateNum != wantTemplates ||
+			structure.ResolutionNum != tc.spatial {
+			t.Fatalf("%q structure shape=%+v", tc.name, structure)
+		}
 	}
 }
 
@@ -334,6 +436,27 @@ func TestSupportedResolutionScaling(t *testing.T) {
 	)
 	if !ok || factor != (Rational{Num: 2, Den: 1}) {
 		t.Fatalf("SupportedResolutionScaling = %+v,%v; want 2/1,true", factor, ok)
+	}
+	factor, ok = SupportedResolutionScaling(
+		Resolution{Width: 960, Height: 540},
+		Resolution{Width: 1440, Height: 810},
+	)
+	if !ok || factor != (Rational{Num: 3, Den: 2}) {
+		t.Fatalf("SupportedResolutionScaling 3:2 = %+v,%v; want 3/2,true", factor, ok)
+	}
+	factor, ok = SupportedResolutionScaling(
+		Resolution{Width: 1440, Height: 810},
+		Resolution{Width: 960, Height: 540},
+	)
+	if !ok || factor != (Rational{Num: 2, Den: 3}) {
+		t.Fatalf("SupportedResolutionScaling 2:3 = %+v,%v; want 2/3,true", factor, ok)
+	}
+	factor, ok = SupportedResolutionScaling(
+		Resolution{Width: 853, Height: 480},
+		Resolution{Width: 1280, Height: 720},
+	)
+	if !ok || factor != (Rational{Num: 3, Den: 2}) {
+		t.Fatalf("SupportedResolutionScaling truncated 3:2 = %+v,%v; want 3/2,true", factor, ok)
 	}
 	if _, ok := SupportedResolutionScaling(
 		Resolution{Width: 640, Height: 360},

@@ -327,11 +327,13 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
 		t.Fatalf("delta counts/control=%+v", delta)
 	}
 	if delta.Frames[0].TemporalID != 1 || delta.Frames[0].ReferenceCount != 1 ||
-		delta.Frames[0].ReferenceBuffers[0] != 0 {
+		delta.Frames[0].ReferenceBuffers[0] != 0 ||
+		!delta.Frames[0].UpdateBufferSet || delta.Frames[0].UpdateBuffer != 2 {
 		t.Fatalf("base delta=%+v", delta.Frames[0])
 	}
 	if delta.Frames[1].TemporalID != 1 || delta.Frames[1].ReferenceCount != 2 ||
-		delta.Frames[1].ReferenceBuffers[0] != 1 || delta.Frames[1].ReferenceBuffers[1] != 0 {
+		delta.Frames[1].ReferenceBuffers[0] != 1 || delta.Frames[1].ReferenceBuffers[1] != 2 ||
+		delta.Frames[1].UpdateBufferSet {
 		t.Fatalf("upper delta=%+v", delta.Frames[1])
 	}
 	if delta.Control.Frames[0].GenericFrameInfo.DependencyNum != 1 ||
@@ -341,7 +343,8 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
 		delta.Control.Frames[1].GenericFrameInfo.Dependencies[1] != 200 {
 		t.Fatalf("delta generic info=%+v %+v", delta.Control.Frames[0].GenericFrameInfo, delta.Control.Frames[1].GenericFrameInfo)
 	}
-	if delta.Control.FrameIDState.FrameIDs[0] != 200 || delta.Control.FrameIDState.FrameIDs[1] != 201 {
+	if delta.Control.FrameIDState.FrameIDs[0] != 100 || delta.Control.FrameIDState.FrameIDs[1] != 101 ||
+		delta.Control.FrameIDState.FrameIDs[2] != 200 {
 		t.Fatalf("delta frame id state=%+v", delta.Control.FrameIDState)
 	}
 	if delta.Headers[0].Prefix.FrameType != FrameHeaderTypeInter ||
@@ -349,20 +352,421 @@ func TestWebRTCDeltaFrameTemporalUnitForConfigLayered(t *testing.T) {
 		delta.Headers[0].Prefix.OrderHint != 0 ||
 		delta.Headers[0].Size.UpscaledWidth != 320 ||
 		delta.Headers[0].Size.Height != 180 ||
-		delta.Headers[0].Size.RefreshFrameFlags != 0x01 ||
+		delta.Headers[0].Size.RefreshFrameFlags != 0x04 ||
 		delta.Headers[0].Size.RefFrameIdx[0] != 0 {
 		t.Fatalf("base delta header=%+v", delta.Headers[0])
 	}
 	if delta.Headers[1].Size.UpscaledWidth != 640 ||
 		delta.Headers[1].Size.Height != 360 ||
-		delta.Headers[1].Size.RefreshFrameFlags != 0x02 ||
+		delta.Headers[1].Size.RefreshFrameFlags != 0x00 ||
 		delta.Headers[1].Size.RefFrameIdx[0] != 1 ||
-		delta.Headers[1].Size.RefFrameIdx[1] != 0 {
+		delta.Headers[1].Size.RefFrameIdx[1] != 2 {
 		t.Fatalf("upper delta header=%+v", delta.Headers[1])
 	}
 	for i := uint8(0); i < delta.FrameNum; i++ {
 		assertParsedDeltaHeader(t, delta.Headers[i])
 	}
+
+	base, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, delta.Control.ReferenceState, delta.Control.FrameIDState, 0, 202)
+	if err != nil {
+		t.Fatalf("base delta: %v", err)
+	}
+	if base.Frames[0].TemporalID != 0 || base.Frames[0].ReferenceBuffers[0] != 0 ||
+		!base.Frames[0].UpdateBufferSet || base.Frames[0].UpdateBuffer != 0 ||
+		base.Frames[1].TemporalID != 0 || base.Frames[1].ReferenceBuffers[0] != 1 ||
+		base.Frames[1].ReferenceBuffers[1] != 0 ||
+		!base.Frames[1].UpdateBufferSet || base.Frames[1].UpdateBuffer != 1 {
+		t.Fatalf("base delta frames=%+v", base.Frames)
+	}
+	if base.Control.Frames[0].GenericFrameInfo.Dependencies[0] != 100 ||
+		base.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 101 ||
+		base.Control.Frames[1].GenericFrameInfo.Dependencies[1] != 202 {
+		t.Fatalf("base delta generic info=%+v %+v", base.Control.Frames[0].GenericFrameInfo, base.Control.Frames[1].GenericFrameInfo)
+	}
+}
+
+func TestWebRTCEncoderStateTemporalUnitsL2T2KeyShift(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		Scalability:       ScalabilityModeL2T2_KEY_SHIFT,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+	}
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 100})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != 2 || key.Frames[0].Type != FrameTypeKey ||
+		key.Frames[1].ReferenceCount != 1 || key.Frames[1].ReferenceBuffers[0] != 0 ||
+		state.NextFrameID != 102 || state.DeltaPictureIndex != 1 {
+		t.Fatalf("key=%+v state=%+v", key, state)
+	}
+
+	delta0, state, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("delta0: %v", err)
+	}
+	if delta0.FrameNum != 2 ||
+		delta0.Frames[0].SpatialID != 0 || delta0.Frames[0].TemporalID != 0 ||
+		delta0.Frames[0].ReferenceCount != 1 || delta0.Frames[0].ReferenceBuffers[0] != 0 ||
+		!delta0.Frames[0].UpdateBufferSet || delta0.Frames[0].UpdateBuffer != 0 ||
+		delta0.Frames[1].SpatialID != 1 || delta0.Frames[1].TemporalID != 1 ||
+		delta0.Frames[1].ReferenceCount != 1 || delta0.Frames[1].ReferenceBuffers[0] != 1 ||
+		delta0.Frames[1].UpdateBufferSet {
+		t.Fatalf("delta0 frames=%+v", delta0.Frames)
+	}
+	if delta0.Headers[0].Size.RefreshFrameFlags != 0x01 || delta0.Headers[1].Size.RefreshFrameFlags != 0x00 {
+		t.Fatalf("delta0 refresh flags=%02x,%02x", delta0.Headers[0].Size.RefreshFrameFlags, delta0.Headers[1].Size.RefreshFrameFlags)
+	}
+	if delta0.Control.Frames[0].GenericFrameInfo.Dependencies[0] != 100 ||
+		delta0.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 101 ||
+		state.FrameIDState.FrameIDs[0] != 102 || state.FrameIDState.FrameIDs[1] != 101 {
+		t.Fatalf("delta0 control=%+v state=%+v", delta0.Control, state)
+	}
+	for i := uint8(0); i < delta0.FrameNum; i++ {
+		assertParsedDeltaHeader(t, delta0.Headers[i])
+	}
+
+	delta1, state, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("delta1: %v", err)
+	}
+	if delta1.FrameNum != 2 ||
+		delta1.Frames[0].SpatialID != 0 || delta1.Frames[0].TemporalID != 1 ||
+		delta1.Frames[0].ReferenceCount != 1 || delta1.Frames[0].ReferenceBuffers[0] != 0 ||
+		delta1.Frames[0].UpdateBufferSet ||
+		delta1.Frames[1].SpatialID != 1 || delta1.Frames[1].TemporalID != 0 ||
+		delta1.Frames[1].ReferenceCount != 1 || delta1.Frames[1].ReferenceBuffers[0] != 1 ||
+		!delta1.Frames[1].UpdateBufferSet || delta1.Frames[1].UpdateBuffer != 1 {
+		t.Fatalf("delta1 frames=%+v", delta1.Frames)
+	}
+	if delta1.Headers[0].Size.RefreshFrameFlags != 0x00 || delta1.Headers[1].Size.RefreshFrameFlags != 0x02 {
+		t.Fatalf("delta1 refresh flags=%02x,%02x", delta1.Headers[0].Size.RefreshFrameFlags, delta1.Headers[1].Size.RefreshFrameFlags)
+	}
+	if delta1.Control.Frames[0].GenericFrameInfo.Dependencies[0] != 102 ||
+		delta1.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 101 ||
+		state.FrameIDState.FrameIDs[0] != 102 || state.FrameIDState.FrameIDs[1] != 105 {
+		t.Fatalf("delta1 control=%+v state=%+v", delta1.Control, state)
+	}
+	for i := uint8(0); i < delta1.FrameNum; i++ {
+		assertParsedDeltaHeader(t, delta1.Headers[i])
+	}
+
+	delta2, _, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("delta2: %v", err)
+	}
+	if delta2.Control.Frames[0].GenericFrameInfo.Dependencies[0] != 102 ||
+		delta2.Control.Frames[1].GenericFrameInfo.Dependencies[0] != 105 {
+		t.Fatalf("delta2 control=%+v", delta2.Control)
+	}
+}
+
+func TestWebRTCEncoderStateTemporalUnitsKeyShiftModes(t *testing.T) {
+	for _, tc := range [...]struct {
+		name string
+		mode ScalabilityMode
+		want [][]uint8
+	}{
+		{name: "L2T3", mode: ScalabilityModeL2T3_KEY_SHIFT, want: [][]uint8{
+			{2, 2},
+			{0, 1},
+			{2, 2},
+			{1, 0},
+		}},
+		{name: "L3T2", mode: ScalabilityModeL3T2_KEY_SHIFT, want: [][]uint8{
+			{0, 0, 1},
+			{1, 1, 0},
+		}},
+		{name: "L3T3", mode: ScalabilityModeL3T3_KEY_SHIFT, want: [][]uint8{
+			{0, 2, 2},
+			{2, 0, 1},
+			{1, 2, 2},
+			{2, 1, 0},
+		}},
+	} {
+		cfg := Config{
+			Resolution:        Resolution{Width: 1280, Height: 720},
+			Scalability:       tc.mode,
+			MaxFramerate:      Rational{Num: 30, Den: 1},
+			MinBitrateKbps:    100,
+			MaxBitrateKbps:    1200,
+			TargetBitrateKbps: 800,
+		}
+		_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 10})
+		if err != nil {
+			t.Fatalf("%s key: %v", tc.name, err)
+		}
+		for i, want := range tc.want {
+			delta, next, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+			if err != nil {
+				t.Fatalf("%s delta %d: %v", tc.name, i, err)
+			}
+			if int(delta.FrameNum) != len(want) {
+				t.Fatalf("%s delta %d frame num=%d want %d", tc.name, i, delta.FrameNum, len(want))
+			}
+			for spatialID, wantTemporalID := range want {
+				frame := delta.Frames[spatialID]
+				primaryBuffer := uint8(spatialID)
+				middleBuffer := delta.FrameNum + uint8(spatialID)
+				selfReference := frame.ReferenceBuffers[0] == primaryBuffer ||
+					(frame.TemporalID == 2 && frame.ReferenceBuffers[0] == middleBuffer)
+				if frame.SpatialID != uint8(spatialID) || frame.TemporalID != wantTemporalID ||
+					frame.ReferenceCount != 1 || !selfReference {
+					t.Fatalf("%s delta %d spatial %d frame=%+v want temporal %d single self ref", tc.name, i, spatialID, frame, wantTemporalID)
+				}
+				if frame.UpdateBufferSet && frame.UpdateBuffer != primaryBuffer && frame.UpdateBuffer != middleBuffer {
+					t.Fatalf("%s delta %d spatial %d update buffer=%d", tc.name, i, spatialID, frame.UpdateBuffer)
+				}
+			}
+			state = next
+		}
+	}
+}
+
+func TestWebRTCControllerSettingsMatrix(t *testing.T) {
+	profiles := [...]struct {
+		name               string
+		fps                Rational
+		rateControl        RateControlMode
+		quantizer          uint8
+		minKbps            int32
+		maxKbps            int32
+		targetKbps         int32
+		content            ContentHint
+		dependencyMetadata bool
+		lowOverheadOBU     bool
+		rtpPacketization   bool
+	}{
+		{
+			name:               "camera-cbr-30fps-rtp",
+			fps:                Rational{Num: 30, Den: 1},
+			rateControl:        RateControlCBR,
+			minKbps:            120,
+			maxKbps:            1800,
+			targetKbps:         900,
+			content:            ContentCamera,
+			dependencyMetadata: true,
+			lowOverheadOBU:     true,
+			rtpPacketization:   true,
+		},
+		{
+			name:               "screen-cqp-ntsc-headers",
+			fps:                Rational{Num: 30000, Den: 1001},
+			rateControl:        RateControlCQP,
+			quantizer:          37,
+			minKbps:            80,
+			maxKbps:            1200,
+			targetKbps:         640,
+			content:            ContentScreen,
+			dependencyMetadata: true,
+			lowOverheadOBU:     true,
+			rtpPacketization:   false,
+		},
+	}
+
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		for _, profile := range profiles {
+			name := mode.String() + "/" + profile.name
+			t.Run(name, func(t *testing.T) {
+				cfg := Config{
+					Resolution:         Resolution{Width: 1280, Height: 720},
+					MaxFramerate:       profile.fps,
+					RateControl:        profile.rateControl,
+					Quantizer:          profile.quantizer,
+					MinBitrateKbps:     profile.minKbps,
+					MaxBitrateKbps:     profile.maxKbps,
+					TargetBitrateKbps:  profile.targetKbps,
+					Content:            profile.content,
+					Scalability:        mode,
+					DependencyMetadata: profile.dependencyMetadata,
+					LowOverheadOBU:     profile.lowOverheadOBU,
+					RTPPacketization:   profile.rtpPacketization,
+				}
+				assertWebRTCControllerReferenceModel(t, cfg)
+			})
+		}
+	}
+}
+
+func TestWebRTCControllerSettingsMatrixKeyInterval(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 1280, Height: 720},
+		Scalability:       ScalabilityModeL2T3_KEY_SHIFT,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 700,
+		KeyFrameInterval:  2,
+	}
+	unit, state, err := WebRTCNextTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 1}, false)
+	if err != nil || !unit.Key || unit.Delta {
+		t.Fatalf("initial key unit=%+v state=%+v err=%v", unit, state, err)
+	}
+	unit, state, err = WebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil || !unit.Delta || unit.Key || state.DeltaPictureIndex != 2 {
+		t.Fatalf("first delta unit=%+v state=%+v err=%v", unit, state, err)
+	}
+	unit, state, err = WebRTCNextTemporalUnitForState(cfg, state, false)
+	if err != nil || !unit.Key || unit.Delta || state.DeltaPictureIndex != 1 {
+		t.Fatalf("interval key unit=%+v state=%+v err=%v", unit, state, err)
+	}
+}
+
+func assertWebRTCControllerReferenceModel(t *testing.T, cfg Config) {
+	t.Helper()
+	normalized, err := SetWebRTCSVCConfig(cfg, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCSVCConfig: %v", err)
+	}
+	spatialLayers, temporalLayers, _, ok := normalized.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid mode %v", normalized.Scalability)
+	}
+	if normalized.SpatialLayerCount != spatialLayers || normalized.TemporalLayerCount != temporalLayers {
+		t.Fatalf("normalized layers=%d,%d want %d,%d", normalized.SpatialLayerCount, normalized.TemporalLayerCount, spatialLayers, temporalLayers)
+	}
+	structure, err := WebRTCFrameDependencyStructureForConfig(normalized)
+	if err != nil {
+		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	if structure.NumDecodeTargets != spatialLayers*temporalLayers ||
+		structure.NumChains != spatialLayers ||
+		structure.ResolutionNum != spatialLayers {
+		t.Fatalf("structure shape=%+v", structure)
+	}
+
+	var headerBuf [2048]byte
+	if _, picture, _, err := AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(headerBuf[:0], normalized, WebRTCEncoderState{NextFrameID: 1}, false); err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState key: %v", err)
+	} else if !picture.Key || picture.Delta {
+		t.Fatalf("first picture=%+v want key", picture)
+	}
+
+	key, state, err := WebRTCKeyFrameTemporalUnitForState(normalized, WebRTCEncoderState{NextFrameID: 1})
+	if err != nil {
+		t.Fatalf("WebRTCKeyFrameTemporalUnitForState: %v", err)
+	}
+	if key.FrameNum != spatialLayers || !key.Control.HasDependencyStructure ||
+		state.NextFrameID != 1+uint64(spatialLayers) || state.DeltaPictureIndex != 1 {
+		t.Fatalf("key=%+v state=%+v", key, state)
+	}
+	type frameLayer struct {
+		spatial  uint8
+		temporal uint8
+	}
+	history := make(map[uint64]frameLayer, 64)
+	for i := uint8(0); i < key.Control.FrameNum; i++ {
+		info := key.Control.Frames[i].GenericFrameInfo
+		history[info.FrameID] = frameLayer{spatial: info.SpatialID, temporal: info.TemporalID}
+	}
+
+	steps := webRTCTestControllerMatrixSteps(temporalLayers)
+	for deltaIndex := uint64(1); deltaIndex <= steps; deltaIndex++ {
+		currentState := state
+		delta, next, err := WebRTCDeltaFrameTemporalUnitForState(normalized, state)
+		if err != nil {
+			t.Fatalf("delta %d: %v", deltaIndex, err)
+		}
+		if delta.FrameNum != spatialLayers || delta.Control.HasDependencyStructure {
+			t.Fatalf("delta %d unit/control=%+v", deltaIndex, delta)
+		}
+		if next.NextFrameID != state.NextFrameID+uint64(spatialLayers) ||
+			next.DeltaPictureIndex != state.DeltaPictureIndex+1 {
+			t.Fatalf("delta %d next=%+v state=%+v", deltaIndex, next, state)
+		}
+		for i := uint8(0); i < delta.FrameNum; i++ {
+			frame := delta.Frames[i]
+			control := delta.Control.Frames[i]
+			info := control.GenericFrameInfo
+			wantTemporal := webRTCTestExpectedTemporalID(normalized.Scalability, i, deltaIndex)
+			if frame.SpatialID != i || info.SpatialID != i ||
+				frame.TemporalID != wantTemporal || info.TemporalID != wantTemporal ||
+				delta.Headers[i].TemporalID != wantTemporal || delta.Headers[i].SpatialID != i {
+				t.Fatalf("delta %d frame %d frame=%+v info=%+v header=%+v want temporal=%d", deltaIndex, i, frame, info, delta.Headers[i], wantTemporal)
+			}
+			if frame.RateControl != normalized.RateControl ||
+				(normalized.RateControl == RateControlCQP && frame.Quantizer != normalized.Quantizer) {
+				t.Fatalf("delta %d frame %d rate control frame=%+v config=%+v", deltaIndex, i, frame, normalized)
+			}
+			if normalized.Content == ContentScreen &&
+				(!delta.Headers[i].Prefix.AllowScreenContentTools || !delta.Headers[i].Prefix.ForceIntegerMV) {
+				t.Fatalf("delta %d frame %d screen header=%+v", deltaIndex, i, delta.Headers[i])
+			}
+			wantRefresh := uint8(0)
+			if frame.UpdateBufferSet {
+				wantRefresh = 1 << frame.UpdateBuffer
+			}
+			if delta.Headers[i].Size.RefreshFrameFlags != wantRefresh {
+				t.Fatalf("delta %d frame %d refresh=%02x want %02x frame=%+v", deltaIndex, i, delta.Headers[i].Size.RefreshFrameFlags, wantRefresh, frame)
+			}
+			if (normalized.Scalability.IsSimulcast() || normalized.Scalability.UsesKeyFrameInterLayerDependency()) && frame.ReferenceCount != 1 {
+				t.Fatalf("delta %d frame %d key/simulcast refs=%+v", deltaIndex, i, frame)
+			}
+			if webRTCUsesDeltaInterLayerReference(normalized) && i > 0 && frame.ReferenceCount < 2 {
+				t.Fatalf("delta %d frame %d full-svc refs=%+v", deltaIndex, i, frame)
+			}
+			for j := uint8(0); j < info.DependencyNum; j++ {
+				dep, ok := history[info.Dependencies[j]]
+				if !ok {
+					t.Fatalf("delta %d frame %d missing dependency %d in history", deltaIndex, i, info.Dependencies[j])
+				}
+				if dep.temporal > info.TemporalID {
+					t.Fatalf("delta %d frame %d temporal dependency %d has T%d > T%d", deltaIndex, i, info.Dependencies[j], dep.temporal, info.TemporalID)
+				}
+				if normalized.Scalability.IsSimulcast() && dep.spatial != info.SpatialID {
+					t.Fatalf("delta %d frame %d simulcast dependency spatial=%d want %d", deltaIndex, i, dep.spatial, info.SpatialID)
+				}
+			}
+			var descriptorBuf [256]byte
+			if _, err := AppendWebRTCDependencyDescriptor(descriptorBuf[:0], currentState.DependencyStructureState.Structure, info, true, true, false); err != nil {
+				t.Fatalf("delta %d frame %d dependency descriptor: %v", deltaIndex, i, err)
+			}
+			history[info.FrameID] = frameLayer{spatial: info.SpatialID, temporal: info.TemporalID}
+		}
+		state = next
+	}
+}
+
+func webRTCTestControllerMatrixSteps(temporalLayers uint8) uint64 {
+	switch temporalLayers {
+	case 1:
+		return 3
+	case 2:
+		return 4
+	default:
+		return 8
+	}
+}
+
+func webRTCTestExpectedTemporalID(mode ScalabilityMode, spatialID uint8, deltaPictureIndex uint64) uint8 {
+	if mode.UsesKeyFrameInterLayerDependencyShift() {
+		switch mode {
+		case ScalabilityModeL2T2_KEY_SHIFT:
+			table := [2][2]uint8{{0, 1}, {1, 0}}
+			return table[(deltaPictureIndex-1)%2][spatialID]
+		case ScalabilityModeL2T3_KEY_SHIFT:
+			table := [4][2]uint8{{2, 2}, {0, 1}, {2, 2}, {1, 0}}
+			return table[(deltaPictureIndex-1)%4][spatialID]
+		case ScalabilityModeL3T2_KEY_SHIFT:
+			table := [2][3]uint8{{0, 0, 1}, {1, 1, 0}}
+			return table[(deltaPictureIndex-1)%2][spatialID]
+		case ScalabilityModeL3T3_KEY_SHIFT:
+			table := [4][3]uint8{{0, 2, 2}, {2, 0, 1}, {1, 2, 2}, {2, 1, 0}}
+			return table[(deltaPictureIndex-1)%4][spatialID]
+		}
+	}
+	_, temporalLayers, _, ok := mode.Layers()
+	if !ok || deltaPictureIndex == 0 {
+		return 0
+	}
+	trailingZeroCount := uint8(0)
+	for value := deltaPictureIndex; value&1 == 0 && trailingZeroCount < temporalLayers-1; value >>= 1 {
+		trailingZeroCount++
+	}
+	return temporalLayers - 1 - trailingZeroCount
 }
 
 func TestWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(t *testing.T) {

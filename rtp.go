@@ -3,7 +3,7 @@ package goav1
 import internalrtp "github.com/thesyncim/goav1/internal/av1/rtp"
 
 // RTPAggregationHeader is the parsed AV1 RTP aggregation header (Z/Y/W/N bits
-// and element count) defined by draft-ietf-avtcore-rtp-av1.
+// and element count) defined by the AOM AV1 RTP payload specification.
 type RTPAggregationHeader = internalrtp.AggregationHeader
 
 // RTPElement is a single OBU element inside an AV1 RTP payload, with the
@@ -60,7 +60,7 @@ type RTPDependencyDescriptorMandatory = internalrtp.DependencyDescriptorMandator
 const RTPDependencyDescriptorMandatorySize = internalrtp.DependencyDescriptorMandatorySize
 
 // RTP packetization/depacketization errors. Each Err* value is returned by
-// the RTP helpers when their input violates the AV1 RTP draft framing rules
+// the RTP helpers when their input violates the AV1 RTP payload framing rules
 // or the supplied caller buffers are too small.
 var (
 	ErrRTPShortPayload                = internalrtp.ErrShortPayload

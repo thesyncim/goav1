@@ -1,6 +1,10 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
+import (
+	"math/bits"
+
+	"github.com/thesyncim/goav1/internal/av1/bitstream"
+)
 
 type bitWriter struct {
 	dst    []byte
@@ -106,6 +110,17 @@ func (w *bitWriter) writeBits(value uint64, n uint8) error {
 		remaining -= take
 	}
 	return nil
+}
+
+func (w *bitWriter) writeUVLC(value uint32) error {
+	codeNum := uint64(value) + 1
+	width := uint8(bits.Len64(codeNum))
+	for i := uint8(1); i < width; i++ {
+		if err := w.writeBit(0); err != nil {
+			return err
+		}
+	}
+	return w.writeBits(codeNum, width)
 }
 
 func (w *bitWriter) writeTrailingBits() error {

@@ -172,6 +172,108 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 }
 
+func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
+	const w, h = 192, 128
+	cw, ch := w/2, h/2
+	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h,
+		TargetBitrate: 250_000, Framerate: 30,
+		TemporalLayers: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := goav1.I420Frame{
+		Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: w, ChromaStride: cw, Width: w, Height: h,
+	}
+	for i := range src.Y {
+		src.Y[i] = uint8(40 + i%170)
+	}
+	for i := range src.U {
+		src.U[i] = 120
+		src.V[i] = 130
+	}
+	frame, err := enc.Encode(src, false)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen first: %v", err)
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen full: %v", err)
+	}
+	if size.Packetizer.Packets <= 1 {
+		t.Fatalf("packetizer packets=%d want fragmented frame", size.Packetizer.Packets)
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		t.Fatalf("AppendRTPPackets: %v", err)
+	}
+	if packetCount != size.Packetizer.Packets {
+		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
+	}
+	payloadSlices := make([][]byte, packetCount)
+	for i := range packetCount {
+		span := spans[i]
+		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		mandatory, _, err := goav1.ParseRTPDependencyDescriptorMandatory(desc)
+		if err != nil {
+			t.Fatalf("packet %d descriptor: %v", i, err)
+		}
+		if mandatory.FirstPacketInFrame != (i == 0) || mandatory.LastPacketInFrame != (i == packetCount-1) {
+			t.Fatalf("packet %d descriptor flags=%+v packets=%d", i, mandatory, packetCount)
+		}
+		if span.Marker != (i == packetCount-1) {
+			t.Fatalf("packet %d marker=%v", i, span.Marker)
+		}
+	}
+	if spans[0].DescriptorLength <= goav1.RTPDependencyDescriptorMandatorySize {
+		t.Fatal("first descriptor did not attach dependency structure")
+	}
+	assembledLen, obuCount, err := goav1.AssembleRTPFrameSize(payloadSlices)
+	if err != nil {
+		t.Fatalf("AssembleRTPFrameSize: %v", err)
+	}
+	assembled := make([]byte, assembledLen)
+	assembledOBUs := make([]goav1.RTPFrameOBU, obuCount)
+	wrote, gotOBUs, err := goav1.AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
+	if err != nil {
+		t.Fatalf("AssembleRTPFrame: %v", err)
+	}
+	var expected []byte
+	it := goav1.NewLowOverheadIterator(frame.Data)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("source OBU iteration: %v", err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case goav1.OBUTemporalDelimiter, goav1.OBUTileList, goav1.OBUPadding:
+			continue
+		default:
+			expected = append(expected, unit.Raw...)
+		}
+	}
+	if wrote != len(expected) || gotOBUs != obuCount || string(assembled[:wrote]) != string(expected) {
+		t.Fatalf("assembled len=%d obus=%d match=%v want len=%d obus=%d", wrote, gotOBUs, string(assembled[:wrote]) == string(expected), len(expected), obuCount)
+	}
+}
+
 func TestPublicRTCEncoderL1T3(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
@@ -288,5 +390,67 @@ func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
 	t.Logf("rtc reveal frame: last-only %dB, with golden %dB", len(lastOnly[2]), len(withGolden[2]))
 	if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
 		t.Fatalf("golden interval did not materially reduce reveal frame: last-only %dB, golden %dB", len(lastOnly[2]), len(withGolden[2]))
+	}
+}
+
+func TestPublicEncoderZeroValueGuards(t *testing.T) {
+	var video goav1.VideoEncoder
+	if _, err := video.Encode(goav1.I420Frame{}, false); err == nil {
+		t.Fatal("zero VideoEncoder Encode returned nil error")
+	}
+	video.SetDecisionStatsEnabled(true)
+	video.ResetDecisionStats()
+	if got := video.DecisionStats(); got != (goav1.EncoderDecisionStats{}) {
+		t.Fatalf("zero VideoEncoder stats=%+v", got)
+	}
+	if got := video.QIndex(); got != 0 {
+		t.Fatalf("zero VideoEncoder QIndex=%d", got)
+	}
+	if got := video.Reconstruction(); got.Width != 0 || got.Height != 0 {
+		t.Fatalf("zero VideoEncoder reconstruction=%+v", got)
+	}
+
+	var rtc goav1.RTCEncoder
+	if _, err := rtc.Encode(goav1.I420Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder Encode returned nil error")
+	}
+}
+
+func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
+	const w, h = 64, 64
+	invalid := goav1.I420Frame{
+		Y:            make([]byte, w*h-1),
+		U:            make([]byte, w*h/4),
+		V:            make([]byte, w*h/4),
+		YStride:      w,
+		ChromaStride: w / 2,
+		Width:        w,
+		Height:       h,
+	}
+	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, QIndex: 80,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := video.Encode(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted a short Y plane")
+	}
+	invalid.Y = make([]byte, w*h)
+	invalid.ChromaStride = w/2 - 1
+	if _, err := video.Encode(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted an invalid chroma stride")
+	}
+
+	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid.ChromaStride = w / 2
+	invalid.U = invalid.U[:len(invalid.U)-1]
+	if _, err := rtc.Encode(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short U plane")
 	}
 }

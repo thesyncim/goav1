@@ -444,11 +444,7 @@ func WebRTCDeltaFrameTemporalUnitForState(config Config, state WebRTCEncoderStat
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
-	temporalID, err := WebRTCTemporalIDForDeltaPicture(config.TemporalLayerCount, state.DeltaPictureIndex)
-	if err != nil {
-		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
-	}
-	unit, err := WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, state.ReferenceState, state.FrameIDState, temporalID, state.NextFrameID, state.NextOrderHint)
+	unit, err := WebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config, state.ReferenceState, state.FrameIDState, state.DeltaPictureIndex, state.NextFrameID, state.NextOrderHint)
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
@@ -671,6 +667,22 @@ func WebRTCDeltaFrameTemporalUnitForConfig(config Config, referenceState Referen
 }
 
 func WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (WebRTCDeltaFrameTemporalUnit, error) {
+	return webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint, 0, false)
+}
+
+func WebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, deltaPictureIndex uint64, firstFrameID uint64, orderHint uint8) (WebRTCDeltaFrameTemporalUnit, error) {
+	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, err
+	}
+	temporalID, err := WebRTCTemporalIDForDeltaPicture(config.TemporalLayerCount, deltaPictureIndex)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, err
+	}
+	return webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint, deltaPictureIndex, true)
+}
+
+func webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8, deltaPictureIndex uint64, hasDeltaPictureIndex bool) (WebRTCDeltaFrameTemporalUnit, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, err
@@ -679,28 +691,46 @@ func WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, reference
 		temporalID >= config.TemporalLayerCount {
 		return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidConfig
 	}
+	if config.Scalability == ScalabilityModeL2T2_KEY_SHIFT {
+		return webRTCL2T2KeyShiftDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint)
+	}
 
 	var unit WebRTCDeltaFrameTemporalUnit
 	unit.FrameNum = config.SpatialLayerCount
 	for i := uint8(0); i < unit.FrameNum; i++ {
-		layer := config.SpatialLayers[i]
-		settings := FrameEncodeSettings{
-			Type:            FrameTypeDelta,
-			Resolution:      layer.Resolution,
-			SpatialID:       i,
-			TemporalID:      temporalID,
-			UpdateBuffer:    i,
-			UpdateBufferSet: true,
-			EffortLevel:     config.Speed,
-			RateControl:     config.RateControl,
-			Quantizer:       config.Quantizer,
-			Output:          true,
+		layerTemporalID := webRTCLayerTemporalIDForDeltaPicture(config, i, temporalID, deltaPictureIndex, hasDeltaPictureIndex)
+		settings := webRTCFrameEncodeSettingsForLayer(config, i, layerTemporalID)
+
+		refBuffer, updateBuffer, update, err := webRTCTemporalReferenceBufferForLayer(config, i, layerTemporalID, deltaPictureIndex, hasDeltaPictureIndex)
+		if err != nil {
+			return WebRTCDeltaFrameTemporalUnit{}, err
 		}
-		settings.ReferenceBuffers[settings.ReferenceCount] = i
+		settings.ReferenceBuffers[settings.ReferenceCount] = refBuffer
 		settings.ReferenceCount++
-		if i > 0 && !config.Scalability.IsSimulcast() {
-			settings.ReferenceBuffers[settings.ReferenceCount] = i - 1
-			settings.ReferenceCount++
+		if update {
+			settings.UpdateBuffer = updateBuffer
+			settings.UpdateBufferSet = true
+		}
+		if webRTCUsesDeltaInterLayerReference(config) {
+			if i+1 < unit.FrameNum && !settings.UpdateBufferSet {
+				currentBuffer, ok := webRTCInterLayerCurrentBuffer(config, i)
+				if !ok {
+					return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidConfig
+				}
+				settings.UpdateBuffer = currentBuffer
+				settings.UpdateBufferSet = true
+			}
+			if i > 0 {
+				lower := unit.Frames[i-1]
+				if !lower.UpdateBufferSet {
+					return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidFrame
+				}
+				settings.ReferenceBuffers[settings.ReferenceCount] = lower.UpdateBuffer
+				settings.ReferenceCount++
+			}
+		}
+		if settings.ReferenceCount > WebRTCMaxFrameReferences {
+			return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidFrame
 		}
 		unit.Frames[i] = settings
 	}
@@ -719,6 +749,151 @@ func WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, reference
 	return unit, nil
 }
 
+func webRTCLayerTemporalIDForDeltaPicture(config Config, spatialID uint8, fallbackTemporalID uint8, deltaPictureIndex uint64, hasDeltaPictureIndex bool) uint8 {
+	if !hasDeltaPictureIndex {
+		return fallbackTemporalID
+	}
+	temporalID, err := WebRTCTemporalIDForDeltaPicture(config.TemporalLayerCount, deltaPictureIndex)
+	if err != nil {
+		return fallbackTemporalID
+	}
+	if !config.Scalability.UsesKeyFrameInterLayerDependencyShift() {
+		return temporalID
+	}
+	switch config.Scalability {
+	case ScalabilityModeL2T2_KEY_SHIFT:
+		table := [2][2]uint8{{0, 1}, {1, 0}}
+		return table[(deltaPictureIndex-1)%2][spatialID]
+	case ScalabilityModeL2T3_KEY_SHIFT:
+		table := [4][2]uint8{{2, 2}, {0, 1}, {2, 2}, {1, 0}}
+		return table[(deltaPictureIndex-1)%4][spatialID]
+	case ScalabilityModeL3T2_KEY_SHIFT:
+		table := [2][3]uint8{{0, 0, 1}, {1, 1, 0}}
+		return table[(deltaPictureIndex-1)%2][spatialID]
+	case ScalabilityModeL3T3_KEY_SHIFT:
+		table := [4][3]uint8{{0, 2, 2}, {2, 0, 1}, {1, 2, 2}, {2, 1, 0}}
+		return table[(deltaPictureIndex-1)%4][spatialID]
+	default:
+		return temporalID
+	}
+}
+
+func webRTCTemporalReferenceBufferForLayer(config Config, spatialID uint8, temporalID uint8, deltaPictureIndex uint64, hasDeltaPictureIndex bool) (referenceBuffer uint8, updateBuffer uint8, update bool, err error) {
+	if spatialID >= config.SpatialLayerCount || temporalID >= config.TemporalLayerCount {
+		return 0, 0, false, ErrInvalidConfig
+	}
+	baseBuffer := spatialID
+	switch config.TemporalLayerCount {
+	case 1:
+		return baseBuffer, baseBuffer, true, nil
+	case 2:
+		if temporalID == 0 {
+			return baseBuffer, baseBuffer, true, nil
+		}
+		return baseBuffer, 0, false, nil
+	case 3:
+		middleBuffer := config.SpatialLayerCount + spatialID
+		if middleBuffer >= WebRTCReferenceBuffers {
+			return 0, 0, false, ErrInvalidConfig
+		}
+		switch temporalID {
+		case 0:
+			return baseBuffer, baseBuffer, true, nil
+		case 1:
+			return baseBuffer, middleBuffer, true, nil
+		case 2:
+			referenceBuffer := baseBuffer
+			if hasDeltaPictureIndex && deltaPictureIndex > 1 {
+				previousTemporalID := webRTCLayerTemporalIDForDeltaPicture(config, spatialID, 0, deltaPictureIndex-1, true)
+				if previousTemporalID == 1 {
+					referenceBuffer = middleBuffer
+				}
+			}
+			return referenceBuffer, 0, false, nil
+		}
+	}
+	return 0, 0, false, ErrInvalidConfig
+}
+
+func webRTCUsesDeltaInterLayerReference(config Config) bool {
+	return config.SpatialLayerCount > 1 &&
+		!config.Scalability.IsSimulcast() &&
+		!config.Scalability.UsesKeyFrameInterLayerDependency()
+}
+
+func webRTCInterLayerCurrentBuffer(config Config, spatialID uint8) (uint8, bool) {
+	if !webRTCUsesDeltaInterLayerReference(config) || spatialID+1 >= config.SpatialLayerCount {
+		return 0, false
+	}
+	start := config.SpatialLayerCount
+	if config.TemporalLayerCount == 3 {
+		start = config.SpatialLayerCount * 2
+	}
+	buffer := start + spatialID
+	return buffer, buffer < WebRTCReferenceBuffers
+}
+
+// Ported from libwebrtc:
+// modules/video_coding/svc/scalability_structure_l2t2_key_shift.cc
+func webRTCL2T2KeyShiftDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, referenceState ReferenceBufferState, frameIDState FrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (WebRTCDeltaFrameTemporalUnit, error) {
+	if config.SpatialLayerCount != 2 || config.TemporalLayerCount != 2 {
+		return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidConfig
+	}
+	var unit WebRTCDeltaFrameTemporalUnit
+	unit.FrameNum = 2
+	switch temporalID {
+	case 1:
+		unit.Frames[0] = webRTCFrameEncodeSettingsForLayer(config, 0, 0)
+		unit.Frames[0].ReferenceBuffers[0] = 0
+		unit.Frames[0].ReferenceCount = 1
+		unit.Frames[0].UpdateBuffer = 0
+		unit.Frames[0].UpdateBufferSet = true
+
+		unit.Frames[1] = webRTCFrameEncodeSettingsForLayer(config, 1, 1)
+		unit.Frames[1].ReferenceBuffers[0] = 1
+		unit.Frames[1].ReferenceCount = 1
+	case 0:
+		unit.Frames[0] = webRTCFrameEncodeSettingsForLayer(config, 0, 1)
+		unit.Frames[0].ReferenceBuffers[0] = 0
+		unit.Frames[0].ReferenceCount = 1
+
+		unit.Frames[1] = webRTCFrameEncodeSettingsForLayer(config, 1, 0)
+		unit.Frames[1].ReferenceBuffers[0] = 1
+		unit.Frames[1].ReferenceCount = 1
+		unit.Frames[1].UpdateBuffer = 1
+		unit.Frames[1].UpdateBufferSet = true
+	default:
+		return WebRTCDeltaFrameTemporalUnit{}, ErrInvalidConfig
+	}
+	control, err := WebRTCTemporalUnitControlForFrames(config, unit.Frames[:unit.FrameNum], referenceState, frameIDState, firstFrameID)
+	if err != nil {
+		return WebRTCDeltaFrameTemporalUnit{}, err
+	}
+	unit.Control = control
+	for i := uint8(0); i < unit.FrameNum; i++ {
+		header, err := interHeaderFrameForSettings(config, unit.Frames[i], firstFrameID+uint64(i), orderHint)
+		if err != nil {
+			return WebRTCDeltaFrameTemporalUnit{}, err
+		}
+		unit.Headers[i] = header
+	}
+	return unit, nil
+}
+
+func webRTCFrameEncodeSettingsForLayer(config Config, spatialID uint8, temporalID uint8) FrameEncodeSettings {
+	layer := config.SpatialLayers[spatialID]
+	return FrameEncodeSettings{
+		Type:        FrameTypeDelta,
+		Resolution:  layer.Resolution,
+		SpatialID:   spatialID,
+		TemporalID:  temporalID,
+		EffortLevel: config.Speed,
+		RateControl: config.RateControl,
+		Quantizer:   config.Quantizer,
+		Output:      true,
+	}
+}
+
 func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, frameID uint64, orderHint uint8) (InterHeaderFrame, error) {
 	seq, err := SequenceHeaderForConfig(config)
 	if err != nil {
@@ -731,7 +906,7 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 		return InterHeaderFrame{}, ErrInvalidFrame
 	}
 	if settings.ReferenceCount == 0 || settings.ReferenceCount > WebRTCMaxFrameReferences ||
-		!settings.UpdateBufferSet || settings.UpdateBuffer >= WebRTCReferenceBuffers {
+		(settings.UpdateBufferSet && settings.UpdateBuffer >= WebRTCReferenceBuffers) {
 		return InterHeaderFrame{}, ErrInvalidFrame
 	}
 
@@ -753,7 +928,9 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 		UpscaledWidth:       uint32(settings.Resolution.Width),
 		Height:              uint32(settings.Resolution.Height),
 		SuperResDenominator: 8,
-		RefreshFrameFlags:   1 << settings.UpdateBuffer,
+	}
+	if settings.UpdateBufferSet {
+		size.RefreshFrameFlags = 1 << settings.UpdateBuffer
 	}
 	firstRef := settings.ReferenceBuffers[0]
 	for i := range size.RefFrameIdx {

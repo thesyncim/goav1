@@ -143,7 +143,19 @@ func TestAppendSequenceHeaderRejectsInvalid(t *testing.T) {
 		want error
 	}{
 		{name: "dimension", mut: func(seq *SequenceHeader) { seq.MaxFrameWidth = 0 }, want: ErrInvalidConfig},
-		{name: "timing", mut: func(seq *SequenceHeader) { seq.TimingInfoPresent = true }, want: ErrUnsupported},
+		{name: "decoder model without timing", mut: func(seq *SequenceHeader) { seq.DecoderModelInfoPresent = true }, want: ErrInvalidConfig},
+		{name: "decoder model bad length", mut: func(seq *SequenceHeader) {
+			seq.TimingInfoPresent = true
+			seq.DecoderModelInfoPresent = true
+			seq.DecoderModelInfo = SequenceDecoderModelInfo{
+				BufferDelayLength:           0,
+				BufferRemovalTimeLength:     4,
+				FramePresentationTimeLength: 4,
+			}
+		}, want: ErrInvalidConfig},
+		{name: "operating point display delay without header flag", mut: func(seq *SequenceHeader) {
+			seq.OperatingPoints[0].InitialDisplayDelayPresent = true
+		}, want: ErrInvalidConfig},
 		{name: "level", mut: func(seq *SequenceHeader) { seq.OperatingPoints[0].SeqLevelIdx = 10 }, want: ErrInvalidConfig},
 		{name: "profile-bitdepth", mut: func(seq *SequenceHeader) {
 			seq.Profile = Profile0
@@ -162,6 +174,57 @@ func TestAppendSequenceHeaderRejectsInvalid(t *testing.T) {
 		if _, err := AppendLowOverheadSequenceHeaderOBU(buf[:0], seq); !errors.Is(err, tt.want) {
 			t.Fatalf("%s err=%v want %v", tt.name, err, tt.want)
 		}
+	}
+}
+
+func TestAppendSequenceHeaderTimingAndDisplayDelay(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	seq.TimingInfoPresent = true
+	seq.TimingInfo = SequenceTimingInfo{
+		NumUnitsInDisplayTick:    1001,
+		TimeScale:                30000,
+		EqualPictureInterval:     false,
+		NumTicksPerPictureMinus1: 0,
+	}
+	seq.DecoderModelInfoPresent = true
+	seq.DecoderModelInfo = SequenceDecoderModelInfo{
+		BufferDelayLength:           8,
+		NumUnitsInDecodingTick:      1001,
+		BufferRemovalTimeLength:     5,
+		FramePresentationTimeLength: 6,
+	}
+	seq.InitialDisplayDelayPresent = true
+	seq.OperatingPoints[0].DecoderModelPresent = true
+	seq.OperatingPoints[0].DecoderBufferDelay = 17
+	seq.OperatingPoints[0].EncoderBufferDelay = 19
+	seq.OperatingPoints[0].LowDelayMode = true
+	seq.OperatingPoints[0].InitialDisplayDelayPresent = true
+	seq.OperatingPoints[0].InitialDisplayDelayMinus1 = 3
+
+	var buf [128]byte
+	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	if err != nil {
+		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+	}
+	parsed, err := parser.ParseSequenceHeader(out)
+	if err != nil {
+		t.Fatalf("ParseSequenceHeader: %v", err)
+	}
+	if !parsed.TimingInfoPresent || !parsed.DecoderModelInfoPresent || !parsed.InitialDisplayDelayPresent {
+		t.Fatalf("parsed timing flags: %+v", parsed)
+	}
+	if parsed.TimingInfo.NumUnitsInDisplayTick != 1001 || parsed.TimingInfo.TimeScale != 30000 ||
+		parsed.TimingInfo.EqualPictureInterval {
+		t.Fatalf("parsed timing info: %+v", parsed.TimingInfo)
+	}
+	if parsed.DecoderModelInfo.BufferDelayLength != 8 || parsed.DecoderModelInfo.NumUnitsInDecodingTick != 1001 ||
+		parsed.DecoderModelInfo.BufferRemovalTimeLength != 5 || parsed.DecoderModelInfo.FramePresentationTimeLength != 6 {
+		t.Fatalf("parsed decoder model info: %+v", parsed.DecoderModelInfo)
+	}
+	op := parsed.OperatingPoints[0]
+	if !op.DecoderModelPresent || op.DecoderBufferDelay != 17 || op.EncoderBufferDelay != 19 || !op.LowDelayMode ||
+		!op.InitialDisplayDelayPresent || op.InitialDisplayDelayMinus1 != 3 {
+		t.Fatalf("parsed operating point: %+v", op)
 	}
 }
 

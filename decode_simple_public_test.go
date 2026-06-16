@@ -261,6 +261,32 @@ var profileClips = []struct {
 	},
 }
 
+func TestSimpleDecoderZeroValueGuards(t *testing.T) {
+	var zero av1.Decoder
+	if frames, ok, err := zero.DecodeNext(); err == nil || ok || frames != nil {
+		t.Fatalf("zero DecodeNext frames=%v ok=%v err=%v", frames, ok, err)
+	}
+	if frames, err := zero.DecodeAll(); err == nil || frames != nil {
+		t.Fatalf("zero DecodeAll frames=%v err=%v", frames, err)
+	}
+	if err := zero.Reset(); err == nil {
+		t.Fatal("zero Reset returned nil error")
+	}
+	zero.Close()
+
+	var nilDecoder *av1.Decoder
+	if frames, ok, err := nilDecoder.DecodeNext(); err == nil || ok || frames != nil {
+		t.Fatalf("nil DecodeNext frames=%v ok=%v err=%v", frames, ok, err)
+	}
+	if frames, err := nilDecoder.DecodeAll(); err == nil || frames != nil {
+		t.Fatalf("nil DecodeAll frames=%v err=%v", frames, err)
+	}
+	if err := nilDecoder.Reset(); err == nil {
+		t.Fatal("nil Reset returned nil error")
+	}
+	nilDecoder.Close()
+}
+
 var superResProfileClips = []struct {
 	file        string
 	frameMD5Hex []string

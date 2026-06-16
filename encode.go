@@ -165,6 +165,12 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 // next Encode call - send or copy it before encoding the next frame, the
 // same lifetime the Reconstruction planes have.
 func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	if err := validateI420Frame(frame); err != nil {
+		return EncodedFrame{}, err
+	}
 	tid := e.enc.TemporalID()
 	tu, key, err := e.enc.Encode(frame, forceKey)
 	if err != nil {
@@ -180,28 +186,43 @@ func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, err
 // what a conformant decoder outputs for it. The planes alias encoder-owned
 // buffers that are recycled two frames later; copy for longer-lived use.
 func (e *VideoEncoder) Reconstruction() I420Frame {
+	if e == nil || e.enc == nil {
+		return I420Frame{}
+	}
 	return e.enc.Recon()
 }
 
 // SetDecisionStatsEnabled toggles encoder-decision diagnostics. It is disabled
 // by default; enable it only around measurement runs.
 func (e *VideoEncoder) SetDecisionStatsEnabled(enabled bool) {
+	if e == nil || e.enc == nil {
+		return
+	}
 	e.enc.SetDecisionStatsEnabled(enabled)
 }
 
 // ResetDecisionStats clears the accumulated encoder-decision diagnostics.
 func (e *VideoEncoder) ResetDecisionStats() {
+	if e == nil || e.enc == nil {
+		return
+	}
 	e.enc.ResetDecisionStats()
 }
 
 // DecisionStats returns a copy of the accumulated encoder-decision diagnostics.
 func (e *VideoEncoder) DecisionStats() EncoderDecisionStats {
+	if e == nil || e.enc == nil {
+		return EncoderDecisionStats{}
+	}
 	return e.enc.DecisionStats()
 }
 
 // QIndex reports the current working quantizer index (the CBR controller
 // moves it between frames).
 func (e *VideoEncoder) QIndex() uint8 {
+	if e == nil || e.enc == nil {
+		return 0
+	}
 	return e.enc.QIndex()
 }
 
@@ -216,8 +237,85 @@ type RTCFrame struct {
 	TemporalID uint8
 	// DependencyDescriptor is the serialized RTP dependency descriptor for a
 	// single-packet frame; keyframes attach the dependency structure. It is
-	// freshly allocated and owned by the caller.
+	// freshly allocated and owned by the caller. Use AppendRTPPackets when the
+	// frame is fragmented across multiple RTP payloads.
 	DependencyDescriptor []byte
+
+	frameInfo                 encoder.WebRTCGenericFrameInfo
+	dependencyStructure       encoder.WebRTCFrameDependencyStructure
+	attachDependencyStructure bool
+}
+
+// RTCFrameRTPScratchSize reports caller-owned scratch needed to packetize one
+// RTCFrame into AV1 RTP payload bodies and dependency descriptors.
+type RTCFrameRTPScratchSize struct {
+	Packetizer         RTPPacketizerScratchSize
+	MaxPayloadBytes    int
+	MaxDescriptorBytes int
+}
+
+// RTPPacketScratchLen reports scratch sizes for AppendRTPPackets. Callers may
+// first pass nil or short obuScratch to learn the OBU count, allocate that many
+// RTPPacketizerOBU slots, then call again to learn packet/work-plan sizes.
+func (f RTCFrame) RTPPacketScratchLen(limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU) (RTCFrameRTPScratchSize, error) {
+	packetizer, err := RTPPacketizerScratchLen(f.Data, limits, obuScratch)
+	size := RTCFrameRTPScratchSize{Packetizer: packetizer}
+	if err != nil {
+		return size, err
+	}
+	descriptor, err := encoder.WebRTCDependencyDescriptorSize(f.dependencyStructure, f.frameInfo, f.attachDependencyStructure)
+	if err != nil {
+		return size, err
+	}
+	size.MaxDescriptorBytes = descriptor
+	if packetizer.OBUs != 0 {
+		size.MaxPayloadBytes = limits.MaxPayloadLen
+	}
+	return size, nil
+}
+
+// AppendRTPPackets packetizes f.Data into AV1 RTP payload bodies and appends the
+// corresponding RTP dependency descriptor bytes. Packet and descriptor spans are
+// written into spans; the caller owns RTP headers, header-extension IDs, SRTP,
+// pacing, retransmission, and network transport.
+func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayloads []byte, descriptors []byte, packetCount int, err error) {
+	packetizer, err := NewRTPPacketizer(f.Data, limits, f.Keyframe, true, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return payloadDst, descriptorDst, 0, err
+	}
+	control := EncoderWebRTCFrameControl{
+		GenericFrameInfo:          f.frameInfo,
+		AttachDependencyStructure: f.attachDependencyStructure,
+	}
+	rtpPayloads = payloadDst
+	descriptors = descriptorDst
+	for {
+		if packetCount >= len(spans) {
+			if packetizer.NumPackets() == 0 {
+				return rtpPayloads, descriptors, packetCount, nil
+			}
+			return payloadDst, descriptorDst, 0, ErrRTPPacketPlanTooSmall
+		}
+		payloadStart := len(rtpPayloads)
+		descriptorStart := len(descriptors)
+		nextPayloads, nextDescriptors, marker, ok, err := AppendEncoderWebRTCFrameControlRTPPacket(rtpPayloads, descriptors, &packetizer, control, f.dependencyStructure)
+		if err != nil {
+			return payloadDst, descriptorDst, 0, err
+		}
+		if !ok {
+			return rtpPayloads, descriptors, packetCount, nil
+		}
+		spans[packetCount] = EncoderWebRTCRTPPacketSpan{
+			PayloadOffset:    payloadStart,
+			PayloadLength:    len(nextPayloads) - payloadStart,
+			DescriptorOffset: descriptorStart,
+			DescriptorLength: len(nextDescriptors) - descriptorStart,
+			Marker:           marker,
+		}
+		rtpPayloads = nextPayloads
+		descriptors = nextDescriptors
+		packetCount++
+	}
 }
 
 // RTCEncoder encodes an L1T1, L1T2, or L1T3 WebRTC stream with per-frame dependency
@@ -269,14 +367,64 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 // has the same lifetime as VideoEncoder.Encode; copy it before retaining or
 // sending asynchronously.
 func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if err := validateI420Frame(frame); err != nil {
+		return RTCFrame{}, err
+	}
 	out, err := e.stream.Encode(frame, forceKey)
 	if err != nil {
 		return RTCFrame{}, err
 	}
 	return RTCFrame{
-		Data:                 out.TU,
-		Keyframe:             out.Keyframe,
-		TemporalID:           out.Info.TemporalID,
-		DependencyDescriptor: out.Descriptor,
+		Data:                      out.TU,
+		Keyframe:                  out.Keyframe,
+		TemporalID:                out.Info.TemporalID,
+		DependencyDescriptor:      out.Descriptor,
+		frameInfo:                 out.Info,
+		dependencyStructure:       out.Structure,
+		attachDependencyStructure: out.AttachDependencyStructure,
 	}, nil
+}
+
+func validateI420Frame(frame I420Frame) error {
+	if frame.Width <= 0 || frame.Height <= 0 || frame.Width%2 != 0 || frame.Height%2 != 0 {
+		return fmt.Errorf("goav1: I420Frame dimensions must be positive even values, got %dx%d", frame.Width, frame.Height)
+	}
+	chromaWidth := frame.Width / 2
+	chromaHeight := frame.Height / 2
+	if frame.YStride < frame.Width {
+		return fmt.Errorf("goav1: I420Frame YStride %d is smaller than width %d", frame.YStride, frame.Width)
+	}
+	if frame.ChromaStride < chromaWidth {
+		return fmt.Errorf("goav1: I420Frame ChromaStride %d is smaller than chroma width %d", frame.ChromaStride, chromaWidth)
+	}
+	yLen, ok := i420PlaneLen(frame.YStride, frame.Width, frame.Height)
+	if !ok {
+		return fmt.Errorf("goav1: I420Frame Y plane dimensions overflow int")
+	}
+	chromaLen, ok := i420PlaneLen(frame.ChromaStride, chromaWidth, chromaHeight)
+	if !ok {
+		return fmt.Errorf("goav1: I420Frame chroma plane dimensions overflow int")
+	}
+	if len(frame.Y) < yLen {
+		return fmt.Errorf("goav1: I420Frame Y plane is too short: got %d bytes, need %d", len(frame.Y), yLen)
+	}
+	if len(frame.U) < chromaLen {
+		return fmt.Errorf("goav1: I420Frame U plane is too short: got %d bytes, need %d", len(frame.U), chromaLen)
+	}
+	if len(frame.V) < chromaLen {
+		return fmt.Errorf("goav1: I420Frame V plane is too short: got %d bytes, need %d", len(frame.V), chromaLen)
+	}
+	return nil
+}
+
+func i420PlaneLen(stride int, width int, height int) (int, bool) {
+	maxInt := int(^uint(0) >> 1)
+	rowsBeforeLast := height - 1
+	if rowsBeforeLast > (maxInt-width)/stride {
+		return 0, false
+	}
+	return rowsBeforeLast*stride + width, true
 }

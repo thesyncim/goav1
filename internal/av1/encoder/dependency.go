@@ -79,6 +79,7 @@ type WebRTCGenericFrameInfo struct {
 func WebRTCGenericFrameInfoForFrame(settings FrameEncodeSettings, frameID uint64, state FrameIDBufferState, spatialLayers uint8, temporalLayers uint8) (WebRTCGenericFrameInfo, FrameIDBufferState, error) {
 	if spatialLayers == 0 || spatialLayers > WebRTCMaxSpatialLayers ||
 		temporalLayers == 0 || temporalLayers > WebRTCMaxTemporalLayers ||
+		uint16(spatialLayers)*uint16(temporalLayers) > WebRTCRtpDependencyMaxDecodeTargets ||
 		settings.SpatialID >= spatialLayers || settings.TemporalID >= temporalLayers ||
 		settings.ReferenceCount > WebRTCMaxFrameReferences {
 		return WebRTCGenericFrameInfo{}, FrameIDBufferState{}, ErrInvalidFrame
@@ -88,9 +89,9 @@ func WebRTCGenericFrameInfoForFrame(settings FrameEncodeSettings, frameID uint64
 		FrameID:    frameID,
 		SpatialID:  settings.SpatialID,
 		TemporalID: settings.TemporalID,
-		DTINum:     spatialLayers,
+		DTINum:     spatialLayers * temporalLayers,
 	}
-	fillWebRTCDTIs(&info, settings, spatialLayers)
+	fillWebRTCDTIs(&info, settings, spatialLayers, temporalLayers, ScalabilityModeL1T1, false)
 
 	for i := uint8(0); i < settings.ReferenceCount; i++ {
 		ref := settings.ReferenceBuffers[i]
@@ -176,6 +177,13 @@ func WebRTCTemporalUnitControlForFrames(config Config, frames []FrameEncodeSetti
 	control.FrameNum = uint8(len(frames))
 	control.ReferenceState = nextReferenceState
 	nextFrameIDState := frameIDState
+	keyTemporalUnit := false
+	for i := range frames {
+		if frames[i].Type == FrameTypeKey {
+			keyTemporalUnit = true
+			break
+		}
+	}
 	for i := range frames {
 		settings := frames[i]
 		if settings.SpatialID >= config.SpatialLayerCount || settings.TemporalID >= config.TemporalLayerCount {
@@ -189,13 +197,7 @@ func WebRTCTemporalUnitControlForFrames(config Config, frames []FrameEncodeSetti
 		if err != nil {
 			return WebRTCTemporalUnitControl{}, err
 		}
-		frameControl.GenericFrameInfo, nextFrameIDState, err = WebRTCGenericFrameInfoForFrame(
-			settings,
-			frameID,
-			nextFrameIDState,
-			config.SpatialLayerCount,
-			config.TemporalLayerCount,
-		)
+		frameControl.GenericFrameInfo, nextFrameIDState, err = webRTCGenericFrameInfoForFrameMode(settings, frameID, nextFrameIDState, config, keyTemporalUnit)
 		if err != nil {
 			return WebRTCTemporalUnitControl{}, err
 		}
@@ -243,18 +245,11 @@ func WebRTCDependencyStructureStateForTemporalUnit(control WebRTCTemporalUnitCon
 }
 
 func WebRTCTemplateIDForFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (uint8, error) {
-	if structure.TemplateNum == 0 || structure.TemplateNum > WebRTCRtpDependencyMaxTemplates ||
-		structure.NumDecodeTargets == 0 || structure.StructureID >= WebRTCRtpDependencyMaxTemplates ||
-		info.SpatialID >= WebRTCMaxSpatialLayers || info.TemporalID >= WebRTCMaxTemporalLayers {
-		return 0, ErrInvalidFrame
+	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
+	if err != nil {
+		return 0, err
 	}
-	for i := uint8(0); i < structure.TemplateNum; i++ {
-		template := structure.Templates[i]
-		if template.SpatialID == info.SpatialID && template.TemporalID == info.TemporalID {
-			return (structure.StructureID + i) % WebRTCRtpDependencyMaxTemplates, nil
-		}
-	}
-	return 0, ErrInvalidFrame
+	return (structure.StructureID + match.templateIndex) % WebRTCRtpDependencyMaxTemplates, nil
 }
 
 func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependencyStructure, error) {
@@ -263,17 +258,29 @@ func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependen
 		return WebRTCFrameDependencyStructure{}, err
 	}
 	if config.SpatialLayerCount == 0 || config.TemporalLayerCount == 0 ||
-		uint16(config.SpatialLayerCount)*uint16(config.TemporalLayerCount) > WebRTCRtpDependencyMaxTemplates {
+		uint16(config.SpatialLayerCount)*uint16(config.TemporalLayerCount) > WebRTCRtpDependencyMaxTemplates ||
+		uint16(config.SpatialLayerCount)*uint16(config.TemporalLayerCount) > WebRTCRtpDependencyMaxDecodeTargets {
 		return WebRTCFrameDependencyStructure{}, ErrInvalidConfig
 	}
 
 	var structure WebRTCFrameDependencyStructure
-	structure.NumDecodeTargets = config.SpatialLayerCount
+	structure.NumDecodeTargets = config.SpatialLayerCount * config.TemporalLayerCount
 	structure.NumChains = config.SpatialLayerCount
 	structure.ResolutionNum = config.SpatialLayerCount
 	for i := uint8(0); i < config.SpatialLayerCount; i++ {
-		structure.DecodeTargetProtectedByChain[i] = i
 		structure.Resolutions[i] = config.SpatialLayers[i].Resolution
+	}
+	for target := uint8(0); target < structure.NumDecodeTargets; target++ {
+		spatial, _, ok := webRTCDecodeTargetLayer(target, config.SpatialLayerCount, config.TemporalLayerCount)
+		if !ok {
+			return WebRTCFrameDependencyStructure{}, ErrInvalidConfig
+		}
+		structure.DecodeTargetProtectedByChain[target] = spatial
+	}
+
+	if config.Scalability == ScalabilityModeL2T2_KEY_SHIFT {
+		fillWebRTCL2T2KeyShiftTemplates(&structure)
+		return structure, nil
 	}
 
 	for spatial := uint8(0); spatial < config.SpatialLayerCount; spatial++ {
@@ -281,39 +288,153 @@ func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependen
 			template := &structure.Templates[structure.TemplateNum]
 			template.SpatialID = spatial
 			template.TemporalID = temporal
-			template.DTINum = config.SpatialLayerCount
+			template.DTINum = structure.NumDecodeTargets
 			template.ChainDiffNum = config.SpatialLayerCount
-			fillTemplateDTIs(template, spatial, temporal, config.SpatialLayerCount)
+			fillTemplateDTIs(template, spatial, temporal, config)
 			structure.TemplateNum++
 		}
 	}
 	return structure, nil
 }
 
-func fillWebRTCDTIs(info *WebRTCGenericFrameInfo, settings FrameEncodeSettings, spatialLayers uint8) {
-	for target := uint8(0); target < spatialLayers; target++ {
-		info.DTIs[target] = webRTCDTIForLayer(settings.Type, settings.SpatialID, settings.TemporalID, target)
+// Ported from libwebrtc:
+// modules/video_coding/svc/scalability_structure_l2t2_key_shift.cc
+func fillWebRTCL2T2KeyShiftTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 7
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSSS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS--", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[2], 0, 0, "SS--", []uint16{4}, []uint8{4, 1})
+	setWebRTCTemplate(&structure.Templates[3], 0, 1, "-D--", []uint16{2}, []uint8{2, 3})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS", []uint16{1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[5], 1, 0, "--SS", []uint16{4}, []uint8{3, 4})
+	setWebRTCTemplate(&structure.Templates[6], 1, 1, "---D", []uint16{2}, []uint8{1, 2})
+}
+
+func setWebRTCTemplate(template *WebRTCFrameDependencyTemplate, spatialID uint8, temporalID uint8, dtis string, frameDiffs []uint16, chainDiffs []uint8) {
+	template.SpatialID = spatialID
+	template.TemporalID = temporalID
+	template.DTINum = uint8(len(dtis))
+	for i := 0; i < len(dtis) && i < len(template.DTIs); i++ {
+		switch dtis[i] {
+		case 'D':
+			template.DTIs[i] = DecodeTargetDiscardable
+		case 'S':
+			template.DTIs[i] = DecodeTargetSwitch
+		case 'R':
+			template.DTIs[i] = DecodeTargetRequired
+		default:
+			template.DTIs[i] = DecodeTargetNotPresent
+		}
+	}
+	template.FrameDiffNum = uint8(len(frameDiffs))
+	for i := 0; i < len(frameDiffs) && i < len(template.FrameDiffs); i++ {
+		template.FrameDiffs[i] = frameDiffs[i]
+	}
+	template.ChainDiffNum = uint8(len(chainDiffs))
+	for i := 0; i < len(chainDiffs) && i < len(template.ChainDiffs); i++ {
+		template.ChainDiffs[i] = chainDiffs[i]
 	}
 }
 
-func fillTemplateDTIs(template *WebRTCFrameDependencyTemplate, spatialID uint8, temporalID uint8, spatialLayers uint8) {
-	for target := uint8(0); target < spatialLayers; target++ {
-		template.DTIs[target] = webRTCDTIForLayer(FrameTypeDelta, spatialID, temporalID, target)
+func webRTCGenericFrameInfoForFrameMode(settings FrameEncodeSettings, frameID uint64, state FrameIDBufferState, config Config, keyTemporalUnit bool) (WebRTCGenericFrameInfo, FrameIDBufferState, error) {
+	if config.SpatialLayerCount == 0 || config.SpatialLayerCount > WebRTCMaxSpatialLayers ||
+		config.TemporalLayerCount == 0 || config.TemporalLayerCount > WebRTCMaxTemporalLayers ||
+		uint16(config.SpatialLayerCount)*uint16(config.TemporalLayerCount) > WebRTCRtpDependencyMaxDecodeTargets {
+		return WebRTCGenericFrameInfo{}, FrameIDBufferState{}, ErrInvalidFrame
+	}
+	info, out, err := WebRTCGenericFrameInfoForFrame(settings, frameID, state, config.SpatialLayerCount, config.TemporalLayerCount)
+	if err != nil {
+		return WebRTCGenericFrameInfo{}, FrameIDBufferState{}, err
+	}
+	fillWebRTCDTIs(&info, settings, config.SpatialLayerCount, config.TemporalLayerCount, config.Scalability, keyTemporalUnit)
+	return info, out, nil
+}
+
+func fillWebRTCDTIs(info *WebRTCGenericFrameInfo, settings FrameEncodeSettings, spatialLayers uint8, temporalLayers uint8, mode ScalabilityMode, keyTemporalUnit bool) {
+	count := spatialLayers * temporalLayers
+	for target := uint8(0); target < count; target++ {
+		targetSpatial, targetTemporal, ok := webRTCDecodeTargetLayer(target, spatialLayers, temporalLayers)
+		if !ok {
+			info.DTIs[target] = DecodeTargetNotPresent
+			continue
+		}
+		info.DTIs[target] = webRTCDTIForTarget(settings, targetSpatial, targetTemporal, mode, keyTemporalUnit)
 	}
 }
 
-func webRTCDTIForLayer(frameType FrameType, spatialID uint8, temporalID uint8, target uint8) DecodeTargetIndication {
-	if target < spatialID {
+func fillTemplateDTIs(template *WebRTCFrameDependencyTemplate, spatialID uint8, temporalID uint8, config Config) {
+	settings := FrameEncodeSettings{
+		Type:       FrameTypeDelta,
+		SpatialID:  spatialID,
+		TemporalID: temporalID,
+	}
+	count := config.SpatialLayerCount * config.TemporalLayerCount
+	for target := uint8(0); target < count; target++ {
+		targetSpatial, targetTemporal, ok := webRTCDecodeTargetLayer(target, config.SpatialLayerCount, config.TemporalLayerCount)
+		if !ok {
+			template.DTIs[target] = DecodeTargetNotPresent
+			continue
+		}
+		template.DTIs[target] = webRTCDTIForTarget(settings, targetSpatial, targetTemporal, config.Scalability, false)
+	}
+}
+
+func webRTCDecodeTargetLayer(target uint8, spatialLayers uint8, temporalLayers uint8) (spatialID uint8, temporalID uint8, ok bool) {
+	if spatialLayers == 0 || temporalLayers == 0 || target >= spatialLayers*temporalLayers {
+		return 0, 0, false
+	}
+	return target / temporalLayers, target % temporalLayers, true
+}
+
+func webRTCDTIForTarget(settings FrameEncodeSettings, targetSpatialID uint8, targetTemporalID uint8, mode ScalabilityMode, keyTemporalUnit bool) DecodeTargetIndication {
+	switch {
+	case mode.IsSimulcast():
+		return webRTCSimulcastDTI(settings, targetSpatialID, targetTemporalID)
+	case mode.UsesKeyFrameInterLayerDependency():
+		return webRTCKeySVCDTI(settings, targetSpatialID, targetTemporalID, keyTemporalUnit)
+	default:
+		return webRTCFullSVCDTI(settings, targetSpatialID, targetTemporalID, keyTemporalUnit)
+	}
+}
+
+func webRTCFullSVCDTI(settings FrameEncodeSettings, targetSpatialID uint8, targetTemporalID uint8, keyTemporalUnit bool) DecodeTargetIndication {
+	if targetSpatialID < settings.SpatialID || targetTemporalID < settings.TemporalID {
 		return DecodeTargetNotPresent
 	}
-	if target > spatialID {
-		if frameType.resetsReferences() && temporalID == 0 {
+	if targetSpatialID == settings.SpatialID {
+		if targetTemporalID == 0 {
 			return DecodeTargetSwitch
 		}
-		return DecodeTargetNotPresent
-	}
-	if temporalID == 0 || frameType.resetsReferences() {
+		if targetTemporalID == settings.TemporalID {
+			return DecodeTargetDiscardable
+		}
 		return DecodeTargetSwitch
 	}
-	return DecodeTargetDiscardable
+	if keyTemporalUnit || settings.Type.resetsReferences() {
+		return DecodeTargetSwitch
+	}
+	return DecodeTargetRequired
+}
+
+func webRTCKeySVCDTI(settings FrameEncodeSettings, targetSpatialID uint8, targetTemporalID uint8, keyTemporalUnit bool) DecodeTargetIndication {
+	if keyTemporalUnit || settings.Type.resetsReferences() {
+		if targetSpatialID < settings.SpatialID {
+			return DecodeTargetNotPresent
+		}
+		return DecodeTargetSwitch
+	}
+	return webRTCSimulcastDTI(settings, targetSpatialID, targetTemporalID)
+}
+
+func webRTCSimulcastDTI(settings FrameEncodeSettings, targetSpatialID uint8, targetTemporalID uint8) DecodeTargetIndication {
+	if targetSpatialID != settings.SpatialID || targetTemporalID < settings.TemporalID {
+		return DecodeTargetNotPresent
+	}
+	if targetTemporalID == 0 {
+		return DecodeTargetSwitch
+	}
+	if targetTemporalID == settings.TemporalID {
+		return DecodeTargetDiscardable
+	}
+	return DecodeTargetSwitch
 }

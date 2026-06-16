@@ -64,6 +64,35 @@ func TestAppendFrameHeaderPrefixPayloadShowExisting(t *testing.T) {
 	}
 }
 
+func TestAppendFrameHeaderPrefixPayloadPresentationDelay(t *testing.T) {
+	seq := realtimeEncoderSequenceHeader()
+	seq.TimingInfoPresent = true
+	seq.TimingInfo = SequenceTimingInfo{
+		NumUnitsInDisplayTick: 1001,
+		TimeScale:             30000,
+	}
+	seq.DecoderModelInfoPresent = true
+	seq.DecoderModelInfo = SequenceDecoderModelInfo{
+		BufferDelayLength:           8,
+		BufferRemovalTimeLength:     5,
+		FramePresentationTimeLength: 6,
+	}
+	prefix := FrameHeaderPrefix{
+		FrameType:              FrameHeaderTypeKey,
+		ShowFrame:              true,
+		ErrorResilientMode:     true,
+		DisableCDFUpdate:       true,
+		ForceIntegerMV:         true,
+		FramePresentationDelay: 17,
+		OrderHint:              5,
+		PrimaryRefFrame:        EncoderPrimaryRefNone,
+	}
+	_, parsed := appendAndParseFrameHeaderPrefix(t, seq, prefix)
+	if parsed.FramePresentationDelay != 17 {
+		t.Fatalf("parsed presentation delay=%d want 17", parsed.FramePresentationDelay)
+	}
+}
+
 func TestAppendFrameHeaderPrefixPayloadReducedStillPicture(t *testing.T) {
 	seq := reducedStillEncoderSequenceHeader()
 	prefix := FrameHeaderPrefix{
@@ -133,14 +162,14 @@ func TestAppendFrameHeaderPrefixPayloadRejectsInvalid(t *testing.T) {
 			want: ErrInvalidFrame,
 		},
 		{
-			name: "unsupported presentation delay",
+			name: "presentation delay without decoder model",
 			prefix: FrameHeaderPrefix{
 				ShowExistingFrame:      true,
 				ExistingFrameIdx:       1,
 				FramePresentationDelay: 1,
 				PrimaryRefFrame:        EncoderPrimaryRefNone,
 			},
-			want: ErrUnsupported,
+			want: ErrInvalidFrame,
 		},
 	}
 	var buf [8]byte

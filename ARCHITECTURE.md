@@ -1030,10 +1030,10 @@ Two pieces of bitstream syntax carry layer information:
    `FramePool` instances behind a single global-surface-ID namespace.
 4. **Cross-pool reference resolution.** When a layer-1 frame
    references a layer-0 surface, the lookup goes through a
-   caller-supplied `decoder.FrameSurfaceProvider` (and a matching
-   `FrameSurfaceReleaser` for refresh-time deallocation). The
-   `decoder.FrameLayerPool` adapter satisfies both interfaces directly
-   when using `FrameLayerPool`.
+   caller-supplied `DecoderFrameSurfaceProvider` (and a matching
+   `DecoderFrameSurfaceReleaser` for refresh-time deallocation). The
+   root `NewDecoderFrameLayerPool` adapter satisfies both interfaces
+   directly when using `FrameLayerPool`.
 5. **Scaled inter prediction.** When an enhancement-layer frame
    references a smaller base-layer surface, the decoder must apply
    the AV1 8-tap convolve at the appropriate scale factor
@@ -1047,11 +1047,15 @@ Two pieces of bitstream syntax carry layer information:
 
 - `internal/av1/decoder/svc.go` — `FrameSurfaceProvider`,
   `FrameSurfaceReleaser`, `TemporalMotionReferenceProvider`,
-  `RunEventWithContextAndExternalReferences`. These are the SVC
-  entry-points; root-package re-exports are pending.
+  `RunEventWithContextAndExternalReferences`. The root package exposes
+  these through `DecoderFrameWorkExternalReferenceRuntime`,
+  `DecoderFrameSurfaceProvider`, `DecoderFrameSurfaceReleaser`,
+  `DecoderTemporalMotionReferenceProvider`, and the resolver helpers.
 - `internal/av1/decoder/svc_layer_pool.go` — `FrameLayerPool`
   adapter that satisfies the provider/releaser pair against a
-  `*frame.LayerPool`.
+  `*frame.LayerPool`; root callers use `NewDecoderFrameLayerPool`,
+  `DecoderAcquireLayerFrameSurface`, and
+  `DecoderLayerPoolGlobalSurfaceID`.
 - `internal/av1/frame/layer_pool.go` — `LayerPool` aggregator and
   `LayerFactory` interface. Exported at root as `FrameLayerPool` and
   `FrameLayerFactory`.
@@ -1069,17 +1073,17 @@ Two pieces of bitstream syntax carry layer information:
 
 ### Limitations today
 
-- The `RunEventWithContextAndExternalReferences` entry point and the
-  `FrameSurfaceProvider` interface live in the internal decoder
-  package; the root-package re-export is on the roadmap. Callers
-  needing the multi-pool path today either vendor the interface
-  contract or import the internal package directly.
-- L1T2 (single-pool friendly) currently passes lenient first-frame
-  MD5 only; later frames fail at `threading: invalid batch` on the
-  same-size inter-layer reference path.
-- L2T1 / L2T2 require the multi-pool path; higher spatial-layer
-  frame 0 still mismatches the libaom reference. Tracked in
-  CONFORMANCE.md.
+- SVC decode is covered by the framework/oracle path. L1T2, L2T1,
+  and L2T2 libaom vectors pass the strict gates listed in
+  CONFORMANCE.md, including multi-pool surface routing and scaled
+  inter prediction.
+- Public SVC ergonomics are still lower-level than the simple
+  single-stream decoder path. Integrations that need explicit
+  spatial-layer selection should follow `docs/svc.md` and the
+  `cmd/dump_svc` / testvector harness patterns.
+- Tile-list playback is not wired. Tile-list OBUs parse and are
+  surfaced as events, but anchor-frame tile reuse and output-frame
+  blitting remain open.
 
 ---
 
@@ -1087,35 +1091,16 @@ Two pieces of bitstream syntax carry layer information:
 
 ### Current state (as of the README)
 
-`make testvectors-fast` is green in CI on every push. It exercises the
-committed test-vector suite and the oracle-tagged libaom frame-MD5 checks
-for `av1-1-b8-00-quantizer-00.ivf`.
+`make testvectors-fast` and `make dryrun-fast` are green in CI on every push.
+The dry-run lane uses strict per-frame MD5 and covers the committed fast
+libaom vectors, including the current L1T2 SVC fast vector.
 
-`make dryrun-fast` runs the in-progress framework dry-run against the
-eight `SuiteLevelFast` libaom vectors:
+The broader local gates in CONFORMANCE.md currently pass:
 
-```
-av1-1-b8-00-quantizer-00.ivf                   (Quantizer 00)
-av1-1-b8-01-size-16x16.ivf                     (16x16 size)
-av1-1-b8-02-allintra.ivf                       (All-intra)
-av1-1-b8-04-cdfupdate.ivf                      (CDF update)
-av1-1-b8-05-mv.ivf                             (MV)
-av1-1-b8-06-mfmv.ivf                           (Motion field MV)
-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf  (Intrabc extreme DV)
-av1-1-b8-24-monochrome.ivf                     (Monochrome)
-```
-
-(The exact list is the output of
-`LibaomRemoteManifest().SelectRemote(SuiteLevelFast, 0, nil)`.)
-
-Reported state from the README:
-
-- 6 of 8 pass the lenient first-frame MD5 gate.
-- 1 of 8 (`av1-1-b8-00-quantizer-00`) currently passes strict mode
-  (every-frame MD5).
-- The remaining vectors hit known mismatches in later frames; the
-  per-frame log under lenient mode is the place to look for the first
-  mismatch.
+- `make dryrun-relevant-supported`
+- `make dryrun-full`
+- `make dryrun-extended`
+- `make dryrun-profiles`
 
 ### Feature coverage status
 
@@ -1148,16 +1133,20 @@ roll-up.
 | Show-existing-frame                   | Complete (lifecycle, reference reset, release).  |
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
 | Annex B / IVF / RTP intake            | Complete.                                        |
-| SVC streams                           | Parsed (per-OBU IDs, operating points, scalability metadata); multi-pool surface routing wired internally; scaled inter prediction behind `GOAV1_SCALED_PRED=1`. See [docs/svc.md](docs/svc.md). |
+| SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
+| Realtime pixel encoder                | Functional for 8-bit I420 single-spatial-layer L1T1/L1T2/L1T3 WebRTC streams, including RTP payload packetization and dependency descriptors. |
+| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, and RTP packet spans for caller-supplied frame payloads. |
 
 ### Not yet implemented
 
-- **Encoder bitstream emission.** Encoder implementation is in scope. The
-  WebRTC control surface is present; actual AV1 packet/tile/residual emission is
-  next. The target is realtime WebRTC AV1, not offline/general-purpose encoding.
-- **SIMD / assembly backends.** Every DSP path is pure Go. The dispatch
-  in `internal/av1/dsp` is stable and ready to take SIMD variants once
-  the conformance work is complete.
+- **Spatial-SVC/simulcast pixel encoding.** The lower-level WebRTC scheduling
+  surface handles SVC mode metadata and dependency descriptors, but the friendly
+  realtime pixel encoder still emits one single-spatial-layer frame per call.
+- **High-bit-depth and non-4:2:0 pixel encoding.** The decoder covers broader
+  formats; the realtime pixel encoder currently accepts 8-bit I420 only.
+- **Full WebRTC media transport.** The package emits AV1 RTP payload bodies and
+  dependency descriptors. RTP headers, SRTP, SDP, jitter buffering, loss policy,
+  pacing, and retransmission remain integration-layer responsibilities.
 - **Work-stealing scheduling.** The current `threading.Pool` does a
   deterministic fan-out per batch; there is no dynamic stealing across
   workers mid-frame. Determinism plus the batch unit-count balancing
@@ -1165,9 +1154,9 @@ roll-up.
 
 ### Open Work
 
-1. **Implement the WebRTC realtime encoder.** Build the in-scope encoder target
-   described in `README.md` and `internal/av1/encoder/doc.go`, starting from
-   bitstream emission behind the existing control surface.
+1. **Broaden the WebRTC realtime encoder.** Add spatial-SVC/simulcast pixel
+   encoding, high-bit-depth/non-4:2:0 inputs, richer tuning controls, and
+   broader libaom/libwebrtc/SVT oracle coverage.
 2. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
    malformed/adversarial, fuzz, and real-world corpus coverage beyond the
    committed vector gates.

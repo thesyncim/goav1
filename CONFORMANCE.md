@@ -258,7 +258,7 @@ ship under `internal/av1/testdata/libaom/`.
 | 33 | IVF container (DKIF/AV01)        | Yes     | internal/av1/ivf/reader.go       | Zero-allocation NewIVFIterator; conformance    |
 |    |                                  |         |                                  | harness and CLI both consume it.               |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-| 34 | AV1 RTP payload (RFC draft)      | Yes     | internal/av1/rtp/                | Aggregation header parse, payload iteration,   |
+| 34 | AV1 RTP payload (AOM v1.0.0)     | Yes     | internal/av1/rtp/                | Aggregation header parse, payload iteration,   |
 |    |                                  |         |                                  | single-OBU + fragmented OBU packetization,     |
 |    |                                  |         |                                  | depacketizer state machine, frame assembler;   |
 |    |                                  |         |                                  | round-trip alloc-tested and fuzzed.            |
@@ -293,13 +293,18 @@ ship under `internal/av1/testdata/libaom/`.
 
 ### Cross-cutting items not enumerated above
 
-- **Encoder.** Encoder implementation is in project scope. The first target is
-  a WebRTC-focused realtime AV1 encoder with WebRTC controls and RTP/OBU
-  output, not an offline/general-purpose encoder. The control foundation is
-  landed; AV1 bitstream emission remains in progress.
-- **SIMD / assembly backends.** Every DSP entry point is pure Go today.
-  The `internal/av1/dsp` and `internal/av1/transform` dispatch shapes are
-  stable; an amd64/arm64 backend will land behind them.
+- **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit I420
+  single-spatial-layer WebRTC use, with fixed-quality/CBR, forced keyframes,
+  L1T1/L1T2/L1T3 temporal layering, tile columns, golden references, RTP payload
+  packetization, and dependency descriptors. The lower-level WebRTC encoder
+  surface validates the W3C AV1 SVC mode vocabulary, temporal/spatial
+  dependency structures, dependency-descriptor decode-target grids, W3C
+  key-shift temporal schedules, and the pinned-libwebrtc `L2T2_KEY_SHIFT`
+  dependency templates for caller-supplied frame payloads.
+  Spatial-SVC/simulcast pixel encoding, high-bit-depth input
+  encoding, and non-4:2:0 input encoding remain open.
+- **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
+  assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic
   fan-out per batch; no dynamic stealing across workers mid-frame.
 - **Allocation budget.** Every public hot-path helper is zero-allocation

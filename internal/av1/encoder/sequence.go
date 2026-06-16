@@ -27,7 +27,10 @@ type SequenceHeader struct {
 	ReducedStillPictureHeader bool
 
 	TimingInfoPresent          bool
+	DecoderModelInfoPresent    bool
 	InitialDisplayDelayPresent bool
+	TimingInfo                 SequenceTimingInfo
+	DecoderModelInfo           SequenceDecoderModelInfo
 	OperatingPointsCount       uint8
 	OperatingPoints            [32]SequenceOperatingPoint
 
@@ -59,9 +62,29 @@ type SequenceHeader struct {
 }
 
 type SequenceOperatingPoint struct {
-	IDC         uint16
-	SeqLevelIdx uint8
-	SeqTier     uint8
+	IDC                        uint16
+	SeqLevelIdx                uint8
+	SeqTier                    uint8
+	DecoderModelPresent        bool
+	DecoderBufferDelay         uint32
+	EncoderBufferDelay         uint32
+	LowDelayMode               bool
+	InitialDisplayDelayPresent bool
+	InitialDisplayDelayMinus1  uint8
+}
+
+type SequenceTimingInfo struct {
+	NumUnitsInDisplayTick    uint32
+	TimeScale                uint32
+	EqualPictureInterval     bool
+	NumTicksPerPictureMinus1 uint32
+}
+
+type SequenceDecoderModelInfo struct {
+	BufferDelayLength           uint8
+	NumUnitsInDecodingTick      uint32
+	BufferRemovalTimeLength     uint8
+	FramePresentationTimeLength uint8
 }
 
 type SequenceColorConfig struct {
@@ -177,6 +200,19 @@ func writeSequenceHeaderPayload(w *bitWriter, seq SequenceHeader) error {
 		if err := w.writeBool(seq.TimingInfoPresent); err != nil {
 			return err
 		}
+		if seq.TimingInfoPresent {
+			if err := writeSequenceTimingInfo(w, seq.TimingInfo); err != nil {
+				return err
+			}
+			if err := w.writeBool(seq.DecoderModelInfoPresent); err != nil {
+				return err
+			}
+			if seq.DecoderModelInfoPresent {
+				if err := writeSequenceDecoderModelInfo(w, seq.DecoderModelInfo); err != nil {
+					return err
+				}
+			}
+		}
 		if err := w.writeBool(seq.InitialDisplayDelayPresent); err != nil {
 			return err
 		}
@@ -194,6 +230,26 @@ func writeSequenceHeaderPayload(w *bitWriter, seq SequenceHeader) error {
 			if op.SeqLevelIdx > 7 {
 				if err := w.writeBits(uint64(op.SeqTier), 1); err != nil {
 					return err
+				}
+			}
+			if seq.DecoderModelInfoPresent {
+				if err := w.writeBool(op.DecoderModelPresent); err != nil {
+					return err
+				}
+				if op.DecoderModelPresent {
+					if err := writeSequenceOperatingParametersInfo(w, seq.DecoderModelInfo, op); err != nil {
+						return err
+					}
+				}
+			}
+			if seq.InitialDisplayDelayPresent {
+				if err := w.writeBool(op.InitialDisplayDelayPresent); err != nil {
+					return err
+				}
+				if op.InitialDisplayDelayPresent {
+					if err := w.writeBits(uint64(op.InitialDisplayDelayMinus1), 4); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -216,6 +272,45 @@ func writeSequenceHeaderPayload(w *bitWriter, seq SequenceHeader) error {
 
 func writeSequenceLevel(w *bitWriter, level uint8) error {
 	return w.writeBits(uint64(level), 5)
+}
+
+func writeSequenceTimingInfo(w *bitWriter, timing SequenceTimingInfo) error {
+	if err := w.writeBits(uint64(timing.NumUnitsInDisplayTick), 32); err != nil {
+		return err
+	}
+	if err := w.writeBits(uint64(timing.TimeScale), 32); err != nil {
+		return err
+	}
+	if err := w.writeBool(timing.EqualPictureInterval); err != nil {
+		return err
+	}
+	if timing.EqualPictureInterval {
+		return w.writeUVLC(timing.NumTicksPerPictureMinus1)
+	}
+	return nil
+}
+
+func writeSequenceDecoderModelInfo(w *bitWriter, info SequenceDecoderModelInfo) error {
+	if err := w.writeBits(uint64(info.BufferDelayLength-1), 5); err != nil {
+		return err
+	}
+	if err := w.writeBits(uint64(info.NumUnitsInDecodingTick), 32); err != nil {
+		return err
+	}
+	if err := w.writeBits(uint64(info.BufferRemovalTimeLength-1), 5); err != nil {
+		return err
+	}
+	return w.writeBits(uint64(info.FramePresentationTimeLength-1), 5)
+}
+
+func writeSequenceOperatingParametersInfo(w *bitWriter, info SequenceDecoderModelInfo, op SequenceOperatingPoint) error {
+	if err := w.writeBits(uint64(op.DecoderBufferDelay), info.BufferDelayLength); err != nil {
+		return err
+	}
+	if err := w.writeBits(uint64(op.EncoderBufferDelay), info.BufferDelayLength); err != nil {
+		return err
+	}
+	return w.writeBool(op.LowDelayMode)
 }
 
 func writeSequenceFrameSize(w *bitWriter, seq SequenceHeader) error {
@@ -390,8 +485,23 @@ func validateSequenceHeader(seq SequenceHeader) error {
 	if seq.ReducedStillPictureHeader && !seq.StillPicture {
 		return ErrInvalidConfig
 	}
-	if seq.TimingInfoPresent || seq.InitialDisplayDelayPresent {
-		return ErrUnsupported
+	if seq.ReducedStillPictureHeader && (seq.TimingInfoPresent || seq.DecoderModelInfoPresent || seq.InitialDisplayDelayPresent) {
+		return ErrInvalidConfig
+	}
+	if !seq.TimingInfoPresent && seq.TimingInfo != (SequenceTimingInfo{}) {
+		return ErrInvalidConfig
+	}
+	if seq.TimingInfoPresent && !seq.TimingInfo.EqualPictureInterval && seq.TimingInfo.NumTicksPerPictureMinus1 != 0 {
+		return ErrInvalidConfig
+	}
+	if seq.DecoderModelInfoPresent && !seq.TimingInfoPresent {
+		return ErrInvalidConfig
+	}
+	if seq.DecoderModelInfoPresent && !validSequenceDecoderModelInfo(seq.DecoderModelInfo) {
+		return ErrInvalidConfig
+	}
+	if !seq.DecoderModelInfoPresent && seq.DecoderModelInfo != (SequenceDecoderModelInfo{}) {
+		return ErrInvalidConfig
 	}
 	opCount := sequenceOperatingPointCount(seq)
 	if opCount == 0 || opCount > 32 {
@@ -406,6 +516,26 @@ func validateSequenceHeader(seq SequenceHeader) error {
 			return ErrInvalidConfig
 		}
 		if op.SeqLevelIdx <= 7 && op.SeqTier != 0 {
+			return ErrInvalidConfig
+		}
+		if op.DecoderModelPresent && !seq.DecoderModelInfoPresent {
+			return ErrInvalidConfig
+		}
+		if op.DecoderModelPresent {
+			if !valueFitsBits32(op.DecoderBufferDelay, seq.DecoderModelInfo.BufferDelayLength) ||
+				!valueFitsBits32(op.EncoderBufferDelay, seq.DecoderModelInfo.BufferDelayLength) {
+				return ErrInvalidConfig
+			}
+		} else if op.DecoderBufferDelay != 0 || op.EncoderBufferDelay != 0 || op.LowDelayMode {
+			return ErrInvalidConfig
+		}
+		if op.InitialDisplayDelayPresent && !seq.InitialDisplayDelayPresent {
+			return ErrInvalidConfig
+		}
+		if op.InitialDisplayDelayMinus1 > 0x0f {
+			return ErrInvalidConfig
+		}
+		if !op.InitialDisplayDelayPresent && op.InitialDisplayDelayMinus1 != 0 {
 			return ErrInvalidConfig
 		}
 	}
@@ -442,6 +572,22 @@ func validateSequenceHeader(seq SequenceHeader) error {
 		return ErrInvalidConfig
 	}
 	return validateSequenceColorConfig(seq.Profile, seq.ColorConfig)
+}
+
+func validSequenceDecoderModelInfo(info SequenceDecoderModelInfo) bool {
+	return info.BufferDelayLength >= 1 && info.BufferDelayLength <= 32 &&
+		info.BufferRemovalTimeLength >= 1 && info.BufferRemovalTimeLength <= 32 &&
+		info.FramePresentationTimeLength >= 1 && info.FramePresentationTimeLength <= 32
+}
+
+func valueFitsBits32(value uint32, n uint8) bool {
+	if n == 0 || n > 32 {
+		return false
+	}
+	if n == 32 {
+		return true
+	}
+	return value < (uint32(1) << n)
 }
 
 func validateSequenceColorConfig(profile Profile, cfg SequenceColorConfig) error {
